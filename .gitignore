@@ -1,0 +1,229 @@
+# Rust build artifacts and binaries
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is usually tracked for binary crates but not for libraries
+# Since this is a database server (binary), we should keep Cargo.lock
+# Uncomment the next line if you want to ignore it
+# Cargo.lock
+
+# Rust debug artifacts
+**/*.dSYM/
+
+# Executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*-test
+*-test.exe
+
+# Benchmark binaries
+*-bench
+*-bench.exe
+
+# Python client artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Java client artifacts
+clients/java/target/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.mvn/
+.gradle/
+gradle/
+gradlew
+gradlew.bat
+
+# JavaScript/Node.js client artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+package-lock.json
+yarn.lock
+*.tsbuildinfo
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Environment and configuration
+.env
+.env.local
+.env.*.local
+*.env
+!example.env
+
+# Logs and databases
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+tmp/
+temp/
+
+# Storage and data directories (database files)
+/data/*
+!/data/.gitkeep
+/storage/*
+!/storage/.gitkeep
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+*.pdf
+!docs/*.pdf
+site/
+
+# Coverage reports
+coverage/
+*.lcov
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling data
+*.prof
+*.lprof
+perf.data*
+flamegraph.svg
+
+# Core dumps
+/core
+core.*
+*.core
+!src/core/
+
+# Security files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# PlantUML temporary files
+*.puml.tmp
+
+# Keep image files generated from diagrams
+!images/*.png
+!images/*.svg
+
+# Keep all documentation files
+!*.md
+!*.adoc
+!*.rst
+!*.txt
+
+# Except CLAUDE.md which is for local development
+CLAUDE.md
+
+# Keep configuration examples
+!examples/**/*.toml
+!examples/**/*.yaml
+!examples/**/*.yml
+!examples/**/*.json
+
+# Keep proto files
+!*.proto
+
+# Keep diagram source files
+!*.puml
+!*.dot
+!*.mermaid
+
+# Keep asset files
+!assets/*.svg
+!assets/*.png
+!assets/*.jpg
+!assets/*.jpeg
+
+# Benchmark results
+benches/target/
+criterion/
+
+# Serverless/Cloud function packages
+*.zip
+lambda-package/
+function-package/
+
+# Docker artifacts
+.dockerignore
+docker-compose.override.yml
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraformrc
+terraform.rc
+
+# Misc
+.cache/
+.parcel-cache/
+.turbo/
+.vercel/
+.netlify/

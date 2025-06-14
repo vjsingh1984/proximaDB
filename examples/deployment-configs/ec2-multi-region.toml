@@ -1,0 +1,236 @@
+# EC2 deployment with multi-region coordination and OS optimization
+[server]
+node_id = "vectordb-ec2-primary-1"
+bind_address = "0.0.0.0"
+port = 8080
+data_dir = "/opt/vectordb/data"
+
+[storage]
+data_dirs = ["/mnt/nvme0/hot", "/mnt/ssd0/warm", "/mnt/hdd0/cold"]
+wal_dir = "/mnt/nvme0/wal"
+mmap_enabled = true
+cache_size_mb = 8192
+bloom_filter_bits = 12
+
+# Tiered storage for EC2
+[storage.tiered]
+deployment_mode = "VirtualMachine"
+
+[storage.tiered.deployment_mode.VirtualMachine]
+cloud_storage_backend = "AWS"
+
+[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
+path = "/mnt/nvme0"
+storage_type = "NVMe"
+size_gb = 1000
+performance_tier = "UltraHigh"
+
+[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.NVMe]
+iops = 400000
+throughput_mbps = 7000
+
+[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
+path = "/mnt/ssd0"
+storage_type = "SATASSD"
+size_gb = 4000
+performance_tier = "High"
+
+[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.SATASSD]
+iops = 16000
+
+[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
+path = "/mnt/hdd0"
+storage_type = "HDD"
+size_gb = 20000
+performance_tier = "Medium"
+
+[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.HDD]
+rpm = 7200
+
+# OS optimization for EC2
+[storage.tiered.deployment_mode.VirtualMachine.os_optimization]
+mmap_enabled = true
+numa_awareness = true
+huge_pages_enabled = true
+direct_io_threshold_mb = 1024
+io_scheduler = "MQ"
+
+[storage.tiered.deployment_mode.VirtualMachine.os_optimization.page_cache_optimization]
+enabled = true
+drop_caches_on_memory_pressure = true
+readahead_kb = 1024
+dirty_ratio = 10
+dirty_background_ratio = 5
+
+# Multi-tier storage configuration
+[[storage.tiered.storage_tiers]]
+tier_name = "ultra-hot-nvme"
+tier_level = "UltraHot"
+access_pattern = "Random"
+
+[storage.tiered.storage_tiers.storage_backend.MMAP]
+file_path = "/mnt/nvme0/mmap"
+advise_random = true
+populate_pages = true
+
+[[storage.tiered.storage_tiers]]
+tier_name = "hot-ssd"
+tier_level = "Hot"
+access_pattern = "Sequential"
+
+[storage.tiered.storage_tiers.storage_backend.LocalFS]
+base_path = "/mnt/ssd0"
+use_direct_io = false
+sync_strategy = "WriteBack"
+
+[[storage.tiered.storage_tiers]]
+tier_name = "warm-hdd"
+tier_level = "Warm"
+access_pattern = "WriteOnce"
+
+[storage.tiered.storage_tiers.storage_backend.LocalFS]
+base_path = "/mnt/hdd0"
+use_direct_io = true
+sync_strategy = "Async"
+
+[[storage.tiered.storage_tiers]]
+tier_name = "cold-s3"
+tier_level = "Cold"
+access_pattern = "ReadMostly"
+
+[storage.tiered.storage_tiers.storage_backend.CloudObjectStore]
+multipart_threshold_mb = 100
+local_cache_path = "/mnt/ssd0/s3-cache"
+
+[storage.tiered.storage_tiers.storage_backend.CloudObjectStore.backend.AWS]
+s3_bucket = "vectordb-global-storage"
+intelligent_tiering = true
+cross_region_replication = "us-west-2"
+
+# Global coordination for multi-region
+[global_coordination]
+deployment_topology = "MultiRegionActiveActive"
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.regions.us_east_1]
+region_id = "us-east-1"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+capacity_weight = 1.0
+latency_zone = "UltraLow"
+disaster_recovery_tier = "Primary"
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.regions.us_west_2]
+region_id = "us-west-2"
+availability_zones = ["us-west-2a", "us-west-2b", "us-west-2c"]
+capacity_weight = 0.8
+latency_zone = "Low"
+disaster_recovery_tier = "Hot"
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.regions.eu_west_1]
+region_id = "eu-west-1"
+availability_zones = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+capacity_weight = 0.6
+latency_zone = "Medium"
+disaster_recovery_tier = "Warm"
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.global_load_balancing]
+strategy = "Weighted"
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.global_load_balancing.Weighted]
+latency_weight = 0.6
+capacity_weight = 0.3
+cost_weight = 0.1
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.data_locality_rules]
+
+[global_coordination.deployment_topology.MultiRegionActiveActive.data_locality_rules.residency_rules.eu_customers]
+tenant_pattern = "eu_.*"
+allowed_regions = ["eu-west-1", "eu-central-1"]
+prohibited_regions = ["us-east-1", "us-west-2"]
+encryption_required = true
+audit_logging = true
+
+[global_coordination.consistency_model]
+type = "Session"
+
+[global_coordination.replication_strategy]
+type = "Quorum"
+
+[global_coordination.replication_strategy.Quorum]
+read_quorum = 2
+write_quorum = 2
+total_replicas = 3
+
+[global_coordination.conflict_resolution]
+type = "VectorClock"
+
+# Metadata sharding for global scale
+[global_coordination.metadata_sharding]
+sharding_strategy = "Hierarchical"
+shard_count = 64
+
+[global_coordination.metadata_sharding.sharding_strategy.Hierarchical]
+tenant_shards = 16
+collection_shards_per_tenant = 4
+
+[global_coordination.metadata_sharding.rebalancing]
+enabled = true
+trigger_threshold = 0.2
+rebalancing_strategy = "LoadThreshold"
+migration_rate_limit = 200
+
+[global_coordination.metadata_sharding.rebalancing.rebalancing_strategy.LoadThreshold]
+cpu_threshold = 0.8
+memory_threshold = 0.8
+
+[global_coordination.metadata_sharding.hot_shard_detection]
+detection_enabled = true
+cpu_threshold = 0.9
+memory_threshold = 0.9
+request_rate_threshold = 5000.0
+mitigation_strategies = ["ScaleOut", "TenantIsolation", "AggressiveCaching"]
+
+# Advanced routing for global deployment
+[routing.geographic_routing]
+enabled = true
+latency_routing = true
+
+[routing.geographic_routing.regions.us_east_1]
+clusters = ["us-east-1-cluster-1", "us-east-1-cluster-2"]
+primary = true
+latency_weight = 1.0
+capacity_weight = 1.0
+
+[routing.geographic_routing.regions.eu_west_1]
+clusters = ["eu-west-1-cluster-1"]
+primary = false
+latency_weight = 0.8
+capacity_weight = 0.6
+
+[routing.geographic_routing.data_residency_rules]
+eu_customers = ["eu-west-1", "eu-central-1"]
+us_customers = ["us-east-1", "us-west-2"]
+
+# Disaster recovery configuration
+[global_coordination.disaster_recovery]
+enabled = true
+rto_seconds = 300
+rpo_seconds = 60
+
+[global_coordination.disaster_recovery.backup_strategy]
+type = "Hybrid"
+continuous_retention_hours = 72
+snapshot_frequency_hours = 6
+long_term_retention_days = 2555  # 7 years
+
+[global_coordination.disaster_recovery.failover_automation]
+enabled = true
+health_check_interval_seconds = 30
+failure_threshold_count = 3
+automatic_failback = false
+notification_channels = ["slack", "pagerduty", "email"]
+
+[global_coordination.disaster_recovery.testing_schedule]
+enabled = true
+frequency_days = 30
+test_type = "NonDisruptive"
+rollback_testing = true

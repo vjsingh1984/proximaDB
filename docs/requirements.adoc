@@ -1,0 +1,716 @@
+= ProximaDB Requirements Specification
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectnums:
+:sectnumlevels: 3
+:author: Vijaykumar Singh
+:email: singhvjd@gmail.com
+:revdate: 2025
+:version: 0.1.0
+:copyright: Copyright 2025 Vijaykumar Singh
+:organization: ProximaDB
+
+[abstract]
+== Abstract
+
+ProximaDB is a cloud-native vector database engineered for AI-first applications. This document outlines comprehensive requirements for building a high-performance, scalable vector database with intelligent tiering, distributed consensus, and GPU acceleration capabilities for both vector operations and inference workloads.
+
+**Tagline**: _proximity at scale_
+
+== Executive Summary
+
+=== Vision
+Create the world's most performant and scalable vector database that seamlessly bridges the gap between vector storage/retrieval and AI inference, enabling organizations to build AI-first applications at global scale.
+
+=== Mission
+Deliver a cloud-native vector database that provides:
+- Sub-millisecond vector similarity search at internet scale
+- Intelligent data tiering from ultra-hot to archive storage
+- Seamless integration with AI inference frameworks
+- Zero-touch serverless deployment across multiple clouds
+- Enterprise-grade security, compliance, and observability
+
+== Product Requirements
+
+=== Functional Requirements
+
+==== Core Vector Operations
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|VR-001
+|Vector similarity search with cosine, euclidean, and dot product distance metrics
+|Critical
+|✅ IMPLEMENTED
+
+|VR-002
+|CRUD operations on vector collections with metadata filtering and ID-based lookups
+|Critical
+|✅ IMPLEMENTED
+
+|VR-003
+|Hybrid dense/sparse vector storage with automatic format optimization
+|High
+|🚧 PARTIAL (VIPER storage)
+
+|VR-004
+|Metadata-based filtering with NoSQL-style queries ($gte, $lte, $in operators)
+|High
+|✅ IMPLEMENTED
+
+|VR-005
+|Batch vector operations for high-throughput ingestion
+|Critical
+|✅ IMPLEMENTED
+
+|VR-006
+|Real-time vector upserts with immediate consistency
+|High
+|✅ IMPLEMENTED
+
+|VR-007
+|Approximate nearest neighbor (ANN) search with configurable accuracy
+|Critical
+|✅ IMPLEMENTED
+
+|VR-008
+|Exact nearest neighbor search for small datasets
+|Medium
+|✅ IMPLEMENTED
+
+|VR-009
+|Multi-vector queries (search multiple vectors simultaneously)
+|High
+|🚧 PARTIAL
+
+|VR-010
+|Geospatial vector queries with location-based filtering
+|Medium
+|❌ NOT IMPLEMENTED
+
+|VR-011
+|Adaptive eXtensible Indexing System (AXIS) for intelligent vector indexing
+|Critical
+|🚧 PARTIAL (85% complete)
+
+|VR-012
+|Global ID Index with Trie + HashMap for fast lookups and prefix queries
+|Critical
+|✅ IMPLEMENTED
+
+|VR-013
+|Metadata Index with columnar storage and Roaring Bitmap filters
+|Critical
+|🚧 PARTIAL
+
+|VR-014
+|Dense Vector Index with Parquet Row Groups + HNSW/PQ integration
+|Critical
+|✅ IMPLEMENTED
+
+|VR-015
+|Sparse Vector Index with LSM tree + MinHash LSH for ANN queries
+|High
+|🚧 PARTIAL
+
+|VR-016
+|Join Engine with RowSet intersection and Bloom filter optimization
+|High
+|🚧 PARTIAL
+
+|VR-017
+|Adaptive Index Selection based on data characteristics and query patterns
+|Critical
+|🚧 PARTIAL
+
+|VR-018
+|Dynamic Index Migration with zero-downtime switching between index types
+|High
+|🚧 PARTIAL
+
+|VR-019
+|Index Evolution Engine for automatic optimization as data grows
+|High
+|🚧 PARTIAL
+
+|VR-020
+|Multi-level caching for hot vectors in memory
+|Medium
+|✅ IMPLEMENTED
+
+|VR-021
+|Streaming mode with mini-segment indexing for real-time updates
+|Medium
+|❌ NOT IMPLEMENTED
+
+|VR-022
+|Time-travel queries with versioned vector IDs and timestamps
+|Low
+|❌ NOT IMPLEMENTED
+|===
+
+==== Storage and Data Management
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|ST-001
+|MMAP-based reads with OS page cache optimization for hot data
+|Critical
+
+|ST-002
+|LSM tree-based append-only writes for internet scale
+|Critical
+
+|ST-003
+|Multi-disk support with intelligent data placement
+|High
+
+|ST-004
+|Intelligent 5-tier storage: Ultra-Hot → Hot → Warm → Cold → Archive
+|Critical
+
+|ST-005
+|Seamless S3/ADLS/GCS integration - delegate replication to object store instead of ProximaDB
+|Critical
+
+|ST-006
+|Parquet encoding with column families for analytics workloads
+|High
+
+|ST-007
+|Configurable compression (LZ4, ZSTD, GZIP) per column family
+|High
+
+|ST-008
+|Schema evolution with backward compatibility
+|Medium
+
+|ST-009
+|Point-in-time recovery with configurable retention
+|High
+
+|ST-010
+|Cross-region data replication with consistency guarantees
+|High
+
+|ST-011
+|Multi-cloud Write-Ahead Log (WAL) with S3/ADLS/GCS backend support
+|Critical
+
+|ST-012
+|Avro-based WAL serialization with schema evolution and compression
+|Critical
+
+|ST-013
+|Recovery-optimized compression (LZ4 >2GB/s decompression, Zstd adaptive)
+|Critical
+
+|ST-014
+|Multi-disk WAL with parallel writes for critical systems (RAID-like distribution)
+|High
+
+|ST-015
+|Parallel WAL recovery with disk I/O bottleneck optimization (not CPU)
+|Critical
+
+|ST-016
+|Cloud-native WAL batching and cost optimization (lifecycle management)
+|High
+
+|ST-017
+|Hybrid WAL: local cache + cloud backup with configurable sync strategies
+|High
+
+|ST-018
+|WAL segment rotation with automatic cleanup and retention policies
+|High
+
+|ST-019
+|Memtable with ID-based deduplication and metadata filtering
+|High
+
+|ST-020
+|Unified storage engine supporting VIPER and LSM layouts via strategy pattern
+|High
+|===
+
+==== Adaptive eXtensible Indexing System (AXIS)
+[cols="1,3,1"]
+|===
+|ID |Requirement |Priority
+
+|IX-001
+|Global ID Index with Trie structure for prefix queries and HashMap for O(1) lookups
+|Critical
+
+|IX-002
+|ID-to-location mapping: id → {partition_id, offset_in_file} for unified access
+|Critical
+
+|IX-003
+|Metadata Index with Parquet columnar storage and Roaring Bitmap filters
+|Critical
+
+|IX-004
+|Bitmap filtering for metadata predicates (e.g., language="en") mapped to row IDs
+|Critical
+
+|IX-005
+|Dense Vector Index with per-partition HNSW/IVF/PQ indexes
+|Critical
+
+|IX-006
+|ANN index pointers stored alongside Parquet row group offsets
+|High
+
+|IX-007
+|Sparse Vector Index with LSM tree for ID → sparse vector mapping
+|High
+
+|IX-008
+|MinHash LSH support for ANN queries over sparse vectors
+|High
+
+|IX-009
+|Count-Min Sketch or SimHash for approximate sparse similarity filtering
+|Medium
+
+|IX-010
+|Join Engine with RowSet intersection for multi-index query results
+|Critical
+
+|IX-011
+|Bloom filter cache for false-positive rejection in joins
+|High
+
+|IX-012
+|Priority queue for relevance re-ranking of combined results
+|High
+
+|IX-013
+|Multi-level caching with hot vectors kept in memory
+|High
+
+|IX-014
+|Streaming index mode with mini-segment batch processing
+|Medium
+
+|IX-015
+|Periodic reorg tool for partition rebalancing and ANN index rebuilds
+|Medium
+
+|IX-016
+|Time-travel support with versioned vector IDs and timestamp columns
+|Low
+
+|IX-017
+|Adaptive Index Strategy Selection based on collection characteristics
+|Critical
+
+|IX-018
+|Real-time Index Performance Monitoring and automatic optimization triggers
+|High
+
+|IX-019
+|Zero-downtime Index Migration between different indexing strategies
+|High
+
+|IX-020
+|Index Evolution Engine with ML-based optimization recommendations
+|High
+
+|IX-021
+|Collection-level Index Configuration with inheritance and overrides
+|Medium
+
+|IX-022
+|Index Rebuild Pipeline with incremental migration capabilities
+|High
+
+|IX-023
+|Automatic Index Type Detection based on vector sparsity and query patterns
+|Critical
+
+|IX-024
+|Index Performance Benchmarking and strategy comparison tools
+|Medium
+|===
+
+==== Distributed Architecture
+[cols="1,3,1"]
+|===
+|ID |Requirement |Priority
+
+|DA-001
+|Raft consensus for strongly consistent metadata operations
+|Critical
+
+|DA-002
+|Horizontal scaling across nodes with automatic sharding
+|Critical
+
+|DA-003
+|Multi-region deployment with data residency compliance
+|High
+
+|DA-004
+|Automatic failover with zero data loss
+|Critical
+
+|DA-005
+|Configurable consistency levels (strong, eventual, session)
+|High
+
+|DA-006
+|Global coordination service for multi-region operations
+|High
+
+|DA-007
+|Intelligent request routing based on data locality
+|High
+
+|DA-008
+|Automatic data rebalancing during scale operations
+|Medium
+|===
+
+==== Performance and Hardware Acceleration
+[cols="1,3,1"]
+|===
+|ID |Requirement |Priority
+
+|PA-001
+|SIMD vectorization (AVX-512, AVX2, SSE4.2) for CPU operations
+|Critical
+
+|PA-002
+|CUDA support for NVIDIA GPU acceleration
+|Critical
+
+|PA-003
+|ROCm support for AMD GPU acceleration
+|High
+
+|PA-004
+|Intel GPU (XPU) support for Intel discrete graphics
+|Medium
+
+|PA-005
+|HNSW algorithm implementation with GPU-optimized indexing
+|Critical
+
+|PA-006
+|Memory pool management for zero-allocation hot paths
+|High
+
+|PA-007
+|Async I/O with io_uring on Linux for maximum throughput
+|High
+
+|PA-008
+|CPU affinity and NUMA-aware memory allocation
+|Medium
+
+|PA-009
+|Sub-millisecond P99 latency for vector similarity search
+|Critical
+
+|PA-010
+|Throughput of 100K+ QPS on commodity hardware
+|High
+|===
+
+==== AI Inference Integration
+[cols="1,3,1"]
+|===
+|ID |Requirement |Priority
+
+|AI-001
+|Vertical appliance support with multi-GPU inference capabilities
+|High
+
+|AI-002
+|Integration with vLLM for high-throughput LLM serving
+|High
+
+|AI-003
+|Integration with llama.cpp for efficient CPU inference
+|High
+
+|AI-004
+|Weight sharding across multiple GPUs for large model support
+|High
+
+|AI-005
+|Dynamic batching for inference workloads
+|Medium
+
+|AI-006
+|Model serving with A/B testing capabilities
+|Medium
+
+|AI-007
+|Embedding generation pipeline with configurable models
+|High
+
+|AI-008
+|Real-time feature extraction and vector generation
+|High
+
+|AI-009
+|Support for popular embedding models (OpenAI, Cohere, HuggingFace)
+|High
+
+|AI-010
+|Custom model deployment and versioning
+|Medium
+|===
+
+==== Development and Testing
+[cols="1,3,1"]
+|===
+|ID |Requirement |Priority
+
+|DT-001
+|3-node Docker cluster for distributed testing with Raft coordination
+|Critical
+
+|DT-002
+|All-in-one Docker container for demo and quick evaluation
+|Critical
+
+|DT-003
+|Docker Compose setup for pseudo-distributed testing
+|High
+
+|DT-004
+|Kubernetes Helm charts for production deployment
+|High
+
+|DT-005
+|Integration test suite with distributed scenarios
+|High
+
+|DT-006
+|Performance benchmarking with realistic workloads
+|High
+
+|DT-007
+|Chaos engineering tests for fault tolerance validation
+|Medium
+
+|DT-008
+|Load testing framework with configurable scenarios
+|High
+
+|DT-009
+|Migration testing between versions
+|Medium
+
+|DT-010
+|Security penetration testing framework
+|Medium
+|===
+
+=== Hardware Requirements
+
+==== Minimum System Requirements
+- **CPU**: 4 cores, 2.4 GHz (x86_64 or ARM64)
+- **Memory**: 8 GB RAM
+- **Storage**: 100 GB SSD
+- **Network**: 1 Gbps network interface
+
+==== Recommended Production Requirements
+- **CPU**: 16+ cores, 3.0+ GHz with SIMD support
+- **Memory**: 64+ GB RAM with ECC
+- **Storage**: NVMe SSD with 100K+ IOPS
+- **Network**: 10+ Gbps network interface
+- **GPU**: Optional NVIDIA/AMD GPU for acceleration
+
+==== Vertical Appliance Requirements
+- **CPU**: 32+ cores high-frequency processors
+- **Memory**: 256+ GB high-bandwidth memory
+- **GPU**: 4-8x high-end GPUs (A100, H100, MI250X) with NVLink/Infinity Fabric
+- **Storage**: High-speed NVMe arrays with 1M+ IOPS
+- **Network**: 25+ Gbps networking with RDMA support
+- **Interconnect**: GPU-to-GPU high-bandwidth interconnect for weight sharding
+
+== Technical Architecture Requirements
+
+=== Storage Engine
+- LSM tree implementation with configurable bloom filters
+- MMAP-based read path with intelligent prefetching
+- Multi-tier storage with automatic data movement policies
+- Column-oriented storage with compression
+- Snapshot isolation for consistent reads
+- Replication delegated to object stores (S3/ADLS/GCS) for cold data
+- No redundant replication at ProximaDB layer for tiered storage
+
+=== Consensus and Distribution
+- Raft consensus implementation for metadata operations
+- Consistent hashing for data distribution
+- Gossip protocol for cluster membership
+- Multi-Paxos for cross-region coordination
+- Byzantine fault tolerance for critical operations
+
+=== Query Engine
+- Vectorized execution engine with SIMD optimization
+- Cost-based query optimizer
+- Parallel query execution across multiple cores/GPUs
+- Intelligent caching with LRU and frequency-based eviction
+- Support for complex filtering predicates
+
+=== GPU Acceleration Framework
+- CUDA kernel optimization for vector operations
+- Memory coalescing for efficient GPU memory access
+- Multi-GPU scaling with automatic load balancing
+- Integration with cuBLAS and cuDNN for optimized operations
+- Fallback to CPU implementation when GPU unavailable
+
+=== AI Inference Integration
+- Plugin architecture for inference framework integration
+- Model registry with versioning and A/B testing
+- Dynamic GPU memory management for inference workloads
+- Batching optimization for improved throughput
+- Pipeline parallelism for large model inference
+
+== MVP Requirements
+
+=== Core MVP Features (Phase 1)
+[cols="1,3,1"]
+|===
+|Feature |Description |Priority
+
+|Vector CRUD
+|Basic vector insert, update, delete, search operations
+|Critical
+
+|Single Node
+|Single-node deployment with MMAP storage
+|Critical
+
+|REST API
+|HTTP REST API for all vector operations
+|Critical
+
+|Python SDK
+|Python client library with sync/async support
+|Critical
+
+|Docker Demo
+|All-in-one container for quick evaluation
+|Critical
+
+|Basic Metrics
+|Health checks and basic performance metrics
+|High
+
+|File Storage
+|Local file-based storage for development
+|High
+|===
+
+=== Distributed MVP Features (Phase 2)
+[cols="1,3,1"]
+|===
+|Feature |Description |Priority
+
+|3-Node Cluster
+|Docker Compose setup with Raft consensus
+|Critical
+
+|Java SDK
+|Java client library with connection pooling
+|High
+
+|Load Balancing
+|Client-side load balancing across nodes
+|High
+
+|Persistence
+|Durable storage with WAL and snapshots
+|Critical
+
+|Monitoring
+|Prometheus metrics and basic dashboards
+|High
+|===
+
+== Testing Strategy
+
+=== Distributed Testing Setup
+```yaml
+# docker-compose.test.yml
+version: '3.8'
+services:
+  proximadb-node1:
+    image: proximadb:latest
+    environment:
+      - NODE_ID=1
+      - CLUSTER_PEERS=node2:7001,node3:7002
+    ports:
+      - "8080:8080"
+      - "7000:7000"
+  
+  proximadb-node2:
+    image: proximadb:latest
+    environment:
+      - NODE_ID=2
+      - CLUSTER_PEERS=node1:7000,node3:7002
+    ports:
+      - "8081:8080"
+      - "7001:7000"
+  
+  proximadb-node3:
+    image: proximadb:latest
+    environment:
+      - NODE_ID=3
+      - CLUSTER_PEERS=node1:7000,node2:7001
+    ports:
+      - "8082:8080"
+      - "7002:7000"
+```
+
+=== Demo Container Features
+- Pre-loaded sample datasets (movies, products, documents)
+- Interactive web UI for vector operations
+- Built-in tutorials and examples
+- Performance benchmarking tools
+- One-command startup: `docker run -p 8080:8080 proximadb/demo`
+
+== Future Roadmap
+
+=== Phase 1: Core MVP (6 months)
+- Basic vector operations with CRUD functionality
+- Single-node deployment with MMAP storage
+- Python and Java client SDKs
+- REST API with OpenAPI specification
+- Docker demo container for adoption
+
+=== Phase 2: Distribution and Scale (12 months)
+- 3-node Raft cluster implementation
+- Multi-node deployment with consensus
+- Intelligent storage tiering implementation
+- GPU acceleration for vector operations
+- Advanced monitoring and observability
+
+=== Phase 3: AI Integration (18 months)
+- Vertical appliance with multi-GPU support
+- vLLM and llama.cpp integration
+- Advanced inference serving capabilities
+- Enterprise security and compliance features
+- Global multi-region deployment
+
+=== Phase 4: Global Scale (24 months)
+- Petabyte-scale deployments
+- Advanced analytics and data science features
+- Edge computing support
+- Advanced AI/ML pipeline integration
+- Full enterprise feature set
+
+---
+
+Copyright 2025 Vijaykumar Singh. Licensed under Apache 2.0.

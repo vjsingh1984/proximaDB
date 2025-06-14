@@ -1,0 +1,217 @@
+# Container deployment on AWS with tiered storage
+[server]
+node_id = "vectordb-container-1"
+bind_address = "0.0.0.0"
+port = 8080
+data_dir = "/data"
+
+[storage]
+data_dirs = ["/data/hot", "/data/warm"]
+wal_dir = "/data/wal"
+mmap_enabled = true
+cache_size_mb = 2048
+bloom_filter_bits = 10
+
+[storage.lsm_config]
+memtable_size_mb = 128
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+
+# Tiered storage configuration
+[storage.tiered]
+deployment_mode = "Container"
+
+[storage.tiered.deployment_mode.Container]
+ephemeral_storage_gb = 20
+cloud_storage_backend = "AWS"
+
+[[storage.tiered.deployment_mode.Container.persistent_volumes]]
+name = "hot-data"
+size_gb = 100
+storage_class = "gp3"
+mount_path = "/data/hot"
+performance_tier = "High"
+
+[[storage.tiered.deployment_mode.Container.persistent_volumes]]
+name = "warm-data"
+size_gb = 500
+storage_class = "gp2"
+mount_path = "/data/warm"
+performance_tier = "Medium"
+
+[storage.tiered.deployment_mode.Container.cloud_storage_backend.AWS]
+s3_bucket = "vectordb-prod-storage"
+intelligent_tiering = true
+cross_region_replication = "us-west-2"
+
+[storage.tiered.deployment_mode.Container.cloud_storage_backend.AWS.storage_classes]
+hot = "Standard"
+warm = "StandardIA"
+cold = "Glacier"
+archive = "GlacierDeepArchive"
+
+# Storage tiers
+[[storage.tiered.storage_tiers]]
+tier_name = "ultra-hot"
+tier_level = "UltraHot"
+access_pattern = "Random"
+
+[storage.tiered.storage_tiers.storage_backend.MMAP]
+file_path = "/data/hot/mmap"
+advise_random = true
+populate_pages = true
+
+[storage.tiered.storage_tiers.retention_policy]
+hot_retention_hours = 24
+warm_retention_days = 7
+cold_retention_months = 12
+auto_deletion_enabled = false
+
+# Tiering policy
+[storage.tiered.tiering_policy]
+auto_tiering_enabled = true
+
+[[storage.tiered.tiering_policy.promotion_rules]]
+name = "frequent-access"
+from_tier = "Warm"
+to_tier = "Hot"
+priority = 1
+
+[storage.tiered.tiering_policy.promotion_rules.condition.AccessFrequency]
+min_accesses_per_hour = 10
+
+[[storage.tiered.tiering_policy.demotion_rules]]
+name = "infrequent-access"
+from_tier = "Hot"
+to_tier = "Warm"
+priority = 2
+
+[storage.tiered.tiering_policy.demotion_rules.condition.LastAccessTime]
+hours_since_access = 72
+
+# Cache configuration
+[storage.tiered.cache_configuration.l1_cache]
+enabled = true
+max_size_mb = 1024
+ttl_seconds = 3600
+cache_type = "ARC"
+
+[storage.tiered.cache_configuration.l2_cache]
+enabled = true
+cache_path = "/data/cache"
+max_size_gb = 20
+block_size_kb = 64
+write_through = false
+
+# Serverless configuration
+[serverless]
+deployment_mode = "Containers"
+
+[serverless.deployment_mode.Containers]
+min_instances = 2
+max_instances = 20
+target_cpu_percent = 70
+target_memory_percent = 80
+
+[serverless.cloud_provider.AWS]
+region = "us-east-1"
+s3_bucket = "vectordb-prod-storage"
+
+[serverless.auto_scaling]
+enabled = true
+scale_to_zero = false
+scale_up_threshold = 0.7
+scale_down_threshold = 0.3
+scale_up_delay_seconds = 30
+scale_down_delay_seconds = 300
+
+[[serverless.auto_scaling.metrics]]
+type = "CpuUtilization"
+target_percent = 70.0
+
+[[serverless.auto_scaling.metrics]]
+type = "RequestsPerSecond"
+target = 100.0
+
+# Multi-tenant configuration
+[serverless.multi_tenant]
+enabled = true
+isolation_level = "Logical"
+namespace_header = "x-tenant-id"
+default_namespace = "default"
+
+# Routing configuration
+[routing]
+strategy = "TenantBased"
+
+[routing.strategy.TenantBased]
+tenant_key = "tenant_id"
+shard_count = 16
+consistent_hashing = true
+
+[routing.load_balancing]
+strategy = "WeightedRoundRobin"
+
+[routing.load_balancing.WeightedRoundRobin.weights]
+"shard-0" = 10
+"shard-1" = 10
+
+[routing.tenant_routing.tenant_extraction]
+headers = ["x-tenant-id", "authorization"]
+default_tenant = "default"
+
+[routing.tenant_routing.tenant_mapping]
+strategy = "TierBased"
+
+[routing.tenant_routing.tenant_mapping.TierBased]
+starter_tier = ["shared-cluster-1", "shared-cluster-2"]
+professional_tier = ["dedicated-container-pool"]
+enterprise_tier = ["dedicated-cluster-1", "dedicated-cluster-2"]
+
+# Global coordination (for future multi-region)
+[global_coordination]
+deployment_topology = "SingleRegion"
+
+[global_coordination.deployment_topology.SingleRegion]
+region = "us-east-1"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+cross_az_replication = true
+
+[global_coordination.consistency_model]
+type = "EventualBounded"
+max_staleness_seconds = 60
+
+[global_coordination.replication_strategy]
+type = "Hybrid"
+
+[global_coordination.replication_strategy.Hybrid.intra_region]
+type = "Synchronous"
+min_replicas = 2
+timeout_ms = 5000
+
+[global_coordination.replication_strategy.Hybrid.inter_region]
+type = "Asynchronous"
+replication_lag_target_ms = 30000
+batch_size = 1000
+
+# API configuration
+[api]
+grpc_port = 9090
+rest_port = 8080
+max_request_size_mb = 100
+timeout_seconds = 30
+
+# Monitoring
+[monitoring]
+metrics_enabled = true
+dashboard_port = 3000
+log_level = "info"
+
+[observability]
+metrics_enabled = true
+tracing_enabled = true
+logging_level = "info"
+metrics_endpoint = "/metrics"
+health_check_path = "/health"
+readiness_check_path = "/ready"

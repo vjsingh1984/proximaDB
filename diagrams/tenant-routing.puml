@@ -1,0 +1,97 @@
+@startuml
+!theme aws-orange
+
+title VectorFlow - Smart Tenant Routing & Multi-Tenancy
+
+actor "Enterprise Customer" as enterprise
+actor "SMB Customer" as smb  
+actor "Startup Customer" as startup
+
+package "API Gateway" {
+    [Load Balancer] as lb
+    [Router] as router
+    [Auth Service] as auth
+}
+
+package "Tenant Classification" {
+    [Tenant Extractor] as extractor
+    [Tier Mapper] as mapper
+    [Resource Quotas] as quotas
+}
+
+package "Routing Strategies" {
+    [Consistent Hashing] as hash
+    [Geographic Routing] as geo
+    [Workload Routing] as workload
+}
+
+package "Infrastructure Tiers" {
+    package "Enterprise Tier" {
+        [Dedicated Clusters] as dedicated
+        [Private Networks] as private
+        [Custom SLAs] as sla
+        note right of dedicated : "• Isolated infrastructure\n• Custom resource limits\n• 99.99% uptime SLA\n• Priority support"
+    }
+    
+    package "Professional Tier" {
+        [Shared Clusters] as shared_pro
+        [QoS Guarantees] as qos
+        note right of shared_pro : "• Shared infrastructure\n• Resource guarantees\n• 99.9% uptime SLA\n• Standard support"
+    }
+    
+    package "Starter Tier" {
+        [Shared Resources] as shared_basic
+        [Best Effort] as best_effort
+        note right of shared_basic : "• Multi-tenant sharing\n• Burst capabilities\n• 99% uptime SLA\n• Community support"
+    }
+}
+
+package "Data Isolation" {
+    [Logical Separation] as logical
+    [Encryption Keys] as encryption
+    [Network Policies] as network
+}
+
+package "Regional Distribution" {
+    [US East] as us_east
+    [US West] as us_west
+    [EU West] as eu_west
+    [Asia Pacific] as asia
+}
+
+' Request flow
+enterprise --> lb : "API calls"
+smb --> lb : "API calls" 
+startup --> lb : "API calls"
+
+lb --> auth : "Authentication"
+auth --> extractor : "Extract tenant info"
+extractor --> mapper : "Map to tier"
+mapper --> quotas : "Check limits"
+
+' Routing decisions
+quotas --> hash : "Tenant-based sharding"
+quotas --> geo : "Geographic routing"
+quotas --> workload : "OLTP vs OLAP"
+
+' Infrastructure mapping
+hash --> dedicated : "Enterprise customers"
+hash --> shared_pro : "Professional customers"
+hash --> shared_basic : "Startup customers"
+
+' Security
+mapper --> logical : "Tenant isolation"
+logical --> encryption : "Per-tenant keys"
+logical --> network : "Network segmentation"
+
+' Geographic distribution
+geo --> us_east : "US customers"
+geo --> eu_west : "EU customers (GDPR)"
+geo --> asia : "APAC customers"
+
+' Tenant metadata
+note left of extractor : "**Tenant Identification**\n\n• HTTP headers (x-tenant-id)\n• JWT token claims\n• API key prefixes\n• URL path patterns\n• Default tenant fallback"
+
+note right of mapper : "**Tier Mapping Rules**\n\n• Enterprise: ent_* prefix\n• Professional: pro_* prefix\n• Startup: startup_* prefix\n• Usage-based promotion\n• Manual tier assignment"
+
+@enduml

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: proximadb
+description: A cloud-native vector database for AI applications
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/proximadb/proximadb
+sources:
+  - https://github.com/proximadb/proximadb
+maintainers:
+  - name: ProximaDB Team
+    email: team@proximadb.ai
+keywords:
+  - database
+  - vector
+  - ai
+  - machine-learning
+  - similarity-search
+annotations:
+  category: Database

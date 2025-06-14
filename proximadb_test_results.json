@@ -1,0 +1,82 @@
+{
+  "summary": {
+    "passed": 4,
+    "failed": 8,
+    "duration": 0.56892991065979,
+    "success_rate": 33.33333333333333
+  },
+  "tests": [
+    {
+      "test_name": "Health Check",
+      "success": true,
+      "message": "Status: healthy",
+      "timestamp": "2025-06-14T14:01:29.088516"
+    },
+    {
+      "test_name": "Authentication",
+      "success": true,
+      "message": "No auth required (default config)",
+      "timestamp": "2025-06-14T14:01:29.091859"
+    },
+    {
+      "test_name": "Collection Operations",
+      "success": false,
+      "message": "404 Client Error: Not Found for url: http://localhost:5678/api/v1/collections/test_collection_bert",
+      "timestamp": "2025-06-14T14:01:29.106210"
+    },
+    {
+      "test_name": "Vector Generation",
+      "success": true,
+      "message": "Generated 10 BERT embeddings (768 dims each)",
+      "timestamp": "2025-06-14T14:01:29.530199"
+    },
+    {
+      "test_name": "Bulk Insert",
+      "success": true,
+      "message": "Inserted 10 vectors successfully, got 10 UUIDs",
+      "timestamp": "2025-06-14T14:01:29.583851"
+    },
+    {
+      "test_name": "ID-based Search",
+      "success": false,
+      "message": "500 Server Error: Internal Server Error for url: http://localhost:5678/api/v1/collections/test_collection_bert/search/client_id/client_vector_1",
+      "timestamp": "2025-06-14T14:01:29.590653"
+    },
+    {
+      "test_name": "Similarity Search",
+      "success": false,
+      "message": "500 Server Error: Internal Server Error for url: http://localhost:5678/api/v1/collections/test_collection_bert/search",
+      "timestamp": "2025-06-14T14:01:29.595114"
+    },
+    {
+      "test_name": "Metadata Filtering",
+      "success": false,
+      "message": "500 Server Error: Internal Server Error for url: http://localhost:5678/api/v1/collections/test_collection_bert/search",
+      "timestamp": "2025-06-14T14:01:29.599728"
+    },
+    {
+      "test_name": "Bulk Update",
+      "success": false,
+      "message": "405 Client Error: Method Not Allowed for url: http://localhost:5678/api/v1/collections/test_collection_bert/vectors",
+      "timestamp": "2025-06-14T14:01:29.603875"
+    },
+    {
+      "test_name": "Bulk Delete",
+      "success": false,
+      "message": "405 Client Error: Method Not Allowed for url: http://localhost:5678/api/v1/collections/test_collection_bert/vectors",
+      "timestamp": "2025-06-14T14:01:29.605935"
+    },
+    {
+      "test_name": "Semantic Search",
+      "success": false,
+      "message": "500 Server Error: Internal Server Error for url: http://localhost:5678/api/v1/collections/test_collection_bert/search",
+      "timestamp": "2025-06-14T14:01:29.648785"
+    },
+    {
+      "test_name": "Cleanup",
+      "success": false,
+      "message": "Expecting value: line 1 column 1 (char 0)",
+      "timestamp": "2025-06-14T14:01:29.651637"
+    }
+  ]
+}

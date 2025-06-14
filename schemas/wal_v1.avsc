@@ -1,0 +1,101 @@
+{
+  "type": "record",
+  "name": "WalEntry",
+  "namespace": "proximadb.wal.v1",
+  "doc": "ProximaDB Write-Ahead Log Entry v1.0 - Initial schema with basic operations",
+  "fields": [
+    {
+      "name": "sequence",
+      "type": "long",
+      "doc": "Monotonic sequence number for ordering"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Entry timestamp in milliseconds since epoch"
+    },
+    {
+      "name": "entry_type",
+      "type": {
+        "type": "enum",
+        "name": "WalEntryType",
+        "symbols": [
+          "PUT",
+          "DELETE", 
+          "CREATE_COLLECTION",
+          "DELETE_COLLECTION",
+          "CHECKPOINT",
+          "VIPER_VECTOR_INSERT",
+          "VIPER_VECTOR_UPDATE",
+          "VIPER_VECTOR_DELETE",
+          "VIPER_CLUSTER_UPDATE",
+          "VIPER_PARTITION_CREATE",
+          "VIPER_COMPACTION_OPERATION",
+          "VIPER_TIER_MIGRATION",
+          "VIPER_MODEL_UPDATE"
+        ]
+      }
+    },
+    {
+      "name": "collection_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Target collection identifier"
+    },
+    {
+      "name": "vector_record",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "VectorRecord",
+          "fields": [
+            {"name": "id", "type": "string"},
+            {"name": "vector", "type": {"type": "array", "items": "float"}},
+            {"name": "metadata", "type": "string", "doc": "JSON-encoded metadata"},
+            {"name": "timestamp", "type": "long", "logicalType": "timestamp-millis"}
+          ]
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "vector_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Vector UUID for operations targeting specific vectors"
+    },
+    {
+      "name": "viper_data",
+      "type": [
+        "null",
+        {
+          "type": "record", 
+          "name": "ViperOperationData",
+          "fields": [
+            {"name": "cluster_id", "type": ["null", "int"], "default": null},
+            {"name": "storage_format", "type": ["null", {"type": "enum", "name": "StorageFormat", "symbols": ["DENSE", "SPARSE", "AUTO"]}], "default": null},
+            {"name": "tier_level", "type": ["null", {"type": "enum", "name": "TierLevel", "symbols": ["ULTRA_HOT", "HOT", "WARM", "COLD", "ARCHIVE"]}], "default": null},
+            {"name": "cluster_prediction", "type": ["null", "string"], "default": null, "doc": "JSON-encoded cluster prediction"},
+            {"name": "quality_metrics", "type": ["null", "string"], "default": null, "doc": "JSON-encoded quality metrics"},
+            {"name": "centroid", "type": ["null", {"type": "array", "items": "float"}], "default": null},
+            {"name": "partition_ids", "type": ["null", {"type": "array", "items": "string"}], "default": null},
+            {"name": "operation_id", "type": ["null", "string"], "default": null},
+            {"name": "model_version", "type": ["null", "string"], "default": null},
+            {"name": "model_type", "type": ["null", "string"], "default": null},
+            {"name": "migration_reason", "type": ["null", "string"], "default": null}
+          ]
+        }
+      ],
+      "default": null,
+      "doc": "VIPER-specific operation data"
+    },
+    {
+      "name": "checkpoint_sequence",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Checkpoint sequence number for CHECKPOINT entries"
+    }
+  ]
+}

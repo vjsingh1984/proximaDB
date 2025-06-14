@@ -1,0 +1,36 @@
+[server]
+node_id = "node-1"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "./data"
+
+[storage]
+data_dirs = ["./data/storage"]
+wal_dir = "./data/wal"
+mmap_enabled = true
+cache_size_mb = 512
+bloom_filter_bits = 10
+
+[storage.lsm_config]
+memtable_size_mb = 64
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+
+[consensus]
+node_id = 1
+cluster_peers = []
+election_timeout_ms = 15000
+heartbeat_interval_ms = 3000
+snapshot_threshold = 1000
+
+[api]
+grpc_port = 5678
+rest_port = 5678
+max_request_size_mb = 100
+timeout_seconds = 30
+
+[monitoring]
+metrics_enabled = true
+dashboard_port = 3000
+log_level = "debug"

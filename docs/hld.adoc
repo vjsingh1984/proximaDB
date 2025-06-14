@@ -1,0 +1,1028 @@
+= ProximaDB - High-Level Design Document
+:toc: left
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: highlightjs
+:imagesdir: ../images
+
+== Executive Summary
+
+ProximaDB is a cloud-native, serverless vector database designed for the AI era. This High-Level Design (HLD) document outlines the system architecture, key components, and design decisions that enable ProximaDB to deliver enterprise-grade performance, scalability, and cost-efficiency with advanced WAL capabilities and hybrid storage systems.
+
+== Architecture Overview
+
+image::architecture-overview.png[ProximaDB Architecture Overview, 800, align="center"]
+
+ProximaDB follows a **layered, cloud-native architecture** with clear separation of concerns:
+
+- **API Gateway Layer**: Request routing, authentication, rate limiting
+- **Serverless Compute Layer**: Auto-scaling business logic services  
+- **Intelligent Storage Tiers**: Performance-optimized data placement
+- **Global Coordination Layer**: Multi-region metadata management
+- **Observability Layer**: Comprehensive monitoring and alerting
+
+=== Design Principles
+
+==== Cloud-Native First
+- **Serverless deployment**: Scale to zero, pay per use
+- **Kubernetes-native**: CRDs, operators, Helm charts
+- **Multi-cloud**: No vendor lock-in, consistent APIs
+
+==== Performance & Cost Optimization
+- **Intelligent tiering**: Hot data in memory, cold data in object storage
+- **Zero-copy reads**: MMAP with OS page cache optimization
+- **Predictive caching**: ML-driven data placement decisions
+
+==== Enterprise Ready
+- **Multi-tenancy**: Secure isolation with flexible resource allocation
+- **Global distribution**: Data residency compliance (GDPR, CCPA)
+- **Observability**: OpenTelemetry integration with major platforms
+
+== System Components
+
+=== API Gateway Layer
+
+==== Load Balancer
+- **Technology**: Nginx/Envoy with TLS termination
+- **Capabilities**: 
+  * SSL/TLS 1.3 termination
+  * HTTP/2 and gRPC support
+  * Geographic routing
+  * Circuit breaker patterns
+
+==== Authentication & Authorization
+- **Multi-provider support**: OAuth2, SAML, API Keys, JWT
+- **RBAC model**: Role-based access control with fine-grained permissions
+- **Audit logging**: Comprehensive activity tracking for compliance
+
+==== Rate Limiting & Quotas
+- **Per-tenant limits**: Configurable QPS, storage, and compute quotas
+- **Burst handling**: Short-term quota overages with automatic throttling
+- **Fair sharing**: Prevent noisy neighbor problems in multi-tenant environments
+
+=== Serverless Compute Layer
+
+==== Query Service
+**Primary Responsibility**: Vector similarity search and retrieval
+
+- **Technology Stack**: Rust with Tokio async runtime
+- **Vector Algorithms**: 
+  * HNSW (Hierarchical Navigable Small World) for high-recall search
+  * IVF (Inverted File) for large-scale datasets
+  * Product Quantization for memory efficiency
+- **Caching Strategy**: Multi-level caching (L1: memory, L2: local SSD, L3: distributed)
+- **Auto-scaling**: Based on query latency and throughput metrics
+
+==== Ingest Service  
+**Primary Responsibility**: Vector ingestion and preprocessing
+
+- **Batch Processing**: Configurable batch sizes for optimal throughput
+- **Data Validation**: Schema validation and vector dimension verification
+- **Duplicate Detection**: Configurable deduplication strategies
+- **Background Processing**: Async indexing and compaction
+
+==== Admin Service
+**Primary Responsibility**: Collection and tenant management
+
+- **Collection Lifecycle**: Create, update, delete operations
+- **Schema Management**: Dynamic schema evolution support
+- **Tenant Operations**: Provisioning, quotas, billing integration
+- **Health Monitoring**: Service health checks and diagnostics
+
+=== Intelligent Storage Tiers
+
+image::storage-tiering.png[Storage Tiering Architecture, 800, align="center"]
+
+VectorFlow implements a **5-tier storage hierarchy** optimized for different access patterns and cost requirements:
+
+==== Ultra-Hot Tier (< 1ms latency)
+- **Technology**: Memory-mapped files with OS page cache
+- **Use Case**: Recently accessed vectors, frequent queries
+- **Characteristics**:
+  * Zero-copy reads using `mmap()`
+  * Automatic page cache optimization
+  * NUMA-aware memory allocation
+  * Up to 100K+ IOPS
+
+==== Hot Tier (< 10ms latency)  
+- **Technology**: Local NVMe/SATA SSDs with LSM trees
+- **Use Case**: Frequently accessed data
+- **Characteristics**:
+  * Read-optimized LSM tree structure
+  * Bloom filters for efficient lookups
+  * Background compaction
+  * Up to 50K+ IOPS
+
+==== Warm Tier (< 100ms latency)
+- **Technology**: Local HDDs with compression
+- **Use Case**: Occasionally accessed data
+- **Characteristics**:
+  * Zstd compression for space efficiency
+  * Batch read optimization
+  * Configurable prefetching
+  * Cost-optimized storage
+
+==== Cold Tier (< 1s latency)
+- **Technology**: Cloud object storage (S3, Azure Blob, GCS)
+- **Use Case**: Rarely accessed historical data
+- **Characteristics**:
+  * Parquet format for analytics workloads
+  * Intelligent tiering (S3 IA, Glacier)
+  * Cross-region replication
+  * 90% cost reduction vs hot storage
+
+==== Archive Tier (< 10s latency)
+- **Technology**: Long-term archival storage (Glacier, Archive)
+- **Use Case**: Compliance and long-term retention
+- **Characteristics**:
+  * 7+ year retention policies
+  * Immutable storage for compliance
+  * Retrieval SLAs for legal discovery
+  * 99% cost reduction vs hot storage
+
+=== Write-Ahead Log (WAL) Architecture
+
+ProximaDB implements a sophisticated WAL system with cloud-native capabilities and multi-disk support for critical systems.
+
+==== WAL Design Principles
+
+**Recovery-Optimized Compression**: Prioritizes decompression speed over compression ratio
+- **LZ4**: >2GB/s decompression ensures disk I/O is the bottleneck during recovery
+- **Zstd Fast**: Levels 1-3 for balance between speed and compression
+- **Adaptive**: Vector data uses LZ4, metadata uses Zstd for optimal performance
+
+**Multi-Storage Backend Support**:
+- **Local Disk**: Multi-disk RAID-like distribution for critical systems
+- **Cloud Object Stores**: S3, Azure Data Lake Storage, Google Cloud Storage
+- **Hybrid**: Local cache + cloud backup with configurable sync strategies
+
+==== Cloud-Native WAL Features
+
+**Serverless-Optimized**:
+- **Large Segments**: 256MB segments to minimize cloud API calls
+- **Batch Operations**: 64MB batches with 5000 entries for efficiency
+- **Aggressive Compression**: 75% compression for cloud storage cost reduction
+- **Lifecycle Management**: Automatic transitions to IA/Archive storage classes
+
+**Multi-Region Resilience**:
+- **Cross-Region Replication**: Automatic failover across AWS/Azure/GCP regions
+- **Cost Optimization**: Intelligent tiering and retention policies
+- **Schema Evolution**: Avro-based serialization with backward compatibility
+
+==== WAL Class Diagram
+
+[source,mermaid]
+----
+classDiagram
+    class AvroWalManager {
+        +storage_backend: WalStorageBackend
+        +compression: RecoveryOptimizedCompression
+        +multi_storage_config: MultiStorageConfig
+        +recovery_config: RecoveryConfig
+        +append_entry(entry: AvroWalEntry) Future~u64~
+        +read_all_parallel() Future~Vec~AvroWalEntry~~
+        +checkpoint(sequence: u64) Future~()~
+        +recover_adaptive() Future~Vec~AvroWalEntry~~
+    }
+
+    class WalStorageBackend {
+        <<enumeration>>
+        LocalDisk
+        S3
+        AzureDataLake
+        GoogleCloudStorage
+        Hybrid
+    }
+
+    class RecoveryOptimizedCompression {
+        <<enumeration>>
+        LZ4
+        Snappy
+        ZstdFast
+        Adaptive
+    }
+
+    class MultiStorageConfig {
+        +replication_factor: usize
+        +distribution_strategy: StorageDistributionStrategy
+        +enable_parallel_recovery: bool
+        +failure_handling: StorageFailureHandling
+    }
+
+    class RecoveryConfig {
+        +parallel_threads: usize
+        +prefetch_buffer_mb: usize
+        +recovery_mode: RecoveryMode
+        +memory_limits: RecoveryMemoryLimits
+    }
+
+    class AvroWalEntry {
+        +schema_version: u8
+        +sequence: u64
+        +entry_type: WalEntryType
+        +vector_record: Option~AvroVectorRecord~
+        +viper_data: Option~ViperOperationData~
+        +cloud_data: Option~CloudOperationData~
+    }
+
+    class UnifiedStorageEngine {
+        +wal_manager: Arc~AvroWalManager~
+        +memtable: Arc~Memtable~
+        +storage_handlers: HashMap~CollectionId, StorageLayoutHandler~
+        +insert_vector(record: VectorRecord) Future~()~
+        +get_vector(id: VectorId) Future~Option~VectorRecord~~
+        +search_with_metadata_filters() Future~Vec~VectorRecord~~
+    }
+
+    class Memtable {
+        +data: HashMap~CollectionId, CollectionMemtable~
+        +put(record: VectorRecord) Future~u64~
+        +get(id: VectorId) Future~Option~VectorRecord~~
+        +filter_by_metadata() Future~Vec~VectorRecord~~
+        +search_with_filters() Future~Vec~VectorRecord~~
+    }
+
+    class ViperStorageEngine {
+        +hybrid_storage: ViperHybridStorage
+        +compression_engine: CompressionEngine
+        +ml_models: HashMap~CollectionId, ClusterModel~
+        +insert_vector_hybrid() Future~()~
+        +search_vectors() Future~Vec~ViperSearchResult~~
+    }
+
+    AvroWalManager --> WalStorageBackend
+    AvroWalManager --> RecoveryOptimizedCompression
+    AvroWalManager --> MultiStorageConfig
+    AvroWalManager --> RecoveryConfig
+    AvroWalManager --> AvroWalEntry
+    UnifiedStorageEngine --> AvroWalManager
+    UnifiedStorageEngine --> Memtable
+    UnifiedStorageEngine --> ViperStorageEngine
+----
+
+==== Recovery Performance Characteristics
+
+[cols="2,2,2,2,2"]
+|===
+|Storage Type |Compression |Decompression Speed |Recovery Throughput |Cost Optimization
+
+|**Local SSD**
+|LZ4
+|>2GB/s
+|~500MB/s
+|N/A
+
+|**AWS S3**
+|Zstd-3 (75%)
+|~800MB/s
+|~200MB/s
+|70% storage savings
+
+|**Azure ADLS**
+|Zstd-2 (70%)
+|~600MB/s
+|~150MB/s
+|65% storage savings
+
+|**GCS**
+|Zstd-2 (70%)
+|~600MB/s
+|~180MB/s
+|65% storage savings
+
+|**Hybrid**
+|Adaptive
+|>1GB/s
+|~400MB/s
+|50% storage savings
+|===
+
+=== VIPER Storage Layout
+
+**Hybrid Dense/Sparse Architecture**:
+- **Dense Vectors**: Parquet row format with ID/metadata columns first
+- **Sparse Vectors**: Separate metadata Parquet + KV storage for vector data
+- **ML-Guided Clustering**: Automatic partitioning based on trained models
+- **Columnar Compression**: Parquet excels at similar vector value compression
+
+=== Adaptive eXtensible Indexing System (AXIS)
+
+ProximaDB implements a sophisticated hybrid indexing system that seamlessly handles both sparse and dense vectors while providing unified access patterns for metadata filtering, similarity search, and exact lookups.
+
+==== AXIS Architecture Overview
+
+image::axis-architecture.png[AXIS Architecture, 800, align="center"]
+
+The AXIS (Adaptive eXtensible Indexing System) consists of five core components with adaptive intelligence:
+
+**1. Global ID Index (Trie + HashMap)**
+- **Purpose**: Fast global lookup and prefix query support
+- **Structure**: Trie for prefix searches + HashMap for O(1) exact lookups
+- **Mapping**: `id → {partition_id, offset_in_file, vector_type}`
+- **Benefits**: Enables joins between metadata and vector storage layers
+
+**2. Metadata Index (Columnar + Bitmap)**
+- **Purpose**: Efficient predicate filtering on vector metadata
+- **Structure**: Parquet columnar storage with Roaring Bitmap augmentation
+- **Mapping**: `metadata.field = "value" → bitmap → row_ids`
+- **Benefits**: Fast filtering with minimal I/O and memory usage
+
+**3. Dense Vector Index (Row Groups + ANN)**
+- **Purpose**: High-performance ANN search for dense vectors
+- **Structure**: Per-partition HNSW/IVF/PQ indexes with Parquet integration
+- **Mapping**: `ANN_query → partition → index → row_ids`
+- **Benefits**: Partition-aware search with optimal recall/latency trade-offs
+
+**4. Sparse Vector Index (LSM + MinHash)**
+- **Purpose**: Efficient storage and ANN search for sparse vectors
+- **Structure**: LSM tree with MinHash LSH for similarity search
+- **Mapping**: `sparse_vector → MinHash → candidate_set → exact_similarity`
+- **Benefits**: Memory-efficient sparse vector indexing with ANN capabilities
+
+**5. Join Engine (RowSet + Bloom)**
+- **Purpose**: Combine results from multiple indexes efficiently
+- **Structure**: RowSet intersection with Bloom filter false-positive rejection
+- **Process**: `metadata_results ∩ ann_results ∩ id_results → ranked_output`
+- **Benefits**: Fast multi-index query execution with relevance ranking
+
+==== AXIS Class Diagram
+
+[source,mermaid]
+----
+classDiagram
+    class AxisIndexManager {
+        +global_id_index: GlobalIdIndex
+        +metadata_index: MetadataIndex
+        +dense_vector_index: DenseVectorIndex
+        +sparse_vector_index: SparseVectorIndex
+        +join_engine: JoinEngine
+        +adaptive_engine: AdaptiveIndexEngine
+        +migration_engine: IndexMigrationEngine
+        +query(query: HybridQuery) Future~QueryResult~
+        +insert(vector: VectorRecord) Future~()~
+        +update(id: VectorId, vector: VectorRecord) Future~()~
+        +delete(id: VectorId) Future~()~
+        +evolve_index(collection_id: CollectionId) Future~()~
+    }
+    
+    class AdaptiveIndexEngine {
+        +collection_analyzer: CollectionAnalyzer
+        +strategy_selector: IndexStrategySelector
+        +performance_monitor: PerformanceMonitor
+        +analyze_collection(collection_id: CollectionId) Future~CollectionCharacteristics~
+        +recommend_strategy(characteristics: CollectionCharacteristics) IndexStrategy
+        +should_migrate(collection_id: CollectionId) Future~bool~
+        +trigger_migration(collection_id: CollectionId, new_strategy: IndexStrategy) Future~()~
+    }
+    
+    class IndexMigrationEngine {
+        +migration_planner: MigrationPlanner
+        +data_migrator: DataMigrator
+        +rollback_manager: RollbackManager
+        +plan_migration(from: IndexStrategy, to: IndexStrategy) MigrationPlan
+        +execute_migration(plan: MigrationPlan) Future~MigrationResult~
+        +rollback_migration(plan: MigrationPlan) Future~()~
+    }
+    
+    class CollectionCharacteristics {
+        +vector_count: u64
+        +average_sparsity: f32
+        +dimension_variance: Vec~f32~
+        +query_patterns: QueryPatternAnalysis
+        +data_distribution: DataDistributionMetrics
+        +growth_rate: f32
+        +access_frequency: AccessFrequencyMetrics
+    }
+    
+    class IndexStrategy {
+        +primary_index_type: IndexType
+        +secondary_indexes: Vec~IndexType~
+        +optimization_config: OptimizationConfig
+        +migration_priority: MigrationPriority
+        +resource_requirements: ResourceRequirements
+    }
+
+    class GlobalIdIndex {
+        +trie: RadixTrie~VectorId, LocationInfo~
+        +hashmap: HashMap~VectorId, LocationInfo~
+        +lookup(id: VectorId) Option~LocationInfo~
+        +prefix_search(prefix: String) Vec~VectorId~
+        +insert(id: VectorId, location: LocationInfo) Result~()~
+        +remove(id: VectorId) Result~()~
+    }
+
+    class LocationInfo {
+        +partition_id: PartitionId
+        +offset_in_file: u64
+        +vector_type: VectorType
+        +size_bytes: u32
+        +timestamp: DateTime~Utc~
+    }
+
+    class MetadataIndex {
+        +column_store: ParquetMetadataStore
+        +bitmap_filters: RoaringBitmapIndex
+        +filter(predicate: MetadataPredicate) Future~BitSet~
+        +range_filter(field: String, range: Range) Future~BitSet~
+        +insert_metadata(id: VectorId, metadata: Metadata) Future~()~
+        +update_metadata(id: VectorId, metadata: Metadata) Future~()~
+    }
+
+    class RoaringBitmapIndex {
+        +field_bitmaps: HashMap~String, RoaringBitmap~
+        +value_bitmaps: HashMap~(String, Value), RoaringBitmap~
+        +get_rows_for_value(field: String, value: Value) RoaringBitmap
+        +intersect(bitmaps: Vec~RoaringBitmap~) RoaringBitmap
+        +union(bitmaps: Vec~RoaringBitmap~) RoaringBitmap
+    }
+
+    class DenseVectorIndex {
+        +partition_indexes: HashMap~PartitionId, HnswIndex~
+        +row_group_offsets: HashMap~PartitionId, Vec~u64~~
+        +search(query: DenseVector, k: usize) Future~Vec~SimilarityResult~~
+        +build_partition_index(partition: PartitionId) Future~()~
+        +rebuild_index(partition: PartitionId) Future~()~
+    }
+
+    class SparseVectorIndex {
+        +lsm_tree: LsmTree~VectorId, SparseVector~
+        +minhash_lsh: MinHashLSH
+        +count_min_sketch: CountMinSketch
+        +search_similar(query: SparseVector, threshold: f32) Future~Vec~SimilarityResult~~
+        +exact_lookup(id: VectorId) Future~Option~SparseVector~~
+        +insert(id: VectorId, vector: SparseVector) Future~()~
+    }
+
+    class MinHashLSH {
+        +hash_tables: Vec~HashMap~MinHash, Vec~VectorId~~~
+        +num_hashes: usize
+        +bands: usize
+        +query(vector: SparseVector) Vec~VectorId~
+        +insert(id: VectorId, vector: SparseVector) Result~()~
+    }
+
+    class JoinEngine {
+        +bloom_cache: BloomFilterCache
+        +result_merger: ResultMerger
+        +priority_queue: BinaryHeap~RankedResult~
+        +intersect_results(results: Vec~IndexResult~) Future~Vec~RankedResult~~
+        +merge_and_rank(results: Vec~RankedResult~) Vec~RankedResult~
+    }
+
+    class BloomFilterCache {
+        +filters: LruCache~QuerySignature, BloomFilter~
+        +check_membership(signature: QuerySignature, id: VectorId) bool
+        +add_result_set(signature: QuerySignature, ids: Vec~VectorId~) Result~()~
+    }
+
+    class HybridQuery {
+        +vector_query: Option~VectorQuery~
+        +metadata_filters: Vec~MetadataPredicate~
+        +id_filters: Vec~VectorId~
+        +similarity_threshold: Option~f32~
+        +k: usize
+        +return_vectors: bool
+        +return_metadata: bool
+    }
+
+    class QueryResult {
+        +results: Vec~RankedResult~
+        +total_found: usize
+        +execution_stats: QueryStats
+        +next_page_token: Option~String~
+    }
+
+    class RankedResult {
+        +id: VectorId
+        +similarity_score: f32
+        +vector: Option~Vector~
+        +metadata: Option~Metadata~
+        +partition_id: PartitionId
+    }
+
+    AxisIndexManager --> GlobalIdIndex
+    AxisIndexManager --> MetadataIndex
+    AxisIndexManager --> DenseVectorIndex
+    AxisIndexManager --> SparseVectorIndex
+    AxisIndexManager --> JoinEngine
+    AxisIndexManager --> AdaptiveIndexEngine
+    AxisIndexManager --> IndexMigrationEngine
+    AdaptiveIndexEngine --> CollectionCharacteristics
+    AdaptiveIndexEngine --> IndexStrategy
+    IndexMigrationEngine --> IndexStrategy
+    GlobalIdIndex --> LocationInfo
+    MetadataIndex --> RoaringBitmapIndex
+    SparseVectorIndex --> MinHashLSH
+    JoinEngine --> BloomFilterCache
+    AxisIndexManager ..> HybridQuery
+    AxisIndexManager ..> QueryResult
+    QueryResult --> RankedResult
+----
+
+==== AXIS Query Execution Pipeline
+
+**Example Query**: "Find vectors where metadata.user_type = 'pro' and similarity > 0.9 to this query vector"
+
+**Execution Steps**:
+1. **Metadata Filtering**: MetadataIndex filters `user_type = 'pro'` → bitmap → row_ids
+2. **Vector Similarity**: DenseVectorIndex/SparseVectorIndex performs ANN search → candidate_row_ids  
+3. **Result Intersection**: JoinEngine intersects metadata_row_ids ∩ similarity_row_ids
+4. **Bloom Filter Check**: Fast false-positive rejection using cached Bloom filters
+5. **Vector Retrieval**: GlobalIdIndex maps row_ids → locations → fetch actual vectors
+6. **Ranking & Results**: Priority queue re-ranks by similarity score → final results
+
+==== AXIS Performance Characteristics
+
+[cols="2,2,2,2"]
+|===
+|Operation |Dense Vectors |Sparse Vectors |Hybrid Queries
+
+|**Exact ID Lookup**
+|O(1) HashMap
+|O(log n) LSM
+|O(1) Global Index
+
+|**Prefix Search**
+|O(k) Trie traversal
+|O(k) Trie traversal
+|O(k) Trie traversal
+
+|**Metadata Filter**
+|O(1) Bitmap lookup
+|O(1) Bitmap lookup
+|O(1) Bitmap lookup
+
+|**ANN Search**
+|O(log n) HNSW
+|O(n/b) MinHash LSH
+|O(log n + n/b)
+
+|**Join Operations**
+|O(r₁ + r₂) intersection
+|O(r₁ + r₂) intersection
+|O(r₁ + r₂ + r₃)
+
+|**Insert/Update**
+|O(log n) index update
+|O(log n) LSM write
+|O(log n) multi-index
+|===
+
+==== AXIS Competitive Advantages
+
+[cols="2,1,1,1,1"]
+|===
+|Feature |Pinecone |Qdrant |Milvus |ProximaDB AXIS
+
+|**Sparse Vector Support**
+|❌
+|Partial
+|❌
+|✅ Full LSM + MinHash
+
+|**Hybrid Dense/Sparse**
+|❌
+|❌
+|❌
+|✅ Unified indexing
+
+|**ML-Based Partitioning**
+|❌
+|❌
+|✅
+|✅ Dynamic VIPER
+
+|**Metadata Bitmap Filtering**
+|✅
+|✅
+|✅
+|✅ Roaring optimized
+
+|**Prefix ID Queries**
+|❌
+|❌
+|❌
+|✅ Trie-based
+
+|**Multi-Index Joins**
+|❌
+|Basic
+|Basic
+|✅ Bloom-optimized
+
+|**Time-Travel Queries**
+|❌
+|❌
+|❌
+|✅ Versioned IDs
+
+|**Adaptive Index Selection**
+|❌
+|❌
+|❌
+|✅ ML-driven strategies
+
+|**Zero-downtime Migration**
+|❌
+|Partial
+|❌
+|✅ Incremental migration
+|===
+
+==== AXIS Adaptive Intelligence
+
+**Collection Analysis Engine**
+
+AXIS continuously monitors collection characteristics and query patterns to automatically optimize indexing strategies:
+
+[source,rust]
+----
+pub struct CollectionAnalyzer {
+    // Data Characteristics Analysis
+    pub fn analyze_vector_distribution(&self, vectors: &[VectorRecord]) -> DataDistribution;
+    pub fn calculate_sparsity_trends(&self, collection_id: &CollectionId) -> SparsityTrends;
+    pub fn analyze_dimension_importance(&self, vectors: &[VectorRecord]) -> DimensionAnalysis;
+    
+    // Query Pattern Analysis  
+    pub fn analyze_query_patterns(&self, queries: &[QueryLog]) -> QueryPatternAnalysis;
+    pub fn calculate_access_frequencies(&self, collection_id: &CollectionId) -> AccessMetrics;
+    pub fn detect_hotspots(&self, collection_id: &CollectionId) -> HotspotAnalysis;
+}
+----
+
+**Strategy Selection Matrix**
+
+[cols="3,2,2,2,2"]
+|===
+|Collection Profile |Vector Type |Query Pattern |Recommended Strategy |Migration Trigger
+
+|**Small Dense Collections**
+(<10K vectors, <5% sparsity)
+|Dense
+|Point queries + ANN
+|HNSW + Metadata Index
+|Growth >100K vectors
+
+|**Large Dense Collections** 
+(>100K vectors, <10% sparsity)
+|Dense  
+|Primarily ANN search
+|Partitioned HNSW + PQ
+|Sparsity >20%
+
+|**Sparse Collections**
+(>50% sparsity)
+|Sparse
+|Exact + approximate search
+|LSM + MinHash LSH
+|Density >30%
+
+|**Mixed Collections**
+(20-50% sparsity variance)
+|Hybrid
+|Mixed query patterns
+|Adaptive AXIS (All indexes)
+|Pattern change >30%
+
+|**Metadata-Heavy**
+(Complex filtering)
+|Any
+|Filter-then-search
+|Metadata Index + ANN
+|Filter selectivity <10%
+
+|**High-Throughput**
+(>10K QPS)
+|Any
+|Real-time search
+|Multi-tier caching + AXIS
+|Latency >5ms P99
+
+|**Analytical**
+(OLAP queries)
+|Any
+|Range + aggregation
+|Columnar + Bitmap indexes
+|Point query increase >20%
+|===
+
+**Migration Decision Engine**
+
+[source,rust]
+----
+pub struct IndexMigrationEngine {
+    pub fn should_migrate(&self, collection_id: &CollectionId) -> MigrationDecision {
+        let characteristics = self.analyzer.analyze_collection(collection_id);
+        let current_strategy = self.get_current_strategy(collection_id);
+        let optimal_strategy = self.strategy_selector.recommend_strategy(&characteristics);
+        
+        if self.calculate_improvement_potential(&current_strategy, &optimal_strategy) > 0.2 {
+            MigrationDecision::Migrate {
+                from: current_strategy,
+                to: optimal_strategy,
+                estimated_improvement: self.calculate_improvement_potential(&current_strategy, &optimal_strategy),
+                migration_complexity: self.estimate_migration_complexity(&current_strategy, &optimal_strategy),
+            }
+        } else {
+            MigrationDecision::Stay { reason: "Performance improvement insufficient".to_string() }
+        }
+    }
+    
+    pub async fn execute_migration(&self, plan: MigrationPlan) -> Result<MigrationResult> {
+        // 1. Create new index structure
+        // 2. Incrementally migrate data (zero-downtime)
+        // 3. Switch traffic to new index
+        // 4. Clean up old index
+        // 5. Monitor and rollback if needed
+    }
+}
+----
+
+**Index Evolution Timeline**
+
+[source,mermaid]
+----
+graph LR
+    A[Collection Created] --> B[Initial Analysis]
+    B --> C[Default Strategy]
+    C --> D[Monitor Performance]
+    D --> E{Migration Needed?}
+    E -->|No| D
+    E -->|Yes| F[Plan Migration]
+    F --> G[Execute Migration]
+    G --> H[Monitor New Index]
+    H --> I{Performance OK?}
+    I -->|Yes| D
+    I -->|No| J[Rollback]
+    J --> D
+----
+
+=== Multi-Tenant Architecture
+
+image::tenant-routing.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
+
+==== Tenant Identification
+- **HTTP Headers**: `x-tenant-id`, `x-organization-id`
+- **JWT Claims**: Embedded tenant information in authentication tokens
+- **API Key Prefixes**: Encoded tenant data in API keys
+- **URL Patterns**: Tenant-specific subdomains or path prefixes
+
+==== Resource Isolation
+
+===== Logical Isolation (Default)
+- **Namespace-based**: All data tagged with tenant identifiers
+- **Query filtering**: Automatic tenant filtering in all operations
+- **Resource quotas**: Per-tenant limits on storage, compute, QPS
+- **Cost efficiency**: Maximum resource sharing while maintaining security
+
+===== Container Isolation (Professional)
+- **Dedicated containers**: Separate container instances per tenant
+- **Resource guarantees**: CPU and memory reservations
+- **Network isolation**: Separate network namespaces
+- **Performance predictability**: Reduced noisy neighbor effects
+
+===== Cluster Isolation (Enterprise)
+- **Dedicated infrastructure**: Separate Kubernetes clusters
+- **Custom configurations**: Tenant-specific tuning and policies
+- **Enhanced security**: Air-gapped deployments available
+- **Compliance support**: Dedicated infrastructure for regulatory requirements
+
+==== Tenant Routing Strategies
+
+===== Consistent Hashing
+- **Algorithm**: SHA-256 hash of tenant ID
+- **Shard assignment**: Deterministic routing to storage shards
+- **Rebalancing**: Minimal data movement during scaling
+- **Fault tolerance**: Automatic failover to replica shards
+
+===== Geographic Routing
+- **Data residency**: Tenant data stays in specified regions
+- **Latency optimization**: Route to nearest available region
+- **Compliance support**: GDPR, CCPA, data sovereignty
+- **Disaster recovery**: Cross-region replication with geo-fencing
+
+===== Workload-Based Routing
+- **OLTP workloads**: Routed to read-optimized clusters
+- **OLAP workloads**: Routed to analytics-optimized clusters
+- **ML inference**: Routed to GPU-accelerated clusters
+- **Batch processing**: Routed to cost-optimized clusters
+
+=== Global Coordination
+
+==== Metadata Management
+- **Distributed architecture**: Multi-region metadata stores
+- **Consistency model**: Configurable consistency levels
+  * Strong consistency for critical operations
+  * Eventual consistency for high availability
+  * Session consistency for user experience
+- **Conflict resolution**: Vector clocks and CRDTs for conflict-free updates
+
+==== Service Discovery
+- **Kubernetes native**: Service mesh integration (Istio/Linkerd)
+- **Health monitoring**: Continuous health checks and circuit breakers
+- **Load balancing**: Intelligent routing based on real-time metrics
+- **Failover automation**: Automatic traffic rerouting during failures
+
+== Deployment Models
+
+=== Homelab Development
+
+image::deployment-homelab.png[Homelab Deployment, 600, align="center"]
+
+**Target**: Local development and proof-of-concept
+
+**Infrastructure**:
+- Docker Compose for easy local deployment
+- Single-node configuration with all services
+- Local storage with basic tiering (SSD + HDD)
+- Integrated monitoring with Prometheus + Grafana
+
+**Migration Path**: 
+- Export configuration and data
+- Cloud deployment scripts
+- Zero-downtime migration tools
+
+=== Cloud Production
+
+**Container Orchestration**:
+- Kubernetes (EKS, GKE, AKS) for production workloads
+- Helm charts for standardized deployments
+- Custom operators for lifecycle management
+- GitOps workflows for continuous deployment
+
+**Auto-scaling Configuration**:
+- Horizontal Pod Autoscaler (HPA) based on custom metrics
+- Vertical Pod Autoscaler (VPA) for right-sizing
+- Cluster Autoscaler for node-level scaling
+- KEDA for event-driven scaling
+
+== Data Models
+
+=== Vector Records
+[source,rust]
+----
+pub struct VectorRecord {
+    pub id: VectorId,
+    pub collection_id: CollectionId, 
+    pub vector: Vec<f32>,
+    pub metadata: HashMap<String, Value>,
+    pub timestamp: DateTime<Utc>,
+}
+----
+
+=== Collection Schema
+[source,rust]
+----
+pub struct Collection {
+    pub id: CollectionId,
+    pub name: String,
+    pub dimension: usize,
+    pub schema_type: SchemaType, // Document | Relational
+    pub index_config: IndexConfig,
+    pub retention_policy: RetentionPolicy,
+}
+----
+
+=== Tenant Configuration
+[source,rust]
+----
+pub struct TenantConfig {
+    pub tenant_id: String,
+    pub tier: AccountTier, // Free | Starter | Pro | Enterprise
+    pub resource_limits: ResourceLimits,
+    pub data_residency: DataResidency,
+    pub billing_config: BillingConfig,
+}
+----
+
+== API Design
+
+=== gRPC Primary API
+- **Protocol Buffers**: Strongly typed, version-safe contracts
+- **Streaming Support**: Real-time data ingestion and query results
+- **Load Balancing**: Client-side load balancing for optimal performance
+- **Authentication**: Mutual TLS and token-based authentication
+
+=== REST Compatibility Layer
+- **OpenAPI Specification**: Auto-generated documentation
+- **HTTP/2 Support**: Connection multiplexing and server push
+- **CORS Handling**: Cross-origin request support for web applications
+- **Rate Limiting**: Per-endpoint throttling and quota management
+
+=== SDK Strategy
+- **Auto-generated Clients**: Protocol buffer definitions generate clients
+- **Language Support**: Python, JavaScript, Java, Go, Rust, C#
+- **Async/Await Support**: Native async patterns in supported languages
+- **Retry Logic**: Built-in exponential backoff and circuit breakers
+
+== Performance Characteristics
+
+=== Latency Targets
+[options="header"]
+|===
+|Operation |P50 |P95 |P99 |Scale
+|Point Query (Hot) |< 0.5ms |< 1ms |< 2ms |100K+ QPS
+|Similarity Search (Hot) |< 1ms |< 5ms |< 10ms |50K+ QPS  
+|Similarity Search (Cold) |< 100ms |< 500ms |< 1s |1K+ QPS
+|Vector Insertion |< 1ms |< 5ms |< 10ms |10K+ QPS
+|Batch Insertion |< 10ms |< 50ms |< 100ms |100K+ vectors/sec
+|===
+
+=== Throughput Targets
+- **Query Throughput**: 100K+ QPS per cluster
+- **Ingestion Throughput**: 1M+ vectors per second
+- **Concurrent Users**: 10K+ simultaneous connections
+- **Data Volume**: Exabyte-scale with linear scaling
+
+=== Scalability Characteristics
+- **Horizontal Scaling**: Linear performance scaling to 1000+ nodes
+- **Auto-scaling Speed**: 0-100 instances in < 30 seconds
+- **Storage Scaling**: Automatic sharding and rebalancing
+- **Cross-region Scaling**: Global deployment with local performance
+
+== Security Architecture
+
+=== Data Protection
+- **Encryption at Rest**: AES-256 with customer-managed keys
+- **Encryption in Transit**: TLS 1.3 with perfect forward secrecy
+- **Key Management**: Integration with cloud KMS services
+- **Data Masking**: PII detection and automatic redaction
+
+=== Access Control
+- **Authentication**: Multi-factor authentication support
+- **Authorization**: Fine-grained RBAC with attribute-based policies
+- **API Security**: Rate limiting, DDoS protection, input validation
+- **Network Security**: VPC isolation, private endpoints, WAF integration
+
+=== Compliance & Governance
+- **Audit Logging**: Immutable audit trails with tamper detection
+- **Data Lineage**: Complete data provenance tracking
+- **Retention Policies**: Automated data lifecycle management
+- **Right to be Forgotten**: GDPR-compliant data deletion
+
+== Observability & Monitoring
+
+=== Metrics Collection
+- **Application Metrics**: Custom business metrics via OpenTelemetry
+- **Infrastructure Metrics**: CPU, memory, disk, network utilization
+- **Performance Metrics**: Latency percentiles, throughput, error rates
+- **Cost Metrics**: Resource consumption and cost attribution
+
+=== Distributed Tracing
+- **Request Tracing**: End-to-end request flow visualization
+- **Performance Analysis**: Bottleneck identification and optimization
+- **Error Tracking**: Detailed error context and stack traces
+- **Dependency Mapping**: Service topology and communication patterns
+
+=== Alerting & Incident Response
+- **SLA Monitoring**: Real-time SLA compliance tracking
+- **Anomaly Detection**: ML-based pattern recognition for proactive alerts
+- **Escalation Policies**: Multi-tier alerting with automatic escalation
+- **Runbook Automation**: Automated incident response procedures
+
+== Disaster Recovery & Business Continuity
+
+=== Backup Strategy
+- **Continuous Backup**: Real-time data replication to multiple regions
+- **Point-in-Time Recovery**: Restore to any point within retention period
+- **Cross-region Replication**: Automated failover with RPO < 1 minute
+- **Backup Verification**: Regular restore testing and validation
+
+=== High Availability Design
+- **Multi-AZ Deployment**: Automatic failover within region
+- **Circuit Breakers**: Graceful degradation during partial failures
+- **Bulkhead Pattern**: Fault isolation between system components
+- **Chaos Engineering**: Regular failure injection testing
+
+=== Recovery Procedures
+- **Automated Failover**: Zero-touch recovery for common scenarios
+- **Manual Procedures**: Documented steps for complex recovery scenarios
+- **Recovery Testing**: Monthly disaster recovery drills
+- **Communication Plans**: Stakeholder notification and status updates
+
+== Cost Optimization
+
+=== Serverless Economics
+- **Pay-per-use**: No charges for idle infrastructure
+- **Auto-scaling**: Automatic resource optimization based on demand
+- **Reserved Capacity**: Cost savings for predictable workloads
+- **Spot Instances**: Up to 70% cost savings for batch processing
+
+=== Storage Optimization
+- **Intelligent Tiering**: Automatic data movement to optimal storage class
+- **Compression**: Up to 10x data reduction with minimal CPU overhead
+- **Deduplication**: Eliminate redundant vector storage
+- **Lifecycle Policies**: Automated data archival and deletion
+
+=== Multi-cloud Cost Management
+- **Cost Attribution**: Per-tenant cost tracking and chargebacks
+- **Cloud Arbitrage**: Automatic workload placement based on pricing
+- **Reserved Instance Management**: Optimal utilization of committed capacity
+- **Budget Controls**: Automatic spending alerts and limits
+
+== Conclusion
+
+VectorFlow's high-level architecture provides a solid foundation for building a cloud-native, enterprise-grade vector database. The modular design, intelligent tiering, and multi-tenant architecture enable VectorFlow to serve a wide range of use cases while maintaining high performance, cost efficiency, and operational simplicity.
+
+The next phase involves detailed implementation of core components, starting with the storage engine and vector indexing algorithms outlined in the Low-Level Design document.
