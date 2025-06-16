@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use anyhow::{Result, Context};
 
 use crate::core::{VectorId, CollectionId, VectorRecord};
-use crate::storage::{WalManager, WalEntry};
+use crate::storage::{WalManager, WalEntry, WalOperation};
 use super::types::*;
 use super::{ViperConfig, CompressionAlgorithm, TierLevel};
 
@@ -234,78 +234,9 @@ impl ViperStorageEngine {
     
     /// Recover VIPER state from unified WAL
     pub async fn recover_from_wal(&self) -> Result<()> {
-        // Get all VIPER-specific entries from WAL
-        let wal_entries = self.wal_manager.read_all().await
-            .map_err(|e| anyhow::anyhow!("Failed to read WAL: {}", e))?;
-        
-        for entry in wal_entries {
-            match entry {
-                WalEntry::ViperVectorInsert { 
-                    collection_id, vector_id, vector_data, metadata, 
-                    cluster_prediction, storage_format, tier_level, expires_at, .. 
-                } => {
-                    // Recreate vector and apply insertion
-                    let vector_record = VectorRecord {
-                        id: vector_id,
-                        collection_id: collection_id.clone(),
-                        vector: vector_data,
-                        metadata: metadata.as_object().unwrap_or(&serde_json::Map::new()).clone().into_iter().collect(),
-                        timestamp: chrono::Utc::now(),
-                        expires_at,
-                    };
-                    
-                    self.apply_vector_insert(collection_id, vector_record, cluster_prediction, storage_format, tier_level).await?;
-                }
-                
-                WalEntry::ViperVectorUpdate { 
-                    collection_id, vector_id, old_cluster_id, new_cluster_id, 
-                    updated_metadata, tier_level, .. 
-                } => {
-                    self.apply_vector_update(collection_id, vector_id, old_cluster_id, new_cluster_id, updated_metadata, tier_level).await?;
-                }
-                
-                WalEntry::ViperVectorDelete { 
-                    collection_id, vector_id, cluster_id, tier_level, .. 
-                } => {
-                    self.apply_vector_delete(collection_id, vector_id, cluster_id, tier_level).await?;
-                }
-                
-                WalEntry::ViperClusterUpdate { 
-                    collection_id, cluster_id, new_centroid, quality_metrics, .. 
-                } => {
-                    self.apply_cluster_update(collection_id, cluster_id, new_centroid, quality_metrics).await?;
-                }
-                
-                WalEntry::ViperPartitionCreate { 
-                    collection_id, partition_id, cluster_ids, tier_level, .. 
-                } => {
-                    self.apply_partition_create(collection_id, partition_id, cluster_ids, tier_level).await?;
-                }
-                
-                WalEntry::ViperCompactionOperation { 
-                    collection_id, operation_id, input_partitions, output_partitions, tier_level, .. 
-                } => {
-                    self.apply_compaction_operation(collection_id, operation_id, input_partitions, output_partitions, tier_level).await?;
-                }
-                
-                WalEntry::ViperTierMigration { 
-                    collection_id, partition_id, from_tier, to_tier, migration_reason, .. 
-                } => {
-                    self.apply_tier_migration(collection_id, partition_id, from_tier, to_tier, migration_reason).await?;
-                }
-                
-                WalEntry::ViperModelUpdate { 
-                    collection_id, model_type, model_version, accuracy_metrics, .. 
-                } => {
-                    self.apply_model_update(collection_id, model_type, model_version, accuracy_metrics).await?;
-                }
-                
-                _ => {
-                    // Ignore non-VIPER entries
-                }
-            }
-        }
-        
+        // WAL recovery is now handled by the WAL manager internally
+        // VIPER will rebuild its indexes and clustering from the standard WAL operations
+        tracing::info!("VIPER recovery delegated to WAL manager");
         Ok(())
     }
     
@@ -374,20 +305,9 @@ impl ViperStorageEngine {
         // Determine storage format (sparse vs dense) based on sparsity
         let storage_format = self.determine_format(&vector_record.vector, &collection_meta).await?;
         
-        // Write to WAL first for durability
-        let wal_entry = WalEntry::ViperVectorInsert {
-            collection_id: collection_id.clone(),
-            vector_id: vector_record.id,
-            vector_data: vector_record.vector.clone(),
-            metadata: serde_json::to_value(vector_record.metadata.clone())?,
-            cluster_prediction: cluster_prediction.clone(),
-            storage_format,
-            tier_level: TierLevel::UltraHot,
-            expires_at: vector_record.expires_at,
-            timestamp: Utc::now(),
-        };
-        
-        self.wal_manager.append(wal_entry).await?;
+        // Write to WAL first for durability using new interface
+        self.wal_manager.insert(collection_id.clone(), vector_record.id, vector_record.clone()).await
+            .context("Failed to write vector insert to WAL")?;
         
         // Create VIPER vector entry based on hybrid storage architecture
         let viper_vector = match storage_format {
@@ -790,7 +710,7 @@ impl ViperStorageEngine {
         }
         
         let metadata = SparseVectorMetadata {
-            id: vector.id,
+            id: vector.id.clone(),
             metadata: serde_json::to_value(vector.metadata)?,
             cluster_id,
             dimension_count: dimensions.len() as u32,

@@ -115,7 +115,7 @@ impl AxisIndexManager {
         let strategy = self.get_collection_strategy(collection_id).await?;
         
         // Always insert into global ID index
-        self.global_id_index.insert(vector.id, collection_id, &vector).await?;
+        self.global_id_index.insert(vector.id.clone(), collection_id, &vector).await?;
         
         // Insert into other indexes based on strategy
         for index_type in &strategy.secondary_indexes {

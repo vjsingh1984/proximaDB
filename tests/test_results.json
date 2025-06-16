@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-06-14T12:57:15.612141",
+  "timestamp": "2025-06-14T23:02:37.670560",
   "summary": {
     "pending": 0,
     "running": 0,
@@ -12,19 +12,19 @@
       "status": "\u2705 PASSED",
       "result": "PASS",
       "notes": "Server started successfully on all ports",
-      "timestamp": "2025-06-14T12:57:15.589507"
+      "timestamp": "2025-06-14T23:02:37.640402"
     },
     "health_rest": {
       "status": "\u2705 PASSED",
       "result": "PASS",
       "notes": "REST health OK: healthy",
-      "timestamp": "2025-06-14T12:57:15.600451"
+      "timestamp": "2025-06-14T23:02:37.653472"
     },
     "auth_api_key": {
       "status": "\u274c FAILED",
       "result": "FAIL",
-      "notes": ". Error: Unexpected error: HTTP 404 error | Error Code: UNKNOWN",
-      "timestamp": "2025-06-14T12:57:15.611899"
+      "notes": ". Error: Unexpected error: list indices must be integers or slices, not str",
+      "timestamp": "2025-06-14T23:02:37.670310"
     }
   },
   "config": {

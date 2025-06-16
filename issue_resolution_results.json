@@ -1,0 +1,45 @@
+{
+  "summary": {
+    "total_fixes_attempted": 6,
+    "successful_fixes": 4,
+    "resolution_rate": 66.66666666666666
+  },
+  "fixes": [
+    {
+      "issue": "Dimension Mismatch",
+      "success": true,
+      "description": "Created 768-dim collection for BERT embeddings, tests should use appropriate dimensions",
+      "timestamp": 1749991002.833603
+    },
+    {
+      "issue": "Connection Timeouts",
+      "success": true,
+      "description": "All endpoints responding: GET vector by ID, DELETE vector, Bulk DELETE",
+      "timestamp": 1749991002.8384376
+    },
+    {
+      "issue": "Similarity Search",
+      "success": false,
+      "description": "Top result: \"different\" (score: 0.0000), expected exact match with score ~1.0",
+      "timestamp": 1749991002.863793
+    },
+    {
+      "issue": "gRPC Collection Creation",
+      "success": true,
+      "description": "Created collection grpc_collection_grpc_test_fix via gRPC with proper parameters",
+      "timestamp": 1749991003.0571694
+    },
+    {
+      "issue": "gRPC Error Handling",
+      "success": false,
+      "description": "No error raised for non-existent collection - error handling not working",
+      "timestamp": 1749991003.0572693
+    },
+    {
+      "issue": "System Stability",
+      "success": true,
+      "description": "Completed 10 operations successfully",
+      "timestamp": 1749991004.9739127
+    }
+  ]
+}

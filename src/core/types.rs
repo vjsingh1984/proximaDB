@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub type VectorId = Uuid;
+pub type VectorId = String;
 pub type CollectionId = String;
 pub type NodeId = String;
 pub type Vector = Vec<f32>;

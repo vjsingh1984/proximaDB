@@ -52,6 +52,15 @@ pub enum StorageError {
     
     #[error("Index error: {0}")]
     IndexError(String),
+    
+    #[error("WAL error: {0}")]
+    WalError(String),
+    
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+    
+    #[error("Metadata error: {0}")]
+    MetadataError(#[from] anyhow::Error),
 }
 
 #[derive(Error, Debug)]

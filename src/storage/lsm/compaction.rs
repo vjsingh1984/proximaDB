@@ -369,7 +369,7 @@ impl CompactionManager {
             };
             
             if should_keep {
-                let entry = bincode::serialize(&(*id, lsm_entry))
+                let entry = bincode::serialize(&(id.clone(), lsm_entry))
                     .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
                 output_data.extend_from_slice(&(entry.len() as u32).to_le_bytes());
                 output_data.extend_from_slice(&entry);

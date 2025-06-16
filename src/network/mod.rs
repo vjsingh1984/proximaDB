@@ -7,7 +7,6 @@
 
 pub mod grpc;
 pub mod http_service;
-pub mod grpc_service;
 pub mod metrics_service;
 pub mod unified_server;
 pub mod middleware;
@@ -26,7 +25,6 @@ use crate::consensus::ConsensusEngine;
 use crate::monitoring::MetricsCollector;
 
 pub use http_service::*;
-pub use grpc_service::*;
 pub use metrics_service::*;
 pub use unified_server::UnifiedServer;
 pub use grpc::service::ProximaDbGrpcService;

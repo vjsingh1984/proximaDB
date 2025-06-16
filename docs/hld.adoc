@@ -170,20 +170,37 @@ ProximaDB implements a sophisticated WAL system with cloud-native capabilities a
 - **Cost Optimization**: Intelligent tiering and retention policies
 - **Schema Evolution**: Avro-based serialization with backward compatibility
 
-==== WAL Class Diagram
+==== Current WAL Implementation Status ✅
+
+**Strategy Pattern Implementation (COMPLETED)**
+- **AvroWalStrategy**: Schema evolution support with human-readable format
+- **BincodeWalStrategy**: High-performance binary serialization  
+- **WalFactory**: Creates appropriate strategy based on configuration
+- **WalManager**: High-level interface using strategies
+
+**Key Features Implemented:**
+- MVCC support with versioned entries
+- TTL support for soft deletes
+- Collection-aware organization
+- Multi-disk support with RAID-like distribution
+- Configurable compression (LZ4, Zstd)
+- Atomic operations and batch writes
+
+==== WAL Class Diagram (Current Implementation)
 
 [source,mermaid]
 ----
 classDiagram
-    class AvroWalManager {
-        +storage_backend: WalStorageBackend
-        +compression: RecoveryOptimizedCompression
-        +multi_storage_config: MultiStorageConfig
-        +recovery_config: RecoveryConfig
-        +append_entry(entry: AvroWalEntry) Future~u64~
-        +read_all_parallel() Future~Vec~AvroWalEntry~~
-        +checkpoint(sequence: u64) Future~()~
-        +recover_adaptive() Future~Vec~AvroWalEntry~~
+    class WalManager {
+        +strategy: Box~dyn WalStrategy~
+        +config: WalConfig
+        +insert(collection_id, vector_id, record) Future~u64~
+        +update(collection_id, vector_id, record) Future~u64~
+        +delete(collection_id, vector_id) Future~u64~
+        +create_collection(collection_id, config) Future~u64~
+        +drop_collection(collection_id) Future~()~
+        +flush(collection_id) Future~FlushResult~
+        +search(collection_id, vector_id) Future~Option~WalEntry~~
     }
 
     class WalStorageBackend {

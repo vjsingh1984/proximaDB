@@ -40,6 +40,8 @@ pub mod network;
 pub mod proto;
 pub mod query;
 pub mod schema;
+pub mod server;
+pub mod services;
 pub mod storage;
 pub mod utils;
 

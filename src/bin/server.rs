@@ -20,6 +20,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use tracing::{info, error};
 use proximadb::{ProximaDB, Config};
+use proximadb::compute::hardware_detection::HardwareCapabilities;
 
 #[derive(Parser)]
 #[command(name = "proximadb-server")]
@@ -40,8 +41,17 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Initialize tracing with debug level for comprehensive logging
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(true)
+        .with_line_number(true)
+        .with_file(true)
+        .init();
+    
+    // Initialize hardware capabilities detection early to prevent crashes
+    info!("🔧 Initializing hardware detection...");
+    let _hardware_caps = HardwareCapabilities::initialize();
     
     let args = Args::parse();
     

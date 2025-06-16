@@ -199,22 +199,27 @@ Deliver a cloud-native vector database that provides:
 |ST-011
 |Multi-cloud Write-Ahead Log (WAL) with S3/ADLS/GCS backend support
 |Critical
+|✅ IMPLEMENTED
 
 |ST-012
 |Avro-based WAL serialization with schema evolution and compression
 |Critical
+|✅ IMPLEMENTED
 
 |ST-013
 |Recovery-optimized compression (LZ4 >2GB/s decompression, Zstd adaptive)
 |Critical
+|✅ IMPLEMENTED
 
 |ST-014
 |Multi-disk WAL with parallel writes for critical systems (RAID-like distribution)
 |High
+|✅ IMPLEMENTED
 
 |ST-015
 |Parallel WAL recovery with disk I/O bottleneck optimization (not CPU)
 |Critical
+|✅ IMPLEMENTED
 
 |ST-016
 |Cloud-native WAL batching and cost optimization (lifecycle management)

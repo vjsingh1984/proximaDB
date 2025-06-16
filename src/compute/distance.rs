@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 
-//! High-performance distance computation implementations
+//! Hardware-aware distance computation implementations
 //! 
-//! This module provides optimized distance metrics with SIMD acceleration:
+//! This module provides safe, optimized distance metrics with runtime SIMD detection:
 //! - Cosine similarity
-//! - Euclidean distance (L2)
+//! - Euclidean distance (L2) 
 //! - Manhattan distance (L1)
 //! - Dot product
 //! - Hamming distance (binary vectors)
+//!
+//! All implementations use runtime feature detection to prevent illegal instruction crashes.
 
 use serde::{Deserialize, Serialize};
+use crate::compute::hardware_detection::{HardwareCapabilities, SimdLevel, ComputeBackend, is_simd_supported};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DistanceMetric {
@@ -61,33 +64,84 @@ pub trait DistanceCompute: Send + Sync {
     fn metric(&self) -> DistanceMetric;
 }
 
-/// SIMD-optimized cosine similarity
+/// Hardware-aware cosine similarity with safe SIMD detection
 pub struct CosineDistance {
-    use_simd: bool,
+    simd_level: SimdLevel,
 }
 
 impl CosineDistance {
-    pub fn new(use_simd: bool) -> Self {
-        Self { use_simd }
+    /// Create with automatic hardware detection
+    pub fn new() -> Self {
+        let caps = HardwareCapabilities::get();
+        let simd_level = caps.optimal_paths.simd_level.clone();
+        
+        tracing::debug!("CosineDistance initialized with SIMD level: {:?}", simd_level);
+        Self { simd_level }
     }
     
-    /// Optimized cosine similarity using SIMD instructions
-    #[inline(always)]
-    fn cosine_similarity_simd(&self, a: &[f32], b: &[f32]) -> f32 {
-        debug_assert_eq!(a.len(), b.len());
-        
-        if self.use_simd && a.len() >= 8 {
-            // Use AVX2/AVX-512 if available
-            unsafe { self.cosine_similarity_avx(a, b) }
+    /// Create with legacy boolean parameter (for compatibility)
+    pub fn new_with_simd(use_simd: bool) -> Self {
+        if use_simd {
+            Self::new()
         } else {
-            // Fallback to scalar implementation
-            self.cosine_similarity_scalar(a, b)
+            Self { simd_level: SimdLevel::None }
         }
     }
     
+    /// Create with explicit SIMD level
+    pub fn with_simd_level(level: SimdLevel) -> Self {
+        if is_simd_supported(level.clone()) {
+            Self { simd_level: level }
+        } else {
+            tracing::warn!("Requested SIMD level {:?} not supported, falling back to scalar", level);
+            Self { simd_level: SimdLevel::None }
+        }
+    }
+}
+
+impl CosineDistance {
+    /// Hardware-aware cosine similarity with safe SIMD detection
+    #[inline(always)]
+    fn cosine_similarity_impl(&self, a: &[f32], b: &[f32]) -> f32 {
+        debug_assert_eq!(a.len(), b.len());
+        
+        match self.simd_level {
+            SimdLevel::Avx2 if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+                    unsafe { self.cosine_similarity_avx2_fma(a, b) }
+                } else {
+                    self.cosine_similarity_scalar(a, b)
+                }
+            }
+            SimdLevel::Avx if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx") {
+                    unsafe { self.cosine_similarity_avx_safe(a, b) }
+                } else {
+                    self.cosine_similarity_scalar(a, b)
+                }
+            }
+            SimdLevel::Sse4 if a.len() >= 4 => {
+                if is_x86_feature_detected!("sse4.1") {
+                    unsafe { self.cosine_similarity_sse4(a, b) }
+                } else {
+                    self.cosine_similarity_scalar(a, b)
+                }
+            }
+            SimdLevel::Sse if a.len() >= 4 => {
+                if is_x86_feature_detected!("sse2") {
+                    unsafe { self.cosine_similarity_sse2(a, b) }
+                } else {
+                    self.cosine_similarity_scalar(a, b)
+                }
+            }
+            _ => self.cosine_similarity_scalar(a, b)
+        }
+    }
+    
+    /// AVX2 + FMA implementation (requires both AVX2 and FMA support)
     #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2")]
-    unsafe fn cosine_similarity_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn cosine_similarity_avx2_fma(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
         let len = a.len();
@@ -114,9 +168,9 @@ impl CosineDistance {
         }
         
         // Horizontal sum of vectors
-        let mut dot_product = horizontal_sum_avx(dot_sum);
-        let mut norm_a = horizontal_sum_avx(norm_a_sum);
-        let mut norm_b = horizontal_sum_avx(norm_b_sum);
+        let mut dot_product = horizontal_sum_avx256(dot_sum);
+        let mut norm_a = horizontal_sum_avx256(norm_a_sum);
+        let mut norm_b = horizontal_sum_avx256(norm_b_sum);
         
         // Handle remainder elements
         for i in (chunks * 8)..len {
@@ -129,12 +183,159 @@ impl CosineDistance {
         if norm_a == 0.0 || norm_b == 0.0 {
             0.0
         } else {
-            dot_product / (norm_a.sqrt() * norm_b.sqrt())
+            let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+            // Clamp to valid cosine similarity range [-1, 1] to handle floating-point precision errors
+            similarity.clamp(-1.0, 1.0)
+        }
+    }
+    
+    /// Safe AVX implementation without FMA (8 floats at once)
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx")]
+    unsafe fn cosine_similarity_avx_safe(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 8;
+        
+        let mut dot_sum = _mm256_setzero_ps();
+        let mut norm_a_sum = _mm256_setzero_ps();
+        let mut norm_b_sum = _mm256_setzero_ps();
+        
+        // Process 8 elements at a time using AVX (no FMA)
+        for i in 0..chunks {
+            let offset = i * 8;
+            
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            // Use separate multiply and add (no FMA)
+            let dot = _mm256_mul_ps(va, vb);
+            dot_sum = _mm256_add_ps(dot_sum, dot);
+            
+            let norm_a = _mm256_mul_ps(va, va);
+            norm_a_sum = _mm256_add_ps(norm_a_sum, norm_a);
+            
+            let norm_b = _mm256_mul_ps(vb, vb);
+            norm_b_sum = _mm256_add_ps(norm_b_sum, norm_b);
+        }
+        
+        // Horizontal sum
+        let mut dot_product = horizontal_sum_avx256(dot_sum);
+        let mut norm_a = horizontal_sum_avx256(norm_a_sum);
+        let mut norm_b = horizontal_sum_avx256(norm_b_sum);
+        
+        // Handle remainder
+        for i in (chunks * 8)..len {
+            dot_product += a[i] * b[i];
+            norm_a += a[i] * a[i];
+            norm_b += b[i] * b[i];
+        }
+        
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+            // Clamp to valid cosine similarity range [-1, 1] to handle floating-point precision errors
+            similarity.clamp(-1.0, 1.0)
+        }
+    }
+    
+    /// SSE4.1 implementation (4 floats at once)
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "sse4.1")]
+    unsafe fn cosine_similarity_sse4(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 4;
+        
+        let mut dot_sum = _mm_setzero_ps();
+        let mut norm_a_sum = _mm_setzero_ps();
+        let mut norm_b_sum = _mm_setzero_ps();
+        
+        // Process 4 elements at a time using SSE4.1
+        for i in 0..chunks {
+            let offset = i * 4;
+            
+            let va = _mm_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm_loadu_ps(b.as_ptr().add(offset));
+            
+            dot_sum = _mm_add_ps(dot_sum, _mm_mul_ps(va, vb));
+            norm_a_sum = _mm_add_ps(norm_a_sum, _mm_mul_ps(va, va));
+            norm_b_sum = _mm_add_ps(norm_b_sum, _mm_mul_ps(vb, vb));
+        }
+        
+        // Horizontal sum using SSE
+        let mut dot_product = horizontal_sum_sse(dot_sum);
+        let mut norm_a = horizontal_sum_sse(norm_a_sum);
+        let mut norm_b = horizontal_sum_sse(norm_b_sum);
+        
+        // Handle remainder
+        for i in (chunks * 4)..len {
+            dot_product += a[i] * b[i];
+            norm_a += a[i] * a[i];
+            norm_b += b[i] * b[i];
+        }
+        
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+            // Clamp to valid cosine similarity range [-1, 1] to handle floating-point precision errors
+            similarity.clamp(-1.0, 1.0)
+        }
+    }
+    
+    /// SSE2 implementation (4 floats at once)
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "sse2")]
+    unsafe fn cosine_similarity_sse2(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 4;
+        
+        let mut dot_sum = _mm_setzero_ps();
+        let mut norm_a_sum = _mm_setzero_ps();
+        let mut norm_b_sum = _mm_setzero_ps();
+        
+        // Process 4 elements at a time using SSE2
+        for i in 0..chunks {
+            let offset = i * 4;
+            
+            let va = _mm_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm_loadu_ps(b.as_ptr().add(offset));
+            
+            dot_sum = _mm_add_ps(dot_sum, _mm_mul_ps(va, vb));
+            norm_a_sum = _mm_add_ps(norm_a_sum, _mm_mul_ps(va, va));
+            norm_b_sum = _mm_add_ps(norm_b_sum, _mm_mul_ps(vb, vb));
+        }
+        
+        // Horizontal sum using SSE
+        let mut dot_product = horizontal_sum_sse(dot_sum);
+        let mut norm_a = horizontal_sum_sse(norm_a_sum);
+        let mut norm_b = horizontal_sum_sse(norm_b_sum);
+        
+        // Handle remainder
+        for i in (chunks * 4)..len {
+            dot_product += a[i] * b[i];
+            norm_a += a[i] * a[i];
+            norm_b += b[i] * b[i];
+        }
+        
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+            // Clamp to valid cosine similarity range [-1, 1] to handle floating-point precision errors
+            similarity.clamp(-1.0, 1.0)
         }
     }
     
     #[cfg(target_arch = "aarch64")]
-    fn cosine_similarity_neon(&self, a: &[f32], b: &[f32]) -> f32 {
+    #[target_feature(enable = "neon")]
+    unsafe fn cosine_similarity_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         // TODO: Implement NEON SIMD for ARM architectures
         self.cosine_similarity_scalar(a, b)
     }
@@ -179,7 +380,9 @@ impl CosineDistance {
         if norm_a == 0.0 || norm_b == 0.0 {
             0.0
         } else {
-            dot_product / (norm_a.sqrt() * norm_b.sqrt())
+            let similarity = dot_product / (norm_a.sqrt() * norm_b.sqrt());
+            // Clamp to valid cosine similarity range [-1, 1] to handle floating-point precision errors
+            similarity.clamp(-1.0, 1.0)
         }
     }
 }
@@ -187,7 +390,7 @@ impl CosineDistance {
 impl DistanceCompute for CosineDistance {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
         // Return cosine similarity (higher = more similar)
-        self.cosine_similarity_simd(a, b)
+        self.cosine_similarity_impl(a, b)
     }
     
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
@@ -211,30 +414,56 @@ impl DistanceCompute for CosineDistance {
     }
 }
 
-/// SIMD-optimized Euclidean distance
+/// Hardware-aware Euclidean distance
 pub struct EuclideanDistance {
-    use_simd: bool,
+    simd_level: SimdLevel,
 }
 
 impl EuclideanDistance {
-    pub fn new(use_simd: bool) -> Self {
-        Self { use_simd }
+    /// Create with automatic hardware detection
+    pub fn new() -> Self {
+        let caps = HardwareCapabilities::get();
+        let simd_level = caps.optimal_paths.simd_level.clone();
+        
+        tracing::debug!("EuclideanDistance initialized with SIMD level: {:?}", simd_level);
+        Self { simd_level }
+    }
+    
+    /// Create with legacy boolean parameter (for compatibility)
+    pub fn new_with_simd(use_simd: bool) -> Self {
+        if use_simd {
+            Self::new()
+        } else {
+            Self { simd_level: SimdLevel::None }
+        }
     }
     
     #[inline(always)]
-    fn euclidean_distance_simd(&self, a: &[f32], b: &[f32]) -> f32 {
+    fn euclidean_distance_impl(&self, a: &[f32], b: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len());
         
-        if self.use_simd && a.len() >= 8 {
-            unsafe { self.euclidean_distance_avx(a, b) }
-        } else {
-            self.euclidean_distance_scalar(a, b)
+        match self.simd_level {
+            SimdLevel::Avx2 if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx2") {
+                    unsafe { self.euclidean_distance_avx2(a, b) }
+                } else {
+                    self.euclidean_distance_scalar(a, b)
+                }
+            }
+            SimdLevel::Avx if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx") {
+                    unsafe { self.euclidean_distance_avx(a, b) }
+                } else {
+                    self.euclidean_distance_scalar(a, b)
+                }
+            }
+            _ => self.euclidean_distance_scalar(a, b)
         }
     }
     
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn euclidean_distance_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn euclidean_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
         let len = a.len();
@@ -256,7 +485,41 @@ impl EuclideanDistance {
         }
         
         // Horizontal sum
-        let mut squared_distance = horizontal_sum_avx(sum);
+        let mut squared_distance = horizontal_sum_avx256(sum);
+        
+        // Handle remainder
+        for i in (chunks * 8)..len {
+            let diff = a[i] - b[i];
+            squared_distance += diff * diff;
+        }
+        
+        squared_distance.sqrt()
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx")]
+    unsafe fn euclidean_distance_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 8;
+        
+        let mut sum = _mm256_setzero_ps();
+        
+        // Process 8 elements at a time using AVX
+        for i in 0..chunks {
+            let offset = i * 8;
+            
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            let diff = _mm256_sub_ps(va, vb);
+            let squared = _mm256_mul_ps(diff, diff);
+            sum = _mm256_add_ps(sum, squared);
+        }
+        
+        // Horizontal sum
+        let mut squared_distance = horizontal_sum_avx256(sum);
         
         // Handle remainder
         for i in (chunks * 8)..len {
@@ -300,7 +563,7 @@ impl EuclideanDistance {
 
 impl DistanceCompute for EuclideanDistance {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        self.euclidean_distance_simd(a, b)
+        self.euclidean_distance_impl(a, b)
     }
     
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
@@ -326,28 +589,54 @@ impl DistanceCompute for EuclideanDistance {
 
 /// Dot product similarity (for normalized vectors)
 pub struct DotProductDistance {
-    use_simd: bool,
+    simd_level: SimdLevel,
 }
 
 impl DotProductDistance {
-    pub fn new(use_simd: bool) -> Self {
-        Self { use_simd }
+    /// Create with automatic hardware detection
+    pub fn new() -> Self {
+        let caps = HardwareCapabilities::get();
+        let simd_level = caps.optimal_paths.simd_level.clone();
+        
+        tracing::debug!("DotProductDistance initialized with SIMD level: {:?}", simd_level);
+        Self { simd_level }
+    }
+    
+    /// Create with legacy boolean parameter (for compatibility)
+    pub fn new_with_simd(use_simd: bool) -> Self {
+        if use_simd {
+            Self::new()
+        } else {
+            Self { simd_level: SimdLevel::None }
+        }
     }
     
     #[inline(always)]
-    fn dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
+    fn dot_product_impl(&self, a: &[f32], b: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len());
         
-        if self.use_simd && a.len() >= 8 {
-            unsafe { self.dot_product_avx(a, b) }
-        } else {
-            self.dot_product_scalar(a, b)
+        match self.simd_level {
+            SimdLevel::Avx2 if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+                    unsafe { self.dot_product_avx2_fma(a, b) }
+                } else {
+                    self.dot_product_scalar(a, b)
+                }
+            }
+            SimdLevel::Avx if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx") {
+                    unsafe { self.dot_product_avx(a, b) }
+                } else {
+                    self.dot_product_scalar(a, b)
+                }
+            }
+            _ => self.dot_product_scalar(a, b)
         }
     }
     
     #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2")]
-    unsafe fn dot_product_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn dot_product_avx2_fma(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
         let len = a.len();
@@ -364,7 +653,38 @@ impl DotProductDistance {
             sum = _mm256_fmadd_ps(va, vb, sum);
         }
         
-        let mut result = horizontal_sum_avx(sum);
+        let mut result = horizontal_sum_avx256(sum);
+        
+        // Handle remainder
+        for i in (chunks * 8)..len {
+            result += a[i] * b[i];
+        }
+        
+        result
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx")]
+    unsafe fn dot_product_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 8;
+        
+        let mut sum = _mm256_setzero_ps();
+        
+        // Process 8 elements at a time using AVX
+        for i in 0..chunks {
+            let offset = i * 8;
+            
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            let product = _mm256_mul_ps(va, vb);
+            sum = _mm256_add_ps(sum, product);
+        }
+        
+        let mut result = horizontal_sum_avx256(sum);
         
         // Handle remainder
         for i in (chunks * 8)..len {
@@ -401,7 +721,7 @@ impl DotProductDistance {
 
 impl DistanceCompute for DotProductDistance {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        self.dot_product_simd(a, b)
+        self.dot_product_impl(a, b)
     }
     
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
@@ -425,25 +745,192 @@ impl DistanceCompute for DotProductDistance {
     }
 }
 
-/// Manhattan distance (L1 norm)
+/// Hardware-aware Manhattan distance (L1 norm)
 pub struct ManhattanDistance {
-    use_simd: bool,
+    simd_level: SimdLevel,
 }
 
 impl ManhattanDistance {
-    pub fn new(use_simd: bool) -> Self {
-        Self { use_simd }
+    /// Create with automatic hardware detection
+    pub fn new() -> Self {
+        let caps = HardwareCapabilities::get();
+        let simd_level = caps.optimal_paths.simd_level.clone();
+        
+        tracing::debug!("ManhattanDistance initialized with SIMD level: {:?}", simd_level);
+        Self { simd_level }
+    }
+    
+    /// Create with legacy boolean parameter (for compatibility)
+    pub fn new_with_simd(use_simd: bool) -> Self {
+        if use_simd {
+            Self::new()
+        } else {
+            Self { simd_level: SimdLevel::None }
+        }
+    }
+    
+    /// Create with explicit SIMD level
+    pub fn with_simd_level(level: SimdLevel) -> Self {
+        if is_simd_supported(level.clone()) {
+            Self { simd_level: level }
+        } else {
+            tracing::warn!("Requested SIMD level {:?} not supported, falling back to scalar", level);
+            Self { simd_level: SimdLevel::None }
+        }
     }
     
     #[inline(always)]
-    fn manhattan_distance(&self, a: &[f32], b: &[f32]) -> f32 {
+    fn manhattan_distance_impl(&self, a: &[f32], b: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len());
         
+        match self.simd_level {
+            SimdLevel::Avx2 if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx2") {
+                    unsafe { self.manhattan_distance_avx2(a, b) }
+                } else {
+                    self.manhattan_distance_scalar(a, b)
+                }
+            }
+            SimdLevel::Avx if a.len() >= 8 => {
+                if is_x86_feature_detected!("avx") {
+                    unsafe { self.manhattan_distance_avx(a, b) }
+                } else {
+                    self.manhattan_distance_scalar(a, b)
+                }
+            }
+            SimdLevel::Sse4 if a.len() >= 4 => {
+                if is_x86_feature_detected!("sse4.1") {
+                    unsafe { self.manhattan_distance_sse4(a, b) }
+                } else {
+                    self.manhattan_distance_scalar(a, b)
+                }
+            }
+            _ => self.manhattan_distance_scalar(a, b)
+        }
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn manhattan_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 8;
+        
+        let mut sum = _mm256_setzero_ps();
+        let sign_mask = _mm256_set1_ps(-0.0); // 0x80000000 to flip sign bit
+        
+        // Process 8 elements at a time
+        for i in 0..chunks {
+            let offset = i * 8;
+            
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            // Compute |a - b| using AVX2
+            let diff = _mm256_sub_ps(va, vb);
+            let abs_diff = _mm256_andnot_ps(sign_mask, diff); // Clear sign bit for absolute value
+            sum = _mm256_add_ps(sum, abs_diff);
+        }
+        
+        // Horizontal sum
+        let mut result = horizontal_sum_avx256(sum);
+        
+        // Handle remainder
+        for i in (chunks * 8)..len {
+            result += (a[i] - b[i]).abs();
+        }
+        
+        result
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx")]
+    unsafe fn manhattan_distance_avx(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 8;
+        
+        let mut sum = _mm256_setzero_ps();
+        let sign_mask = _mm256_set1_ps(-0.0);
+        
+        // Process 8 elements at a time using AVX
+        for i in 0..chunks {
+            let offset = i * 8;
+            
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            let diff = _mm256_sub_ps(va, vb);
+            let abs_diff = _mm256_andnot_ps(sign_mask, diff);
+            sum = _mm256_add_ps(sum, abs_diff);
+        }
+        
+        // Horizontal sum
+        let mut result = horizontal_sum_avx256(sum);
+        
+        // Handle remainder
+        for i in (chunks * 8)..len {
+            result += (a[i] - b[i]).abs();
+        }
+        
+        result
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "sse4.1")]
+    unsafe fn manhattan_distance_sse4(&self, a: &[f32], b: &[f32]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 4;
+        
+        let mut sum = _mm_setzero_ps();
+        let sign_mask = _mm_set1_ps(-0.0);
+        
+        // Process 4 elements at a time using SSE4.1
+        for i in 0..chunks {
+            let offset = i * 4;
+            
+            let va = _mm_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm_loadu_ps(b.as_ptr().add(offset));
+            
+            let diff = _mm_sub_ps(va, vb);
+            let abs_diff = _mm_andnot_ps(sign_mask, diff);
+            sum = _mm_add_ps(sum, abs_diff);
+        }
+        
+        // Horizontal sum using SSE
+        let mut result = horizontal_sum_sse(sum);
+        
+        // Handle remainder
+        for i in (chunks * 4)..len {
+            result += (a[i] - b[i]).abs();
+        }
+        
+        result
+    }
+    
+    fn manhattan_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0f32;
         
-        // Simple scalar implementation
-        for (av, bv) in a.iter().zip(b.iter()) {
-            sum += (av - bv).abs();
+        // Loop unrolling for better performance
+        let len = a.len();
+        let chunks = len / 4;
+        
+        for i in 0..chunks {
+            let base = i * 4;
+            
+            sum += (a[base] - b[base]).abs();
+            sum += (a[base + 1] - b[base + 1]).abs();
+            sum += (a[base + 2] - b[base + 2]).abs();
+            sum += (a[base + 3] - b[base + 3]).abs();
+        }
+        
+        // Handle remainder
+        for i in (chunks * 4)..len {
+            sum += (a[i] - b[i]).abs();
         }
         
         sum
@@ -452,7 +939,7 @@ impl ManhattanDistance {
 
 impl DistanceCompute for ManhattanDistance {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        self.manhattan_distance(a, b)
+        self.manhattan_distance_impl(a, b)
     }
     
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
@@ -476,24 +963,91 @@ impl DistanceCompute for ManhattanDistance {
     }
 }
 
-/// Factory function to create distance computers
-pub fn create_distance_computer(metric: DistanceMetric, use_simd: bool) -> Box<dyn DistanceCompute> {
-    match metric {
-        DistanceMetric::Cosine => Box::new(CosineDistance::new(use_simd)),
-        DistanceMetric::Euclidean => Box::new(EuclideanDistance::new(use_simd)),
-        DistanceMetric::Manhattan => Box::new(ManhattanDistance::new(use_simd)),
-        DistanceMetric::DotProduct => Box::new(DotProductDistance::new(use_simd)),
-        _ => {
-            // Default to cosine similarity for unsupported metrics
-            Box::new(CosineDistance::new(use_simd))
+/// Create distance computer with automatic hardware detection (recommended)
+pub fn create_distance_computer_optimized(metric: DistanceMetric) -> Box<dyn DistanceCompute> {
+    let caps = HardwareCapabilities::get();
+    
+    // Check if GPU acceleration is available and beneficial
+    match &caps.optimal_paths.preferred_backend {
+        ComputeBackend::Cuda { device_id } => {
+            // Use GPU-accelerated distance computation if available
+            if caps.gpu.devices.iter().any(|d| d.id == *device_id && d.is_cuda) {
+                tracing::info!("Using CUDA-accelerated distance computation on GPU {}", device_id);
+                create_gpu_distance_computer(metric, ComputeBackend::Cuda { device_id: *device_id })
+            } else {
+                // Fallback to CPU with hardware-optimized SIMD
+                create_cpu_distance_computer_optimized(metric)
+            }
+        }
+        ComputeBackend::OpenCl { device_id } => {
+            tracing::info!("Using OpenCL-accelerated distance computation on device {}", device_id);
+            create_gpu_distance_computer(metric, ComputeBackend::OpenCl { device_id: *device_id })
+        }
+        ComputeBackend::Rocm { device_id } => {
+            tracing::info!("Using ROCm-accelerated distance computation on device {}", device_id);
+            create_gpu_distance_computer(metric, ComputeBackend::Rocm { device_id: *device_id })
+        }
+        ComputeBackend::Cpu { simd_level: _ } => {
+            // Use CPU with optimal SIMD level
+            create_cpu_distance_computer_optimized(metric)
         }
     }
 }
 
-// Helper function for AVX horizontal sum
+/// Create CPU-optimized distance computer with automatic SIMD detection
+fn create_cpu_distance_computer_optimized(metric: DistanceMetric) -> Box<dyn DistanceCompute> {
+    match metric {
+        DistanceMetric::Cosine => Box::new(CosineDistance::new()),
+        DistanceMetric::Euclidean => Box::new(EuclideanDistance::new()),
+        DistanceMetric::Manhattan => Box::new(ManhattanDistance::new()),
+        DistanceMetric::DotProduct => Box::new(DotProductDistance::new()),
+        _ => {
+            // Default to cosine similarity for unsupported metrics
+            Box::new(CosineDistance::new())
+        }
+    }
+}
+
+/// Create GPU-accelerated distance computer
+fn create_gpu_distance_computer(metric: DistanceMetric, backend: ComputeBackend) -> Box<dyn DistanceCompute> {
+    // For now, return CPU implementation with warning
+    // TODO: Implement GPU-accelerated distance computation
+    tracing::warn!("GPU acceleration not yet implemented for distance metrics, falling back to CPU");
+    
+    match backend {
+        ComputeBackend::Cuda { device_id } => {
+            tracing::debug!("CUDA device {} available but not yet integrated", device_id);
+        }
+        ComputeBackend::OpenCl { device_id } => {
+            tracing::debug!("OpenCL device {} available but not yet integrated", device_id);
+        }
+        ComputeBackend::Rocm { device_id } => {
+            tracing::debug!("ROCm device {} available but not yet integrated", device_id);
+        }
+        _ => {}
+    }
+    
+    create_cpu_distance_computer_optimized(metric)
+}
+
+/// Legacy factory function (for compatibility)
+pub fn create_distance_computer(metric: DistanceMetric, use_simd: bool) -> Box<dyn DistanceCompute> {
+    match metric {
+        DistanceMetric::Cosine => Box::new(CosineDistance::new_with_simd(use_simd)),
+        DistanceMetric::Euclidean => Box::new(EuclideanDistance::new_with_simd(use_simd)),
+        DistanceMetric::Manhattan => Box::new(ManhattanDistance::new_with_simd(use_simd)),
+        DistanceMetric::DotProduct => Box::new(DotProductDistance::new_with_simd(use_simd)),
+        _ => {
+            // Default to cosine similarity for unsupported metrics
+            Box::new(CosineDistance::new_with_simd(use_simd))
+        }
+    }
+}
+
+// Helper functions for horizontal sums
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn horizontal_sum_avx(v: std::arch::x86_64::__m256) -> f32 {
+#[target_feature(enable = "avx")]
+unsafe fn horizontal_sum_avx256(v: std::arch::x86_64::__m256) -> f32 {
     use std::arch::x86_64::*;
     
     // v = [a0, a1, a2, a3, a4, a5, a6, a7]
@@ -510,6 +1064,20 @@ unsafe fn horizontal_sum_avx(v: std::arch::x86_64::__m256) -> f32 {
     _mm_cvtss_f32(sum)
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse")]
+unsafe fn horizontal_sum_sse(v: std::arch::x86_64::__m128) -> f32 {
+    use std::arch::x86_64::*;
+    
+    let hi64 = _mm_movehl_ps(v, v);           // [a2, a3, ?, ?]
+    let sum_dual = _mm_add_ps(v, hi64);       // [a0+a2, a1+a3, ?, ?]
+    
+    let hi32 = _mm_shuffle_ps(sum_dual, sum_dual, 0x1); // [a1+a3, ?, ?, ?]
+    let sum = _mm_add_ss(sum_dual, hi32);               // [a0+a1+a2+a3, ?, ?, ?]
+    
+    _mm_cvtss_f32(sum)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,7 +1088,7 @@ mod tests {
         let b = vec![0.0, 1.0, 0.0];
         let c = vec![1.0, 0.0, 0.0];
         
-        let distance = CosineDistance::new(false);
+        let distance = CosineDistance::new_with_simd(false);
         
         assert!((distance.distance(&a, &b) - 0.0).abs() < 1e-6); // Orthogonal vectors
         assert!((distance.distance(&a, &c) - 1.0).abs() < 1e-6); // Identical vectors
@@ -531,7 +1099,7 @@ mod tests {
         let a = vec![0.0, 0.0];
         let b = vec![3.0, 4.0];
         
-        let distance = EuclideanDistance::new(false);
+        let distance = EuclideanDistance::new_with_simd(false);
         
         assert!((distance.distance(&a, &b) - 5.0).abs() < 1e-6); // 3-4-5 triangle
     }
@@ -541,9 +1109,67 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
         
-        let distance = DotProductDistance::new(false);
+        let distance = DotProductDistance::new_with_simd(false);
         
         // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
         assert!((distance.distance(&a, &b) - 32.0).abs() < 1e-6);
+    }
+    
+    #[test]
+    fn debug_cosine_similarity_scores() {
+        let distance_computer = CosineDistance::new_with_simd(false);
+        
+        // Test case 1: Identical vectors
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];  // Identical
+        let similarity = distance_computer.distance(&a, &b);
+        println!("Identical vectors [1,0,0] vs [1,0,0]: similarity = {}", similarity);
+        assert!((similarity - 1.0).abs() < 1e-6, "Expected ~1.0, got {}", similarity);
+        
+        // Test case 2: Orthogonal vectors
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];  // Orthogonal
+        let similarity = distance_computer.distance(&a, &b);
+        println!("Orthogonal vectors [1,0,0] vs [0,1,0]: similarity = {}", similarity);
+        assert!((similarity - 0.0).abs() < 1e-6, "Expected ~0.0, got {}", similarity);
+        
+        // Test case 3: Complex identical vectors with normalization
+        let a = vec![2.0, 2.0, 2.0];
+        let b = vec![2.0, 2.0, 2.0];  // Identical but not normalized
+        let similarity = distance_computer.distance(&a, &b);
+        println!("Non-normalized identical vectors [2,2,2] vs [2,2,2]: similarity = {}", similarity);
+        assert!((similarity - 1.0).abs() < 1e-6, "Expected ~1.0, got {}", similarity);
+        
+        // Test case 4: Same direction, different magnitude
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![5.0, 0.0, 0.0];  // Same direction, different magnitude
+        let similarity = distance_computer.distance(&a, &b);
+        println!("Same direction, different magnitude [1,0,0] vs [5,0,0]: similarity = {}", similarity);
+        assert!((similarity - 1.0).abs() < 1e-6, "Expected ~1.0, got {}", similarity);
+        
+        // Test case 5: High-dimensional identical vectors
+        let a = vec![0.1; 128];
+        let b = vec![0.1; 128];
+        let similarity = distance_computer.distance(&a, &b);
+        println!("High-dimensional identical vectors (128D): similarity = {}", similarity);
+        assert_eq!(similarity, 1.0, "Expected exactly 1.0 for identical vectors after clamping, got {}", similarity);
+        
+        // Test case 6: Zero vectors (edge case)
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![0.0, 0.0, 0.0];
+        let similarity = distance_computer.distance(&a, &b);
+        println!("Zero vectors [0,0,0] vs [0,0,0]: similarity = {}", similarity);
+        // Zero vectors should return 0.0 due to division by zero handling
+        assert_eq!(similarity, 0.0, "Zero vectors should return 0.0, got {}", similarity);
+        
+        // Test case 7: One zero vector
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 0.0, 0.0];
+        let similarity = distance_computer.distance(&a, &b);
+        println!("One zero vector [1,0,0] vs [0,0,0]: similarity = {}", similarity);
+        assert_eq!(similarity, 0.0, "One zero vector should return 0.0, got {}", similarity);
+        
+        // Verify it's returning similarity, not distance
+        assert!(distance_computer.is_similarity(), "Should return similarity (higher = more similar)");
     }
 }

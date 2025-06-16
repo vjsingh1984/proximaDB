@@ -97,7 +97,7 @@ async fn test_vector_search_basic() {
     });
     assert!(exact_match.is_some(), "Should find exact match vector_x in results");
     let exact_match = exact_match.unwrap();
-    assert!(exact_match.score > 0.9); // Should be very close to 1.0 for cosine similarity
+    assert_eq!(exact_match.score, 1.0); // Should be exactly 1.0 for identical vectors after precision fix
     
     // Test search with more results
     let results = storage.search_vectors(&"search_collection".to_string(), vec![0.0, 1.0, 0.0], 5).await.unwrap();

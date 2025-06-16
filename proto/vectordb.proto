@@ -8,35 +8,101 @@ import "google/protobuf/struct.proto";
 service VectorDB {
   // Collection management
   rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
   rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
   rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
   
-  // Vector operations
-  rpc Insert(InsertRequest) returns (InsertResponse);
-  rpc Search(SearchRequest) returns (SearchResponse);
-  rpc Get(GetRequest) returns (GetResponse);
-  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  // Collection helper endpoints
+  rpc ListCollectionIds(ListCollectionIdsRequest) returns (ListCollectionIdsResponse);
+  rpc ListCollectionNames(ListCollectionNamesRequest) returns (ListCollectionNamesResponse);
+  rpc GetCollectionIdByName(GetCollectionIdByNameRequest) returns (GetCollectionIdByNameResponse);
+  rpc GetCollectionNameById(GetCollectionNameByIdRequest) returns (GetCollectionNameByIdResponse);
   
-  // Batch operations
+  // Vector operations - single
+  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+  rpc GetVectorByClientId(GetVectorByClientIdRequest) returns (GetVectorByClientIdResponse);
+  rpc UpdateVector(UpdateVectorRequest) returns (UpdateVectorResponse);
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
+  
+  // Vector operations - batch
   rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
   rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchUpdate(BatchUpdateRequest) returns (BatchUpdateResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  
+  // Search operations
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc BatchSearch(BatchSearchRequest) returns (BatchSearchResponse);
+  
+  // Index operations
+  rpc GetIndexStats(GetIndexStatsRequest) returns (GetIndexStatsResponse);
+  rpc OptimizeIndex(OptimizeIndexRequest) returns (OptimizeIndexResponse);
   
   // Health and status
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
+  rpc Liveness(LivenessRequest) returns (LivenessResponse);
   rpc Status(StatusRequest) returns (StatusResponse);
 }
 
+// Core Data Types
+message Vector {
+  string id = 1;                          // Server-generated UUID or client-provided ID
+  repeated float values = 2;              // Vector values
+  google.protobuf.Struct metadata = 3;    // Arbitrary metadata
+  string client_id = 4;                   // Optional client-provided ID (stored in metadata)
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message Collection {
+  string id = 1;                          // Server-generated UUID
+  string name = 2;                        // Human-readable name
+  uint32 dimension = 3;                   // Vector dimension
+  string distance_metric = 4;             // "cosine", "euclidean", "manhattan", "dot_product"
+  string indexing_algorithm = 5;          // "hnsw", "flat", "ivf"
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  uint64 vector_count = 8;                // Number of vectors
+  uint64 total_size_bytes = 9;            // Storage size
+  google.protobuf.Struct config = 10;     // Additional configuration
+  bool allow_client_ids = 11;             // Whether client IDs are allowed
+}
+
+message SearchResult {
+  string id = 1;                          // Vector ID
+  float score = 2;                        // Similarity score
+  repeated float vector = 3;              // Optional: return vector values
+  google.protobuf.Struct metadata = 4;    // Vector metadata
+  string client_id = 5;                   // Client ID if available
+}
+
+// Collection Messages
 message CreateCollectionRequest {
-  string collection_id = 1;
-  string name = 2;
-  uint32 dimension = 3;
-  SchemaType schema_type = 4;
-  google.protobuf.Struct schema = 5;
+  string name = 1;
+  uint32 dimension = 2;
+  string distance_metric = 3;             // "cosine", "euclidean", "manhattan", "dot_product"
+  string indexing_algorithm = 4;          // "hnsw", "flat", "ivf"
+  bool allow_client_ids = 5;              // Allow client-provided IDs
+  google.protobuf.Struct config = 6;      // Additional configuration
 }
 
 message CreateCollectionResponse {
   bool success = 1;
   string message = 2;
+  Collection collection = 3;
+}
+
+message GetCollectionRequest {
+  oneof identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+}
+
+message GetCollectionResponse {
+  Collection collection = 1;
 }
 
 message ListCollectionsRequest {}
@@ -46,7 +112,10 @@ message ListCollectionsResponse {
 }
 
 message DeleteCollectionRequest {
-  string collection_id = 1;
+  oneof identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
 }
 
 message DeleteCollectionResponse {
@@ -54,138 +123,285 @@ message DeleteCollectionResponse {
   string message = 2;
 }
 
-message InsertRequest {
-  string collection_id = 1;
-  VectorRecord record = 2;
+// Collection Helper Messages
+message ListCollectionIdsRequest {}
+
+message ListCollectionIdsResponse {
+  repeated string collection_ids = 1;
 }
 
-message InsertResponse {
+message ListCollectionNamesRequest {}
+
+message ListCollectionNamesResponse {
+  repeated string collection_names = 1;
+}
+
+message GetCollectionIdByNameRequest {
+  string collection_name = 1;
+}
+
+message GetCollectionIdByNameResponse {
+  string collection_id = 1;
+}
+
+message GetCollectionNameByIdRequest {
+  string collection_id = 1;
+}
+
+message GetCollectionNameByIdResponse {
+  string collection_name = 1;
+}
+
+// Vector Operations - Single
+message InsertVectorRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  string client_id = 3;                   // Optional client-provided ID
+  repeated float vector = 4;              // Vector values
+  google.protobuf.Struct metadata = 5;    // Optional metadata
+}
+
+message InsertVectorResponse {
   bool success = 1;
-  string vector_id = 2;
-  string message = 3;
+  string message = 2;
+  string vector_id = 3;                   // Server-generated UUID
+  string client_id = 4;                   // Client-provided ID if any
 }
 
-message SearchRequest {
-  string collection_id = 1;
-  repeated float vector = 2;
-  uint32 k = 3;
-  google.protobuf.Struct filters = 4;
-  optional float threshold = 5;
+message GetVectorRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  string vector_id = 3;                   // Server UUID
 }
 
-message SearchResponse {
-  repeated SearchResult results = 1;
-  uint32 total_count = 2;
+message GetVectorResponse {
+  Vector vector = 1;
 }
 
-message GetRequest {
-  string collection_id = 1;
-  string vector_id = 2;
+message GetVectorByClientIdRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  string client_id = 3;                   // Client-provided ID
 }
 
-message GetResponse {
-  optional VectorRecord record = 1;
+message GetVectorByClientIdResponse {
+  Vector vector = 1;
 }
 
-message DeleteRequest {
-  string collection_id = 1;
-  string vector_id = 2;
+message UpdateVectorRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  string vector_id = 3;                   // Server UUID
+  repeated float vector = 4;              // New vector values
+  google.protobuf.Struct metadata = 5;    // New metadata
 }
 
-message DeleteResponse {
+message UpdateVectorResponse {
+  bool success = 1;
+  string message = 2;
+  Vector vector = 3;                      // Updated vector
+}
+
+message DeleteVectorRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  string vector_id = 3;                   // Server UUID
+}
+
+message DeleteVectorResponse {
   bool success = 1;
   string message = 2;
 }
 
+// Vector Operations - Batch
 message BatchInsertRequest {
-  string collection_id = 1;
-  repeated VectorRecord records = 2;
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated InsertVectorData vectors = 3;
+}
+
+message InsertVectorData {
+  string client_id = 1;                   // Optional client-provided ID
+  repeated float vector = 2;              // Vector values
+  google.protobuf.Struct metadata = 3;    // Optional metadata
 }
 
 message BatchInsertResponse {
-  uint32 inserted_count = 1;
-  repeated string vector_ids = 2;
-  repeated string errors = 3;
+  bool success = 1;
+  string message = 2;
+  repeated string vector_ids = 3;         // Server-generated UUIDs
+  repeated string client_ids = 4;         // Client-provided IDs
+  uint32 inserted_count = 5;
 }
 
 message BatchGetRequest {
-  string collection_id = 1;
-  repeated string vector_ids = 2;
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated string vector_ids = 3;         // Server UUIDs
 }
 
 message BatchGetResponse {
-  repeated VectorRecord records = 1;
+  repeated Vector vectors = 1;
+  uint32 found_count = 2;
 }
 
+message BatchUpdateRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated UpdateVectorData updates = 3;
+}
+
+message UpdateVectorData {
+  string vector_id = 1;                   // Server UUID
+  repeated float vector = 2;              // New vector values
+  google.protobuf.Struct metadata = 3;    // New metadata
+}
+
+message BatchUpdateResponse {
+  bool success = 1;
+  string message = 2;
+  uint32 updated_count = 3;
+  repeated Vector vectors = 4;            // Updated vectors
+}
+
+message BatchDeleteRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated string vector_ids = 3;         // Server UUIDs
+  google.protobuf.Struct metadata_filter = 4; // Optional: delete by metadata filter
+}
+
+message BatchDeleteResponse {
+  bool success = 1;
+  string message = 2;
+  uint32 deleted_count = 3;
+}
+
+// Search Operations
+message SearchRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated float query_vector = 3;        // Query vector
+  uint32 top_k = 4;                       // Number of results
+  google.protobuf.Struct metadata_filter = 5; // Optional metadata filtering
+  float threshold = 6;                    // Optional similarity threshold
+  bool include_vectors = 7;               // Whether to include vector values in results
+}
+
+message SearchResponse {
+  repeated SearchResult matches = 1;
+  uint32 total_count = 2;
+  float query_time_ms = 3;                // Query execution time
+}
+
+message BatchSearchRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  repeated SearchQuery queries = 3;
+}
+
+message SearchQuery {
+  repeated float query_vector = 1;        // Query vector
+  uint32 top_k = 2;                       // Number of results
+  google.protobuf.Struct metadata_filter = 3; // Optional metadata filtering
+  float threshold = 4;                    // Optional similarity threshold
+  bool include_vectors = 5;               // Whether to include vector values in results
+}
+
+message BatchSearchResponse {
+  repeated SearchResponse results = 1;
+  float total_query_time_ms = 2;          // Total execution time
+}
+
+// Index Operations
+message GetIndexStatsRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+}
+
+message GetIndexStatsResponse {
+  string collection_id = 1;
+  string collection_name = 2;
+  uint64 vector_count = 3;
+  uint64 index_size_bytes = 4;
+  string index_type = 5;
+  google.protobuf.Struct index_config = 6;
+  google.protobuf.Timestamp last_optimized = 7;
+  google.protobuf.Struct performance_metrics = 8;
+}
+
+message OptimizeIndexRequest {
+  oneof collection_identifier {
+    string collection_id = 1;
+    string collection_name = 2;
+  }
+  bool force_rebuild = 3;                 // Force full index rebuild
+}
+
+message OptimizeIndexResponse {
+  bool success = 1;
+  string message = 2;
+  float optimization_time_ms = 3;
+  google.protobuf.Struct optimization_stats = 4;
+}
+
+// Health and Status
 message HealthRequest {}
 
 message HealthResponse {
-  string status = 1;
+  string status = 1;                      // "healthy", "unhealthy", "degraded"
   google.protobuf.Timestamp timestamp = 2;
+  string version = 3;
+  google.protobuf.Struct details = 4;
+}
+
+message ReadinessRequest {}
+
+message ReadinessResponse {
+  bool ready = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message LivenessRequest {}
+
+message LivenessResponse {
+  bool alive = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
 }
 
 message StatusRequest {}
 
 message StatusResponse {
-  string node_id = 1;
-  string version = 2;
-  NodeRole role = 3;
-  ClusterInfo cluster = 4;
-  StorageInfo storage = 5;
-}
-
-message Collection {
-  string id = 1;
-  string name = 2;
-  uint32 dimension = 3;
-  SchemaType schema_type = 4;
-  google.protobuf.Timestamp created_at = 5;
-  google.protobuf.Timestamp updated_at = 6;
-  uint64 vector_count = 7;
-}
-
-message VectorRecord {
-  string id = 1;
-  string collection_id = 2;
-  repeated float vector = 3;
-  google.protobuf.Struct metadata = 4;
-  google.protobuf.Timestamp timestamp = 5;
-}
-
-message SearchResult {
-  string id = 1;
-  float score = 2;
-  google.protobuf.Struct metadata = 3;
-}
-
-message ClusterInfo {
-  repeated string peers = 1;
-  string leader = 2;
-  uint64 term = 3;
-}
-
-message StorageInfo {
-  uint64 total_vectors = 1;
-  uint64 total_size_bytes = 2;
-  repeated DiskInfo disks = 3;
-}
-
-message DiskInfo {
-  string path = 1;
-  uint64 total_bytes = 2;
-  uint64 used_bytes = 3;
-  uint64 available_bytes = 4;
-}
-
-enum SchemaType {
-  SCHEMA_TYPE_UNSPECIFIED = 0;
-  SCHEMA_TYPE_DOCUMENT = 1;
-  SCHEMA_TYPE_RELATIONAL = 2;
-}
-
-enum NodeRole {
-  NODE_ROLE_UNSPECIFIED = 0;
-  NODE_ROLE_LEADER = 1;
-  NODE_ROLE_FOLLOWER = 2;
-  NODE_ROLE_CANDIDATE = 3;
+  string version = 1;
+  string build_info = 2;
+  uint64 uptime_seconds = 3;
+  google.protobuf.Struct system_info = 4;
+  google.protobuf.Struct performance_metrics = 5;
+  google.protobuf.Timestamp timestamp = 6;
 }

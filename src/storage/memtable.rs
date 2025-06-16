@@ -603,13 +603,15 @@ impl CollectionMemtable {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use uuid::Uuid;
+    use chrono::Utc;
     
     #[tokio::test]
     async fn test_memtable_basic_operations() {
         let memtable = Memtable::new(1); // 1MB limit
         
         let record = VectorRecord {
-            id: Uuid::new_v4(),
+            id: Uuid::new_v4().to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: HashMap::new(),
@@ -640,7 +642,7 @@ mod tests {
         let memtable = Memtable::new(1); // 1MB limit
         
         let record = VectorRecord {
-            id: Uuid::new_v4(),
+            id: Uuid::new_v4().to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0; 1000], // Large vector
             metadata: HashMap::new(),

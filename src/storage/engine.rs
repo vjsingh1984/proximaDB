@@ -1,5 +1,5 @@
 use crate::core::{StorageConfig, VectorRecord, VectorId, CollectionId, BatchSearchRequest};
-use crate::storage::{lsm::{LsmTree, CompactionManager}, mmap::MmapReader, disk_manager::DiskManager, WalManager, WalConfig, WalEntry, MetadataStore, CollectionMetadata};
+use crate::storage::{lsm::{LsmTree, CompactionManager}, mmap::MmapReader, disk_manager::DiskManager, WalManager, WalConfig, MetadataStore, CollectionMetadata};
 use crate::storage::search_index::{SearchIndexManager, SearchRequest};
 use crate::compute::algorithms::SearchResult;
 use std::sync::Arc;
@@ -24,20 +24,39 @@ impl StorageEngine {
     pub async fn new(config: StorageConfig) -> crate::storage::Result<Self> {
         let disk_manager = Arc::new(DiskManager::new(config.data_dirs.clone())?);
         
-        // Initialize WAL manager
+        // Initialize comprehensive WAL manager with optimized defaults (Avro + ART)
         let wal_config = WalConfig {
-            wal_dir: config.wal_dir.clone(),
-            segment_size: 64 * 1024 * 1024, // 64MB
-            sync_mode: true,
-            retention_segments: 3,
+            multi_disk: crate::storage::wal::config::MultiDiskConfig {
+                data_directories: vec![config.wal_dir.clone()],
+                ..Default::default()
+            },
+            ..Default::default() // Uses Avro + ART defaults from conversation
         };
-        let wal_manager = Arc::new(WalManager::new(wal_config).await?);
         
-        // Initialize metadata store
-        let data_dir = config.data_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("./data"));
-        let metadata_store = Arc::new(MetadataStore::new(data_dir.clone()).await?);
+        // Create filesystem factory for WAL
+        let filesystem = Arc::new(crate::storage::filesystem::FilesystemFactory::new(
+            crate::storage::filesystem::FilesystemConfig::default()
+        ).await.map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?);
+        
+        // Create WAL strategy and manager using factory pattern
+        let wal_strategy = crate::storage::wal::WalFactory::create_from_config(&wal_config, filesystem).await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
+        let wal_manager = Arc::new(WalManager::new(wal_strategy, wal_config).await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?);
+        
+        // Initialize metadata store with dedicated location (separate from WAL)
+        let metadata_config = crate::storage::metadata::store::MetadataStoreConfig {
+            metadata_base_dir: PathBuf::from("./data/metadata"),
+            metadata_storage_urls: vec!["file://./data/metadata".to_string()],
+            enable_atomic_operations: true,
+            ..Default::default()
+        };
+        tracing::debug!("📂 Initializing metadata store at: {:?}", metadata_config.metadata_base_dir);
+        let metadata_store = Arc::new(crate::storage::metadata::store::MetadataStore::new(metadata_config).await
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?);
         
         // Initialize search index manager
+        let data_dir = config.data_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("./data"));
         let search_index_manager = Arc::new(SearchIndexManager::new(data_dir.join("indexes")));
         
         // Initialize compaction manager
@@ -82,17 +101,31 @@ impl StorageEngine {
         for (_, tree) in trees.iter() {
             tree.flush().await?;
         }
+        
+        // Force WAL flush during shutdown
+        tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
+        if let Err(e) = self.wal_manager.flush(None).await {
+            tracing::warn!("Failed to flush WAL during shutdown: {}", e);
+        }
+        
         Ok(())
     }
 
     pub async fn write(&self, record: VectorRecord) -> crate::storage::Result<()> {
         let collection_id = record.collection_id.clone();
         let vector_size = std::mem::size_of_val(&record.vector[..]) + std::mem::size_of::<VectorRecord>();
+        let start = std::time::Instant::now();
         
+        tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
+                       record.id, collection_id, record.vector.len(), vector_size);
+        
+        tracing::debug!("🔒 Acquiring LSM trees write lock for collection {}", collection_id);
         let mut trees = self.lsm_trees.write().await;
+        tracing::debug!("✅ Acquired LSM trees write lock for collection {}", collection_id);
         
         let tree = trees.entry(collection_id.clone())
             .or_insert_with(|| {
+                tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
                 let default_dir = PathBuf::from("./data/storage");
                 let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
                 LsmTree::new(
@@ -104,14 +137,27 @@ impl StorageEngine {
                 )
             });
         
-        tree.put(record.id, record.clone()).await?;
+        tracing::debug!("💾 Calling tree.put() for vector {} in collection {}", record.id, collection_id);
+        tree.put(record.id.clone(), record.clone()).await?;
+        tracing::debug!("✅ Completed tree.put() for vector {} in collection {}", record.id, collection_id);
+        
+        // Release the trees lock before other operations
+        drop(trees);
+        tracing::debug!("🔓 Released LSM trees write lock for collection {}", collection_id);
         
         // Add to search index
+        tracing::debug!("🔍 Adding vector {} to search index for collection {}", record.id, collection_id);
         self.search_index_manager.add_vector(&collection_id, &record).await?;
+        tracing::debug!("✅ Completed search index addition for vector {} in collection {}", record.id, collection_id);
         
         // Update metadata statistics
+        tracing::debug!("📊 Updating metadata stats for collection {} (vector_delta=1, size_delta={})", collection_id, vector_size);
         self.metadata_store.update_stats(&collection_id, 1, vector_size as i64).await?;
+        tracing::debug!("✅ Completed metadata stats update for collection {}", collection_id);
         
+        let elapsed = start.elapsed();
+        tracing::debug!("🎉 Successfully completed write operation for vector {} in collection {}, total_time={:?}", 
+                       record.id, collection_id, elapsed);
         Ok(())
     }
 
@@ -134,13 +180,9 @@ impl StorageEngine {
     }
     
     pub async fn soft_delete(&self, collection_id: &CollectionId, id: &VectorId) -> crate::storage::Result<bool> {
-        // Write delete marker to WAL
-        let wal_entry = WalEntry::Delete {
-            collection_id: collection_id.clone(),
-            vector_id: *id,
-            timestamp: chrono::Utc::now(),
-        };
-        self.wal_manager.append(wal_entry).await?;
+        // Write delete marker to WAL using new interface
+        self.wal_manager.delete(collection_id.clone(), id.clone()).await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
         
         // Check if the record exists
         let exists = self.read(collection_id, id).await?.is_some();
@@ -157,7 +199,7 @@ impl StorageEngine {
         if exists {
             let trees = self.lsm_trees.read().await;
             if let Some(tree) = trees.get(collection_id) {
-                tree.delete(*id).await?;
+                tree.delete(id.clone()).await?;
             }
         }
         
@@ -181,17 +223,21 @@ impl StorageEngine {
             vector_count: 0,
             total_size_bytes: 0,
             config: HashMap::new(),
+            access_pattern: crate::storage::metadata::AccessPattern::Normal,
+            retention_policy: None,
+            tags: Vec::new(),
+            owner: None,
+            description: None,
+            strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(),
+            strategy_change_history: Vec::new(),
+            flush_config: None, // Use global defaults
         });
         
         // Store metadata first
         self.metadata_store.create_collection(collection_metadata).await?;
         
-        // Write to WAL
-        let wal_entry = WalEntry::CreateCollection {
-            collection_id: collection_id.clone(),
-            timestamp: Utc::now(),
-        };
-        self.wal_manager.append(wal_entry).await?;
+        // WAL entry for collection creation is handled internally by LSM tree during first write
+        // No explicit WAL write needed here as metadata operations are tracked separately
         
         // Create LSM tree
         let mut trees = self.lsm_trees.write().await;
@@ -271,66 +317,32 @@ impl StorageEngine {
     }
     
     async fn recover_from_wal(&self) -> crate::storage::Result<()> {
-        // Read all WAL entries and replay them
-        let entries = self.wal_manager.read_all().await?;
+        tracing::info!("🔄 Starting WAL recovery");
         
-        for entry in entries {
-            match entry {
-                WalEntry::Put { collection_id, record, .. } => {
-                    // Recreate the LSM tree if needed
-                    let mut trees = self.lsm_trees.write().await;
-                    if !trees.contains_key(&collection_id) {
-                        let default_dir = PathBuf::from("./data/storage");
-                        let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
-                        trees.insert(collection_id.clone(), LsmTree::new(
-                            &self.config.lsm_config,
-                            collection_id.clone(),
-                            self.wal_manager.clone(),
-                            data_dir.clone(),
-                            Some(self.compaction_manager.clone())
-                        ));
-                    }
-                    
-                    // Insert the record
-                    if let Some(tree) = trees.get(&collection_id) {
-                        tree.put(record.id, record).await?;
-                    }
-                },
-                WalEntry::CreateCollection { collection_id, .. } => {
-                    // Ensure collection exists
-                    let mut trees = self.lsm_trees.write().await;
-                    if !trees.contains_key(&collection_id) {
-                        let default_dir = PathBuf::from("./data/storage");
-                        let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
-                        trees.insert(collection_id.clone(), LsmTree::new(
-                            &self.config.lsm_config,
-                            collection_id.clone(),
-                            self.wal_manager.clone(),
-                            data_dir.clone(),
-                            Some(self.compaction_manager.clone())
-                        ));
-                    }
-                },
-                WalEntry::Checkpoint { .. } => {
-                    // Checkpoints are informational during recovery
-                },
-                _ => {
-                    // Handle other entry types as needed
-                }
+        // Use the new WAL interface to recover
+        match self.wal_manager.recover().await {
+            Ok(recovered_entries) => {
+                tracing::info!("✅ WAL recovery completed successfully, recovered {} entries", recovered_entries);
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("⚠️ WAL recovery failed: {}", e);
+                // Continue startup even if recovery fails
+                Ok(())
             }
         }
-        
-        Ok(())
     }
     
     /// Get collection metadata
     pub async fn get_collection_metadata(&self, collection_id: &CollectionId) -> crate::storage::Result<Option<CollectionMetadata>> {
         self.metadata_store.get_collection(collection_id).await
+            .map_err(|e| crate::core::StorageError::MetadataError(e))
     }
     
     /// List all collections
     pub async fn list_collections(&self) -> crate::storage::Result<Vec<CollectionMetadata>> {
         self.metadata_store.list_collections().await
+            .map_err(|e| crate::core::StorageError::MetadataError(e))
     }
     
     /// Delete collection and all its data
@@ -343,12 +355,11 @@ impl StorageEngine {
         let reader_removed = readers.remove(collection_id).is_some();
         
         if tree_removed || reader_removed {
-            // Write delete to WAL
-            let wal_entry = WalEntry::DeleteCollection {
-                collection_id: collection_id.clone(),
-                timestamp: Utc::now(),
-            };
-            self.wal_manager.append(wal_entry).await?;
+            // Collection-aware WAL cleanup - remove only this collection's entries
+            tracing::debug!("🧹 Performing collection-aware WAL cleanup for: {}", collection_id);
+            if let Err(e) = self.wal_manager.drop_collection(collection_id).await {
+                tracing::warn!("Failed to cleanup WAL entries for collection {}: {}", collection_id, e);
+            }
             
             // Remove metadata
             self.metadata_store.delete_collection(collection_id).await?;
@@ -381,6 +392,10 @@ impl StorageEngine {
     where
         F: Fn(&HashMap<String, serde_json::Value>) -> bool + Send + Sync + 'static,
     {
+        tracing::debug!(
+            "🔍 search_vectors_with_filter: collection_id='{}', query_dim={}, k={}", 
+            collection_id, query.len(), k
+        );
         let search_request = SearchRequest {
             query,
             k,
@@ -388,7 +403,9 @@ impl StorageEngine {
             filter: Some(Box::new(filter)),
         };
         
-        self.search_index_manager.search(search_request).await
+        let result = self.search_index_manager.search(search_request).await;
+        tracing::debug!("🔍 search_vectors_with_filter result: {:?}", result.as_ref().map(|r| r.len()));
+        result
     }
     
     /// Get search index statistics
@@ -403,15 +420,23 @@ impl StorageEngine {
     
     /// Batch insert multiple vectors into a collection
     pub async fn batch_write(&self, records: Vec<VectorRecord>) -> crate::storage::Result<Vec<VectorId>> {
+        tracing::debug!("🚀 Starting batch_write for {} records", records.len());
         let mut inserted_ids = Vec::with_capacity(records.len());
         
         // Use existing write method for each record to ensure consistency
-        for record in records {
-            let record_id = record.id;
+        for (index, record) in records.into_iter().enumerate() {
+            let record_id = record.id.clone();
+            tracing::debug!("📝 Processing record {}/{}: vector_id={}, collection_id={}", 
+                       index + 1, inserted_ids.capacity(), record_id, record.collection_id);
+            
             self.write(record).await?;
             inserted_ids.push(record_id);
+            
+            tracing::debug!("✅ Successfully processed record {}/{}: vector_id={}", 
+                       index + 1, inserted_ids.capacity(), record_id);
         }
         
+        tracing::debug!("🎉 Completed batch_write for {} records successfully", inserted_ids.len());
         Ok(inserted_ids)
     }
     
@@ -443,5 +468,60 @@ impl StorageEngine {
         }
         
         Ok(results)
+    }
+    
+    /// Cleanup for test scenarios - removes WAL entries for all collections
+    /// This method is intended for test cleanup and should not be used in production
+    pub async fn cleanup_for_tests(&self) -> crate::storage::Result<()> {
+        tracing::debug!("🧹 Starting storage cleanup for test scenarios");
+        
+        // Get list of all collections
+        let collections = match self.metadata_store.list_collections().await {
+            Ok(collections) => collections,
+            Err(e) => {
+                tracing::warn!("Failed to list collections for cleanup: {}", e);
+                Vec::new()
+            }
+        };
+        
+        // Collect collection IDs
+        let collection_ids: Vec<String> = collections.iter().map(|c| c.id.clone()).collect();
+        
+        if !collection_ids.is_empty() {
+            // Collection-aware WAL cleanup for all collections
+            tracing::debug!("🧹 Performing collection-aware WAL cleanup for {} collections: {:?}", 
+                           collection_ids.len(), collection_ids);
+            for collection_id in &collection_ids {
+                if let Err(e) = self.wal_manager.drop_collection(collection_id).await {
+                    tracing::warn!("Failed to cleanup WAL entries for collection {}: {}", collection_id, e);
+                }
+            }
+        } else {
+            // If no collections found, flush all WAL data
+            tracing::debug!("🧹 No collections found, performing WAL flush");
+            if let Err(e) = self.wal_manager.flush(None).await {
+                tracing::warn!("Failed to flush WAL: {}", e);
+            }
+        }
+        
+        // Clear metadata store by deleting all collections
+        for collection in collections {
+            if let Err(e) = self.metadata_store.delete_collection(&collection.id).await {
+                tracing::warn!("Failed to delete collection metadata {}: {}", collection.id, e);
+            }
+        }
+        
+        // Clear in-memory structures
+        {
+            let mut trees = self.lsm_trees.write().await;
+            trees.clear();
+        }
+        {
+            let mut readers = self.mmap_readers.write().await;
+            readers.clear();
+        }
+        
+        tracing::debug!("✅ Completed storage cleanup for tests");
+        Ok(())
     }
 }

@@ -155,19 +155,34 @@ impl SearchIndexManager {
     
     /// Search vectors
     pub async fn search(&self, request: SearchRequest) -> Result<Vec<SearchResult>> {
+        tracing::debug!(
+            "🔍 SearchIndexManager::search: collection_id='{}', query_dim={}, k={}, has_filter={}", 
+            request.collection_id, request.query.len(), request.k, request.filter.is_some()
+        );
         let indexes = self.indexes.read().await;
         
         if let Some(index) = indexes.get(&request.collection_id) {
+            tracing::debug!("🔍 Found index for collection, index size: {}", index.size());
             let results = if let Some(filter) = request.filter {
+                tracing::debug!("🔍 Performing search with filter");
                 index.search_with_filter(&request.query, request.k, &*filter)
-                    .map_err(|e| StorageError::IndexError(e))?
+                    .map_err(|e| {
+                        tracing::error!("🔥 Index search_with_filter error: {}", e);
+                        StorageError::IndexError(e)
+                    })?
             } else {
+                tracing::debug!("🔍 Performing search without filter");
                 index.search(&request.query, request.k)
-                    .map_err(|e| StorageError::IndexError(e))?
+                    .map_err(|e| {
+                        tracing::error!("🔥 Index search error: {}", e);
+                        StorageError::IndexError(e)
+                    })?
             };
             
+            tracing::debug!("🔍 SearchIndexManager::search results: {} matches", results.len());
             Ok(results)
         } else {
+            tracing::error!("🔥 Index for collection {} not found", request.collection_id);
             Err(StorageError::NotFound(format!("Index for collection {} not found", request.collection_id)))
         }
     }
@@ -366,7 +381,7 @@ mod tests {
         // Add test vectors
         let vectors = vec![
             VectorRecord {
-                id: Uuid::new_v4(),
+                id: Uuid::new_v4().to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: HashMap::new(),
@@ -374,7 +389,7 @@ mod tests {
                 expires_at: None,
             },
             VectorRecord {
-                id: Uuid::new_v4(),
+                id: Uuid::new_v4().to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: HashMap::new(),
@@ -382,7 +397,7 @@ mod tests {
                 expires_at: None,
             },
             VectorRecord {
-                id: Uuid::new_v4(),
+                id: Uuid::new_v4().to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![0.0, 0.0, 1.0],
                 metadata: HashMap::new(),

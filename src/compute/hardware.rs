@@ -245,7 +245,7 @@ impl HardwareAccelerator for CpuAccelerator {
         // Use CPU SIMD implementation from distance.rs
         use crate::compute::distance::{DotProductDistance, DistanceCompute};
         
-        let computer = DotProductDistance::new(self.use_simd);
+        let computer = DotProductDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
         
         for query in queries {
@@ -261,7 +261,7 @@ impl HardwareAccelerator for CpuAccelerator {
     async fn batch_cosine_similarity(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
         use crate::compute::distance::{CosineDistance, DistanceCompute};
         
-        let computer = CosineDistance::new(self.use_simd);
+        let computer = CosineDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
         
         for query in queries {
@@ -277,7 +277,7 @@ impl HardwareAccelerator for CpuAccelerator {
     async fn batch_euclidean_distance(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
         use crate::compute::distance::{EuclideanDistance, DistanceCompute};
         
-        let computer = EuclideanDistance::new(self.use_simd);
+        let computer = EuclideanDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
         
         for query in queries {

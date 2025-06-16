@@ -24,6 +24,7 @@
 pub mod algorithms;
 pub mod distance;
 pub mod hardware;
+pub mod hardware_detection;
 pub mod indexing;
 pub mod quantization;
 

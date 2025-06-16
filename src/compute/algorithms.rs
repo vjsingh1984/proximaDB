@@ -334,6 +334,8 @@ impl VectorSearchAlgorithm for HNSWIndex {
     }
     
     fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>, String> {
+        tracing::debug!("🔍 HNSWIndex::search: query_dim={}, k={}, vectors={}, entry_point={:?}", 
+            query.len(), k, self.vectors.len(), self.entry_point);
         if let Some(entry_point) = self.entry_point {
             let mut curr_nearest = vec![entry_point];
             
@@ -370,20 +372,32 @@ impl VectorSearchAlgorithm for HNSWIndex {
     }
     
     fn search_with_filter(&self, query: &[f32], k: usize, filter: &dyn Fn(&HashMap<String, serde_json::Value>) -> bool) -> Result<Vec<SearchResult>, String> {
+        tracing::debug!("🔍 HNSWIndex::search_with_filter: query_dim={}, k={}, vectors={}", query.len(), k, self.vectors.len());
         // For now, do post-filtering. TODO: Implement filtered search directly
         let all_results = self.search(query, k * 2)?; // Get more candidates
+        tracing::debug!("🔍 HNSWIndex::search_with_filter: got {} raw results", all_results.len());
         
+        let mut filter_matches = 0;
         let filtered: Vec<_> = all_results.into_iter()
             .filter(|result| {
                 if let Some(ref metadata) = result.metadata {
-                    filter(metadata)
+                    let matches = filter(metadata);
+                    if matches {
+                        filter_matches += 1;
+                        tracing::debug!("🔍 Filter match #{}: vector_id={}, metadata={:?}", filter_matches, result.vector_id, metadata);
+                    } else {
+                        tracing::debug!("🔍 Filter NO MATCH: vector_id={}, metadata={:?}", result.vector_id, metadata);
+                    }
+                    matches
                 } else {
+                    tracing::debug!("🔍 No metadata for vector_id={}, skipping", result.vector_id);
                     false
                 }
             })
             .take(k)
             .collect();
         
+        tracing::debug!("🔍 HNSWIndex::search_with_filter: returning {} filtered results", filtered.len());
         Ok(filtered)
     }
     

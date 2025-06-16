@@ -31,7 +31,17 @@ pub async fn start_grpc_server(
     
     info!("Starting gRPC server on {}", addr);
     
-    let service = service::ProximaDbGrpcService::new(storage);
+    // Create service instances
+    let vector_service = crate::services::VectorService::new(storage.clone());
+    let collection_service = crate::services::CollectionService::new(storage.clone());
+    
+    let service = service::ProximaDbGrpcService::new(
+        storage,
+        vector_service,
+        collection_service,
+        "grpc-node".to_string(),
+        "0.1.0".to_string(),
+    );
     let server = VectorDbServer::new(service);
     
     Server::builder()
