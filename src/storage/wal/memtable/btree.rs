@@ -227,7 +227,7 @@ impl CollectionBTree {
         let operation_size = match &entry.operation {
             WalOperation::Insert { record, .. } | WalOperation::Update { record, .. } => {
                 record.vector.len() * std::mem::size_of::<f32>() + 
-                record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                record.metadata.len() * 32 // Estimate 32 bytes per metadata entry
             }
             _ => 64,
         };

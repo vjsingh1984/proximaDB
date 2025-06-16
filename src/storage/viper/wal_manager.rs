@@ -20,15 +20,15 @@ use serde::{Serialize, Deserialize};
 
 use crate::core::{VectorId, CollectionId};
 use super::types::*;
-use super::{ViperConfig, TierLevel};
+use super::ViperConfig;
 
 /// VIPER WAL Manager with multi-tier coordination
 pub struct ViperWalManager {
     /// Configuration
     config: ViperConfig,
     
-    /// WAL files per tier
-    tier_wal_files: Arc<RwLock<HashMap<TierLevel, TierWalFile>>>,
+    /// WAL files per storage location
+    storage_wal_files: Arc<RwLock<HashMap<String, StorageWalFile>>>,
     
     /// WAL write queue
     write_queue: Arc<Mutex<VecDeque<WalWriteRequest>>>,
@@ -46,11 +46,11 @@ pub struct ViperWalManager {
     checkpoint_manager: Arc<CheckpointManager>,
 }
 
-/// WAL file for a specific tier
+/// WAL file for a specific storage location
 #[derive(Debug)]
-pub struct TierWalFile {
-    /// Tier level
-    pub tier_level: TierLevel,
+pub struct StorageWalFile {
+    /// Storage URL
+    pub storage_url: String,
     
     /// WAL file path
     pub file_path: PathBuf,
@@ -77,8 +77,8 @@ pub struct WalWriteRequest {
     /// Collection ID
     pub collection_id: CollectionId,
     
-    /// Target tier
-    pub tier_level: TierLevel,
+    /// Target storage URL
+    pub storage_url: String,
     
     /// WAL entry to write
     pub entry: WalEntry,
@@ -141,8 +141,8 @@ pub enum WalEntry {
     /// Tier migration
     TierMigration {
         partition_id: PartitionId,
-        from_tier: TierLevel,
-        to_tier: TierLevel,
+        from_tier: String,
+        to_tier: String,
         migration_reason: MigrationReason,
     },
     
@@ -213,7 +213,7 @@ pub struct WalRecordHeader {
     pub collection_id: CollectionId,
     
     /// Tier level
-    pub tier_level: TierLevel,
+    pub tier_level: String,
 }
 
 /// WAL statistics
@@ -223,7 +223,7 @@ pub struct WalStats {
     pub total_records: u64,
     
     /// Records per tier
-    pub tier_records: HashMap<TierLevel, u64>,
+    pub tier_records: HashMap<String, u64>,
     
     /// Total bytes written
     pub total_bytes: u64,
@@ -247,7 +247,7 @@ pub struct CheckpointManager {
     checkpoint_interval: std::time::Duration,
     
     /// Last checkpoint per tier
-    last_checkpoints: Arc<RwLock<HashMap<TierLevel, CheckpointInfo>>>,
+    last_checkpoints: Arc<RwLock<HashMap<String, CheckpointInfo>>>,
     
     /// Checkpoint task handle
     task_handle: Option<tokio::task::JoinHandle<()>>,
@@ -273,7 +273,7 @@ pub struct WalRecoveryInfo {
     pub recovery_duration: std::time::Duration,
     
     /// Tiers recovered
-    pub tiers_recovered: Vec<TierLevel>,
+    pub tiers_recovered: Vec<String>,
     
     /// Any errors encountered
     pub errors: Vec<String>,
@@ -331,7 +331,7 @@ impl ViperWalManager {
     pub async fn write_entry(
         &self,
         collection_id: CollectionId,
-        tier_level: TierLevel,
+        tier_level: String,
         entry: WalEntry,
     ) -> Result<u64> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -388,7 +388,7 @@ impl ViperWalManager {
     }
     
     /// Create checkpoint for WAL cleanup
-    pub async fn create_checkpoint(&self, tier_level: TierLevel) -> Result<CheckpointInfo> {
+    pub async fn create_checkpoint(&self, tier_level: String) -> Result<CheckpointInfo> {
         self.checkpoint_manager.create_checkpoint(tier_level).await
     }
     
@@ -415,8 +415,8 @@ impl ViperWalManager {
                 .await
                 .context("Failed to open WAL file")?;
             
-            let tier_wal = TierWalFile {
-                tier_level: tier_level.clone(),
+            let tier_wal = StorageWalFile {
+                storage_url: tier_level.clone(),
                 file_path: wal_file_path,
                 file_handle: Arc::new(Mutex::new(BufWriter::new(file))),
                 current_size: Arc::new(Mutex::new(0)),
@@ -475,15 +475,15 @@ impl ViperWalManager {
     /// Process a single write request
     async fn process_write_request(
         request: WalWriteRequest,
-        tier_wal_files: &Arc<RwLock<HashMap<TierLevel, TierWalFile>>>,
+        tier_wal_files: &Arc<RwLock<HashMap<String, StorageWalFile>>>,
         stats: &Arc<RwLock<WalStats>>,
     ) {
         let start_time = std::time::Instant::now();
         
         let result = async {
             let tier_files = tier_wal_files.read().await;
-            let tier_wal = tier_files.get(&request.tier_level)
-                .ok_or_else(|| anyhow::anyhow!("No WAL file for tier: {:?}", request.tier_level))?;
+            let tier_wal = tier_files.get(&request.storage_url)
+                .ok_or_else(|| anyhow::anyhow!("No WAL file for storage: {:?}", request.storage_url))?;
             
             // Get next sequence number
             let sequence = {
@@ -503,7 +503,7 @@ impl ViperWalManager {
                 checksum: crc32fast::hash(&entry_data),
                 timestamp: request.timestamp,
                 collection_id: request.collection_id,
-                tier_level: request.tier_level,
+                storage_url: request.storage_url,
             };
             
             // Serialize header
@@ -544,7 +544,7 @@ impl ViperWalManager {
         let elapsed_ms = start_time.elapsed().as_millis() as f32;
         if let Ok(mut stats) = stats.try_write() {
             stats.total_records += 1;
-            *stats.tier_records.entry(request.tier_level).or_insert(0) += 1;
+            *stats.tier_records.entry(request.storage_url).or_insert(0) += 1;
             
             // Update latency with exponential moving average
             let alpha = 0.1;
@@ -606,7 +606,7 @@ impl ViperWalManager {
     /// Recover a single tier WAL file
     async fn recover_tier_wal(
         &self,
-        _tier_level: &TierLevel,
+        _tier_level: &String,
         file_path: &Path,
         start_sequence: u64,
     ) -> Result<u64> {
@@ -735,7 +735,7 @@ impl CheckpointManager {
         }
     }
     
-    async fn create_checkpoint(&self, tier_level: TierLevel) -> Result<CheckpointInfo> {
+    async fn create_checkpoint(&self, tier_level: String) -> Result<CheckpointInfo> {
         let checkpoint_id = uuid::Uuid::new_v4().to_string();
         let timestamp = Utc::now();
         let file_path = PathBuf::from(format!("checkpoint_{}_{}.chkpt", tier_level as u8, checkpoint_id));

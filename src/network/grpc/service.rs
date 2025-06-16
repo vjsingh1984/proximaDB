@@ -212,12 +212,14 @@ impl VectorDb for ProximaDbGrpcService {
             Some(req.distance_metric),
             Some(req.indexing_algorithm),
             None, // TODO: Convert req.config to HashMap<String, Value>
+            None, // TODO: Add flush_config parameter
+            None, // TODO: Add filterable_metadata_fields to proto and extract here
         ).await {
             Ok(collection) => {
                 let collection_pb = Collection {
                     id: collection.id.clone(),
                     name: collection.name,
-                    dimension: collection.dimension,
+                    dimension: collection.dimension as u32,
                     distance_metric: collection.distance_metric,
                     indexing_algorithm: collection.indexing_algorithm,
                     created_at: Self::system_time_to_timestamp(
@@ -266,7 +268,7 @@ impl VectorDb for ProximaDbGrpcService {
                 let collection_pb = Collection {
                     id: collection.id,
                     name: collection.name,
-                    dimension: collection.dimension,
+                    dimension: collection.dimension as u32,
                     distance_metric: collection.distance_metric,
                     indexing_algorithm: collection.indexing_algorithm,
                     created_at: Self::system_time_to_timestamp(
@@ -304,7 +306,7 @@ impl VectorDb for ProximaDbGrpcService {
                     Collection {
                         id: collection.id,
                         name: collection.name,
-                        dimension: collection.dimension,
+                        dimension: collection.dimension as u32,
                         distance_metric: collection.distance_metric,
                         indexing_algorithm: collection.indexing_algorithm,
                         created_at: Self::system_time_to_timestamp(
@@ -506,7 +508,7 @@ impl VectorDb for ProximaDbGrpcService {
         let collection_id = self.resolve_get_vector_collection_id(req.collection_identifier).await?;
 
         // Use vector_id directly as String (client-provided ID)
-        let vector_id = req.vector_id;
+        let vector_id = req.vector_id.clone();
         
         // Use storage engine directly (same as REST API)
         let storage = self.storage.read().await;
@@ -645,32 +647,24 @@ impl VectorDb for ProximaDbGrpcService {
 
         let collection_id = self.resolve_delete_vector_collection_id(req.collection_identifier).await?;
 
-        // Parse vector ID as UUID
-        let vector_uuid = match uuid::Uuid::parse_str(&req.vector_id) {
-            Ok(uuid) => uuid,
-            Err(_) => {
-                return Ok(Response::new(DeleteVectorResponse {
-                    success: false,
-                    message: "Vector ID must be a valid UUID".to_string(),
-                }));
-            }
-        };
+        // Use vector_id directly as String (client-provided ID)
+        let vector_id = req.vector_id;
         
         // Use storage engine directly (same as REST API)
         let storage = self.storage.write().await;
-        match storage.soft_delete(&collection_id, &vector_uuid).await {
+        match storage.soft_delete(&collection_id, &vector_id).await {
             Ok(true) => {
-                info!("✅ gRPC Vector deleted: {}", req.vector_id);
+                info!("✅ gRPC Vector deleted: {}", vector_id);
                 Ok(Response::new(DeleteVectorResponse {
                     success: true,
-                    message: format!("Vector '{}' deleted successfully", req.vector_id),
+                    message: format!("Vector '{}' deleted successfully", vector_id),
                 }))
             },
             Ok(false) => {
-                warn!("⚠️ gRPC Vector not found for deletion: {}", req.vector_id);
+                warn!("⚠️ gRPC Vector not found for deletion: {}", vector_id);
                 Ok(Response::new(DeleteVectorResponse {
                     success: false,
-                    message: format!("Vector '{}' not found", req.vector_id),
+                    message: format!("Vector '{}' not found", vector_id),
                 }))
             },
             Err(e) => {

@@ -76,11 +76,14 @@ impl VectorService {
         // Use provided vector_id or generate one if not provided
         let id = vector_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         
+        // Accept all metadata fields - they will be mapped to filterable columns + extra_meta internally
+        let validated_metadata = metadata.unwrap_or_default();
+        
         let record = VectorRecord {
             id,
             collection_id: collection_id.to_string(),
             vector,
-            metadata: metadata.unwrap_or_default(),
+            metadata: validated_metadata,
             timestamp: Utc::now(),
             expires_at: None,
         };
@@ -216,8 +219,35 @@ impl CollectionService {
         indexing_algorithm: Option<String>,
         config: Option<HashMap<String, Value>>,
         flush_config: Option<CollectionFlushConfig>,
+        filterable_metadata_fields: Option<Vec<String>>,
     ) -> ServiceResult<CollectionMetadata> {
         let mut storage = self.storage.write().await;
+        
+        // Validate and limit filterable metadata fields to 16 for Parquet column optimization
+        let mut validated_fields = filterable_metadata_fields.unwrap_or_default();
+        if validated_fields.len() > 16 {
+            tracing::warn!("⚠️  Collection '{}' specified {} filterable metadata fields, limiting to 16 for Parquet optimization. Dropped fields: {:?}. Additional metadata can still be used via insert operations (stored in extra_meta).", 
+                name, validated_fields.len(), &validated_fields[16..]);
+            validated_fields.truncate(16);
+        }
+        
+        if !validated_fields.is_empty() {
+            tracing::info!("📊 Collection '{}' configured with {} filterable metadata fields for optimized queries: {:?}", 
+                name, validated_fields.len(), validated_fields);
+        }
+        
+        // Store filterable metadata fields in collection config
+        let mut collection_config = config.unwrap_or_default();
+        if !validated_fields.is_empty() {
+            collection_config.insert(
+                "filterable_metadata_fields".to_string(),
+                serde_json::Value::Array(
+                    validated_fields.iter()
+                        .map(|s| serde_json::Value::String(s.clone()))
+                        .collect()
+                )
+            );
+        }
         
         let mut metadata = CollectionMetadata {
             id: name.clone(),
@@ -229,7 +259,7 @@ impl CollectionService {
             updated_at: Utc::now(),
             vector_count: 0,
             total_size_bytes: 0,
-            config: config.unwrap_or_default(),
+            config: collection_config,
             flush_config,
             ..CollectionMetadata::default()
         };
@@ -237,7 +267,8 @@ impl CollectionService {
         tracing::info!("🏗️ Creating collection '{}' with flush config: {:?}", 
                       metadata.name, metadata.flush_config);
         
-        storage.create_collection(metadata.id.clone())
+        // Pass validated filterable metadata fields to storage layer
+        storage.create_collection_with_metadata(metadata.id.clone(), Some(metadata.clone()), Some(validated_fields))
             .await
             .map_err(|e| ServiceError::Storage(e.to_string()))?;
             

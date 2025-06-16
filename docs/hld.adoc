@@ -74,6 +74,309 @@ ProximaDB follows a **layered, cloud-native architecture** with clear separation
 - **Caching Strategy**: Multi-level caching (L1: memory, L2: local SSD, L3: distributed)
 - **Auto-scaling**: Based on query latency and throughput metrics
 
+==== Advanced Vector Search Strategies
+
+ProximaDB implements a **multi-strategy vector search architecture** that combines the best of clustering and quantization approaches for optimal performance across different use cases and dataset sizes.
+
+===== Strategy 1: HNSW + Quantization (Primary Approach)
+
+**Technology Choice**: Graph-based indexing with compression enhancement
+
+**Architecture Components**:
+- **HNSW Graph Structure**: Primary navigation mechanism for similarity search
+- **Scalar Quantization (SQ)**: int8 vector storage for memory efficiency  
+- **Two-Phase Search**: 
+  * Phase 1: Fast candidate selection using quantized vectors in HNSW graph
+  * Phase 2: Re-ranking with full float32 precision from Parquet storage
+- **Incremental Updates**: Add vectors to existing graph without full rebuilds
+
+**Advantages**:
+- Superior accuracy/speed trade-off across all data distributions
+- Memory efficient: 4x reduction with int8 quantization
+- Handles non-clustered data excellently
+- Incremental indexing capability
+- Hardware acceleration ready (SIMD/GPU optimized distance calculations)
+
+**Implementation Details**:
+- Quantized vectors stored in memory for graph traversal
+- Full-precision vectors stored in VIPER Parquet segments  
+- Configurable graph parameters (M, efConstruction, ef)
+- SIMD-optimized distance calculations for quantized search
+
+===== Strategy 2: IVF Cluster-Based Pruning (Massive Scale)
+
+**Technology Choice**: Cluster-based partitioning for disk-efficient search
+
+**Architecture Components**:
+- **K-Means Clustering**: Partition vectors into manageable clusters
+- **Inverted File Structure**: centroid_id → [vector_ids] mapping
+- **nprobe Parameter**: Controls search/accuracy trade-off
+- **Disk-Optimized Storage**: Each cluster stored as separate Parquet partition
+
+**Advantages**:
+- Excellent I/O efficiency for large datasets
+- Massive search space reduction (e.g., search 5 of 1000 clusters)
+- Well-suited for disk-based storage systems
+- Predictable memory usage independent of dataset size
+
+**Disadvantages**:
+- Rigid cluster boundaries can miss nearest neighbors
+- Expensive clustering process for dynamic datasets
+- Sensitive to nprobe tuning for accuracy
+
+===== Strategy 3: IVF-HNSW Hybrid (Future Evolution)
+
+**Technology Choice**: Best of both worlds for extreme scale
+
+**Architecture Components**:
+- **Coarse-Grained IVF**: Partition into thousands of clusters
+- **Fine-Grained HNSW**: Independent graph per cluster
+- **Parallel Search**: Search multiple cluster graphs simultaneously
+- **Result Merging**: Combine and rank results across clusters
+
+**Benefits**:
+- Combines massive search space reduction (IVF) with high accuracy (HNSW)
+- Ideal for multi-TB datasets that exceed single HNSW capacity
+- Enables cluster-specific optimization strategies
+- Fault-tolerant: individual cluster failures don't affect entire system
+
+===== Search Strategy Selection
+
+**Automatic Strategy Selection** based on collection characteristics:
+
+[source,rust]
+----
+enum SearchStrategy {
+    // Default for most use cases
+    HNSWQuantized {
+        quantization: QuantizationType,  // SQ8, PQ
+        ef: usize,                       // Search breadth
+        re_rank_count: usize,           // Full-precision candidates
+    },
+    
+    // For massive datasets with clear clustering
+    IVFExhaustive {
+        nprobe: usize,                  // Clusters to search
+        quantization: Option<QuantizationType>,
+    },
+    
+    // Future: extreme scale hybrid
+    IVFHNSWHybrid {
+        coarse_nprobe: usize,
+        fine_ef: usize,
+        quantization: QuantizationType,
+    },
+}
+----
+
+**Strategy Recommendation Logic**:
+- Collections < 10M vectors: HNSW + SQ8
+- Collections 10M-100M vectors: HNSW + PQ or IVF based on clustering quality
+- Collections > 100M vectors: IVF-HNSW hybrid with progressive deployment
+
+===== Quantization Implementation
+
+**Scalar Quantization (SQ)**:
+- Convert float32 → int8 with learned min/max per dimension
+- 4x memory reduction, 2-4x speed improvement
+- Negligible accuracy loss for most datasets
+
+**Product Quantization (PQ)**:  
+- Divide vector into subspaces, quantize each independently
+- 8-32x compression possible with controlled accuracy trade-off
+- Ideal for memory-constrained environments
+
+**Quantization Training**:
+- Automatic quantization parameter learning during index build
+- Per-collection quantization models stored with index metadata
+- Periodic re-quantization for evolving datasets
+
+==== Core Engine & Performance Differentiation
+
+ProximaDB implements **two fundamental differentiators** that provide significant cost and performance advantages over traditional vector databases.
+
+===== Advanced Vector Compression with Re-ranking
+
+**Core Innovation**: Dual-format storage and intelligent memory management
+
+**Architecture Overview**:
+```
+┌─────────────────┬─────────────────────────────────┐
+│   Storage       │            Memory               │
+│  (Parquet)      │         (Runtime)               │
+├─────────────────┼─────────────────────────────────┤
+│ Full float32    │ Quantized vectors               │
+│ vectors         │ (8-32x compression)             │
+│ (perfect        │                                 │
+│ accuracy)       │ HNSW graph on                   │
+│                 │ quantized data                  │
+└─────────────────┴─────────────────────────────────┘
+```
+
+**Compression Strategies**:
+
+*Scalar Quantization (SQ)*:
+- Convert float32 → uint8 per dimension with learned min/max
+- 4x memory reduction with minimal accuracy loss
+- SIMD-optimized distance calculations
+- Ideal for most real-world datasets
+
+*Product Quantization (PQ)*:
+- Divide vector into subspaces, quantize each independently  
+- 8-32x compression ratio with controlled accuracy trade-off
+- Asymmetric distance computation for queries
+- Perfect for memory-constrained environments
+
+**Two-Phase Search Process**:
+
+*Phase 1: Fast Candidate Selection*
+```rust
+// Search quantized vectors in memory
+let candidates = hnsw_quantized_index
+    .search(query, candidate_count) // e.g., top 200
+    .with_quantized_distance()
+    .execute();
+```
+
+*Phase 2: Precise Re-ranking*
+```rust
+// Fetch full-precision vectors for final ranking
+let final_results = Vec::new();
+for candidate in candidates {
+    let full_vector = parquet_storage
+        .load_vector(&candidate.id)  // Only load what we need
+        .await?;
+    
+    let exact_score = compute_exact_distance(query, &full_vector);
+    final_results.push(SearchResult { 
+        id: candidate.id, 
+        score: exact_score 
+    });
+}
+final_results.sort_by_score().take(k)
+```
+
+**Business Impact**:
+- **Cost Reduction**: Fit 4-32x more vectors in same RAM budget
+- **Performance**: Near-in-memory speed at disk-storage cost
+- **Scale**: Handle truly massive datasets that competitors can't afford
+- **Flexibility**: Choose compression level based on accuracy requirements
+
+===== Cost-Based Query Optimizer
+
+**Core Innovation**: Intelligent operation reordering based on execution cost models
+
+**Problem Statement**: 
+Traditional vector databases execute queries naively:
+1. Perform expensive ANN search on full dataset
+2. Apply metadata filters afterward
+3. Return results
+
+This is inefficient for queries with selective filters.
+
+**ProximaDB's Solution**: 
+Intelligent query planning that minimizes total execution cost.
+
+**Cost Model Components**:
+
+```rust
+enum OperationCost {
+    // Very cheap: Parquet predicate pushdown  
+    PromotedColumnFilter { 
+        selectivity: f32,           // 0.0 = very selective
+        cost_per_row: f32,         // ~0.001ms per row
+    },
+    
+    // Expensive: Full JSON scan
+    ExtraMetaFilter {
+        selectivity: f32,           
+        cost_per_row: f32,         // ~0.1ms per row  
+    },
+    
+    // Moderate: Vector similarity search
+    ANNSearch {
+        dataset_size: usize,
+        ef_parameter: usize,
+        cost_per_vector: f32,      // ~0.01ms per vector
+    },
+}
+```
+
+**Query Optimization Examples**:
+
+*Example 1: Selective Filter + ANN*
+```sql
+-- Query: Category-specific similarity search
+SELECT * FROM vectors 
+WHERE category = 'electronics'  -- Very selective (1% of data)
+ORDER BY cosine_similarity(vector, query_vector)
+LIMIT 10
+```
+
+*Naive Execution*:
+1. ANN search on 10M vectors → 10,000ms
+2. Apply category filter → 100ms  
+3. Total: 10,100ms
+
+*Optimized Execution*:
+1. Apply category filter first → 10ms (filters to 100K vectors)
+2. ANN search on 100K vectors → 1,000ms
+3. Total: 1,010ms (**10x speedup**)
+
+*Example 2: Multiple Filter Strategy*
+```sql
+-- Query: Complex metadata filtering
+SELECT * FROM vectors 
+WHERE promoted_status = 'premium'      -- Promoted column (cheap)
+  AND extra_meta->>'brand' = 'Apple'   -- JSON scan (expensive)
+ORDER BY cosine_similarity(vector, query_vector)
+LIMIT 5
+```
+
+*Optimized Execution Plan*:
+1. Apply promoted_status filter (cheap predicate pushdown)
+2. ANN search on filtered subset  
+3. Apply expensive JSON filter on final candidates only
+4. Result: Minimize expensive operations to smallest possible dataset
+
+**Query Planner Architecture**:
+
+```rust
+pub struct QueryPlanner {
+    // Statistics for cost estimation
+    column_statistics: Arc<RwLock<HashMap<String, ColumnStats>>>,
+    // Cost model for different operations
+    cost_model: Arc<CostModel>,
+    // Execution plan cache
+    plan_cache: Arc<LruCache<QueryHash, ExecutionPlan>>,
+}
+
+impl QueryPlanner {
+    /// Generate optimal execution plan
+    pub fn optimize_query(&self, query: &VectorQuery) -> ExecutionPlan {
+        let mut operations = self.extract_operations(query);
+        
+        // Estimate selectivity and cost for each operation
+        for op in &mut operations {
+            op.estimated_cost = self.cost_model.estimate_cost(op);
+            op.selectivity = self.estimate_selectivity(op);
+        }
+        
+        // Sort by cost-effectiveness (selectivity / cost ratio)
+        operations.sort_by_key(|op| op.cost_effectiveness());
+        
+        // Generate execution plan
+        ExecutionPlan::new(operations)
+    }
+}
+```
+
+**Differentiation Impact**:
+- **Consistent Performance**: Complex queries remain fast automatically
+- **Enterprise-Grade**: Sophisticated optimization like traditional databases
+- **Developer Experience**: No manual query tuning required
+- **Competitive Advantage**: Significantly outperform on filtered similarity searches
+
 ==== Ingest Service  
 **Primary Responsibility**: Vector ingestion and preprocessing
 

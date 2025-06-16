@@ -16,15 +16,12 @@ use tokio::time::{interval, Duration as TokioDuration};
 
 use crate::core::CollectionId;
 use super::WalConfig;
-use super::memtable::{MemTableStrategy, FlushIsolationCoordinator, IsolationReason};
+use super::memtable::MemTableStrategy;
 
 /// WAL age monitoring and flush triggering service
 pub struct WalAgeMonitor {
     /// WAL manager reference
     wal_manager: Arc<dyn WalManagerTrait>,
-    
-    /// Flush isolation coordinator
-    flush_coordinator: Arc<FlushIsolationCoordinator>,
     
     /// Configuration
     config: Arc<WalConfig>,
@@ -74,12 +71,10 @@ impl WalAgeMonitor {
     /// Create new WAL age monitor
     pub fn new(
         wal_manager: Arc<dyn WalManagerTrait>,
-        flush_coordinator: Arc<FlushIsolationCoordinator>,
         config: Arc<WalConfig>,
     ) -> Self {
         Self {
             wal_manager,
-            flush_coordinator,
             config,
             shutdown: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(tokio::sync::RwLock::new(AgeMonitorStats::default())),
@@ -181,28 +176,13 @@ impl WalAgeMonitor {
                       age_info.entry_count,
                       age_info.memory_usage / (1024 * 1024));
         
-        // Check if collection is already being flushed
-        if self.flush_coordinator.is_isolated(&age_info.collection_id).await {
-            tracing::debug!("⏸️ Collection {} already isolated, skipping age-based flush", age_info.collection_id);
-            return Ok(());
+        // Directly trigger flush for the collection
+        if let Err(e) = self.wal_manager.flush(Some(&age_info.collection_id)).await {
+            tracing::error!("❌ Failed to flush collection {}: {}", age_info.collection_id, e);
+            return Err(e);
         }
         
-        // Start isolation for flush
-        let memtable = self.wal_manager.get_memtable_strategy().await?;
-        let isolatable_memtable = memtable.as_any()
-            .downcast_ref::<super::memtable::skiplist_isolatable::IsolatableSkipListMemTable>()
-            .ok_or_else(|| anyhow::anyhow!("Memtable does not support isolation"))?;
-        
-        self.flush_coordinator.start_isolation(
-            isolatable_memtable,
-            &age_info.collection_id,
-            IsolationReason::Flush,
-        ).await?;
-        
-        // Trigger actual flush operation (this would integrate with existing flush logic)
-        // For now, we just log the trigger - the actual flush would be handled by the flush coordinator
-        tracing::info!("🚀 Age-based flush isolation started for collection {}", age_info.collection_id);
-        
+        tracing::info!("✅ Age-based flush completed for collection {}", age_info.collection_id);
         Ok(())
     }
     
@@ -269,6 +249,9 @@ impl WalAgeMonitor {
 pub trait WalManagerTrait: Send + Sync {
     /// Get the memtable strategy for age monitoring
     async fn get_memtable_strategy(&self) -> Result<Arc<dyn MemTableStrategy>>;
+    
+    /// Flush a specific collection or all collections
+    async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<super::FlushResult>;
     
     /// Get memtable as Any for downcasting
     fn as_any(&self) -> &dyn std::any::Any;

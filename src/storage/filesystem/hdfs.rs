@@ -91,6 +91,15 @@ pub struct HdfsFileSystem {
     client: HdfsClient,
 }
 
+impl std::fmt::Debug for HdfsFileSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HdfsFileSystem")
+            .field("config", &self.config)
+            .field("client", &"<hdfs_client>")
+            .finish()
+    }
+}
+
 /// HDFS WebHDFS REST API client
 struct HdfsClient {
     config: HdfsConfig,

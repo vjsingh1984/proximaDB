@@ -67,7 +67,7 @@ impl Default for MetadataWalConfig {
         
         // Separate directory from vector WAL data
         base_config.multi_disk.data_directories = vec![
-            "./data/metadata/wal".to_string()
+            "./data/metadata/wal".to_string().into()
         ];
         
         // Smaller flush threshold for metadata (fewer operations than vectors)
@@ -82,9 +82,7 @@ impl Default for MetadataWalConfig {
         // Use Snappy for fast compression (metadata needs fast read/write)
         base_config.compression.algorithm = CompressionAlgorithm::Snappy;
         
-        // Enable batch operations for atomic metadata updates
-        base_config.enable_batch_operations = true;
-        base_config.batch_size = 100; // Smaller batches for metadata
+        // Configuration optimized for metadata operations
         
         Self {
             base_config,
@@ -158,7 +156,18 @@ pub struct MetadataWalManager {
     stats: Arc<tokio::sync::RwLock<MetadataStats>>,
 }
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for MetadataWalManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetadataWalManager")
+            .field("config", &self.config)
+            .field("metadata_cache", &"<cached data>")
+            .field("cache_timestamps", &"<timestamps>")
+            .field("stats", &"<stats>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct MetadataStats {
     pub total_collections: u64,
     pub cache_hits: u64,
@@ -345,6 +354,7 @@ impl MetadataWalManager {
                 collection_id: collection_id.clone(),
                 operation: WalOperation::Delete {
                     vector_id: format!("metadata_{}", collection_id),
+                    expires_at: Some(Utc::now() + chrono::Duration::days(30)), // 30-day soft delete
                 },
                 timestamp: Utc::now(),
                 sequence: 0,
@@ -461,6 +471,23 @@ pub struct SystemMetadata {
     pub total_vectors: u64,
     pub total_size_bytes: u64,
     pub config: HashMap<String, serde_json::Value>,
+}
+
+impl Default for SystemMetadata {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            version: "0.1.0".to_string(),
+            node_id: uuid::Uuid::new_v4().to_string(),
+            cluster_name: "default".to_string(),
+            created_at: now,
+            updated_at: now,
+            total_collections: 0,
+            total_vectors: 0,
+            total_size_bytes: 0,
+            config: HashMap::new(),
+        }
+    }
 }
 
 impl SystemMetadata {

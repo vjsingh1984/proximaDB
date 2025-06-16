@@ -54,6 +54,7 @@ pub struct CreateCollectionRequest {
     pub indexing_algorithm: Option<String>,
     pub allow_client_ids: Option<bool>,  // Allow client-provided IDs
     pub config: Option<HashMap<String, serde_json::Value>>,
+    pub filterable_metadata_fields: Option<Vec<String>>, // Up to 16 metadata fields for Parquet optimization
     
     // WAL flush configuration (optional - uses global defaults if not specified)
     pub max_wal_age_hours: Option<f64>,    // Max WAL age in hours (default: 24 hours)
@@ -120,7 +121,7 @@ impl From<CollectionMetadata> for CollectionResponse {
         Self {
             id: metadata.id,
             name: metadata.name,
-            dimension: metadata.dimension,
+            dimension: metadata.dimension as u32,
             distance_metric: metadata.distance_metric,
             indexing_algorithm: metadata.indexing_algorithm,
             created_at: metadata.created_at.to_rfc3339(),
@@ -367,6 +368,10 @@ pub fn create_router(storage: Arc<tokio::sync::RwLock<StorageEngine>>) -> Router
         .route("/collections/:collection_id/migrate/history", get(get_migration_history))
         .route("/collections/:collection_id/strategy", get(get_current_strategy))
         
+        // TTL (Time-To-Live) management
+        .route("/ttl/stats", get(get_ttl_stats))
+        .route("/ttl/cleanup", post(force_ttl_cleanup))
+        
         .with_state(state)
 }
 
@@ -456,6 +461,7 @@ async fn create_collection(
         request.indexing_algorithm,
         request.config,
         flush_config,
+        request.filterable_metadata_fields,
     ).await {
         Ok(metadata) => Ok(Json(CollectionResponse::from(metadata))),
         Err(e) => {
@@ -1489,4 +1495,40 @@ async fn get_current_strategy(
             ))
         }
     }
+}
+
+/// TTL statistics response
+#[derive(Debug, Serialize)]
+pub struct TTLStatsResponse {
+    pub enabled: bool,
+    pub stats: Option<crate::storage::viper::TTLStats>,
+}
+
+/// TTL cleanup response
+#[derive(Debug, Serialize)]
+pub struct TTLCleanupResponse {
+    pub enabled: bool,
+    pub result: Option<crate::storage::viper::CleanupResult>,
+}
+
+/// Get TTL cleanup statistics
+async fn get_ttl_stats(
+    State(state): State<ApiState>,
+) -> Result<Json<TTLStatsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let response = TTLStatsResponse {
+        enabled: false, 
+        stats: None,    
+    };
+    Ok(Json(response))
+}
+
+/// Force TTL cleanup
+async fn force_ttl_cleanup(
+    State(state): State<ApiState>,
+) -> Result<Json<TTLCleanupResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let response = TTLCleanupResponse {
+        enabled: false, 
+        result: None,   
+    };
+    Ok(Json(response))
 }

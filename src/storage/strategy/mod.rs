@@ -254,12 +254,29 @@ pub struct SearchCacheConfig {
 }
 
 /// Search filter for vector queries
-#[derive(Debug, Clone)]
 pub struct SearchFilter {
     /// Metadata filters
     pub metadata_filters: HashMap<String, serde_json::Value>,
     /// Custom filter function
     pub custom_filter: Option<Box<dyn Fn(&VectorRecord) -> bool + Send + Sync>>,
+}
+
+impl std::fmt::Debug for SearchFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchFilter")
+            .field("metadata_filters", &self.metadata_filters)
+            .field("custom_filter", &self.custom_filter.is_some())
+            .finish()
+    }
+}
+
+impl Clone for SearchFilter {
+    fn clone(&self) -> Self {
+        Self {
+            metadata_filters: self.metadata_filters.clone(),
+            custom_filter: None, // Function trait objects can't be cloned
+        }
+    }
 }
 
 /// Search result with score and metadata
@@ -342,7 +359,7 @@ pub struct StrategyRegistry {
     /// Registered strategies by collection ID
     strategies: HashMap<CollectionId, Arc<dyn CollectionStrategy>>,
     /// Default strategy factory
-    default_strategy_factory: Box<dyn Fn(&CollectionMetadata) -> Result<Box<dyn CollectionStrategy>> + Send + Sync>,
+    default_strategy_factory: Box<dyn Fn(&CollectionMetadata) -> Result<Arc<dyn CollectionStrategy>> + Send + Sync>,
 }
 
 impl StrategyRegistry {
@@ -352,7 +369,7 @@ impl StrategyRegistry {
             strategies: HashMap::new(),
             default_strategy_factory: Box::new(|metadata| {
                 // Default to standard strategy
-                Ok(Box::new(standard::StandardStrategy::new(metadata)?))
+                Ok(Arc::new(standard::StandardStrategy::new(metadata)?))
             }),
         }
     }
@@ -372,7 +389,7 @@ impl StrategyRegistry {
         if let Some(strategy) = self.strategies.get(collection_id) {
             Ok(strategy.clone())
         } else {
-            let strategy = Arc::new((self.default_strategy_factory)(metadata)?);
+            let strategy = (self.default_strategy_factory)(metadata)?;
             self.strategies.insert(collection_id.clone(), strategy.clone());
             Ok(strategy)
         }

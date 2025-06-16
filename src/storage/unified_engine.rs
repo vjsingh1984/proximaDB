@@ -17,8 +17,9 @@ use chrono::{DateTime, Utc};
 use crate::core::{VectorRecord, CollectionId, VectorId};
 use crate::storage::{
     WalManager, WalConfig, Memtable, StorageError,
-    ViperStorageEngine, ViperConfig
+    ViperConfig, ViperParquetFlusher, ViperStorageEngine, SearchStrategy
 };
+use crate::storage::viper::types::ViperSearchContext;
 
 /// Collection storage layout strategy
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +38,8 @@ pub struct CollectionConfig {
     pub collection_id: CollectionId,
     pub dimension: usize,
     pub storage_strategy: StorageLayoutStrategy,
+    /// Filterable metadata fields (max 16) for Parquet column optimization
+    pub filterable_metadata_fields: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -168,11 +171,21 @@ impl UnifiedStorageEngine {
         collection_id: CollectionId,
         dimension: usize,
         storage_strategy: StorageLayoutStrategy,
+        filterable_metadata_fields: Option<Vec<String>>,
     ) -> Result<()> {
+        // Validate and limit metadata fields to 16
+        let mut validated_fields = filterable_metadata_fields.unwrap_or_default();
+        if validated_fields.len() > 16 {
+            eprintln!("Warning: Collection {} specified {} filterable metadata fields, limiting to 16", 
+                collection_id, validated_fields.len());
+            validated_fields.truncate(16);
+        }
+        
         let collection_config = CollectionConfig {
             collection_id: collection_id.clone(),
             dimension,
             storage_strategy: storage_strategy.clone(),
+            filterable_metadata_fields: validated_fields,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -423,7 +436,7 @@ impl UnifiedStorageEngine {
             match collection_config.storage_strategy {
                 StorageLayoutStrategy::VIPER => {
                     // Use VIPER search engine
-                    let viper_context = crate::storage::viper::ViperSearchContext {
+                    let viper_context = ViperSearchContext {
                         collection_id: collection_id.clone(),
                         query_vector: query_vector.to_vec(),
                         k: remaining_k,
@@ -736,7 +749,7 @@ impl StorageLayoutHandler for ViperStorageHandler {
         k: usize,
     ) -> Result<Vec<VectorRecord>> {
         // Use VIPER search engine
-        let search_context = crate::storage::viper::ViperSearchContext {
+        let search_context = ViperSearchContext {
             collection_id: collection_id.clone(),
             query_vector: query_vector.to_vec(),
             k,

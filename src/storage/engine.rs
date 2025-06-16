@@ -207,10 +207,10 @@ impl StorageEngine {
     }
 
     pub async fn create_collection(&self, collection_id: CollectionId) -> crate::storage::Result<()> {
-        self.create_collection_with_metadata(collection_id, None).await
+        self.create_collection_with_metadata(collection_id, None, None).await
     }
     
-    pub async fn create_collection_with_metadata(&self, collection_id: CollectionId, metadata: Option<CollectionMetadata>) -> crate::storage::Result<()> {
+    pub async fn create_collection_with_metadata(&self, collection_id: CollectionId, metadata: Option<CollectionMetadata>, filterable_metadata_fields: Option<Vec<String>>) -> crate::storage::Result<()> {
         // Create metadata or use provided
         let collection_metadata = metadata.unwrap_or_else(|| CollectionMetadata {
             id: collection_id.clone(),
@@ -430,7 +430,7 @@ impl StorageEngine {
                        index + 1, inserted_ids.capacity(), record_id, record.collection_id);
             
             self.write(record).await?;
-            inserted_ids.push(record_id);
+            inserted_ids.push(record_id.clone());
             
             tracing::debug!("✅ Successfully processed record {}/{}: vector_id={}", 
                        index + 1, inserted_ids.capacity(), record_id);

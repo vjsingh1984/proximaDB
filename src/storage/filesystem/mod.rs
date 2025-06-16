@@ -209,7 +209,7 @@ pub struct FilesystemPerformanceConfig {
 
 /// Abstract filesystem trait for strategy pattern
 #[async_trait]
-pub trait FileSystem: Send + Sync {
+pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Read file contents
     async fn read(&self, path: &str) -> FsResult<Vec<u8>>;
     
@@ -321,6 +321,15 @@ impl Default for FilesystemConfig {
 pub struct FilesystemFactory {
     config: FilesystemConfig,
     filesystems: HashMap<String, Box<dyn FileSystem>>,
+}
+
+impl std::fmt::Debug for FilesystemFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilesystemFactory")
+            .field("config", &self.config)
+            .field("filesystems_count", &self.filesystems.len())
+            .finish()
+    }
 }
 
 impl FilesystemFactory {

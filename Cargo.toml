@@ -40,6 +40,9 @@ crc32fast = "1.4"
 # System information
 libc = "0.2"
 
+# Data structures
+art-tree = "0.2.0"
+
 # Networking & gRPC
 tonic = "0.10"
 tonic-build = "0.10"

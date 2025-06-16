@@ -142,7 +142,8 @@ impl WalDiskManager {
         Ok(manager)
     }
     
-    /// Flush entries to disk for a collection
+    /*
+    /// Flush entries to disk for a collection (deprecated - use write_raw)
     pub async fn flush_collection(
         &self,
         collection_id: &CollectionId,
@@ -216,7 +217,9 @@ impl WalDiskManager {
             flush_duration_ms: flush_duration,
         })
     }
+    */
     
+    /*
     /// Read entries from disk for a collection
     pub async fn read_entries(
         &self,
@@ -261,6 +264,67 @@ impl WalDiskManager {
         }
         
         Ok(result)
+    }
+    */
+    
+    /// Write raw serialized data for a collection (used by strategies)
+    pub async fn write_raw(&self, collection_id: &CollectionId, data: Vec<u8>) -> Result<FlushResult> {
+        if data.is_empty() {
+            return Ok(FlushResult {
+                entries_flushed: 0,
+                bytes_written: 0,
+                segments_created: 0,
+                collections_affected: vec![],
+                flush_duration_ms: 0,
+            });
+        }
+        
+        let start_time = std::time::Instant::now();
+        
+        // Get or create collection layout
+        self.get_or_create_layout(collection_id).await?;
+        
+        // Create new segment
+        let segment_path = {
+            let mut layouts = self.collection_layouts.write().await;
+            let layout = layouts.get_mut(collection_id).unwrap();
+            layout.next_segment_path()
+        };
+        
+        // Write to filesystem
+        let bytes_written = self.write_segment(&segment_path, &data).await?;
+        
+        // Update layout
+        let segment = DiskSegment {
+            path: segment_path,
+            sequence_range: (0, 0), // Unknown for raw data
+            size_bytes: bytes_written,
+            entry_count: 0, // Unknown for raw data
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            compression_ratio: 1.0, // Assume already compressed by strategy
+        };
+        
+        {
+            let mut layouts = self.collection_layouts.write().await;
+            if let Some(layout) = layouts.get_mut(collection_id) {
+                layout.add_segment(segment);
+                
+                // Update disk usage
+                let mut disk_usage = self.disk_usage.write().await;
+                disk_usage[layout.disk_index] += bytes_written;
+            }
+        }
+        
+        let flush_duration = start_time.elapsed().as_millis() as u64;
+        
+        Ok(FlushResult {
+            entries_flushed: 0, // Unknown for raw data
+            bytes_written,
+            segments_created: 1,
+            collections_affected: vec![collection_id.clone()],
+            flush_duration_ms: flush_duration,
+        })
     }
     
     /// Drop collection data from disk
@@ -466,6 +530,7 @@ impl WalDiskManager {
         Ok(data.len() as u64)
     }
     
+    /*
     /// Read segment from filesystem
     async fn read_segment(&self, path: &Path, deserializer: &dyn WalDeserializer) -> Result<Vec<WalEntry>> {
         let url = format!("file://{}", path.to_string_lossy());
@@ -475,6 +540,7 @@ impl WalDiskManager {
         
         deserializer.deserialize_entries(&data).await
     }
+    */
     
     /// Estimate compression ratio
     fn estimate_compression_ratio(&self, entries: &[WalEntry], compressed_size: u64) -> f64 {
@@ -495,7 +561,7 @@ impl WalDiskManager {
         std::mem::size_of::<WalEntry>() + match &entry.operation {
             super::WalOperation::Insert { record, .. } | super::WalOperation::Update { record, .. } => {
                 record.vector.len() * std::mem::size_of::<f32>() +
-                record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                record.metadata.len() * 32 // Estimate 32 bytes per metadata entry
             }
             _ => 64,
         }
@@ -516,17 +582,6 @@ impl WalDiskManager {
     }
 }
 
-/// Serializer trait for WAL entries
-#[async_trait::async_trait]
-pub trait WalSerializer: Send + Sync {
-    async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>>;
-}
-
-/// Deserializer trait for WAL entries
-#[async_trait::async_trait]
-pub trait WalDeserializer: Send + Sync {
-    async fn deserialize_entries(&self, data: &[u8]) -> Result<Vec<WalEntry>>;
-}
 
 /// Disk usage information
 #[derive(Debug, Clone)]

@@ -26,6 +26,7 @@ use super::{
     MetadataFilter, SystemMetadata, MetadataStorageStats,
     wal::{MetadataWalManager, MetadataWalConfig, VersionedCollectionMetadata},
 };
+use crate::storage::strategy::CollectionStrategyConfig;
 use crate::storage::filesystem::FilesystemFactory;
 
 /// Transaction identifier
@@ -72,7 +73,7 @@ impl MetadataTransaction {
     pub fn new(isolation_level: IsolationLevel, timeout_seconds: u64) -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: Uuid::new_v4(),
             operations: Vec::new(),
             state: TransactionState::Active,
             created_at: now,
@@ -137,6 +138,18 @@ pub struct AtomicMetadataStore {
     
     /// Statistics
     stats: Arc<RwLock<AtomicStoreStats>>,
+}
+
+impl std::fmt::Debug for AtomicMetadataStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AtomicMetadataStore")
+            .field("version_store", &"<version data>")
+            .field("active_transactions", &"<transactions>")
+            .field("lock_table", &"<locks>")
+            .field("cleanup_interval", &self.cleanup_interval)
+            .field("stats", &"<stats>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -609,6 +622,9 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 tags: versioned.tags,
                 owner: versioned.owner,
                 description: versioned.description,
+                strategy_config: CollectionStrategyConfig::default(),
+                strategy_change_history: Vec::new(),
+                flush_config: None, // Use global defaults
             }
         }).collect();
         

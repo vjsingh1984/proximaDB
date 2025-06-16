@@ -17,7 +17,8 @@ use anyhow::Result;
 
 use crate::core::CollectionId;
 use super::types::*;
-use super::{ViperConfig, TierLevel};
+use super::ViperConfig;
+use chrono::{DateTime, Utc};
 
 /// Progressive search engine for VIPER storage
 pub struct ViperProgressiveSearchEngine {
@@ -25,7 +26,7 @@ pub struct ViperProgressiveSearchEngine {
     config: ViperConfig,
     
     /// Tier searchers optimized for each storage tier
-    tier_searchers: Arc<RwLock<HashMap<TierLevel, Box<dyn TierSearcher>>>>,
+    storage_searchers: Arc<RwLock<HashMap<String, Box<dyn TierSearcher>>>>,
     
     /// Search concurrency limiter
     search_semaphore: Arc<Semaphore>,
@@ -37,7 +38,7 @@ pub struct ViperProgressiveSearchEngine {
     stats: Arc<RwLock<SearchStats>>,
 }
 
-/// Trait for tier-specific search implementations
+/// Trait for storage-specific search implementations
 #[async_trait::async_trait]
 pub trait TierSearcher: Send + Sync {
     /// Search within a specific tier
@@ -55,7 +56,7 @@ pub trait TierSearcher: Send + Sync {
 /// Tier characteristics for search optimization
 #[derive(Debug, Clone)]
 pub struct TierCharacteristics {
-    pub tier_level: TierLevel,
+    pub storage_url: String,
     pub avg_latency_ms: f32,
     pub throughput_mbps: f32,
     pub memory_resident: bool,
@@ -89,7 +90,7 @@ pub struct CachedFeatureSet {
 #[derive(Debug, Default)]
 pub struct SearchStats {
     pub total_searches: u64,
-    pub tier_hits: HashMap<TierLevel, u64>,
+    pub storage_hits: HashMap<String, u64>,
     pub avg_latency_ms: f32,
     pub cluster_pruning_ratio: f32,
     pub feature_reduction_ratio: f32,
@@ -126,35 +127,32 @@ impl PartialOrd for ScoredResult {
 impl ViperProgressiveSearchEngine {
     /// Create new progressive search engine
     pub async fn new(config: ViperConfig) -> Result<Self> {
-        let max_concurrent_searches = config.performance_config.parallel_config.io_thread_count;
+        let max_concurrent_searches = 8; // Default value for now
         
-        let mut tier_searchers: HashMap<TierLevel, Box<dyn TierSearcher>> = HashMap::new();
+        let mut storage_searchers: HashMap<String, Box<dyn TierSearcher>> = HashMap::new();
         
-        // Initialize tier-specific searchers
-        for (_, tier_def) in &config.tier_config.tiers {
-            let searcher: Box<dyn TierSearcher> = match tier_def.level {
-                TierLevel::UltraHot => {
-                    Box::new(UltraHotTierSearcher::new(tier_def.clone()))
-                }
-                TierLevel::Hot => {
-                    Box::new(HotTierSearcher::new(tier_def.clone()))
-                }
-                TierLevel::Warm => {
-                    Box::new(WarmTierSearcher::new(tier_def.clone()))
-                }
-                TierLevel::Cold => {
-                    Box::new(ColdTierSearcher::new(tier_def.clone()))
-                }
-                TierLevel::Archive => {
-                    Box::new(ArchiveTierSearcher::new(tier_def.clone()))
-                }
+        // Initialize storage-specific searchers based on filesystem configuration
+        // For now, use a default set of storage types - this can be made configurable later
+        let default_storage_urls = vec![
+            "file://hot".to_string(),
+            "file://warm".to_string(),
+            "s3://cold".to_string(),
+        ];
+        
+        for storage_url in default_storage_urls {
+            let searcher: Box<dyn TierSearcher> = if storage_url.starts_with("file://") {
+                Box::new(LocalFileSearcher::new(storage_url.clone()))
+            } else if storage_url.starts_with("s3://") {
+                Box::new(S3Searcher::new(storage_url.clone()))
+            } else {
+                Box::new(GenericSearcher::new(storage_url.clone()))
             };
-            tier_searchers.insert(tier_def.level.clone(), searcher);
+            storage_searchers.insert(storage_url, searcher);
         }
         
         Ok(Self {
             config,
-            tier_searchers: Arc::new(RwLock::new(tier_searchers)),
+            storage_searchers: Arc::new(RwLock::new(storage_searchers)),
             search_semaphore: Arc::new(Semaphore::new(max_concurrent_searches)),
             feature_cache: Arc::new(RwLock::new(FeatureSelectionCache::new(1000))),
             stats: Arc::new(RwLock::new(SearchStats::default())),
@@ -227,25 +225,23 @@ impl ViperProgressiveSearchEngine {
         let mut result_heap = BinaryHeap::new();
         let mut searched_vectors = HashSet::new();
         
-        let tier_order = vec![
-            TierLevel::UltraHot,
-            TierLevel::Hot,
-            TierLevel::Warm,
-            TierLevel::Cold,
-            TierLevel::Archive,
+        let storage_order = vec![
+            "file://hot".to_string(),
+            "file://warm".to_string(),
+            "s3://cold".to_string(),
         ];
         
-        for (tier_idx, tier_level) in tier_order.iter().enumerate() {
-            if let Some(max_tiers) = context.max_tiers {
-                if tier_idx >= max_tiers {
+        for (storage_idx, storage_url) in storage_order.iter().enumerate() {
+            if let Some(max_storage_locations) = context.max_storage_locations {
+                if storage_idx >= max_storage_locations {
                     break;
                 }
             }
             
-            // Get partitions for this tier
-            let partitions = self.get_tier_partitions(
+            // Get partitions for this storage location
+            let partitions = self.get_storage_partitions(
                 &context.collection_id,
-                tier_level,
+                storage_url,
                 &cluster_hints,
             ).await?;
             
@@ -253,17 +249,17 @@ impl ViperProgressiveSearchEngine {
                 continue;
             }
             
-            // Search this tier
-            let tier_results = self.search_single_tier(
+            // Search this storage location
+            let storage_results = self.search_single_storage(
                 &context,
-                tier_level,
+                storage_url,
                 partitions,
                 &important_features,
             ).await?;
             
-            // Merge results
-            for result in tier_results {
-                if !searched_vectors.contains(&result.vector_id) {
+            // Merge results with TTL filtering
+            for result in storage_results {
+                if !searched_vectors.contains(&result.vector_id) && self.is_vector_valid(&result).await {
                     searched_vectors.insert(result.vector_id.clone());
                     result_heap.push(ScoredResult {
                         score: result.score,
@@ -272,8 +268,8 @@ impl ViperProgressiveSearchEngine {
                 }
             }
             
-            // Check if we have enough results for this tier
-            if tier_idx < tier_thresholds.len() && result_heap.len() >= tier_thresholds[tier_idx] {
+            // Check if we have enough results for this storage location
+            if storage_idx < tier_thresholds.len() && result_heap.len() >= tier_thresholds[storage_idx] {
                 break; // Early stopping
             }
         }
@@ -448,17 +444,17 @@ impl ViperProgressiveSearchEngine {
         }
     }
     
-    /// Search a single tier
-    async fn search_single_tier(
+    /// Search a single storage location
+    async fn search_single_storage(
         &self,
         context: &ViperSearchContext,
-        tier_level: &TierLevel,
+        storage_url: &str,
         partitions: Vec<PartitionId>,
         important_features: &[usize],
     ) -> Result<Vec<ViperSearchResult>> {
-        let tier_searchers = self.tier_searchers.read().await;
+        let storage_searchers = self.storage_searchers.read().await;
         
-        if let Some(searcher) = tier_searchers.get(tier_level) {
+        if let Some(searcher) = storage_searchers.get(storage_url) {
             searcher.search_tier(context, partitions, important_features).await
         } else {
             Ok(Vec::new())
@@ -476,6 +472,30 @@ impl ViperProgressiveSearchEngine {
         Ok(())
     }
     
+    /// Check if a vector is valid (not expired based on TTL)
+    async fn is_vector_valid(&self, result: &ViperSearchResult) -> bool {
+        // Check if vector has expired based on TTL
+        if let Some(expires_at) = self.extract_expires_at_from_metadata(&result.metadata).await {
+            let now = Utc::now();
+            if now > expires_at {
+                tracing::debug!("🕒 Vector {} expired at {}, skipping", result.vector_id, expires_at);
+                return false;
+            }
+        }
+        true
+    }
+    
+    /// Extract expires_at timestamp from metadata
+    async fn extract_expires_at_from_metadata(&self, metadata: &serde_json::Value) -> Option<DateTime<Utc>> {
+        // Try to extract expires_at from metadata if it exists
+        if let Some(expires_at_value) = metadata.get("expires_at") {
+            if let Some(timestamp_ms) = expires_at_value.as_i64() {
+                return DateTime::from_timestamp_millis(timestamp_ms);
+            }
+        }
+        None
+    }
+
     /// Update search statistics
     async fn update_search_stats(
         &self,
@@ -498,10 +518,10 @@ impl ViperProgressiveSearchEngine {
     }
     
     // Placeholder methods for partition management
-    async fn get_tier_partitions(
+    async fn get_storage_partitions(
         &self,
         _collection_id: &CollectionId,
-        _tier_level: &TierLevel,
+        _storage_url: &str,
         _cluster_hints: &Option<Vec<ClusterId>>,
     ) -> Result<Vec<PartitionId>> {
         Ok(Vec::new())
@@ -510,7 +530,7 @@ impl ViperProgressiveSearchEngine {
     async fn get_cluster_partitions(
         &self,
         _collection_id: &CollectionId,
-        _tier_level: &TierLevel,
+        _storage_url: &str,
         _clusters: &[ClusterId],
     ) -> Result<Vec<PartitionId>> {
         Ok(Vec::new())
@@ -519,7 +539,7 @@ impl ViperProgressiveSearchEngine {
     async fn get_all_partitions(
         &self,
         _collection_id: &CollectionId,
-        _tier_level: &TierLevel,
+        _storage_url: &str,
     ) -> Result<Vec<PartitionId>> {
         Ok(Vec::new())
     }
@@ -533,68 +553,32 @@ impl ViperProgressiveSearchEngine {
     }
 }
 
-/// Ultra-hot tier searcher (MMAP + OS cache)
-struct UltraHotTierSearcher {
-    tier_def: super::TierDefinition,
+/// Local file storage searcher (file:// URLs)
+struct LocalFileSearcher {
+    storage_url: String,
 }
 
-impl UltraHotTierSearcher {
-    fn new(tier_def: super::TierDefinition) -> Self {
-        Self { tier_def }
+impl LocalFileSearcher {
+    fn new(storage_url: String) -> Self {
+        Self { storage_url }
     }
 }
 
 #[async_trait::async_trait]
-impl TierSearcher for UltraHotTierSearcher {
+impl TierSearcher for LocalFileSearcher {
     async fn search_tier(
         &self,
         _context: &ViperSearchContext,
         _partitions: Vec<PartitionId>,
         _important_features: &[usize],
     ) -> Result<Vec<ViperSearchResult>> {
-        // Ultra-hot tier: Direct memory access, no decompression needed
-        // Implementation would use memory-mapped Parquet files
+        // Local file storage: Direct file access with optimal caching
         Ok(Vec::new())
     }
     
     fn tier_characteristics(&self) -> TierCharacteristics {
         TierCharacteristics {
-            tier_level: TierLevel::UltraHot,
-            avg_latency_ms: 0.1,
-            throughput_mbps: 10000.0,
-            memory_resident: true,
-            supports_random_access: true,
-            compression_overhead: 0.0,
-        }
-    }
-}
-
-/// Hot tier searcher (Local SSD)
-struct HotTierSearcher {
-    tier_def: super::TierDefinition,
-}
-
-impl HotTierSearcher {
-    fn new(tier_def: super::TierDefinition) -> Self {
-        Self { tier_def }
-    }
-}
-
-#[async_trait::async_trait]
-impl TierSearcher for HotTierSearcher {
-    async fn search_tier(
-        &self,
-        _context: &ViperSearchContext,
-        _partitions: Vec<PartitionId>,
-        _important_features: &[usize],
-    ) -> Result<Vec<ViperSearchResult>> {
-        // Hot tier: SSD-optimized search with LZ4 decompression
-        Ok(Vec::new())
-    }
-    
-    fn tier_characteristics(&self) -> TierCharacteristics {
-        TierCharacteristics {
-            tier_level: TierLevel::Hot,
+            storage_url: self.storage_url.clone(),
             avg_latency_ms: 1.0,
             throughput_mbps: 5000.0,
             memory_resident: false,
@@ -604,67 +588,32 @@ impl TierSearcher for HotTierSearcher {
     }
 }
 
-/// Warm tier searcher (Local HDD)
-struct WarmTierSearcher {
-    tier_def: super::TierDefinition,
+/// S3 storage searcher (s3:// URLs)
+struct S3Searcher {
+    storage_url: String,
 }
 
-impl WarmTierSearcher {
-    fn new(tier_def: super::TierDefinition) -> Self {
-        Self { tier_def }
+impl S3Searcher {
+    fn new(storage_url: String) -> Self {
+        Self { storage_url }
     }
 }
 
 #[async_trait::async_trait]
-impl TierSearcher for WarmTierSearcher {
+impl TierSearcher for S3Searcher {
     async fn search_tier(
         &self,
         _context: &ViperSearchContext,
         _partitions: Vec<PartitionId>,
         _important_features: &[usize],
     ) -> Result<Vec<ViperSearchResult>> {
-        // Warm tier: Sequential access optimized with Zstd decompression
+        // S3 storage: Network-optimized batch fetching
         Ok(Vec::new())
     }
     
     fn tier_characteristics(&self) -> TierCharacteristics {
         TierCharacteristics {
-            tier_level: TierLevel::Warm,
-            avg_latency_ms: 10.0,
-            throughput_mbps: 200.0,
-            memory_resident: false,
-            supports_random_access: false,
-            compression_overhead: 0.3,
-        }
-    }
-}
-
-/// Cold tier searcher (Object storage)
-struct ColdTierSearcher {
-    tier_def: super::TierDefinition,
-}
-
-impl ColdTierSearcher {
-    fn new(tier_def: super::TierDefinition) -> Self {
-        Self { tier_def }
-    }
-}
-
-#[async_trait::async_trait]
-impl TierSearcher for ColdTierSearcher {
-    async fn search_tier(
-        &self,
-        _context: &ViperSearchContext,
-        _partitions: Vec<PartitionId>,
-        _important_features: &[usize],
-    ) -> Result<Vec<ViperSearchResult>> {
-        // Cold tier: Network-optimized batch fetching
-        Ok(Vec::new())
-    }
-    
-    fn tier_characteristics(&self) -> TierCharacteristics {
-        TierCharacteristics {
-            tier_level: TierLevel::Cold,
+            storage_url: self.storage_url.clone(),
             avg_latency_ms: 100.0,
             throughput_mbps: 100.0,
             memory_resident: false,
@@ -674,37 +623,37 @@ impl TierSearcher for ColdTierSearcher {
     }
 }
 
-/// Archive tier searcher (Deep archive)
-struct ArchiveTierSearcher {
-    tier_def: super::TierDefinition,
+/// Generic storage searcher for other URLs
+struct GenericSearcher {
+    storage_url: String,
 }
 
-impl ArchiveTierSearcher {
-    fn new(tier_def: super::TierDefinition) -> Self {
-        Self { tier_def }
+impl GenericSearcher {
+    fn new(storage_url: String) -> Self {
+        Self { storage_url }
     }
 }
 
 #[async_trait::async_trait]
-impl TierSearcher for ArchiveTierSearcher {
+impl TierSearcher for GenericSearcher {
     async fn search_tier(
         &self,
         _context: &ViperSearchContext,
         _partitions: Vec<PartitionId>,
         _important_features: &[usize],
     ) -> Result<Vec<ViperSearchResult>> {
-        // Archive tier: High-latency retrieval
+        // Generic storage: Filesystem API-based access
         Ok(Vec::new())
     }
     
     fn tier_characteristics(&self) -> TierCharacteristics {
         TierCharacteristics {
-            tier_level: TierLevel::Archive,
-            avg_latency_ms: 1000.0,
-            throughput_mbps: 50.0,
+            storage_url: self.storage_url.clone(),
+            avg_latency_ms: 50.0,
+            throughput_mbps: 500.0,
             memory_resident: false,
-            supports_random_access: false,
-            compression_overhead: 0.7,
+            supports_random_access: true,
+            compression_overhead: 0.2,
         }
     }
 }

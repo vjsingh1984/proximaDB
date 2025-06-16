@@ -23,7 +23,8 @@ use anyhow::Result;
 
 use crate::core::CollectionId;
 use super::types::*;
-use super::{ViperConfig, CompressionAlgorithm};
+use super::ViperConfig;
+use crate::storage::wal::config::CompressionAlgorithm;
 
 /// VIPER Compaction Engine with ML-guided optimization
 pub struct ViperCompactionEngine {

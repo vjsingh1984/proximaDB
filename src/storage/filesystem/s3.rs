@@ -172,6 +172,16 @@ pub struct S3FileSystem {
     client: S3Client,
 }
 
+impl std::fmt::Debug for S3FileSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3FileSystem")
+            .field("config", &self.config)
+            .field("credential_provider", &"<credential_provider>")
+            .field("client", &"<s3_client>")
+            .finish()
+    }
+}
+
 /// Simple S3 client abstraction (in production, use aws-sdk-s3)
 struct S3Client {
     config: S3Config,

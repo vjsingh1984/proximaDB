@@ -78,6 +78,10 @@ class CollectionConfig(BaseModel):
     storage_config: Optional[StorageConfig] = None
     description: Optional[str] = None
     metadata_schema: Optional[Dict[str, str]] = None
+    filterable_metadata_fields: Optional[List[str]] = Field(
+        default=None, 
+        description="Up to 16 metadata field names for Parquet column optimization and efficient filtering"
+    )
     
     class Config:
         use_enum_values = True
@@ -86,6 +90,30 @@ class CollectionConfig(BaseModel):
     def validate_dimension(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Dimension must be positive")
+        return v
+    
+    @validator('filterable_metadata_fields')
+    def validate_filterable_fields(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            # Validate field names
+            for field in v:
+                if not isinstance(field, str) or not field.strip():
+                    raise ValueError("Filterable metadata field names must be non-empty strings")
+                if len(field) > 64:
+                    raise ValueError(f"Filterable metadata field name '{field}' exceeds 64 character limit")
+                if not field.replace('_', '').isalnum():
+                    raise ValueError(f"Filterable metadata field name '{field}' must be alphanumeric with underscores")
+            
+            # Check for duplicates
+            if len(v) != len(set(v)):
+                raise ValueError("Filterable metadata field names must be unique")
+            
+            # Check reserved names
+            reserved_names = {'id', 'vector', 'vectors', 'timestamp', 'created_at', 'updated_at', 'expires_at', 'extra_meta'}
+            for field in v:
+                if field.lower() in reserved_names:
+                    raise ValueError(f"Filterable metadata field name '{field}' is reserved")
+        
         return v
 
 

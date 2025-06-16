@@ -7,7 +7,7 @@ pub type CollectionId = String;
 pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorRecord {
     pub id: VectorId,
     pub collection_id: CollectionId,

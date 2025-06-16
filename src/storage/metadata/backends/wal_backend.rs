@@ -23,6 +23,7 @@ use super::{
 use crate::storage::metadata::{
     wal::{MetadataWalManager, MetadataWalConfig, VersionedCollectionMetadata},
     atomic::AtomicMetadataStore,
+    MetadataStoreInterface,
 };
 
 /// WAL-based metadata backend
@@ -148,6 +149,9 @@ impl MetadataBackend for WalMetadataBackend {
                     tags: versioned.tags,
                     owner: versioned.owner,
                     description: versioned.description,
+                    strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(),
+                    strategy_change_history: Vec::new(),
+                    flush_config: None, // Use global defaults
                 };
                 Ok(Some(metadata))
             } else {
@@ -225,6 +229,9 @@ impl MetadataBackend for WalMetadataBackend {
                     tags: versioned.tags,
                     owner: versioned.owner,
                     description: versioned.description,
+                    strategy_config: crate::storage::metadata::CollectionStrategyConfig::default(),
+                    strategy_change_history: Vec::new(),
+                    flush_config: None,
                 }
             }).collect();
             

@@ -25,7 +25,6 @@ use crate::core::{VectorRecord, VectorId, CollectionId};
 use crate::storage::filesystem::FilesystemFactory;
 
 // Sub-modules
-pub mod memory;
 pub mod disk;
 pub mod factory;
 pub mod config;
@@ -35,12 +34,12 @@ pub mod bincode;
 pub mod age_monitor;
 
 // Re-exports
-pub use memory::WalMemTable;
 pub use disk::WalDiskManager;
 pub use factory::WalFactory;
 pub use config::WalStrategyType;
 pub use config::{WalConfig, CompressionConfig, PerformanceConfig};
 pub use age_monitor::{WalAgeMonitor, AgeMonitorStats, CollectionAgeInfo};
+pub use memtable::WalMemTable;
 
 /// WAL operation types with MVCC support
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,11 +129,23 @@ pub trait WalStrategy: Send + Sync {
     /// Initialize the strategy with configuration
     async fn initialize(&mut self, config: &WalConfig, filesystem: Arc<FilesystemFactory>) -> Result<()>;
     
+    /// Serialize entries to bytes (strategy-specific format)
+    async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>>;
+    
+    /// Deserialize entries from bytes (strategy-specific format)
+    async fn deserialize_entries(&self, data: &[u8]) -> Result<Vec<WalEntry>>;
+    
     /// Write single entry atomically (memory + disk)
     async fn write_entry(&self, entry: WalEntry) -> Result<u64>;
     
-    /// Write batch of entries atomically
-    async fn write_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>>;
+    /// Write batch of entries atomically (default implementation using single writes)
+    async fn write_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
+        let mut sequences = Vec::with_capacity(entries.len());
+        for entry in entries {
+            sequences.push(self.write_entry(entry).await?);
+        }
+        Ok(sequences)
+    }
     
     /// Read entries for a collection starting from sequence
     async fn read_entries(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>>;

@@ -235,7 +235,7 @@ impl CollectionHashMap {
         let operation_size = match &entry.operation {
             WalOperation::Insert { record, .. } | WalOperation::Update { record, .. } => {
                 record.vector.len() * std::mem::size_of::<f32>() + 
-                record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                record.metadata.len() * 32 // Estimate 32 bytes per metadata entry
             }
             _ => 64,
         };
@@ -496,7 +496,7 @@ impl MemTableStrategy for HashMapMemTable {
         
         for (collection_id, hash_map) in collections.iter() {
             // Get oldest entry timestamp from the first entry by insertion order
-            if let Some((_, first_entry)) = hash_map.entries.iter().next() {
+            if let Some((_, first_entry)) = hash_map.entries_by_sequence.iter().next() {
                 let age = now.signed_duration_since(first_entry.timestamp);
                 ages.insert(collection_id.clone(), age);
             }
@@ -509,7 +509,7 @@ impl MemTableStrategy for HashMapMemTable {
         let collections = self.collections.read().await;
         
         if let Some(hash_map) = collections.get(collection_id) {
-            if let Some((_, first_entry)) = hash_map.entries.iter().next() {
+            if let Some((_, first_entry)) = hash_map.entries_by_sequence.iter().next() {
                 Ok(Some(first_entry.timestamp))
             } else {
                 Ok(None)

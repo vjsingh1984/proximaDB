@@ -24,6 +24,7 @@ use super::{
     atomic::AtomicMetadataStore,
     wal::{MetadataWalConfig, MetadataWalManager},
 };
+use crate::storage::strategy::CollectionStrategyConfig;
 
 /// Configuration for metadata store
 #[derive(Debug, Clone)]
@@ -155,6 +156,7 @@ pub enum ConsistencyLevel {
 }
 
 /// High-level metadata store that coordinates different backends
+#[derive(Debug)]
 pub struct MetadataStore {
     /// Configuration
     config: MetadataStoreConfig,
@@ -458,6 +460,9 @@ impl MetadataStoreInterface for MetadataStore {
                     tags: versioned.tags,
                     owner: versioned.owner,
                     description: versioned.description,
+                    strategy_config: CollectionStrategyConfig::default(),
+                    strategy_change_history: Vec::new(),
+                    flush_config: None, // Use global defaults
                 };
                 Ok(Some(metadata))
             } else {
@@ -526,6 +531,9 @@ impl MetadataStoreInterface for MetadataStore {
                     tags: versioned.tags,
                     owner: versioned.owner,
                     description: versioned.description,
+                    strategy_config: super::CollectionStrategyConfig::default(),
+                    strategy_change_history: Vec::new(),
+                    flush_config: None,
                 }
             }).collect();
             

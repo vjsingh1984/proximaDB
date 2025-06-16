@@ -129,6 +129,16 @@ pub struct GcsFileSystem {
     client: GcsClient,
 }
 
+impl std::fmt::Debug for GcsFileSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GcsFileSystem")
+            .field("config", &self.config)
+            .field("credential_provider", &"<credential_provider>")
+            .field("client", &"<gcs_client>")
+            .finish()
+    }
+}
+
 /// Simple GCS client abstraction (in production, use google-cloud-storage)
 struct GcsClient {
     config: GcsConfig,

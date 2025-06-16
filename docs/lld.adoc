@@ -589,7 +589,907 @@ impl HNSWIndex {
 }
 ----
 
-=== 2.2 SIMD Distance Computation
+=== 2.2 Advanced Vector Search Strategies
+
+==== Multi-Strategy Architecture
+
+ProximaDB implements a flexible, multi-strategy vector search system that automatically selects optimal algorithms based on dataset characteristics and query patterns.
+
+[source,rust]
+----
+/// Vector search strategy manager
+pub struct VectorSearchManager {
+    /// Primary HNSW index with quantization
+    hnsw_index: Arc<HNSWQuantizedIndex>,
+    /// IVF index for massive datasets
+    ivf_index: Option<Arc<IVFIndex>>,
+    /// Strategy selector based on collection metrics
+    strategy_selector: Arc<SearchStrategySelector>,
+    /// Quantization models per collection
+    quantization_models: Arc<RwLock<HashMap<CollectionId, QuantizationModel>>>,
+}
+
+/// Quantized HNSW index implementation
+pub struct HNSWQuantizedIndex {
+    /// Standard HNSW graph structure
+    graph: HNSWGraph,
+    /// Quantized vectors for graph traversal
+    quantized_vectors: Arc<QuantizedVectorStorage>,
+    /// Full-precision vector accessor for re-ranking
+    full_precision_accessor: Arc<dyn VectorStorage>,
+    /// Quantization parameters
+    quantization_params: QuantizationParams,
+}
+
+/// IVF (Inverted File) index for cluster-based search
+pub struct IVFIndex {
+    /// Cluster centroids
+    centroids: Vec<Vec<f32>>,
+    /// Inverted lists: centroid_id -> vector_ids
+    inverted_lists: Vec<Vec<VectorId>>,
+    /// Cluster assignment for new vectors
+    cluster_assigner: Arc<KMeansClusterer>,
+    /// Per-cluster HNSW indexes (for IVF-HNSW hybrid)
+    cluster_indexes: HashMap<ClusterId, Arc<HNSWIndex>>,
+}
+----
+
+==== Scalar Quantization Implementation
+
+[source,rust]
+----
+/// Scalar quantization for memory-efficient vector storage
+pub struct ScalarQuantizer {
+    /// Per-dimension min/max values for quantization
+    min_values: Vec<f32>,
+    max_values: Vec<f32>,
+    /// Quantization resolution (typically 8-bit)
+    bits: u8,
+    /// Scale factors for each dimension
+    scale_factors: Vec<f32>,
+}
+
+impl ScalarQuantizer {
+    /// Train quantization parameters on sample data
+    pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<(), QuantizationError> {
+        let dimensions = training_vectors[0].len();
+        self.min_values = vec![f32::INFINITY; dimensions];
+        self.max_values = vec![f32::NEG_INFINITY; dimensions];
+        
+        // Find min/max per dimension across all training vectors
+        for vector in training_vectors {
+            for (dim, &value) in vector.iter().enumerate() {
+                self.min_values[dim] = self.min_values[dim].min(value);
+                self.max_values[dim] = self.max_values[dim].max(value);
+            }
+        }
+        
+        // Calculate scale factors for quantization
+        let max_quantized_value = (1 << self.bits) - 1;
+        for dim in 0..dimensions {
+            let range = self.max_values[dim] - self.min_values[dim];
+            self.scale_factors.push(max_quantized_value as f32 / range);
+        }
+        
+        Ok(())
+    }
+    
+    /// Quantize a full-precision vector to int8
+    pub fn quantize(&self, vector: &[f32]) -> Vec<u8> {
+        vector.iter()
+            .enumerate()
+            .map(|(dim, &value)| {
+                let normalized = (value - self.min_values[dim]) * self.scale_factors[dim];
+                normalized.clamp(0.0, 255.0) as u8
+            })
+            .collect()
+    }
+    
+    /// Dequantize for approximate reconstruction
+    pub fn dequantize(&self, quantized: &[u8]) -> Vec<f32> {
+        quantized.iter()
+            .enumerate()
+            .map(|(dim, &q_value)| {
+                let normalized = q_value as f32 / self.scale_factors[dim];
+                normalized + self.min_values[dim]
+            })
+            .collect()
+    }
+    
+    /// Fast quantized distance computation (SIMD optimized)
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn quantized_l2_distance_avx2(&self, a: &[u8], b: &[u8]) -> f32 {
+        use std::arch::x86_64::*;
+        
+        let len = a.len();
+        let chunks = len / 32; // Process 32 bytes per iteration
+        
+        let mut sum = _mm256_setzero_si256();
+        
+        for i in 0..chunks {
+            let offset = i * 32;
+            
+            // Load 32 bytes from each quantized vector
+            let va = _mm256_loadu_si256(a.as_ptr().add(offset) as *const __m256i);
+            let vb = _mm256_loadu_si256(b.as_ptr().add(offset) as *const __m256i);
+            
+            // Compute absolute differences
+            let diff = _mm256_sub_epi8(va, vb);
+            let abs_diff = _mm256_abs_epi8(diff);
+            
+            // Square differences (split into 16-bit to avoid overflow)
+            let lo = _mm256_unpacklo_epi8(abs_diff, _mm256_setzero_si256());
+            let hi = _mm256_unpackhi_epi8(abs_diff, _mm256_setzero_si256());
+            
+            let lo_squared = _mm256_mullo_epi16(lo, lo);
+            let hi_squared = _mm256_mullo_epi16(hi, hi);
+            
+            // Add to accumulator
+            sum = _mm256_add_epi16(sum, lo_squared);
+            sum = _mm256_add_epi16(sum, hi_squared);
+        }
+        
+        // Horizontal sum and handle remainder
+        let mut distance = 0u32;
+        let sum_array: [u16; 16] = std::mem::transmute(sum);
+        distance += sum_array.iter().map(|&x| x as u32).sum::<u32>();
+        
+        // Handle remainder bytes
+        for i in (chunks * 32)..len {
+            let diff = (a[i] as i16 - b[i] as i16).abs() as u32;
+            distance += diff * diff;
+        }
+        
+        distance as f32
+    }
+}
+----
+
+==== Product Quantization Implementation
+
+[source,rust]
+----
+/// Product quantization for extreme compression
+pub struct ProductQuantizer {
+    /// Number of subspaces (typically 8-64)
+    num_subspaces: usize,
+    /// Subspace dimension
+    subspace_dim: usize,
+    /// Number of centroids per subspace (typically 256 for 8-bit)
+    num_centroids: usize,
+    /// Codebooks: subspace_id -> [centroids]
+    codebooks: Vec<Vec<Vec<f32>>>,
+}
+
+impl ProductQuantizer {
+    /// Train PQ codebooks using K-means per subspace
+    pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<(), QuantizationError> {
+        let vector_dim = training_vectors[0].len();
+        self.subspace_dim = vector_dim / self.num_subspaces;
+        
+        for subspace_idx in 0..self.num_subspaces {
+            let start_dim = subspace_idx * self.subspace_dim;
+            let end_dim = (subspace_idx + 1) * self.subspace_dim;
+            
+            // Extract subspace vectors for training
+            let subspace_vectors: Vec<Vec<f32>> = training_vectors
+                .iter()
+                .map(|v| v[start_dim..end_dim].to_vec())
+                .collect();
+            
+            // Run K-means to find centroids for this subspace
+            let centroids = self.kmeans_train(&subspace_vectors, self.num_centroids)?;
+            self.codebooks.push(centroids);
+        }
+        
+        Ok(())
+    }
+    
+    /// Encode vector using product quantization
+    pub fn encode(&self, vector: &[f32]) -> Vec<u8> {
+        let mut codes = Vec::with_capacity(self.num_subspaces);
+        
+        for subspace_idx in 0..self.num_subspaces {
+            let start_dim = subspace_idx * self.subspace_dim;
+            let end_dim = (subspace_idx + 1) * self.subspace_dim;
+            let subvector = &vector[start_dim..end_dim];
+            
+            // Find nearest centroid in this subspace
+            let mut best_code = 0u8;
+            let mut best_distance = f32::INFINITY;
+            
+            for (centroid_idx, centroid) in self.codebooks[subspace_idx].iter().enumerate() {
+                let distance = l2_distance(subvector, centroid);
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_code = centroid_idx as u8;
+                }
+            }
+            
+            codes.push(best_code);
+        }
+        
+        codes
+    }
+    
+    /// Asymmetric distance computation (query vector vs PQ codes)
+    pub fn asymmetric_distance(&self, query: &[f32], codes: &[u8]) -> f32 {
+        let mut distance = 0.0;
+        
+        for subspace_idx in 0..self.num_subspaces {
+            let start_dim = subspace_idx * self.subspace_dim;
+            let end_dim = (subspace_idx + 1) * self.subspace_dim;
+            let query_subvector = &query[start_dim..end_dim];
+            
+            let code = codes[subspace_idx] as usize;
+            let centroid = &self.codebooks[subspace_idx][code];
+            
+            distance += l2_distance(query_subvector, centroid);
+        }
+        
+        distance
+    }
+}
+----
+
+==== Two-Phase Search Implementation
+
+[source,rust]
+----
+/// Two-phase search: fast candidate selection + precise re-ranking
+impl VectorSearchManager {
+    pub async fn search_two_phase(
+        &self,
+        collection_id: &CollectionId,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        // Phase 1: Fast candidate selection using quantized index
+        let candidate_count = (k * 10).min(ef); // Over-retrieve for re-ranking
+        let quantized_candidates = self.hnsw_index
+            .search_quantized(query, candidate_count)
+            .await?;
+        
+        // Phase 2: Re-ranking with full-precision vectors
+        let mut final_results = Vec::with_capacity(k);
+        
+        for candidate in quantized_candidates {
+            // Fetch full-precision vector from Parquet storage
+            let full_vector = self.full_precision_accessor
+                .get_vector(&candidate.vector_id)
+                .await?;
+            
+            // Compute exact distance
+            let exact_distance = self.distance_computer
+                .compute_distance(query, &full_vector);
+            
+            final_results.push(SearchResult {
+                vector_id: candidate.vector_id,
+                score: exact_distance,
+                metadata: candidate.metadata,
+            });
+        }
+        
+        // Sort by exact distance and return top-k
+        final_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        final_results.truncate(k);
+        
+        Ok(final_results)
+    }
+    
+    /// IVF search with cluster pruning
+    pub async fn search_ivf(
+        &self,
+        query: &[f32],
+        k: usize,
+        nprobe: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        if let Some(ivf_index) = &self.ivf_index {
+            // Find nprobe nearest clusters
+            let nearest_clusters = ivf_index
+                .find_nearest_clusters(query, nprobe)
+                .await?;
+            
+            let mut all_candidates = Vec::new();
+            
+            // Search each selected cluster
+            for cluster_id in nearest_clusters {
+                if let Some(cluster_index) = ivf_index.cluster_indexes.get(&cluster_id) {
+                    // Use HNSW search within cluster
+                    let cluster_results = cluster_index
+                        .search_knn(query, k, k * 2)
+                        .await?;
+                    all_candidates.extend(cluster_results);
+                } else {
+                    // Fallback to brute-force search in cluster
+                    let cluster_vectors = ivf_index
+                        .get_cluster_vectors(&cluster_id)
+                        .await?;
+                    
+                    for vector_info in cluster_vectors {
+                        let distance = self.distance_computer
+                            .compute_distance(query, &vector_info.vector);
+                        all_candidates.push(SearchResult {
+                            vector_id: vector_info.id,
+                            score: distance,
+                            metadata: vector_info.metadata,
+                        });
+                    }
+                }
+            }
+            
+            // Global re-ranking across all clusters
+            all_candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+            all_candidates.truncate(k);
+            
+            Ok(all_candidates)
+        } else {
+            Err(SearchError::IVFIndexNotAvailable)
+        }
+    }
+}
+----
+
+==== Automatic Strategy Selection
+
+[source,rust]
+----
+/// Intelligent strategy selection based on collection characteristics
+pub struct SearchStrategySelector {
+    /// Collection statistics for strategy decision
+    collection_stats: Arc<RwLock<HashMap<CollectionId, CollectionStats>>>,
+}
+
+impl SearchStrategySelector {
+    /// Select optimal search strategy for given collection and query
+    pub fn select_strategy(
+        &self,
+        collection_id: &CollectionId,
+        query_characteristics: &QueryCharacteristics,
+    ) -> SearchStrategy {
+        let stats = self.collection_stats.read().unwrap();
+        
+        if let Some(collection_stats) = stats.get(collection_id) {
+            // Strategy selection logic
+            match collection_stats.vector_count {
+                // Small collections: pure HNSW
+                0..=1_000_000 => SearchStrategy::HNSWQuantized {
+                    quantization: QuantizationType::ScalarQ8,
+                    ef: (query_characteristics.k * 2).max(16),
+                    re_rank_count: query_characteristics.k * 3,
+                },
+                
+                // Medium collections: HNSW with PQ or IVF based on clustering quality
+                1_000_001..=10_000_000 => {
+                    if collection_stats.clustering_quality > 0.7 {
+                        SearchStrategy::IVFExhaustive {
+                            nprobe: (collection_stats.total_clusters / 100).max(5).min(50),
+                            quantization: Some(QuantizationType::ProductQ8x8),
+                        }
+                    } else {
+                        SearchStrategy::HNSWQuantized {
+                            quantization: QuantizationType::ProductQ8x8,
+                            ef: (query_characteristics.k * 4).max(32),
+                            re_rank_count: query_characteristics.k * 5,
+                        }
+                    }
+                },
+                
+                // Large collections: IVF-HNSW hybrid
+                _ => SearchStrategy::IVFHNSWHybrid {
+                    coarse_nprobe: (collection_stats.total_clusters / 200).max(10).min(100),
+                    fine_ef: query_characteristics.k * 2,
+                    quantization: QuantizationType::ProductQ8x16,
+                },
+            }
+        } else {
+            // Default strategy for unknown collections
+            SearchStrategy::HNSWQuantized {
+                quantization: QuantizationType::ScalarQ8,
+                ef: 64,
+                re_rank_count: query_characteristics.k * 2,
+            }
+        }
+    }
+}
+----
+
+=== 2.3 Core Engine Performance Optimizations
+
+==== Dual-Format Vector Storage Implementation
+
+[source,rust]
+----
+/// Dual-format vector storage: full-precision + quantized
+pub struct DualFormatVectorStorage {
+    /// Full-precision vectors stored in Parquet format
+    parquet_storage: Arc<ParquetVectorStorage>,
+    /// Quantized vectors for in-memory operations
+    quantized_storage: Arc<QuantizedVectorStorage>,
+    /// Compression configuration per collection
+    compression_config: Arc<RwLock<HashMap<CollectionId, CompressionConfig>>>,
+    /// Loading strategy selector
+    loading_strategy: Arc<MemoryLoadingStrategy>,
+}
+
+/// Compression configuration for a collection
+#[derive(Debug, Clone)]
+pub struct CompressionConfig {
+    /// Primary quantization method
+    quantization_type: QuantizationType,
+    /// Compression ratio achieved
+    compression_ratio: f32,
+    /// Accuracy retention (0.0 to 1.0)
+    accuracy_retention: f32,
+    /// Memory budget for this collection
+    memory_budget_mb: usize,
+    /// Re-ranking candidate multiplier
+    rerank_multiplier: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum QuantizationType {
+    /// Scalar quantization: float32 -> uint8
+    ScalarQ8 {
+        min_values: Vec<f32>,
+        max_values: Vec<f32>,
+        scale_factors: Vec<f32>,
+    },
+    /// Product quantization: subspace clustering
+    ProductQ8x8 {
+        codebooks: Vec<Vec<Vec<f32>>>,  // [subspace][centroid][values]
+        subspace_dim: usize,
+        num_centroids: usize,
+    },
+    /// Advanced: Binary quantization for extreme compression
+    Binary {
+        thresholds: Vec<f32>,
+    },
+}
+
+impl DualFormatVectorStorage {
+    /// Store vector in both formats during flush
+    pub async fn store_dual_format(
+        &self,
+        collection_id: &CollectionId,
+        vectors: &[VectorRecord],
+    ) -> Result<(), StorageError> {
+        let config = self.compression_config.read().await;
+        let compression_config = config.get(collection_id)
+            .ok_or(StorageError::CompressionConfigNotFound)?;
+        
+        // Store full-precision vectors in Parquet
+        self.parquet_storage
+            .write_batch(collection_id, vectors)
+            .await?;
+        
+        // Quantize and store compressed versions
+        let quantized_vectors = self.quantize_batch(vectors, compression_config)?;
+        self.quantized_storage
+            .write_quantized_batch(collection_id, &quantized_vectors)
+            .await?;
+        
+        Ok(())
+    }
+    
+    /// Intelligent loading based on memory budget and query patterns
+    pub async fn load_for_query(
+        &self,
+        collection_id: &CollectionId,
+        query_hint: &QueryHint,
+    ) -> Result<LoadedVectorSet, StorageError> {
+        let strategy = self.loading_strategy
+            .select_loading_strategy(collection_id, query_hint)
+            .await?;
+        
+        match strategy {
+            LoadingStrategy::QuantizedOnly => {
+                // Load only quantized vectors for memory efficiency
+                let quantized = self.quantized_storage
+                    .load_collection(collection_id)
+                    .await?;
+                Ok(LoadedVectorSet::QuantizedOnly(quantized))
+            },
+            
+            LoadingStrategy::FullPrecision => {
+                // Load full vectors for maximum accuracy
+                let full_vectors = self.parquet_storage
+                    .load_collection(collection_id)
+                    .await?;
+                Ok(LoadedVectorSet::FullPrecision(full_vectors))
+            },
+            
+            LoadingStrategy::Hybrid { quantized_ratio } => {
+                // Load quantized + subset of full-precision for hot data
+                let quantized = self.quantized_storage
+                    .load_collection(collection_id)
+                    .await?;
+                let hot_vectors = self.parquet_storage
+                    .load_hot_subset(collection_id, quantized_ratio)
+                    .await?;
+                Ok(LoadedVectorSet::Hybrid { quantized, hot_vectors })
+            },
+        }
+    }
+    
+    /// Two-phase search implementation
+    pub async fn search_two_phase(
+        &self,
+        collection_id: &CollectionId,
+        query: &[f32],
+        k: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let config = self.compression_config.read().await;
+        let compression_config = config.get(collection_id)
+            .ok_or(SearchError::CompressionConfigNotFound)?;
+        
+        // Phase 1: Fast candidate selection using quantized vectors
+        let candidate_count = k * compression_config.rerank_multiplier;
+        let quantized_candidates = self.quantized_storage
+            .search_quantized(collection_id, query, candidate_count)
+            .await?;
+        
+        // Phase 2: Re-ranking with full-precision vectors
+        let mut final_results = Vec::with_capacity(k);
+        
+        // Batch load full-precision vectors for efficiency
+        let candidate_ids: Vec<_> = quantized_candidates
+            .iter()
+            .map(|c| c.vector_id.clone())
+            .collect();
+        
+        let full_vectors = self.parquet_storage
+            .load_vectors_by_ids(collection_id, &candidate_ids)
+            .await?;
+        
+        // Compute exact distances and re-rank
+        for (candidate, full_vector) in quantized_candidates.iter().zip(full_vectors.iter()) {
+            let exact_distance = match compression_config.quantization_type {
+                QuantizationType::ScalarQ8 { .. } => {
+                    euclidean_distance(query, &full_vector.vector)
+                },
+                QuantizationType::ProductQ8x8 { .. } => {
+                    cosine_similarity(query, &full_vector.vector)
+                },
+                QuantizationType::Binary { .. } => {
+                    hamming_distance_f32(query, &full_vector.vector)
+                },
+            };
+            
+            final_results.push(SearchResult {
+                vector_id: candidate.vector_id.clone(),
+                score: exact_distance,
+                metadata: full_vector.metadata.clone(),
+            });
+        }
+        
+        // Sort by exact scores and return top-k
+        final_results.sort_by(|a, b| {
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        final_results.truncate(k);
+        
+        Ok(final_results)
+    }
+}
+----
+
+==== Cost-Based Query Optimizer Implementation
+
+[source,rust]
+----
+/// Cost-based query optimizer for vector database operations
+pub struct VectorQueryOptimizer {
+    /// Statistics collector for cost estimation
+    statistics: Arc<QueryStatistics>,
+    /// Cost models for different operations
+    cost_models: Arc<OperationCostModels>,
+    /// Execution plan cache
+    plan_cache: Arc<LruCache<QueryFingerprint, ExecutionPlan>>,
+    /// Cardinality estimator
+    cardinality_estimator: Arc<CardinalityEstimator>,
+}
+
+/// Statistics for query optimization
+#[derive(Debug)]
+pub struct QueryStatistics {
+    /// Column statistics for selectivity estimation
+    column_stats: RwLock<HashMap<(CollectionId, String), ColumnStatistics>>,
+    /// Query execution history
+    execution_history: RwLock<Vec<ExecutionRecord>>,
+    /// Index statistics
+    index_stats: RwLock<HashMap<CollectionId, IndexStatistics>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ColumnStatistics {
+    /// Distinct value count
+    cardinality: usize,
+    /// Total row count
+    total_rows: usize,
+    /// Most frequent values and their frequencies
+    frequent_values: HashMap<String, f32>,
+    /// Histogram for numeric values
+    histogram: Option<Histogram>,
+}
+
+/// Cost model for different operation types
+#[derive(Debug)]
+pub struct OperationCostModels {
+    /// Cost per row for promoted column filtering (very cheap)
+    promoted_filter_cost: f32,      // ~0.001ms per row
+    /// Cost per row for JSON metadata scanning (expensive)
+    json_filter_cost: f32,          // ~0.1ms per row
+    /// Cost per vector for ANN search
+    ann_search_cost: f32,           // ~0.01ms per vector
+    /// Cost per vector for exact distance computation
+    exact_distance_cost: f32,       // ~0.001ms per vector
+    /// I/O cost for loading vectors from storage
+    vector_load_cost: f32,          // ~0.05ms per vector
+}
+
+/// Query execution plan with optimized operation order
+#[derive(Debug, Clone)]
+pub struct ExecutionPlan {
+    /// Ordered list of operations to execute
+    operations: Vec<QueryOperation>,
+    /// Estimated total cost
+    estimated_cost_ms: f32,
+    /// Estimated result cardinality
+    estimated_result_count: usize,
+    /// Plan generation timestamp
+    created_at: std::time::Instant,
+}
+
+#[derive(Debug, Clone)]
+pub enum QueryOperation {
+    /// Apply filter on promoted column (Parquet predicate pushdown)
+    PromotedColumnFilter {
+        column: String,
+        predicate: FilterPredicate,
+        estimated_selectivity: f32,
+        estimated_cost: f32,
+    },
+    
+    /// ANN search on current candidate set
+    ANNSearch {
+        k: usize,
+        ef: usize,
+        estimated_candidates: usize,
+        estimated_cost: f32,
+    },
+    
+    /// Apply filter on JSON metadata (expensive)
+    JsonMetadataFilter {
+        json_path: String,
+        predicate: FilterPredicate,
+        estimated_selectivity: f32,
+        estimated_cost: f32,
+    },
+    
+    /// Load full vectors for re-ranking
+    LoadFullVectors {
+        vector_ids: Vec<String>,
+        estimated_cost: f32,
+    },
+    
+    /// Exact distance computation for re-ranking
+    ExactDistanceComputation {
+        candidate_count: usize,
+        estimated_cost: f32,
+    },
+}
+
+impl VectorQueryOptimizer {
+    /// Generate optimal execution plan for a vector query
+    pub async fn optimize_query(
+        &self,
+        query: &VectorQuery,
+    ) -> Result<ExecutionPlan, OptimizerError> {
+        // Check plan cache first
+        let query_fingerprint = self.compute_query_fingerprint(query);
+        if let Some(cached_plan) = self.plan_cache.get(&query_fingerprint) {
+            return Ok(cached_plan.clone());
+        }
+        
+        // Extract all operations from the query
+        let mut operations = self.extract_operations(query)?;
+        
+        // Estimate cost and selectivity for each operation
+        for operation in &mut operations {
+            operation.estimate_cost(&self.cost_models, &self.statistics).await?;
+            operation.estimate_selectivity(&self.cardinality_estimator).await?;
+        }
+        
+        // Sort operations by cost-effectiveness
+        operations.sort_by(|a, b| {
+            let cost_effectiveness_a = a.selectivity() / a.cost().max(0.001);
+            let cost_effectiveness_b = b.selectivity() / b.cost().max(0.001);
+            cost_effectiveness_b.partial_cmp(&cost_effectiveness_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        // Generate execution plan
+        let plan = self.generate_execution_plan(operations, query).await?;
+        
+        // Cache the plan
+        self.plan_cache.put(query_fingerprint, plan.clone());
+        
+        Ok(plan)
+    }
+    
+    /// Execute optimized query plan
+    pub async fn execute_plan(
+        &self,
+        plan: &ExecutionPlan,
+        query: &VectorQuery,
+        storage: &dyn VectorStorage,
+    ) -> Result<Vec<SearchResult>, ExecutionError> {
+        let mut current_candidates = CandidateSet::new();
+        let mut execution_context = ExecutionContext::new();
+        
+        for operation in &plan.operations {
+            match operation {
+                QueryOperation::PromotedColumnFilter { column, predicate, .. } => {
+                    // Apply very efficient Parquet predicate pushdown
+                    let filtered_candidates = storage
+                        .filter_by_promoted_column(column, predicate)
+                        .await?;
+                    current_candidates = current_candidates.intersect(filtered_candidates);
+                    
+                    tracing::debug!("Applied promoted filter on {}: {} candidates remaining", 
+                                  column, current_candidates.len());
+                },
+                
+                QueryOperation::ANNSearch { k, ef, .. } => {
+                    // Perform ANN search on current candidate set
+                    let search_results = if current_candidates.is_empty() {
+                        // Search entire collection
+                        storage.ann_search(&query.vector, *k, *ef).await?
+                    } else {
+                        // Search only within current candidates
+                        storage.ann_search_filtered(&query.vector, *k, *ef, &current_candidates).await?
+                    };
+                    
+                    current_candidates = CandidateSet::from_search_results(search_results);
+                    tracing::debug!("ANN search completed: {} candidates", current_candidates.len());
+                },
+                
+                QueryOperation::JsonMetadataFilter { json_path, predicate, .. } => {
+                    // Apply expensive JSON filter only on remaining candidates
+                    let filtered_candidates = storage
+                        .filter_json_metadata(&current_candidates, json_path, predicate)
+                        .await?;
+                    current_candidates = current_candidates.intersect(filtered_candidates);
+                    
+                    tracing::debug!("Applied JSON filter on {}: {} candidates remaining",
+                                  json_path, current_candidates.len());
+                },
+                
+                QueryOperation::LoadFullVectors { .. } => {
+                    // Load full-precision vectors for final ranking
+                    execution_context.full_vectors = storage
+                        .load_vectors_by_candidates(&current_candidates)
+                        .await?;
+                },
+                
+                QueryOperation::ExactDistanceComputation { .. } => {
+                    // Compute exact distances for final re-ranking
+                    let mut final_results = Vec::new();
+                    for candidate in current_candidates.iter() {
+                        if let Some(full_vector) = execution_context.full_vectors.get(&candidate.id) {
+                            let exact_distance = euclidean_distance(&query.vector, &full_vector.vector);
+                            final_results.push(SearchResult {
+                                vector_id: candidate.id.clone(),
+                                score: exact_distance,
+                                metadata: full_vector.metadata.clone(),
+                            });
+                        }
+                    }
+                    
+                    // Sort by exact distance and return top-k
+                    final_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+                    final_results.truncate(query.k);
+                    
+                    return Ok(final_results);
+                },
+            }
+        }
+        
+        // Fallback: return current candidates as search results
+        Ok(current_candidates.to_search_results())
+    }
+    
+    /// Update statistics based on query execution
+    pub async fn update_statistics(
+        &self,
+        query: &VectorQuery,
+        plan: &ExecutionPlan,
+        execution_time: std::time::Duration,
+        result_count: usize,
+    ) -> Result<(), OptimizerError> {
+        let execution_record = ExecutionRecord {
+            query_fingerprint: self.compute_query_fingerprint(query),
+            plan: plan.clone(),
+            execution_time_ms: execution_time.as_millis() as f32,
+            result_count,
+            timestamp: std::time::Instant::now(),
+        };
+        
+        // Update execution history
+        let mut history = self.statistics.execution_history.write().await;
+        history.push(execution_record);
+        
+        // Keep only recent history (last 10,000 executions)
+        if history.len() > 10_000 {
+            history.drain(0..1_000);
+        }
+        
+        // Update cost models based on actual execution times
+        self.update_cost_models_from_history(&history).await?;
+        
+        Ok(())
+    }
+}
+
+/// Cardinality estimation for query selectivity
+#[derive(Debug)]
+pub struct CardinalityEstimator {
+    /// HyperLogLog sketches for distinct value estimation
+    hll_sketches: RwLock<HashMap<String, HyperLogLog>>,
+    /// Sampling-based estimators
+    sample_estimators: RwLock<HashMap<String, SampleEstimator>>,
+}
+
+impl CardinalityEstimator {
+    /// Estimate selectivity of a filter predicate
+    pub async fn estimate_selectivity(
+        &self,
+        collection_id: &CollectionId,
+        column: &str,
+        predicate: &FilterPredicate,
+    ) -> Result<f32, EstimationError> {
+        match predicate {
+            FilterPredicate::Equals(value) => {
+                // Use frequency statistics for equality predicates
+                let sketches = self.hll_sketches.read().await;
+                let key = format!("{}:{}", collection_id, column);
+                
+                if let Some(hll) = sketches.get(&key) {
+                    let distinct_count = hll.count() as f32;
+                    Ok(1.0 / distinct_count) // Uniform distribution assumption
+                } else {
+                    Ok(0.1) // Default estimate
+                }
+            },
+            
+            FilterPredicate::In(values) => {
+                // Multiple equality predicates
+                let single_selectivity = self.estimate_selectivity(
+                    collection_id, column, &FilterPredicate::Equals(values[0].clone())
+                ).await?;
+                Ok(single_selectivity * values.len() as f32)
+            },
+            
+            FilterPredicate::Range { min, max } => {
+                // Use histogram-based estimation for range predicates
+                let estimators = self.sample_estimators.read().await;
+                let key = format!("{}:{}", collection_id, column);
+                
+                if let Some(estimator) = estimators.get(&key) {
+                    estimator.estimate_range_selectivity(min, max)
+                } else {
+                    Ok(0.1) // Default estimate
+                }
+            },
+        }
+    }
+}
+----
+
+=== 2.4 SIMD Distance Computation
 
 ==== AVX-512 Optimized Implementation
 

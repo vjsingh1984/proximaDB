@@ -146,6 +146,16 @@ pub struct AzureFileSystem {
     client: AzureClient,
 }
 
+impl std::fmt::Debug for AzureFileSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AzureFileSystem")
+            .field("config", &self.config)
+            .field("credential_provider", &"<credential_provider>")
+            .field("client", &"<azure_client>")
+            .finish()
+    }
+}
+
 /// Simple Azure client abstraction (in production, use azure-sdk-for-rust)
 #[derive(Clone)]
 struct AzureClient {

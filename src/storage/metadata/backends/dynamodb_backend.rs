@@ -238,6 +238,8 @@ impl DynamoDBMetadataBackend {
                 retain_days: retain_days.max(1),
                 auto_archive: false,
                 auto_delete: true,
+                cold_storage_days: None,
+                backup_config: None,
             }
         });
         
@@ -257,6 +259,9 @@ impl DynamoDBMetadataBackend {
             tags: item.tags.clone(),
             owner: item.owner.clone(),
             description: item.description.clone(),
+            strategy_config: crate::storage::metadata::CollectionStrategyConfig::default(),
+            strategy_change_history: Vec::new(),
+            flush_config: None,
         })
     }
     

@@ -52,6 +52,7 @@ impl Default for LocalConfig {
 }
 
 /// Local filesystem implementation
+#[derive(Debug)]
 pub struct LocalFileSystem {
     config: LocalConfig,
 }

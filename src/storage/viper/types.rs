@@ -177,8 +177,8 @@ pub struct PartitionMetadata {
     /// Partition statistics
     pub statistics: PartitionStatistics,
     
-    /// Storage tier assignment
-    pub tier_level: super::TierLevel,
+    /// Storage filesystem URL (s3://, file://, adls://, gcs://)
+    pub storage_url: String,
     
     /// Parquet file information
     pub parquet_files: Vec<ParquetFileInfo>,
@@ -218,6 +218,9 @@ pub struct PartitionStatistics {
 pub struct ParquetFileInfo {
     /// File path relative to partition directory
     pub file_path: String,
+    
+    /// Storage URL for filesystem access (s3://, file://, etc.)
+    pub storage_url: String,
     
     /// File size in bytes
     pub file_size_bytes: u64,
@@ -262,8 +265,8 @@ pub struct ViperSearchResult {
     /// Partition where this vector is stored
     pub partition_id: PartitionId,
     
-    /// Storage tier where vector was found
-    pub tier_level: super::TierLevel,
+    /// Storage filesystem URL where vector was found (s3://, file://, adls://, gcs://)
+    pub storage_url: String,
 }
 
 /// Query context for VIPER search operations
@@ -290,8 +293,8 @@ pub struct ViperSearchContext {
     /// Search strategy preferences
     pub search_strategy: SearchStrategy,
     
-    /// Maximum tiers to search (for performance control)
-    pub max_tiers: Option<usize>,
+    /// Maximum storage locations to search (for performance control)
+    pub max_storage_locations: Option<usize>,
 }
 
 /// Search strategy for VIPER operations
@@ -765,3 +768,6 @@ impl SearchStrategy {
         }
     }
 }
+
+// Re-export SIMD capabilities from hardware detection
+pub use crate::compute::hardware_detection::SimdLevel as SimdInstructionSet;

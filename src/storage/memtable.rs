@@ -165,7 +165,7 @@ impl Memtable {
         
         let entry = MemtableEntry {
             sequence,
-            operation: MemtableOperation::Delete { vector_id },
+            operation: MemtableOperation::Delete { vector_id: vector_id.clone() },
             timestamp: Utc::now(),
         };
         
@@ -181,7 +181,7 @@ impl Memtable {
             });
         
         // Mark as deleted
-        collection_table.deleted.insert(vector_id, sequence);
+        collection_table.deleted.insert(vector_id.clone(), sequence);
         
         // Remove from active if it was there
         if let Some(old_sequence) = collection_table.id_to_sequence.remove(&vector_id) {

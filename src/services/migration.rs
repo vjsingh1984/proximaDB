@@ -23,6 +23,7 @@ use crate::storage::{
 };
 
 /// Migration service for updating collection strategies
+#[derive(Clone)]
 pub struct MigrationService {
     metadata_store: Arc<MetadataStore>,
 }

@@ -14,6 +14,7 @@ pub mod search_index;
 pub mod memtable;
 pub mod viper;
 pub mod strategy;
+pub mod unified_engine;
 
 pub use builder::{StorageSystemBuilder, StorageSystem, StorageSystemConfig};
 pub use filesystem::{FilesystemFactory, FilesystemConfig};
@@ -27,10 +28,12 @@ pub use metadata::{MetadataStore, CollectionMetadata, SystemMetadata};
 pub use search_index::{SearchIndexManager, SearchRequest};
 pub use memtable::{Memtable, MemtableEntry, MemtableOperation, MemtableCollectionStats};
 pub use viper::{
-    ViperStorageEngine, ViperConfig, ViperProgressiveSearchEngine, 
-    SimdCompressionEngine, FilesystemPartitioner,
-    ViperCompactionEngine, ViperVector, ViperSearchContext, ViperSearchResult
+    ViperConfig, ViperSchemaBuilder, ViperSchemaStrategy, 
+    VectorRecordProcessor, VectorRecordSchemaAdapter,
+    ViperSchemaFactory, ViperParquetFlusher, FlushResult,
+    SearchStrategy, ViperStorageEngine
 };
+pub use unified_engine::{CollectionConfig, StorageLayoutStrategy, UnifiedStorageEngine};
 use crate::core::StorageError;
 
 pub type Result<T> = std::result::Result<T, StorageError>;

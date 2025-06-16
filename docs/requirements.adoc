@@ -428,6 +428,138 @@ Deliver a cloud-native vector database that provides:
 |High
 |===
 
+==== Advanced Vector Search Strategies
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|AVS-001
+|HNSW (Hierarchical Navigable Small World) graph-based indexing as primary search strategy
+|Critical
+|📋 PLANNED
+
+|AVS-002
+|Scalar Quantization (SQ) integration with HNSW for memory-efficient vector search
+|High
+|📋 PLANNED
+
+|AVS-003
+|Product Quantization (PQ) support for ultra-compressed vector representations
+|High
+|📋 PLANNED
+
+|AVS-004
+|Two-phase search: quantized vectors for candidate selection, full-precision for re-ranking
+|High
+|📋 PLANNED
+
+|AVS-005
+|IVF (Inverted File Index) cluster-based pruning for massive datasets
+|Medium
+|📋 PLANNED
+
+|AVS-006
+|IVF-HNSW hybrid approach: coarse-grained IVF clustering with fine-grained HNSW search
+|Medium
+|📋 PLANNED
+
+|AVS-007
+|Configurable search strategies: Exhaustive, ClusterPruned, Progressive, Adaptive
+|High
+|📋 PLANNED
+
+|AVS-008
+|Dynamic nprobe selection for IVF-based searches with accuracy/speed trade-offs
+|Medium
+|📋 PLANNED
+
+|AVS-009
+|Graph-based index incremental updates without full rebuilds
+|High
+|📋 PLANNED
+
+|AVS-010
+|Quantization-aware distance calculation optimization (SIMD/GPU acceleration)
+|High
+|📋 PLANNED
+
+|AVS-011
+|Disk-efficient search with compressed index loading and candidate batching
+|High
+|📋 PLANNED
+
+|AVS-012
+|Multi-level quantization: different compression ratios per storage tier
+|Medium
+|📋 PLANNED
+|===
+
+==== Core Engine & Performance Differentiation
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|CEP-001
+|Dual-format vector storage: full-precision float32 + compressed quantized versions in Parquet
+|Critical
+|📋 PLANNED
+
+|CEP-002
+|Product Quantization (PQ) implementation with configurable subspaces and codebooks
+|High
+|📋 PLANNED
+
+|CEP-003
+|Scalar Quantization (SQ) with learned min/max per dimension and 8-bit precision
+|High
+|📋 PLANNED
+
+|CEP-004
+|Two-phase search optimization: quantized candidate selection + full-precision re-ranking
+|Critical
+|📋 PLANNED
+
+|CEP-005
+|Memory loading strategy selection: quantized-only vs full-precision based on cost/performance trade-offs
+|High
+|📋 PLANNED
+
+|CEP-006
+|Cost-based query optimizer for intelligent filter and search operation reordering
+|Critical
+|📋 PLANNED
+
+|CEP-007
+|Query execution cost modeling: predicate pushdown cost vs full scan cost vs ANN search cost
+|High
+|📋 PLANNED
+
+|CEP-008
+|Automatic query plan optimization for complex metadata filters with promoted columns
+|High
+|📋 PLANNED
+
+|CEP-009
+|Filter selectivity estimation and cardinality-based execution planning
+|Medium
+|📋 PLANNED
+
+|CEP-010
+|Dynamic compression ratio selection based on dataset characteristics and access patterns
+|Medium
+|📋 PLANNED
+
+|CEP-011
+|Near-in-memory performance at fraction of cost through intelligent quantization
+|Critical
+|📋 PLANNED
+
+|CEP-012
+|Enterprise-grade query optimization with execution plan caching and statistics
+|High
+|📋 PLANNED
+|===
+
 ==== AI Inference Integration
 [cols="1,3,1"]
 |===

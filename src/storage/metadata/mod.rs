@@ -244,7 +244,6 @@ pub enum MetadataOperation {
 }
 
 /// Metadata query filters
-#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     /// Filter by access pattern
     pub access_pattern: Option<AccessPattern>,
@@ -263,6 +262,32 @@ pub struct MetadataFilter {
     
     /// Custom filter function
     pub custom_filter: Option<Box<dyn Fn(&CollectionMetadata) -> bool + Send + Sync>>,
+}
+
+impl std::fmt::Debug for MetadataFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetadataFilter")
+            .field("access_pattern", &self.access_pattern)
+            .field("tags", &self.tags)
+            .field("owner", &self.owner)
+            .field("min_vector_count", &self.min_vector_count)
+            .field("max_age_days", &self.max_age_days)
+            .field("custom_filter", &self.custom_filter.is_some())
+            .finish()
+    }
+}
+
+impl Clone for MetadataFilter {
+    fn clone(&self) -> Self {
+        Self {
+            access_pattern: self.access_pattern.clone(),
+            tags: self.tags.clone(),
+            owner: self.owner.clone(),
+            min_vector_count: self.min_vector_count,
+            max_age_days: self.max_age_days,
+            custom_filter: None, // Function trait objects can't be cloned
+        }
+    }
 }
 
 impl Default for MetadataFilter {
@@ -324,7 +349,7 @@ pub struct CollectionFlushConfig {
     /// Maximum WAL size before forced flush (bytes, None = use global default)
     pub max_wal_size_bytes: Option<usize>,
     
-    /// Maximum vector count before forced flush (None = use global default)
+    /// Maximum vector count before forced flush (None = use global default, u64::MAX = disabled)
     pub max_vector_count: Option<u64>,
     
     /// Custom flush priority (higher = flush sooner)
@@ -355,7 +380,7 @@ pub struct GlobalFlushDefaults {
     /// Default maximum WAL size (128MB)
     pub default_max_wal_size_bytes: usize,
     
-    /// Default maximum vector count (1M vectors)
+    /// Default maximum vector count (u64::MAX = disabled, only size & age triggers used)
     pub default_max_vector_count: u64,
     
     /// Default flush priority
@@ -370,7 +395,7 @@ impl Default for GlobalFlushDefaults {
         Self {
             default_max_wal_age_secs: 5 * 60,             // 5 minutes for testing
             default_max_wal_size_bytes: 10 * 1024 * 1024, // 10MB for testing
-            default_max_vector_count: 1000,               // 1K vectors for testing
+            default_max_vector_count: u64::MAX,           // Disabled - only size & age triggers
             default_flush_priority: 50,                   // Medium priority
             default_enable_background_flush: true,        // Enable by default
         }

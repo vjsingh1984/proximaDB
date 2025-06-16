@@ -13,7 +13,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::{Result, Context};
 
-use super::{CompressionAlgorithm, SimdInstructionSet};
+use super::types::SimdInstructionSet;
+use crate::storage::wal::config::CompressionAlgorithm;
 
 /// SIMD-optimized compression engine for VIPER storage
 pub struct SimdCompressionEngine {

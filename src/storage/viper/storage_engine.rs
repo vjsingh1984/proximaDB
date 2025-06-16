@@ -28,8 +28,11 @@ use anyhow::{Result, Context};
 
 use crate::core::{VectorId, CollectionId, VectorRecord};
 use crate::storage::{WalManager, WalEntry, WalOperation};
+use crate::storage::filesystem::FilesystemFactory;
 use super::types::*;
-use super::{ViperConfig, CompressionAlgorithm, TierLevel};
+use super::ViperConfig;
+use super::ttl::TTLCleanupService;
+use crate::storage::wal::config::CompressionAlgorithm;
 
 /// Calculate sparsity ratio for a vector (standalone function)
 fn calculate_sparsity_ratio(vector: &[f32]) -> f32 {
@@ -68,6 +71,9 @@ pub struct ViperStorageEngine {
     
     /// Statistics tracker
     stats: Arc<RwLock<ViperStorageStats>>,
+    
+    /// TTL cleanup service
+    ttl_service: Option<Arc<RwLock<super::ttl::TTLCleanupService>>>,
 }
 
 /// Collection metadata in VIPER
@@ -205,30 +211,44 @@ pub struct ViperStorageStats {
 
 impl ViperStorageEngine {
     /// Create a new VIPER storage engine with unified WAL
-    pub async fn new(config: ViperConfig, wal_manager: Arc<WalManager>) -> Result<Self> {
-        // Ensure storage directories exist
-        tokio::fs::create_dir_all(&config.storage_root).await
-            .context("Failed to create VIPER storage root directory")?;
-        
+    pub async fn new(
+        config: ViperConfig, 
+        wal_manager: Arc<WalManager>,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
         let compaction_manager = Arc::new(
             super::compaction::ViperCompactionEngine::new(config.clone()).await?
         );
         
-        let writer_pool = Arc::new(ParquetWriterPool::new(
-            config.performance_config.parallel_config.io_thread_count
-        ));
+        let writer_pool = Arc::new(ParquetWriterPool::new(8)); // Default to 8 threads
+        
+        let partitions = Arc::new(RwLock::new(HashMap::new()));
+        
+        // Initialize TTL service if enabled
+        let ttl_service = if config.ttl_config.enabled {
+            let mut service = TTLCleanupService::new(
+                config.ttl_config.clone(),
+                filesystem,
+                partitions.clone(),
+            );
+            service.start().await?;
+            Some(Arc::new(RwLock::new(service)))
+        } else {
+            None
+        };
         
         Ok(Self {
             config,
             wal_manager,
             collections: Arc::new(RwLock::new(HashMap::new())),
             clusters: Arc::new(RwLock::new(HashMap::new())),
-            partitions: Arc::new(RwLock::new(HashMap::new())),
+            partitions,
             ml_models: Arc::new(RwLock::new(HashMap::new())),
             feature_models: Arc::new(RwLock::new(HashMap::new())),
             compaction_manager,
             writer_pool,
             stats: Arc::new(RwLock::new(ViperStorageStats::default())),
+            ttl_service,
         })
     }
     
@@ -306,7 +326,7 @@ impl ViperStorageEngine {
         let storage_format = self.determine_format(&vector_record.vector, &collection_meta).await?;
         
         // Write to WAL first for durability using new interface
-        self.wal_manager.insert(collection_id.clone(), vector_record.id, vector_record.clone()).await
+        self.wal_manager.insert(collection_id.clone(), vector_record.id.clone(), vector_record.clone()).await
             .context("Failed to write vector insert to WAL")?;
         
         // Create VIPER vector entry based on hybrid storage architecture
@@ -317,7 +337,7 @@ impl ViperStorageEngine {
                 let sparsity_ratio = 1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
                 
                 let metadata = SparseVectorMetadata::new(
-                    vector_record.id,
+                    vector_record.id.clone(),
                     serde_json::to_value(vector_record.metadata.clone())?,
                     cluster_prediction.cluster_id,
                     vector_record.vector.len() as u32,
@@ -377,15 +397,12 @@ impl ViperStorageEngine {
         // Process each cluster batch and log to WAL
         for (cluster_id, batch) in cluster_batches {
             // Log operations to unified WAL first
-            for (vector, prediction) in &batch {
-                let _ = self.wal_manager.log_viper_vector_insert(
+            for (vector, _prediction) in &batch {
+                // Log vector insertion to WAL using standard insert method
+                let _ = self.wal_manager.insert(
                     collection_id.clone(),
-                    vector.id,
-                    vector.vector.clone(),
-                    serde_json::to_value(vector.metadata.clone()).unwrap_or(serde_json::Value::Null),
-                    prediction.clone(),
-                    self.determine_storage_format(&vector.vector),
-                    TierLevel::Hot, // Default tier for new vectors
+                    vector.id.clone(),
+                    vector.clone(),
                 ).await;
             }
             
@@ -1040,7 +1057,7 @@ impl ViperStorageEngine {
                     let sparsity_ratio = 1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
                     
                     let metadata = SparseVectorMetadata::new(
-                        vector_record.id,
+                        vector_record.id.clone(),
                         serde_json::to_value(vector_record.metadata.clone())?,
                         cluster_prediction.cluster_id,
                         vector_record.vector.len() as u32,
@@ -1154,7 +1171,7 @@ impl ViperStorageEngine {
         vector_record: VectorRecord,
         _cluster_prediction: ClusterPrediction,
         _storage_format: VectorStorageFormat,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // Re-apply the insert without logging to WAL again
         self.insert_vector(&collection_id, vector_record).await
@@ -1168,7 +1185,7 @@ impl ViperStorageEngine {
         _old_cluster_id: ClusterId,
         _new_cluster_id: ClusterId,
         _updated_metadata: Option<serde_json::Value>,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement vector update logic
         Ok(())
@@ -1180,7 +1197,7 @@ impl ViperStorageEngine {
         _collection_id: String,
         _vector_id: VectorId,
         _cluster_id: ClusterId,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement vector delete logic
         Ok(())
@@ -1209,7 +1226,7 @@ impl ViperStorageEngine {
         collection_id: String,
         partition_id: PartitionId,
         cluster_ids: Vec<ClusterId>,
-        tier_level: TierLevel,
+        storage_url: &str,
     ) -> Result<()> {
         let mut partitions = self.partitions.write().await;
         partitions.insert(partition_id.clone(), PartitionMetadata {
@@ -1224,7 +1241,7 @@ impl ViperStorageEngine {
                 access_frequency: 0.0,
                 last_accessed: Utc::now(),
             },
-            tier_level,
+            storage_url: storage_url.to_string(),
             parquet_files: Vec::new(),
             bloom_filter: None,
             created_at: Utc::now(),
@@ -1240,7 +1257,7 @@ impl ViperStorageEngine {
         _operation_id: String,
         _input_partitions: Vec<PartitionId>,
         _output_partitions: Vec<PartitionId>,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement compaction recovery logic
         Ok(())
@@ -1251,13 +1268,13 @@ impl ViperStorageEngine {
         &self,
         _collection_id: String,
         partition_id: PartitionId,
-        _from_tier: TierLevel,
-        to_tier: TierLevel,
+        _from_storage_url: &str,
+        to_storage_url: &str,
         _migration_reason: String,
     ) -> Result<()> {
         let mut partitions = self.partitions.write().await;
         if let Some(partition) = partitions.get_mut(&partition_id) {
-            partition.tier_level = to_tier;
+            partition.storage_url = to_storage_url.to_string();
         }
         Ok(())
     }
@@ -1272,6 +1289,26 @@ impl ViperStorageEngine {
     ) -> Result<()> {
         // TODO: Implement model update recovery logic
         Ok(())
+    }
+    
+    /// Get TTL cleanup statistics
+    pub async fn get_ttl_stats(&self) -> Result<Option<super::ttl::TTLStats>> {
+        if let Some(ttl_service) = &self.ttl_service {
+            let service = ttl_service.read().await;
+            Ok(Some(service.get_stats().await))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Force TTL cleanup (for admin/testing purposes)
+    pub async fn force_ttl_cleanup(&self) -> Result<Option<super::ttl::CleanupResult>> {
+        if let Some(ttl_service) = &self.ttl_service {
+            let service = ttl_service.read().await;
+            Ok(Some(service.force_cleanup().await?))
+        } else {
+            Ok(None)
+        }
     }
 }
 

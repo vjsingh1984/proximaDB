@@ -18,19 +18,12 @@ pub mod skiplist;
 pub mod btree;
 pub mod art; // Adaptive Radix Tree
 pub mod hashmap;
-pub mod isolation; // Collection isolation for atomic flush
-pub mod skiplist_isolatable; // Example isolatable implementation
 
 // Re-exports
 pub use skiplist::SkipListMemTable;
 pub use btree::BTreeMemTable;
 pub use art::ArtMemTable;
 pub use hashmap::HashMapMemTable;
-pub use isolation::{
-    IsolatableMemTableStrategy, CollectionMemTableData, IsolatedCollectionMemTable,
-    FlushIsolationCoordinator, IsolationReason, IsolationMetadata
-};
-pub use skiplist_isolatable::{IsolatableSkipListMemTable, IsolatableCollectionSkipList};
 
 /// Memtable strategy type selection
 #[derive(Debug, Clone, PartialEq)]
@@ -72,7 +65,7 @@ pub struct MemTableMaintenanceStats {
 
 /// Generic memtable trait for pluggable implementations
 #[async_trait]
-pub trait MemTableStrategy: Send + Sync {
+pub trait MemTableStrategy: Send + Sync + std::fmt::Debug {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
     
@@ -309,5 +302,82 @@ impl Default for WorkloadCharacteristics {
             string_keys: false,
             point_lookups_only: false,
         }
+    }
+}
+
+/// Unified WAL MemTable that wraps a MemTableStrategy
+/// This provides a simplified interface for WAL strategies to use
+#[derive(Debug)]
+pub struct WalMemTable {
+    strategy: Box<dyn MemTableStrategy>,
+}
+
+impl WalMemTable {
+    /// Create new WalMemTable with specified configuration
+    pub async fn new(config: WalConfig) -> Result<Self> {
+        let strategy = MemTableFactory::create_from_config(&config).await?;
+        Ok(Self { strategy })
+    }
+    
+    /// Insert a single entry and return sequence number
+    pub async fn insert_entry(&self, entry: WalEntry) -> Result<u64> {
+        self.strategy.insert_entry(entry).await
+    }
+    
+    /// Insert multiple entries in batch
+    pub async fn insert_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
+        self.strategy.insert_batch(entries).await
+    }
+    
+    /// Get entries for a collection
+    pub async fn get_entries(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>> {
+        self.strategy.get_entries_from(collection_id, from_sequence, limit).await
+    }
+    
+    /// Get all entries for a collection
+    pub async fn get_all_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>> {
+        self.strategy.get_all_entries(collection_id).await
+    }
+    
+    /// Search for specific vector
+    pub async fn search_vector(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>> {
+        self.strategy.search_vector(collection_id, vector_id).await
+    }
+    
+    /// Clear flushed entries
+    pub async fn clear_flushed(&self, collection_id: &CollectionId, up_to_sequence: u64) -> Result<()> {
+        self.strategy.clear_flushed(collection_id, up_to_sequence).await
+    }
+    
+    /// Drop collection
+    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+        self.strategy.drop_collection(collection_id).await
+    }
+    
+    /// Get collections needing flush
+    pub async fn collections_needing_flush(&self) -> Result<Vec<CollectionId>> {
+        self.strategy.collections_needing_flush().await
+    }
+    
+    /// Check if global flush needed
+    pub async fn needs_global_flush(&self) -> Result<bool> {
+        self.strategy.needs_global_flush().await
+    }
+    
+    /// Get statistics
+    pub async fn get_stats(&self) -> Result<HashMap<CollectionId, MemTableStats>> {
+        self.strategy.get_stats().await
+    }
+    
+    /// Perform maintenance
+    pub async fn maintenance(&self) -> Result<MemTableMaintenanceStats> {
+        self.strategy.maintenance().await
+    }
+}
+
+/// Clone implementation for Arc-wrapped WalMemTable
+impl Clone for WalMemTable {
+    fn clone(&self) -> Self {
+        panic!("WalMemTable should be wrapped in Arc for sharing across tasks")
     }
 }

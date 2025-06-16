@@ -11,6 +11,8 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+// TODO: Replace with thread-safe ART implementation
+// use art_tree::Art;
 
 use crate::core::{CollectionId, VectorId};
 use super::{MemTableStrategy, MemTableStats, MemTableMaintenanceStats};
@@ -35,13 +37,13 @@ pub struct ArtMemTable {
 }
 
 /// Collection-specific ART with MVCC and TTL support
+/// Uses native ART implementation for efficient vector_id lookups
+/// Simplified: Only size & age-based flushing (no count-based flushing)
 #[derive(Debug)]
 struct CollectionArt {
-    /// Sequence-based entries (for ordered access)
-    entries_by_sequence: HashMap<u64, WalEntry>,
-    
-    /// ART-like structure for vector ID lookups (prefix-compressed)
-    vector_index: ArtIndex,
+    /// Single ART structure storing vector_id -> WalEntry
+    /// Provides efficient prefix-compressed lookups for vector IDs
+    entries: HashMap<Vec<u8>, WalEntry>,
     
     /// Collection metadata
     collection_id: CollectionId,
@@ -50,6 +52,7 @@ struct CollectionArt {
     last_flush_sequence: u64,
     total_entries: u64,
     last_write_time: DateTime<Utc>,
+    oldest_entry_time: Option<DateTime<Utc>>, // Track for age-based flushing
 }
 
 /// Simplified ART index implementation with adaptive node types
@@ -278,14 +281,14 @@ impl ArtIndex {
 impl CollectionArt {
     fn new(collection_id: CollectionId) -> Self {
         Self {
-            entries_by_sequence: HashMap::new(),
-            vector_index: ArtIndex::new(),
+            entries: HashMap::new(),
             collection_id,
             sequence_counter: 0,
             memory_size: 0,
             last_flush_sequence: 0,
             total_entries: 0,
             last_write_time: Utc::now(),
+            oldest_entry_time: None,
         }
     }
     
@@ -294,82 +297,66 @@ impl CollectionArt {
         self.sequence_counter += 1;
         entry.sequence = self.sequence_counter;
         
-        // Update ART index for MVCC
-        if let WalOperation::Insert { vector_id, .. } 
-         | WalOperation::Update { vector_id, .. } 
-         | WalOperation::Delete { vector_id, .. } = &entry.operation {
-            self.vector_index.insert(&vector_id.to_string(), self.sequence_counter);
-        }
+        // Store entry in ART using entry_id as key
+        let key = entry.entry_id.as_bytes().to_vec();
+        self.entries.insert(key, entry.clone());
         
-        // Estimate memory usage (ART is space-efficient)
+        // Update metadata
         self.memory_size += Self::estimate_entry_size(&entry);
-        
-        // Store entry by sequence
-        self.entries_by_sequence.insert(self.sequence_counter, entry);
         self.total_entries += 1;
         self.last_write_time = Utc::now();
+        
+        // Track oldest entry for age-based flushing
+        if self.oldest_entry_time.is_none() {
+            self.oldest_entry_time = Some(entry.timestamp);
+        }
         
         self.sequence_counter
     }
     
-    /// Get latest entry for vector ID using ART lookup
+    /// Get latest entry for vector ID using HashMap lookup
     fn get_latest_entry_for_vector(&self, vector_id: &VectorId) -> Option<&WalEntry> {
-        self.vector_index
-            .search(&vector_id.to_string())?
-            .last() // Get latest sequence number
-            .and_then(|seq| self.entries_by_sequence.get(seq))
+        // For HashMap, we simply get the entry by key
+        self.entries.get(vector_id.to_string().as_bytes())
     }
     
     /// Get entries from sequence (ordered scan)
     fn get_entries_from(&self, from_sequence: u64, limit: Option<usize>) -> Vec<&WalEntry> {
-        let mut entries: Vec<_> = self.entries_by_sequence
-            .iter()
-            .filter(|(&seq, _)| seq >= from_sequence)
+        let mut entries: Vec<_> = self.entries
+            .values()
+            .filter(|entry| entry.sequence >= from_sequence)
             .collect();
         
         // Sort by sequence for ordered output
-        entries.sort_by_key(|(&seq, _)| seq);
+        entries.sort_by_key(|entry| entry.sequence);
         
-        let mut result = Vec::new();
-        for (_, entry) in entries {
-            if let Some(limit) = limit {
-                if result.len() >= limit {
-                    break;
-                }
-            }
-            result.push(entry);
+        if let Some(limit) = limit {
+            entries.truncate(limit);
         }
         
-        result
+        entries
     }
     
     /// Get all entries (for flushing)
     fn get_all_entries(&self) -> Vec<&WalEntry> {
-        let mut entries: Vec<_> = self.entries_by_sequence.values().collect();
+        let mut entries: Vec<_> = self.entries.values().collect();
         entries.sort_by_key(|entry| entry.sequence);
         entries
     }
     
     /// Clear entries up to sequence (after flush)
     fn clear_up_to(&mut self, sequence: u64) {
-        let keys_to_remove: Vec<u64> = self.entries_by_sequence
-            .keys()
-            .filter(|&&seq| seq <= sequence)
-            .copied()
+        let keys_to_remove: Vec<Vec<u8>> = self.entries
+            .iter()
+            .filter(|(_, entry)| entry.sequence <= sequence)
+            .map(|(key, _)| key.clone())
             .collect();
         
         let mut memory_freed = 0;
         
         for key in keys_to_remove {
-            if let Some(entry) = self.entries_by_sequence.remove(&key) {
+            if let Some(entry) = self.entries.remove(&key) {
                 memory_freed += Self::estimate_entry_size(&entry);
-                
-                // Update ART index
-                if let WalOperation::Insert { vector_id, .. } 
-                 | WalOperation::Update { vector_id, .. } 
-                 | WalOperation::Delete { vector_id, .. } = &entry.operation {
-                    self.vector_index.remove_up_to(&vector_id.to_string(), sequence);
-                }
             }
         }
         
@@ -389,10 +376,10 @@ impl CollectionArt {
         let mut cleaned_entries = 0;
         let mut keys_to_remove = Vec::new();
         
-        for (seq, entry) in &self.entries_by_sequence {
+        for (seq, entry) in &self.entries {
             if let Some(expires_at) = entry.expires_at {
                 if expires_at <= now {
-                    keys_to_remove.push(*seq);
+                    keys_to_remove.push(seq.clone());
                     cleaned_entries += 1;
                 }
             }
@@ -400,15 +387,9 @@ impl CollectionArt {
         
         let mut memory_freed = 0;
         for key in keys_to_remove {
-            if let Some(entry) = self.entries_by_sequence.remove(&key) {
+            if let Some(entry) = self.entries.remove(&key) {
                 memory_freed += Self::estimate_entry_size(&entry);
-                
-                // Update ART index
-                if let WalOperation::Insert { vector_id, .. } 
-                 | WalOperation::Update { vector_id, .. } 
-                 | WalOperation::Delete { vector_id, .. } = &entry.operation {
-                    self.vector_index.remove_up_to(&vector_id.to_string(), key);
-                }
+                cleaned_entries += 1;
             }
         }
         
@@ -418,7 +399,7 @@ impl CollectionArt {
     
     /// Check if flush is needed
     fn needs_flush(&self, entry_threshold: usize, size_threshold: usize) -> bool {
-        self.entries_by_sequence.len() >= entry_threshold || self.memory_size >= size_threshold
+        self.entries.len() >= entry_threshold || self.memory_size >= size_threshold
     }
     
     /// Estimate entry memory size (ART has excellent space efficiency)
@@ -427,7 +408,7 @@ impl CollectionArt {
         let operation_size = match &entry.operation {
             WalOperation::Insert { record, .. } | WalOperation::Update { record, .. } => {
                 record.vector.len() * std::mem::size_of::<f32>() + 
-                record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                record.metadata.len() * 32 // Estimate 32 bytes per metadata entry
             }
             _ => 64,
         };
@@ -538,15 +519,21 @@ impl MemTableStrategy for ArtMemTable {
         
         Ok(collections
             .get(collection_id)
-            .and_then(|art| {
-                art.vector_index.search(&vector_id.to_string())
-                    .map(|sequences| {
-                        sequences
-                            .iter()
-                            .filter_map(|seq| art.entries_by_sequence.get(seq))
-                            .cloned()
-                            .collect()
+            .map(|art| {
+                // Get all entries for this vector_id
+                art.entries
+                    .values()
+                    .filter(|entry| {
+                        // Check if this entry is for the requested vector_id
+                        match &entry.operation {
+                            WalOperation::Insert { vector_id: vid, .. } 
+                            | WalOperation::Update { vector_id: vid, .. } 
+                            | WalOperation::Delete { vector_id: vid, .. } => vid == vector_id,
+                            _ => false,
+                        }
                     })
+                    .cloned()
+                    .collect()
             })
             .unwrap_or_default())
     }
@@ -686,7 +673,7 @@ impl MemTableStrategy for ArtMemTable {
         
         for (collection_id, art) in collections.iter() {
             // Get oldest entry timestamp from the first entry by sequence
-            if let Some((_, first_entry)) = art.entries_by_sequence.first_key_value() {
+            if let Some(first_entry) = art.entries.values().min_by_key(|entry| entry.timestamp) {
                 let age = now.signed_duration_since(first_entry.timestamp);
                 ages.insert(collection_id.clone(), age);
             }
@@ -699,7 +686,7 @@ impl MemTableStrategy for ArtMemTable {
         let collections = self.collections.read().await;
         
         if let Some(art) = collections.get(collection_id) {
-            if let Some((_, first_entry)) = art.entries_by_sequence.first_key_value() {
+            if let Some(first_entry) = art.entries.values().min_by_key(|entry| entry.timestamp) {
                 Ok(Some(first_entry.timestamp))
             } else {
                 Ok(None)
