@@ -72,7 +72,7 @@ impl ProximaDB {
         let query_engine = query::QueryEngine::new_placeholder().await?;
         
         // Create unified server configuration
-        let bind_addr = format!("{}:{}", config.server.bind_address, config.api.rest_port)
+        let bind_addr = format!("{}:{}", config.server.bind_address, config.server.port)
             .parse()
             .map_err(|e| format!("Invalid bind address: {}", e))?;
             

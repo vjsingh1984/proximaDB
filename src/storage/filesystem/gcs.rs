@@ -16,10 +16,9 @@
 
 //! Google Cloud Storage (GCS) filesystem implementation with service accounts and ADC
 
-use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 use super::{FileSystem, FileMetadata, DirEntry, FileOptions, FsResult, FilesystemError};
 use super::auth::{GcsCredentials, GcsCredentialProvider};
@@ -612,7 +611,7 @@ mod tests {
             ..Default::default()
         };
         
-        let credential_provider = Box::new(super::auth::GcsApplicationDefaultProvider::new());
+        let credential_provider = Box::new(crate::storage::filesystem::auth::GcsApplicationDefaultProvider::new());
         let client = GcsClient::new(config.clone()).await.unwrap();
         
         let fs = GcsFileSystem {

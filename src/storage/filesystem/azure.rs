@@ -16,8 +16,6 @@
 
 //! Azure Data Lake Storage (ADLS) filesystem implementation with managed identity and authentication
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 use tokio::time::{Duration, Instant};

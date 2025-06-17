@@ -42,6 +42,42 @@ pub struct ViperConfig {
     
     /// TTL (Time-To-Live) configuration
     pub ttl_config: TTLConfig,
+    
+    /// Compaction trigger configuration
+    pub compaction_config: CompactionConfig,
+}
+
+/// Compaction trigger configuration for background file optimization
+#[derive(Debug, Clone)]
+pub struct CompactionConfig {
+    /// Enable automatic compaction
+    pub enabled: bool,
+    
+    /// Minimum number of files to trigger compaction (MVP default: 8)
+    pub min_files_for_compaction: usize,
+    
+    /// Maximum average file size for compaction trigger (in KB for granularity)
+    pub max_avg_file_size_kb: usize,
+    
+    // No inspection interval needed - compaction checks happen immediately after flush
+    
+    /// Maximum files to compact in a single operation
+    pub max_files_per_compaction: usize,
+    
+    /// Target file size after compaction (in MB)
+    pub target_file_size_mb: usize,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_files_for_compaction: 2,          // Testing: >2 files trigger compaction
+            max_avg_file_size_kb: 16 * 1024,      // Testing: <16MB (16384 KB) average triggers compaction
+            max_files_per_compaction: 5,          // Testing: smaller batches
+            target_file_size_mb: 64,              // Testing: smaller target size
+        }
+    }
 }
 
 /// TTL (Time-To-Live) configuration for automatic vector expiration
@@ -93,6 +129,7 @@ impl Default for ViperConfig {
             enable_column_stats: true,
             enable_bloom_filters: true,
             ttl_config: TTLConfig::default(),
+            compaction_config: CompactionConfig::default(),
         }
     }
 }

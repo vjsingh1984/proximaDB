@@ -444,9 +444,151 @@ VectorFlow implements a **5-tier storage hierarchy** optimized for different acc
   * Retrieval SLAs for legal discovery
   * 99% cost reduction vs hot storage
 
+=== VIPER Atomic Operations
+
+ProximaDB implements Hadoop MapReduce v2 style atomic operations using staging directories to ensure consistency during flush and compaction operations.
+
+==== Atomic Flush Architecture
+
+**Design Pattern**: Staging Directory + Collection Locking
+
+**Operation Flow**:
+1. **Stage Preparation**: Create `__flush` staging directory (reads/writes continue)
+2. **Data Writing**: Write flushed Parquet files to staging directory (reads/writes continue)
+3. **Lock Acquisition**: Acquire exclusive write lock on collection (minimal blocking)
+4. **Atomic Switch**: Delete WAL entries + move staged files (milliseconds)
+5. **Lock Release**: Release write lock, enabling queries on new data
+
+**Consistency Guarantees**:
+- No duplicate reads from memtable + storage during flush
+- WAL entries and memtable cleared atomically with file availability
+- **Queries blocked only during final atomic switch (milliseconds)**
+- **WAL and memtable remain available for new inserts/updates/deletes during flush**
+
+==== Atomic Compaction Architecture
+
+**Design Pattern**: Source Replacement + Staging Directory
+
+**Operation Flow**:
+1. **Stage Preparation**: Create `__compaction` staging directory (reads/writes continue)
+2. **Compaction Processing**: Merge source Parquet files in staging (reads/writes continue)
+3. **Lock Acquisition**: Acquire exclusive write lock on collection (minimal blocking)
+4. **Atomic Switch**: Delete source files + move compacted file (milliseconds)
+5. **Lock Release**: Release write lock, enabling queries on compacted data
+
+**Performance Optimizations**:
+- Same-mount staging directories minimize lock periods
+- Cloud storage: copy operations minimize inconsistent state windows
+- Collection-level locking allows concurrent operations on different collections
+- **WAL and memtable remain available for writes during compaction**
+
+==== Collection Locking Coordinator
+
+**Lock Types**:
+- **Read Locks**: Multiple concurrent readers allowed (queries, searches)
+- **Write Locks**: Exclusive access only during fast file move operations
+- **Minimal Blocking**: Reads/searches blocked only during millisecond file moves
+- **WAL Independence**: WAL operations (insert/update/delete) continue during flush/compaction
+
+**Implementation**:
+```rust
+pub enum OperationType {
+    Read,        // Allow multiple concurrent readers
+    Flush,       // Exclusive writer for flush operations
+    Compaction,  // Exclusive writer for compaction operations
+}
+```
+
 === Write-Ahead Log (WAL) Architecture
 
-ProximaDB implements a sophisticated WAL system with cloud-native capabilities and multi-disk support for critical systems.
+ProximaDB implements a sophisticated WAL system with cloud-native capabilities, multi-disk support, and intelligent flush trigger mechanisms for critical systems.
+
+==== WAL Flush Trigger Architecture
+
+ProximaDB implements a **hybrid flush trigger system** that combines time-based background monitoring with immediate size-based triggers for optimal performance and data safety.
+
+===== Flush Trigger Mechanisms
+
+**1. Background Age-Based Triggers (Async Scheduled)**
+- **Primary mechanism**: Dedicated async background thread
+- **Inspection frequency**: Every 5 minutes (configurable via `age_check_interval_secs`)
+- **Age threshold**: Default 1 hour maximum WAL age (configurable via `max_wal_age_secs`)
+- **Per-collection overrides**: Support for collection-specific age thresholds
+- **Implementation**: Tokio async task with graceful shutdown handling
+
+**2. Immediate Size-Based Triggers (Synchronous on Write)**
+- **Memory threshold**: 75,000 entries per collection (default)
+- **Memory size**: 1GB per collection, 2GB global limit
+- **Trigger point**: Checked on every write operation
+- **Response**: Immediate flush initiation when thresholds exceeded
+- **Implementation**: Synchronous checks in write path for responsiveness
+
+**3. Manual Flush Triggers (API-Driven)**
+- **REST API**: `POST /collections/{id}/flush`
+- **gRPC API**: `FlushCollection` service call
+- **Internal API**: Direct `WalManager::flush()` calls
+- **Use cases**: Testing, maintenance, explicit data persistence
+
+===== Flush Decision Logic
+
+The background monitoring thread (`WalAgeMonitor`) performs these operations every 5 minutes:
+
+```rust
+// Pseudo-code for age-based flush logic
+async fn perform_age_check() -> Result<()> {
+    for collection_id in get_all_collections() {
+        let age = get_collection_wal_age(collection_id).await?;
+        let threshold = get_age_threshold(collection_id); // Default: 1 hour
+        
+        if age > threshold {
+            trigger_immediate_flush(collection_id).await?;
+        }
+    }
+}
+```
+
+**Size-based flush logic (on every write)**:
+```rust
+// Checked after each write operation
+async fn after_write_check(collection_id: &str) -> Result<()> {
+    let (entry_count, memory_size) = get_collection_metrics(collection_id).await?;
+    
+    if entry_count > 75_000 || memory_size > 1_GB || global_memory > 2_GB {
+        trigger_immediate_flush(collection_id).await?;
+    }
+}
+```
+
+===== Sequential Flush-Compaction Design
+
+**Thread Safety Architecture**:
+- **Same thread execution**: Flush thread immediately checks compaction criteria after flush completion
+- **Compaction triggers**: `file_count > 2 AND avg_file_size < 16384KB`
+- **No race conditions**: Sequential execution eliminates thread conflicts
+- **No background compaction threads**: Compaction happens only after flush on same thread
+
+```rust
+async fn flush_with_compaction_check(collection_id: &str) -> Result<()> {
+    // 1. Perform flush operation
+    let flush_result = perform_flush(collection_id).await?;
+    
+    // 2. Immediately check compaction criteria (same thread)
+    let compaction_needed = check_compaction_criteria(collection_id).await?;
+    
+    // 3. If needed, perform compaction immediately
+    if compaction_needed {
+        perform_compaction(collection_id).await?;
+    }
+    
+    Ok(())
+}
+```
+
+**Benefits of same-thread design**:
+- ✅ **No race conditions** between flush and compaction operations
+- ✅ **Predictable behavior** for testing and production environments
+- ✅ **Immediate compaction** when needed (no delays from background scheduling)
+- ✅ **Simplified architecture** without complex thread coordination
 
 ==== WAL Design Principles
 
@@ -1218,17 +1360,27 @@ pub struct TenantConfig {
 
 == API Design
 
-=== gRPC Primary API
-- **Protocol Buffers**: Strongly typed, version-safe contracts
-- **Streaming Support**: Real-time data ingestion and query results
-- **Load Balancing**: Client-side load balancing for optimal performance
-- **Authentication**: Mutual TLS and token-based authentication
+=== Unified Dual-Protocol Server ✅ IMPLEMENTED
+**Single Port Architecture**: ProximaDB runs both gRPC and REST APIs on port 5678 with intelligent protocol detection.
 
-=== REST Compatibility Layer
+==== Protocol Detection Strategy
+- **Content-Type Based Routing**: Requests with `content-type: application/grpc` are routed to native gRPC handlers
+- **HTTP Method Detection**: Traditional HTTP methods (GET, POST, PUT, DELETE) are routed to REST handlers
+- **Zero Overhead**: Direct protocol detection without parsing overhead
+- **Shared Business Logic**: Both protocols delegate to common service layer ensuring identical behavior
+
+=== gRPC Primary API ✅ IMPLEMENTED
+- **Protocol Buffers**: Strongly typed, version-safe contracts using `proximadb.v1` package
+- **HTTP/2 Native**: Pure HTTP/2 implementation for maximum performance
+- **Binary Efficiency**: Protobuf serialization vs JSON for reduced bandwidth
+- **Service Methods**: Complete CRUD operations (CreateCollection, InsertVector, SearchVector, etc.)
+- **Error Handling**: Native gRPC status codes and error propagation
+
+=== REST Compatibility Layer ✅ IMPLEMENTED
 - **OpenAPI Specification**: Auto-generated documentation
 - **HTTP/2 Support**: Connection multiplexing and server push
 - **CORS Handling**: Cross-origin request support for web applications
-- **Rate Limiting**: Per-endpoint throttling and quota management
+- **JSON over HTTP**: Traditional REST semantics with JSON payloads
 
 === SDK Strategy
 - **Auto-generated Clients**: Protocol buffer definitions generate clients

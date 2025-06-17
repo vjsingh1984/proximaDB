@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
-use crate::core::VectorDBError;
+// use crate::core::VectorDBError; // Unused import
 
 /// Individual Raft node in the cluster
 #[derive(Debug)]

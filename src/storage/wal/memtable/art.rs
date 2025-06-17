@@ -52,7 +52,6 @@ struct CollectionArt {
     last_flush_sequence: u64,
     total_entries: u64,
     last_write_time: DateTime<Utc>,
-    oldest_entry_time: Option<DateTime<Utc>>, // Track for age-based flushing
 }
 
 /// Simplified ART index implementation with adaptive node types
@@ -288,7 +287,6 @@ impl CollectionArt {
             last_flush_sequence: 0,
             total_entries: 0,
             last_write_time: Utc::now(),
-            oldest_entry_time: None,
         }
     }
     
@@ -305,11 +303,6 @@ impl CollectionArt {
         self.memory_size += Self::estimate_entry_size(&entry);
         self.total_entries += 1;
         self.last_write_time = Utc::now();
-        
-        // Track oldest entry for age-based flushing
-        if self.oldest_entry_time.is_none() {
-            self.oldest_entry_time = Some(entry.timestamp);
-        }
         
         self.sequence_counter
     }
@@ -397,9 +390,9 @@ impl CollectionArt {
         cleaned_entries
     }
     
-    /// Check if flush is needed
-    fn needs_flush(&self, entry_threshold: usize, size_threshold: usize) -> bool {
-        self.entries.len() >= entry_threshold || self.memory_size >= size_threshold
+    /// Check if flush is needed based on size only
+    fn needs_flush(&self, size_threshold: usize) -> bool {
+        self.memory_size >= size_threshold
     }
     
     /// Estimate entry memory size (ART has excellent space efficiency)
@@ -608,10 +601,7 @@ impl MemTableStrategy for ArtMemTable {
         for (collection_id, art) in collections.iter() {
             let effective_config = config.effective_config_for_collection(collection_id.as_str());
             
-            if art.needs_flush(
-                effective_config.memory_flush_threshold,
-                effective_config.disk_segment_size,
-            ) {
+            if art.needs_flush(effective_config.memory_flush_size_bytes) {
                 result.push(collection_id.clone());
             }
         }
@@ -666,44 +656,6 @@ impl MemTableStrategy for ArtMemTable {
         Ok(stats)
     }
     
-    async fn get_collection_ages(&self) -> Result<HashMap<CollectionId, chrono::Duration>> {
-        let collections = self.collections.read().await;
-        let mut ages = HashMap::new();
-        let now = chrono::Utc::now();
-        
-        for (collection_id, art) in collections.iter() {
-            // Get oldest entry timestamp from the first entry by sequence
-            if let Some(first_entry) = art.entries.values().min_by_key(|entry| entry.timestamp) {
-                let age = now.signed_duration_since(first_entry.timestamp);
-                ages.insert(collection_id.clone(), age);
-            }
-        }
-        
-        Ok(ages)
-    }
-    
-    async fn get_oldest_unflushed_timestamp(&self, collection_id: &CollectionId) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
-        let collections = self.collections.read().await;
-        
-        if let Some(art) = collections.get(collection_id) {
-            if let Some(first_entry) = art.entries.values().min_by_key(|entry| entry.timestamp) {
-                Ok(Some(first_entry.timestamp))
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-    
-    async fn needs_age_based_flush(&self, collection_id: &CollectionId, max_age_secs: u64) -> Result<bool> {
-        if let Some(oldest_time) = self.get_oldest_unflushed_timestamp(collection_id).await? {
-            let age = chrono::Utc::now().signed_duration_since(oldest_time);
-            Ok(age.num_seconds() > max_age_secs as i64)
-        } else {
-            Ok(false)
-        }
-    }
 
     async fn close(&self) -> Result<()> {
         tracing::info!("✅ ART memtable closed");

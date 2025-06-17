@@ -18,8 +18,8 @@
 //!
 //! This module contains the generated protobuf code for ProximaDB's gRPC API.
 
-pub mod vectordb {
+pub mod proximadb {
     pub mod v1 {
-        include!("vectordb.v1.rs");
+        include!("proximadb.v1.rs");
     }
 }

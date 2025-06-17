@@ -12,7 +12,7 @@ use crate::storage::unified_engine::CollectionConfig;
 use super::config::ViperSchemaBuilder;
 
 /// Strategy Pattern: Defines different schema generation strategies
-pub trait SchemaGenerationStrategy {
+pub trait SchemaGenerationStrategy: Send + Sync {
     fn generate_schema(&self) -> Result<Arc<Schema>>;
     fn get_filterable_fields(&self) -> &[String];
     fn get_collection_id(&self) -> &CollectionId;

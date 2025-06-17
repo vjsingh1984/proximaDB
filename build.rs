@@ -3,8 +3,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .out_dir("src/proto")
-        .compile(&["proto/vectordb.proto"], &["proto"])?;
+        .compile(&["proto/proximadb.proto"], &["proto"])?;
     
-    println!("cargo:rerun-if-changed=proto/vectordb.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb.proto");
     Ok(())
 }

@@ -22,12 +22,15 @@
 //! - `adapter.rs` - Record to schema adaptation logic
 //! - `factory.rs` - Strategy factories and creation patterns
 //! - `flusher.rs` - Core Parquet flushing implementation
+//! - `atomic_operations.rs` - Atomic flush/compaction with staging directories
 //! - `stats.rs` - Performance statistics and monitoring
 
 pub mod config;
 pub mod schema;
 pub mod processor;
 pub mod adapter;
+pub mod atomic_operations;
+pub mod staging_operations;
 pub mod factory;
 pub mod flusher;
 pub mod stats;
@@ -37,20 +40,24 @@ pub mod search_engine;
 pub mod compaction;
 pub mod compression;
 pub mod partitioner;
-pub mod wal_manager;
 pub mod ttl;
+pub mod index;
+pub mod search_impl;
 
 // Re-export main types for convenience
-pub use config::{ViperConfig, ViperSchemaBuilder, TTLConfig};
+pub use config::{ViperConfig, ViperSchemaBuilder, TTLConfig, CompactionConfig};
 pub use schema::{SchemaGenerationStrategy, ViperSchemaStrategy};
 pub use processor::{VectorProcessor, VectorRecordProcessor};
 pub use adapter::VectorRecordSchemaAdapter;
 pub use factory::ViperSchemaFactory;
 pub use flusher::ViperParquetFlusher;
+pub use search_engine::ViperProgressiveSearchEngine as ViperSearchEngine;
 pub use stats::ViperStats;
-pub use types::SearchStrategy;
+pub use types::{SearchStrategy, ViperSearchContext, ViperSearchResult};
 pub use storage_engine::ViperStorageEngine;
+pub use search_engine::{ViperProgressiveSearchEngine, SearchStats};
 pub use ttl::{TTLCleanupService, TTLStats, CleanupResult};
+pub use index::{VectorIndex, ViperIndexManager, IndexStrategy, HNSWIndex, HNSWConfig};
 
 // Re-export core functionality for backward compatibility
 pub use flusher::FlushResult;

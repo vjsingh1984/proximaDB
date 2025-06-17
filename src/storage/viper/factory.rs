@@ -133,48 +133,24 @@ pub struct ViperPipelineFactory;
 
 impl ViperPipelineFactory {
     /// Create a complete processing pipeline for a collection
-    pub fn create_pipeline<'a>(
-        collection_config: &'a CollectionConfig
-    ) -> (
-        Box<dyn SchemaGenerationStrategy>,
-        Box<dyn VectorProcessor + 'a>,
-        VectorRecordSchemaAdapter<'a>
-    ) {
-        let strategy = ViperSchemaFactory::create_adaptive_strategy(collection_config);
-        let processor = VectorProcessorFactory::create_adaptive_processor(strategy.as_ref(), collection_config);
-        let adapter = AdapterFactory::create_adaptive_adapter(strategy.as_ref(), collection_config);
-        
-        (strategy, processor, adapter)
+    pub fn create_pipeline(
+        collection_config: &CollectionConfig
+    ) -> Box<dyn SchemaGenerationStrategy> {
+        ViperSchemaFactory::create_adaptive_strategy(collection_config)
     }
     
     /// Create an optimized pipeline for high-throughput scenarios
-    pub fn create_high_throughput_pipeline<'a>(
-        collection_config: &'a CollectionConfig
-    ) -> (
-        Box<dyn SchemaGenerationStrategy>,
-        Box<dyn VectorProcessor + 'a>,
-        VectorRecordSchemaAdapter<'a>
-    ) {
-        let strategy = ViperSchemaFactory::create_strategy(collection_config);
-        let processor = VectorProcessorFactory::create_similarity_processor(strategy.as_ref(), 0.9);
-        let adapter = AdapterFactory::create_adapter(strategy.as_ref());
-        
-        (strategy, processor, adapter)
+    pub fn create_high_throughput_pipeline(
+        collection_config: &CollectionConfig
+    ) -> Box<dyn SchemaGenerationStrategy> {
+        ViperSchemaFactory::create_strategy(collection_config)
     }
     
     /// Create a pipeline optimized for time-series data
-    pub fn create_time_series_pipeline<'a>(
-        collection_config: &'a CollectionConfig,
-        time_window_seconds: u64
-    ) -> (
-        Box<dyn SchemaGenerationStrategy>,
-        Box<dyn VectorProcessor + 'a>,
-        TimeSeriesAdapter<'a>
-    ) {
-        let strategy = ViperSchemaFactory::create_strategy(collection_config);
-        let processor = VectorProcessorFactory::create_time_series_processor(strategy.as_ref(), time_window_seconds);
-        let adapter = AdapterFactory::create_time_series_adapter(strategy.as_ref(), TimePrecision::Seconds);
-        
-        (strategy, processor, adapter)
+    pub fn create_time_series_pipeline(
+        collection_config: &CollectionConfig,
+        _time_window_seconds: u64
+    ) -> Box<dyn SchemaGenerationStrategy> {
+        ViperSchemaFactory::create_strategy(collection_config)
     }
 }

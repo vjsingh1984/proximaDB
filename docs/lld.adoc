@@ -1,5 +1,5 @@
-= VectorFlow - Low-Level Design Document
-Vijaykumar Singh <vijaykumar.singh@vectorflow.ai>
+= ProximaDB - Low-Level Design Document
+Vijaykumar Singh <singhvjd@gmail.com>
 v1.0, {docdate}
 :toc: left
 :toclevels: 3
@@ -10,7 +10,7 @@ v1.0, {docdate}
 
 == Executive Summary
 
-This document provides the Low-Level Design (LLD) for VectorFlow, a cloud-native serverless vector database optimized for the AI era. The LLD details the technical implementation of each architectural component, including data structures, algorithms, performance optimizations, and deployment strategies.
+This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native serverless vector database optimized for the AI era. The LLD details the technical implementation of each architectural component, including data structures, algorithms, performance optimizations, and deployment strategies.
 
 == 1. Core Storage Engine Implementation
 
@@ -148,7 +148,195 @@ impl LSMTreeEngine {
 }
 ----
 
-=== 1.2 Memory-Mapped File Implementation
+=== 1.2 Write-Ahead Log (WAL) Implementation
+
+==== WAL Flush Trigger System
+
+ProximaDB implements a hybrid flush trigger architecture with both background monitoring and immediate size-based triggers for optimal performance.
+
+===== Age-Based Background Monitor
+
+[source,rust]
+----
+/// Background age monitor for WAL flush triggers
+pub struct WalAgeMonitor {
+    /// WAL manager reference
+    wal_manager: Arc<WalManager>,
+    /// Configuration settings
+    config: WalConfig,
+    /// Shutdown signal
+    shutdown: Arc<AtomicBool>,
+    /// Collection age overrides
+    age_overrides: Arc<RwLock<HashMap<CollectionId, Duration>>>,
+}
+
+impl WalAgeMonitor {
+    /// Start background age monitoring
+    pub async fn start(&self) -> Result<()> {
+        let check_interval = self.config.performance.age_check_interval_secs; // Default: 300s (5min)
+        let mut interval = interval(TokioDuration::from_secs(check_interval));
+        
+        while !self.shutdown.load(Ordering::Relaxed) {
+            interval.tick().await;
+            if let Err(e) = self.perform_age_check().await {
+                tracing::error!("❌ WAL age check failed: {}", e);
+            }
+        }
+        Ok(())
+    }
+    
+    /// Check all collections for age-based flush triggers
+    async fn perform_age_check(&self) -> Result<()> {
+        let collections = self.wal_manager.get_active_collections().await?;
+        
+        for collection_id in collections {
+            let age = self.get_collection_wal_age(&collection_id).await?;
+            let threshold = self.get_age_threshold(&collection_id).await; // Default: 3600s (1hr)
+            
+            if age > threshold {
+                tracing::info!("🕐 Age-based flush triggered for collection {}: {}s > {}s", 
+                              collection_id, age.as_secs(), threshold.as_secs());
+                self.wal_manager.flush(Some(&collection_id)).await?;
+            }
+        }
+        Ok(())
+    }
+}
+----
+
+===== Size-Based Immediate Triggers
+
+[source,rust]
+----
+impl WalManager {
+    /// Insert vector with immediate size-based flush checks
+    pub async fn insert_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: VectorId,
+        record: VectorRecord,
+    ) -> Result<u64> {
+        // 1. Write to WAL
+        let sequence = self.strategy.write_entry(collection_id, vector_id, record).await?;
+        
+        // 2. Immediate size-based flush check (synchronous)
+        let flush_needed = self.check_immediate_flush_triggers(collection_id).await?;
+        
+        if flush_needed {
+            tracing::info!("📊 Size-based flush triggered for collection {}", collection_id);
+            let _ = self.flush(Some(collection_id)).await; // Non-blocking flush
+        }
+        
+        Ok(sequence)
+    }
+    
+    /// Check immediate flush triggers after each write
+    async fn check_immediate_flush_triggers(&self, collection_id: &CollectionId) -> Result<bool> {
+        let stats = self.get_collection_stats(collection_id).await?;
+        let config = &self.config.performance;
+        
+        // Size-based triggers (checked on every write)
+        let triggers_met = 
+            stats.entry_count > config.memory_flush_threshold ||        // Default: 75,000 entries
+            stats.memory_size_bytes > config.memory_flush_size_bytes || // Default: 1GB per collection
+            self.get_global_memory_usage().await? > config.global_memory_limit; // Default: 2GB global
+            
+        Ok(triggers_met)
+    }
+}
+----
+
+===== Sequential Flush-Compaction Implementation
+
+[source,rust]
+----
+/// Atomic operations factory with same-thread compaction
+pub struct AtomicOperationsFactory {
+    /// Collection lock manager
+    lock_manager: Arc<CollectionLockManager>,
+    /// Staging operations coordinator
+    staging_coordinator: Arc<StagingOperationsCoordinator>,
+    /// VIPER configuration with compaction settings
+    config: ViperConfig,
+}
+
+impl AtomicOperationsFactory {
+    /// Perform flush followed by immediate compaction check (same thread)
+    pub async fn flush_with_compaction_check(
+        &self,
+        collection_id: &CollectionId,
+        records: Vec<VectorRecord>,
+    ) -> Result<FlushResult> {
+        // 1. Acquire collection write lock
+        let _write_lock = self.lock_manager.acquire_write_lock(collection_id).await?;
+        
+        // 2. Perform atomic flush operation
+        let flush_result = self.atomic_flush(collection_id, records).await?;
+        
+        // 3. Immediate compaction check (same thread - no race conditions)
+        let compaction_needed = self.check_compaction_criteria(collection_id).await?;
+        
+        if compaction_needed {
+            tracing::info!("🗜️ Compaction triggered immediately after flush for collection {}", collection_id);
+            let _compaction_result = self.atomic_compact(collection_id).await?;
+        }
+        
+        Ok(flush_result)
+    }
+    
+    /// Check compaction criteria after flush completion
+    async fn check_compaction_criteria(&self, collection_id: &CollectionId) -> Result<bool> {
+        let file_stats = self.get_collection_file_stats(collection_id).await?;
+        let config = &self.config.compaction_config;
+        
+        let should_compact = 
+            config.enabled &&
+            file_stats.file_count > config.min_files_for_compaction &&     // Default: >2 files
+            file_stats.avg_file_size_kb < config.max_avg_file_size_kb;     // Default: <16384KB (16MB)
+            
+        if should_compact {
+            tracing::info!("📋 Compaction criteria met: {} files (>{}), avg size {}KB (<{}KB)",
+                          file_stats.file_count, config.min_files_for_compaction,
+                          file_stats.avg_file_size_kb, config.max_avg_file_size_kb);
+        }
+        
+        Ok(should_compact)
+    }
+}
+----
+
+===== Configuration Structure
+
+[source,rust]
+----
+/// WAL performance configuration
+#[derive(Debug, Clone)]
+pub struct WalPerformanceConfig {
+    /// Age-based flush triggers
+    pub max_wal_age_secs: u64,                    // Default: 3600 (1 hour)
+    pub age_check_interval_secs: u64,             // Default: 300 (5 minutes)
+    
+    /// Size-based flush triggers
+    pub memory_flush_threshold: usize,            // Default: 75,000 entries per collection
+    pub memory_flush_size_bytes: usize,           // Default: 1GB per collection
+    pub global_memory_limit: usize,               // Default: 2GB across all collections
+    
+    /// Collection-specific overrides
+    pub collection_max_age_overrides: HashMap<CollectionId, u64>,
+}
+
+/// VIPER compaction configuration
+#[derive(Debug, Clone)]
+pub struct CompactionConfig {
+    pub enabled: bool,                            // Default: true
+    pub min_files_for_compaction: usize,         // Default: 2 (testing)
+    pub max_avg_file_size_kb: usize,             // Default: 16384KB (16MB, testing)
+    pub max_files_per_compaction: usize,         // Default: 5 (testing)
+    pub target_file_size_mb: usize,              // Default: 64MB (testing)
+}
+----
+
+=== 1.3 Memory-Mapped File Implementation
 
 ==== MMAP Storage Layer
 
@@ -1858,33 +2046,58 @@ impl RaftNode {
 }
 ----
 
-=== 3.2 Network Protocol Implementation
+=== 3.2 Unified Dual-Protocol Server Implementation ✅ IMPLEMENTED
 
-==== gRPC Service Definition
+==== Protocol Detection and Routing Strategy
+
+[source,rust]
+----
+/// Unified server that handles both gRPC and REST on port 5678
+pub struct UnifiedServer {
+    config: UnifiedServerConfig,
+    storage: Arc<RwLock<StorageEngine>>,
+    metrics_collector: Option<Arc<MetricsCollector>>,
+    server_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+/// High-performance connection routing based on content-type detection
+async fn route_request(req: hyper::Request<hyper::Body>) -> Result<hyper::Response<Body>, Error> {
+    // Zero-overhead protocol detection
+    if let Some(content_type) = req.headers().get("content-type") {
+        if content_type.as_bytes().starts_with(b"application/grpc") {
+            // Route to native gRPC service (HTTP/2 + Protobuf)
+            return grpc_service.oneshot(req).await;
+        }
+    }
+    
+    // Route to REST service (HTTP/1.1 + JSON)
+    http_service.oneshot(req).await
+}
+----
+
+==== gRPC Service Definition (Current Implementation)
 
 [source,protobuf]
 ----
 syntax = "proto3";
 
-package vectorflow.v1;
+package proximadb.v1;
 
-service VectorFlowService {
-  // Vector operations
-  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
-  rpc SearchVectors(SearchVectorsRequest) returns (SearchVectorsResponse);
-  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
-  rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
-  rpc BatchSearch(BatchSearchRequest) returns (BatchSearchResponse);
+service ProximaDB {
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
   
   // Collection management
   rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
-  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
   rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
   
-  // Cluster management
-  rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
-  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
-  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+  // Vector operations
+  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+  rpc SearchVector(SearchRequest) returns (SearchResponse);
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
 }
 
 // Raft consensus service

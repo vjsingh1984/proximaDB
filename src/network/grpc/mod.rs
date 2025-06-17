@@ -27,7 +27,7 @@ pub async fn start_grpc_server(
     storage: Arc<RwLock<StorageEngine>>,
     addr: std::net::SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::proto::vectordb::v1::vector_db_server::VectorDbServer;
+    use crate::proto::proximadb::v1::proxima_db_server::ProximaDbServer;
     
     info!("Starting gRPC server on {}", addr);
     
@@ -42,7 +42,7 @@ pub async fn start_grpc_server(
         "grpc-node".to_string(),
         "0.1.0".to_string(),
     );
-    let server = VectorDbServer::new(service);
+    let server = ProximaDbServer::new(service);
     
     Server::builder()
         .add_service(server)

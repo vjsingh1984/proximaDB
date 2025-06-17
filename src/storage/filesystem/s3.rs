@@ -16,10 +16,9 @@
 
 //! Amazon S3 filesystem implementation with IAM roles, STS, and credential management
 
-use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 use super::{FileSystem, FileMetadata, DirEntry, FileOptions, FsResult, FilesystemError};
 use super::auth::{AwsCredentials, CredentialProvider};

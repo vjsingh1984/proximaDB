@@ -15,9 +15,12 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
 use anyhow::Result;
 
-use crate::core::CollectionId;
+use crate::core::{CollectionId, VectorId};
+use crate::storage::WalEntry;
+use crate::compute::distance::DistanceMetric;
 use super::types::*;
 use super::ViperConfig;
+use super::index::{VectorIndex, ViperIndexManager, IndexStrategy, IndexVector};
 use chrono::{DateTime, Utc};
 
 /// Progressive search engine for VIPER storage
@@ -36,6 +39,9 @@ pub struct ViperProgressiveSearchEngine {
     
     /// Search statistics
     stats: Arc<RwLock<SearchStats>>,
+    
+    /// Vector index manager for ANN search
+    index_manager: Arc<RwLock<HashMap<CollectionId, ViperIndexManager>>>,
 }
 
 /// Trait for storage-specific search implementations
@@ -156,6 +162,7 @@ impl ViperProgressiveSearchEngine {
             search_semaphore: Arc::new(Semaphore::new(max_concurrent_searches)),
             feature_cache: Arc::new(RwLock::new(FeatureSelectionCache::new(1000))),
             stats: Arc::new(RwLock::new(SearchStats::default())),
+            index_manager: Arc::new(RwLock::new(HashMap::new())),
         })
     }
     
@@ -311,7 +318,7 @@ impl ViperProgressiveSearchEngine {
         // Search across all tiers but only in selected clusters
         let mut all_results = Vec::new();
         
-        let tier_searchers = self.tier_searchers.read().await;
+        let tier_searchers = self.storage_searchers.read().await;
         for (tier_level, searcher) in tier_searchers.iter() {
             let partitions = self.get_cluster_partitions(
                 &context.collection_id,
@@ -347,7 +354,7 @@ impl ViperProgressiveSearchEngine {
         let mut all_results = Vec::new();
         
         // Search all tiers in parallel
-        let tier_searchers = self.tier_searchers.read().await;
+        let tier_searchers = self.storage_searchers.read().await;
         // Process tiers sequentially for now (could be parallelized)
         for (tier_level, searcher) in tier_searchers.iter() {
             let partitions = self.get_all_partitions(
@@ -511,7 +518,7 @@ impl ViperProgressiveSearchEngine {
         
         // Update tier hits
         for result in results {
-            *stats.tier_hits.entry(result.tier_level.clone()).or_insert(0) += 1;
+            *stats.storage_hits.entry("storage_tier".to_string()).or_insert(0) += 1;
         }
         
         Ok(())
@@ -550,6 +557,429 @@ impl ViperProgressiveSearchEngine {
         _confidence_threshold: f32,
     ) -> Result<Vec<ClusterId>> {
         Ok(Vec::new())
+    }
+    
+    /// Phase 5: Two-phase search integration (WAL + Storage) with result merging
+    pub async fn search_two_phase(
+        &self,
+        context: ViperSearchContext,
+        // Note: WAL search is handled separately by unified engine
+    ) -> Result<Vec<ViperSearchResult>> {
+        tracing::debug!("🔍 Starting two-phase search for collection: {}", context.collection_id);
+        
+        let start_time = std::time::Instant::now();
+        
+        // Phase 1: WAL search is handled by unified engine
+        let wal_results = Vec::new(); // Placeholder - unified engine handles WAL search
+        
+        tracing::debug!("📝 WAL search completed: {} results found", wal_results.len());
+        
+        // Phase 2: Search storage tiers (flushed data) - this uses the existing progressive search
+        let storage_results = self.search_storage_phase(&context).await?;
+        
+        tracing::debug!("💾 Storage search completed: {} results found", storage_results.len());
+        
+        // Phase 3: Merge and deduplicate results with recency bias
+        let merged_results = self.merge_two_phase_results(
+            wal_results,
+            storage_results,
+            &context,
+        ).await?;
+        
+        let elapsed = start_time.elapsed();
+        tracing::debug!("✅ Two-phase search completed: {} total results in {:?}", 
+                       merged_results.len(), elapsed);
+        
+        // Update statistics
+        let mut stats = self.stats.write().await;
+        stats.total_searches += 1;
+        stats.avg_latency_ms = (stats.avg_latency_ms + elapsed.as_millis() as f32) / 2.0;
+        
+        Ok(merged_results)
+    }
+    
+    // Note: WAL search methods removed - handled by unified engine
+    
+    /// Search storage tiers for flushed vectors (Phase 2)
+    async fn search_storage_phase(
+        &self,
+        context: &ViperSearchContext,
+    ) -> Result<Vec<ViperSearchResult>> {
+        // Use existing progressive search implementation
+        // This searches across all storage tiers (hot, warm, cold)
+        let storage_results = self.search(context.clone(), None, vec![]).await?;
+        
+        tracing::debug!("🗄️ Storage phase found {} results", storage_results.len());
+        
+        Ok(storage_results)
+    }
+    
+    /// Merge results from WAL and storage phases with intelligent deduplication
+    async fn merge_two_phase_results(
+        &self,
+        mut wal_results: Vec<ViperSearchResult>,
+        mut storage_results: Vec<ViperSearchResult>,
+        context: &ViperSearchContext,
+    ) -> Result<Vec<ViperSearchResult>> {
+        let mut merged_results = Vec::new();
+        let mut seen_vectors = HashSet::new();
+        
+        // Recency bias: WAL results are more recent, so prefer them
+        let recency_boost = 0.05; // 5% boost for WAL results
+        
+        // Apply recency boost to WAL results
+        for result in &mut wal_results {
+            result.score += recency_boost;
+        }
+        
+        // Create a combined result set for merge sorting
+        let mut all_results = Vec::new();
+        
+        // Mark WAL results with source
+        for mut result in wal_results {
+            result.partition_id = format!("wal:{}", result.partition_id);
+            all_results.push((result, true)); // true = from WAL
+        }
+        
+        // Mark storage results with source
+        for result in storage_results {
+            all_results.push((result, false)); // false = from storage
+        }
+        
+        // Sort all results by score (descending)
+        all_results.sort_by(|a, b| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Track total candidate count before consuming all_results
+        let total_candidates = all_results.len();
+        
+        // Merge with deduplication, preferring WAL results for duplicates
+        for (result, from_wal) in all_results {
+            if seen_vectors.contains(&result.vector_id) {
+                // Duplicate found - keep the version we already have
+                // Since we sorted by score and WAL has recency boost, 
+                // the first occurrence is the best one
+                continue;
+            }
+            
+            seen_vectors.insert(result.vector_id.clone());
+            merged_results.push(result);
+            
+            // Stop when we have enough results
+            if merged_results.len() >= context.k {
+                break;
+            }
+        }
+        
+        tracing::debug!("🔀 Merged {} unique results (from {} total candidates)", 
+                       merged_results.len(), total_candidates);
+        
+        // Log merge statistics
+        let wal_count = merged_results.iter().filter(|r| r.partition_id.starts_with("wal:")).count();
+        let storage_count = merged_results.len() - wal_count;
+        
+        tracing::debug!("📊 Final result composition: {} from WAL, {} from storage", 
+                       wal_count, storage_count);
+        
+        Ok(merged_results)
+    }
+    
+    /// Extract vector record from WAL entry
+    async fn extract_vector_from_wal_entry(
+        &self,
+        entry: &WalEntry,
+    ) -> Result<Option<WalVectorRecord>> {
+        match &entry.operation {
+            crate::storage::WalOperation::Insert { record, .. } => {
+                // Convert VectorRecord to WalVectorRecord
+                Ok(Some(WalVectorRecord {
+                    id: record.id.clone(),
+                    vector: record.vector.clone(),
+                    metadata: serde_json::to_value(&record.metadata).unwrap_or(serde_json::Value::Null),
+                    timestamp: entry.timestamp,
+                    operation_type: WalOperationType::Insert,
+                }))
+            },
+            crate::storage::WalOperation::Update { record, .. } => {
+                // Convert VectorRecord to WalVectorRecord
+                Ok(Some(WalVectorRecord {
+                    id: record.id.clone(),
+                    vector: record.vector.clone(),
+                    metadata: serde_json::to_value(&record.metadata).unwrap_or(serde_json::Value::Null),
+                    timestamp: entry.timestamp,
+                    operation_type: WalOperationType::Update,
+                }))
+            },
+            crate::storage::WalOperation::Delete { vector_id, .. } => {
+                // For deletes, create a tombstone record
+                Ok(Some(WalVectorRecord {
+                    id: vector_id.clone(),
+                    vector: Vec::new(), // Empty vector for tombstone
+                    metadata: serde_json::Value::Null,
+                    timestamp: entry.timestamp,
+                    operation_type: WalOperationType::Delete,
+                }))
+            },
+            _ => Ok(None), // Other WAL entry types don't contain vectors
+        }
+    }
+    
+    /// Check if WAL vector is valid (not deleted, not expired)
+    async fn is_wal_vector_valid(&self, wal_vector: &WalVectorRecord) -> bool {
+        // Skip deleted vectors (tombstones)
+        if wal_vector.operation_type == WalOperationType::Delete {
+            return false;
+        }
+        
+        // Check TTL if applicable (similar to storage TTL check)
+        // For now, WAL vectors are considered always valid
+        // Future: implement TTL check for WAL vectors
+        
+        true
+    }
+    
+    /// Check if metadata matches the given filters
+    fn matches_metadata_filters(
+        &self,
+        metadata: &serde_json::Value,
+        filters: &HashMap<String, serde_json::Value>,
+    ) -> bool {
+        for (key, expected_value) in filters {
+            if let Some(actual_value) = metadata.get(key) {
+                if actual_value != expected_value {
+                    return false;
+                }
+            } else {
+                return false; // Missing key
+            }
+        }
+        true
+    }
+    
+    /// Compute vector similarity using the configured distance metric
+    async fn compute_vector_similarity(
+        &self,
+        query_vector: &[f32],
+        candidate_vector: &[f32],
+    ) -> Result<f32> {
+        // For now, use cosine similarity as default
+        // Future: make this configurable based on collection settings
+        let similarity = cosine_similarity(query_vector, candidate_vector);
+        Ok(similarity)
+    }
+    
+    /// VIPER Phase 6: Build HNSW index for a collection
+    pub async fn build_hnsw_index(
+        &self,
+        collection_id: &CollectionId,
+        vectors: Vec<(VectorId, Vec<f32>, serde_json::Value)>,
+        distance_metric: DistanceMetric,
+    ) -> Result<()> {
+        tracing::info!("🏗️ Building HNSW index for collection {} with {} vectors", 
+                      collection_id, vectors.len());
+        
+        // Convert to IndexVector format
+        let index_vectors: Vec<IndexVector> = vectors.into_iter()
+            .map(|(id, vector, metadata)| IndexVector {
+                id,
+                vector,
+                metadata,
+                cluster_id: None, // Will be assigned during clustering
+            })
+            .collect();
+        
+        // Create index manager with adaptive strategy
+        let mut index_manager = ViperIndexManager::new(
+            self.config.clone(),
+            IndexStrategy::Adaptive { threshold: 1_000_000 }, // Use HNSW for <1M vectors
+        );
+        
+        // Build the index
+        index_manager.build_indexes(index_vectors, distance_metric).await?;
+        
+        // Store the index manager
+        let mut managers = self.index_manager.write().await;
+        managers.insert(collection_id.clone(), index_manager);
+        
+        tracing::info!("✅ HNSW index built successfully for collection {}", collection_id);
+        
+        Ok(())
+    }
+    
+    /// VIPER Phase 6: Search using HNSW index with filtered candidates
+    pub async fn search_with_hnsw(
+        &self,
+        context: ViperSearchContext,
+        filtered_candidates: Option<HashSet<VectorId>>,
+    ) -> Result<Vec<ViperSearchResult>> {
+        tracing::debug!("🔍 HNSW search for collection: {}", context.collection_id);
+        
+        let managers = self.index_manager.read().await;
+        
+        if let Some(index_manager) = managers.get(&context.collection_id) {
+            // Search using HNSW index with optional filtering
+            let ef = context.k * 10; // Dynamic ef based on k
+            let index_results = index_manager.search(
+                &context.query_vector,
+                context.k,
+                ef,
+                filtered_candidates.as_ref(),
+            ).await?;
+            
+            // Convert IndexSearchResult to ViperSearchResult
+            let mut results = Vec::new();
+            for index_result in index_results {
+                // Apply similarity threshold if specified
+                if let Some(threshold) = context.threshold {
+                    // Convert distance to similarity (assuming cosine distance)
+                    let similarity = 1.0 - index_result.distance;
+                    if similarity < threshold {
+                        continue;
+                    }
+                }
+                
+                results.push(ViperSearchResult {
+                    vector_id: index_result.vector_id,
+                    score: 1.0 - index_result.distance, // Convert distance to similarity
+                    vector: None, // Will be loaded on demand
+                    metadata: index_result.metadata.unwrap_or(serde_json::Value::Null),
+                    cluster_id: 0, // TODO: Track cluster assignments
+                    partition_id: "hnsw_index".to_string(),
+                    storage_url: "memory://hnsw".to_string(),
+                });
+            }
+            
+            tracing::debug!("🎯 HNSW search returned {} results", results.len());
+            Ok(results)
+        } else {
+            tracing::warn!("⚠️ No HNSW index found for collection {}, falling back to scan", 
+                         context.collection_id);
+            // Fallback to regular search
+            self.search(context, None, vec![]).await
+        }
+    }
+    
+    /// VIPER Phase 6: Combined search with metadata filtering + HNSW
+    pub async fn search_filtered_with_hnsw(
+        &self,
+        context: ViperSearchContext,
+    ) -> Result<Vec<ViperSearchResult>> {
+        tracing::info!("🔍 Starting filtered HNSW search for collection: {}", context.collection_id);
+        
+        let start_time = std::time::Instant::now();
+        
+        // Step 1: Apply metadata filters to get candidate set
+        let filtered_candidates = if let Some(filters) = &context.filters {
+            tracing::debug!("📋 Applying metadata filters: {:?}", filters);
+            let candidates = self.apply_metadata_filters(&context.collection_id, filters).await?;
+            tracing::debug!("✅ Metadata filtering reduced to {} candidates", candidates.len());
+            Some(candidates)
+        } else {
+            None
+        };
+        
+        // Step 2: Use HNSW index on filtered candidates
+        let hnsw_results = self.search_with_hnsw(context.clone(), filtered_candidates).await?;
+        
+        // Step 3: Load full vectors for final results if needed
+        let mut final_results = Vec::new();
+        for mut result in hnsw_results {
+            // Load vector data if not already present
+            if result.vector.is_none() {
+                result.vector = self.load_vector_data(&result.vector_id).await?;
+            }
+            final_results.push(result);
+        }
+        
+        let elapsed = start_time.elapsed();
+        tracing::info!("✅ Filtered HNSW search completed: {} results in {:?}", 
+                      final_results.len(), elapsed);
+        
+        // Update statistics
+        let mut stats = self.stats.write().await;
+        stats.total_searches += 1;
+        stats.avg_latency_ms = (stats.avg_latency_ms + elapsed.as_millis() as f32) / 2.0;
+        
+        Ok(final_results)
+    }
+    
+    /// Apply metadata filters to get candidate vector IDs
+    async fn apply_metadata_filters(
+        &self,
+        collection_id: &CollectionId,
+        filters: &HashMap<String, serde_json::Value>,
+    ) -> Result<HashSet<VectorId>> {
+        // This would integrate with the storage layer to efficiently
+        // query vectors based on metadata filters
+        // For now, return empty set as placeholder
+        tracing::warn!("⚠️ Metadata filtering not yet fully implemented");
+        Ok(HashSet::new())
+    }
+    
+    /// Load vector data for a specific vector ID
+    async fn load_vector_data(&self, vector_id: &VectorId) -> Result<Option<Vec<f32>>> {
+        // This would load from storage
+        // For now, return None as placeholder
+        Ok(None)
+    }
+    
+    /// Update HNSW index with new vectors (incremental indexing)
+    pub async fn update_hnsw_index(
+        &self,
+        collection_id: &CollectionId,
+        new_vectors: Vec<(VectorId, Vec<f32>, serde_json::Value)>,
+    ) -> Result<()> {
+        let managers = self.index_manager.read().await;
+        
+        if let Some(_index_manager) = managers.get(collection_id) {
+            // In a real implementation, we would:
+            // 1. Get the HNSW index from the manager
+            // 2. Add new vectors incrementally
+            // 3. Update the index structure
+            
+            tracing::info!("📝 Updating HNSW index with {} new vectors", new_vectors.len());
+            
+            // Placeholder for incremental update
+            tracing::warn!("⚠️ Incremental HNSW update not yet implemented");
+        } else {
+            tracing::warn!("⚠️ No HNSW index found for collection {}", collection_id);
+        }
+        
+        Ok(())
+    }
+}
+
+/// WAL vector record for search operations
+#[derive(Debug, Clone)]
+struct WalVectorRecord {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub metadata: serde_json::Value,
+    pub timestamp: DateTime<Utc>,
+    pub operation_type: WalOperationType,
+}
+
+/// WAL operation type for tracking vector lifecycle
+#[derive(Debug, Clone, PartialEq)]
+enum WalOperationType {
+    Insert,
+    Update,
+    Delete,
+}
+
+/// Cosine similarity implementation
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot_product / (norm_a * norm_b)
     }
 }
 

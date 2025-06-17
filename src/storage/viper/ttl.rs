@@ -6,13 +6,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
-use tokio::time::{interval, Duration};
+use tokio::sync::RwLock;
+use tokio::time::interval;
 use anyhow::{Result, Context};
 use chrono::{DateTime, Utc};
 use tracing::{info, warn, debug, error};
 
-use crate::core::{CollectionId, VectorId};
 use crate::storage::filesystem::FilesystemFactory;
 use super::config::TTLConfig;
 use super::types::{PartitionId, PartitionMetadata};
@@ -37,7 +36,7 @@ pub struct TTLCleanupService {
 }
 
 /// TTL cleanup statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct TTLStats {
     pub total_cleanup_runs: u64,
     pub vectors_expired: u64,
@@ -48,7 +47,7 @@ pub struct TTLStats {
 }
 
 /// Cleanup result for a single operation
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct CleanupResult {
     pub vectors_expired: u64,
     pub files_deleted: u64,
@@ -88,10 +87,9 @@ impl TTLCleanupService {
         let stats = self.stats.clone();
         
         // Convert chrono::Duration to tokio::time::Duration
-        let tokio_duration = Duration::from_std(
-            config.cleanup_interval.to_std()
-                .context("Failed to convert cleanup interval to std duration")?
-        )?;
+        let std_duration = config.cleanup_interval.to_std()
+            .context("Failed to convert cleanup interval to std duration")?;
+        let tokio_duration = std_duration;
         
         let cleanup_task = tokio::spawn(async move {
             let mut interval = interval(tokio_duration);
@@ -205,7 +203,7 @@ impl TTLCleanupService {
         if Self::is_partition_fully_expired(metadata, now, config) {
             // Delete all Parquet files for this partition
             for file_info in &metadata.parquet_files {
-                match filesystem.delete_file(&file_info.storage_url).await {
+                match filesystem.delete(&file_info.storage_url).await {
                     Ok(_) => {
                         *files_deleted += 1;
                         debug!("🗑️ Deleted expired Parquet file: {}", file_info.storage_url);
@@ -259,7 +257,7 @@ impl TTLCleanupService {
     
     /// Get TTL cleanup statistics
     pub async fn get_stats(&self) -> TTLStats {
-        self.stats.read().await.clone()
+        (*self.stats.read().await).clone()
     }
     
     /// Force run cleanup immediately (for testing/admin purposes)

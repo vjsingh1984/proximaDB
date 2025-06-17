@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
+// use uuid::Uuid; // Unused import - using String for IDs now
 
 pub type VectorId = String;
 pub type CollectionId = String;

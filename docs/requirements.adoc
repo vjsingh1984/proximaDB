@@ -240,6 +240,42 @@ Deliver a cloud-native vector database that provides:
 |ST-020
 |Unified storage engine supporting VIPER and LSM layouts via strategy pattern
 |High
+|✅ IMPLEMENTED
+
+|ST-021
+|Hybrid WAL flush trigger system: background age-based + immediate size-based triggers
+|Critical
+|✅ IMPLEMENTED
+
+|ST-022
+|Background WAL age monitoring with configurable inspection intervals (default: 5 minutes)
+|Critical
+|✅ IMPLEMENTED
+
+|ST-023
+|Immediate size-based flush triggers on write operations (memory/entry thresholds)
+|Critical
+|✅ IMPLEMENTED
+
+|ST-024
+|Sequential flush-compaction execution on same thread to eliminate race conditions
+|Critical
+|✅ IMPLEMENTED
+
+|ST-025
+|Configurable compaction triggers: file count (>2) and average file size (<16MB) for testing
+|High
+|✅ IMPLEMENTED
+
+|ST-026
+|Atomic operations with staging directories (__flush, __compaction) for ACID guarantees
+|Critical
+|✅ IMPLEMENTED
+
+|ST-027
+|Collection-level read/write locking for coordinated flush/compaction operations
+|Critical
+|✅ IMPLEMENTED
 |===
 
 ==== Adaptive eXtensible Indexing System (AXIS)
@@ -732,6 +768,17 @@ Deliver a cloud-native vector database that provides:
 |REST API
 |HTTP REST API for all vector operations
 |Critical
+|✅ IMPLEMENTED
+
+|gRPC API
+|High-performance gRPC with protobuf for all vector operations
+|Critical
+|✅ IMPLEMENTED
+
+|Dual Protocol Server
+|Single server supporting both REST and gRPC on same port with content-type detection
+|High
+|✅ IMPLEMENTED
 
 |Python SDK
 |Python client library with sync/async support

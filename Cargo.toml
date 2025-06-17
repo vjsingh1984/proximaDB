@@ -97,6 +97,9 @@ hnsw = "0.11"
 # CPU optimization
 num_cpus = "1.16"
 
+# Random number generation
+rand = "0.8"
+
 # GPU acceleration (optional)
 cudarc = { version = "0.9", optional = true }
 candle-core = { version = "0.3", optional = true }
@@ -108,6 +111,7 @@ intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"], optional
 # Logging & Monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 prometheus = "0.13"
 metrics = "0.21"
 metrics-prometheus = "0.6"

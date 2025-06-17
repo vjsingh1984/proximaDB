@@ -4,7 +4,7 @@
 //! for VIPER operations, enabling performance analysis and optimization.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// VIPER performance statistics
 #[derive(Debug, Clone)]

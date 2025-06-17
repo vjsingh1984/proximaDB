@@ -16,9 +16,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 use anyhow::Result;
 
 use crate::core::{VectorRecord, VectorId, CollectionId};
@@ -31,14 +29,15 @@ pub mod config;
 pub mod memtable;
 pub mod avro;
 pub mod bincode;
-pub mod age_monitor;
+pub mod background_manager;
+// Note: age_monitor removed - using size-based flush on write operations only
 
 // Re-exports
 pub use disk::WalDiskManager;
 pub use factory::WalFactory;
 pub use config::WalStrategyType;
 pub use config::{WalConfig, CompressionConfig, PerformanceConfig};
-pub use age_monitor::{WalAgeMonitor, AgeMonitorStats, CollectionAgeInfo};
+pub use background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus, BackgroundMaintenanceStats};
 pub use memtable::WalMemTable;
 
 /// WAL operation types with MVCC support
@@ -180,6 +179,7 @@ pub struct WalManager {
     strategy: Box<dyn WalStrategy>,
     config: WalConfig,
     stats: Arc<tokio::sync::RwLock<WalStats>>,
+    atomicity_manager: Option<Arc<crate::storage::atomicity::AtomicityManager>>,
 }
 
 impl WalManager {
@@ -209,7 +209,90 @@ impl WalManager {
             strategy,
             config,
             stats,
+            atomicity_manager: None,
         })
+    }
+    
+    /// Set atomicity manager for transaction support
+    pub fn set_atomicity_manager(&mut self, atomicity_manager: Arc<crate::storage::atomicity::AtomicityManager>) {
+        self.atomicity_manager = Some(atomicity_manager);
+        tracing::info!("🔒 Atomicity manager attached to WAL manager");
+    }
+    
+    /// Execute atomic operation with transaction support
+    pub async fn execute_atomic_operation(
+        &self,
+        operation: Box<dyn crate::storage::atomicity::AtomicOperation>,
+    ) -> Result<crate::storage::atomicity::OperationResult> {
+        if let Some(atomicity_manager) = &self.atomicity_manager {
+            // Begin transaction
+            let transaction_id = atomicity_manager.begin_transaction(None, None).await
+                .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
+            
+            // Execute operation
+            match atomicity_manager.execute_operation(transaction_id, operation).await {
+                Ok(result) => {
+                    // Commit transaction
+                    atomicity_manager.commit_transaction(transaction_id).await
+                        .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
+                    Ok(result)
+                },
+                Err(e) => {
+                    // Rollback transaction
+                    let _ = atomicity_manager.rollback_transaction(
+                        transaction_id, 
+                        format!("Operation failed: {}", e)
+                    ).await;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(anyhow::anyhow!("Atomicity manager not configured"))
+        }
+    }
+    
+    /// Execute atomic operation within existing transaction
+    pub async fn execute_in_transaction(
+        &self,
+        transaction_id: crate::storage::atomicity::TransactionId,
+        operation: Box<dyn crate::storage::atomicity::AtomicOperation>,
+    ) -> Result<crate::storage::atomicity::OperationResult> {
+        if let Some(atomicity_manager) = &self.atomicity_manager {
+            atomicity_manager.execute_operation(transaction_id, operation).await
+                .map_err(|e| anyhow::anyhow!("Failed to execute operation in transaction: {}", e))
+        } else {
+            Err(anyhow::anyhow!("Atomicity manager not configured"))
+        }
+    }
+    
+    /// Begin a new transaction
+    pub async fn begin_transaction(&self) -> Result<crate::storage::atomicity::TransactionId> {
+        if let Some(atomicity_manager) = &self.atomicity_manager {
+            atomicity_manager.begin_transaction(None, None).await
+                .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))
+        } else {
+            Err(anyhow::anyhow!("Atomicity manager not configured"))
+        }
+    }
+    
+    /// Commit a transaction
+    pub async fn commit_transaction(&self, transaction_id: crate::storage::atomicity::TransactionId) -> Result<()> {
+        if let Some(atomicity_manager) = &self.atomicity_manager {
+            atomicity_manager.commit_transaction(transaction_id).await
+                .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))
+        } else {
+            Err(anyhow::anyhow!("Atomicity manager not configured"))
+        }
+    }
+    
+    /// Rollback a transaction
+    pub async fn rollback_transaction(&self, transaction_id: crate::storage::atomicity::TransactionId, reason: String) -> Result<()> {
+        if let Some(atomicity_manager) = &self.atomicity_manager {
+            atomicity_manager.rollback_transaction(transaction_id, reason).await
+                .map_err(|e| anyhow::anyhow!("Failed to rollback transaction: {}", e))
+        } else {
+            Err(anyhow::anyhow!("Atomicity manager not configured"))
+        }
     }
     
     /// Insert single vector record

@@ -23,9 +23,9 @@ use serde_json::Value;
 use uuid::Uuid;
 use chrono::Utc;
 
-use crate::storage::{StorageEngine, CollectionMetadata, MetadataStore};
+use crate::storage::{StorageEngine, CollectionMetadata};
 use crate::storage::metadata::CollectionFlushConfig;
-use crate::core::{VectorRecord, VectorId, CollectionId};
+use crate::core::VectorRecord;
 use crate::compute::algorithms::SearchResult;
 
 pub mod migration;
@@ -48,6 +48,8 @@ pub enum ServiceError {
     InvalidDimension { expected: u32, actual: usize },
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
     #[error("Not found: {0}")]
     NotFound(String),
 }
@@ -76,21 +78,48 @@ impl VectorService {
         // Use provided vector_id or generate one if not provided
         let id = vector_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         
+        tracing::info!("🔍 VectorService::insert_vector - Starting insert for collection: {}, vector_id: {}", 
+                      collection_id, id);
+        
+        // Check collection metadata to determine storage layout
+        let collection_metadata = storage.get_collection_metadata(&collection_id.to_string()).await
+            .map_err(|e| ServiceError::Storage(e.to_string()))?;
+            
+        if let Some(metadata) = &collection_metadata {
+            let storage_layout = metadata.config.get("storage_layout")
+                .and_then(|v| v.as_str())
+                .unwrap_or("viper");
+            tracing::info!("📊 Collection {} uses storage layout: {}", collection_id, storage_layout);
+        } else {
+            tracing::warn!("⚠️ Collection {} not found", collection_id);
+            return Err(ServiceError::CollectionNotFound(collection_id.to_string()));
+        }
+        
         // Accept all metadata fields - they will be mapped to filterable columns + extra_meta internally
         let validated_metadata = metadata.unwrap_or_default();
         
+        tracing::debug!("📝 Creating VectorRecord with {} metadata fields", validated_metadata.len());
+        
         let record = VectorRecord {
-            id,
+            id: id.clone(),
             collection_id: collection_id.to_string(),
-            vector,
+            vector: vector.clone(),
             metadata: validated_metadata,
             timestamp: Utc::now(),
             expires_at: None,
         };
         
+        tracing::info!("💾 Writing vector {} to storage engine (dimension: {})", 
+                      record.id, record.vector.len());
+        
         storage.write(record.clone())
             .await
-            .map_err(|e| ServiceError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!("❌ Failed to write vector {}: {}", id, e);
+                ServiceError::Storage(e.to_string())
+            })?;
+            
+        tracing::info!("✅ Successfully inserted vector {} to collection {}", record.id, collection_id);
             
         Ok(record)
     }
@@ -217,6 +246,7 @@ impl CollectionService {
         dimension: u32,
         distance_metric: Option<String>,
         indexing_algorithm: Option<String>,
+        storage_layout: Option<String>,  // Storage layout: "viper" (default), "lsm", "rocksdb", "memory"
         config: Option<HashMap<String, Value>>,
         flush_config: Option<CollectionFlushConfig>,
         filterable_metadata_fields: Option<Vec<String>>,
@@ -236,17 +266,41 @@ impl CollectionService {
                 name, validated_fields.len(), validated_fields);
         }
         
-        // Store filterable metadata fields in collection config
+        // Resolve storage layout (default to VIPER)
+        let effective_storage_layout = storage_layout.unwrap_or_else(|| "viper".to_string());
+        
+        // Validate storage layout
+        match effective_storage_layout.as_str() {
+            "viper" | "lsm" | "rocksdb" | "memory" => {},
+            _ => return Err(ServiceError::Validation(format!(
+                "Invalid storage layout '{}'. Valid options: viper, lsm, rocksdb, memory", 
+                effective_storage_layout
+            )))
+        }
+        
+        // Store configuration
         let mut collection_config = config.unwrap_or_default();
+        
+        // Add storage layout to config
+        collection_config.insert(
+            "storage_layout".to_string(),
+            serde_json::Value::String(effective_storage_layout.clone())
+        );
+        
+        // Add filterable metadata fields for VIPER optimization
         if !validated_fields.is_empty() {
-            collection_config.insert(
-                "filterable_metadata_fields".to_string(),
-                serde_json::Value::Array(
-                    validated_fields.iter()
-                        .map(|s| serde_json::Value::String(s.clone()))
-                        .collect()
-                )
-            );
+            if effective_storage_layout == "viper" {
+                collection_config.insert(
+                    "filterable_metadata_fields".to_string(),
+                    serde_json::Value::Array(
+                        validated_fields.iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect()
+                    )
+                );
+            } else {
+                tracing::warn!("⚠️  Filterable metadata fields specified for non-VIPER storage layout '{}'. This optimization is only available with VIPER storage.", effective_storage_layout);
+            }
         }
         
         let mut metadata = CollectionMetadata {

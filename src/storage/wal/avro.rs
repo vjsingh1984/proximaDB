@@ -6,12 +6,11 @@
 //! Avro WAL Strategy - Schema Evolution Support with High Performance
 
 use anyhow::{Result, Context};
-use apache_avro::{Schema, Writer, Reader, to_avro_datum, from_avro_datum};
+use apache_avro::{Schema, Writer, Reader};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
@@ -173,7 +172,7 @@ impl WalStrategy for AvroWalStrategy {
         tracing::debug!("📋 Config details:");
         tracing::debug!("  - memtable_type: {:?}", config.memtable.memtable_type);
         tracing::debug!("  - compression: {:?}", config.compression.algorithm);
-        tracing::debug!("  - memory_flush_threshold: {}", config.memtable.memory_flush_threshold);
+        tracing::debug!("  - memory_flush_size_bytes: {}", config.performance.memory_flush_size_bytes);
         tracing::debug!("  - data_directories: {} dirs", config.multi_disk.data_directories.len());
         
         self.config = Some(config.clone());
@@ -364,9 +363,42 @@ impl WalStrategy for AvroWalStrategy {
     }
     
     async fn recover(&self) -> Result<u64> {
-        // Recovery is handled by disk manager initialization
-        tracing::info!("✅ Avro WAL recovery completed");
-        Ok(0)
+        tracing::info!("🔄 WAL RECOVERY: Starting Avro WAL recovery");
+        
+        // Get all WAL files from disk
+        if let Some(disk_manager) = &self.disk_manager {
+            let collections = disk_manager.list_collections().await?;
+            tracing::info!("📂 WAL RECOVERY: Found {} collections to recover", collections.len());
+            
+            let mut total_entries = 0u64;
+            for collection_id in collections {
+                tracing::debug!("📄 WAL RECOVERY: Recovering collection {}", collection_id);
+                
+                // Read all entries for this collection
+                let entries = disk_manager.read_entries(&collection_id, 0, None).await?;
+                let entry_count = entries.len();
+                
+                if entry_count > 0 {
+                    tracing::info!("📦 WAL RECOVERY: Found {} entries for collection {}", 
+                                 entry_count, collection_id);
+                    
+                    // Load entries into memory table
+                    if let Some(memory_table) = &self.memory_table {
+                        for entry in entries {
+                            memory_table.insert_entry(entry).await?;
+                        }
+                    }
+                    
+                    total_entries += entry_count as u64;
+                }
+            }
+            
+            tracing::info!("✅ WAL RECOVERY: Recovered {} total entries from disk", total_entries);
+            Ok(total_entries)
+        } else {
+            tracing::warn!("⚠️ WAL RECOVERY: No disk manager configured, skipping recovery");
+            Ok(0)
+        }
     }
     
     async fn close(&self) -> Result<()> {

@@ -82,7 +82,7 @@ class ClientConfig(BaseModel):
     """Complete client configuration"""
     
     # Connection settings
-    url: str = Field(..., description="VectorFlow server URL")
+    url: str = Field(..., description="ProximaDB server URL")
     api_key: Optional[str] = Field(default=None, description="API key for authentication")
     protocol: Protocol = Field(default=Protocol.AUTO, description="Communication protocol")
     
@@ -219,7 +219,7 @@ class ClientConfig(BaseModel):
     def get_base_headers(self) -> Dict[str, str]:
         """Get base headers for requests"""
         headers = {
-            "User-Agent": self.user_agent or f"vectorflow-python/{self._get_version()}",
+            "User-Agent": self.user_agent or f"proximadb-python/{self._get_version()}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
@@ -239,7 +239,7 @@ class ClientConfig(BaseModel):
         if self.api_key:
             metadata.append(("authorization", f"Bearer {self.api_key}"))
         
-        metadata.append(("user-agent", self.user_agent or f"vectorflow-python/{self._get_version()}"))
+        metadata.append(("user-agent", self.user_agent or f"proximadb-python/{self._get_version()}"))
         
         # Add custom headers as metadata
         for key, value in self.custom_headers.items():
@@ -285,7 +285,7 @@ class ClientConfig(BaseModel):
 
 # Default configuration instance
 DEFAULT_CONFIG = ClientConfig(
-    url="https://api.vectorflow.ai",
+    url="http://localhost:5678",
     protocol=Protocol.AUTO,
     timeout=30.0,
 )

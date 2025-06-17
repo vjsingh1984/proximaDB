@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import vectordb_pb2 as vectordb__pb2
+from . import proximadb_pb2 as proximadb__pb2
 
 GRPC_GENERATED_VERSION = '1.73.0'
 GRPC_VERSION = grpc.__version__
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in vectordb_pb2_grpc.py depends on'
+        + f' but the generated code in proximadb_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class VectorDBStub(object):
+class ProximaDBStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -35,133 +35,133 @@ class VectorDBStub(object):
             channel: A grpc.Channel.
         """
         self.CreateCollection = channel.unary_unary(
-                '/vectordb.v1.VectorDB/CreateCollection',
-                request_serializer=vectordb__pb2.CreateCollectionRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.CreateCollectionResponse.FromString,
+                '/proximadb.v1.ProximaDB/CreateCollection',
+                request_serializer=proximadb__pb2.CreateCollectionRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.CreateCollectionResponse.FromString,
                 _registered_method=True)
         self.GetCollection = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetCollection',
-                request_serializer=vectordb__pb2.GetCollectionRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetCollectionResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetCollection',
+                request_serializer=proximadb__pb2.GetCollectionRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetCollectionResponse.FromString,
                 _registered_method=True)
         self.ListCollections = channel.unary_unary(
-                '/vectordb.v1.VectorDB/ListCollections',
-                request_serializer=vectordb__pb2.ListCollectionsRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.ListCollectionsResponse.FromString,
+                '/proximadb.v1.ProximaDB/ListCollections',
+                request_serializer=proximadb__pb2.ListCollectionsRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.ListCollectionsResponse.FromString,
                 _registered_method=True)
         self.DeleteCollection = channel.unary_unary(
-                '/vectordb.v1.VectorDB/DeleteCollection',
-                request_serializer=vectordb__pb2.DeleteCollectionRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.DeleteCollectionResponse.FromString,
+                '/proximadb.v1.ProximaDB/DeleteCollection',
+                request_serializer=proximadb__pb2.DeleteCollectionRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.DeleteCollectionResponse.FromString,
                 _registered_method=True)
         self.ListCollectionIds = channel.unary_unary(
-                '/vectordb.v1.VectorDB/ListCollectionIds',
-                request_serializer=vectordb__pb2.ListCollectionIdsRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.ListCollectionIdsResponse.FromString,
+                '/proximadb.v1.ProximaDB/ListCollectionIds',
+                request_serializer=proximadb__pb2.ListCollectionIdsRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.ListCollectionIdsResponse.FromString,
                 _registered_method=True)
         self.ListCollectionNames = channel.unary_unary(
-                '/vectordb.v1.VectorDB/ListCollectionNames',
-                request_serializer=vectordb__pb2.ListCollectionNamesRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.ListCollectionNamesResponse.FromString,
+                '/proximadb.v1.ProximaDB/ListCollectionNames',
+                request_serializer=proximadb__pb2.ListCollectionNamesRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.ListCollectionNamesResponse.FromString,
                 _registered_method=True)
         self.GetCollectionIdByName = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetCollectionIdByName',
-                request_serializer=vectordb__pb2.GetCollectionIdByNameRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetCollectionIdByNameResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetCollectionIdByName',
+                request_serializer=proximadb__pb2.GetCollectionIdByNameRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetCollectionIdByNameResponse.FromString,
                 _registered_method=True)
         self.GetCollectionNameById = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetCollectionNameById',
-                request_serializer=vectordb__pb2.GetCollectionNameByIdRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetCollectionNameByIdResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetCollectionNameById',
+                request_serializer=proximadb__pb2.GetCollectionNameByIdRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetCollectionNameByIdResponse.FromString,
                 _registered_method=True)
         self.InsertVector = channel.unary_unary(
-                '/vectordb.v1.VectorDB/InsertVector',
-                request_serializer=vectordb__pb2.InsertVectorRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.InsertVectorResponse.FromString,
+                '/proximadb.v1.ProximaDB/InsertVector',
+                request_serializer=proximadb__pb2.InsertVectorRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.InsertVectorResponse.FromString,
                 _registered_method=True)
         self.GetVector = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetVector',
-                request_serializer=vectordb__pb2.GetVectorRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetVectorResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetVector',
+                request_serializer=proximadb__pb2.GetVectorRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetVectorResponse.FromString,
                 _registered_method=True)
         self.GetVectorByClientId = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetVectorByClientId',
-                request_serializer=vectordb__pb2.GetVectorByClientIdRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetVectorByClientIdResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetVectorByClientId',
+                request_serializer=proximadb__pb2.GetVectorByClientIdRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetVectorByClientIdResponse.FromString,
                 _registered_method=True)
         self.UpdateVector = channel.unary_unary(
-                '/vectordb.v1.VectorDB/UpdateVector',
-                request_serializer=vectordb__pb2.UpdateVectorRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.UpdateVectorResponse.FromString,
+                '/proximadb.v1.ProximaDB/UpdateVector',
+                request_serializer=proximadb__pb2.UpdateVectorRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.UpdateVectorResponse.FromString,
                 _registered_method=True)
         self.DeleteVector = channel.unary_unary(
-                '/vectordb.v1.VectorDB/DeleteVector',
-                request_serializer=vectordb__pb2.DeleteVectorRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.DeleteVectorResponse.FromString,
+                '/proximadb.v1.ProximaDB/DeleteVector',
+                request_serializer=proximadb__pb2.DeleteVectorRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.DeleteVectorResponse.FromString,
                 _registered_method=True)
         self.BatchInsert = channel.unary_unary(
-                '/vectordb.v1.VectorDB/BatchInsert',
-                request_serializer=vectordb__pb2.BatchInsertRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.BatchInsertResponse.FromString,
+                '/proximadb.v1.ProximaDB/BatchInsert',
+                request_serializer=proximadb__pb2.BatchInsertRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.BatchInsertResponse.FromString,
                 _registered_method=True)
         self.BatchGet = channel.unary_unary(
-                '/vectordb.v1.VectorDB/BatchGet',
-                request_serializer=vectordb__pb2.BatchGetRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.BatchGetResponse.FromString,
+                '/proximadb.v1.ProximaDB/BatchGet',
+                request_serializer=proximadb__pb2.BatchGetRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.BatchGetResponse.FromString,
                 _registered_method=True)
         self.BatchUpdate = channel.unary_unary(
-                '/vectordb.v1.VectorDB/BatchUpdate',
-                request_serializer=vectordb__pb2.BatchUpdateRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.BatchUpdateResponse.FromString,
+                '/proximadb.v1.ProximaDB/BatchUpdate',
+                request_serializer=proximadb__pb2.BatchUpdateRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.BatchUpdateResponse.FromString,
                 _registered_method=True)
         self.BatchDelete = channel.unary_unary(
-                '/vectordb.v1.VectorDB/BatchDelete',
-                request_serializer=vectordb__pb2.BatchDeleteRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.BatchDeleteResponse.FromString,
+                '/proximadb.v1.ProximaDB/BatchDelete',
+                request_serializer=proximadb__pb2.BatchDeleteRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.BatchDeleteResponse.FromString,
                 _registered_method=True)
         self.Search = channel.unary_unary(
-                '/vectordb.v1.VectorDB/Search',
-                request_serializer=vectordb__pb2.SearchRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.SearchResponse.FromString,
+                '/proximadb.v1.ProximaDB/Search',
+                request_serializer=proximadb__pb2.SearchRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.SearchResponse.FromString,
                 _registered_method=True)
         self.BatchSearch = channel.unary_unary(
-                '/vectordb.v1.VectorDB/BatchSearch',
-                request_serializer=vectordb__pb2.BatchSearchRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.BatchSearchResponse.FromString,
+                '/proximadb.v1.ProximaDB/BatchSearch',
+                request_serializer=proximadb__pb2.BatchSearchRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.BatchSearchResponse.FromString,
                 _registered_method=True)
         self.GetIndexStats = channel.unary_unary(
-                '/vectordb.v1.VectorDB/GetIndexStats',
-                request_serializer=vectordb__pb2.GetIndexStatsRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.GetIndexStatsResponse.FromString,
+                '/proximadb.v1.ProximaDB/GetIndexStats',
+                request_serializer=proximadb__pb2.GetIndexStatsRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.GetIndexStatsResponse.FromString,
                 _registered_method=True)
         self.OptimizeIndex = channel.unary_unary(
-                '/vectordb.v1.VectorDB/OptimizeIndex',
-                request_serializer=vectordb__pb2.OptimizeIndexRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.OptimizeIndexResponse.FromString,
+                '/proximadb.v1.ProximaDB/OptimizeIndex',
+                request_serializer=proximadb__pb2.OptimizeIndexRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.OptimizeIndexResponse.FromString,
                 _registered_method=True)
         self.Health = channel.unary_unary(
-                '/vectordb.v1.VectorDB/Health',
-                request_serializer=vectordb__pb2.HealthRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.HealthResponse.FromString,
+                '/proximadb.v1.ProximaDB/Health',
+                request_serializer=proximadb__pb2.HealthRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.HealthResponse.FromString,
                 _registered_method=True)
         self.Readiness = channel.unary_unary(
-                '/vectordb.v1.VectorDB/Readiness',
-                request_serializer=vectordb__pb2.ReadinessRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.ReadinessResponse.FromString,
+                '/proximadb.v1.ProximaDB/Readiness',
+                request_serializer=proximadb__pb2.ReadinessRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.ReadinessResponse.FromString,
                 _registered_method=True)
         self.Liveness = channel.unary_unary(
-                '/vectordb.v1.VectorDB/Liveness',
-                request_serializer=vectordb__pb2.LivenessRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.LivenessResponse.FromString,
+                '/proximadb.v1.ProximaDB/Liveness',
+                request_serializer=proximadb__pb2.LivenessRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.LivenessResponse.FromString,
                 _registered_method=True)
         self.Status = channel.unary_unary(
-                '/vectordb.v1.VectorDB/Status',
-                request_serializer=vectordb__pb2.StatusRequest.SerializeToString,
-                response_deserializer=vectordb__pb2.StatusResponse.FromString,
+                '/proximadb.v1.ProximaDB/Status',
+                request_serializer=proximadb__pb2.StatusRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.StatusResponse.FromString,
                 _registered_method=True)
 
 
-class VectorDBServicer(object):
+class ProximaDBServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def CreateCollection(self, request, context):
@@ -322,142 +322,142 @@ class VectorDBServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
-def add_VectorDBServicer_to_server(servicer, server):
+def add_ProximaDBServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'CreateCollection': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateCollection,
-                    request_deserializer=vectordb__pb2.CreateCollectionRequest.FromString,
-                    response_serializer=vectordb__pb2.CreateCollectionResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.CreateCollectionRequest.FromString,
+                    response_serializer=proximadb__pb2.CreateCollectionResponse.SerializeToString,
             ),
             'GetCollection': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCollection,
-                    request_deserializer=vectordb__pb2.GetCollectionRequest.FromString,
-                    response_serializer=vectordb__pb2.GetCollectionResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetCollectionRequest.FromString,
+                    response_serializer=proximadb__pb2.GetCollectionResponse.SerializeToString,
             ),
             'ListCollections': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCollections,
-                    request_deserializer=vectordb__pb2.ListCollectionsRequest.FromString,
-                    response_serializer=vectordb__pb2.ListCollectionsResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.ListCollectionsRequest.FromString,
+                    response_serializer=proximadb__pb2.ListCollectionsResponse.SerializeToString,
             ),
             'DeleteCollection': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteCollection,
-                    request_deserializer=vectordb__pb2.DeleteCollectionRequest.FromString,
-                    response_serializer=vectordb__pb2.DeleteCollectionResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.DeleteCollectionRequest.FromString,
+                    response_serializer=proximadb__pb2.DeleteCollectionResponse.SerializeToString,
             ),
             'ListCollectionIds': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCollectionIds,
-                    request_deserializer=vectordb__pb2.ListCollectionIdsRequest.FromString,
-                    response_serializer=vectordb__pb2.ListCollectionIdsResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.ListCollectionIdsRequest.FromString,
+                    response_serializer=proximadb__pb2.ListCollectionIdsResponse.SerializeToString,
             ),
             'ListCollectionNames': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCollectionNames,
-                    request_deserializer=vectordb__pb2.ListCollectionNamesRequest.FromString,
-                    response_serializer=vectordb__pb2.ListCollectionNamesResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.ListCollectionNamesRequest.FromString,
+                    response_serializer=proximadb__pb2.ListCollectionNamesResponse.SerializeToString,
             ),
             'GetCollectionIdByName': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCollectionIdByName,
-                    request_deserializer=vectordb__pb2.GetCollectionIdByNameRequest.FromString,
-                    response_serializer=vectordb__pb2.GetCollectionIdByNameResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetCollectionIdByNameRequest.FromString,
+                    response_serializer=proximadb__pb2.GetCollectionIdByNameResponse.SerializeToString,
             ),
             'GetCollectionNameById': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCollectionNameById,
-                    request_deserializer=vectordb__pb2.GetCollectionNameByIdRequest.FromString,
-                    response_serializer=vectordb__pb2.GetCollectionNameByIdResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetCollectionNameByIdRequest.FromString,
+                    response_serializer=proximadb__pb2.GetCollectionNameByIdResponse.SerializeToString,
             ),
             'InsertVector': grpc.unary_unary_rpc_method_handler(
                     servicer.InsertVector,
-                    request_deserializer=vectordb__pb2.InsertVectorRequest.FromString,
-                    response_serializer=vectordb__pb2.InsertVectorResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.InsertVectorRequest.FromString,
+                    response_serializer=proximadb__pb2.InsertVectorResponse.SerializeToString,
             ),
             'GetVector': grpc.unary_unary_rpc_method_handler(
                     servicer.GetVector,
-                    request_deserializer=vectordb__pb2.GetVectorRequest.FromString,
-                    response_serializer=vectordb__pb2.GetVectorResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetVectorRequest.FromString,
+                    response_serializer=proximadb__pb2.GetVectorResponse.SerializeToString,
             ),
             'GetVectorByClientId': grpc.unary_unary_rpc_method_handler(
                     servicer.GetVectorByClientId,
-                    request_deserializer=vectordb__pb2.GetVectorByClientIdRequest.FromString,
-                    response_serializer=vectordb__pb2.GetVectorByClientIdResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetVectorByClientIdRequest.FromString,
+                    response_serializer=proximadb__pb2.GetVectorByClientIdResponse.SerializeToString,
             ),
             'UpdateVector': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateVector,
-                    request_deserializer=vectordb__pb2.UpdateVectorRequest.FromString,
-                    response_serializer=vectordb__pb2.UpdateVectorResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.UpdateVectorRequest.FromString,
+                    response_serializer=proximadb__pb2.UpdateVectorResponse.SerializeToString,
             ),
             'DeleteVector': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteVector,
-                    request_deserializer=vectordb__pb2.DeleteVectorRequest.FromString,
-                    response_serializer=vectordb__pb2.DeleteVectorResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.DeleteVectorRequest.FromString,
+                    response_serializer=proximadb__pb2.DeleteVectorResponse.SerializeToString,
             ),
             'BatchInsert': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchInsert,
-                    request_deserializer=vectordb__pb2.BatchInsertRequest.FromString,
-                    response_serializer=vectordb__pb2.BatchInsertResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.BatchInsertRequest.FromString,
+                    response_serializer=proximadb__pb2.BatchInsertResponse.SerializeToString,
             ),
             'BatchGet': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchGet,
-                    request_deserializer=vectordb__pb2.BatchGetRequest.FromString,
-                    response_serializer=vectordb__pb2.BatchGetResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.BatchGetRequest.FromString,
+                    response_serializer=proximadb__pb2.BatchGetResponse.SerializeToString,
             ),
             'BatchUpdate': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchUpdate,
-                    request_deserializer=vectordb__pb2.BatchUpdateRequest.FromString,
-                    response_serializer=vectordb__pb2.BatchUpdateResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.BatchUpdateRequest.FromString,
+                    response_serializer=proximadb__pb2.BatchUpdateResponse.SerializeToString,
             ),
             'BatchDelete': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchDelete,
-                    request_deserializer=vectordb__pb2.BatchDeleteRequest.FromString,
-                    response_serializer=vectordb__pb2.BatchDeleteResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.BatchDeleteRequest.FromString,
+                    response_serializer=proximadb__pb2.BatchDeleteResponse.SerializeToString,
             ),
             'Search': grpc.unary_unary_rpc_method_handler(
                     servicer.Search,
-                    request_deserializer=vectordb__pb2.SearchRequest.FromString,
-                    response_serializer=vectordb__pb2.SearchResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.SearchRequest.FromString,
+                    response_serializer=proximadb__pb2.SearchResponse.SerializeToString,
             ),
             'BatchSearch': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchSearch,
-                    request_deserializer=vectordb__pb2.BatchSearchRequest.FromString,
-                    response_serializer=vectordb__pb2.BatchSearchResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.BatchSearchRequest.FromString,
+                    response_serializer=proximadb__pb2.BatchSearchResponse.SerializeToString,
             ),
             'GetIndexStats': grpc.unary_unary_rpc_method_handler(
                     servicer.GetIndexStats,
-                    request_deserializer=vectordb__pb2.GetIndexStatsRequest.FromString,
-                    response_serializer=vectordb__pb2.GetIndexStatsResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.GetIndexStatsRequest.FromString,
+                    response_serializer=proximadb__pb2.GetIndexStatsResponse.SerializeToString,
             ),
             'OptimizeIndex': grpc.unary_unary_rpc_method_handler(
                     servicer.OptimizeIndex,
-                    request_deserializer=vectordb__pb2.OptimizeIndexRequest.FromString,
-                    response_serializer=vectordb__pb2.OptimizeIndexResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.OptimizeIndexRequest.FromString,
+                    response_serializer=proximadb__pb2.OptimizeIndexResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
-                    request_deserializer=vectordb__pb2.HealthRequest.FromString,
-                    response_serializer=vectordb__pb2.HealthResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.HealthRequest.FromString,
+                    response_serializer=proximadb__pb2.HealthResponse.SerializeToString,
             ),
             'Readiness': grpc.unary_unary_rpc_method_handler(
                     servicer.Readiness,
-                    request_deserializer=vectordb__pb2.ReadinessRequest.FromString,
-                    response_serializer=vectordb__pb2.ReadinessResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.ReadinessRequest.FromString,
+                    response_serializer=proximadb__pb2.ReadinessResponse.SerializeToString,
             ),
             'Liveness': grpc.unary_unary_rpc_method_handler(
                     servicer.Liveness,
-                    request_deserializer=vectordb__pb2.LivenessRequest.FromString,
-                    response_serializer=vectordb__pb2.LivenessResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.LivenessRequest.FromString,
+                    response_serializer=proximadb__pb2.LivenessResponse.SerializeToString,
             ),
             'Status': grpc.unary_unary_rpc_method_handler(
                     servicer.Status,
-                    request_deserializer=vectordb__pb2.StatusRequest.FromString,
-                    response_serializer=vectordb__pb2.StatusResponse.SerializeToString,
+                    request_deserializer=proximadb__pb2.StatusRequest.FromString,
+                    response_serializer=proximadb__pb2.StatusResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'vectordb.v1.VectorDB', rpc_method_handlers)
+            'proximadb.v1.ProximaDB', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('vectordb.v1.VectorDB', rpc_method_handlers)
+    server.add_registered_method_handlers('proximadb.v1.ProximaDB', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class VectorDB(object):
+class ProximaDB(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -474,9 +474,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/CreateCollection',
-            vectordb__pb2.CreateCollectionRequest.SerializeToString,
-            vectordb__pb2.CreateCollectionResponse.FromString,
+            '/proximadb.v1.ProximaDB/CreateCollection',
+            proximadb__pb2.CreateCollectionRequest.SerializeToString,
+            proximadb__pb2.CreateCollectionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -501,9 +501,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetCollection',
-            vectordb__pb2.GetCollectionRequest.SerializeToString,
-            vectordb__pb2.GetCollectionResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetCollection',
+            proximadb__pb2.GetCollectionRequest.SerializeToString,
+            proximadb__pb2.GetCollectionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -528,9 +528,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/ListCollections',
-            vectordb__pb2.ListCollectionsRequest.SerializeToString,
-            vectordb__pb2.ListCollectionsResponse.FromString,
+            '/proximadb.v1.ProximaDB/ListCollections',
+            proximadb__pb2.ListCollectionsRequest.SerializeToString,
+            proximadb__pb2.ListCollectionsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -555,9 +555,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/DeleteCollection',
-            vectordb__pb2.DeleteCollectionRequest.SerializeToString,
-            vectordb__pb2.DeleteCollectionResponse.FromString,
+            '/proximadb.v1.ProximaDB/DeleteCollection',
+            proximadb__pb2.DeleteCollectionRequest.SerializeToString,
+            proximadb__pb2.DeleteCollectionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -582,9 +582,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/ListCollectionIds',
-            vectordb__pb2.ListCollectionIdsRequest.SerializeToString,
-            vectordb__pb2.ListCollectionIdsResponse.FromString,
+            '/proximadb.v1.ProximaDB/ListCollectionIds',
+            proximadb__pb2.ListCollectionIdsRequest.SerializeToString,
+            proximadb__pb2.ListCollectionIdsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -609,9 +609,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/ListCollectionNames',
-            vectordb__pb2.ListCollectionNamesRequest.SerializeToString,
-            vectordb__pb2.ListCollectionNamesResponse.FromString,
+            '/proximadb.v1.ProximaDB/ListCollectionNames',
+            proximadb__pb2.ListCollectionNamesRequest.SerializeToString,
+            proximadb__pb2.ListCollectionNamesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -636,9 +636,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetCollectionIdByName',
-            vectordb__pb2.GetCollectionIdByNameRequest.SerializeToString,
-            vectordb__pb2.GetCollectionIdByNameResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetCollectionIdByName',
+            proximadb__pb2.GetCollectionIdByNameRequest.SerializeToString,
+            proximadb__pb2.GetCollectionIdByNameResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -663,9 +663,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetCollectionNameById',
-            vectordb__pb2.GetCollectionNameByIdRequest.SerializeToString,
-            vectordb__pb2.GetCollectionNameByIdResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetCollectionNameById',
+            proximadb__pb2.GetCollectionNameByIdRequest.SerializeToString,
+            proximadb__pb2.GetCollectionNameByIdResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -690,9 +690,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/InsertVector',
-            vectordb__pb2.InsertVectorRequest.SerializeToString,
-            vectordb__pb2.InsertVectorResponse.FromString,
+            '/proximadb.v1.ProximaDB/InsertVector',
+            proximadb__pb2.InsertVectorRequest.SerializeToString,
+            proximadb__pb2.InsertVectorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -717,9 +717,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetVector',
-            vectordb__pb2.GetVectorRequest.SerializeToString,
-            vectordb__pb2.GetVectorResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetVector',
+            proximadb__pb2.GetVectorRequest.SerializeToString,
+            proximadb__pb2.GetVectorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -744,9 +744,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetVectorByClientId',
-            vectordb__pb2.GetVectorByClientIdRequest.SerializeToString,
-            vectordb__pb2.GetVectorByClientIdResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetVectorByClientId',
+            proximadb__pb2.GetVectorByClientIdRequest.SerializeToString,
+            proximadb__pb2.GetVectorByClientIdResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -771,9 +771,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/UpdateVector',
-            vectordb__pb2.UpdateVectorRequest.SerializeToString,
-            vectordb__pb2.UpdateVectorResponse.FromString,
+            '/proximadb.v1.ProximaDB/UpdateVector',
+            proximadb__pb2.UpdateVectorRequest.SerializeToString,
+            proximadb__pb2.UpdateVectorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -798,9 +798,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/DeleteVector',
-            vectordb__pb2.DeleteVectorRequest.SerializeToString,
-            vectordb__pb2.DeleteVectorResponse.FromString,
+            '/proximadb.v1.ProximaDB/DeleteVector',
+            proximadb__pb2.DeleteVectorRequest.SerializeToString,
+            proximadb__pb2.DeleteVectorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -825,9 +825,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/BatchInsert',
-            vectordb__pb2.BatchInsertRequest.SerializeToString,
-            vectordb__pb2.BatchInsertResponse.FromString,
+            '/proximadb.v1.ProximaDB/BatchInsert',
+            proximadb__pb2.BatchInsertRequest.SerializeToString,
+            proximadb__pb2.BatchInsertResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -852,9 +852,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/BatchGet',
-            vectordb__pb2.BatchGetRequest.SerializeToString,
-            vectordb__pb2.BatchGetResponse.FromString,
+            '/proximadb.v1.ProximaDB/BatchGet',
+            proximadb__pb2.BatchGetRequest.SerializeToString,
+            proximadb__pb2.BatchGetResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -879,9 +879,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/BatchUpdate',
-            vectordb__pb2.BatchUpdateRequest.SerializeToString,
-            vectordb__pb2.BatchUpdateResponse.FromString,
+            '/proximadb.v1.ProximaDB/BatchUpdate',
+            proximadb__pb2.BatchUpdateRequest.SerializeToString,
+            proximadb__pb2.BatchUpdateResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -906,9 +906,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/BatchDelete',
-            vectordb__pb2.BatchDeleteRequest.SerializeToString,
-            vectordb__pb2.BatchDeleteResponse.FromString,
+            '/proximadb.v1.ProximaDB/BatchDelete',
+            proximadb__pb2.BatchDeleteRequest.SerializeToString,
+            proximadb__pb2.BatchDeleteResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -933,9 +933,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/Search',
-            vectordb__pb2.SearchRequest.SerializeToString,
-            vectordb__pb2.SearchResponse.FromString,
+            '/proximadb.v1.ProximaDB/Search',
+            proximadb__pb2.SearchRequest.SerializeToString,
+            proximadb__pb2.SearchResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -960,9 +960,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/BatchSearch',
-            vectordb__pb2.BatchSearchRequest.SerializeToString,
-            vectordb__pb2.BatchSearchResponse.FromString,
+            '/proximadb.v1.ProximaDB/BatchSearch',
+            proximadb__pb2.BatchSearchRequest.SerializeToString,
+            proximadb__pb2.BatchSearchResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -987,9 +987,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/GetIndexStats',
-            vectordb__pb2.GetIndexStatsRequest.SerializeToString,
-            vectordb__pb2.GetIndexStatsResponse.FromString,
+            '/proximadb.v1.ProximaDB/GetIndexStats',
+            proximadb__pb2.GetIndexStatsRequest.SerializeToString,
+            proximadb__pb2.GetIndexStatsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1014,9 +1014,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/OptimizeIndex',
-            vectordb__pb2.OptimizeIndexRequest.SerializeToString,
-            vectordb__pb2.OptimizeIndexResponse.FromString,
+            '/proximadb.v1.ProximaDB/OptimizeIndex',
+            proximadb__pb2.OptimizeIndexRequest.SerializeToString,
+            proximadb__pb2.OptimizeIndexResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1041,9 +1041,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/Health',
-            vectordb__pb2.HealthRequest.SerializeToString,
-            vectordb__pb2.HealthResponse.FromString,
+            '/proximadb.v1.ProximaDB/Health',
+            proximadb__pb2.HealthRequest.SerializeToString,
+            proximadb__pb2.HealthResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1068,9 +1068,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/Readiness',
-            vectordb__pb2.ReadinessRequest.SerializeToString,
-            vectordb__pb2.ReadinessResponse.FromString,
+            '/proximadb.v1.ProximaDB/Readiness',
+            proximadb__pb2.ReadinessRequest.SerializeToString,
+            proximadb__pb2.ReadinessResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1095,9 +1095,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/Liveness',
-            vectordb__pb2.LivenessRequest.SerializeToString,
-            vectordb__pb2.LivenessResponse.FromString,
+            '/proximadb.v1.ProximaDB/Liveness',
+            proximadb__pb2.LivenessRequest.SerializeToString,
+            proximadb__pb2.LivenessResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1122,9 +1122,9 @@ class VectorDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/vectordb.v1.VectorDB/Status',
-            vectordb__pb2.StatusRequest.SerializeToString,
-            vectordb__pb2.StatusResponse.FromString,
+            '/proximadb.v1.ProximaDB/Status',
+            proximadb__pb2.StatusRequest.SerializeToString,
+            proximadb__pb2.StatusResponse.FromString,
             options,
             channel_credentials,
             insecure,

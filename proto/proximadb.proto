@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package vectordb.v1;
+package proximadb.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
 
-service VectorDB {
+service ProximaDB {
   // Collection management
   rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
   rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
@@ -67,7 +67,8 @@ message Collection {
   uint64 vector_count = 8;                // Number of vectors
   uint64 total_size_bytes = 9;            // Storage size
   google.protobuf.Struct config = 10;     // Additional configuration
-  bool allow_client_ids = 11;             // Whether client IDs are allowed
+  string storage_layout = 11;             // Storage layout: "viper" (default), "lsm", "rocksdb", "memory"
+  repeated string filterable_metadata_fields = 12; // VIPER optimization: up to 16 metadata fields
 }
 
 message SearchResult {
@@ -84,8 +85,10 @@ message CreateCollectionRequest {
   uint32 dimension = 2;
   string distance_metric = 3;             // "cosine", "euclidean", "manhattan", "dot_product"
   string indexing_algorithm = 4;          // "hnsw", "flat", "ivf"
-  bool allow_client_ids = 5;              // Allow client-provided IDs
+  string storage_layout = 5;              // Storage layout: "viper" (default), "lsm", "rocksdb", "memory"
   google.protobuf.Struct config = 6;      // Additional configuration
+  repeated string filterable_metadata_fields = 7; // VIPER optimization: up to 16 metadata fields
+  double max_wal_size_mb = 8;             // WAL flush configuration (optional, uses global defaults)
 }
 
 message CreateCollectionResponse {

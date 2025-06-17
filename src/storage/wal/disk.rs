@@ -327,64 +327,6 @@ impl WalDiskManager {
         })
     }
     
-    /// Drop collection data from disk
-    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
-        let mut layouts = self.collection_layouts.write().await;
-        
-        if let Some(layout) = layouts.remove(collection_id) {
-            // Delete all segment files
-            for segment in &layout.segments {
-                if let Err(e) = fs::remove_file(&segment.path).await {
-                    tracing::warn!("Failed to remove segment file {:?}: {}", segment.path, e);
-                }
-            }
-            
-            // Remove collection directory if empty
-            if let Err(e) = fs::remove_dir(&layout.base_directory).await {
-                tracing::debug!("Collection directory not empty or failed to remove: {}", e);
-            }
-            
-            // Update disk usage
-            let mut disk_usage = self.disk_usage.write().await;
-            disk_usage[layout.disk_index] = disk_usage[layout.disk_index]
-                .saturating_sub(layout.total_size_bytes);
-        }
-        
-        Ok(())
-    }
-    
-    /// Get disk statistics
-    pub async fn get_stats(&self) -> Result<DiskStats> {
-        let layouts = self.collection_layouts.read().await;
-        let disk_usage = self.disk_usage.read().await;
-        
-        let total_segments: u64 = layouts.values().map(|l| l.segments.len() as u64).sum();
-        let total_size: u64 = disk_usage.iter().sum();
-        let collections_count = layouts.len();
-        
-        let disk_distribution: Vec<DiskUsage> = self.disk_directories
-            .iter()
-            .enumerate()
-            .map(|(i, dir)| DiskUsage {
-                directory: dir.clone(),
-                usage_bytes: disk_usage[i],
-                collections: layouts
-                    .values()
-                    .filter(|l| l.disk_index == i)
-                    .map(|l| l.collection_id.clone())
-                    .collect(),
-            })
-            .collect();
-        
-        Ok(DiskStats {
-            total_segments,
-            total_size_bytes: total_size,
-            collections_count,
-            disk_distribution,
-            compression_ratio: self.calculate_average_compression_ratio(&layouts).await,
-        })
-    }
-    
     /// Recover layouts from existing disk structure
     async fn recover_layouts(&self) -> Result<()> {
         let mut layouts = self.collection_layouts.write().await;
@@ -579,6 +521,85 @@ impl WalDiskManager {
         } else {
             ratios.iter().sum::<f64>() / ratios.len() as f64
         }
+    }
+
+    /// List all collections that have WAL data on disk
+    pub async fn list_collections(&self) -> Result<Vec<CollectionId>> {
+        let layouts = self.collection_layouts.read().await;
+        Ok(layouts.keys().cloned().collect())
+    }
+
+    /// Read WAL entries for a collection from disk (stub implementation)
+    pub async fn read_entries(
+        &self,
+        _collection_id: &CollectionId,
+        _from_sequence: u64,
+        _limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>> {
+        // TODO: Implement actual disk reading with deserializer
+        // For now, return empty vector since disk reading is not fully implemented
+        tracing::debug!("🚧 WAL DISK: read_entries not yet implemented, returning empty result");
+        Ok(Vec::new())
+    }
+
+    /// Get WAL statistics from disk
+    pub async fn get_stats(&self) -> Result<DiskStats> {
+        let layouts = self.collection_layouts.read().await;
+        let disk_usage = self.disk_usage.read().await;
+        
+        let total_segments = layouts.values().map(|l| l.segments.len() as u64).sum();
+        let total_size_bytes = layouts.values()
+            .flat_map(|l| l.segments.iter())
+            .map(|s| s.size_bytes)
+            .sum();
+        
+        let disk_distribution = self.disk_directories.iter()
+            .enumerate()
+            .map(|(i, dir)| DiskUsage {
+                directory: dir.clone(),
+                usage_bytes: disk_usage.get(i).copied().unwrap_or(0),
+                collections: layouts.values()
+                    .filter(|l| l.disk_index == i)
+                    .map(|l| l.collection_id.clone())
+                    .collect(),
+            })
+            .collect();
+
+        Ok(DiskStats {
+            total_segments,
+            total_size_bytes,
+            collections_count: layouts.len(),
+            disk_distribution,
+            compression_ratio: self.calculate_average_compression_ratio(&layouts).await,
+        })
+    }
+
+    /// Drop all WAL data for a collection
+    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+        let mut layouts = self.collection_layouts.write().await;
+        
+        if let Some(layout) = layouts.remove(collection_id) {
+            // Remove all segment files
+            for segment in &layout.segments {
+                if segment.path.exists() {
+                    if let Err(e) = fs::remove_file(&segment.path).await {
+                        tracing::warn!("Failed to remove WAL segment {:?}: {}", segment.path, e);
+                    }
+                }
+            }
+            
+            // Remove collection directory if empty
+            if layout.base_directory.exists() {
+                if let Err(e) = fs::remove_dir(&layout.base_directory).await {
+                    tracing::debug!("Collection directory not empty or failed to remove: {:?}: {}", 
+                                   layout.base_directory, e);
+                }
+            }
+            
+            tracing::info!("✅ Dropped WAL disk data for collection: {}", collection_id);
+        }
+        
+        Ok(())
     }
 }
 

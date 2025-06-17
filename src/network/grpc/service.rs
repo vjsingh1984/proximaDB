@@ -25,9 +25,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::storage::StorageEngine;
 use crate::services::{VectorService, CollectionService};
-use crate::proto::vectordb::v1::*;
-use crate::proto::vectordb::v1::vector_db_server::VectorDb;
-use crate::proto::vectordb::v1::{get_collection_request, delete_collection_request, insert_vector_request, get_vector_request, get_vector_by_client_id_request, delete_vector_request, search_request};
+use crate::proto::proximadb::v1::*;
+use crate::proto::proximadb::v1::proxima_db_server::ProximaDb;
+use crate::proto::proximadb::v1::{get_collection_request, delete_collection_request, insert_vector_request, get_vector_request, get_vector_by_client_id_request, delete_vector_request, search_request};
 
 /// ProximaDB gRPC service implementation
 #[derive(Clone)]
@@ -107,6 +107,31 @@ impl ProximaDbGrpcService {
                 let struct_value = Self::hashmap_to_struct(obj_hashmap).unwrap_or_default();
                 Value { kind: Some(Kind::StructValue(struct_value)) }
             },
+        }
+    }
+    
+    /// Convert protobuf Value to JSON value
+    fn protobuf_value_to_json_value(value: prost_types::Value) -> serde_json::Value {
+        use prost_types::value::Kind;
+        
+        match value.kind {
+            Some(Kind::NullValue(_)) => serde_json::Value::Null,
+            Some(Kind::BoolValue(b)) => serde_json::Value::Bool(b),
+            Some(Kind::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or_else(|| serde_json::Number::from(0))),
+            Some(Kind::StringValue(s)) => serde_json::Value::String(s),
+            Some(Kind::ListValue(list)) => {
+                serde_json::Value::Array(
+                    list.values.into_iter().map(Self::protobuf_value_to_json_value).collect()
+                )
+            },
+            Some(Kind::StructValue(struct_val)) => {
+                let mut map = serde_json::Map::new();
+                for (key, value) in struct_val.fields {
+                    map.insert(key, Self::protobuf_value_to_json_value(value));
+                }
+                serde_json::Value::Object(map)
+            },
+            None => serde_json::Value::Null,
         }
     }
 
@@ -196,7 +221,7 @@ impl ProximaDbGrpcService {
 }
 
 #[tonic::async_trait]
-impl VectorDb for ProximaDbGrpcService {
+impl ProximaDb for ProximaDbGrpcService {
     /// Collection management
     async fn create_collection(
         &self,
@@ -206,16 +231,47 @@ impl VectorDb for ProximaDbGrpcService {
         debug!("📁 gRPC CreateCollection: {} (dim: {})", req.name, req.dimension);
 
         let collection_name = req.name.clone();
+        
+        // Build flush configuration from protobuf request
+        let flush_config = if req.max_wal_size_mb > 0.0 {
+            Some(crate::storage::metadata::CollectionFlushConfig {
+                max_wal_size_bytes: Some((req.max_wal_size_mb * 1024.0 * 1024.0) as usize),
+            })
+        } else {
+            None // Use global defaults
+        };
+        
+        // Convert protobuf config to HashMap if present
+        let config = req.config.map(|config_struct| {
+            let mut map = std::collections::HashMap::new();
+            for (key, value) in config_struct.fields {
+                map.insert(key, Self::protobuf_value_to_json_value(value));
+            }
+            map
+        });
+        
         match self.collection_service.create_collection(
             req.name,
             req.dimension,
             Some(req.distance_metric),
             Some(req.indexing_algorithm),
-            None, // TODO: Convert req.config to HashMap<String, Value>
-            None, // TODO: Add flush_config parameter
-            None, // TODO: Add filterable_metadata_fields to proto and extract here
+            Some(req.storage_layout),
+            config,
+            flush_config,
+            Some(req.filterable_metadata_fields),
         ).await {
             Ok(collection) => {
+                // Extract storage layout and filterable metadata fields from collection config
+                let storage_layout = collection.config.get("storage_layout")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("viper")
+                    .to_string();
+                    
+                let filterable_metadata_fields = collection.config.get("filterable_metadata_fields")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                
                 let collection_pb = Collection {
                     id: collection.id.clone(),
                     name: collection.name,
@@ -231,7 +287,8 @@ impl VectorDb for ProximaDbGrpcService {
                     vector_count: collection.vector_count,
                     total_size_bytes: collection.total_size_bytes,
                     config: Self::hashmap_to_struct(collection.config),
-                    allow_client_ids: req.allow_client_ids,
+                    storage_layout,
+                    filterable_metadata_fields,
                 };
 
                 let response = CreateCollectionResponse {
@@ -265,6 +322,17 @@ impl VectorDb for ProximaDbGrpcService {
 
         match self.collection_service.get_collection(&collection_id).await {
             Ok(collection) => {
+                // Extract storage layout and filterable metadata fields from collection config
+                let storage_layout = collection.config.get("storage_layout")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("viper")
+                    .to_string();
+                    
+                let filterable_metadata_fields = collection.config.get("filterable_metadata_fields")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                
                 let collection_pb = Collection {
                     id: collection.id,
                     name: collection.name,
@@ -280,7 +348,8 @@ impl VectorDb for ProximaDbGrpcService {
                     vector_count: collection.vector_count,
                     total_size_bytes: collection.total_size_bytes,
                     config: Self::hashmap_to_struct(collection.config),
-                    allow_client_ids: true, // Default for now
+                    storage_layout,
+                    filterable_metadata_fields,
                 };
 
                 Ok(Response::new(GetCollectionResponse {
@@ -303,6 +372,17 @@ impl VectorDb for ProximaDbGrpcService {
         match self.collection_service.list_collections().await {
             Ok(collections) => {
                 let collections_pb = collections.into_iter().map(|collection| {
+                    // Extract storage layout and filterable metadata fields from collection config
+                    let storage_layout = collection.config.get("storage_layout")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("viper")
+                        .to_string();
+                        
+                    let filterable_metadata_fields = collection.config.get("filterable_metadata_fields")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default();
+                    
                     Collection {
                         id: collection.id,
                         name: collection.name,
@@ -318,7 +398,8 @@ impl VectorDb for ProximaDbGrpcService {
                         vector_count: collection.vector_count,
                         total_size_bytes: collection.total_size_bytes,
                         config: Self::hashmap_to_struct(collection.config),
-                        allow_client_ids: true, // Default for now
+                        storage_layout,
+                        filterable_metadata_fields,
                     }
                 }).collect();
 

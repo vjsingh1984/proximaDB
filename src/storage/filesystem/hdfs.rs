@@ -16,7 +16,6 @@
 
 //! Hadoop Distributed File System (HDFS) implementation with WebHDFS REST API
 
-use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 use tokio::time::Duration;

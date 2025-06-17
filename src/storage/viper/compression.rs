@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::{Result, Context};
 
-use super::types::SimdInstructionSet;
+use crate::compute::hardware_detection::SimdLevel;
 use crate::storage::wal::config::CompressionAlgorithm;
 
 /// SIMD-optimized compression engine for VIPER storage
@@ -76,7 +76,7 @@ pub struct SimdCapabilities {
     pub has_avx2: bool,
     pub has_avx512: bool,
     pub has_neon: bool,
-    pub detected_instruction_set: SimdInstructionSet,
+    pub detected_instruction_set: SimdLevel,
 }
 
 /// Compression statistics for adaptive selection
@@ -151,7 +151,7 @@ pub struct RatioPredictor {
 pub struct SpeedPredictor {
     pub base_speeds: HashMap<CompressionAlgorithm, f32>,
     pub size_scaling_factors: HashMap<CompressionAlgorithm, f32>,
-    pub simd_speedup_factors: HashMap<SimdInstructionSet, f32>,
+    pub simd_speedup_factors: HashMap<SimdLevel, f32>,
 }
 
 /// Memory usage prediction model
@@ -222,7 +222,7 @@ pub struct DecompressionResult {
 impl SimdCompressionEngine {
     /// Create new SIMD compression engine
     pub async fn new() -> Result<Self> {
-        let simd_capabilities = Self::detect_simd_capabilities();
+        let simd_capabilities = Self::get_default_simd_capabilities();
         
         let mut backends: HashMap<CompressionAlgorithm, Box<dyn CompressionBackend>> = HashMap::new();
         
@@ -233,7 +233,7 @@ impl SimdCompressionEngine {
         );
         
         backends.insert(
-            CompressionAlgorithm::LZ4,
+            CompressionAlgorithm::Lz4,
             Box::new(Lz4Backend::new(simd_capabilities.clone())),
         );
         
@@ -248,8 +248,8 @@ impl SimdCompressionEngine {
         );
         
         backends.insert(
-            CompressionAlgorithm::Gzip { level: 6 },
-            Box::new(GzipBackend::new(6, simd_capabilities.clone())),
+            CompressionAlgorithm::Zstd { level: 6 },
+            Box::new(ZstdBackend::new(6, simd_capabilities.clone())),
         );
         
         Ok(Self {
@@ -350,7 +350,7 @@ impl SimdCompressionEngine {
         // Get data type preferences
         if let Some(preferences) = model.data_type_preferences.get(&request.data_type) {
             // Score algorithms based on features and preferences
-            let mut best_algorithm = CompressionAlgorithm::LZ4;
+            let mut best_algorithm = CompressionAlgorithm::Lz4;
             let mut best_score = 0.0;
             
             for (algorithm, base_score) in preferences {
@@ -378,10 +378,10 @@ impl SimdCompressionEngine {
         match request.optimization_target {
             OptimizationTarget::MaxSpeed => {
                 match request.data_type {
-                    DataType::DenseVectors => Ok(CompressionAlgorithm::LZ4),
+                    DataType::DenseVectors => Ok(CompressionAlgorithm::Lz4),
                     DataType::SparseVectors => Ok(CompressionAlgorithm::Snappy),
-                    DataType::Metadata => Ok(CompressionAlgorithm::LZ4),
-                    DataType::ClusterIds => Ok(CompressionAlgorithm::LZ4),
+                    DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
+                    DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
                     DataType::Timestamps => Ok(CompressionAlgorithm::None),
                 }
             }
@@ -390,25 +390,25 @@ impl SimdCompressionEngine {
                 match request.data_type {
                     DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 6 }),
                     DataType::SparseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::Metadata => Ok(CompressionAlgorithm::Gzip { level: 9 }),
+                    DataType::Metadata => Ok(CompressionAlgorithm::Snappy),
                     DataType::ClusterIds => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::Timestamps => Ok(CompressionAlgorithm::LZ4),
+                    DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
                 }
             }
             
             OptimizationTarget::Balanced => {
                 match request.data_type {
                     DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::SparseVectors => Ok(CompressionAlgorithm::LZ4),
-                    DataType::Metadata => Ok(CompressionAlgorithm::LZ4),
-                    DataType::ClusterIds => Ok(CompressionAlgorithm::LZ4),
-                    DataType::Timestamps => Ok(CompressionAlgorithm::LZ4),
+                    DataType::SparseVectors => Ok(CompressionAlgorithm::Lz4),
+                    DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
+                    DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
+                    DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
                 }
             }
             
             OptimizationTarget::MinMemory => {
                 // Prefer algorithms with low memory overhead
-                Ok(CompressionAlgorithm::LZ4)
+                Ok(CompressionAlgorithm::Lz4)
             }
         }
     }
@@ -458,24 +458,14 @@ impl SimdCompressionEngine {
         zero_count as f32 / data.len() as f32
     }
     
-    /// Detect SIMD capabilities
-    fn detect_simd_capabilities() -> SimdCapabilities {
+    /// Get default SIMD capabilities (hardware detection done at server startup)
+    fn get_default_simd_capabilities() -> SimdCapabilities {
         SimdCapabilities {
-            has_sse4_2: is_x86_feature_detected!("sse4.2"),
-            has_avx2: is_x86_feature_detected!("avx2"),
-            has_avx512: is_x86_feature_detected!("avx512f"),
+            has_sse4_2: true,  // Assume basic capabilities available
+            has_avx2: false,   // Conservative default
+            has_avx512: false, // Conservative default
             has_neon: cfg!(target_arch = "aarch64"),
-            detected_instruction_set: if is_x86_feature_detected!("avx512f") {
-                SimdInstructionSet::AVX512
-            } else if is_x86_feature_detected!("avx2") {
-                SimdInstructionSet::AVX2
-            } else if is_x86_feature_detected!("sse4.2") {
-                SimdInstructionSet::SSE4_2
-            } else if cfg!(target_arch = "aarch64") {
-                SimdInstructionSet::NEON
-            } else {
-                SimdInstructionSet::Auto
-            },
+            detected_instruction_set: SimdLevel::None, // Let distance algorithms handle optimization
         }
     }
     
@@ -483,12 +473,12 @@ impl SimdCompressionEngine {
     fn estimate_memory_usage(&self, algorithm: &CompressionAlgorithm, data_size: usize) -> f32 {
         match algorithm {
             CompressionAlgorithm::None => 0.0,
-            CompressionAlgorithm::LZ4 => (data_size / 1024) as f32 * 0.1, // 10% overhead
+            CompressionAlgorithm::Lz4 => (data_size / 1024) as f32 * 0.1, // 10% overhead
             CompressionAlgorithm::Zstd { level } => {
                 (data_size / 1024) as f32 * (0.2 + (*level as f32 * 0.1))
             }
             CompressionAlgorithm::Snappy => (data_size / 1024) as f32 * 0.15,
-            CompressionAlgorithm::Gzip { .. } => (data_size / 1024) as f32 * 0.3,
+            CompressionAlgorithm::Snappy { .. } => (data_size / 1024) as f32 * 0.3,
         }
     }
     
@@ -610,7 +600,7 @@ impl CompressionBackend for Lz4Backend {
     
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
-            algorithm: CompressionAlgorithm::LZ4,
+            algorithm: CompressionAlgorithm::Lz4,
             compression_speed_mbps: 300.0,
             decompression_speed_mbps: 1000.0,
             typical_compression_ratio: 2.5,
@@ -621,7 +611,7 @@ impl CompressionBackend for Lz4Backend {
     }
     
     fn algorithm(&self) -> CompressionAlgorithm {
-        CompressionAlgorithm::LZ4
+        CompressionAlgorithm::Lz4
     }
 }
 
@@ -703,41 +693,3 @@ impl CompressionBackend for SnappyBackend {
     }
 }
 
-/// Gzip compression backend
-struct GzipBackend {
-    level: u32,
-    simd_capabilities: SimdCapabilities,
-}
-
-impl GzipBackend {
-    fn new(level: u32, simd_capabilities: SimdCapabilities) -> Self {
-        Self { level, simd_capabilities }
-    }
-}
-
-#[async_trait::async_trait]
-impl CompressionBackend for GzipBackend {
-    async fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
-    }
-    
-    async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
-        Ok(compressed.to_vec())
-    }
-    
-    fn characteristics(&self) -> CompressionCharacteristics {
-        CompressionCharacteristics {
-            algorithm: CompressionAlgorithm::Gzip { level: self.level },
-            compression_speed_mbps: 50.0 - (self.level as f32 * 3.0),
-            decompression_speed_mbps: 200.0,
-            typical_compression_ratio: 3.5 + (self.level as f32 * 0.2),
-            memory_usage_mb: 1,
-            supports_simd: false,
-            best_for_data_types: vec![DataType::Metadata],
-        }
-    }
-    
-    fn algorithm(&self) -> CompressionAlgorithm {
-        CompressionAlgorithm::Gzip { level: self.level }
-    }
-}

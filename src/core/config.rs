@@ -47,8 +47,6 @@ pub struct ConsensusConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
-    pub grpc_port: u16,
-    pub rest_port: u16,
     pub max_request_size_mb: u64,
     pub timeout_seconds: u64,
 }
@@ -56,7 +54,6 @@ pub struct ApiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
     pub metrics_enabled: bool,
-    pub dashboard_port: u16,
     pub log_level: String,
 }
 
@@ -66,7 +63,7 @@ impl Default for Config {
             server: ServerConfig {
                 node_id: "node-1".to_string(),
                 bind_address: "0.0.0.0".to_string(),
-                port: 8080,
+                port: 5678,
                 data_dir: PathBuf::from("./data"),
             },
             storage: StorageConfig {
@@ -90,14 +87,11 @@ impl Default for Config {
                 snapshot_threshold: 1000,
             },
             api: ApiConfig {
-                grpc_port: 9090,
-                rest_port: 8080,
                 max_request_size_mb: 100,
                 timeout_seconds: 30,
             },
             monitoring: MonitoringConfig {
                 metrics_enabled: true,
-                dashboard_port: 3000,
                 log_level: "info".to_string(),
             },
         }

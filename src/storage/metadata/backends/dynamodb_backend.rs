@@ -9,7 +9,7 @@
 //! Provides serverless scaling, global tables, and pay-per-use pricing.
 //! Designed for cloud-native and multi-region deployments.
 
-use anyhow::{Result, Context, bail};
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;

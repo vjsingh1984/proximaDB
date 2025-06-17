@@ -226,12 +226,17 @@ class ProximaDBClient:
             "dimension": config.dimension,
             "distance_metric": config.distance_metric,
             "indexing_algorithm": config.index_config.algorithm if config.index_config else "hnsw",
-            "allow_client_ids": True,  # Default to True for flexibility
+            "storage_layout": getattr(config, 'storage_layout', 'viper'),  # Default to VIPER storage
         }
         
-        # Add optional fields
+        # Add VIPER-specific optimization fields
         if config.filterable_metadata_fields:
             request_data["filterable_metadata_fields"] = config.filterable_metadata_fields
+        
+        # Add WAL flush configuration
+        if hasattr(config, 'flush_config') and config.flush_config:
+            if hasattr(config.flush_config, 'max_wal_size_mb'):
+                request_data["max_wal_size_mb"] = config.flush_config.max_wal_size_mb
         
         if config.description:
             request_data["config"] = {"description": config.description}
@@ -285,19 +290,15 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
         
-        request_data = {
-            "vectors": [{
-                "id": vector_id,
-                "vector": vector,
-                "metadata": metadata or {}
-            }],
-            "upsert": upsert
-        }
-        
+        # For single vector, use the single vector endpoint directly
         response = self._make_request(
             "POST",
             f"/collections/{collection_id}/vectors",
-            json=request_data
+            json={
+                "id": vector_id,
+                "vector": vector,
+                "metadata": metadata or {}
+            }
         )
         
         return InsertResult(**response.json())
@@ -354,7 +355,7 @@ class ProximaDBClient:
             
             response = self._make_request(
                 "POST",
-                f"/collections/{collection_id}/vectors",
+                f"/collections/{collection_id}/vectors/batch",
                 json=request_data
             )
             
@@ -377,7 +378,7 @@ class ProximaDBClient:
                     
                     response = self._make_request(
                         "POST",
-                        f"/collections/{collection_id}/vectors",
+                        f"/collections/{collection_id}/vectors/batch",
                         json=request_data
                     )
                     

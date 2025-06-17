@@ -51,9 +51,14 @@ pub struct Collection {
     /// Additional configuration
     #[prost(message, optional, tag = "10")]
     pub config: ::core::option::Option<::prost_types::Struct>,
-    /// Whether client IDs are allowed
-    #[prost(bool, tag = "11")]
-    pub allow_client_ids: bool,
+    /// Storage layout: "viper" (default), "lsm", "rocksdb", "memory"
+    #[prost(string, tag = "11")]
+    pub storage_layout: ::prost::alloc::string::String,
+    /// VIPER optimization: up to 16 metadata fields
+    #[prost(string, repeated, tag = "12")]
+    pub filterable_metadata_fields: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -88,12 +93,20 @@ pub struct CreateCollectionRequest {
     /// "hnsw", "flat", "ivf"
     #[prost(string, tag = "4")]
     pub indexing_algorithm: ::prost::alloc::string::String,
-    /// Allow client-provided IDs
-    #[prost(bool, tag = "5")]
-    pub allow_client_ids: bool,
+    /// Storage layout: "viper" (default), "lsm", "rocksdb", "memory"
+    #[prost(string, tag = "5")]
+    pub storage_layout: ::prost::alloc::string::String,
     /// Additional configuration
     #[prost(message, optional, tag = "6")]
     pub config: ::core::option::Option<::prost_types::Struct>,
+    /// VIPER optimization: up to 16 metadata fields
+    #[prost(string, repeated, tag = "7")]
+    pub filterable_metadata_fields: ::prost::alloc::vec::Vec<
+        ::prost::alloc::string::String,
+    >,
+    /// WAL flush configuration (optional, uses global defaults)
+    #[prost(double, tag = "8")]
+    pub max_wal_size_mb: f64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -771,15 +784,15 @@ pub struct StatusResponse {
     pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// Generated client implementations.
-pub mod vector_db_client {
+pub mod proxima_db_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
-    pub struct VectorDbClient<T> {
+    pub struct ProximaDbClient<T> {
         inner: tonic::client::Grpc<T>,
     }
-    impl VectorDbClient<tonic::transport::Channel> {
+    impl ProximaDbClient<tonic::transport::Channel> {
         /// Attempt to create a new client by connecting to a given endpoint.
         pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
         where
@@ -790,7 +803,7 @@ pub mod vector_db_client {
             Ok(Self::new(conn))
         }
     }
-    impl<T> VectorDbClient<T>
+    impl<T> ProximaDbClient<T>
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
@@ -808,7 +821,7 @@ pub mod vector_db_client {
         pub fn with_interceptor<F>(
             inner: T,
             interceptor: F,
-        ) -> VectorDbClient<InterceptedService<T, F>>
+        ) -> ProximaDbClient<InterceptedService<T, F>>
         where
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
@@ -822,7 +835,7 @@ pub mod vector_db_client {
                 http::Request<tonic::body::BoxBody>,
             >>::Error: Into<StdError> + Send + Sync,
         {
-            VectorDbClient::new(InterceptedService::new(inner, interceptor))
+            ProximaDbClient::new(InterceptedService::new(inner, interceptor))
         }
         /// Compress requests with the given encoding.
         ///
@@ -874,11 +887,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/CreateCollection",
+                "/proximadb.v1.ProximaDB/CreateCollection",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "CreateCollection"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "CreateCollection"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_collection(
@@ -899,11 +912,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetCollection",
+                "/proximadb.v1.ProximaDB/GetCollection",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "GetCollection"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "GetCollection"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn list_collections(
@@ -924,11 +937,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/ListCollections",
+                "/proximadb.v1.ProximaDB/ListCollections",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "ListCollections"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "ListCollections"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn delete_collection(
@@ -949,11 +962,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/DeleteCollection",
+                "/proximadb.v1.ProximaDB/DeleteCollection",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "DeleteCollection"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "DeleteCollection"));
             self.inner.unary(req, path, codec).await
         }
         /// Collection helper endpoints
@@ -975,11 +988,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/ListCollectionIds",
+                "/proximadb.v1.ProximaDB/ListCollectionIds",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "ListCollectionIds"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "ListCollectionIds"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn list_collection_names(
@@ -1000,11 +1013,13 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/ListCollectionNames",
+                "/proximadb.v1.ProximaDB/ListCollectionNames",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "ListCollectionNames"));
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ProximaDB", "ListCollectionNames"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_collection_id_by_name(
@@ -1025,12 +1040,12 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetCollectionIdByName",
+                "/proximadb.v1.ProximaDB/GetCollectionIdByName",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("vectordb.v1.VectorDB", "GetCollectionIdByName"),
+                    GrpcMethod::new("proximadb.v1.ProximaDB", "GetCollectionIdByName"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -1052,12 +1067,12 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetCollectionNameById",
+                "/proximadb.v1.ProximaDB/GetCollectionNameById",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
-                    GrpcMethod::new("vectordb.v1.VectorDB", "GetCollectionNameById"),
+                    GrpcMethod::new("proximadb.v1.ProximaDB", "GetCollectionNameById"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -1080,11 +1095,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/InsertVector",
+                "/proximadb.v1.ProximaDB/InsertVector",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "InsertVector"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "InsertVector"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_vector(
@@ -1105,11 +1120,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetVector",
+                "/proximadb.v1.ProximaDB/GetVector",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "GetVector"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "GetVector"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_vector_by_client_id(
@@ -1130,11 +1145,13 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetVectorByClientId",
+                "/proximadb.v1.ProximaDB/GetVectorByClientId",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "GetVectorByClientId"));
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ProximaDB", "GetVectorByClientId"),
+                );
             self.inner.unary(req, path, codec).await
         }
         pub async fn update_vector(
@@ -1155,11 +1172,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/UpdateVector",
+                "/proximadb.v1.ProximaDB/UpdateVector",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "UpdateVector"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "UpdateVector"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn delete_vector(
@@ -1180,11 +1197,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/DeleteVector",
+                "/proximadb.v1.ProximaDB/DeleteVector",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "DeleteVector"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "DeleteVector"));
             self.inner.unary(req, path, codec).await
         }
         /// Vector operations - batch
@@ -1206,11 +1223,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/BatchInsert",
+                "/proximadb.v1.ProximaDB/BatchInsert",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "BatchInsert"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "BatchInsert"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn batch_get(
@@ -1231,11 +1248,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/BatchGet",
+                "/proximadb.v1.ProximaDB/BatchGet",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "BatchGet"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "BatchGet"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn batch_update(
@@ -1256,11 +1273,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/BatchUpdate",
+                "/proximadb.v1.ProximaDB/BatchUpdate",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "BatchUpdate"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "BatchUpdate"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn batch_delete(
@@ -1281,11 +1298,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/BatchDelete",
+                "/proximadb.v1.ProximaDB/BatchDelete",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "BatchDelete"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "BatchDelete"));
             self.inner.unary(req, path, codec).await
         }
         /// Search operations
@@ -1304,11 +1321,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/Search",
+                "/proximadb.v1.ProximaDB/Search",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "Search"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "Search"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn batch_search(
@@ -1329,11 +1346,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/BatchSearch",
+                "/proximadb.v1.ProximaDB/BatchSearch",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "BatchSearch"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "BatchSearch"));
             self.inner.unary(req, path, codec).await
         }
         /// Index operations
@@ -1355,11 +1372,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/GetIndexStats",
+                "/proximadb.v1.ProximaDB/GetIndexStats",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "GetIndexStats"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "GetIndexStats"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn optimize_index(
@@ -1380,11 +1397,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/OptimizeIndex",
+                "/proximadb.v1.ProximaDB/OptimizeIndex",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "OptimizeIndex"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "OptimizeIndex"));
             self.inner.unary(req, path, codec).await
         }
         /// Health and status
@@ -1403,11 +1420,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/Health",
+                "/proximadb.v1.ProximaDB/Health",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "Health"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "Health"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn readiness(
@@ -1428,11 +1445,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/Readiness",
+                "/proximadb.v1.ProximaDB/Readiness",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "Readiness"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "Readiness"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn liveness(
@@ -1453,11 +1470,11 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/Liveness",
+                "/proximadb.v1.ProximaDB/Liveness",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "Liveness"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "Liveness"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn status(
@@ -1475,22 +1492,22 @@ pub mod vector_db_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/vectordb.v1.VectorDB/Status",
+                "/proximadb.v1.ProximaDB/Status",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("vectordb.v1.VectorDB", "Status"));
+                .insert(GrpcMethod::new("proximadb.v1.ProximaDB", "Status"));
             self.inner.unary(req, path, codec).await
         }
     }
 }
 /// Generated server implementations.
-pub mod vector_db_server {
+pub mod proxima_db_server {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
     use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with VectorDbServer.
+    /// Generated trait containing gRPC methods that should be implemented for use with ProximaDbServer.
     #[async_trait]
-    pub trait VectorDb: Send + Sync + 'static {
+    pub trait ProximaDb: Send + Sync + 'static {
         /// Collection management
         async fn create_collection(
             &self,
@@ -1666,7 +1683,7 @@ pub mod vector_db_server {
         ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status>;
     }
     #[derive(Debug)]
-    pub struct VectorDbServer<T: VectorDb> {
+    pub struct ProximaDbServer<T: ProximaDb> {
         inner: _Inner<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
@@ -1674,7 +1691,7 @@ pub mod vector_db_server {
         max_encoding_message_size: Option<usize>,
     }
     struct _Inner<T>(Arc<T>);
-    impl<T: VectorDb> VectorDbServer<T> {
+    impl<T: ProximaDb> ProximaDbServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
@@ -1726,9 +1743,9 @@ pub mod vector_db_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for VectorDbServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for ProximaDbServer<T>
     where
-        T: VectorDb,
+        T: ProximaDb,
         B: Body + Send + 'static,
         B::Error: Into<StdError> + Send + 'static,
     {
@@ -1744,11 +1761,11 @@ pub mod vector_db_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/vectordb.v1.VectorDB/CreateCollection" => {
+                "/proximadb.v1.ProximaDB/CreateCollection" => {
                     #[allow(non_camel_case_types)]
-                    struct CreateCollectionSvc<T: VectorDb>(pub Arc<T>);
+                    struct CreateCollectionSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::CreateCollectionRequest>
                     for CreateCollectionSvc<T> {
                         type Response = super::CreateCollectionResponse;
@@ -1762,7 +1779,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::create_collection(&inner, request).await
+                                <T as ProximaDb>::create_collection(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1790,11 +1807,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetCollection" => {
+                "/proximadb.v1.ProximaDB/GetCollection" => {
                     #[allow(non_camel_case_types)]
-                    struct GetCollectionSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetCollectionSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetCollectionRequest>
                     for GetCollectionSvc<T> {
                         type Response = super::GetCollectionResponse;
@@ -1808,7 +1825,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_collection(&inner, request).await
+                                <T as ProximaDb>::get_collection(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1836,11 +1853,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/ListCollections" => {
+                "/proximadb.v1.ProximaDB/ListCollections" => {
                     #[allow(non_camel_case_types)]
-                    struct ListCollectionsSvc<T: VectorDb>(pub Arc<T>);
+                    struct ListCollectionsSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::ListCollectionsRequest>
                     for ListCollectionsSvc<T> {
                         type Response = super::ListCollectionsResponse;
@@ -1854,7 +1871,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::list_collections(&inner, request).await
+                                <T as ProximaDb>::list_collections(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1882,11 +1899,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/DeleteCollection" => {
+                "/proximadb.v1.ProximaDB/DeleteCollection" => {
                     #[allow(non_camel_case_types)]
-                    struct DeleteCollectionSvc<T: VectorDb>(pub Arc<T>);
+                    struct DeleteCollectionSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::DeleteCollectionRequest>
                     for DeleteCollectionSvc<T> {
                         type Response = super::DeleteCollectionResponse;
@@ -1900,7 +1917,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::delete_collection(&inner, request).await
+                                <T as ProximaDb>::delete_collection(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1928,11 +1945,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/ListCollectionIds" => {
+                "/proximadb.v1.ProximaDB/ListCollectionIds" => {
                     #[allow(non_camel_case_types)]
-                    struct ListCollectionIdsSvc<T: VectorDb>(pub Arc<T>);
+                    struct ListCollectionIdsSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::ListCollectionIdsRequest>
                     for ListCollectionIdsSvc<T> {
                         type Response = super::ListCollectionIdsResponse;
@@ -1946,7 +1963,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::list_collection_ids(&inner, request).await
+                                <T as ProximaDb>::list_collection_ids(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1974,11 +1991,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/ListCollectionNames" => {
+                "/proximadb.v1.ProximaDB/ListCollectionNames" => {
                     #[allow(non_camel_case_types)]
-                    struct ListCollectionNamesSvc<T: VectorDb>(pub Arc<T>);
+                    struct ListCollectionNamesSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::ListCollectionNamesRequest>
                     for ListCollectionNamesSvc<T> {
                         type Response = super::ListCollectionNamesResponse;
@@ -1992,7 +2009,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::list_collection_names(&inner, request)
+                                <T as ProximaDb>::list_collection_names(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2021,11 +2038,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetCollectionIdByName" => {
+                "/proximadb.v1.ProximaDB/GetCollectionIdByName" => {
                     #[allow(non_camel_case_types)]
-                    struct GetCollectionIdByNameSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetCollectionIdByNameSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetCollectionIdByNameRequest>
                     for GetCollectionIdByNameSvc<T> {
                         type Response = super::GetCollectionIdByNameResponse;
@@ -2039,7 +2056,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_collection_id_by_name(&inner, request)
+                                <T as ProximaDb>::get_collection_id_by_name(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2068,11 +2085,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetCollectionNameById" => {
+                "/proximadb.v1.ProximaDB/GetCollectionNameById" => {
                     #[allow(non_camel_case_types)]
-                    struct GetCollectionNameByIdSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetCollectionNameByIdSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetCollectionNameByIdRequest>
                     for GetCollectionNameByIdSvc<T> {
                         type Response = super::GetCollectionNameByIdResponse;
@@ -2086,7 +2103,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_collection_name_by_id(&inner, request)
+                                <T as ProximaDb>::get_collection_name_by_id(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2115,11 +2132,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/InsertVector" => {
+                "/proximadb.v1.ProximaDB/InsertVector" => {
                     #[allow(non_camel_case_types)]
-                    struct InsertVectorSvc<T: VectorDb>(pub Arc<T>);
+                    struct InsertVectorSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::InsertVectorRequest>
                     for InsertVectorSvc<T> {
                         type Response = super::InsertVectorResponse;
@@ -2133,7 +2150,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::insert_vector(&inner, request).await
+                                <T as ProximaDb>::insert_vector(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2161,11 +2178,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetVector" => {
+                "/proximadb.v1.ProximaDB/GetVector" => {
                     #[allow(non_camel_case_types)]
-                    struct GetVectorSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetVectorSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetVectorRequest>
                     for GetVectorSvc<T> {
                         type Response = super::GetVectorResponse;
@@ -2179,7 +2196,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_vector(&inner, request).await
+                                <T as ProximaDb>::get_vector(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2207,11 +2224,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetVectorByClientId" => {
+                "/proximadb.v1.ProximaDB/GetVectorByClientId" => {
                     #[allow(non_camel_case_types)]
-                    struct GetVectorByClientIdSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetVectorByClientIdSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetVectorByClientIdRequest>
                     for GetVectorByClientIdSvc<T> {
                         type Response = super::GetVectorByClientIdResponse;
@@ -2225,7 +2242,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_vector_by_client_id(&inner, request)
+                                <T as ProximaDb>::get_vector_by_client_id(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -2254,11 +2271,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/UpdateVector" => {
+                "/proximadb.v1.ProximaDB/UpdateVector" => {
                     #[allow(non_camel_case_types)]
-                    struct UpdateVectorSvc<T: VectorDb>(pub Arc<T>);
+                    struct UpdateVectorSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::UpdateVectorRequest>
                     for UpdateVectorSvc<T> {
                         type Response = super::UpdateVectorResponse;
@@ -2272,7 +2289,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::update_vector(&inner, request).await
+                                <T as ProximaDb>::update_vector(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2300,11 +2317,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/DeleteVector" => {
+                "/proximadb.v1.ProximaDB/DeleteVector" => {
                     #[allow(non_camel_case_types)]
-                    struct DeleteVectorSvc<T: VectorDb>(pub Arc<T>);
+                    struct DeleteVectorSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::DeleteVectorRequest>
                     for DeleteVectorSvc<T> {
                         type Response = super::DeleteVectorResponse;
@@ -2318,7 +2335,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::delete_vector(&inner, request).await
+                                <T as ProximaDb>::delete_vector(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2346,11 +2363,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/BatchInsert" => {
+                "/proximadb.v1.ProximaDB/BatchInsert" => {
                     #[allow(non_camel_case_types)]
-                    struct BatchInsertSvc<T: VectorDb>(pub Arc<T>);
+                    struct BatchInsertSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::BatchInsertRequest>
                     for BatchInsertSvc<T> {
                         type Response = super::BatchInsertResponse;
@@ -2364,7 +2381,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::batch_insert(&inner, request).await
+                                <T as ProximaDb>::batch_insert(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2392,10 +2409,12 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/BatchGet" => {
+                "/proximadb.v1.ProximaDB/BatchGet" => {
                     #[allow(non_camel_case_types)]
-                    struct BatchGetSvc<T: VectorDb>(pub Arc<T>);
-                    impl<T: VectorDb> tonic::server::UnaryService<super::BatchGetRequest>
+                    struct BatchGetSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::BatchGetRequest>
                     for BatchGetSvc<T> {
                         type Response = super::BatchGetResponse;
                         type Future = BoxFuture<
@@ -2408,7 +2427,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::batch_get(&inner, request).await
+                                <T as ProximaDb>::batch_get(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2436,11 +2455,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/BatchUpdate" => {
+                "/proximadb.v1.ProximaDB/BatchUpdate" => {
                     #[allow(non_camel_case_types)]
-                    struct BatchUpdateSvc<T: VectorDb>(pub Arc<T>);
+                    struct BatchUpdateSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::BatchUpdateRequest>
                     for BatchUpdateSvc<T> {
                         type Response = super::BatchUpdateResponse;
@@ -2454,7 +2473,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::batch_update(&inner, request).await
+                                <T as ProximaDb>::batch_update(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2482,11 +2501,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/BatchDelete" => {
+                "/proximadb.v1.ProximaDB/BatchDelete" => {
                     #[allow(non_camel_case_types)]
-                    struct BatchDeleteSvc<T: VectorDb>(pub Arc<T>);
+                    struct BatchDeleteSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::BatchDeleteRequest>
                     for BatchDeleteSvc<T> {
                         type Response = super::BatchDeleteResponse;
@@ -2500,7 +2519,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::batch_delete(&inner, request).await
+                                <T as ProximaDb>::batch_delete(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2528,10 +2547,10 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/Search" => {
+                "/proximadb.v1.ProximaDB/Search" => {
                     #[allow(non_camel_case_types)]
-                    struct SearchSvc<T: VectorDb>(pub Arc<T>);
-                    impl<T: VectorDb> tonic::server::UnaryService<super::SearchRequest>
+                    struct SearchSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::SearchRequest>
                     for SearchSvc<T> {
                         type Response = super::SearchResponse;
                         type Future = BoxFuture<
@@ -2544,7 +2563,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::search(&inner, request).await
+                                <T as ProximaDb>::search(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2572,11 +2591,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/BatchSearch" => {
+                "/proximadb.v1.ProximaDB/BatchSearch" => {
                     #[allow(non_camel_case_types)]
-                    struct BatchSearchSvc<T: VectorDb>(pub Arc<T>);
+                    struct BatchSearchSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::BatchSearchRequest>
                     for BatchSearchSvc<T> {
                         type Response = super::BatchSearchResponse;
@@ -2590,7 +2609,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::batch_search(&inner, request).await
+                                <T as ProximaDb>::batch_search(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2618,11 +2637,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/GetIndexStats" => {
+                "/proximadb.v1.ProximaDB/GetIndexStats" => {
                     #[allow(non_camel_case_types)]
-                    struct GetIndexStatsSvc<T: VectorDb>(pub Arc<T>);
+                    struct GetIndexStatsSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::GetIndexStatsRequest>
                     for GetIndexStatsSvc<T> {
                         type Response = super::GetIndexStatsResponse;
@@ -2636,7 +2655,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::get_index_stats(&inner, request).await
+                                <T as ProximaDb>::get_index_stats(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2664,11 +2683,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/OptimizeIndex" => {
+                "/proximadb.v1.ProximaDB/OptimizeIndex" => {
                     #[allow(non_camel_case_types)]
-                    struct OptimizeIndexSvc<T: VectorDb>(pub Arc<T>);
+                    struct OptimizeIndexSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::OptimizeIndexRequest>
                     for OptimizeIndexSvc<T> {
                         type Response = super::OptimizeIndexResponse;
@@ -2682,7 +2701,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::optimize_index(&inner, request).await
+                                <T as ProximaDb>::optimize_index(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2710,10 +2729,10 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/Health" => {
+                "/proximadb.v1.ProximaDB/Health" => {
                     #[allow(non_camel_case_types)]
-                    struct HealthSvc<T: VectorDb>(pub Arc<T>);
-                    impl<T: VectorDb> tonic::server::UnaryService<super::HealthRequest>
+                    struct HealthSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::HealthRequest>
                     for HealthSvc<T> {
                         type Response = super::HealthResponse;
                         type Future = BoxFuture<
@@ -2726,7 +2745,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::health(&inner, request).await
+                                <T as ProximaDb>::health(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2754,11 +2773,11 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/Readiness" => {
+                "/proximadb.v1.ProximaDB/Readiness" => {
                     #[allow(non_camel_case_types)]
-                    struct ReadinessSvc<T: VectorDb>(pub Arc<T>);
+                    struct ReadinessSvc<T: ProximaDb>(pub Arc<T>);
                     impl<
-                        T: VectorDb,
+                        T: ProximaDb,
                     > tonic::server::UnaryService<super::ReadinessRequest>
                     for ReadinessSvc<T> {
                         type Response = super::ReadinessResponse;
@@ -2772,7 +2791,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::readiness(&inner, request).await
+                                <T as ProximaDb>::readiness(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2800,10 +2819,12 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/Liveness" => {
+                "/proximadb.v1.ProximaDB/Liveness" => {
                     #[allow(non_camel_case_types)]
-                    struct LivenessSvc<T: VectorDb>(pub Arc<T>);
-                    impl<T: VectorDb> tonic::server::UnaryService<super::LivenessRequest>
+                    struct LivenessSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::LivenessRequest>
                     for LivenessSvc<T> {
                         type Response = super::LivenessResponse;
                         type Future = BoxFuture<
@@ -2816,7 +2837,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::liveness(&inner, request).await
+                                <T as ProximaDb>::liveness(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2844,10 +2865,10 @@ pub mod vector_db_server {
                     };
                     Box::pin(fut)
                 }
-                "/vectordb.v1.VectorDB/Status" => {
+                "/proximadb.v1.ProximaDB/Status" => {
                     #[allow(non_camel_case_types)]
-                    struct StatusSvc<T: VectorDb>(pub Arc<T>);
-                    impl<T: VectorDb> tonic::server::UnaryService<super::StatusRequest>
+                    struct StatusSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::StatusRequest>
                     for StatusSvc<T> {
                         type Response = super::StatusResponse;
                         type Future = BoxFuture<
@@ -2860,7 +2881,7 @@ pub mod vector_db_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as VectorDb>::status(&inner, request).await
+                                <T as ProximaDb>::status(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -2903,7 +2924,7 @@ pub mod vector_db_server {
             }
         }
     }
-    impl<T: VectorDb> Clone for VectorDbServer<T> {
+    impl<T: ProximaDb> Clone for ProximaDbServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -2915,7 +2936,7 @@ pub mod vector_db_server {
             }
         }
     }
-    impl<T: VectorDb> Clone for _Inner<T> {
+    impl<T: ProximaDb> Clone for _Inner<T> {
         fn clone(&self) -> Self {
             Self(Arc::clone(&self.0))
         }
@@ -2925,7 +2946,7 @@ pub mod vector_db_server {
             write!(f, "{:?}", self.0)
         }
     }
-    impl<T: VectorDb> tonic::server::NamedService for VectorDbServer<T> {
-        const NAME: &'static str = "vectordb.v1.VectorDB";
+    impl<T: ProximaDb> tonic::server::NamedService for ProximaDbServer<T> {
+        const NAME: &'static str = "proximadb.v1.ProximaDB";
     }
 }

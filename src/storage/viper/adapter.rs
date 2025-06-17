@@ -88,7 +88,7 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
         
         // Add filterable metadata arrays
         for field_name in self.strategy.get_filterable_fields() {
-            let builder = meta_builders.remove(field_name).unwrap();
+            let mut builder = meta_builders.remove(field_name).unwrap();
             arrays.push(Arc::new(builder.finish()));
         }
         

@@ -83,7 +83,7 @@ impl ViperParquetFlusher {
         let bytes_written = buffer.len() as u64;
         
         // Write using filesystem API
-        self.filesystem.write_file(output_url, &buffer).await
+        self.filesystem.write(output_url, &buffer, None).await
             .with_context(|| format!("Failed to write Parquet file to: {}", output_url))?;
         
         tracing::debug!("📦 Parquet file written: {} bytes to {}", bytes_written, output_url);
@@ -181,7 +181,7 @@ impl ViperParquetFlusher {
         }
         
         // Perform K-means clustering
-        let cluster_assignments = self.perform_kmeans_clustering(&vectors, cluster_count)?;
+        let cluster_assignments = self.assign_to_collection(&vectors)?;
         
         // Group entries by cluster
         let mut cluster_groups: std::collections::HashMap<usize, Vec<WalEntry>> = std::collections::HashMap::new();
@@ -205,47 +205,10 @@ impl ViperParquetFlusher {
         Ok(clustered_entries)
     }
     
-    /// Perform K-means clustering on vectors using linfa
-    fn perform_kmeans_clustering(&self, vectors: &[Vec<f32>], cluster_count: usize) -> Result<Vec<usize>> {
-        use linfa::prelude::*;
-        use linfa_clustering::KMeansParams;
-        use ndarray::Array2;
-        
-        if vectors.is_empty() {
-            return Ok(Vec::new());
-        }
-        
-        let vector_dim = vectors[0].len();
-        
-        // Convert vectors to ndarray matrix
-        let mut matrix_data = Vec::with_capacity(vectors.len() * vector_dim);
-        for vector in vectors {
-            if vector.len() != vector_dim {
-                return Err(anyhow::anyhow!("Inconsistent vector dimensions"));
-            }
-            matrix_data.extend_from_slice(vector);
-        }
-        
-        let matrix = Array2::from_shape_vec((vectors.len(), vector_dim), matrix_data)
-            .context("Failed to create matrix for clustering")?;
-        
-        // Create dataset
-        let dataset = Dataset::from(matrix);
-        
-        // Perform K-means clustering
-        let kmeans = KMeansParams::new(cluster_count)
-            .max_n_iterations(100)
-            .tolerance(1e-4)
-            .fit(&dataset)
-            .context("K-means clustering failed")?;
-        
-        // Get cluster assignments
-        let predictions = kmeans.predict(&dataset);
-        let cluster_assignments: Vec<usize> = predictions.iter().cloned().collect();
-        
-        tracing::debug!("🎯 K-means clustering assigned vectors to {} clusters", cluster_count);
-        
-        Ok(cluster_assignments)
+    /// Simple assignment to single collection directory (no clustering for MVP)
+    fn assign_to_collection(&self, vectors: &[Vec<f32>]) -> Result<Vec<usize>> {
+        // For MVP: all vectors go to cluster 0 (single collection directory)
+        Ok(vec![0; vectors.len()])
     }
     
     /// Convert WAL entries to Arrow RecordBatch (legacy support)
@@ -325,13 +288,13 @@ impl ViperParquetFlusher {
         let collection_id_array: ArrayRef = Arc::new(StringArray::from(collection_ids));
         let operation_type_array: ArrayRef = Arc::new(StringArray::from(operation_types));
         
-        let vector_id_array: ArrayRef = Arc::new(StringArray::from(
-            vector_ids.into_iter().map(|v| v.as_deref()).collect::<Vec<_>>()
-        ));
+        let vector_id_array: ArrayRef = Arc::new(StringArray::from(vector_ids));
         
-        let vector_data_array: ArrayRef = Arc::new(BinaryArray::from(
-            vector_data.into_iter().map(|v| v.as_deref()).collect::<Vec<_>>()
-        ));
+        // Convert Vec<Option<Vec<u8>>> to Vec<Option<&[u8]>> for BinaryArray
+        let vector_data_refs: Vec<Option<&[u8]>> = vector_data.iter()
+            .map(|v| v.as_deref())
+            .collect();
+        let vector_data_array: ArrayRef = Arc::new(BinaryArray::from(vector_data_refs));
         
         let timestamp_array: ArrayRef = Arc::new(TimestampMillisecondArray::from(timestamps));
         let sequence_array: ArrayRef = Arc::new(UInt64Array::from(sequences));

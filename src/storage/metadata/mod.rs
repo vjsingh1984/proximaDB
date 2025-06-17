@@ -22,10 +22,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-
 use crate::core::CollectionId;
-use crate::storage::strategy::{CollectionStrategyConfig, StrategyType};
+use crate::storage::strategy::CollectionStrategyConfig;
 
 // Re-exports
 pub use wal::{MetadataWalManager, MetadataWalConfig, VersionedCollectionMetadata, SystemMetadata};
@@ -341,63 +339,33 @@ pub trait MetadataStoreInterface: Send + Sync {
 }
 
 /// Collection-specific WAL flush configuration
+/// SIZE-BASED FLUSH ONLY - age and count-based triggers removed for stability
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionFlushConfig {
-    /// Maximum WAL age before forced flush (seconds, None = use global default)
-    pub max_wal_age_secs: Option<u64>,
-    
     /// Maximum WAL size before forced flush (bytes, None = use global default)
     pub max_wal_size_bytes: Option<usize>,
-    
-    /// Maximum vector count before forced flush (None = use global default, u64::MAX = disabled)
-    pub max_vector_count: Option<u64>,
-    
-    /// Custom flush priority (higher = flush sooner)
-    pub flush_priority: Option<u8>,
-    
-    /// Enable/disable background flushing for this collection
-    pub enable_background_flush: Option<bool>,
 }
 
 impl Default for CollectionFlushConfig {
     fn default() -> Self {
         Self {
-            max_wal_age_secs: None,      // Use global default (24 hours)
             max_wal_size_bytes: None,    // Use global default (128MB)
-            max_vector_count: None,      // Use global default (1M vectors)
-            flush_priority: None,        // Use default priority
-            enable_background_flush: None, // Use global setting
         }
     }
 }
 
 /// Global flush defaults for the system
+/// SIZE-BASED FLUSH ONLY - simplified for write-triggered flush architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalFlushDefaults {
-    /// Default maximum WAL age (24 hours)
-    pub default_max_wal_age_secs: u64,
-    
     /// Default maximum WAL size (128MB)
     pub default_max_wal_size_bytes: usize,
-    
-    /// Default maximum vector count (u64::MAX = disabled, only size & age triggers used)
-    pub default_max_vector_count: u64,
-    
-    /// Default flush priority
-    pub default_flush_priority: u8,
-    
-    /// Default background flush setting
-    pub default_enable_background_flush: bool,
 }
 
 impl Default for GlobalFlushDefaults {
     fn default() -> Self {
         Self {
-            default_max_wal_age_secs: 5 * 60,             // 5 minutes for testing
-            default_max_wal_size_bytes: 10 * 1024 * 1024, // 10MB for testing
-            default_max_vector_count: u64::MAX,           // Disabled - only size & age triggers
-            default_flush_priority: 50,                   // Medium priority
-            default_enable_background_flush: true,        // Enable by default
+            default_max_wal_size_bytes: 128 * 1024 * 1024, // 128MB for write-triggered flush
         }
     }
 }
@@ -406,23 +374,16 @@ impl CollectionFlushConfig {
     /// Get effective configuration using global defaults for None values
     pub fn effective_config(&self, global_defaults: &GlobalFlushDefaults) -> EffectiveFlushConfig {
         EffectiveFlushConfig {
-            max_wal_age_secs: self.max_wal_age_secs.unwrap_or(global_defaults.default_max_wal_age_secs),
             max_wal_size_bytes: self.max_wal_size_bytes.unwrap_or(global_defaults.default_max_wal_size_bytes),
-            max_vector_count: self.max_vector_count.unwrap_or(global_defaults.default_max_vector_count),
-            flush_priority: self.flush_priority.unwrap_or(global_defaults.default_flush_priority),
-            enable_background_flush: self.enable_background_flush.unwrap_or(global_defaults.default_enable_background_flush),
         }
     }
 }
 
 /// Effective flush configuration with all values resolved
+/// SIZE-BASED FLUSH ONLY
 #[derive(Debug, Clone)]
 pub struct EffectiveFlushConfig {
-    pub max_wal_age_secs: u64,
     pub max_wal_size_bytes: usize,
-    pub max_vector_count: u64,
-    pub flush_priority: u8,
-    pub enable_background_flush: bool,
 }
 
 /// Storage statistics for monitoring

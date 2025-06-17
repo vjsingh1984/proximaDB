@@ -100,13 +100,13 @@ impl ConfigValidator {
             bail!("WAL segment size must be at least 1MB");
         }
         
-        // Validate memory thresholds
-        if config.performance.memory_flush_threshold == 0 {
-            bail!("WAL memory flush threshold must be greater than 0");
+        // Validate memory thresholds (size-based only)
+        if config.performance.memory_flush_size_bytes == 0 {
+            bail!("WAL memory flush size must be greater than 0");
         }
         
-        if config.memtable.memory_flush_threshold == 0 {
-            bail!("Memtable flush threshold must be greater than 0");
+        if config.memtable.global_memory_limit == 0 {
+            bail!("Memtable global memory limit must be greater than 0");
         }
         
         // Validate concurrent flush settings

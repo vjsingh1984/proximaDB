@@ -29,7 +29,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
 
-use crate::storage::{StorageEngine, CollectionMetadata, MetadataStore};
+use crate::storage::{StorageEngine, CollectionMetadata};
 use crate::storage::metadata::{CollectionFlushConfig, GlobalFlushDefaults};
 use crate::core::VectorRecord;
 use crate::compute::algorithms::SearchResult;
@@ -52,16 +52,17 @@ pub struct CreateCollectionRequest {
     pub dimension: u32,
     pub distance_metric: Option<String>,
     pub indexing_algorithm: Option<String>,
-    pub allow_client_ids: Option<bool>,  // Allow client-provided IDs
+    
+    // Storage layout configuration
+    pub storage_layout: Option<String>,  // "viper" (default), "lsm", "rocksdb", "memory"
     pub config: Option<HashMap<String, serde_json::Value>>,
+    
+    // VIPER-specific optimization (only used when storage_layout = "viper")
     pub filterable_metadata_fields: Option<Vec<String>>, // Up to 16 metadata fields for Parquet optimization
     
     // WAL flush configuration (optional - uses global defaults if not specified)
-    pub max_wal_age_hours: Option<f64>,    // Max WAL age in hours (default: 24 hours)
-    pub max_wal_size_mb: Option<f64>,      // Max WAL size in MB (default: 128MB)  
-    pub max_vector_count: Option<u64>,     // Max vectors before flush (default: 1M)
-    pub flush_priority: Option<u8>,        // Flush priority 1-100 (default: 50)
-    pub enable_background_flush: Option<bool>, // Enable background flushing (default: true)
+    // SIZE-BASED FLUSH ONLY
+    pub max_wal_size_mb: Option<f64>,      // Max WAL size in MB (default: 128MB)
 }
 
 /// Collection response
@@ -83,13 +84,10 @@ pub struct CollectionResponse {
 }
 
 /// Flush configuration response
+/// SIZE-BASED FLUSH ONLY
 #[derive(Debug, Serialize)]
 pub struct FlushConfigResponse {
-    pub max_wal_age_hours: f64,     // Effective max WAL age in hours
     pub max_wal_size_mb: f64,       // Effective max WAL size in MB
-    pub max_vector_count: u64,      // Effective max vector count
-    pub flush_priority: u8,         // Effective flush priority
-    pub enable_background_flush: bool, // Effective background flush setting
     pub using_global_defaults: bool,   // True if using all global defaults
 }
 
@@ -110,11 +108,7 @@ impl From<CollectionMetadata> for CollectionResponse {
         let using_global_defaults = metadata.flush_config.is_none();
         
         let flush_config = FlushConfigResponse {
-            max_wal_age_hours: effective_config.max_wal_age_secs as f64 / 3600.0, // Convert seconds to hours
             max_wal_size_mb: effective_config.max_wal_size_bytes as f64 / (1024.0 * 1024.0), // Convert bytes to MB
-            max_vector_count: effective_config.max_vector_count,
-            flush_priority: effective_config.flush_priority,
-            enable_background_flush: effective_config.enable_background_flush,
             using_global_defaults,
         };
         
@@ -435,18 +429,9 @@ async fn create_collection(
                   request.name, request.dimension);
     
     // Build flush configuration from request
-    let flush_config = if request.max_wal_age_hours.is_some() 
-                        || request.max_wal_size_mb.is_some() 
-                        || request.max_vector_count.is_some() 
-                        || request.flush_priority.is_some() 
-                        || request.enable_background_flush.is_some() {
-        
+    let flush_config = if request.max_wal_size_mb.is_some() {
         Some(CollectionFlushConfig {
-            max_wal_age_secs: request.max_wal_age_hours.map(|hours| (hours * 3600.0) as u64),
             max_wal_size_bytes: request.max_wal_size_mb.map(|mb| (mb * 1024.0 * 1024.0) as usize),
-            max_vector_count: request.max_vector_count,
-            flush_priority: request.flush_priority,
-            enable_background_flush: request.enable_background_flush,
         })
     } else {
         None // Use global defaults
@@ -459,6 +444,7 @@ async fn create_collection(
         request.dimension,
         request.distance_metric,
         request.indexing_algorithm,
+        request.storage_layout,
         request.config,
         flush_config,
         request.filterable_metadata_fields,
@@ -467,6 +453,7 @@ async fn create_collection(
         Err(e) => {
             let (status_code, error_type) = match e {
                 ServiceError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "validation_error"),
+                ServiceError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
                 ServiceError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage_error"),
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
             };

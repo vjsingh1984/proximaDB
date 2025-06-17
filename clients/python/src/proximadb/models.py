@@ -70,17 +70,42 @@ class StorageConfig(BaseModel):
         use_enum_values = True
 
 
+class FlushConfig(BaseModel):
+    """WAL flush configuration for collections"""
+    max_wal_size_mb: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        description="Maximum WAL size in MB before forced flush (None = use global default: 128MB)"
+    )
+    
+    class Config:
+        use_enum_values = True
+
+
 class CollectionConfig(BaseModel):
     """Configuration for creating collections"""
     dimension: int = Field(..., ge=1, le=65536)
     distance_metric: DistanceMetric = DistanceMetric.COSINE
     index_config: Optional[IndexConfig] = None
     storage_config: Optional[StorageConfig] = None
+    
+    # Storage layout configuration
+    storage_layout: str = Field(
+        default="viper",
+        description="Storage layout: 'viper' (default), 'lsm', 'rocksdb', 'memory'"
+    )
+    
     description: Optional[str] = None
     metadata_schema: Optional[Dict[str, str]] = None
+    
+    # VIPER-specific optimization (only used when storage_layout = 'viper')
     filterable_metadata_fields: Optional[List[str]] = Field(
         default=None, 
-        description="Up to 16 metadata field names for Parquet column optimization and efficient filtering"
+        description="Up to 16 metadata field names for Parquet column optimization and efficient filtering (VIPER only)"
+    )
+    flush_config: Optional[FlushConfig] = Field(
+        default=None,
+        description="WAL flush configuration (None = use global defaults). SIZE-BASED FLUSH ONLY for stability."
     )
     
     class Config:
@@ -90,6 +115,13 @@ class CollectionConfig(BaseModel):
     def validate_dimension(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Dimension must be positive")
+        return v
+    
+    @validator('storage_layout')
+    def validate_storage_layout(cls, v: str) -> str:
+        valid_layouts = {'viper', 'lsm', 'rocksdb', 'memory'}
+        if v not in valid_layouts:
+            raise ValueError(f"Storage layout '{v}' is not supported. Valid options: {', '.join(valid_layouts)}")
         return v
     
     @validator('filterable_metadata_fields')

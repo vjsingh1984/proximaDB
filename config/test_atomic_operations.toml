@@ -1,0 +1,43 @@
+[server]
+node_id = "test-node-001"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "./test_data"
+
+[storage]
+data_dirs = ["./test_data/storage"]
+wal_dir = "./test_data/wal"
+mmap_enabled = true
+cache_size_mb = 64
+bloom_filter_bits = 10
+
+[storage.lsm_config]
+memtable_size_mb = 2          # Small memtable for testing
+level_count = 4
+compaction_threshold = 2      # Trigger compaction quickly
+block_size_kb = 32
+
+# WAL configuration - size-based flush only
+[storage.wal]
+memory_flush_size_mb = 8      # 8MB flush threshold for testing  
+global_flush_threshold_mb = 16 # 16MB global threshold
+disk_segment_size_mb = 32     # 32MB disk segments
+
+[consensus]
+enabled = false
+node_id = 1
+cluster_peers = []
+election_timeout_ms = 15000
+heartbeat_interval_ms = 3000
+snapshot_threshold = 1000
+
+[api]
+max_request_size_mb = 10
+timeout_seconds = 30
+
+[logging]
+level = "debug"
+
+[monitoring]
+metrics_enabled = true
+log_level = "debug"

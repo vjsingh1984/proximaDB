@@ -11,10 +11,12 @@ pub mod tiered;
 pub mod wal;
 pub mod metadata;
 pub mod search_index;
+pub mod search;
 pub mod memtable;
 pub mod viper;
 pub mod strategy;
 pub mod unified_engine;
+pub mod atomicity;
 
 pub use builder::{StorageSystemBuilder, StorageSystem, StorageSystemConfig};
 pub use filesystem::{FilesystemFactory, FilesystemConfig};
@@ -34,6 +36,11 @@ pub use viper::{
     SearchStrategy, ViperStorageEngine
 };
 pub use unified_engine::{CollectionConfig, StorageLayoutStrategy, UnifiedStorageEngine};
+pub use atomicity::{
+    AtomicityManager, AtomicityConfig, AtomicOperation, TransactionContext, 
+    TransactionId, OperationResult, VectorInsertOperation, VectorUpdateOperation,
+    VectorDeleteOperation, BulkVectorOperation, BulkOperation
+};
 use crate::core::StorageError;
 
 pub type Result<T> = std::result::Result<T, StorageError>;

@@ -216,9 +216,9 @@ impl CollectionBTree {
         cleaned_entries
     }
     
-    /// Check if flush is needed
-    fn needs_flush(&self, entry_threshold: usize, size_threshold: usize) -> bool {
-        self.entries.len() >= entry_threshold || self.memory_size >= size_threshold
+    /// Check if flush is needed based on size only
+    fn needs_flush(&self, size_threshold: usize) -> bool {
+        self.memory_size >= size_threshold
     }
     
     /// Estimate entry memory size (B+ tree has minimal overhead)
@@ -423,10 +423,7 @@ impl MemTableStrategy for BTreeMemTable {
         for (collection_id, btree) in collections.iter() {
             let effective_config = config.effective_config_for_collection(collection_id.as_str());
             
-            if btree.needs_flush(
-                effective_config.memory_flush_threshold,
-                effective_config.disk_segment_size,
-            ) {
+            if btree.needs_flush(effective_config.memory_flush_size_bytes) {
                 result.push(collection_id.clone());
             }
         }
@@ -481,44 +478,6 @@ impl MemTableStrategy for BTreeMemTable {
         Ok(stats)
     }
     
-    async fn get_collection_ages(&self) -> Result<HashMap<CollectionId, chrono::Duration>> {
-        let collections = self.collections.read().await;
-        let mut ages = HashMap::new();
-        let now = chrono::Utc::now();
-        
-        for (collection_id, btree) in collections.iter() {
-            // Get oldest entry timestamp from the first entry in the B+ tree
-            if let Some((_, first_entry)) = btree.entries.first_key_value() {
-                let age = now.signed_duration_since(first_entry.timestamp);
-                ages.insert(collection_id.clone(), age);
-            }
-        }
-        
-        Ok(ages)
-    }
-    
-    async fn get_oldest_unflushed_timestamp(&self, collection_id: &CollectionId) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
-        let collections = self.collections.read().await;
-        
-        if let Some(btree) = collections.get(collection_id) {
-            if let Some((_, first_entry)) = btree.entries.first_key_value() {
-                Ok(Some(first_entry.timestamp))
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-    
-    async fn needs_age_based_flush(&self, collection_id: &CollectionId, max_age_secs: u64) -> Result<bool> {
-        if let Some(oldest_time) = self.get_oldest_unflushed_timestamp(collection_id).await? {
-            let age = chrono::Utc::now().signed_duration_since(oldest_time);
-            Ok(age.num_seconds() > max_age_secs as i64)
-        } else {
-            Ok(false)
-        }
-    }
 
     async fn close(&self) -> Result<()> {
         tracing::info!("✅ B+ Tree memtable closed");

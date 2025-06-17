@@ -19,8 +19,7 @@
 //! - **Vector WAL**: Flushes to collection-specific indexing/storage layout
 //! - **Metadata WAL**: Flushes to optimal B+Tree storage for reload into memory
 
-use anyhow::{Result, Context};
-use async_trait::async_trait;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
@@ -29,7 +28,7 @@ use uuid::Uuid;
 
 use crate::core::CollectionId;
 use crate::storage::wal::{
-    WalConfig, WalStrategy, WalEntry, WalOperation, FlushResult,
+    WalConfig, WalStrategy, WalEntry, WalOperation,
     config::{WalStrategyType, MemTableType, CompressionAlgorithm},
 };
 use crate::storage::filesystem::FilesystemFactory;
@@ -70,8 +69,8 @@ impl Default for MetadataWalConfig {
             "./data/metadata/wal".to_string().into()
         ];
         
-        // Smaller flush threshold for metadata (fewer operations than vectors)
-        base_config.memtable.memory_flush_threshold = 5_000; // 5K metadata entries
+        // Smaller memory limit for metadata (fewer operations than vectors)
+        base_config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB size threshold
         
         // Lower memory limit since metadata is much smaller than vectors
         base_config.memtable.global_memory_limit = 128 * 1024 * 1024; // 128MB

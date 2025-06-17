@@ -8,7 +8,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::core::{CollectionId, VectorId};
 use super::{WalEntry, WalConfig};
@@ -110,15 +109,6 @@ pub trait MemTableStrategy: Send + Sync + std::fmt::Debug {
     
     /// Perform maintenance (MVCC cleanup, TTL expiration)
     async fn maintenance(&self) -> Result<MemTableMaintenanceStats>;
-    
-    /// Get collection ages (time since oldest unflushed entry)
-    async fn get_collection_ages(&self) -> Result<HashMap<CollectionId, chrono::Duration>>;
-    
-    /// Get oldest unflushed timestamp for a collection
-    async fn get_oldest_unflushed_timestamp(&self, collection_id: &CollectionId) -> Result<Option<chrono::DateTime<chrono::Utc>>>;
-    
-    /// Check if collection needs flush based on age threshold
-    async fn needs_age_based_flush(&self, collection_id: &CollectionId, max_age_secs: u64) -> Result<bool>;
     
     /// Close and cleanup resources
     async fn close(&self) -> Result<()>;

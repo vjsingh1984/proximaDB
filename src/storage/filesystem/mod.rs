@@ -24,11 +24,9 @@
 //!
 //! Uses Strategy Pattern for backend implementations with automatic URL-based routing.
 
-use std::path::{Path, PathBuf};
-use std::io::{Result as IoResult, Error as IoError, ErrorKind};
+use std::io::{Error as IoError};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncWrite};
 use url::Url;
 use serde::{Serialize, Deserialize};
 

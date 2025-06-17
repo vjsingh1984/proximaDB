@@ -10,7 +10,7 @@
 
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::sync::Arc;
 
 use crate::core::CollectionId;

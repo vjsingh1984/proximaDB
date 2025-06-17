@@ -14,7 +14,6 @@
 use anyhow::{Result, Context, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};

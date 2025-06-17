@@ -10,12 +10,11 @@
 //! and storage layout strategies.
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 
 use crate::storage::filesystem::{FilesystemFactory, FilesystemConfig};
-use super::wal::{WalConfig, WalFactory, WalManager, WalStrategy};
+use super::wal::{WalConfig, WalFactory, WalManager};
 use super::wal::config::{WalStrategyType, MemTableType, CompressionAlgorithm};
 
 /// Storage layout strategy

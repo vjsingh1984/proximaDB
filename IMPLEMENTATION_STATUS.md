@@ -27,6 +27,14 @@ ProximaDB has achieved significant progress with a complete storage layer implem
 - **Background Compaction**: Intelligent compaction using trained models
 - **Unified Engine Integration**: Strategy pattern for VIPER vs LSM storage layouts
 
+### ✅ VIPER Atomic Operations Complete  
+- **Hadoop MapReduce v2 Style**: Staging directories (__flush, __compaction) for atomic operations
+- **Collection-Level Locking**: Read/write locks coordinating queries with flush/compaction operations
+- **Atomic Flush**: WAL cleanup + memtable clear + file move in single atomic operation
+- **Atomic Compaction**: Source file deletion + compacted file move with staging directory
+- **Same-Mount Optimization**: Staging directories on same filesystem mount for minimal lock periods
+- **Consistency Guarantees**: No duplicate reads from memtable+storage during flush operations
+
 ### ✅ AXIS (Adaptive eXtensible Indexing System) Implementation Complete
 - **Intelligent Strategy Selection**: ML-driven analysis of collection characteristics and query patterns
 - **Zero-Downtime Migration**: Incremental migration with traffic switching and rollback capabilities
@@ -122,6 +130,7 @@ ProximaDB has achieved significant progress with a complete storage layer implem
 | **Avro WAL Manager** | ✅ Complete | Cloud backends, schema evolution, recovery-optimized compression |
 | **Multi-Storage WAL** | ✅ Complete | S3/ADLS/GCS support, hybrid local+cloud, multi-disk distribution |
 | **VIPER Storage Engine** | ✅ Complete | ML-guided clustering, Parquet format, hybrid dense/sparse |
+| **VIPER Atomic Operations** | ✅ Complete | Staging directories, collection locking, atomic flush/compaction |
 | **Unified Storage Engine** | ✅ Complete | Strategy pattern for LSM/VIPER, metadata filtering |
 | **Enhanced Memtable** | ✅ Complete | ID-based deduplication, metadata filtering, vector semantics |
 | **Legacy LSM Tree** | ✅ Complete | Memtable, SST flush, WAL integration |

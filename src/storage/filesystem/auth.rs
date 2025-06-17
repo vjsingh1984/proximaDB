@@ -16,11 +16,9 @@
 
 //! Cloud authentication providers for AWS, Azure, and GCS with credential renewal
 
-use std::collections::HashMap;
 use std::env;
 use async_trait::async_trait;
 use tokio::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
 use super::{FsResult, FilesystemError};
 

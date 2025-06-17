@@ -41,12 +41,37 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Initialize tracing with debug level for comprehensive logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+    // Initialize tracing with rolling file appender
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    
+    // Create log directory if it doesn't exist
+    std::fs::create_dir_all("./log").expect("Failed to create log directory");
+    
+    // Create rolling file appender (daily rotation)
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, "./log", "proximadb.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    
+    // Create console appender for stdout
+    let console_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_line_number(true)
         .with_file(true)
+        .with_writer(std::io::stdout);
+    
+    // Create file appender layer
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_line_number(true)
+        .with_file(true)
+        .with_ansi(false)  // No ANSI colors in file
+        .with_writer(non_blocking);
+    
+    // Initialize subscriber with both console and file output
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with(console_layer)
+        .with(file_layer)
         .init();
     
     // Initialize hardware capabilities detection early to prevent crashes
@@ -70,8 +95,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     if let Some(port) = args.port {
         config.server.port = port;
-        config.api.grpc_port = port + 10;
-        config.api.rest_port = port;
     }
     if let Some(node_id) = args.node_id {
         config.server.node_id = node_id;

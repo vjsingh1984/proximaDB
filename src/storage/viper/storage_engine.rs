@@ -20,14 +20,12 @@
 //! - **Intelligent compaction**: ML-guided data reorganization during compaction
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc};
-use anyhow::{Result, Context};
+use anyhow::Result;
 
 use crate::core::{VectorId, CollectionId, VectorRecord};
-use crate::storage::{WalManager, WalEntry, WalOperation};
 use crate::storage::filesystem::FilesystemFactory;
 use super::types::*;
 use super::ViperConfig;
@@ -45,8 +43,6 @@ pub struct ViperStorageEngine {
     /// Configuration
     config: ViperConfig,
     
-    /// Unified WAL manager
-    wal_manager: Arc<WalManager>,
     
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<CollectionId, CollectionMetadata>>>,
@@ -74,6 +70,9 @@ pub struct ViperStorageEngine {
     
     /// TTL cleanup service
     ttl_service: Option<Arc<RwLock<super::ttl::TTLCleanupService>>>,
+    
+    /// Atomic operations factory for flush/compaction
+    atomic_operations: Arc<super::atomic_operations::AtomicOperationsFactory>,
 }
 
 /// Collection metadata in VIPER
@@ -143,7 +142,7 @@ pub struct ParquetWriterPool {
 /// Parquet writer for specific partitions
 pub struct ParquetWriter {
     partition_id: PartitionId,
-    file_path: PathBuf,
+    file_url: String,
     schema: ParquetSchema,
     row_group_size: usize,
     current_batch: Vec<ViperVector>,
@@ -207,13 +206,15 @@ pub struct ViperStorageStats {
     pub read_operations: u64,
     pub write_operations: u64,
     pub compaction_operations: u64,
+    pub total_flushes: u64,
+    pub total_compactions: u64,
+    pub total_vectors_flushed: u64,
 }
 
 impl ViperStorageEngine {
     /// Create a new VIPER storage engine with unified WAL
     pub async fn new(
         config: ViperConfig, 
-        wal_manager: Arc<WalManager>,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         let compaction_manager = Arc::new(
@@ -228,7 +229,7 @@ impl ViperStorageEngine {
         let ttl_service = if config.ttl_config.enabled {
             let mut service = TTLCleanupService::new(
                 config.ttl_config.clone(),
-                filesystem,
+                filesystem.clone(),
                 partitions.clone(),
             );
             service.start().await?;
@@ -237,9 +238,13 @@ impl ViperStorageEngine {
             None
         };
         
+        // Initialize atomic operations factory
+        let atomic_operations = Arc::new(
+            super::atomic_operations::AtomicOperationsFactory::new(filesystem.clone())
+        );
+        
         Ok(Self {
             config,
-            wal_manager,
             collections: Arc::new(RwLock::new(HashMap::new())),
             clusters: Arc::new(RwLock::new(HashMap::new())),
             partitions,
@@ -249,6 +254,7 @@ impl ViperStorageEngine {
             writer_pool,
             stats: Arc::new(RwLock::new(ViperStorageStats::default())),
             ttl_service,
+            atomic_operations,
         })
     }
     
@@ -316,18 +322,28 @@ impl ViperStorageEngine {
         collection_id: &CollectionId,
         vector_record: VectorRecord,
     ) -> Result<()> {
+        tracing::info!("🔹 VIPER: insert_vector called for collection: {}, vector_id: {}", 
+                      collection_id, vector_record.id);
+        
         // Get collection metadata or create if new
         let collection_meta = self.get_or_create_collection_metadata(collection_id).await?;
+        tracing::debug!("📄 VIPER: Got collection metadata for {}", collection_id);
         
         // Predict cluster assignment using ML model
         let cluster_prediction = self.predict_cluster(collection_id, &vector_record.vector).await?;
+        tracing::debug!("🎯 VIPER: Predicted cluster {} for vector {}", 
+                       cluster_prediction.cluster_id, vector_record.id);
         
         // Determine storage format (sparse vs dense) based on sparsity
         let storage_format = self.determine_format(&vector_record.vector, &collection_meta).await?;
+        tracing::info!("💾 VIPER: Storage format for vector {}: {:?}", 
+                      vector_record.id, storage_format);
+        
+        // Store vector ID before any moves
+        let vector_id = vector_record.id.clone();
         
         // Write to WAL first for durability using new interface
-        self.wal_manager.insert(collection_id.clone(), vector_record.id.clone(), vector_record.clone()).await
-            .context("Failed to write vector insert to WAL")?;
+        // Note: WAL operations are handled by unified engine, not storage engine
         
         // Create VIPER vector entry based on hybrid storage architecture
         let viper_vector = match storage_format {
@@ -365,10 +381,16 @@ impl ViperStorageEngine {
         };
         
         // Write to appropriate hybrid storage (Parquet + KV for sparse, Parquet for dense)
+        tracing::info!("📝 VIPER: Writing vector {} to hybrid storage", vector_id);
         self.write_to_hybrid_storage(collection_id, viper_vector, &cluster_prediction).await?;
+        tracing::info!("✅ VIPER: Successfully wrote vector {} to storage", vector_id);
         
         // Update collection statistics
+        tracing::debug!("📊 VIPER: Updating collection stats for {}", collection_id);
         self.update_collection_stats_single(collection_id, &cluster_prediction).await?;
+        
+        tracing::info!("🎉 VIPER: Completed insert_vector for {} in collection {}", 
+                      vector_id, collection_id);
         
         Ok(())
     }
@@ -379,6 +401,8 @@ impl ViperStorageEngine {
         collection_id: CollectionId,
         vectors: Vec<VectorRecord>,
     ) -> Result<Vec<ClusterPrediction>> {
+        tracing::info!("📦 VIPER: insert_vectors_batch called for collection: {}, count: {}", 
+                      collection_id, vectors.len());
         let _collection = self.get_collection_metadata(&collection_id).await?;
         
         // Get cluster predictions for the batch
@@ -398,12 +422,7 @@ impl ViperStorageEngine {
         for (cluster_id, batch) in cluster_batches {
             // Log operations to unified WAL first
             for (vector, _prediction) in &batch {
-                // Log vector insertion to WAL using standard insert method
-                let _ = self.wal_manager.insert(
-                    collection_id.clone(),
-                    vector.id.clone(),
-                    vector.clone(),
-                ).await;
+                // Note: WAL operations are handled by unified engine
             }
             
             // Then perform the actual insertion using hybrid storage
@@ -793,10 +812,10 @@ impl ViperStorageEngine {
             .or_insert_with(|| {
                 ParquetWriter::new(
                     partition_id.clone(),
-                    self.get_partition_path(partition_id),
+                    self.get_partition_url(partition_id),
                     self.create_optimized_schema(&vectors),
-                    self.config.parquet_config.row_group_size,
-                    self.config.compression_config.vector_compression.clone(),
+                    self.config.row_group_size,
+                    CompressionAlgorithm::Snappy,
                 )
             });
         
@@ -823,8 +842,8 @@ impl ViperStorageEngine {
         Ok(format!("{}_{}", collection_id, cluster_id))
     }
     
-    fn get_partition_path(&self, partition_id: &PartitionId) -> PathBuf {
-        self.config.storage_root.join(partition_id)
+    fn get_partition_url(&self, partition_id: &PartitionId) -> String {
+        format!("viper/partitions/{}", partition_id)
     }
     
     fn create_optimized_schema(&self, vectors: &[ViperVector]) -> ParquetSchema {
@@ -964,20 +983,19 @@ impl ViperStorageEngine {
         cluster_prediction: &ClusterPrediction,
     ) -> Result<()> {
         let partition_id = self.get_or_create_partition(collection_id, cluster_prediction.cluster_id).await?;
-        let partition_path = self.get_partition_path(&partition_id);
+        let partition_url = self.get_partition_url(&partition_id);
         
-        // Ensure partition directory exists
-        tokio::fs::create_dir_all(&partition_path).await?;
+        // Note: Directory creation handled by filesystem API
         
         match viper_vector {
             ViperVector::Dense { record } => {
                 // Write dense vector to Parquet with ID/metadata columns first
-                self.write_dense_vector_to_parquet(&partition_path, record).await?;
+                self.write_dense_vector_to_parquet(&partition_url, record).await?;
             }
             ViperVector::Sparse { metadata, data } => {
                 // Write sparse vector to separate metadata Parquet + KV storage
-                self.write_sparse_metadata_to_parquet(&partition_path, metadata).await?;
-                self.write_sparse_data_to_kv(&partition_path, data).await?;
+                self.write_sparse_metadata_to_parquet(&partition_url, metadata).await?;
+                self.write_sparse_data_to_kv(&partition_url, data).await?;
             }
         }
         
@@ -987,10 +1005,10 @@ impl ViperStorageEngine {
     /// Write dense vector to Parquet with optimized schema (ID and metadata first)
     async fn write_dense_vector_to_parquet(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         record: DenseVectorRecord,
     ) -> Result<()> {
-        let dense_parquet_path = partition_path.join("dense_vectors.parquet");
+        let dense_parquet_url = format!("{}/dense_vectors.parquet", partition_url);
         
         // Create Parquet schema with ID and metadata columns first for efficient lookups
         // Schema: [id, metadata, cluster_id, vector_dimensions..., timestamp]
@@ -998,7 +1016,7 @@ impl ViperStorageEngine {
         
         // For now, placeholder implementation
         // Real implementation would use arrow/parquet crates to write optimized columnar data
-        println!("Writing dense vector {} to {}", record.id, dense_parquet_path.display());
+        println!("Writing dense vector {} to {}", record.id, dense_parquet_url);
         
         Ok(())
     }
@@ -1006,16 +1024,16 @@ impl ViperStorageEngine {
     /// Write sparse vector metadata to separate Parquet table for efficient filtering
     async fn write_sparse_metadata_to_parquet(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         metadata: SparseVectorMetadata,
     ) -> Result<()> {
-        let metadata_parquet_path = partition_path.join("sparse_metadata.parquet");
+        let metadata_parquet_url = format!("{}/sparse_metadata.parquet", partition_url);
         
         // Create metadata Parquet schema: [id, metadata, cluster_id, dimension_count, sparsity_ratio, timestamp]
         // This enables fast filtering by ID, metadata, cluster, and sparsity before accessing KV data
         
         // Placeholder implementation
-        println!("Writing sparse metadata {} to {}", metadata.id, metadata_parquet_path.display());
+        println!("Writing sparse metadata {} to {}", metadata.id, metadata_parquet_url);
         
         Ok(())
     }
@@ -1023,17 +1041,17 @@ impl ViperStorageEngine {
     /// Write sparse vector data to KV storage (can be RocksDB, LMDB, or custom format)
     async fn write_sparse_data_to_kv(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         data: SparseVectorData,
     ) -> Result<()> {
-        let kv_path = partition_path.join("vectors.kv");
+        let kv_url = format!("{}/vectors.kv", partition_url);
         
         // Store sparse vector as key-value: vector_id -> [(dim_index, value), ...]
         // This format avoids zero-padding and provides excellent compression for sparse data
         
         // Placeholder implementation - would use actual KV store
         println!("Writing sparse vector data {} with {} dimensions to {}", 
-                data.id, data.dimensions.len(), kv_path.display());
+                data.id, data.dimensions.len(), kv_url);
         
         Ok(())
     }
@@ -1310,6 +1328,269 @@ impl ViperStorageEngine {
             Ok(None)
         }
     }
+    
+    /// VIPER Phase 5: Two-phase search with WAL + Storage integration
+    pub async fn search_two_phase(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+        threshold: Option<f32>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::info!("🚀 VIPER two-phase search initiated for collection: {}", collection_id);
+        
+        // Create search engine if needed
+        let search_engine = super::search_engine::ViperProgressiveSearchEngine::new(
+            self.config.clone()
+        ).await?;
+        
+        // Build search context
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Adaptive {
+                query_complexity_score: 0.5,
+                time_budget_ms: 1000,
+            },
+            max_storage_locations: Some(10),
+        };
+        
+        // Execute two-phase search with WAL integration
+        let results = search_engine.search_two_phase(search_context).await?;
+        
+        tracing::info!("✅ VIPER two-phase search completed: {} results returned", results.len());
+        
+        Ok(results)
+    }
+    
+    /// VIPER search without WAL integration (storage-only)
+    pub async fn search_storage_only(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::debug!("🗄️ VIPER storage-only search for collection: {}", collection_id);
+        
+        let search_engine = super::search_engine::ViperProgressiveSearchEngine::new(
+            self.config.clone()
+        ).await?;
+        
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold: None,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Progressive {
+                tier_result_thresholds: vec![k * 2, k * 5, k * 10],
+            },
+            max_storage_locations: Some(5),
+        };
+        
+        // Use existing progressive search (no WAL)
+        let results = search_engine.search(search_context, None, vec![]).await?;
+        
+        tracing::debug!("💾 Storage-only search completed: {} results", results.len());
+        
+        Ok(results)
+    }
+    
+    /// Get search statistics from the VIPER engine
+    pub async fn get_search_stats(&self) -> Result<super::search_engine::SearchStats> {
+        // For now, return default stats
+        // Future: integrate with actual search engine statistics
+        Ok(super::search_engine::SearchStats::default())
+    }
+    
+    /// VIPER Phase 6: Build HNSW index for a collection
+    pub async fn build_hnsw_index(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<()> {
+        tracing::info!("🔨 Building HNSW index for collection: {}", collection_id);
+        
+        // Gather vectors from storage for index building
+        let vectors = self.load_collection_vectors(collection_id).await?;
+        
+        if vectors.is_empty() {
+            tracing::warn!("⚠️ No vectors found for collection {}, skipping index build", collection_id);
+            return Ok(());
+        }
+        
+        // Create search engine and build index
+        let search_engine = super::search_engine::ViperProgressiveSearchEngine::new(
+            self.config.clone()
+        ).await?;
+        
+        // Default to cosine distance for now
+        // Future: make this configurable per collection
+        let distance_metric = crate::compute::distance::DistanceMetric::Cosine;
+        
+        search_engine.build_hnsw_index(collection_id, vectors, distance_metric).await?;
+        
+        tracing::info!("✅ HNSW index built successfully for collection {}", collection_id);
+        
+        Ok(())
+    }
+    
+    /// VIPER Phase 6: Search with HNSW and metadata filtering
+    pub async fn search_with_hnsw(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+        threshold: Option<f32>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::info!("🚀 VIPER HNSW search initiated for collection: {}", collection_id);
+        
+        let search_engine = super::search_engine::ViperProgressiveSearchEngine::new(
+            self.config.clone()
+        ).await?;
+        
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Adaptive {
+                query_complexity_score: 0.5,
+                time_budget_ms: 500, // Faster for HNSW
+            },
+            max_storage_locations: Some(5),
+        };
+        
+        // Use filtered HNSW search
+        let results = search_engine.search_filtered_with_hnsw(search_context).await?;
+        
+        tracing::info!("✅ VIPER HNSW search completed: {} results returned", results.len());
+        
+        Ok(results)
+    }
+    
+    /// Load vectors from storage for index building
+    async fn load_collection_vectors(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<Vec<(String, Vec<f32>, serde_json::Value)>> {
+        // This would load vectors from Parquet storage
+        // For now, return empty vector as placeholder
+        tracing::warn!("⚠️ Vector loading from storage not yet implemented");
+        Ok(Vec::new())
+    }
+    
+    /// Trigger HNSW index rebuild after compaction
+    pub async fn rebuild_hnsw_after_compaction(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<()> {
+        tracing::info!("🔄 Rebuilding HNSW index after compaction for collection: {}", collection_id);
+        
+        // In a real implementation:
+        // 1. Lock the collection for writes
+        // 2. Build new index in background
+        // 3. Atomically swap indexes
+        // 4. Unlock collection
+        
+        self.build_hnsw_index(collection_id).await?;
+        
+        Ok(())
+    }
+    
+    /// Perform atomic flush using staging directory
+    pub async fn atomic_flush_collection(
+        &self,
+        collection_id: &CollectionId,
+        records: Vec<VectorRecord>,
+        wal_entries: Vec<String>,
+    ) -> Result<String> {
+        tracing::info!("🚀 VIPER FLUSH: Starting atomic flush for collection {} with {} records", 
+                      collection_id, records.len());
+        tracing::debug!("📃 VIPER FLUSH: WAL entries to clean: {}", wal_entries.len());
+        
+        let records_count = records.len();
+        let start_time = std::time::Instant::now();
+        
+        tracing::debug!("🔧 VIPER FLUSH: Creating atomic flusher");
+        let flusher = self.atomic_operations.create_flusher();
+        
+        tracing::info!("💾 VIPER FLUSH: Executing atomic flush operation");
+        let result = flusher.atomic_flush(collection_id, records, wal_entries).await?;
+        
+        let flush_duration = start_time.elapsed();
+        tracing::info!("✅ VIPER FLUSH: Completed flush in {:?}, output: {}", 
+                      flush_duration, result);
+        
+        // Update collection statistics
+        tracing::debug!("📊 VIPER FLUSH: Updating statistics");
+        let mut stats = self.stats.write().await;
+        stats.total_flushes += 1;
+        stats.total_vectors_flushed += records_count as u64;
+        
+        tracing::info!("🎉 VIPER FLUSH: Successfully flushed {} records to {}", 
+                      records_count, result);
+        
+        Ok(result)
+    }
+    
+    /// Perform atomic compaction using staging directory
+    pub async fn atomic_compact_collection(
+        &self,
+        collection_id: &CollectionId,
+        source_files: Vec<String>,
+    ) -> Result<String> {
+        tracing::info!("🔄 VIPER COMPACTION: Starting atomic compaction for collection {} with {} files", 
+                      collection_id, source_files.len());
+        tracing::debug!("📂 VIPER COMPACTION: Source files: {:?}", source_files);
+        
+        let start_time = std::time::Instant::now();
+        
+        tracing::debug!("🔧 VIPER COMPACTION: Creating atomic compactor");
+        let compactor = self.atomic_operations.create_compactor();
+        tracing::info!("💾 VIPER COMPACTION: Executing atomic compaction");
+        let result = compactor.atomic_compact(collection_id, source_files).await?;
+        
+        let compaction_duration = start_time.elapsed();
+        tracing::info!("✅ VIPER COMPACTION: Completed compaction in {:?}, output: {}", 
+                      compaction_duration, result);
+        
+        // Rebuild HNSW index after successful compaction
+        tracing::info!("🏗️ VIPER COMPACTION: Rebuilding HNSW index after compaction");
+        self.rebuild_hnsw_after_compaction(collection_id).await?;
+        tracing::info!("✅ VIPER COMPACTION: HNSW index rebuilt successfully");
+        
+        // Update collection statistics
+        tracing::debug!("📊 VIPER COMPACTION: Updating statistics");
+        let mut stats = self.stats.write().await;
+        stats.total_compactions += 1;
+        
+        tracing::info!("🎉 VIPER COMPACTION: Successfully compacted collection {} to {}", 
+                      collection_id, result);
+        
+        Ok(result)
+    }
+    
+    /// Get collection read lock for queries
+    pub async fn acquire_read_lock(&self, collection_id: &CollectionId) -> Result<super::atomic_operations::ReadLockGuard> {
+        self.atomic_operations.lock_manager().acquire_read_lock(collection_id).await
+    }
+    
+    /// Check if collection is available for writes (no exclusive locks)
+    pub async fn is_available_for_writes(&self, collection_id: &CollectionId) -> bool {
+        // WAL and memtable are always available for writes during flush/compaction
+        // Only the storage files are locked
+        true
+    }
 }
 
 impl ParquetWriterPool {
@@ -1324,14 +1605,14 @@ impl ParquetWriterPool {
 impl ParquetWriter {
     fn new(
         partition_id: PartitionId,
-        file_path: PathBuf,
+        file_url: String,
         schema: ParquetSchema,
         row_group_size: usize,
         compression: CompressionAlgorithm,
     ) -> Self {
         Self {
             partition_id,
-            file_path,
+            file_url,
             schema,
             row_group_size,
             current_batch: Vec::new(),
