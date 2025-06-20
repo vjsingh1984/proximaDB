@@ -1,7 +1,7 @@
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use async_trait::async_trait;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TieredStorageConfig {
@@ -114,7 +114,7 @@ pub enum CloudStorageBackend {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum S3StorageClass {
     Standard,
-    StandardIA,     // Infrequent Access
+    StandardIA, // Infrequent Access
     OneZoneIA,
     Glacier,
     GlacierDeepArchive,
@@ -138,9 +138,9 @@ pub enum GCPStorageClass {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CloudSyncStrategy {
-    ActiveActive,   // Sync to both clouds
-    ActivePassive,  // Primary with backup
-    Geographic,     // Route by user location
+    ActiveActive,  // Sync to both clouds
+    ActivePassive, // Primary with backup
+    Geographic,    // Route by user location
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,11 +206,11 @@ pub struct StorageTier {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TierLevel {
-    UltraHot,   // L1 cache equivalent - memory/NVMe
-    Hot,        // L2 cache equivalent - local SSD
-    Warm,       // L3 cache equivalent - local HDD or network storage
-    Cold,       // Remote storage - S3 Standard
-    Archive,    // Long-term storage - S3 Glacier
+    UltraHot, // L1 cache equivalent - memory/NVMe
+    Hot,      // L2 cache equivalent - local SSD
+    Warm,     // L3 cache equivalent - local HDD or network storage
+    Cold,     // Remote storage - S3 Standard
+    Archive,  // Long-term storage - S3 Glacier
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,17 +244,27 @@ pub enum StorageBackend {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncStrategy {
-    WriteThrough,   // Sync on every write
-    WriteBack,      // Batch sync
-    Async,          // Fire and forget
+    WriteThrough, // Sync on every write
+    WriteBack,    // Batch sync
+    Async,        // Fire and forget
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BlockVolumeType {
-    EBS { volume_type: String, iops: Option<u32> },
-    AzureDisk { disk_type: String },
-    GCEPersistentDisk { disk_type: String },
-    NFS { server: String, export_path: String },
+    EBS {
+        volume_type: String,
+        iops: Option<u32>,
+    },
+    AzureDisk {
+        disk_type: String,
+    },
+    GCEPersistentDisk {
+        disk_type: String,
+    },
+    NFS {
+        server: String,
+        export_path: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,10 +278,18 @@ pub enum FilesystemType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessPattern {
     /// Frequently accessed data - keep in fastest tier
-    Sequential { prefetch_size_mb: u32 },
-    Random { cache_size_mb: u32 },
-    WriteOnce { compression_enabled: bool },
-    ReadMostly { replication_factor: u32 },
+    Sequential {
+        prefetch_size_mb: u32,
+    },
+    Random {
+        cache_size_mb: u32,
+    },
+    WriteOnce {
+        compression_enabled: bool,
+    },
+    ReadMostly {
+        replication_factor: u32,
+    },
     Hybrid,
 }
 
@@ -321,11 +339,11 @@ pub enum ConsistencyLevel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PerformanceTier {
-    UltraHigh,  // NVMe, memory
-    High,       // SSD
-    Medium,     // Fast HDD
-    Low,        // Standard HDD
-    Archive,    // Tape, cold storage
+    UltraHigh, // NVMe, memory
+    High,      // SSD
+    Medium,    // Fast HDD
+    Low,       // Standard HDD
+    Archive,   // Tape, cold storage
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -357,14 +375,32 @@ pub struct DemotionRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TieringCondition {
-    AccessFrequency { min_accesses_per_hour: u32 },
-    LastAccessTime { hours_since_access: u32 },
-    DataAge { days_old: u32 },
-    CostThreshold { cost_per_gb_per_month: f32 },
-    PerformanceRequirement { max_latency_ms: u32 },
-    TenantTier { tier: String },
-    DataSize { min_size_gb: u32, max_size_gb: u32 },
-    Composite { conditions: Vec<TieringCondition>, operator: LogicalOperator },
+    AccessFrequency {
+        min_accesses_per_hour: u32,
+    },
+    LastAccessTime {
+        hours_since_access: u32,
+    },
+    DataAge {
+        days_old: u32,
+    },
+    CostThreshold {
+        cost_per_gb_per_month: f32,
+    },
+    PerformanceRequirement {
+        max_latency_ms: u32,
+    },
+    TenantTier {
+        tier: String,
+    },
+    DataSize {
+        min_size_gb: u32,
+        max_size_gb: u32,
+    },
+    Composite {
+        conditions: Vec<TieringCondition>,
+        operator: LogicalOperator,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -458,8 +494,8 @@ pub struct MigrationMonitoringConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfiguration {
-    pub l1_cache: L1CacheConfig,      // Memory cache
-    pub l2_cache: L2CacheConfig,      // Local SSD cache
+    pub l1_cache: L1CacheConfig, // Memory cache
+    pub l2_cache: L2CacheConfig, // Local SSD cache
     pub distributed_cache: Option<DistributedCacheConfig>,
     pub cache_eviction: CacheEvictionPolicy,
 }
@@ -474,10 +510,10 @@ pub struct L1CacheConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum L1CacheType {
-    LRU,        // Least Recently Used
-    LFU,        // Least Frequently Used
-    ARC,        // Adaptive Replacement Cache
-    TwoQ,       // Two Queue algorithm
+    LRU,  // Least Recently Used
+    LFU,  // Least Frequently Used
+    ARC,  // Adaptive Replacement Cache
+    TwoQ, // Two Queue algorithm
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -662,15 +698,13 @@ impl Default for TieredStorageConfig {
         Self {
             deployment_mode: DeploymentMode::Container {
                 ephemeral_storage_gb: 20,
-                persistent_volumes: vec![
-                    PersistentVolumeConfig {
-                        name: "hot-data".to_string(),
-                        size_gb: 100,
-                        storage_class: "fast-ssd".to_string(),
-                        mount_path: PathBuf::from("/data/hot"),
-                        performance_tier: PerformanceTier::High,
-                    }
-                ],
+                persistent_volumes: vec![PersistentVolumeConfig {
+                    name: "hot-data".to_string(),
+                    size_gb: 100,
+                    storage_class: "fast-ssd".to_string(),
+                    mount_path: PathBuf::from("/data/hot"),
+                    performance_tier: PerformanceTier::High,
+                }],
                 cloud_storage_backend: CloudStorageBackend::AWS {
                     s3_bucket: "vectordb-storage".to_string(),
                     storage_classes: HashMap::from([
@@ -682,63 +716,78 @@ impl Default for TieredStorageConfig {
                     cross_region_replication: None,
                 },
             },
-            storage_tiers: vec![
-                StorageTier {
-                    tier_name: "ultra-hot".to_string(),
-                    tier_level: TierLevel::UltraHot,
-                    storage_backend: StorageBackend::MMAP {
-                        file_path: PathBuf::from("/data/hot/mmap"),
-                        advise_random: true,
-                        advise_sequential: false,
-                        populate_pages: true,
-                    },
-                    access_pattern: AccessPattern::Random { cache_size_mb: 1024 },
-                    retention_policy: RetentionPolicy {
-                        hot_retention_hours: 24,
-                        warm_retention_days: 7,
-                        cold_retention_months: 12,
-                        archive_retention_years: Some(7),
-                        auto_deletion_enabled: false,
-                    },
-                    performance_characteristics: PerformanceCharacteristics {
-                        read_latency_ms: LatencyRange { p50: 0.1, p95: 0.5, p99: 1.0 },
-                        write_latency_ms: LatencyRange { p50: 0.2, p95: 1.0, p99: 2.0 },
-                        throughput_mbps: ThroughputRange { read_mbps: 5000, write_mbps: 3000 },
-                        iops: IOPSRange { read_iops: 100000, write_iops: 50000 },
-                        consistency_level: ConsistencyLevel::Immediate,
-                    },
+            storage_tiers: vec![StorageTier {
+                tier_name: "ultra-hot".to_string(),
+                tier_level: TierLevel::UltraHot,
+                storage_backend: StorageBackend::MMAP {
+                    file_path: PathBuf::from("/data/hot/mmap"),
+                    advise_random: true,
+                    advise_sequential: false,
+                    populate_pages: true,
                 },
-            ],
+                access_pattern: AccessPattern::Random {
+                    cache_size_mb: 1024,
+                },
+                retention_policy: RetentionPolicy {
+                    hot_retention_hours: 24,
+                    warm_retention_days: 7,
+                    cold_retention_months: 12,
+                    archive_retention_years: Some(7),
+                    auto_deletion_enabled: false,
+                },
+                performance_characteristics: PerformanceCharacteristics {
+                    read_latency_ms: LatencyRange {
+                        p50: 0.1,
+                        p95: 0.5,
+                        p99: 1.0,
+                    },
+                    write_latency_ms: LatencyRange {
+                        p50: 0.2,
+                        p95: 1.0,
+                        p99: 2.0,
+                    },
+                    throughput_mbps: ThroughputRange {
+                        read_mbps: 5000,
+                        write_mbps: 3000,
+                    },
+                    iops: IOPSRange {
+                        read_iops: 100000,
+                        write_iops: 50000,
+                    },
+                    consistency_level: ConsistencyLevel::Immediate,
+                },
+            }],
             tiering_policy: TieringPolicy {
                 auto_tiering_enabled: true,
-                promotion_rules: vec![
-                    PromotionRule {
-                        name: "frequent-access".to_string(),
-                        condition: TieringCondition::AccessFrequency { min_accesses_per_hour: 10 },
-                        from_tier: TierLevel::Warm,
-                        to_tier: TierLevel::Hot,
-                        priority: 1,
-                    }
-                ],
-                demotion_rules: vec![
-                    DemotionRule {
-                        name: "infrequent-access".to_string(),
-                        condition: TieringCondition::LastAccessTime { hours_since_access: 72 },
-                        from_tier: TierLevel::Hot,
-                        to_tier: TierLevel::Warm,
-                        priority: 2,
-                    }
-                ],
+                promotion_rules: vec![PromotionRule {
+                    name: "frequent-access".to_string(),
+                    condition: TieringCondition::AccessFrequency {
+                        min_accesses_per_hour: 10,
+                    },
+                    from_tier: TierLevel::Warm,
+                    to_tier: TierLevel::Hot,
+                    priority: 1,
+                }],
+                demotion_rules: vec![DemotionRule {
+                    name: "infrequent-access".to_string(),
+                    condition: TieringCondition::LastAccessTime {
+                        hours_since_access: 72,
+                    },
+                    from_tier: TierLevel::Hot,
+                    to_tier: TierLevel::Warm,
+                    priority: 2,
+                }],
                 migration_schedule: MigrationSchedule {
                     enabled: true,
-                    migration_windows: vec![
-                        MigrationWindow {
-                            name: "nightly".to_string(),
-                            cron_schedule: "0 2 * * *".to_string(),
-                            duration_hours: 4,
-                            allowed_migrations: vec![MigrationType::Demotion, MigrationType::Compression],
-                        }
-                    ],
+                    migration_windows: vec![MigrationWindow {
+                        name: "nightly".to_string(),
+                        cron_schedule: "0 2 * * *".to_string(),
+                        duration_hours: 4,
+                        allowed_migrations: vec![
+                            MigrationType::Demotion,
+                            MigrationType::Compression,
+                        ],
+                    }],
                     bandwidth_limit_mbps: 100,
                     concurrent_migrations: 4,
                     failure_retry_count: 3,

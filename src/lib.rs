@@ -40,8 +40,17 @@ pub mod network;
 pub mod proto;
 pub mod query;
 pub mod schema;
+// NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
+pub mod schema_types;
+pub mod server;
+pub mod services;
 pub mod storage;
 pub mod utils;
+
+// NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
+// pub mod compiled_schemas {
+//     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));
+// }
 
 pub use core::*;
 use std::sync::Arc;
@@ -54,51 +63,70 @@ pub struct ProximaDB {
     storage: Arc<RwLock<storage::StorageEngine>>,
     consensus: consensus::ConsensusEngine,
     _query_engine: query::QueryEngine,
-    unified_server: Option<network::UnifiedServer>,
+    multi_server: Option<network::MultiServer>,
     _config: core::Config,
 }
 
 impl ProximaDB {
     pub async fn new(config: core::Config) -> Result<Self> {
+        tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
         let storage_engine = storage::StorageEngine::new(config.storage.clone()).await?;
+        tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
-        
+
         let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?;
-        
+
         // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
         // For now, we'll create a placeholder
         let query_engine = query::QueryEngine::new_placeholder().await?;
-        
-        // Create unified server configuration
-        let bind_addr = format!("{}:{}", config.server.bind_address, config.api.rest_port)
+
+        // Create multi-server configuration from actual config values
+        use std::net::SocketAddr;
+        let rest_addr: SocketAddr = format!("{}:{}", config.server.bind_address, config.api.rest_port)
             .parse()
-            .map_err(|e| format!("Invalid bind address: {}", e))?;
-            
-        let unified_config = network::unified_server::UnifiedServerConfig {
-            bind_address: bind_addr,
-            enable_rest: true,
-            enable_grpc: true,
-            enable_dashboard: true,
-            enable_metrics: true,
-            enable_health: true,
-        };
-        
+            .map_err(|e| format!("Invalid REST address: {}", e))?;
+        let grpc_addr: SocketAddr = format!("{}:{}", config.server.bind_address, config.api.grpc_port)
+            .parse()
+            .map_err(|e| format!("Invalid gRPC address: {}", e))?;
+
+        let mut builder = network::MultiServerBuilder::custom()
+            .http(|h| h.bind_address(rest_addr))
+            .grpc(|g| g.bind_address(grpc_addr));
+
+        // Add TLS configuration if enabled
+        if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
+            let tls_config = config.tls.as_ref().unwrap();
+            if let (Some(cert_file), Some(key_file)) = (&tls_config.cert_file, &tls_config.key_file) {
+                builder = builder.with_tls(cert_file.clone(), key_file.clone());
+            }
+        }
+
+        let multi_config = builder.build()
+            .map_err(|e| format!("Failed to create server config: {}", e))?;
+
         // Create metrics collector for monitoring
         let metrics_config = monitoring::metrics::MetricsConfig::default();
         let (metrics_collector, _receiver) = monitoring::MetricsCollector::new(metrics_config)?;
         let metrics_collector = Arc::new(metrics_collector);
-        
-        let unified_server = network::UnifiedServer::new(
-            unified_config, 
+
+        // Create SharedServices first with metadata configuration (business logic hub)
+        tracing::info!("🔧 ProximaDB::new: Creating SharedServices with metadata config: {:?}", 
+                      config.storage.metadata_backend.as_ref().map(|c| &c.storage_url));
+        let shared_services = network::multi_server::SharedServices::new(
             storage.clone(),
-            Some(metrics_collector)
-        );
+            Some(metrics_collector),
+            config.storage.metadata_backend.clone()
+        ).await?;
+        tracing::info!("✅ ProximaDB::new: SharedServices created successfully");
+
+        // Create MultiServer with SharedServices (network orchestrator)
+        let multi_server = network::MultiServer::new(multi_config, shared_services);
 
         Ok(Self {
             storage,
             consensus,
             _query_engine: query_engine,
-            unified_server: Some(unified_server),
+            multi_server: Some(multi_server),
             _config: config,
         })
     }
@@ -109,52 +137,73 @@ impl ProximaDB {
             let mut storage = self.storage.write().await;
             storage.start().await?;
         }
-        
+
         // Start consensus engine
         self.consensus.start().await?;
-        
-        // Start unified server (REST, gRPC, Dashboard)
-        if let Some(ref mut unified_server) = self.unified_server {
-            unified_server.start().await
-                .map_err(|e| format!("Failed to start unified server: {}", e))?;
+
+        // Start multi-server (HTTP and gRPC on separate ports)
+        if let Some(ref mut multi_server) = self.multi_server {
+            multi_server
+                .start()
+                .await
+                .map_err(|e| format!("Failed to start multi-server: {}", e))?;
         }
-        
+
         Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        // Stop unified server
-        if let Some(ref mut unified_server) = self.unified_server {
-            unified_server.stop().await
-                .map_err(|e| format!("Failed to stop unified server: {}", e))?;
+        // Stop multi-server
+        if let Some(ref mut multi_server) = self.multi_server {
+            multi_server
+                .stop()
+                .await
+                .map_err(|e| format!("Failed to stop multi-server: {}", e))?;
         }
-        
+
         // Stop storage engine
         {
             let mut storage = self.storage.write().await;
             storage.stop().await?;
         }
-        
+
         // Stop consensus engine
         self.consensus.stop().await?;
-        
+
         Ok(())
     }
-    
-    /// Get the unified server address
-    pub fn server_address(&self) -> Option<String> {
-        self.unified_server.as_ref().map(|s| s.address().to_string())
+
+    /// Get the multi-server status
+    pub async fn server_status(&self) -> Option<network::multi_server::ServerStatus> {
+        if let Some(ref multi_server) = self.multi_server {
+            Some(multi_server.get_status().await)
+        } else {
+            None
+        }
     }
-    
-    /// Check if the unified server is running
-    pub fn is_server_running(&self) -> bool {
-        self.unified_server.as_ref().map(|s| s.is_running()).unwrap_or(false)
+
+    /// Check if any server is running
+    pub async fn is_server_running(&self) -> bool {
+        if let Some(status) = self.server_status().await {
+            status.http_running || status.grpc_running
+        } else {
+            false
+        }
     }
-    
-    /// Get server statistics
-    pub async fn get_server_stats(&self) -> Option<monitoring::metrics::ServerMetrics> {
-        if let Some(ref unified_server) = self.unified_server {
-            Some(unified_server.get_stats().await)
+
+    /// Get HTTP server address
+    pub async fn http_server_address(&self) -> Option<std::net::SocketAddr> {
+        if let Some(status) = self.server_status().await {
+            status.http_address
+        } else {
+            None
+        }
+    }
+
+    /// Get gRPC server address
+    pub async fn grpc_server_address(&self) -> Option<std::net::SocketAddr> {
+        if let Some(status) = self.server_status().await {
+            status.grpc_address
         } else {
             None
         }

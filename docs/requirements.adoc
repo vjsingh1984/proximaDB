@@ -18,6 +18,9 @@ ProximaDB is a cloud-native vector database engineered for AI-first applications
 
 **Tagline**: _proximity at scale_
 
+**Latest Update**: Collection persistence across server restarts implemented ✅ (June 2025)
+**BERT Embeddings**: Full support for BERT collections with 384, 768, and 1024 dimensions ✅
+
 == Executive Summary
 
 === Vision
@@ -46,14 +49,14 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |VR-002
-|CRUD operations on vector collections with metadata filtering and ID-based lookups
+|CRUD operations on vector collections with metadata filtering and ID-based lookups including collection persistence across restarts
 |Critical
-|✅ IMPLEMENTED
+|✅ IMPLEMENTED (Collection persistence verified June 2025)
 
 |VR-003
 |Hybrid dense/sparse vector storage with automatic format optimization
 |High
-|🚧 PARTIAL (VIPER storage)
+|✅ IMPLEMENTED (VIPER storage with Parquet + Avro metadata)
 
 |VR-004
 |Metadata-based filtering with NoSQL-style queries ($gte, $lte, $in operators)
@@ -159,190 +162,269 @@ Deliver a cloud-native vector database that provides:
 |ST-001
 |MMAP-based reads with OS page cache optimization for hot data
 |Critical
+|✅ IMPLEMENTED
 
 |ST-002
 |LSM tree-based append-only writes for internet scale
 |Critical
+|✅ IMPLEMENTED
 
 |ST-003
 |Multi-disk support with intelligent data placement
 |High
+|🚧 IN PROGRESS
 
 |ST-004
-|Intelligent 5-tier storage: Ultra-Hot → Hot → Warm → Cold → Archive
+|Flexible storage policies with direct filesystem URL configuration (file://, s3://, gcs://, adls://)
 |Critical
+|✅ IMPLEMENTED
 
 |ST-005
 |Seamless S3/ADLS/GCS integration - delegate replication to object store instead of ProximaDB
 |Critical
+|✅ IMPLEMENTED
 
 |ST-006
 |Parquet encoding with column families for analytics workloads
 |High
+|✅ IMPLEMENTED
 
 |ST-007
 |Configurable compression (LZ4, ZSTD, GZIP) per column family
 |High
+|✅ IMPLEMENTED
 
 |ST-008
 |Schema evolution with backward compatibility
 |Medium
+|🚧 IN PROGRESS (Basic schema service implemented)
 
 |ST-009
 |Point-in-time recovery with configurable retention
 |High
+|🚧 IN PROGRESS
 
 |ST-010
 |Cross-region data replication with consistency guarantees
 |High
+|🚧 IN PROGRESS
 
 |ST-011
 |Multi-cloud Write-Ahead Log (WAL) with S3/ADLS/GCS backend support
 |Critical
+|✅ IMPLEMENTED
 
 |ST-012
 |Avro-based WAL serialization with schema evolution and compression
 |Critical
+|🚧 IN PROGRESS (JSON currently, Avro planned)
 
 |ST-013
 |Recovery-optimized compression (LZ4 >2GB/s decompression, Zstd adaptive)
 |Critical
+|✅ IMPLEMENTED
 
 |ST-014
 |Multi-disk WAL with parallel writes for critical systems (RAID-like distribution)
 |High
+|✅ IMPLEMENTED
 
 |ST-015
 |Parallel WAL recovery with disk I/O bottleneck optimization (not CPU)
 |Critical
+|✅ IMPLEMENTED
 
 |ST-016
 |Cloud-native WAL batching and cost optimization (lifecycle management)
 |High
+|🚧 IN PROGRESS
 
 |ST-017
 |Hybrid WAL: local cache + cloud backup with configurable sync strategies
 |High
+|🚧 IN PROGRESS
 
 |ST-018
 |WAL segment rotation with automatic cleanup and retention policies
 |High
+|✅ IMPLEMENTED
 
 |ST-019
 |Memtable with ID-based deduplication and metadata filtering
 |High
+|✅ IMPLEMENTED
 
 |ST-020
 |Unified storage engine supporting VIPER and LSM layouts via strategy pattern
 |High
+|✅ IMPLEMENTED
+
+|ST-021
+|Hybrid WAL flush trigger system: background age-based + immediate size-based triggers
+|Critical
+|✅ IMPLEMENTED
+
+|ST-022
+|Background WAL age monitoring with configurable inspection intervals (default: 5 minutes)
+|Critical
+|✅ IMPLEMENTED
+
+|ST-023
+|Immediate size-based flush triggers on write operations (memory/entry thresholds)
+|Critical
+|✅ IMPLEMENTED
+
+|ST-024
+|Sequential flush-compaction execution on same thread to eliminate race conditions
+|Critical
+|✅ IMPLEMENTED
+
+|ST-025
+|Configurable compaction triggers: file count (>2) and average file size (<16MB) for testing
+|High
+|✅ IMPLEMENTED
+
+|ST-026
+|Atomic operations with staging directories (__flush, __compaction) for ACID guarantees
+|Critical
+|✅ IMPLEMENTED
+
+|ST-027
+|Collection-level read/write locking for coordinated flush/compaction operations
+|Critical
+|✅ IMPLEMENTED
 |===
 
 ==== Adaptive eXtensible Indexing System (AXIS)
-[cols="1,3,1"]
+[cols="1,3,1,1"]
 |===
-|ID |Requirement |Priority
+|ID |Requirement |Priority |Status
 
 |IX-001
 |Global ID Index with Trie structure for prefix queries and HashMap for O(1) lookups
 |Critical
+|✅ IMPLEMENTED
 
 |IX-002
 |ID-to-location mapping: id → {partition_id, offset_in_file} for unified access
 |Critical
+|✅ IMPLEMENTED
 
 |IX-003
 |Metadata Index with Parquet columnar storage and Roaring Bitmap filters
 |Critical
+|🚧 IN PROGRESS
 
 |IX-004
 |Bitmap filtering for metadata predicates (e.g., language="en") mapped to row IDs
 |Critical
+|🚧 IN PROGRESS
 
 |IX-005
 |Dense Vector Index with per-partition HNSW/IVF/PQ indexes
 |Critical
+|✅ IMPLEMENTED
 
 |IX-006
 |ANN index pointers stored alongside Parquet row group offsets
 |High
+|🚧 IN PROGRESS
 
 |IX-007
 |Sparse Vector Index with LSM tree for ID → sparse vector mapping
 |High
+|❌ NOT IMPLEMENTED
 
 |IX-008
 |MinHash LSH support for ANN queries over sparse vectors
 |High
+|❌ NOT IMPLEMENTED
 
 |IX-009
 |Count-Min Sketch or SimHash for approximate sparse similarity filtering
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-010
 |Join Engine with RowSet intersection for multi-index query results
 |Critical
+|✅ IMPLEMENTED
 
 |IX-011
 |Bloom filter cache for false-positive rejection in joins
 |High
+|🚧 IN PROGRESS
 
 |IX-012
 |Priority queue for relevance re-ranking of combined results
 |High
+|✅ IMPLEMENTED
 
 |IX-013
 |Multi-level caching with hot vectors kept in memory
 |High
+|🚧 IN PROGRESS
 
 |IX-014
 |Streaming index mode with mini-segment batch processing
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-015
 |Periodic reorg tool for partition rebalancing and ANN index rebuilds
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-016
 |Time-travel support with versioned vector IDs and timestamp columns
 |Low
+|❌ NOT IMPLEMENTED
 
 |IX-017
 |Adaptive Index Strategy Selection based on collection characteristics
 |Critical
+|✅ IMPLEMENTED
 
 |IX-018
 |Real-time Index Performance Monitoring and automatic optimization triggers
 |High
+|✅ IMPLEMENTED
 
 |IX-019
 |Zero-downtime Index Migration between different indexing strategies
 |High
+|✅ IMPLEMENTED
 
 |IX-020
 |Index Evolution Engine with ML-based optimization recommendations
 |High
+|✅ IMPLEMENTED
 
 |IX-021
 |Collection-level Index Configuration with inheritance and overrides
 |Medium
+|✅ IMPLEMENTED
 
 |IX-022
 |Index Rebuild Pipeline with incremental migration capabilities
 |High
+|🚧 IN PROGRESS
 
 |IX-023
 |Automatic Index Type Detection based on vector sparsity and query patterns
 |Critical
+|✅ IMPLEMENTED
 
 |IX-024
 |Index Performance Benchmarking and strategy comparison tools
 |Medium
+|❌ NOT IMPLEMENTED
 |===
 
 ==== Distributed Architecture
-[cols="1,3,1"]
+[cols="1,3,1,1"]
 |===
-|ID |Requirement |Priority
+|ID |Requirement |Priority |Status
 
 |DA-001
 |Raft consensus for strongly consistent metadata operations
@@ -421,6 +503,138 @@ Deliver a cloud-native vector database that provides:
 |PA-010
 |Throughput of 100K+ QPS on commodity hardware
 |High
+|===
+
+==== Advanced Vector Search Strategies
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|AVS-001
+|HNSW (Hierarchical Navigable Small World) graph-based indexing as primary search strategy
+|Critical
+|📋 PLANNED
+
+|AVS-002
+|Scalar Quantization (SQ) integration with HNSW for memory-efficient vector search
+|High
+|📋 PLANNED
+
+|AVS-003
+|Product Quantization (PQ) support for ultra-compressed vector representations
+|High
+|📋 PLANNED
+
+|AVS-004
+|Two-phase search: quantized vectors for candidate selection, full-precision for re-ranking
+|High
+|📋 PLANNED
+
+|AVS-005
+|IVF (Inverted File Index) cluster-based pruning for massive datasets
+|Medium
+|📋 PLANNED
+
+|AVS-006
+|IVF-HNSW hybrid approach: coarse-grained IVF clustering with fine-grained HNSW search
+|Medium
+|📋 PLANNED
+
+|AVS-007
+|Configurable search strategies: Exhaustive, ClusterPruned, Progressive, Adaptive
+|High
+|📋 PLANNED
+
+|AVS-008
+|Dynamic nprobe selection for IVF-based searches with accuracy/speed trade-offs
+|Medium
+|📋 PLANNED
+
+|AVS-009
+|Graph-based index incremental updates without full rebuilds
+|High
+|📋 PLANNED
+
+|AVS-010
+|Quantization-aware distance calculation optimization (SIMD/GPU acceleration)
+|High
+|📋 PLANNED
+
+|AVS-011
+|Disk-efficient search with compressed index loading and candidate batching
+|High
+|📋 PLANNED
+
+|AVS-012
+|Multi-level quantization: different compression ratios per storage tier
+|Medium
+|📋 PLANNED
+|===
+
+==== Core Engine & Performance Differentiation
+[cols="1,3,1,1"]
+|===
+|ID |Requirement |Priority |Status
+
+|CEP-001
+|Dual-format vector storage: full-precision float32 + compressed quantized versions in Parquet
+|Critical
+|📋 PLANNED
+
+|CEP-002
+|Product Quantization (PQ) implementation with configurable subspaces and codebooks
+|High
+|📋 PLANNED
+
+|CEP-003
+|Scalar Quantization (SQ) with learned min/max per dimension and 8-bit precision
+|High
+|📋 PLANNED
+
+|CEP-004
+|Two-phase search optimization: quantized candidate selection + full-precision re-ranking
+|Critical
+|📋 PLANNED
+
+|CEP-005
+|Memory loading strategy selection: quantized-only vs full-precision based on cost/performance trade-offs
+|High
+|📋 PLANNED
+
+|CEP-006
+|Cost-based query optimizer for intelligent filter and search operation reordering
+|Critical
+|📋 PLANNED
+
+|CEP-007
+|Query execution cost modeling: predicate pushdown cost vs full scan cost vs ANN search cost
+|High
+|📋 PLANNED
+
+|CEP-008
+|Automatic query plan optimization for complex metadata filters with promoted columns
+|High
+|📋 PLANNED
+
+|CEP-009
+|Filter selectivity estimation and cardinality-based execution planning
+|Medium
+|📋 PLANNED
+
+|CEP-010
+|Dynamic compression ratio selection based on dataset characteristics and access patterns
+|Medium
+|📋 PLANNED
+
+|CEP-011
+|Near-in-memory performance at fraction of cost through intelligent quantization
+|Critical
+|📋 PLANNED
+
+|CEP-012
+|Enterprise-grade query optimization with execution plan caching and statistics
+|High
+|📋 PLANNED
 |===
 
 ==== AI Inference Integration
@@ -595,6 +809,17 @@ Deliver a cloud-native vector database that provides:
 |REST API
 |HTTP REST API for all vector operations
 |Critical
+|✅ IMPLEMENTED
+
+|gRPC API
+|High-performance gRPC with protobuf for all vector operations
+|Critical
+|✅ IMPLEMENTED
+
+|Dual Protocol Server
+|Single server supporting both REST and gRPC on same port with content-type detection
+|High
+|✅ IMPLEMENTED
 
 |Python SDK
 |Python client library with sync/async support

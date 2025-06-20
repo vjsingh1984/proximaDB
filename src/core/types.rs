@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
+// use uuid::Uuid; // Unused import - using String for IDs now
 
-pub type VectorId = Uuid;
+pub type VectorId = String;
 pub type CollectionId = String;
 pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorRecord {
     pub id: VectorId,
     pub collection_id: CollectionId,

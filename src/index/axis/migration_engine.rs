@@ -5,29 +5,29 @@
 
 //! Index Migration Engine - Zero-downtime index strategy migration
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
-use anyhow::Result;
-use chrono::{DateTime, Utc};
 
-use crate::core::CollectionId;
 use super::{IndexStrategy, IndexType, MigrationPriority};
+use crate::core::CollectionId;
 
 /// Engine for performing zero-downtime index migrations
 pub struct IndexMigrationEngine {
     /// Migration executor
     executor: Arc<MigrationExecutor>,
-    
+
     /// Rollback manager
     rollback_manager: Arc<RollbackManager>,
-    
+
     /// Progress tracker
     progress_tracker: Arc<RwLock<MigrationProgressTracker>>,
-    
+
     /// Resource limiter
     resource_limiter: Arc<Semaphore>,
-    
+
     /// Migration history
     history: Arc<RwLock<Vec<MigrationHistory>>>,
 }
@@ -60,41 +60,36 @@ pub struct MigrationStep {
 pub enum MigrationStepType {
     /// Create new index structure
     CreateNewIndex { index_type: IndexType },
-    
+
     /// Copy data from old to new index
     CopyData {
         batch_size: usize,
         parallel_workers: usize,
     },
-    
+
     /// Build new index (e.g., HNSW graph construction)
     BuildIndex {
         index_type: IndexType,
         build_params: IndexBuildParams,
     },
-    
+
     /// Verify index consistency
     VerifyConsistency {
         sample_percentage: f32,
         verification_type: VerificationType,
     },
-    
+
     /// Switch read traffic to new index
-    SwitchReadTraffic {
-        percentage: f32,
-        duration: Duration,
-    },
-    
+    SwitchReadTraffic { percentage: f32, duration: Duration },
+
     /// Switch write traffic to new index
     SwitchWriteTraffic {
         percentage: f32,
         sync_old_index: bool,
     },
-    
+
     /// Delete old index
-    DeleteOldIndex {
-        delay: Duration,
-    },
+    DeleteOldIndex { delay: Duration },
 }
 
 /// Index build parameters
@@ -203,7 +198,8 @@ pub struct MigrationExecutor {
 /// Trait for step execution
 #[async_trait::async_trait]
 pub trait StepExecutor {
-    async fn execute(&self, step: &MigrationStep, context: &MigrationContext) -> Result<StepResult>;
+    async fn execute(&self, step: &MigrationStep, context: &MigrationContext)
+        -> Result<StepResult>;
     fn can_handle(&self, step_type: &MigrationStepType) -> bool;
 }
 
@@ -295,7 +291,7 @@ impl IndexMigrationEngine {
     /// Create new migration engine
     pub async fn new(config: super::AxisConfig) -> Result<Self> {
         let max_concurrent = config.migration_config.max_concurrent_migrations;
-        
+
         Ok(Self {
             executor: Arc::new(MigrationExecutor::new()),
             rollback_manager: Arc::new(RollbackManager::new()),
@@ -304,7 +300,7 @@ impl IndexMigrationEngine {
             history: Arc::new(RwLock::new(Vec::new())),
         })
     }
-    
+
     /// Execute a migration plan
     pub async fn execute_migration(
         &self,
@@ -314,10 +310,10 @@ impl IndexMigrationEngine {
     ) -> Result<MigrationResult> {
         // Acquire resource permit
         let _permit = self.resource_limiter.acquire().await?;
-        
+
         // Create migration plan
         let plan = self.create_migration_plan(collection_id, from.clone(), to.clone())?;
-        
+
         // Initialize progress tracking
         let progress = MigrationProgress {
             migration_id: plan.migration_id,
@@ -329,11 +325,11 @@ impl IndexMigrationEngine {
             estimated_completion: None,
             current_phase: MigrationPhase::Initializing,
         };
-        
+
         let mut tracker = self.progress_tracker.write().await;
         tracker.active_migrations.push(progress.clone());
         drop(tracker);
-        
+
         // Create migration context
         let context = MigrationContext {
             collection_id: collection_id.clone(),
@@ -342,19 +338,19 @@ impl IndexMigrationEngine {
             to_strategy: to.clone(),
             progress: Arc::new(RwLock::new(progress)),
         };
-        
+
         // Execute migration steps
         let mut total_duration = Duration::from_secs(0);
         let mut vectors_migrated = 0u64;
         let mut errors = Vec::new();
-        
+
         for (step_idx, step) in plan.steps.iter().enumerate() {
             // Update progress
             let mut progress = context.progress.write().await;
             progress.current_step = step_idx;
             progress.current_phase = self.step_to_phase(&step.step_type);
             drop(progress);
-            
+
             // Execute step
             match self.executor.execute_step(step, &context).await {
                 Ok(result) => {
@@ -368,7 +364,7 @@ impl IndexMigrationEngine {
                         message: e.to_string(),
                         recoverable: step.can_rollback,
                     });
-                    
+
                     if !step.can_rollback {
                         // Critical error, cannot continue
                         break;
@@ -376,7 +372,7 @@ impl IndexMigrationEngine {
                 }
             }
         }
-        
+
         // Create result
         let result = MigrationResult {
             migration_id: plan.migration_id,
@@ -387,7 +383,7 @@ impl IndexMigrationEngine {
             performance_improvement: 0.0, // TODO: Calculate actual improvement
             errors,
         };
-        
+
         // Update history
         let mut history = self.history.write().await;
         history.push(MigrationHistory {
@@ -395,18 +391,21 @@ impl IndexMigrationEngine {
             collection_id: collection_id.clone(),
             from_strategy: from,
             to_strategy: to,
-            start_time: Utc::now() - chrono::Duration::milliseconds(total_duration.as_millis() as i64),
+            start_time: Utc::now()
+                - chrono::Duration::milliseconds(total_duration.as_millis() as i64),
             end_time: Utc::now(),
             result: result.clone(),
         });
-        
+
         // Clean up progress tracking
         let mut tracker = self.progress_tracker.write().await;
-        tracker.active_migrations.retain(|p| p.migration_id != plan.migration_id);
-        
+        tracker
+            .active_migrations
+            .retain(|p| p.migration_id != plan.migration_id);
+
         Ok(result)
     }
-    
+
     /// Create migration plan
     fn create_migration_plan(
         &self,
@@ -417,7 +416,7 @@ impl IndexMigrationEngine {
         let migration_id = uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
-        
+
         // Step 1: Create new index structures
         for index_type in &to.secondary_indexes {
             if !from.secondary_indexes.contains(index_type) {
@@ -437,7 +436,7 @@ impl IndexMigrationEngine {
                 });
             }
         }
-        
+
         // Step 2: Copy data
         steps.push(MigrationStep {
             step_id: "copy_data".to_string(),
@@ -454,7 +453,7 @@ impl IndexMigrationEngine {
             },
             can_rollback: true,
         });
-        
+
         // Step 3: Build new indexes
         if to.primary_index_type != from.primary_index_type {
             steps.push(MigrationStep {
@@ -477,7 +476,7 @@ impl IndexMigrationEngine {
                 can_rollback: true,
             });
         }
-        
+
         // Step 4: Verify consistency
         steps.push(MigrationStep {
             step_id: "verify_consistency".to_string(),
@@ -494,7 +493,7 @@ impl IndexMigrationEngine {
             },
             can_rollback: false,
         });
-        
+
         // Step 5: Switch traffic progressively
         for percentage in [10.0, 50.0, 100.0] {
             steps.push(MigrationStep {
@@ -513,12 +512,10 @@ impl IndexMigrationEngine {
                 can_rollback: true,
             });
         }
-        
+
         // Calculate total estimated duration
-        let estimated_duration = steps.iter()
-            .map(|s| s.estimated_duration)
-            .sum();
-        
+        let estimated_duration = steps.iter().map(|s| s.estimated_duration).sum();
+
         Ok(MigrationPlan {
             migration_id,
             collection_id: collection_id.clone(),
@@ -530,7 +527,7 @@ impl IndexMigrationEngine {
             rollback_points,
         })
     }
-    
+
     /// Convert step type to migration phase
     fn step_to_phase(&self, step_type: &MigrationStepType) -> MigrationPhase {
         match step_type {
@@ -558,7 +555,7 @@ impl MigrationExecutor {
             ],
         }
     }
-    
+
     /// Execute a migration step
     pub async fn execute_step(
         &self,
@@ -570,7 +567,7 @@ impl MigrationExecutor {
                 return executor.execute(step, context).await;
             }
         }
-        
+
         Err(anyhow::anyhow!("No executor found for step type"))
     }
 }
@@ -578,9 +575,7 @@ impl MigrationExecutor {
 impl RollbackManager {
     /// Create new rollback manager
     pub fn new() -> Self {
-        Self {
-            strategies: vec![],
-        }
+        Self { strategies: vec![] }
     }
 }
 
@@ -603,11 +598,15 @@ struct SwitchTrafficExecutor;
 
 #[async_trait::async_trait]
 impl StepExecutor for CreateIndexExecutor {
-    async fn execute(&self, step: &MigrationStep, _context: &MigrationContext) -> Result<StepResult> {
+    async fn execute(
+        &self,
+        step: &MigrationStep,
+        _context: &MigrationContext,
+    ) -> Result<StepResult> {
         if let MigrationStepType::CreateNewIndex { index_type: _ } = &step.step_type {
             // TODO: Implement actual index creation
             tokio::time::sleep(Duration::from_secs(1)).await;
-            
+
             Ok(StepResult {
                 success: true,
                 duration: Duration::from_secs(1),
@@ -623,7 +622,7 @@ impl StepExecutor for CreateIndexExecutor {
             Err(anyhow::anyhow!("Invalid step type for CreateIndexExecutor"))
         }
     }
-    
+
     fn can_handle(&self, step_type: &MigrationStepType) -> bool {
         matches!(step_type, MigrationStepType::CreateNewIndex { .. })
     }
@@ -631,11 +630,19 @@ impl StepExecutor for CreateIndexExecutor {
 
 #[async_trait::async_trait]
 impl StepExecutor for CopyDataExecutor {
-    async fn execute(&self, step: &MigrationStep, _context: &MigrationContext) -> Result<StepResult> {
-        if let MigrationStepType::CopyData { batch_size: _, parallel_workers: _ } = &step.step_type {
+    async fn execute(
+        &self,
+        step: &MigrationStep,
+        _context: &MigrationContext,
+    ) -> Result<StepResult> {
+        if let MigrationStepType::CopyData {
+            batch_size: _,
+            parallel_workers: _,
+        } = &step.step_type
+        {
             // TODO: Implement actual data copying
             tokio::time::sleep(Duration::from_secs(2)).await;
-            
+
             Ok(StepResult {
                 success: true,
                 duration: Duration::from_secs(2),
@@ -651,7 +658,7 @@ impl StepExecutor for CopyDataExecutor {
             Err(anyhow::anyhow!("Invalid step type for CopyDataExecutor"))
         }
     }
-    
+
     fn can_handle(&self, step_type: &MigrationStepType) -> bool {
         matches!(step_type, MigrationStepType::CopyData { .. })
     }
@@ -659,11 +666,19 @@ impl StepExecutor for CopyDataExecutor {
 
 #[async_trait::async_trait]
 impl StepExecutor for BuildIndexExecutor {
-    async fn execute(&self, step: &MigrationStep, _context: &MigrationContext) -> Result<StepResult> {
-        if let MigrationStepType::BuildIndex { index_type: _, build_params: _ } = &step.step_type {
+    async fn execute(
+        &self,
+        step: &MigrationStep,
+        _context: &MigrationContext,
+    ) -> Result<StepResult> {
+        if let MigrationStepType::BuildIndex {
+            index_type: _,
+            build_params: _,
+        } = &step.step_type
+        {
             // TODO: Implement actual index building
             tokio::time::sleep(Duration::from_secs(3)).await;
-            
+
             Ok(StepResult {
                 success: true,
                 duration: Duration::from_secs(3),
@@ -679,7 +694,7 @@ impl StepExecutor for BuildIndexExecutor {
             Err(anyhow::anyhow!("Invalid step type for BuildIndexExecutor"))
         }
     }
-    
+
     fn can_handle(&self, step_type: &MigrationStepType) -> bool {
         matches!(step_type, MigrationStepType::BuildIndex { .. })
     }
@@ -687,11 +702,19 @@ impl StepExecutor for BuildIndexExecutor {
 
 #[async_trait::async_trait]
 impl StepExecutor for VerifyConsistencyExecutor {
-    async fn execute(&self, step: &MigrationStep, _context: &MigrationContext) -> Result<StepResult> {
-        if let MigrationStepType::VerifyConsistency { sample_percentage: _, verification_type: _ } = &step.step_type {
+    async fn execute(
+        &self,
+        step: &MigrationStep,
+        _context: &MigrationContext,
+    ) -> Result<StepResult> {
+        if let MigrationStepType::VerifyConsistency {
+            sample_percentage: _,
+            verification_type: _,
+        } = &step.step_type
+        {
             // TODO: Implement actual verification
             tokio::time::sleep(Duration::from_millis(500)).await;
-            
+
             Ok(StepResult {
                 success: true,
                 duration: Duration::from_millis(500),
@@ -704,10 +727,12 @@ impl StepExecutor for VerifyConsistencyExecutor {
                 },
             })
         } else {
-            Err(anyhow::anyhow!("Invalid step type for VerifyConsistencyExecutor"))
+            Err(anyhow::anyhow!(
+                "Invalid step type for VerifyConsistencyExecutor"
+            ))
         }
     }
-    
+
     fn can_handle(&self, step_type: &MigrationStepType) -> bool {
         matches!(step_type, MigrationStepType::VerifyConsistency { .. })
     }
@@ -715,12 +740,19 @@ impl StepExecutor for VerifyConsistencyExecutor {
 
 #[async_trait::async_trait]
 impl StepExecutor for SwitchTrafficExecutor {
-    async fn execute(&self, step: &MigrationStep, _context: &MigrationContext) -> Result<StepResult> {
+    async fn execute(
+        &self,
+        step: &MigrationStep,
+        _context: &MigrationContext,
+    ) -> Result<StepResult> {
         match &step.step_type {
-            MigrationStepType::SwitchReadTraffic { percentage: _, duration: _ } => {
+            MigrationStepType::SwitchReadTraffic {
+                percentage: _,
+                duration: _,
+            } => {
                 // TODO: Implement actual traffic switching
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                
+
                 Ok(StepResult {
                     success: true,
                     duration: Duration::from_millis(100),
@@ -733,10 +765,13 @@ impl StepExecutor for SwitchTrafficExecutor {
                     },
                 })
             }
-            MigrationStepType::SwitchWriteTraffic { percentage: _, sync_old_index: _ } => {
+            MigrationStepType::SwitchWriteTraffic {
+                percentage: _,
+                sync_old_index: _,
+            } => {
                 // TODO: Implement actual traffic switching
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                
+
                 Ok(StepResult {
                     success: true,
                     duration: Duration::from_millis(100),
@@ -749,11 +784,17 @@ impl StepExecutor for SwitchTrafficExecutor {
                     },
                 })
             }
-            _ => Err(anyhow::anyhow!("Invalid step type for SwitchTrafficExecutor")),
+            _ => Err(anyhow::anyhow!(
+                "Invalid step type for SwitchTrafficExecutor"
+            )),
         }
     }
-    
+
     fn can_handle(&self, step_type: &MigrationStepType) -> bool {
-        matches!(step_type, MigrationStepType::SwitchReadTraffic { .. } | MigrationStepType::SwitchWriteTraffic { .. })
+        matches!(
+            step_type,
+            MigrationStepType::SwitchReadTraffic { .. }
+                | MigrationStepType::SwitchWriteTraffic { .. }
+        )
     }
 }

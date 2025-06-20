@@ -199,14 +199,47 @@ class ProximaDBClient:
             
         Returns:
             Created collection metadata
+            
+        Example:
+            >>> client = ProximaDBClient()
+            >>> config = CollectionConfig(
+            ...     dimension=128,
+            ...     distance_metric="cosine",
+            ...     filterable_metadata_fields=["category", "price", "brand"]
+            ... )
+            >>> collection = client.create_collection("products", config)
         """
         if config is None:
             config = CollectionConfig(**kwargs)
         
+        # Validate filterable metadata fields limit in client
+        if config.filterable_metadata_fields and len(config.filterable_metadata_fields) > 16:
+            warnings.warn(
+                f"Collection '{name}' specifies {len(config.filterable_metadata_fields)} filterable metadata fields. "
+                f"Only the first 16 will be used for Parquet optimization. Additional metadata can still be "
+                f"inserted via vector operations (stored in extra_meta).",
+                UserWarning
+            )
+        
         request_data = {
             "name": name,
-            "config": config.dict()
+            "dimension": config.dimension,
+            "distance_metric": config.distance_metric,
+            "indexing_algorithm": config.index_config.algorithm if config.index_config else "hnsw",
+            "storage_layout": getattr(config, 'storage_layout', 'viper'),  # Default to VIPER storage
         }
+        
+        # Add VIPER-specific optimization fields
+        if config.filterable_metadata_fields:
+            request_data["filterable_metadata_fields"] = config.filterable_metadata_fields
+        
+        # Add WAL flush configuration
+        if hasattr(config, 'flush_config') and config.flush_config:
+            if hasattr(config.flush_config, 'max_wal_size_mb'):
+                request_data["max_wal_size_mb"] = config.flush_config.max_wal_size_mb
+        
+        if config.description:
+            request_data["config"] = {"description": config.description}
         
         response = self._make_request("POST", "/collections", json=request_data)
         return Collection(**response.json())
@@ -257,19 +290,15 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
         
-        request_data = {
-            "vectors": [{
-                "id": vector_id,
-                "vector": vector,
-                "metadata": metadata or {}
-            }],
-            "upsert": upsert
-        }
-        
+        # For single vector, use the single vector endpoint directly
         response = self._make_request(
             "POST",
             f"/collections/{collection_id}/vectors",
-            json=request_data
+            json={
+                "id": vector_id,
+                "vector": vector,
+                "metadata": metadata or {}
+            }
         )
         
         return InsertResult(**response.json())
@@ -326,7 +355,7 @@ class ProximaDBClient:
             
             response = self._make_request(
                 "POST",
-                f"/collections/{collection_id}/vectors",
+                f"/collections/{collection_id}/vectors/batch",
                 json=request_data
             )
             
@@ -349,7 +378,7 @@ class ProximaDBClient:
                     
                     response = self._make_request(
                         "POST",
-                        f"/collections/{collection_id}/vectors",
+                        f"/collections/{collection_id}/vectors/batch",
                         json=request_data
                     )
                     

@@ -1,164 +1,31 @@
 {
   "type": "record",
   "name": "WalEntry",
-  "namespace": "proximadb.wal.v2",
-  "doc": "ProximaDB Write-Ahead Log Entry v2.0 - Enhanced with streaming and metadata indexing",
+  "namespace": "ai.proximadb.wal",
   "fields": [
-    {
-      "name": "sequence",
-      "type": "long",
-      "doc": "Monotonic sequence number for ordering"
-    },
-    {
-      "name": "timestamp",
-      "type": "long",
-      "logicalType": "timestamp-millis",
-      "doc": "Entry timestamp in milliseconds since epoch"
-    },
-    {
-      "name": "entry_type",
-      "type": {
-        "type": "enum",
-        "name": "WalEntryType",
-        "symbols": [
-          "PUT",
-          "DELETE", 
-          "CREATE_COLLECTION",
-          "DELETE_COLLECTION",
-          "CHECKPOINT",
-          "VIPER_VECTOR_INSERT",
-          "VIPER_VECTOR_UPDATE",
-          "VIPER_VECTOR_DELETE",
-          "VIPER_CLUSTER_UPDATE",
-          "VIPER_PARTITION_CREATE",
-          "VIPER_COMPACTION_OPERATION",
-          "VIPER_TIER_MIGRATION",
-          "VIPER_MODEL_UPDATE",
-          "STREAM_CONSUMER_OFFSET",
-          "METADATA_INDEX_UPDATE",
-          "BATCH_OPERATION"
-        ]
-      }
-    },
-    {
-      "name": "collection_id",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "Target collection identifier"
-    },
-    {
-      "name": "vector_record",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "VectorRecord",
-          "fields": [
-            {"name": "id", "type": "string"},
-            {"name": "vector", "type": {"type": "array", "items": "float"}},
-            {"name": "metadata", "type": "string", "doc": "JSON-encoded metadata"},
-            {"name": "timestamp", "type": "long", "logicalType": "timestamp-millis"},
-            {"name": "source_stream", "type": ["null", "string"], "default": null, "doc": "Source stream for streaming ingestion"},
-            {"name": "batch_id", "type": ["null", "string"], "default": null, "doc": "Batch identifier for batch operations"}
-          ]
-        }
-      ],
-      "default": null
-    },
-    {
-      "name": "vector_id",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "Vector UUID for operations targeting specific vectors"
-    },
-    {
-      "name": "viper_data",
-      "type": [
-        "null",
-        {
-          "type": "record", 
-          "name": "ViperOperationData",
-          "fields": [
-            {"name": "cluster_id", "type": ["null", "int"], "default": null},
-            {"name": "storage_format", "type": ["null", {"type": "enum", "name": "StorageFormat", "symbols": ["DENSE", "SPARSE", "AUTO"]}], "default": null},
-            {"name": "tier_level", "type": ["null", {"type": "enum", "name": "TierLevel", "symbols": ["ULTRA_HOT", "HOT", "WARM", "COLD", "ARCHIVE"]}], "default": null},
-            {"name": "cluster_prediction", "type": ["null", "string"], "default": null, "doc": "JSON-encoded cluster prediction"},
-            {"name": "quality_metrics", "type": ["null", "string"], "default": null, "doc": "JSON-encoded quality metrics"},
-            {"name": "centroid", "type": ["null", {"type": "array", "items": "float"}], "default": null},
-            {"name": "partition_ids", "type": ["null", {"type": "array", "items": "string"}], "default": null},
-            {"name": "operation_id", "type": ["null", "string"], "default": null},
-            {"name": "model_version", "type": ["null", "string"], "default": null},
-            {"name": "model_type", "type": ["null", "string"], "default": null},
-            {"name": "migration_reason", "type": ["null", "string"], "default": null},
-            {"name": "compression_ratio", "type": ["null", "float"], "default": null, "doc": "Achieved compression ratio"},
-            {"name": "sparsity_ratio", "type": ["null", "float"], "default": null, "doc": "Vector sparsity ratio"}
-          ]
-        }
-      ],
-      "default": null,
-      "doc": "VIPER-specific operation data"
-    },
-    {
-      "name": "checkpoint_sequence",
-      "type": ["null", "long"],
-      "default": null,
-      "doc": "Checkpoint sequence number for CHECKPOINT entries"
-    },
-    {
-      "name": "stream_data",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "StreamOperationData", 
-          "fields": [
-            {"name": "consumer_group", "type": "string"},
-            {"name": "topic", "type": "string"},
-            {"name": "partition", "type": "int"},
-            {"name": "offset", "type": "long"},
-            {"name": "message_count", "type": ["null", "long"], "default": null}
-          ]
-        }
-      ],
-      "default": null,
-      "doc": "Streaming operation data for Kafka/Pulsar integration"
-    },
-    {
-      "name": "metadata_index_data",
-      "type": [
-        "null", 
-        {
-          "type": "record",
-          "name": "MetadataIndexData",
-          "fields": [
-            {"name": "index_name", "type": "string"},
-            {"name": "field_name", "type": "string"},
-            {"name": "index_type", "type": {"type": "enum", "name": "IndexType", "symbols": ["BTREE", "HASH", "BLOOM", "LSM"]}},
-            {"name": "operation", "type": {"type": "enum", "name": "IndexOperation", "symbols": ["CREATE", "UPDATE", "DELETE", "REBUILD"]}}
-          ]
-        }
-      ],
-      "default": null,
-      "doc": "Metadata indexing operations for efficient filtering"
-    },
-    {
-      "name": "batch_data",
-      "type": [
-        "null",
-        {
-          "type": "record",
-          "name": "BatchOperationData",
-          "fields": [
-            {"name": "batch_id", "type": "string"},
-            {"name": "batch_size", "type": "int"},
-            {"name": "operation_type", "type": {"type": "enum", "name": "BatchType", "symbols": ["INSERT", "UPDATE", "DELETE", "UPSERT"]}},
-            {"name": "vector_ids", "type": {"type": "array", "items": "string"}},
-            {"name": "completion_status", "type": {"type": "enum", "name": "BatchStatus", "symbols": ["STARTED", "COMPLETED", "FAILED", "PARTIAL"]}}
-          ]
-        }
-      ],
-      "default": null,
-      "doc": "Batch operation tracking for atomic multi-vector operations"
-    }
+    {"name": "schema_version", "type": "int"},
+    {"name": "sequence", "type": "long"},
+    {"name": "timestamp", "type": "string"},
+    {"name": "entry_type", "type": "string"},
+    {"name": "collection_id", "type": ["null", "string"], "default": null},
+    {"name": "vector_record", "type": ["null", {
+      "type": "record",
+      "name": "VectorRecord",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "vector", "type": {"type": "array", "items": "float"}},
+        {"name": "metadata", "type": "string"},
+        {"name": "timestamp", "type": "string"},
+        {"name": "source_stream", "type": ["null", "string"], "default": null},
+        {"name": "batch_id", "type": ["null", "string"], "default": null}
+      ]
+    }], "default": null},
+    {"name": "vector_id", "type": ["null", "string"], "default": null},
+    {"name": "viper_data", "type": ["null", "string"], "default": null},
+    {"name": "checkpoint_sequence", "type": ["null", "long"], "default": null},
+    {"name": "stream_data", "type": ["null", "string"], "default": null},
+    {"name": "metadata_index_data", "type": ["null", "string"], "default": null},
+    {"name": "batch_data", "type": ["null", "string"], "default": null}
   ]
 }
+EOF < /dev/null

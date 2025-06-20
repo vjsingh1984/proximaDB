@@ -15,7 +15,7 @@
  */
 
 //! Advanced indexing algorithms for ProximaDB
-//! 
+//!
 //! This module provides implementations of various vector indexing algorithms:
 //! - IVF (Inverted File Index) for large-scale search
 //! - LSH (Locality Sensitive Hashing) for binary vectors

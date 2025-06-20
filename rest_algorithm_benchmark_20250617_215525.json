@@ -1,0 +1,440 @@
+{
+  "start_time": "2025-06-17T21:55:24.632459",
+  "test_type": "REST API Algorithm Benchmark",
+  "base_url": "http://localhost:5678/api/v1",
+  "test_configurations": [
+    {
+      "distance_metric": "cosine",
+      "storage_layout": "standard",
+      "name": "cosine_standard"
+    },
+    {
+      "distance_metric": "euclidean",
+      "storage_layout": "standard",
+      "name": "euclidean_standard"
+    },
+    {
+      "distance_metric": "dot_product",
+      "storage_layout": "standard",
+      "name": "dot_standard"
+    },
+    {
+      "distance_metric": "manhattan",
+      "storage_layout": "viper",
+      "name": "manhattan_viper"
+    },
+    {
+      "distance_metric": "cosine",
+      "storage_layout": "viper",
+      "name": "cosine_viper"
+    }
+  ],
+  "collections_created": 5,
+  "embeddings_generated": 20,
+  "insertion_results": {
+    "cosine_standard": {
+      "collection_id": "col_fd1be1c4-b57d-419e-8474-ee1461f61b34",
+      "collection_name": "rest_benchmark_cosine_standard_1750215324",
+      "insertion_time": 0.07450222969055176,
+      "vectors_attempted": 20,
+      "vectors_successful": 0,
+      "vectors_per_second": 0.0,
+      "success_rate": 0.0,
+      "config": {
+        "distance_metric": "cosine",
+        "storage_layout": "standard",
+        "name": "cosine_standard"
+      }
+    },
+    "euclidean_standard": {
+      "collection_id": "col_1c73b0e0-5977-446a-8a61-56da3de2b2a1",
+      "collection_name": "rest_benchmark_euclidean_standard_1750215324",
+      "insertion_time": 0.09091567993164062,
+      "vectors_attempted": 20,
+      "vectors_successful": 0,
+      "vectors_per_second": 0.0,
+      "success_rate": 0.0,
+      "config": {
+        "distance_metric": "euclidean",
+        "storage_layout": "standard",
+        "name": "euclidean_standard"
+      }
+    },
+    "dot_standard": {
+      "collection_id": "col_33c89050-f0af-41c7-9e67-819a40007d2a",
+      "collection_name": "rest_benchmark_dot_standard_1750215324",
+      "insertion_time": 0.08491969108581543,
+      "vectors_attempted": 20,
+      "vectors_successful": 0,
+      "vectors_per_second": 0.0,
+      "success_rate": 0.0,
+      "config": {
+        "distance_metric": "dot_product",
+        "storage_layout": "standard",
+        "name": "dot_standard"
+      }
+    },
+    "manhattan_viper": {
+      "collection_id": "col_472fb870-fdf2-4fb0-b878-12aaa5ada87e",
+      "collection_name": "rest_benchmark_manhattan_viper_1750215324",
+      "insertion_time": 0.08246827125549316,
+      "vectors_attempted": 20,
+      "vectors_successful": 0,
+      "vectors_per_second": 0.0,
+      "success_rate": 0.0,
+      "config": {
+        "distance_metric": "manhattan",
+        "storage_layout": "viper",
+        "name": "manhattan_viper"
+      }
+    },
+    "cosine_viper": {
+      "collection_id": "col_ed61dfac-4c02-45fc-bd21-b818368e131d",
+      "collection_name": "rest_benchmark_cosine_viper_1750215324",
+      "insertion_time": 0.10515761375427246,
+      "vectors_attempted": 20,
+      "vectors_successful": 0,
+      "vectors_per_second": 0.0,
+      "success_rate": 0.0,
+      "config": {
+        "distance_metric": "cosine",
+        "storage_layout": "viper",
+        "name": "cosine_viper"
+      }
+    }
+  },
+  "search_results": {
+    "cosine_standard": {
+      "collection_id": "col_fd1be1c4-b57d-419e-8474-ee1461f61b34",
+      "collection_name": "rest_benchmark_cosine_standard_1750215324",
+      "config": {
+        "distance_metric": "cosine",
+        "storage_layout": "standard",
+        "name": "cosine_standard"
+      },
+      "similarity_searches": [
+        {
+          "query_id": 0,
+          "search_time": 0.007581472396850586,
+          "results_count": 0,
+          "success": true,
+          "query_text": "vector database performance optimization..."
+        },
+        {
+          "query_id": 1,
+          "search_time": 0.00706171989440918,
+          "results_count": 0,
+          "success": true,
+          "query_text": "machine learning embeddings similarity..."
+        },
+        {
+          "query_id": 2,
+          "search_time": 0.005717039108276367,
+          "results_count": 0,
+          "success": true,
+          "query_text": "artificial intelligence search algorithms..."
+        }
+      ],
+      "id_searches": [
+        {
+          "vector_id": "rest_vector_14_ca26f202",
+          "search_time": 0.003818035125732422,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_12_ca26f202",
+          "search_time": 0.0037031173706054688,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_1_0b287b0d",
+          "search_time": 0.0036995410919189453,
+          "found": true,
+          "success": true
+        }
+      ],
+      "metadata_searches": {
+        "note": "Metadata filtering would be tested here",
+        "planned_filters": [
+          {
+            "category": "technology"
+          },
+          {
+            "priority": "high"
+          },
+          {
+            "attributes.department": "engineering"
+          }
+        ]
+      }
+    },
+    "euclidean_standard": {
+      "collection_id": "col_1c73b0e0-5977-446a-8a61-56da3de2b2a1",
+      "collection_name": "rest_benchmark_euclidean_standard_1750215324",
+      "config": {
+        "distance_metric": "euclidean",
+        "storage_layout": "standard",
+        "name": "euclidean_standard"
+      },
+      "similarity_searches": [
+        {
+          "query_id": 0,
+          "search_time": 0.005842924118041992,
+          "results_count": 0,
+          "success": true,
+          "query_text": "vector database performance optimization..."
+        },
+        {
+          "query_id": 1,
+          "search_time": 0.005748271942138672,
+          "results_count": 0,
+          "success": true,
+          "query_text": "machine learning embeddings similarity..."
+        },
+        {
+          "query_id": 2,
+          "search_time": 0.0057849884033203125,
+          "results_count": 0,
+          "success": true,
+          "query_text": "artificial intelligence search algorithms..."
+        }
+      ],
+      "id_searches": [
+        {
+          "vector_id": "rest_vector_1_0b287b0d",
+          "search_time": 0.003621339797973633,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_4_ca26f202",
+          "search_time": 0.0036852359771728516,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_11_0b287b0d",
+          "search_time": 0.0036826133728027344,
+          "found": true,
+          "success": true
+        }
+      ],
+      "metadata_searches": {
+        "note": "Metadata filtering would be tested here",
+        "planned_filters": [
+          {
+            "category": "technology"
+          },
+          {
+            "priority": "high"
+          },
+          {
+            "attributes.department": "engineering"
+          }
+        ]
+      }
+    },
+    "dot_standard": {
+      "collection_id": "col_33c89050-f0af-41c7-9e67-819a40007d2a",
+      "collection_name": "rest_benchmark_dot_standard_1750215324",
+      "config": {
+        "distance_metric": "dot_product",
+        "storage_layout": "standard",
+        "name": "dot_standard"
+      },
+      "similarity_searches": [
+        {
+          "query_id": 0,
+          "search_time": 0.005715608596801758,
+          "results_count": 0,
+          "success": true,
+          "query_text": "vector database performance optimization..."
+        },
+        {
+          "query_id": 1,
+          "search_time": 0.005403041839599609,
+          "results_count": 0,
+          "success": true,
+          "query_text": "machine learning embeddings similarity..."
+        },
+        {
+          "query_id": 2,
+          "search_time": 0.005694866180419922,
+          "results_count": 0,
+          "success": true,
+          "query_text": "artificial intelligence search algorithms..."
+        }
+      ],
+      "id_searches": [
+        {
+          "vector_id": "rest_vector_8_ca26f202",
+          "search_time": 0.0031576156616210938,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_5_0b287b0d",
+          "search_time": 0.0035889148712158203,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_1_0b287b0d",
+          "search_time": 0.003465414047241211,
+          "found": true,
+          "success": true
+        }
+      ],
+      "metadata_searches": {
+        "note": "Metadata filtering would be tested here",
+        "planned_filters": [
+          {
+            "category": "technology"
+          },
+          {
+            "priority": "high"
+          },
+          {
+            "attributes.department": "engineering"
+          }
+        ]
+      }
+    },
+    "manhattan_viper": {
+      "collection_id": "col_472fb870-fdf2-4fb0-b878-12aaa5ada87e",
+      "collection_name": "rest_benchmark_manhattan_viper_1750215324",
+      "config": {
+        "distance_metric": "manhattan",
+        "storage_layout": "viper",
+        "name": "manhattan_viper"
+      },
+      "similarity_searches": [
+        {
+          "query_id": 0,
+          "search_time": 0.005439281463623047,
+          "results_count": 0,
+          "success": true,
+          "query_text": "vector database performance optimization..."
+        },
+        {
+          "query_id": 1,
+          "search_time": 0.005147457122802734,
+          "results_count": 0,
+          "success": true,
+          "query_text": "machine learning embeddings similarity..."
+        },
+        {
+          "query_id": 2,
+          "search_time": 0.004172801971435547,
+          "results_count": 0,
+          "success": true,
+          "query_text": "artificial intelligence search algorithms..."
+        }
+      ],
+      "id_searches": [
+        {
+          "vector_id": "rest_vector_8_ca26f202",
+          "search_time": 0.003332853317260742,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_1_0b287b0d",
+          "search_time": 0.003557443618774414,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_5_0b287b0d",
+          "search_time": 0.002931356430053711,
+          "found": true,
+          "success": true
+        }
+      ],
+      "metadata_searches": {
+        "note": "Metadata filtering would be tested here",
+        "planned_filters": [
+          {
+            "category": "technology"
+          },
+          {
+            "priority": "high"
+          },
+          {
+            "attributes.department": "engineering"
+          }
+        ]
+      }
+    },
+    "cosine_viper": {
+      "collection_id": "col_ed61dfac-4c02-45fc-bd21-b818368e131d",
+      "collection_name": "rest_benchmark_cosine_viper_1750215324",
+      "config": {
+        "distance_metric": "cosine",
+        "storage_layout": "viper",
+        "name": "cosine_viper"
+      },
+      "similarity_searches": [
+        {
+          "query_id": 0,
+          "search_time": 0.005763530731201172,
+          "results_count": 0,
+          "success": true,
+          "query_text": "vector database performance optimization..."
+        },
+        {
+          "query_id": 1,
+          "search_time": 0.005609035491943359,
+          "results_count": 0,
+          "success": true,
+          "query_text": "machine learning embeddings similarity..."
+        },
+        {
+          "query_id": 2,
+          "search_time": 0.003849029541015625,
+          "results_count": 0,
+          "success": true,
+          "query_text": "artificial intelligence search algorithms..."
+        }
+      ],
+      "id_searches": [
+        {
+          "vector_id": "rest_vector_16_ca26f202",
+          "search_time": 0.003560304641723633,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_15_0b287b0d",
+          "search_time": 0.003515481948852539,
+          "found": true,
+          "success": true
+        },
+        {
+          "vector_id": "rest_vector_13_0b287b0d",
+          "search_time": 0.003576040267944336,
+          "found": true,
+          "success": true
+        }
+      ],
+      "metadata_searches": {
+        "note": "Metadata filtering would be tested here",
+        "planned_filters": [
+          {
+            "category": "technology"
+          },
+          {
+            "priority": "high"
+          },
+          {
+            "attributes.department": "engineering"
+          }
+        ]
+      }
+    }
+  },
+  "total_time": 0.6349356174468994,
+  "end_time": "2025-06-17T21:55:25.267392"
+}

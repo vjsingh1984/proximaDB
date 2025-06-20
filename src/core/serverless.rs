@@ -147,7 +147,9 @@ impl Default for ServerlessConfig {
                 scale_up_delay_seconds: 30,
                 scale_down_delay_seconds: 300,
                 metrics: vec![
-                    ScalingMetric::CpuUtilization { target_percent: 70.0 },
+                    ScalingMetric::CpuUtilization {
+                        target_percent: 70.0,
+                    },
                     ScalingMetric::RequestsPerSecond { target: 100.0 },
                 ],
             },

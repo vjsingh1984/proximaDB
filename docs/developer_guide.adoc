@@ -1,0 +1,1305 @@
+= ProximaDB Developer Guide
+:doctype: book
+:toc: left
+:toclevels: 4
+:sectnums:
+:sectnumlevels: 4
+:author: Vijaykumar Singh
+:email: singhvjd@gmail.com
+:revdate: 2025-06-20
+:version: 0.1.0
+:copyright: Copyright 2025 Vijaykumar Singh
+:organization: ProximaDB
+:source-highlighter: rouge
+:icons: font
+:experimental:
+
+[abstract]
+== Abstract
+
+This Developer Guide provides comprehensive information for developers working with ProximaDB, including development setup, API documentation, SDK usage, testing strategies, and contribution guidelines.
+
+== Getting Started
+
+=== Development Environment Setup
+
+==== Prerequisites
+
+**System Requirements:**
+- **OS**: Linux (Ubuntu 20.04+), macOS (Big Sur+), or Windows 11 with WSL2
+- **Rust**: 1.70+ with stable toolchain
+- **Node.js**: 18+ for client SDK development
+- **Python**: 3.8+ for Python client development
+- **Docker**: 20.10+ for containerized development
+- **Git**: 2.30+ for version control
+
+**Hardware Requirements:**
+- **CPU**: 4+ cores recommended for parallel compilation
+- **Memory**: 8GB+ RAM (16GB+ recommended for development)
+- **Storage**: 20GB+ free space for builds and data
+
+==== Installation Steps
+
+[source,bash]
+----
+# 1. Clone the repository
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb
+
+# 2. Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup update stable
+
+# 3. Install development dependencies
+sudo apt update && sudo apt install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    cmake
+
+# 4. Install Python dependencies for clients
+pip install -r clients/python/requirements.txt
+
+# 5. Build the project
+cargo build --release
+----
+
+==== Development Tools Configuration
+
+**VS Code Extensions (Recommended):**
+```json
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb", 
+    "serayuzgur.crates",
+    "tamasfe.even-better-toml",
+    "ms-python.python",
+    "ms-vscode.vscode-json"
+  ]
+}
+```
+
+**Rust-Analyzer Settings:**
+```json
+{
+  "rust-analyzer.cargo.features": ["all"],
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.procMacro.enable": true
+}
+```
+
+=== Project Structure
+
+```
+proximadb/
+├── Cargo.toml              # Root project configuration
+├── Cargo.lock              # Dependency lock file
+├── CLAUDE.md               # AI assistant instructions
+├── build.rs                # Build script for protobuf
+├── proto/                  # Protocol buffer definitions
+│   └── proximadb.proto     # gRPC service definitions
+├── src/                    # Rust source code
+│   ├── lib.rs              # Library root
+│   ├── bin/                # Binary executables
+│   │   ├── server.rs       # ProximaDB server
+│   │   └── cli.rs          # Command-line interface
+│   ├── api/                # API layer implementations
+│   │   ├── rest/           # REST API endpoints
+│   │   └── v1/             # API version management
+│   ├── core/               # Core business logic
+│   │   ├── config.rs       # Configuration management
+│   │   ├── error.rs        # Error types and handling
+│   │   └── types.rs        # Common type definitions
+│   ├── network/            # Network layer
+│   │   ├── grpc/           # gRPC service implementation
+│   │   ├── multi_server.rs # Unified dual-protocol server
+│   │   └── middleware/     # Authentication, rate limiting
+│   ├── storage/            # Storage layer
+│   │   ├── engine.rs       # Storage engine abstraction
+│   │   ├── viper/          # VIPER storage implementation
+│   │   ├── wal/            # Write-ahead log
+│   │   ├── metadata/       # Metadata management
+│   │   └── filesystem/     # Multi-cloud filesystem abstraction
+│   ├── services/           # Business logic services
+│   │   ├── collection_service.rs  # Collection management
+│   │   └── storage_path_service.rs # Storage path resolution
+│   └── utils/              # Utility functions
+├── clients/                # Client SDKs
+│   ├── python/             # Python client library
+│   │   ├── src/proximadb/  # Python package source
+│   │   ├── examples/       # Python usage examples
+│   │   └── tests/          # Python client tests
+│   └── java/               # Java client library (planned)
+├── docs/                   # Documentation
+│   ├── requirements.adoc   # Requirements specification
+│   ├── hld.adoc           # High-level design
+│   ├── lld.adoc           # Low-level design
+│   └── api/               # API documentation
+├── tests/                  # Integration tests
+├── benches/               # Performance benchmarks
+├── examples/              # Code examples
+└── config/                # Configuration files
+    └── local.toml         # Local development config
+```
+
+== Build System
+
+=== Cargo Configuration
+
+The project uses a multi-binary Cargo workspace with feature flags for optional functionality:
+
+[source,toml]
+----
+[package]
+name = "proximadb"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["server", "cli"]
+server = ["tonic", "tokio", "serde"]
+cli = ["clap", "tokio"] 
+simd = ["simdeez"]
+intel-mkl = ["intel-mkl-src"]
+cuda = ["candle-core/cuda"]
+
+[[bin]]
+name = "proximadb-server"
+path = "src/bin/server.rs"
+required-features = ["server"]
+
+[[bin]]
+name = "proximadb-cli"
+path = "src/bin/cli.rs"
+required-features = ["cli"]
+----
+
+=== Build Commands
+
+[source,bash]
+----
+# Development builds (faster compilation, includes debug symbols)
+cargo build
+
+# Production builds (optimized, smaller binaries)
+cargo build --release
+
+# Build with specific features
+cargo build --features simd
+cargo build --features intel-mkl
+cargo build --features cuda
+
+# Build only the server
+cargo build --bin proximadb-server --release
+
+# Build only the CLI
+cargo build --bin proximadb-cli --release
+
+# Cross-compilation (requires target installation)
+cargo build --target x86_64-unknown-linux-gnu --release
+----
+
+=== Code Generation
+
+ProximaDB uses `build.rs` for automatic code generation:
+
+[source,rust]
+----
+// build.rs
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Generate Rust code from protobuf definitions
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(true)
+        .compile(&["proto/proximadb.proto"], &["proto"])?;
+    
+    // Generate schema constants
+    generate_schema_constants()?;
+    
+    Ok(())
+}
+----
+
+== API Documentation
+
+=== gRPC API
+
+ProximaDB provides a comprehensive gRPC API defined in `proto/proximadb.proto`.
+
+==== Service Definition
+
+[source,protobuf]
+----
+service ProximaDB {
+  // Collection Management
+  rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+  
+  // Vector Operations
+  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+  rpc UpdateVector(UpdateVectorRequest) returns (UpdateVectorResponse);
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
+  
+  // Search Operations
+  rpc SearchVectors(SearchVectorsRequest) returns (SearchVectorsResponse);
+  rpc SearchWithMetadata(SearchWithMetadataRequest) returns (SearchWithMetadataResponse);
+  
+  // Batch Operations
+  rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  
+  // Health and Admin
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+}
+----
+
+==== Collection Management API
+
+**Create Collection**
+[source,rust]
+----
+use proximadb::proximadb_pb::*;
+
+// Create a new collection for BERT embeddings
+let request = CreateCollectionRequest {
+    name: "bert_embeddings".to_string(),
+    dimension: 768,
+    distance_metric: DistanceMetric::Cosine as i32,
+    description: Some("BERT base model embeddings".to_string()),
+    metadata_schema: Some(json!({
+        "type": "object",
+        "properties": {
+            "document_id": {"type": "string"},
+            "category": {"type": "string"},
+            "timestamp": {"type": "string", "format": "date-time"}
+        }
+    }).to_string()),
+};
+
+let response = client.create_collection(request).await?;
+println!("Collection created: {}", response.into_inner().collection_id);
+----
+
+**List Collections**
+[source,rust]
+----
+let request = ListCollectionsRequest {};
+let response = client.list_collections(request).await?;
+
+for collection in response.into_inner().collections {
+    println!("Collection: {} ({}D, {})", 
+        collection.name, 
+        collection.dimension,
+        collection.distance_metric
+    );
+}
+----
+
+==== Vector Operations API
+
+**Insert Vector**
+[source,rust]
+----
+// Insert a BERT embedding with metadata
+let request = InsertVectorRequest {
+    collection_id: collection_id.clone(),
+    vector_id: "doc_123".to_string(),
+    vector: bert_embedding_768d, // Vec<f32> with 768 dimensions
+    metadata: Some(json!({
+        "document_id": "doc_123",
+        "category": "research_paper",
+        "title": "Attention Is All You Need",
+        "authors": ["Vaswani", "Shazeer", "Parmar"],
+        "timestamp": "2025-06-20T10:30:00Z"
+    }).to_string()),
+};
+
+let response = client.insert_vector(request).await?;
+println!("Vector inserted with sequence: {}", response.into_inner().sequence_number);
+----
+
+**Search Vectors**
+[source,rust]
+----
+// Perform similarity search with metadata filtering
+let request = SearchVectorsRequest {
+    collection_id: collection_id.clone(),
+    query_vector: query_embedding,
+    k: 10,
+    distance_threshold: Some(0.8),
+    metadata_filter: Some(json!({
+        "category": "research_paper",
+        "authors": {"$in": ["Vaswani", "Attention"]}
+    }).to_string()),
+    return_vectors: true,
+    return_metadata: true,
+};
+
+let response = client.search_vectors(request).await?;
+for result in response.into_inner().results {
+    println!("ID: {}, Score: {:.4}, Metadata: {}", 
+        result.vector_id, 
+        result.similarity_score,
+        result.metadata.unwrap_or_default()
+    );
+}
+----
+
+=== REST API
+
+ProximaDB provides REST API endpoints that mirror the gRPC functionality with JSON payloads.
+
+==== Base URL and Authentication
+
+```
+Base URL: http://localhost:5678
+Content-Type: application/json
+```
+
+==== Collection Endpoints
+
+**POST /collections - Create Collection**
+[source,http]
+----
+POST /collections HTTP/1.1
+Content-Type: application/json
+
+{
+  "name": "bert_embeddings",
+  "dimension": 768,
+  "distance_metric": "COSINE",
+  "description": "BERT base model embeddings",
+  "metadata_schema": {
+    "type": "object",
+    "properties": {
+      "document_id": {"type": "string"},
+      "category": {"type": "string"}
+    }
+  }
+}
+----
+
+**GET /collections - List Collections**
+[source,http]
+----
+GET /collections HTTP/1.1
+
+Response:
+{
+  "collections": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "bert_embeddings", 
+      "dimension": 768,
+      "distance_metric": "COSINE",
+      "vector_count": 0,
+      "created_at": "2025-06-20T10:30:00Z"
+    }
+  ]
+}
+----
+
+**GET /collections/{id} - Get Collection**
+[source,http]
+----
+GET /collections/550e8400-e29b-41d4-a716-446655440000 HTTP/1.1
+
+Response:
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "bert_embeddings",
+  "dimension": 768,
+  "distance_metric": "COSINE",
+  "description": "BERT base model embeddings",
+  "vector_count": 1337,
+  "created_at": "2025-06-20T10:30:00Z",
+  "updated_at": "2025-06-20T15:45:30Z"
+}
+----
+
+==== Vector Endpoints
+
+**POST /collections/{id}/vectors - Insert Vector**
+[source,http]
+----
+POST /collections/550e8400-e29b-41d4-a716-446655440000/vectors HTTP/1.1
+Content-Type: application/json
+
+{
+  "vector_id": "doc_123",
+  "vector": [0.1, 0.2, 0.3, ...], // 768 dimensions
+  "metadata": {
+    "document_id": "doc_123",
+    "category": "research_paper",
+    "title": "Attention Is All You Need"
+  }
+}
+----
+
+**POST /collections/{id}/search - Search Vectors**
+[source,http]
+----
+POST /collections/550e8400-e29b-41d4-a716-446655440000/search HTTP/1.1
+Content-Type: application/json
+
+{
+  "query_vector": [0.1, 0.2, 0.3, ...],
+  "k": 10,
+  "distance_threshold": 0.8,
+  "metadata_filter": {
+    "category": "research_paper"
+  },
+  "return_vectors": true,
+  "return_metadata": true
+}
+----
+
+== Client SDK Usage
+
+=== Python SDK
+
+The Python SDK provides both gRPC and REST clients with a unified interface.
+
+==== Installation
+
+[source,bash]
+----
+cd clients/python
+pip install -e .
+
+# Or install from PyPI (when available)
+pip install proximadb-python
+----
+
+==== Basic Usage
+
+[source,python]
+----
+import asyncio
+from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+
+async def main():
+    # Create client (auto-detects best protocol)
+    client = ProximaDBClient("localhost:5678")
+    
+    # Create collection for BERT embeddings
+    collection_config = CollectionConfig(
+        name="bert_embeddings",
+        dimension=768,
+        distance_metric=DistanceMetric.COSINE,
+        description="BERT base model embeddings"
+    )
+    
+    collection_id = await client.create_collection(collection_config)
+    print(f"Created collection: {collection_id}")
+    
+    # Insert vectors with metadata
+    vectors = [
+        {
+            "vector_id": "doc_1",
+            "vector": bert_embedding_1,  # 768-dimensional list
+            "metadata": {"category": "news", "topic": "technology"}
+        },
+        {
+            "vector_id": "doc_2", 
+            "vector": bert_embedding_2,
+            "metadata": {"category": "research", "topic": "ai"}
+        }
+    ]
+    
+    await client.batch_insert(collection_id, vectors)
+    
+    # Perform similarity search
+    results = await client.search_vectors(
+        collection_id=collection_id,
+        query_vector=query_embedding,
+        k=5,
+        metadata_filter={"category": "research"},
+        return_metadata=True
+    )
+    
+    for result in results:
+        print(f"ID: {result.vector_id}, Score: {result.similarity_score:.4f}")
+        print(f"Metadata: {result.metadata}")
+
+# Run the async function
+asyncio.run(main())
+----
+
+==== Advanced Python SDK Features
+
+**Connection Pooling and Retry Logic**
+[source,python]
+----
+from proximadb import ProximaDBClient, ClientConfig, RetryConfig
+
+# Configure client with connection pooling
+config = ClientConfig(
+    endpoint="localhost:5678",
+    max_connections=10,
+    timeout=30.0,
+    retry_config=RetryConfig(
+        max_retries=3,
+        backoff_factor=1.5,
+        max_backoff=10.0
+    )
+)
+
+client = ProximaDBClient(config=config)
+----
+
+**Async Context Manager**
+[source,python]
+----
+async with ProximaDBClient("localhost:5678") as client:
+    # Client automatically handles connection lifecycle
+    collections = await client.list_collections()
+    for collection in collections:
+        print(f"Collection: {collection.name}")
+# Connection automatically closed
+----
+
+**Error Handling**
+[source,python]
+----
+from proximadb.exceptions import (
+    ProximaDBException,
+    CollectionNotFoundError,
+    DimensionMismatchError,
+    ConnectionError
+)
+
+try:
+    await client.get_collection("nonexistent_id")
+except CollectionNotFoundError as e:
+    print(f"Collection not found: {e}")
+except ConnectionError as e:
+    print(f"Connection failed: {e}")
+except ProximaDBException as e:
+    print(f"General ProximaDB error: {e}")
+----
+
+=== BERT Embeddings Integration
+
+ProximaDB has been extensively tested with BERT embeddings of various dimensions.
+
+==== Supported BERT Models
+
+[cols="2,1,2,2"]
+|===
+|Model Type |Dimensions |Distance Metric |Use Case
+
+|BERT Base |768 |COSINE |General text embeddings
+|BERT Large |1024 |COSINE |High-quality text representations  
+|Sentence-BERT |384 |EUCLIDEAN |Sentence similarity tasks
+|DistilBERT |768 |COSINE |Fast inference, smaller model
+|RoBERTa |768/1024 |COSINE |Robust text understanding
+|===
+
+==== BERT Integration Example
+
+[source,python]
+----
+from transformers import AutoTokenizer, AutoModel
+import torch
+import numpy as np
+
+class BERTEmbeddingGenerator:
+    def __init__(self, model_name="bert-base-uncased"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.model.eval()
+    
+    def generate_embedding(self, text: str) -> list[float]:
+        # Tokenize and encode
+        inputs = self.tokenizer(text, return_tensors="pt", 
+                              truncation=True, max_length=512)
+        
+        # Generate embeddings
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # Use [CLS] token embedding
+            embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+            
+        return embedding.numpy().tolist()
+
+# Usage with ProximaDB
+bert = BERTEmbeddingGenerator()
+
+texts = [
+    "The quick brown fox jumps over the lazy dog",
+    "Machine learning is revolutionizing artificial intelligence",
+    "ProximaDB provides fast vector similarity search"
+]
+
+# Create collection for BERT embeddings
+collection_id = await client.create_collection(CollectionConfig(
+    name="bert_documents",
+    dimension=768,
+    distance_metric=DistanceMetric.COSINE
+))
+
+# Insert BERT embeddings
+for i, text in enumerate(texts):
+    embedding = bert.generate_embedding(text)
+    await client.insert_vector(
+        collection_id=collection_id,
+        vector_id=f"doc_{i}",
+        vector=embedding,
+        metadata={"text": text, "length": len(text)}
+    )
+
+# Search with BERT query
+query_text = "fast vector search database"
+query_embedding = bert.generate_embedding(query_text)
+
+results = await client.search_vectors(
+    collection_id=collection_id,
+    query_vector=query_embedding,
+    k=3,
+    return_metadata=True
+)
+
+for result in results:
+    print(f"Score: {result.similarity_score:.4f}")
+    print(f"Text: {result.metadata['text']}")
+----
+
+== Testing Guide
+
+=== Unit Testing
+
+ProximaDB uses Rust's built-in testing framework with additional testing utilities.
+
+==== Running Tests
+
+[source,bash]
+----
+# Run all unit tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test module
+cargo test storage::
+
+# Run tests with specific features
+cargo test --features simd
+
+# Run tests in release mode (for performance testing)
+cargo test --release
+----
+
+==== Test Organization
+
+```
+tests/
+├── unit/                   # Unit tests (co-located with source)
+├── integration/            # Integration tests
+│   ├── test_grpc_integration.rs
+│   ├── test_rest_integration.rs
+│   └── test_storage_integration.rs
+├── e2e/                    # End-to-end tests
+│   ├── test_bert_collections.rs
+│   └── test_persistence.rs
+└── fixtures/               # Test data and utilities
+    ├── bert_embeddings.json
+    └── test_collections.json
+```
+
+==== Writing Unit Tests
+
+[source,rust]
+----
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_test;
+    
+    #[tokio::test]
+    async fn test_collection_creation() {
+        let storage = create_test_storage().await;
+        
+        let collection = Collection {
+            name: "test_collection".to_string(),
+            dimension: 128,
+            distance_metric: DistanceMetric::Cosine,
+            ..Default::default()
+        };
+        
+        let result = storage.create_collection(collection).await;
+        assert!(result.is_ok());
+        
+        let collection_id = result.unwrap();
+        assert!(!collection_id.is_empty());
+    }
+    
+    #[tokio::test]
+    async fn test_vector_insertion() {
+        let (storage, collection_id) = setup_test_collection().await;
+        
+        let vector = vec![0.1, 0.2, 0.3, 0.4];
+        let metadata = json!({"type": "test"});
+        
+        let result = storage.insert_vector(
+            &collection_id,
+            "test_vector_1",
+            vector,
+            Some(metadata)
+        ).await;
+        
+        assert!(result.is_ok());
+    }
+}
+----
+
+=== Integration Testing
+
+Integration tests verify that multiple components work together correctly.
+
+==== gRPC Integration Tests
+
+[source,rust]
+----
+// tests/test_grpc_integration.rs
+use proximadb::network::grpc::ProximaDbGrpcService;
+use proximadb::proximadb_pb::*;
+use tonic::test::mock_stream;
+
+#[tokio::test]
+async fn test_grpc_collection_lifecycle() {
+    let service = create_test_grpc_service().await;
+    
+    // Create collection
+    let create_request = CreateCollectionRequest {
+        name: "integration_test".to_string(),
+        dimension: 384,
+        distance_metric: DistanceMetric::Euclidean as i32,
+        ..Default::default()
+    };
+    
+    let create_response = service
+        .create_collection(tonic::Request::new(create_request))
+        .await
+        .unwrap();
+    
+    let collection_id = create_response.into_inner().collection_id;
+    
+    // Get collection
+    let get_request = GetCollectionRequest {
+        collection_id: collection_id.clone(),
+    };
+    
+    let get_response = service
+        .get_collection(tonic::Request::new(get_request))
+        .await
+        .unwrap();
+    
+    let collection = get_response.into_inner().collection.unwrap();
+    assert_eq!(collection.name, "integration_test");
+    assert_eq!(collection.dimension, 384);
+}
+----
+
+=== End-to-End Testing
+
+E2E tests verify complete workflows from client to storage.
+
+==== BERT Collection E2E Test
+
+[source,python]
+----
+# tests/test_bert_e2e.py
+import pytest
+import asyncio
+from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+
+@pytest.mark.asyncio
+async def test_bert_collection_persistence():
+    """Test BERT collection creation and persistence across server restarts."""
+    
+    client = ProximaDBClient("localhost:5678")
+    
+    # Create BERT collections with different dimensions
+    bert_configs = [
+        CollectionConfig(
+            name="bert_384", 
+            dimension=384, 
+            distance_metric=DistanceMetric.EUCLIDEAN
+        ),
+        CollectionConfig(
+            name="bert_768", 
+            dimension=768, 
+            distance_metric=DistanceMetric.COSINE
+        ),
+        CollectionConfig(
+            name="bert_1024", 
+            dimension=1024, 
+            distance_metric=DistanceMetric.COSINE
+        ),
+    ]
+    
+    created_collections = []
+    for config in bert_configs:
+        collection_id = await client.create_collection(config)
+        created_collections.append(collection_id)
+        
+        # Verify creation
+        collection = await client.get_collection(collection_id)
+        assert collection.name == config.name
+        assert collection.dimension == config.dimension
+    
+    # List all collections
+    collections = await client.list_collections()
+    assert len(collections) >= len(bert_configs)
+    
+    # Simulate server restart by creating new client
+    await client.close()
+    
+    # Verify persistence after restart
+    client = ProximaDBClient("localhost:5678")
+    
+    for collection_id in created_collections:
+        collection = await client.get_collection(collection_id)
+        assert collection is not None
+        print(f"Collection {collection.name} persisted successfully")
+    
+    await client.close()
+----
+
+=== Performance Testing
+
+==== Benchmark Tests
+
+[source,rust]
+----
+// benches/collection_benchmarks.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use proximadb::storage::engine::StorageEngine;
+
+fn benchmark_collection_operations(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let storage = rt.block_on(create_benchmark_storage());
+    
+    c.bench_function("collection_create", |b| {
+        b.to_async(&rt).iter(|| async {
+            let collection = create_test_collection();
+            black_box(storage.create_collection(collection).await.unwrap())
+        })
+    });
+    
+    c.bench_function("collection_get", |b| {
+        let collection_id = rt.block_on(setup_benchmark_collection(&storage));
+        
+        b.to_async(&rt).iter(|| async {
+            black_box(storage.get_collection(&collection_id).await.unwrap())
+        })
+    });
+}
+
+criterion_group!(benches, benchmark_collection_operations);
+criterion_main!(benches);
+----
+
+==== Running Benchmarks
+
+[source,bash]
+----
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark
+cargo bench collection_operations
+
+# Run benchmarks with profiling
+cargo bench --features profiling
+
+# Generate benchmark report
+cargo bench -- --output-format html
+----
+
+== Configuration
+
+=== Configuration File Structure
+
+ProximaDB uses TOML configuration files with hierarchical overrides:
+
+[source,toml]
+----
+# config/local.toml
+[server]
+host = "127.0.0.1"
+port = 5678
+node_id = 1
+data_dir = "/data/proximadb"
+
+[storage]
+engine = "viper"
+storage_url = "file:///data/proximadb/1"
+
+[storage.viper]
+parquet_row_group_size = 10000
+compression = "zstd"
+enable_vectorization = true
+
+[wal]
+strategy = "avro"
+max_memory_mb = 1024
+max_entries = 75000
+flush_interval_secs = 300
+
+[wal.avro]
+compression = "lz4"
+schema_evolution = true
+
+[consensus]
+enabled = false
+# cluster_peers = ["node2:7001", "node3:7002"]
+
+[api]
+enable_grpc = true
+enable_rest = true
+cors_enabled = true
+max_request_size_mb = 64
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+log_level = "info"
+
+[auth]
+enabled = false
+# provider = "jwt"
+# jwt_secret = "your-secret-key"
+----
+
+=== Environment Variables
+
+ProximaDB supports environment variable overrides:
+
+[source,bash]
+----
+# Server configuration
+export PROXIMADB_HOST="0.0.0.0"
+export PROXIMADB_PORT=5678
+export PROXIMADB_DATA_DIR="/data/proximadb"
+
+# Storage configuration  
+export PROXIMADB_STORAGE_URL="s3://my-bucket/proximadb"
+export PROXIMADB_STORAGE_ENGINE="viper"
+
+# WAL configuration
+export PROXIMADB_WAL_STRATEGY="avro"
+export PROXIMADB_WAL_MAX_MEMORY_MB=2048
+
+# Authentication
+export PROXIMADB_AUTH_ENABLED=true
+export PROXIMADB_JWT_SECRET="production-secret"
+
+# Monitoring
+export PROXIMADB_LOG_LEVEL="debug"
+export PROXIMADB_METRICS_ENABLED=true
+----
+
+=== Configuration Priority
+
+Configuration values are resolved in the following order (highest to lowest priority):
+
+1. **Command-line arguments**: `--host`, `--port`, `--config`
+2. **Environment variables**: `PROXIMADB_*`
+3. **Configuration file**: `config/local.toml` or specified file
+4. **Default values**: Built-in defaults
+
+== Deployment
+
+=== Local Development
+
+[source,bash]
+----
+# Start server with default configuration
+cargo run --bin proximadb-server
+
+# Start with custom configuration
+cargo run --bin proximadb-server -- --config config/development.toml
+
+# Start with specific data directory
+cargo run --bin proximadb-server -- --data-dir ./dev-data
+
+# Start with debug logging
+PROXIMADB_LOG_LEVEL=debug cargo run --bin proximadb-server
+----
+
+=== Docker Deployment
+
+==== Build Docker Image
+
+[source,bash]
+----
+# Build production image
+docker build -t proximadb:latest .
+
+# Build with specific target
+docker build --target production -t proximadb:production .
+
+# Build development image
+docker build --target development -t proximadb:dev .
+----
+
+==== Run Container
+
+[source,bash]
+----
+# Run with default configuration
+docker run -p 5678:5678 -v $(pwd)/data:/data proximadb:latest
+
+# Run with custom configuration
+docker run -p 5678:5678 \
+  -v $(pwd)/config:/config \
+  -v $(pwd)/data:/data \
+  proximadb:latest --config /config/production.toml
+
+# Run with environment variables
+docker run -p 5678:5678 \
+  -e PROXIMADB_LOG_LEVEL=debug \
+  -e PROXIMADB_STORAGE_URL=s3://my-bucket \
+  proximadb:latest
+----
+
+=== Kubernetes Deployment
+
+==== Deployment Manifest
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proximadb
+  labels:
+    app: proximadb
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb:latest
+        ports:
+        - containerPort: 5678
+          name: api
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: PROXIMADB_HOST
+          value: "0.0.0.0"
+        - name: PROXIMADB_STORAGE_URL
+          value: "s3://proximadb-production"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /config
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: proximadb-data
+      - name: config
+        configMap:
+          name: proximadb-config
+----
+
+== Debugging
+
+=== Logging Configuration
+
+[source,rust]
+----
+use tracing::{info, warn, error, debug};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+// Initialize logging
+tracing_subscriber::registry()
+    .with(tracing_subscriber::EnvFilter::new(
+        std::env::var("PROXIMADB_LOG_LEVEL").unwrap_or_else(|_| "info".into())
+    ))
+    .with(tracing_subscriber::fmt::layer())
+    .init();
+
+// Usage in code
+info!("Collection created: {}", collection_id);
+debug!("Processing vector with {} dimensions", vector.len());
+warn!("High memory usage: {}MB", memory_usage);
+error!("Failed to connect to storage: {}", error);
+----
+
+=== Debug Build
+
+[source,bash]
+----
+# Build with debug symbols
+cargo build --profile dev
+
+# Build with debug assertions
+cargo build --features debug-assertions
+
+# Run with debug logging
+PROXIMADB_LOG_LEVEL=debug cargo run --bin proximadb-server
+
+# Run with tracing
+PROXIMADB_LOG_LEVEL=trace cargo run --bin proximadb-server
+----
+
+=== Performance Profiling
+
+[source,bash]
+----
+# Install profiling tools
+cargo install flamegraph
+cargo install cargo-profiling
+
+# Generate flame graph
+cargo flamegraph --bin proximadb-server
+
+# Profile with perf
+cargo build --release
+perf record --call-graph=dwarf ./target/release/proximadb-server
+perf report
+----
+
+== Contributing
+
+=== Development Workflow
+
+1. **Fork and Clone**
+[source,bash]
+----
+git clone https://github.com/your-username/proximadb.git
+cd proximadb
+git remote add upstream https://github.com/vjsingh1984/proximadb.git
+----
+
+2. **Create Feature Branch**
+[source,bash]
+----
+git checkout -b feature/your-feature-name
+----
+
+3. **Make Changes**
+[source,bash]
+----
+# Format code
+cargo fmt
+
+# Check code quality
+cargo clippy -- -D warnings
+
+# Run tests
+cargo test
+
+# Run integration tests
+cargo test --test integration
+----
+
+4. **Commit Changes**
+[source,bash]
+----
+git add .
+git commit -m "feat: add vector similarity search optimization
+
+- Implement SIMD-accelerated distance calculations
+- Add configurable similarity thresholds
+- Include comprehensive test coverage"
+----
+
+5. **Push and Create PR**
+[source,bash]
+----
+git push origin feature/your-feature-name
+# Create pull request on GitHub
+----
+
+=== Code Style Guidelines
+
+**Rust Code Style:**
+- Use `cargo fmt` for consistent formatting
+- Follow Rust naming conventions (snake_case, PascalCase)
+- Add documentation comments for public APIs
+- Use `clippy` for code quality checks
+
+**Commit Message Format:**
+```
+type(scope): brief description
+
+Detailed description of the change, including:
+- What was changed and why
+- Any breaking changes
+- Issue references (#123)
+
+Examples:
+feat(api): add vector similarity search endpoint
+fix(storage): resolve race condition in WAL flushing  
+docs(readme): update installation instructions
+test(integration): add BERT collection persistence tests
+```
+
+**Code Review Checklist:**
+- [ ] Code follows style guidelines
+- [ ] Tests are included and pass
+- [ ] Documentation is updated
+- [ ] Breaking changes are documented
+- [ ] Performance impact is considered
+
+=== Release Process
+
+1. **Version Bump**
+[source,bash]
+----
+# Update version in Cargo.toml
+sed -i 's/version = "0.1.0"/version = "0.2.0"/' Cargo.toml
+
+# Update CHANGELOG.md
+echo "## [0.2.0] - 2025-06-20" >> CHANGELOG.md
+----
+
+2. **Create Release**
+[source,bash]
+----
+git tag -a v0.2.0 -m "Release version 0.2.0"
+git push upstream v0.2.0
+----
+
+3. **Build and Publish**
+[source,bash]
+----
+# Build release binaries
+cargo build --release --all-targets
+
+# Publish to crates.io (maintainers only)
+cargo publish
+----
+
+---
+
+**Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>  
+**Repository**: https://github.com/vjsingh1984/proximadb  
+**License**: Apache 2.0

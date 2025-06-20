@@ -1,0 +1,277 @@
+syntax = "proto3";
+
+package proximadb;
+
+// ============================================================================
+// ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
+// - Vector INSERT/UPSERT: Avro binary for zero-copy performance
+// - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+// - Collection operations: Single unified endpoint for all metadata operations
+// ============================================================================
+
+service ProximaDB {
+  // Collection management - single unified endpoint for flexibility
+  rpc CollectionOperation(CollectionRequest) returns (CollectionResponse);
+  
+  // Vector operations - optimized by use case
+  rpc VectorInsert(VectorInsertRequest) returns (VectorOperationResponse);        // Zero-copy Avro binary
+  rpc VectorMutation(VectorMutationRequest) returns (VectorOperationResponse);    // UPDATE/DELETE via gRPC
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);        // Search via gRPC
+  
+  // Health and monitoring
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
+}
+
+// ============================================================================
+// ENUMS - Aligned with Avro schema
+// ============================================================================
+
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+  COSINE = 1;
+  EUCLIDEAN = 2;
+  DOT_PRODUCT = 3;
+  HAMMING = 4;
+}
+
+enum StorageEngine {
+  STORAGE_ENGINE_UNSPECIFIED = 0;
+  VIPER = 1;
+  LSM = 2;
+  MMAP = 3;
+  HYBRID = 4;
+}
+
+enum IndexingAlgorithm {
+  INDEXING_ALGORITHM_UNSPECIFIED = 0;
+  HNSW = 1;
+  IVF = 2;
+  PQ = 3;
+  FLAT = 4;
+  ANNOY = 5;
+}
+
+enum CollectionOperation {
+  COLLECTION_OPERATION_UNSPECIFIED = 0;
+  COLLECTION_CREATE = 1;
+  COLLECTION_UPDATE = 2;
+  COLLECTION_GET = 3;
+  COLLECTION_LIST = 4;
+  COLLECTION_DELETE = 5;
+  COLLECTION_MIGRATE = 6;
+}
+
+enum VectorOperation {
+  VECTOR_OPERATION_UNSPECIFIED = 0;
+  VECTOR_INSERT = 1;
+  VECTOR_UPSERT = 2;
+  VECTOR_UPDATE = 3;
+  VECTOR_DELETE = 4;
+  VECTOR_SEARCH = 5;
+}
+
+enum MutationType {
+  MUTATION_TYPE_UNSPECIFIED = 0;
+  MUTATION_UPDATE = 1;
+  MUTATION_DELETE = 2;  // Sets expires_at to current time
+}
+
+// ============================================================================
+// CORE DATA TYPES - Aligned with Avro schema
+// ============================================================================
+
+message VectorRecord {
+  optional string id = 1;                    // Auto-generated if null
+  repeated float vector = 2;                 // REQUIRED for inserts
+  map<string, string> metadata = 3;          // Simplified - all values as strings
+  optional int64 timestamp = 4;              // Microseconds since epoch
+  int64 version = 5;                         // For optimistic concurrency
+  optional int64 expires_at = 6;             // TTL support
+}
+
+message CollectionConfig {
+  string name = 1;
+  int32 dimension = 2;
+  DistanceMetric distance_metric = 3;
+  StorageEngine storage_engine = 4;
+  IndexingAlgorithm indexing_algorithm = 5;
+  repeated string filterable_metadata_fields = 6;
+  map<string, string> indexing_config = 7;   // Algorithm-specific parameters
+}
+
+message Collection {
+  string id = 1;
+  CollectionConfig config = 2;
+  CollectionStats stats = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+}
+
+message CollectionStats {
+  int64 vector_count = 1;
+  int64 index_size_bytes = 2;
+  int64 data_size_bytes = 3;
+}
+
+message SearchResult {
+  optional string id = 1;
+  float score = 2;                          // REQUIRED
+  repeated float vector = 3;                // Optional - for network efficiency
+  map<string, string> metadata = 4;        // Optional - for network efficiency
+  optional int32 rank = 5;                 // 1-based ranking
+}
+
+// ============================================================================
+// COLLECTION OPERATIONS - Unified flexible schema
+// ============================================================================
+
+message CollectionRequest {
+  CollectionOperation operation = 1;
+  optional string collection_id = 2;
+  optional CollectionConfig collection_config = 3;
+  map<string, string> query_params = 4;      // limit, offset, filters, etc.
+  map<string, bool> options = 5;             // force, include_stats, etc.
+  map<string, string> migration_config = 6;  // For MIGRATE operations
+}
+
+message CollectionResponse {
+  bool success = 1;
+  CollectionOperation operation = 2;
+  optional Collection collection = 3;        // Single result (GET, CREATE)
+  repeated Collection collections = 4;       // Multiple results (LIST)
+  int64 affected_count = 5;                  // Items affected
+  optional int64 total_count = 6;           // For pagination
+  map<string, string> metadata = 7;         // Additional response data
+  optional string error_message = 8;
+  optional string error_code = 9;
+  int64 processing_time_us = 10;
+}
+
+// ============================================================================
+// VECTOR OPERATIONS - Performance-optimized schemas
+// ============================================================================
+
+// ZERO-COPY INSERT - Uses Avro binary for vector data only
+// vectors_avro_payload format: Avro-serialized array of VectorRecord
+// VectorRecord: {id: string, vector: [float], metadata: {key: value}, timestamp?: int64, version?: int64}
+message VectorInsertRequest {
+  string collection_id = 1;                 // Collection identifier (gRPC field)
+  bool upsert_mode = 2;                     // Insert vs upsert behavior (gRPC field)
+  bytes vectors_avro_payload = 3;           // Serialized vector data only (Avro binary)
+  optional int64 batch_timeout_ms = 4;      // Optional batch processing timeout
+  optional string request_id = 5;           // Optional request tracking ID
+}
+
+// FLEXIBLE MUTATION - UPDATE and DELETE via regular gRPC
+message VectorMutationRequest {
+  string collection_id = 1;
+  MutationType operation = 2;
+  VectorSelector selector = 3;
+  optional VectorUpdates updates = 4;        // null for DELETE
+}
+
+message VectorSelector {
+  repeated string ids = 1;                   // Select by IDs
+  map<string, string> metadata_filter = 2;  // Select by metadata
+  repeated float vector_match = 3;           // Select by exact vector match
+}
+
+message VectorUpdates {
+  repeated float vector = 1;                 // New vector data
+  map<string, string> metadata = 2;         // New metadata
+  optional int64 expires_at = 3;            // New expiration
+}
+
+// FLEXIBLE SEARCH - Supports multiple query modes
+message VectorSearchRequest {
+  string collection_id = 1;
+  repeated SearchQuery queries = 2;          // Batch search support
+  int32 top_k = 3;
+  optional DistanceMetric distance_metric_override = 4;
+  map<string, string> search_params = 5;    // ef_search, nprobe, etc.
+  IncludeFields include_fields = 6;
+}
+
+message SearchQuery {
+  repeated float vector = 1;                 // Query vector
+  optional string id = 2;                   // Search by ID
+  map<string, string> metadata_filter = 3;  // Metadata filtering
+}
+
+message IncludeFields {
+  bool vector = 1;
+  bool metadata = 2;
+  bool score = 3;
+  bool rank = 4;
+}
+
+// UNIFIED RESPONSE - All vector operations with optimized data transfer
+message VectorOperationResponse {
+  bool success = 1;
+  VectorOperation operation = 2;
+  OperationMetrics metrics = 3;
+  
+  // Optimized result transfer - choose based on data size and operation
+  oneof result_payload {
+    SearchResultsCompact compact_results = 4;    // Small results: regular gRPC
+    bytes avro_results = 5;                      // Large results: Avro binary for zero-copy
+  }
+  
+  repeated string vector_ids = 6;               // Generated/affected IDs
+  optional string error_message = 7;
+  optional string error_code = 8;
+  
+  // Result metadata for client decision making
+  ResultMetadata result_info = 9;
+}
+
+// Compact results for small datasets (< 1MB typical)
+message SearchResultsCompact {
+  repeated SearchResult results = 1;
+  int64 total_found = 2;
+  optional string search_algorithm_used = 3;
+}
+
+// Metadata about the result payload
+message ResultMetadata {
+  int64 result_count = 1;
+  int64 estimated_size_bytes = 2;
+  bool is_avro_binary = 3;                      // True if using avro_results field
+  string avro_schema_version = 4;               // For Avro compatibility checking
+}
+
+message OperationMetrics {
+  int64 total_processed = 1;
+  int64 successful_count = 2;
+  int64 failed_count = 3;
+  int64 updated_count = 4;                   // For UPSERT
+  int64 processing_time_us = 5;
+  int64 wal_write_time_us = 6;
+  int64 index_update_time_us = 7;
+}
+
+// ============================================================================
+// HEALTH AND MONITORING
+// ============================================================================
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;                         // "healthy", "degraded", "unhealthy"
+  string version = 2;
+  int64 uptime_seconds = 3;
+  int32 active_connections = 4;
+  int64 memory_usage_bytes = 5;
+  int64 storage_usage_bytes = 6;
+}
+
+message MetricsRequest {
+  optional string collection_id = 1;         // Filter by collection
+  repeated string metric_names = 2;          // Specific metrics to retrieve
+}
+
+message MetricsResponse {
+  map<string, double> metrics = 1;           // metric_name -> value
+  int64 timestamp = 2;                       // When metrics were collected
+}

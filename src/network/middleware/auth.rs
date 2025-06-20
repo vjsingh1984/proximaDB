@@ -18,7 +18,7 @@
 
 use axum::{
     extract::State,
-    http::{header, StatusCode, Request},
+    http::{header, Request, StatusCode},
     middleware::Next,
     response::{Json, Response},
 };
@@ -70,7 +70,7 @@ impl AuthLayer {
     pub fn new(config: AuthConfig) -> Self {
         Self { config }
     }
-    
+
     /// Create a disabled authentication layer (all requests pass through)
     pub fn disabled() -> Self {
         Self {
@@ -80,7 +80,7 @@ impl AuthLayer {
             },
         }
     }
-    
+
     /// Create an authentication layer with basic API key support
     pub fn with_api_keys(api_keys: HashMap<String, UserInfo>) -> Self {
         Self {
@@ -103,20 +103,20 @@ pub async fn auth_middleware<B>(
     if !auth_config.enabled {
         return Ok(next.run(request).await);
     }
-    
+
     let path = request.uri().path();
-    
+
     // Skip authentication for health endpoints (if configured)
     if !auth_config.require_auth_for_health && is_health_endpoint(path) {
         return Ok(next.run(request).await);
     }
-    
+
     // Extract Authorization header
     let auth_header = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok());
-    
+
     let api_key = match auth_header {
         Some(header_value) => {
             if header_value.starts_with("Bearer ") {
@@ -137,7 +137,7 @@ pub async fn auth_middleware<B>(
             ));
         }
     };
-    
+
     // Validate API key
     let user_info = match auth_config.api_keys.get(api_key) {
         Some(user_info) => user_info.clone(),
@@ -151,10 +151,10 @@ pub async fn auth_middleware<B>(
             ));
         }
     };
-    
+
     // Add user information to request extensions for use by handlers
     request.extensions_mut().insert(user_info);
-    
+
     Ok(next.run(request).await)
 }
 
@@ -177,7 +177,7 @@ impl<T> RequestUserInfo for Request<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_is_health_endpoint() {
         assert!(is_health_endpoint("/health"));
@@ -186,7 +186,7 @@ mod tests {
         assert!(!is_health_endpoint("/collections"));
         assert!(!is_health_endpoint("/api/health"));
     }
-    
+
     #[test]
     fn test_auth_config_default() {
         let config = AuthConfig::default();

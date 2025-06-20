@@ -5,31 +5,31 @@
 
 //! Adaptive Index Engine - Intelligence core for AXIS
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use crate::core::CollectionId;
 use super::{
-    AxisConfig, IndexStrategy, IndexType, MigrationDecision, MigrationPriority,
-    OptimizationConfig, CollectionAnalyzer, strategy::ResourceRequirements,
+    strategy::ResourceRequirements, AxisConfig, CollectionAnalyzer, IndexStrategy, IndexType,
+    MigrationDecision, MigrationPriority, OptimizationConfig,
 };
+use crate::core::CollectionId;
 
 /// Engine for analyzing collections and recommending optimal indexing strategies
 pub struct AdaptiveIndexEngine {
     /// Collection analyzer for data characteristics
     collection_analyzer: Arc<CollectionAnalyzer>,
-    
+
     /// Strategy selector for choosing optimal indexing approach
     strategy_selector: Arc<IndexStrategySelector>,
-    
+
     /// Performance predictor using ML models
     performance_predictor: Arc<PerformancePredictor>,
-    
+
     /// Decision history for learning
     decision_history: Arc<RwLock<Vec<StrategyDecision>>>,
-    
+
     /// Configuration
     config: AxisConfig,
 }
@@ -64,11 +64,11 @@ impl QueryPatternAnalysis {
     pub fn primarily_point_queries(&self) -> bool {
         self.point_query_percentage > 0.7
     }
-    
+
     pub fn primarily_similarity_search(&self) -> bool {
         self.similarity_search_percentage > 0.7
     }
-    
+
     pub fn ann_heavy(&self) -> bool {
         self.similarity_search_percentage > 0.5
     }
@@ -86,9 +86,9 @@ pub struct QueryDistribution {
 #[derive(Debug, Clone)]
 pub enum TemporalPattern {
     Uniform,
-    Recent, // Most queries for recent data
+    Recent,                        // Most queries for recent data
     Periodic(std::time::Duration), // Periodic access pattern
-    Bursty, // Sudden bursts of activity
+    Bursty,                        // Sudden bursts of activity
 }
 
 /// Current performance metrics
@@ -244,7 +244,7 @@ impl AdaptiveIndexEngine {
         let collection_analyzer = Arc::new(CollectionAnalyzer::new().await?);
         let strategy_selector = Arc::new(IndexStrategySelector::new());
         let performance_predictor = Arc::new(PerformancePredictor::new().await?);
-        
+
         Ok(Self {
             collection_analyzer,
             strategy_selector,
@@ -253,15 +253,17 @@ impl AdaptiveIndexEngine {
             config,
         })
     }
-    
+
     /// Analyze collection characteristics
     pub async fn analyze_collection(
         &self,
         collection_id: &CollectionId,
     ) -> Result<CollectionCharacteristics> {
-        self.collection_analyzer.analyze_collection(collection_id).await
+        self.collection_analyzer
+            .analyze_collection(collection_id)
+            .await
     }
-    
+
     /// Recommend optimal indexing strategy
     pub async fn recommend_strategy(
         &self,
@@ -269,26 +271,27 @@ impl AdaptiveIndexEngine {
     ) -> Result<IndexStrategy> {
         // Determine strategy type based on characteristics
         let strategy_type = self.determine_strategy_type(characteristics);
-        
+
         // Get base strategy from selector
-        let base_strategy = self.strategy_selector
-            .select_strategy(strategy_type, characteristics).await?;
-        
+        let base_strategy = self
+            .strategy_selector
+            .select_strategy(strategy_type, characteristics)
+            .await?;
+
         // Refine using ML predictions if enabled
-        if self.config.strategy_config.use_ml_models 
-            && characteristics.vector_count >= self.config.strategy_config.min_training_size as u64 {
-            
-            let refined_strategy = self.refine_with_ml_predictions(
-                base_strategy, 
-                characteristics
-            ).await?;
-            
+        if self.config.strategy_config.use_ml_models
+            && characteristics.vector_count >= self.config.strategy_config.min_training_size as u64
+        {
+            let refined_strategy = self
+                .refine_with_ml_predictions(base_strategy, characteristics)
+                .await?;
+
             return Ok(refined_strategy);
         }
-        
+
         Ok(base_strategy)
     }
-    
+
     /// Determine if migration is beneficial
     pub async fn should_migrate(
         &self,
@@ -297,24 +300,22 @@ impl AdaptiveIndexEngine {
     ) -> Result<MigrationDecision> {
         // Get current strategy (mock for now)
         let current_strategy = self.get_current_strategy(collection_id).await?;
-        
+
         // Get optimal strategy
         let optimal_strategy = self.recommend_strategy(characteristics).await?;
-        
+
         // Check if strategies are the same
         if current_strategy.primary_index_type == optimal_strategy.primary_index_type {
             return Ok(MigrationDecision::Stay {
                 reason: "Already using optimal strategy".to_string(),
             });
         }
-        
+
         // Calculate improvement potential
-        let improvement = self.calculate_improvement_potential(
-            &current_strategy,
-            &optimal_strategy,
-            characteristics,
-        ).await?;
-        
+        let improvement = self
+            .calculate_improvement_potential(&current_strategy, &optimal_strategy, characteristics)
+            .await?;
+
         // Check against threshold
         if improvement < self.config.migration_config.improvement_threshold {
             return Ok(MigrationDecision::Stay {
@@ -325,16 +326,16 @@ impl AdaptiveIndexEngine {
                 ),
             });
         }
-        
+
         // Estimate migration complexity and duration
         let complexity = self.estimate_migration_complexity(
             &current_strategy,
             &optimal_strategy,
             characteristics,
         );
-        
+
         let duration = self.estimate_migration_duration(characteristics, complexity);
-        
+
         // Record decision
         let decision = StrategyDecision {
             collection_id: collection_id.clone(),
@@ -344,10 +345,10 @@ impl AdaptiveIndexEngine {
             decision_reason: format!("Expected improvement: {:.2}%", improvement * 100.0),
             expected_improvement: improvement,
         };
-        
+
         let mut history = self.decision_history.write().await;
         history.push(decision);
-        
+
         Ok(MigrationDecision::Migrate {
             from: current_strategy,
             to: optimal_strategy,
@@ -356,10 +357,13 @@ impl AdaptiveIndexEngine {
             estimated_duration: duration,
         })
     }
-    
+
     /// Determine strategy type from characteristics
     fn determine_strategy_type(&self, characteristics: &CollectionCharacteristics) -> StrategyType {
-        match (characteristics.vector_count, characteristics.average_sparsity) {
+        match (
+            characteristics.vector_count,
+            characteristics.average_sparsity,
+        ) {
             (count, sparsity) if count < 10_000 && sparsity < 0.1 => StrategyType::SmallDense,
             (count, sparsity) if count >= 10_000 && sparsity < 0.1 => StrategyType::LargeDense,
             (count, sparsity) if count < 10_000 && sparsity > 0.7 => StrategyType::SmallSparse,
@@ -367,7 +371,7 @@ impl AdaptiveIndexEngine {
             _ => StrategyType::Mixed,
         }
     }
-    
+
     /// Refine strategy using ML predictions
     async fn refine_with_ml_predictions(
         &self,
@@ -377,7 +381,7 @@ impl AdaptiveIndexEngine {
         // TODO: Implement ML-based refinement
         Ok(base_strategy)
     }
-    
+
     /// Calculate improvement potential
     async fn calculate_improvement_potential(
         &self,
@@ -387,18 +391,18 @@ impl AdaptiveIndexEngine {
     ) -> Result<f64> {
         // Simple heuristic for now
         // TODO: Use ML models for accurate prediction
-        
+
         let improvement = match (&current.primary_index_type, &optimal.primary_index_type) {
             (IndexType::GlobalIdOnly, IndexType::HNSW) => 0.5, // 50% improvement
             (IndexType::GlobalIdOnly, IndexType::FullAXIS) => 0.7, // 70% improvement
             (IndexType::LightweightHNSW, IndexType::HNSW) => 0.3, // 30% improvement
             (IndexType::HNSW, IndexType::PartitionedHNSW) => 0.2, // 20% improvement
-            _ => 0.1, // Default 10% improvement
+            _ => 0.1,                                          // Default 10% improvement
         };
-        
+
         Ok(improvement)
     }
-    
+
     /// Estimate migration complexity
     fn estimate_migration_complexity(
         &self,
@@ -409,12 +413,16 @@ impl AdaptiveIndexEngine {
         // Complexity based on data size and strategy difference
         let size_factor = (characteristics.vector_count as f64).log10() / 10.0;
         let strategy_difference = self.calculate_strategy_difference(current, target);
-        
+
         size_factor * strategy_difference
     }
-    
+
     /// Calculate difference between strategies
-    fn calculate_strategy_difference(&self, current: &IndexStrategy, target: &IndexStrategy) -> f64 {
+    fn calculate_strategy_difference(
+        &self,
+        current: &IndexStrategy,
+        target: &IndexStrategy,
+    ) -> f64 {
         // Simple heuristic based on index type differences
         if current.primary_index_type == target.primary_index_type {
             0.1 // Minor changes only
@@ -422,7 +430,7 @@ impl AdaptiveIndexEngine {
             1.0 // Major strategy change
         }
     }
-    
+
     /// Estimate migration duration
     fn estimate_migration_duration(
         &self,
@@ -432,10 +440,10 @@ impl AdaptiveIndexEngine {
         // Estimate based on vector count and complexity
         let base_time_per_vector_ms = 0.1; // 0.1ms per vector
         let total_ms = characteristics.vector_count as f64 * base_time_per_vector_ms * complexity;
-        
+
         std::time::Duration::from_millis(total_ms as u64)
     }
-    
+
     /// Get current strategy (mock implementation)
     async fn get_current_strategy(&self, _collection_id: &CollectionId) -> Result<IndexStrategy> {
         // TODO: Get from actual storage
@@ -447,43 +455,51 @@ impl IndexStrategySelector {
     /// Create new strategy selector
     pub fn new() -> Self {
         let mut templates = std::collections::HashMap::new();
-        
+
         // Initialize strategy templates
-        templates.insert(StrategyType::SmallDense, IndexStrategyTemplate {
-            strategy_type: StrategyType::SmallDense,
-            base_strategy: IndexStrategy {
-                primary_index_type: IndexType::LightweightHNSW,
-                secondary_indexes: vec![IndexType::Metadata],
-                optimization_config: OptimizationConfig::default(),
-                migration_priority: MigrationPriority::Low,
-                resource_requirements: ResourceRequirements::low(),
+        templates.insert(
+            StrategyType::SmallDense,
+            IndexStrategyTemplate {
+                strategy_type: StrategyType::SmallDense,
+                base_strategy: IndexStrategy {
+                    primary_index_type: IndexType::LightweightHNSW,
+                    secondary_indexes: vec![IndexType::Metadata],
+                    optimization_config: OptimizationConfig::default(),
+                    migration_priority: MigrationPriority::Low,
+                    resource_requirements: ResourceRequirements::low(),
+                },
+                applicability_conditions: ApplicabilityConditions {
+                    max_vector_count: Some(10_000),
+                    max_sparsity: Some(0.1),
+                    ..Default::default()
+                },
             },
-            applicability_conditions: ApplicabilityConditions {
-                max_vector_count: Some(10_000),
-                max_sparsity: Some(0.1),
-                ..Default::default()
+        );
+
+        templates.insert(
+            StrategyType::LargeDense,
+            IndexStrategyTemplate {
+                strategy_type: StrategyType::LargeDense,
+                base_strategy: IndexStrategy {
+                    primary_index_type: IndexType::HNSW,
+                    secondary_indexes: vec![IndexType::Metadata, IndexType::GlobalId],
+                    optimization_config: OptimizationConfig::high_performance(),
+                    migration_priority: MigrationPriority::High,
+                    resource_requirements: ResourceRequirements::high(),
+                },
+                applicability_conditions: ApplicabilityConditions {
+                    min_vector_count: Some(10_000),
+                    max_sparsity: Some(0.1),
+                    ..Default::default()
+                },
             },
-        });
-        
-        templates.insert(StrategyType::LargeDense, IndexStrategyTemplate {
-            strategy_type: StrategyType::LargeDense,
-            base_strategy: IndexStrategy {
-                primary_index_type: IndexType::HNSW,
-                secondary_indexes: vec![IndexType::Metadata, IndexType::GlobalId],
-                optimization_config: OptimizationConfig::high_performance(),
-                migration_priority: MigrationPriority::High,
-                resource_requirements: ResourceRequirements::high(),
-            },
-            applicability_conditions: ApplicabilityConditions {
-                min_vector_count: Some(10_000),
-                max_sparsity: Some(0.1),
-                ..Default::default()
-            },
-        });
-        
-        Self { strategy_templates: templates }
+        );
+
+        Self {
+            strategy_templates: templates,
+        }
     }
-    
+
     /// Select strategy based on type and characteristics
     pub async fn select_strategy(
         &self,

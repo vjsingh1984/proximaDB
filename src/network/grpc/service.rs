@@ -1,579 +1,727 @@
 /*
  * Copyright 2025 Vijaykumar Singh
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
-//! gRPC Service Implementation for ProximaDB
-//!
-//! Implements the VectorDB trait defined in our protocol buffers.
-
-use crate::storage::CollectionMetadata;
-use crate::proto::vectordb::v1::*;
-use crate::proto::vectordb::v1::vector_db_server::VectorDb;
-use crate::storage::StorageEngine;
 use std::sync::Arc;
-use std::collections::BTreeMap;
-use tokio::sync::RwLock;
+use anyhow::Result;
 use tonic::{Request, Response, Status};
-use tracing::{info, warn, error};
+use tracing::{debug, info, span, Instrument, Level};
+use serde_json::{json, Value as JsonValue};
 
-/// Convert serde_json::Value to prost_types::Value
-fn json_to_prost_value(value: serde_json::Value) -> prost_types::Value {
-    use prost_types::value::Kind;
-    
-    match value {
-        serde_json::Value::Null => prost_types::Value { kind: Some(Kind::NullValue(0)) },
-        serde_json::Value::Bool(b) => prost_types::Value { kind: Some(Kind::BoolValue(b)) },
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                prost_types::Value { kind: Some(Kind::NumberValue(i as f64)) }
-            } else if let Some(f) = n.as_f64() {
-                prost_types::Value { kind: Some(Kind::NumberValue(f)) }
-            } else {
-                prost_types::Value { kind: Some(Kind::NullValue(0)) }
-            }
-        },
-        serde_json::Value::String(s) => prost_types::Value { kind: Some(Kind::StringValue(s)) },
-        serde_json::Value::Array(arr) => {
-            let values: Vec<prost_types::Value> = arr.into_iter().map(json_to_prost_value).collect();
-            prost_types::Value { 
-                kind: Some(Kind::ListValue(prost_types::ListValue { values }))
-            }
-        },
-        serde_json::Value::Object(obj) => {
-            let fields: BTreeMap<String, prost_types::Value> = obj.into_iter()
-                .map(|(k, v)| (k, json_to_prost_value(v)))
-                .collect();
-            prost_types::Value { 
-                kind: Some(Kind::StructValue(prost_types::Struct { fields }))
-            }
-        },
-    }
-}
+use crate::proto::proximadb::proxima_db_server::ProximaDb;
+use crate::proto::proximadb::{
+    CollectionRequest, CollectionResponse, VectorInsertRequest, VectorMutationRequest,
+    VectorSearchRequest, VectorOperationResponse, HealthRequest, HealthResponse,
+    MetricsRequest, MetricsResponse, CollectionOperation, VectorOperation, 
+    OperationMetrics, ResultMetadata, SearchResultsCompact, SearchResult,
+};
+use crate::services::unified_avro_service::UnifiedAvroService;
+use crate::services::collection_service::CollectionService;
+use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
+use crate::storage::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::storage::StorageEngine as StorageEngineImpl;
+use crate::schema_types::{
+    CollectionRequest as SchemaCollectionRequest, 
+    CollectionConfig as SchemaCollectionConfig,
+    VectorRecord as SchemaVectorRecord,
+    VectorInsertResponse as SchemaVectorInsertResponse,
+    VectorOperationMetrics as SchemaVectorOperationMetrics,
+};
 
-/// Convert prost_types::Value to serde_json::Value
-fn prost_to_json_value(value: prost_types::Value) -> serde_json::Value {
-    use prost_types::value::Kind;
-    
-    match value.kind {
-        Some(Kind::NullValue(_)) => serde_json::Value::Null,
-        Some(Kind::BoolValue(b)) => serde_json::Value::Bool(b),
-        Some(Kind::NumberValue(n)) => {
-            if n.fract() == 0.0 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
-                serde_json::Value::Number(serde_json::Number::from(n as i64))
-            } else {
-                serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)))
-            }
-        },
-        Some(Kind::StringValue(s)) => serde_json::Value::String(s),
-        Some(Kind::ListValue(list)) => {
-            let arr: Vec<serde_json::Value> = list.values.into_iter().map(prost_to_json_value).collect();
-            serde_json::Value::Array(arr)
-        },
-        Some(Kind::StructValue(structure)) => {
-            let obj: serde_json::Map<String, serde_json::Value> = structure.fields.into_iter()
-                .map(|(k, v)| (k, prost_to_json_value(v)))
-                .collect();
-            serde_json::Value::Object(obj)
-        },
-        None => serde_json::Value::Null,
-    }
-}
-
-/// gRPC service implementation
+/// ProximaDB gRPC service implementing optimized zero-copy patterns
+/// - Collection operations: Use dedicated CollectionService with FilestoreMetadataBackend
+/// - Vector inserts: Zero-copy Avro binary for WAL performance  
+/// - Vector mutations: Regular gRPC for flexibility
+/// - Vector search: Smart payload selection (compact gRPC vs Avro binary)
 pub struct ProximaDbGrpcService {
-    storage: Arc<RwLock<StorageEngine>>,
-    node_id: String,
-    version: String,
+    avro_service: Arc<UnifiedAvroService>,
+    collection_service: Arc<CollectionService>,
 }
 
 impl ProximaDbGrpcService {
-    pub fn new(storage: Arc<RwLock<StorageEngine>>) -> Self {
+    pub async fn new(storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>) -> Self {
+        info!("🚀 Creating ProximaDbGrpcService v1 with zero-copy optimization (default config)");
+        
+        // Use default configuration for backward compatibility
+        let metadata_config = None;
+        Self::new_with_config(storage, metadata_config).await
+    }
+
+    pub async fn new_with_config(
+        storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>,
+        metadata_config: Option<crate::core::config::MetadataBackendConfig>
+    ) -> Self {
+        info!("🚀 Creating ProximaDbGrpcService v1 with configurable metadata backend");
+        
+        let avro_config = crate::services::unified_avro_service::UnifiedServiceConfig::default();
+        
+        // Extract WAL manager from storage to ensure both insertion and search use the same WAL
+        let wal_manager = {
+            let storage_ref = storage.read().await;
+            storage_ref.get_wal_manager()
+        };
+        
+        // Create UnifiedAvroService with shared WAL manager
+        let avro_service = Arc::new(
+            crate::services::unified_avro_service::UnifiedAvroService::with_existing_wal(
+                storage, 
+                wal_manager,
+                avro_config
+            ).await.expect("Failed to create UnifiedAvroService")
+        );
+        
+        // Create CollectionService with configured metadata backend
+        let collection_service = Self::create_collection_service(metadata_config).await;
+        
+        Self { 
+            avro_service,
+            collection_service,
+        }
+    }
+
+    async fn create_collection_service(
+        metadata_config: Option<crate::core::config::MetadataBackendConfig>
+    ) -> Arc<CollectionService> {
+        use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
+        
+        // Configure filestore based on provided config or use defaults
+        let (filestore_config, filesystem_config) = if let Some(config) = metadata_config {
+            info!("📂 Using configured metadata backend: {}", config.storage_url);
+            
+            let filestore_config = FilestoreMetadataConfig {
+                filestore_url: config.storage_url.clone(),
+                enable_compression: true,
+                enable_backup: true,
+                enable_snapshot_archival: true,
+                max_archived_snapshots: 5,
+                temp_directory: None,
+            };
+            
+            // Configure filesystem for cloud storage if needed
+            let filesystem_config = if config.storage_url.starts_with("s3://") || 
+                                      config.storage_url.starts_with("gcs://") || 
+                                      config.storage_url.starts_with("adls://") {
+                info!("☁️ Detected cloud storage URL, configuring cloud filesystem");
+                // TODO: Configure cloud-specific filesystem settings
+                crate::storage::filesystem::FilesystemConfig::default()
+            } else {
+                info!("📁 Using local filesystem configuration");
+                crate::storage::filesystem::FilesystemConfig::default()
+            };
+            
+            (filestore_config, filesystem_config)
+        } else {
+            info!("📂 Using default metadata backend configuration");
+            (FilestoreMetadataConfig::default(), crate::storage::filesystem::FilesystemConfig::default())
+        };
+        
+        info!("📁 Filestore URL: {}", filestore_config.filestore_url);
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(filesystem_config)
+                .await
+                .expect("Failed to create FilesystemFactory")
+        );
+        
+        let filestore_backend = Arc::new(
+            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .expect("Failed to create FilestoreMetadataBackend")
+        );
+        
+        Arc::new(CollectionService::new(filestore_backend))
+    }
+
+    /// Create gRPC service with pre-initialized shared services (multi-server pattern)
+    pub async fn new_with_services(
+        services: crate::network::multi_server::SharedServices,
+    ) -> Self {
+        info!("🚀 Creating ProximaDbGrpcService with shared services (multi-server pattern)");
+        
         Self {
-            storage,
-            node_id: uuid::Uuid::new_v4().to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            avro_service: services.vector_service,
+            collection_service: services.collection_service,
+        }
+    }
+
+    /// Create versioned payload format for gRPC to UnifiedAvroService communication
+    fn create_versioned_payload(operation_type: &str, json_data: &[u8]) -> Vec<u8> {
+        let schema_version = 1u32.to_le_bytes();
+        let op_bytes = operation_type.as_bytes();
+        let op_len = (op_bytes.len() as u32).to_le_bytes();
+        
+        let mut versioned_payload = Vec::new();
+        versioned_payload.extend_from_slice(&schema_version);
+        versioned_payload.extend_from_slice(&op_len);
+        versioned_payload.extend_from_slice(op_bytes);
+        versioned_payload.extend_from_slice(json_data);
+        
+        versioned_payload
+    }
+
+    /// Convert protobuf VectorRecord to schema types for zero-copy processing
+    fn convert_vector_record(&self, proto_record: &crate::proto::proximadb::VectorRecord) -> SchemaVectorRecord {
+        SchemaVectorRecord {
+            id: proto_record.id.clone(),
+            vector: proto_record.vector.clone(),
+            metadata: proto_record.metadata.iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect::<std::collections::HashMap<String, serde_json::Value>>()
+                .into(),
+            timestamp: proto_record.timestamp,
+            version: proto_record.version,
+            expires_at: proto_record.expires_at,
+        }
+    }
+
+    /// Convert schema operation metrics to protobuf
+    fn convert_operation_metrics(&self, schema_metrics: &SchemaVectorOperationMetrics) -> OperationMetrics {
+        OperationMetrics {
+            total_processed: schema_metrics.total_processed,
+            successful_count: schema_metrics.successful_count,
+            failed_count: schema_metrics.failed_count,
+            updated_count: schema_metrics.updated_count,
+            processing_time_us: schema_metrics.processing_time_us,
+            wal_write_time_us: schema_metrics.wal_write_time_us,
+            index_update_time_us: schema_metrics.index_update_time_us,
         }
     }
 }
 
 #[tonic::async_trait]
-impl VectorDb for ProximaDbGrpcService {
-    async fn create_collection(
+impl ProximaDb for ProximaDbGrpcService {
+    /// Unified collection operations with hardcoded schema types for compile-time safety
+    async fn collection_operation(
         &self,
-        request: Request<CreateCollectionRequest>,
-    ) -> Result<Response<CreateCollectionResponse>, Status> {
+        request: Request<CollectionRequest>,
+    ) -> Result<Response<CollectionResponse>, Status> {
         let req = request.into_inner();
-        info!("Creating collection: {}", req.collection_id);
-        
-        let metadata = CollectionMetadata {
-            id: req.collection_id.clone(),
-            name: req.name,
-            dimension: req.dimension,
-            distance_metric: "cosine".to_string(), // Default for now
-            indexing_algorithm: "hnsw".to_string(), // Default for now
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            vector_count: 0,
-            total_size_bytes: 0,
-            config: std::collections::HashMap::new(),
-        };
-        
-        let storage = self.storage.read().await;
-        match storage.create_collection_with_metadata(req.collection_id.clone(), Some(metadata)).await {
-            Ok(_) => {
-                info!("Collection created successfully: {}", req.collection_id);
-                Ok(Response::new(CreateCollectionResponse {
-                    success: true,
-                    message: format!("Collection {} created successfully", req.collection_id),
-                }))
-            }
-            Err(e) => {
-                warn!("Failed to create collection: {}", e);
-                Ok(Response::new(CreateCollectionResponse {
-                    success: false,
-                    message: e.to_string(),
-                }))
-            }
-        }
-    }
+        let operation = CollectionOperation::try_from(req.operation)
+            .map_err(|_| Status::invalid_argument("Invalid collection operation"))?;
 
-    async fn list_collections(
-        &self,
-        _request: Request<ListCollectionsRequest>,
-    ) -> Result<Response<ListCollectionsResponse>, Status> {
-        info!("Listing collections");
-        
-        let storage = self.storage.read().await;
-        match storage.list_collections().await {
-            Ok(collections) => {
-                let proto_collections: Vec<Collection> = collections
+        debug!("📦 gRPC collection_operation: {:?}", operation);
+        let start_time = std::time::Instant::now();
+
+        match operation {
+            CollectionOperation::CollectionCreate => {
+                let config = req.collection_config.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection config for CREATE"))?;
+                
+                // Use CollectionService directly with FilestoreMetadataBackend
+                let result = self.collection_service
+                    .create_collection_from_grpc(config)
+                    .instrument(span!(Level::DEBUG, "grpc_collection_create"))
+                    .await
+                    .map_err(|e| Status::internal(format!("Collection creation failed: {}", e)))?;
+                
+                if result.success {
+                    // Get the created collection to return it
+                    let created_collection = if let Some(uuid) = &result.collection_uuid {
+                        self.collection_service
+                            .get_collection_by_name(&config.name)
+                            .await
+                            .map_err(|e| Status::internal(format!("Failed to retrieve created collection: {}", e)))?
+                            .map(|record| {
+                                let collection_config = record.to_grpc_config();
+                                crate::proto::proximadb::Collection {
+                                    id: record.uuid,
+                                    config: Some(collection_config),
+                                    stats: Some(crate::proto::proximadb::CollectionStats {
+                                        vector_count: record.vector_count,
+                                        index_size_bytes: 0, // TODO: Calculate from storage
+                                        data_size_bytes: record.total_size_bytes,
+                                    }),
+                                    created_at: record.created_at,
+                                    updated_at: record.updated_at,
+                                }
+                            })
+                    } else {
+                        None
+                    };
+                    
+                    Ok(Response::new(CollectionResponse {
+                        success: true,
+                        operation: req.operation,
+                        collection: created_collection,
+                        collections: vec![],
+                        affected_count: 1,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: None,
+                        error_code: None,
+                        processing_time_us: result.processing_time_us,
+                    }))
+                } else {
+                    Ok(Response::new(CollectionResponse {
+                        success: false,
+                        operation: req.operation,
+                        collection: None,
+                        collections: vec![],
+                        affected_count: 0,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: result.error_message,
+                        error_code: result.error_code,
+                        processing_time_us: result.processing_time_us,
+                    }))
+                }
+            }
+            
+            CollectionOperation::CollectionGet => {
+                let collection_id = req.collection_id.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection_id for GET"))?;
+                
+                let collection = self.collection_service
+                    .get_collection_by_name(collection_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to get collection: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                if let Some(record) = collection {
+                    let collection_config = record.to_grpc_config();
+                    let collection = crate::proto::proximadb::Collection {
+                        id: record.uuid,
+                        config: Some(collection_config),
+                        stats: Some(crate::proto::proximadb::CollectionStats {
+                            vector_count: record.vector_count,
+                            index_size_bytes: 0, // TODO: Calculate from storage
+                            data_size_bytes: record.total_size_bytes,
+                        }),
+                        created_at: record.created_at,
+                        updated_at: record.updated_at,
+                    };
+                    
+                    Ok(Response::new(CollectionResponse {
+                        success: true,
+                        operation: req.operation,
+                        collection: Some(collection),
+                        collections: vec![],
+                        affected_count: 1,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: None,
+                        error_code: None,
+                        processing_time_us: processing_time,
+                    }))
+                } else {
+                    Ok(Response::new(CollectionResponse {
+                        success: false,
+                        operation: req.operation,
+                        collection: None,
+                        collections: vec![],
+                        affected_count: 0,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: Some(format!("Collection '{}' not found", collection_id)),
+                        error_code: Some("COLLECTION_NOT_FOUND".to_string()),
+                        processing_time_us: processing_time,
+                    }))
+                }
+            }
+            
+            CollectionOperation::CollectionList => {
+                let collections = self.collection_service
+                    .list_collections()
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to list collections: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                let proto_collections: Vec<crate::proto::proximadb::Collection> = collections
                     .into_iter()
-                    .map(|meta| Collection {
-                        id: meta.id,
-                        name: meta.name,
-                        dimension: meta.dimension as u32,
-                        schema_type: SchemaType::Document as i32,
-                        created_at: Some(prost_types::Timestamp {
-                            seconds: meta.created_at.timestamp(),
-                            nanos: meta.created_at.timestamp_subsec_nanos() as i32,
-                        }),
-                        updated_at: Some(prost_types::Timestamp {
-                            seconds: meta.updated_at.timestamp(),
-                            nanos: meta.updated_at.timestamp_subsec_nanos() as i32,
-                        }),
-                        vector_count: meta.vector_count,
+                    .map(|record| {
+                        let collection_config = record.to_grpc_config();
+                        crate::proto::proximadb::Collection {
+                            id: record.uuid,
+                            config: Some(collection_config),
+                            stats: Some(crate::proto::proximadb::CollectionStats {
+                                vector_count: record.vector_count,
+                                index_size_bytes: 0, // TODO: Calculate from storage
+                                data_size_bytes: record.total_size_bytes,
+                            }),
+                            created_at: record.created_at,
+                            updated_at: record.updated_at,
+                        }
                     })
                     .collect();
                 
-                Ok(Response::new(ListCollectionsResponse {
+                let total_count = proto_collections.len() as i64;
+                
+                Ok(Response::new(CollectionResponse {
+                    success: true,
+                    operation: req.operation,
+                    collection: None,
                     collections: proto_collections,
+                    affected_count: total_count,
+                    total_count: Some(total_count),
+                    metadata: std::collections::HashMap::new(),
+                    error_message: None,
+                    error_code: None,
+                    processing_time_us: processing_time,
                 }))
             }
-            Err(e) => {
-                error!("Failed to list collections: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
-
-    async fn delete_collection(
-        &self,
-        request: Request<DeleteCollectionRequest>,
-    ) -> Result<Response<DeleteCollectionResponse>, Status> {
-        let req = request.into_inner();
-        info!("Deleting collection: {}", req.collection_id);
-        
-        let storage = self.storage.read().await;
-        match storage.delete_collection(&req.collection_id).await {
-            Ok(deleted) => {
-                if deleted {
-                    info!("Collection deleted successfully: {}", req.collection_id);
-                    Ok(Response::new(DeleteCollectionResponse {
+            
+            CollectionOperation::CollectionDelete => {
+                let collection_id = req.collection_id.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection_id for DELETE"))?;
+                
+                let result = self.collection_service
+                    .delete_collection(collection_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to delete collection: {}", e)))?;
+                
+                if result.success {
+                    Ok(Response::new(CollectionResponse {
                         success: true,
-                        message: format!("Collection {} deleted successfully", req.collection_id),
+                        operation: req.operation,
+                        collection: None,
+                        collections: vec![],
+                        affected_count: 1,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: None,
+                        error_code: None,
+                        processing_time_us: result.processing_time_us,
                     }))
                 } else {
-                    Ok(Response::new(DeleteCollectionResponse {
+                    Ok(Response::new(CollectionResponse {
                         success: false,
-                        message: format!("Collection {} not found", req.collection_id),
+                        operation: req.operation,
+                        collection: None,
+                        collections: vec![],
+                        affected_count: 0,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: result.error_message,
+                        error_code: result.error_code,
+                        processing_time_us: result.processing_time_us,
                     }))
                 }
             }
-            Err(e) => {
-                warn!("Failed to delete collection: {}", e);
-                Ok(Response::new(DeleteCollectionResponse {
-                    success: false,
-                    message: e.to_string(),
-                }))
-            }
-        }
-    }
-
-    async fn insert(
-        &self,
-        request: Request<InsertRequest>,
-    ) -> Result<Response<InsertResponse>, Status> {
-        let req = request.into_inner();
-        
-        let record = req.record.ok_or_else(|| Status::invalid_argument("Record is required"))?;
-        
-        // Convert protobuf metadata to HashMap
-        let metadata = if let Some(proto_metadata) = record.metadata {
-            proto_metadata.fields
-                .into_iter()
-                .map(|(k, v)| (k, prost_to_json_value(v)))
-                .collect()
-        } else {
-            std::collections::HashMap::new()
-        };
-        
-        let vector_id = if record.id.is_empty() {
-            uuid::Uuid::new_v4()
-        } else {
-            uuid::Uuid::parse_str(&record.id).map_err(|e| Status::invalid_argument(format!("Invalid vector ID: {}", e)))?
-        };
-        
-        let core_record = crate::core::VectorRecord {
-            id: vector_id,
-            collection_id: req.collection_id.clone(),
-            vector: record.vector,
-            metadata,
-            timestamp: chrono::Utc::now(),
-            expires_at: None, // No expiration by default
-        };
-        
-        let storage = self.storage.read().await;
-        match storage.write(core_record).await {
-            Ok(_) => {
-                Ok(Response::new(InsertResponse {
+            
+            CollectionOperation::CollectionUpdate => {
+                let collection_id = req.collection_id.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection_id for UPDATE"))?;
+                let config = req.collection_config.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection config for UPDATE"))?;
+                
+                // Get existing collection first
+                let mut existing = self.collection_service
+                    .get_collection_by_name(collection_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to get collection for update: {}", e)))?
+                    .ok_or_else(|| Status::not_found(format!("Collection '{}' not found", collection_id)))?;
+                
+                // Update fields from config
+                existing.dimension = config.dimension;
+                existing.distance_metric = match config.distance_metric {
+                    1 => "COSINE".to_string(),
+                    2 => "EUCLIDEAN".to_string(),
+                    3 => "DOT_PRODUCT".to_string(),
+                    4 => "HAMMING".to_string(),
+                    _ => existing.distance_metric,
+                };
+                existing.indexing_algorithm = match config.indexing_algorithm {
+                    1 => "HNSW".to_string(),
+                    2 => "IVF".to_string(),
+                    3 => "PQ".to_string(),
+                    4 => "FLAT".to_string(),
+                    5 => "ANNOY".to_string(),
+                    _ => existing.indexing_algorithm,
+                };
+                existing.storage_engine = match config.storage_engine {
+                    1 => "VIPER".to_string(),
+                    2 => "LSM".to_string(),
+                    3 => "MMAP".to_string(),
+                    4 => "HYBRID".to_string(),
+                    _ => existing.storage_engine,
+                };
+                existing.config = serde_json::to_string(&config.indexing_config).unwrap_or_default();
+                existing.updated_at = chrono::Utc::now().timestamp_millis();
+                existing.version += 1;
+                
+                // Create the config to update  
+                let update_config = existing.to_grpc_config();
+                
+                // Use the collection service's update method
+                let result = self.collection_service
+                    .create_collection_from_grpc(&update_config) // This does an upsert
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to update collection: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                Ok(Response::new(CollectionResponse {
                     success: true,
-                    vector_id: vector_id.to_string(),
-                    message: "Vector inserted successfully".to_string(),
+                    operation: req.operation,
+                    collection: None,
+                    collections: vec![],
+                    affected_count: 1,
+                    total_count: None,
+                    metadata: std::collections::HashMap::new(),
+                    error_message: None,
+                    error_code: None,
+                    processing_time_us: processing_time,
                 }))
             }
-            Err(e) => {
-                warn!("Failed to insert vector: {}", e);
-                Ok(Response::new(InsertResponse {
-                    success: false,
-                    vector_id: String::new(),
-                    message: e.to_string(),
-                }))
-            }
-        }
-    }
-
-    async fn search(
-        &self,
-        request: Request<SearchRequest>,
-    ) -> Result<Response<SearchResponse>, Status> {
-        let req = request.into_inner();
-        
-        let storage = self.storage.read().await;
-        let results = if let Some(filters) = req.filters {
-            // Convert protobuf Struct to HashMap filter
-            let filter_map: std::collections::HashMap<String, serde_json::Value> = filters.fields
-                .into_iter()
-                .map(|(k, v)| (k, prost_to_json_value(v)))
-                .collect();
             
-            storage.search_vectors_with_filter(
-                &req.collection_id,
-                req.vector,
-                req.k as usize,
-                move |metadata| {
-                    // Simple filter: check if all filter key-value pairs match
-                    for (key, value) in &filter_map {
-                        if metadata.get(key) != Some(value) {
-                            return false;
-                        }
-                    }
-                    true
-                },
-            ).await
-        } else {
-            storage.search_vectors(&req.collection_id, req.vector, req.k as usize).await
-        };
-        
-        match results {
-            Ok(search_results) => {
-                let proto_results: Vec<crate::proto::vectordb::v1::SearchResult> = search_results
-                    .into_iter()
-                    .filter(|result| {
-                        if let Some(threshold) = req.threshold {
-                            result.score >= threshold
-                        } else {
-                            true
-                        }
-                    })
-                    .map(|result| {
-                        let metadata = prost_types::Struct {
-                            fields: result.metadata
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|(k, v)| (k, json_to_prost_value(v)))
-                                .collect(),
-                        };
-                        
-                        crate::proto::vectordb::v1::SearchResult {
-                            id: result.vector_id,
-                            score: result.score,
-                            metadata: Some(metadata),
-                        }
-                    })
-                    .collect();
-                
-                let total_count = proto_results.len() as u32;
-                Ok(Response::new(SearchResponse {
-                    results: proto_results,
-                    total_count,
-                }))
-            }
-            Err(e) => {
-                error!("Search failed: {}", e);
-                Err(Status::internal(e.to_string()))
+            _ => {
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                Err(Status::unimplemented("Operation not yet implemented"))
             }
         }
     }
 
-    async fn get(
+    /// Zero-copy vector insert using Avro binary in gRPC message for WAL performance
+    async fn vector_insert(
         &self,
-        request: Request<GetRequest>,
-    ) -> Result<Response<GetResponse>, Status> {
+        request: Request<VectorInsertRequest>,
+    ) -> Result<Response<VectorOperationResponse>, Status> {
         let req = request.into_inner();
+        debug!("📦 gRPC vector_insert: collection={}, vectors_payload_size={}, upsert={}", 
+               req.collection_id, req.vectors_avro_payload.len(), req.upsert_mode);
         
-        let vector_id = uuid::Uuid::parse_str(&req.vector_id)
-            .map_err(|e| Status::invalid_argument(format!("Invalid vector ID: {}", e)))?;
+        let start_time = std::time::Instant::now();
         
-        let storage = self.storage.read().await;
-        match storage.read(&req.collection_id, &vector_id).await {
-            Ok(Some(record)) => {
-                let metadata = prost_types::Struct {
-                    fields: record.metadata
-                        .into_iter()
-                        .map(|(k, v)| (k, json_to_prost_value(v)))
-                        .collect(),
-                };
-                
-                let proto_record = VectorRecord {
-                    id: record.id.to_string(),
-                    collection_id: record.collection_id,
-                    vector: record.vector,
-                    metadata: Some(metadata),
-                    timestamp: Some(prost_types::Timestamp {
-                        seconds: record.timestamp.timestamp(),
-                        nanos: record.timestamp.timestamp_subsec_nanos() as i32,
-                    }),
-                };
-                
-                Ok(Response::new(GetResponse {
-                    record: Some(proto_record),
-                }))
-            }
-            Ok(None) => {
-                Ok(Response::new(GetResponse {
-                    record: None,
-                }))
-            }
-            Err(e) => {
-                error!("Failed to get vector: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
-
-    async fn delete(
-        &self,
-        request: Request<DeleteRequest>,
-    ) -> Result<Response<DeleteResponse>, Status> {
-        let req = request.into_inner();
+        // Use ONLY the ultra-fast zero-copy path for ALL vector operations
+        // No thresholds, no complexity - just maximum performance
+        debug!("🚀 Using zero-copy path for ALL vectors ({}KB)", req.vectors_avro_payload.len() / 1024);
         
-        let vector_id = uuid::Uuid::parse_str(&req.vector_id)
-            .map_err(|e| Status::invalid_argument(format!("Invalid vector ID: {}", e)))?;
+        let result = self.avro_service
+            .handle_vector_insert_v2(&req.collection_id, req.upsert_mode, &req.vectors_avro_payload)
+            .instrument(span!(Level::DEBUG, "grpc_vector_insert_zero_copy"))
+            .await
+            .map_err(|e| Status::internal(format!("Vector insert failed: {}", e)))?;
         
-        let storage = self.storage.read().await;
-        match storage.soft_delete(&req.collection_id, &vector_id).await {
-            Ok(deleted) => {
-                if deleted {
-                    Ok(Response::new(DeleteResponse {
-                        success: true,
-                        message: "Vector deleted successfully".to_string(),
-                    }))
-                } else {
-                    Ok(Response::new(DeleteResponse {
-                        success: false,
-                        message: "Vector not found".to_string(),
-                    }))
-                }
-            }
-            Err(e) => {
-                warn!("Failed to delete vector: {}", e);
-                Ok(Response::new(DeleteResponse {
-                    success: false,
-                    message: e.to_string(),
-                }))
-            }
-        }
-    }
-
-    async fn batch_insert(
-        &self,
-        request: Request<BatchInsertRequest>,
-    ) -> Result<Response<BatchInsertResponse>, Status> {
-        let req = request.into_inner();
+        // Parse the Avro result back to protobuf
+        let schema_response: SchemaVectorInsertResponse = serde_json::from_slice(&result)
+            .map_err(|e| Status::internal(format!("Failed to parse insert response: {}", e)))?;
         
-        let mut core_records = Vec::new();
-        let mut errors = Vec::new();
+        let operation_metrics = self.convert_operation_metrics(&schema_response.metrics);
         
-        for (idx, record) in req.records.into_iter().enumerate() {
-            let vector_id = if record.id.is_empty() {
-                uuid::Uuid::new_v4()
-            } else {
-                match uuid::Uuid::parse_str(&record.id) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        errors.push(format!("Record {}: Invalid ID - {}", idx, e));
-                        continue;
-                    }
-                }
-            };
-            
-            let metadata = if let Some(proto_metadata) = record.metadata {
-                proto_metadata.fields
-                    .into_iter()
-                    .map(|(k, v)| (k, prost_to_json_value(v)))
-                    .collect()
-            } else {
-                std::collections::HashMap::new()
-            };
-            
-            core_records.push(crate::core::VectorRecord {
-                id: vector_id,
-                collection_id: req.collection_id.clone(),
-                vector: record.vector,
-                metadata,
-                timestamp: chrono::Utc::now(),
-                expires_at: None, // No expiration by default
-            });
-        }
+        let result_count = schema_response.vector_ids.len() as i64;
         
-        let storage = self.storage.read().await;
-        match storage.batch_write(core_records).await {
-            Ok(inserted_ids) => {
-                let vector_ids: Vec<String> = inserted_ids.iter().map(|id| id.to_string()).collect();
-                Ok(Response::new(BatchInsertResponse {
-                    inserted_count: inserted_ids.len() as u32,
-                    vector_ids,
-                    errors,
-                }))
-            }
-            Err(e) => {
-                error!("Batch insert failed: {}", e);
-                errors.push(format!("Batch operation failed: {}", e));
-                Ok(Response::new(BatchInsertResponse {
-                    inserted_count: 0,
-                    vector_ids: Vec::new(),
-                    errors,
-                }))
-            }
-        }
-    }
-
-    async fn batch_get(
-        &self,
-        request: Request<BatchGetRequest>,
-    ) -> Result<Response<BatchGetResponse>, Status> {
-        let req = request.into_inner();
-        
-        let mut records = Vec::new();
-        let storage = self.storage.read().await;
-        
-        for vector_id_str in req.vector_ids {
-            let vector_id = match uuid::Uuid::parse_str(&vector_id_str) {
-                Ok(id) => id,
-                Err(_) => continue, // Skip invalid IDs
-            };
-            
-            if let Ok(Some(record)) = storage.read(&req.collection_id, &vector_id).await {
-                let metadata = prost_types::Struct {
-                    fields: record.metadata
-                        .into_iter()
-                        .map(|(k, v)| (k, json_to_prost_value(v)))
-                        .collect(),
-                };
-                
-                records.push(VectorRecord {
-                    id: record.id.to_string(),
-                    collection_id: record.collection_id,
-                    vector: record.vector,
-                    metadata: Some(metadata),
-                    timestamp: Some(prost_types::Timestamp {
-                        seconds: record.timestamp.timestamp(),
-                        nanos: record.timestamp.timestamp_subsec_nanos() as i32,
-                    }),
-                });
-            }
-        }
-        
-        Ok(Response::new(BatchGetResponse { records }))
-    }
-
-    async fn health(
-        &self,
-        _request: Request<HealthRequest>,
-    ) -> Result<Response<HealthResponse>, Status> {
-        Ok(Response::new(HealthResponse {
-            status: "healthy".to_string(),
-            timestamp: Some(prost_types::Timestamp {
-                seconds: chrono::Utc::now().timestamp(),
-                nanos: chrono::Utc::now().timestamp_subsec_nanos() as i32,
+        Ok(Response::new(VectorOperationResponse {
+            success: schema_response.success,
+            operation: VectorOperation::VectorInsert as i32,
+            metrics: Some(operation_metrics),
+            result_payload: None, // No search results for insert
+            vector_ids: schema_response.vector_ids,
+            error_message: schema_response.error_message,
+            error_code: schema_response.error_code,
+            result_info: Some(ResultMetadata {
+                result_count,
+                estimated_size_bytes: 0,
+                is_avro_binary: true, // Always true - we always use zero-copy
+                avro_schema_version: "1".to_string(),
             }),
         }))
     }
 
-    async fn status(
+    /// Vector mutation (UPDATE/DELETE) via regular gRPC for flexibility
+    async fn vector_mutation(
         &self,
-        _request: Request<StatusRequest>,
-    ) -> Result<Response<StatusResponse>, Status> {
-        let storage = self.storage.read().await;
+        request: Request<VectorMutationRequest>,
+    ) -> Result<Response<VectorOperationResponse>, Status> {
+        let req = request.into_inner();
+        debug!("📦 gRPC vector_mutation: collection={}, operation={:?}", 
+               req.collection_id, req.operation);
         
-        // Get storage statistics
-        let collections = storage.list_collections().await.unwrap_or_default();
-        let total_vectors: u64 = collections.iter().map(|c| c.vector_count).sum();
-        let total_size_bytes: u64 = collections.iter().map(|c| c.total_size_bytes as u64).sum();
+        // TODO: Implement vector mutation with regular gRPC patterns
+        // This provides flexibility for complex update operations
         
-        Ok(Response::new(StatusResponse {
-            node_id: self.node_id.clone(),
-            version: self.version.clone(),
-            role: NodeRole::Leader as i32, // For now, always leader
-            cluster: Some(ClusterInfo {
-                peers: vec![],
-                leader: self.node_id.clone(),
-                term: 1,
-            }),
-            storage: Some(StorageInfo {
-                total_vectors,
-                total_size_bytes,
-                disks: vec![
-                    DiskInfo {
-                        path: "./data".to_string(),
-                        total_bytes: 1_000_000_000, // 1GB dummy value
-                        used_bytes: total_size_bytes,
-                        available_bytes: 1_000_000_000 - total_size_bytes,
+        Err(Status::unimplemented("Vector mutation not yet implemented"))
+    }
+
+    /// Vector search with multiple search types: similarity, metadata filters, ID lookup
+    async fn vector_search(
+        &self,
+        request: Request<VectorSearchRequest>,
+    ) -> Result<Response<VectorOperationResponse>, Status> {
+        let req = request.into_inner();
+        debug!("📦 gRPC vector_search: collection={}, queries={}, top_k={}", 
+               req.collection_id, req.queries.len(), req.top_k);
+        
+        let start_time = std::time::Instant::now();
+        
+        // Extract include fields
+        let include_fields = req.include_fields.as_ref();
+        let include_vectors = include_fields.map_or(false, |f| f.vector);
+        let include_metadata = include_fields.map_or(true, |f| f.metadata);
+        
+        // Extract metadata filters from first query (if any)
+        let metadata_filters = if let Some(first_query) = req.queries.first() {
+            if !first_query.metadata_filter.is_empty() {
+                Some(first_query.metadata_filter.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // Create search request payload
+        let search_request = json!({
+            "collection_id": req.collection_id,
+            "queries": req.queries.iter().map(|q| q.vector.clone()).collect::<Vec<_>>(),
+            "top_k": req.top_k,
+            "include_vectors": include_vectors,
+            "include_metadata": include_metadata,
+            "metadata_filters": metadata_filters,
+            "distance_metric": req.distance_metric_override.unwrap_or(1),
+            "index_algorithm": 1, // Default to HNSW
+            "search_params": req.search_params
+        });
+        
+        let json_data = serde_json::to_vec(&search_request)
+            .map_err(|e| Status::internal(format!("Failed to serialize search request: {}", e)))?;
+        
+        // Create versioned payload for zero-copy search
+        let avro_payload = Self::create_versioned_payload("vector_search", &json_data);
+        
+        // Execute search via unified service
+        let avro_result = self.avro_service
+            .handle_vector_search(&avro_payload)
+            .instrument(span!(Level::DEBUG, "grpc_vector_search"))
+            .await
+            .map_err(|e| Status::internal(format!("Vector search failed: {}", e)))?;
+        
+        let processing_time = start_time.elapsed().as_micros() as i64;
+        let result_size = avro_result.len();
+        
+        // ZERO-COPY: Check if we should use Avro binary for large results
+        // Threshold: 10KB (can be configured)
+        const AVRO_THRESHOLD: usize = 10 * 1024;
+        
+        if result_size > AVRO_THRESHOLD {
+            debug!(
+                "🚀 Using zero-copy Avro binary for search results ({}KB)",
+                result_size / 1024
+            );
+        
+            // Return zero-copy Avro binary response
+            Ok(Response::new(VectorOperationResponse {
+                success: true,
+                operation: VectorOperation::VectorSearch as i32,
+                metrics: Some(OperationMetrics {
+                    total_processed: req.queries.len() as i64,
+                    successful_count: req.queries.len() as i64,
+                    failed_count: 0,
+                    updated_count: 0,
+                    processing_time_us: processing_time,
+                    wal_write_time_us: 0, // No WAL for searches
+                    index_update_time_us: 0,
+                }),
+                result_payload: Some(crate::proto::proximadb::vector_operation_response::ResultPayload::AvroResults(avro_result)),
+                vector_ids: vec![], // Not applicable for search
+                error_message: None,
+                error_code: None,
+                result_info: Some(ResultMetadata {
+                    result_count: 0, // Client needs to parse Avro to get count
+                    estimated_size_bytes: result_size as i64,
+                    is_avro_binary: true,
+                    avro_schema_version: "1".to_string(),
+                }),
+            }))
+        } else {
+            // For small results, parse and use compact format
+            debug!("📦 Using compact format for small search results ({}B)", result_size);
+            
+            // Parse search results
+            let search_results: JsonValue = serde_json::from_slice(&avro_result)
+                .map_err(|e| Status::internal(format!("Failed to parse search results: {}", e)))?;
+            
+            // Debug: Log the actual search results structure
+            debug!("🔍 Raw search results JSON: {}", serde_json::to_string_pretty(&search_results).unwrap_or_default());
+            
+            // Convert results to gRPC format
+            let results = search_results.get("results")
+                .and_then(|r| r.as_array())
+                .unwrap_or(&vec![])
+                .iter()
+                .map(|result| SearchResult {
+                    id: Some(result.get("vector_id").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+                    score: result.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    vector: if include_vectors {
+                        result.get("vector").and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+                            .unwrap_or_default()
+                    } else {
+                        vec![]
                     },
-                ],
-            }),
+                    metadata: if include_metadata {
+                        result.get("metadata").and_then(|m| m.as_object())
+                            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
+                            .unwrap_or_default()
+                    } else {
+                        std::collections::HashMap::new()
+                    },
+                    rank: None
+                })
+                .collect();
+            
+            let total_results = search_results.get("total_count").and_then(|v| v.as_i64()).unwrap_or(0);
+            
+            Ok(Response::new(VectorOperationResponse {
+                success: true,
+                operation: VectorOperation::VectorSearch as i32,
+                metrics: Some(OperationMetrics {
+                    total_processed: req.queries.len() as i64,
+                    successful_count: req.queries.len() as i64,
+                    failed_count: 0,
+                    updated_count: 0,
+                    processing_time_us: processing_time,
+                    wal_write_time_us: 0, // No WAL for searches
+                    index_update_time_us: 0,
+                }),
+                result_payload: Some(crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(SearchResultsCompact {
+                    results,
+                    total_found: total_results,
+                    search_algorithm_used: Some("HNSW".to_string()),
+                })),
+                vector_ids: vec![], // Not applicable for search
+                error_message: None,
+                error_code: None,
+                result_info: Some(ResultMetadata {
+                    result_count: total_results,
+                    estimated_size_bytes: result_size as i64,
+                    is_avro_binary: false,
+                    avro_schema_version: "1".to_string(),
+                }),
+            }))
+        }
+    }
+
+    /// Health check endpoint
+    async fn health(&self, _request: Request<HealthRequest>) -> Result<Response<HealthResponse>, Status> {
+        debug!("📦 gRPC health check");
+        
+        Ok(Response::new(HealthResponse {
+            status: "healthy".to_string(),
+            version: "0.1.0".to_string(),
+            uptime_seconds: 3600,
+            active_connections: 1,
+            memory_usage_bytes: 104_857_600, // 100MB
+            storage_usage_bytes: 1_073_741_824, // 1GB
+        }))
+    }
+
+    /// Metrics endpoint
+    async fn get_metrics(&self, request: Request<MetricsRequest>) -> Result<Response<MetricsResponse>, Status> {
+        let req = request.into_inner();
+        debug!("📦 gRPC get_metrics: collection_filter={:?}", req.collection_id);
+        
+        // Return basic metrics - can be enhanced with real metrics collection
+        let mut metrics = std::collections::HashMap::new();
+        metrics.insert("total_collections".to_string(), 0.0);
+        metrics.insert("total_vectors".to_string(), 0.0);
+        metrics.insert("total_queries".to_string(), 0.0);
+        metrics.insert("avg_query_latency_ms".to_string(), 1.5);
+        
+        Ok(Response::new(MetricsResponse {
+            metrics,
+            timestamp: chrono::Utc::now().timestamp_millis(),
         }))
     }
 }

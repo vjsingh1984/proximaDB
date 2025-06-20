@@ -1,0 +1,93 @@
+= ProximaDB Logo Design Concept
+:author: ProximaDB Team
+:revdate: 2025-06-20
+
+== Logo Philosophy
+
+The ProximaDB logo embodies four core concepts:
+
+1. **Database** - Represented by the cylinder shape
+2. **Vectors** - Shown as interconnected neural network nodes
+3. **AI** - Lightning bolt symbolizing intelligence and speed
+4. **Cloud** - Cloud shape encompassing the database
+
+== Design Elements
+
+=== Primary Logo (`logo_design.svg`)
+
+* **Cloud Container**: Light gradient cloud shape representing cloud-native architecture
+* **Database Cylinder**: Purple cylinder nested within the cloud showing data storage
+* **Neural Network**: Green nodes with connections representing vector embeddings
+* **AI Spark**: Yellow lightning bolt indicating AI-powered capabilities
+* **Typography**: "Proxima" in gradient, "DB" in solid, emphasizing the AI/vector aspect
+
+=== Minimal Logo (`logo_minimal.svg`)
+
+* **Stylized "P"**: Forms both a letter and a database shape
+* **Vector Nodes**: Three connected points creating a neural pattern
+* **Gradient Colors**: Purple to blue transition suggesting innovation
+* **Cloud Element**: Subtle cloud shape integrated into the design
+* **Data Points**: Floating dots representing distributed data
+
+== Color Palette
+
+[cols="2,2,3"]
+|===
+|Color |Hex Code |Meaning
+
+|Purple
+|#8B5CF6
+|AI/ML intelligence
+
+|Blue
+|#3B82F6
+|Database reliability
+
+|Teal
+|#10B981
+|Vector connections
+
+|Cyan
+|#06B6D4
+|Cloud scalability
+
+|Amber
+|#F59E0B
+|Speed/Performance
+|===
+
+== Usage Guidelines
+
+=== Primary Use Cases
+* Main logo for website headers
+* Marketing materials
+* Documentation
+* Presentations
+
+=== Minimal Logo Use Cases
+* App icons
+* Favicon
+* Small space applications
+* Social media profiles
+
+=== Spacing Requirements
+* Minimum clear space: 0.5x the logo height on all sides
+* Never stretch or distort the logo
+* Maintain aspect ratio when scaling
+
+== Brand Message
+
+The logo communicates:
+
+* **Modern**: Cutting-edge vector database technology
+* **Intelligent**: AI-native design
+* **Scalable**: Cloud-first architecture
+* **Connected**: Neural network visualization
+* **Reliable**: Solid database foundation
+
+== File Formats
+
+* `logo_design.svg` - Full horizontal logo with text
+* `logo_minimal.svg` - Square icon version
+* PNG exports available in various sizes
+* Vector formats maintain quality at any scale

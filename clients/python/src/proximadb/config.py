@@ -26,9 +26,10 @@ from pydantic import BaseModel, Field, validator
 
 class Protocol(str, Enum):
     """Supported communication protocols"""
-    GRPC = "grpc"
-    REST = "rest"
-    AUTO = "auto"
+    AUTO = "auto"      # Auto-select best available
+    AVRO = "avro"      # AvroRPC (highest performance)
+    GRPC = "grpc"      # gRPC (proven performance)
+    REST = "rest"      # REST (web compatibility)
 
 
 class LogLevel(str, Enum):
@@ -82,7 +83,7 @@ class ClientConfig(BaseModel):
     """Complete client configuration"""
     
     # Connection settings
-    url: str = Field(..., description="VectorFlow server URL")
+    url: str = Field(..., description="ProximaDB server URL")
     api_key: Optional[str] = Field(default=None, description="API key for authentication")
     protocol: Protocol = Field(default=Protocol.AUTO, description="Communication protocol")
     
@@ -219,7 +220,7 @@ class ClientConfig(BaseModel):
     def get_base_headers(self) -> Dict[str, str]:
         """Get base headers for requests"""
         headers = {
-            "User-Agent": self.user_agent or f"vectorflow-python/{self._get_version()}",
+            "User-Agent": self.user_agent or f"proximadb-python/{self._get_version()}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
@@ -239,7 +240,7 @@ class ClientConfig(BaseModel):
         if self.api_key:
             metadata.append(("authorization", f"Bearer {self.api_key}"))
         
-        metadata.append(("user-agent", self.user_agent or f"vectorflow-python/{self._get_version()}"))
+        metadata.append(("user-agent", self.user_agent or f"proximadb-python/{self._get_version()}"))
         
         # Add custom headers as metadata
         for key, value in self.custom_headers.items():
@@ -281,11 +282,34 @@ class ClientConfig(BaseModel):
         else:  # AUTO
             # Use gRPC by default for better performance
             return True
+    
+    def get_protocol_url(self, target_protocol: Protocol) -> str:
+        """Get URL for specific protocol with correct port"""
+        parsed = urlparse(self.url)
+        host = parsed.hostname or "localhost"
+        scheme = parsed.scheme or "http"
+        
+        # ProximaDB standard port allocation
+        if target_protocol == Protocol.REST:
+            port = 5679 if scheme == "https" else 5678
+        elif target_protocol == Protocol.GRPC:
+            port = 5681 if scheme == "https" else 5680  
+        elif target_protocol == Protocol.AVRO:
+            port = 5683 if scheme == "https" else 5682
+        else:
+            # Keep original port for AUTO or unknown protocols
+            port = parsed.port or (443 if scheme == "https" else 80)
+        
+        # For gRPC, don't include scheme in the endpoint
+        if target_protocol == Protocol.GRPC:
+            return f"{host}:{port}"
+        else:
+            return f"{scheme}://{host}:{port}"
 
 
 # Default configuration instance
 DEFAULT_CONFIG = ClientConfig(
-    url="https://api.vectorflow.ai",
+    url="http://localhost:5678",
     protocol=Protocol.AUTO,
     timeout=30.0,
 )
