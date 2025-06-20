@@ -162,42 +162,52 @@ Deliver a cloud-native vector database that provides:
 |ST-001
 |MMAP-based reads with OS page cache optimization for hot data
 |Critical
+|✅ IMPLEMENTED
 
 |ST-002
 |LSM tree-based append-only writes for internet scale
 |Critical
+|✅ IMPLEMENTED
 
 |ST-003
 |Multi-disk support with intelligent data placement
 |High
+|🚧 IN PROGRESS
 
 |ST-004
 |Intelligent 5-tier storage: Ultra-Hot → Hot → Warm → Cold → Archive
 |Critical
+|✅ IMPLEMENTED
 
 |ST-005
 |Seamless S3/ADLS/GCS integration - delegate replication to object store instead of ProximaDB
 |Critical
+|✅ IMPLEMENTED
 
 |ST-006
 |Parquet encoding with column families for analytics workloads
 |High
+|✅ IMPLEMENTED
 
 |ST-007
 |Configurable compression (LZ4, ZSTD, GZIP) per column family
 |High
+|✅ IMPLEMENTED
 
 |ST-008
 |Schema evolution with backward compatibility
 |Medium
+|✅ IMPLEMENTED
 
 |ST-009
 |Point-in-time recovery with configurable retention
 |High
+|🚧 IN PROGRESS
 
 |ST-010
 |Cross-region data replication with consistency guarantees
 |High
+|🚧 IN PROGRESS
 
 |ST-011
 |Multi-cloud Write-Ahead Log (WAL) with S3/ADLS/GCS backend support
@@ -227,18 +237,22 @@ Deliver a cloud-native vector database that provides:
 |ST-016
 |Cloud-native WAL batching and cost optimization (lifecycle management)
 |High
+|🚧 IN PROGRESS
 
 |ST-017
 |Hybrid WAL: local cache + cloud backup with configurable sync strategies
 |High
+|🚧 IN PROGRESS
 
 |ST-018
 |WAL segment rotation with automatic cleanup and retention policies
 |High
+|✅ IMPLEMENTED
 
 |ST-019
 |Memtable with ID-based deduplication and metadata filtering
 |High
+|✅ IMPLEMENTED
 
 |ST-020
 |Unified storage engine supporting VIPER and LSM layouts via strategy pattern
@@ -282,111 +296,135 @@ Deliver a cloud-native vector database that provides:
 |===
 
 ==== Adaptive eXtensible Indexing System (AXIS)
-[cols="1,3,1"]
+[cols="1,3,1,1"]
 |===
-|ID |Requirement |Priority
+|ID |Requirement |Priority |Status
 
 |IX-001
 |Global ID Index with Trie structure for prefix queries and HashMap for O(1) lookups
 |Critical
+|✅ IMPLEMENTED
 
 |IX-002
 |ID-to-location mapping: id → {partition_id, offset_in_file} for unified access
 |Critical
+|✅ IMPLEMENTED
 
 |IX-003
 |Metadata Index with Parquet columnar storage and Roaring Bitmap filters
 |Critical
+|🚧 IN PROGRESS
 
 |IX-004
 |Bitmap filtering for metadata predicates (e.g., language="en") mapped to row IDs
 |Critical
+|🚧 IN PROGRESS
 
 |IX-005
 |Dense Vector Index with per-partition HNSW/IVF/PQ indexes
 |Critical
+|✅ IMPLEMENTED
 
 |IX-006
 |ANN index pointers stored alongside Parquet row group offsets
 |High
+|🚧 IN PROGRESS
 
 |IX-007
 |Sparse Vector Index with LSM tree for ID → sparse vector mapping
 |High
+|❌ NOT IMPLEMENTED
 
 |IX-008
 |MinHash LSH support for ANN queries over sparse vectors
 |High
+|❌ NOT IMPLEMENTED
 
 |IX-009
 |Count-Min Sketch or SimHash for approximate sparse similarity filtering
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-010
 |Join Engine with RowSet intersection for multi-index query results
 |Critical
+|✅ IMPLEMENTED
 
 |IX-011
 |Bloom filter cache for false-positive rejection in joins
 |High
+|🚧 IN PROGRESS
 
 |IX-012
 |Priority queue for relevance re-ranking of combined results
 |High
+|✅ IMPLEMENTED
 
 |IX-013
 |Multi-level caching with hot vectors kept in memory
 |High
+|🚧 IN PROGRESS
 
 |IX-014
 |Streaming index mode with mini-segment batch processing
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-015
 |Periodic reorg tool for partition rebalancing and ANN index rebuilds
 |Medium
+|❌ NOT IMPLEMENTED
 
 |IX-016
 |Time-travel support with versioned vector IDs and timestamp columns
 |Low
+|❌ NOT IMPLEMENTED
 
 |IX-017
 |Adaptive Index Strategy Selection based on collection characteristics
 |Critical
+|✅ IMPLEMENTED
 
 |IX-018
 |Real-time Index Performance Monitoring and automatic optimization triggers
 |High
+|✅ IMPLEMENTED
 
 |IX-019
 |Zero-downtime Index Migration between different indexing strategies
 |High
+|✅ IMPLEMENTED
 
 |IX-020
 |Index Evolution Engine with ML-based optimization recommendations
 |High
+|✅ IMPLEMENTED
 
 |IX-021
 |Collection-level Index Configuration with inheritance and overrides
 |Medium
+|✅ IMPLEMENTED
 
 |IX-022
 |Index Rebuild Pipeline with incremental migration capabilities
 |High
+|🚧 IN PROGRESS
 
 |IX-023
 |Automatic Index Type Detection based on vector sparsity and query patterns
 |Critical
+|✅ IMPLEMENTED
 
 |IX-024
 |Index Performance Benchmarking and strategy comparison tools
 |Medium
+|❌ NOT IMPLEMENTED
 |===
 
 ==== Distributed Architecture
-[cols="1,3,1"]
+[cols="1,3,1,1"]
 |===
-|ID |Requirement |Priority
+|ID |Requirement |Priority |Status
 
 |DA-001
 |Raft consensus for strongly consistent metadata operations
