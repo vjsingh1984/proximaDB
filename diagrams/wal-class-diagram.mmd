@@ -1,0 +1,86 @@
+classDiagram
+    class WalManager {
+        +strategy: Box~dyn WalStrategy~
+        +config: WalConfig
+        +insert(collection_id, vector_id, record) Future~u64~
+        +update(collection_id, vector_id, record) Future~u64~
+        +delete(collection_id, vector_id) Future~u64~
+        +create_collection(collection_id, config) Future~u64~
+        +drop_collection(collection_id) Future~()~
+        +flush(collection_id) Future~FlushResult~
+        +search(collection_id, vector_id) Future~Option~WalEntry~~
+    }
+
+    class WalStorageBackend {
+        <<enumeration>>
+        LocalDisk
+        S3
+        AzureDataLake
+        GoogleCloudStorage
+        Hybrid
+    }
+
+    class RecoveryOptimizedCompression {
+        <<enumeration>>
+        LZ4
+        Snappy
+        ZstdFast
+        Adaptive
+    }
+
+    class MultiStorageConfig {
+        +replication_factor: usize
+        +distribution_strategy: StorageDistributionStrategy
+        +enable_parallel_recovery: bool
+        +failure_handling: StorageFailureHandling
+    }
+
+    class RecoveryConfig {
+        +parallel_threads: usize
+        +prefetch_buffer_mb: usize
+        +recovery_mode: RecoveryMode
+        +memory_limits: RecoveryMemoryLimits
+    }
+
+    class AvroWalEntry {
+        +schema_version: u8
+        +sequence: u64
+        +entry_type: WalEntryType
+        +vector_record: Option~AvroVectorRecord~
+        +viper_data: Option~ViperOperationData~
+        +cloud_data: Option~CloudOperationData~
+    }
+
+    class UnifiedStorageEngine {
+        +wal_manager: Arc~AvroWalManager~
+        +memtable: Arc~Memtable~
+        +storage_handlers: HashMap~CollectionId, StorageLayoutHandler~
+        +insert_vector(record: VectorRecord) Future~()~
+        +get_vector(id: VectorId) Future~Option~VectorRecord~~
+        +search_with_metadata_filters() Future~Vec~VectorRecord~~
+    }
+
+    class Memtable {
+        +data: HashMap~CollectionId, CollectionMemtable~
+        +put(record: VectorRecord) Future~u64~
+        +get(id: VectorId) Future~Option~VectorRecord~~
+        +filter_by_metadata() Future~Vec~VectorRecord~~
+        +search_with_filters() Future~Vec~VectorRecord~~
+    }
+
+    class ViperStorageEngine {
+        +hybrid_storage: ViperHybridStorage
+        +compression_engine: CompressionEngine
+        +ml_models: HashMap~CollectionId, ClusterModel~
+        +insert_vector_hybrid() Future~()~
+        +search_vectors() Future~Vec~ViperSearchResult~~
+    }
+
+    WalManager --> WalStorageBackend
+    WalManager --> RecoveryOptimizedCompression
+    WalManager --> MultiStorageConfig
+    WalManager --> RecoveryConfig
+    WalManager --> AvroWalEntry
+    UnifiedStorageEngine --> WalManager
+    UnifiedStorageEngine --> Memtable
+    UnifiedStorageEngine --> ViperStorageEngine

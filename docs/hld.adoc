@@ -12,7 +12,7 @@ ProximaDB is a cloud-native, serverless vector database designed for the AI era.
 
 == Architecture Overview
 
-image::architecture-overview.png[ProximaDB Architecture Overview, 800, align="center"]
+image::images/proximadb-architecture.png[ProximaDB Architecture Overview, 800, align="center"]
 
 ProximaDB follows a **layered, cloud-native architecture** with clear separation of concerns:
 
@@ -395,7 +395,7 @@ impl QueryPlanner {
 
 === Intelligent Storage Tiers
 
-image::storage-tiering.png[Storage Tiering Architecture, 800, align="center"]
+image::images/storage-tiers.png[Storage Tiering Architecture, 800, align="center"]
 
 VectorFlow implements a **5-tier storage hierarchy** optimized for different access patterns and cost requirements:
 
@@ -774,7 +774,7 @@ ProximaDB implements a sophisticated hybrid indexing system that seamlessly hand
 
 ==== AXIS Architecture Overview
 
-image::axis-architecture.png[AXIS Architecture, 800, align="center"]
+image::images/axis-architecture.png[AXIS Architecture, 800, align="center"]
 
 The AXIS (Adaptive eXtensible Indexing System) consists of five core components with adaptive intelligence:
 
@@ -1222,7 +1222,7 @@ graph LR
 
 === Multi-Tenant Architecture
 
-image::tenant-routing.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
+image::images/tenant-isolation.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
 
 ==== Tenant Identification
 - **HTTP Headers**: `x-tenant-id`, `x-organization-id`
@@ -1290,7 +1290,7 @@ image::tenant-routing.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
 
 === Homelab Development
 
-image::deployment-homelab.png[Homelab Deployment, 600, align="center"]
+image::images/deployment-models.png[Deployment Models, 800, align="center"]
 
 **Target**: Local development and proof-of-concept
 
