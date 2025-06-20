@@ -1,0 +1,114 @@
+@startuml proximadb-architecture
+!theme cerulean-outline
+skinparam backgroundColor #F8F9FA
+skinparam defaultTextAlignment center
+
+title ProximaDB Architecture Overview
+
+package "Client Applications" as clients {
+  [Python SDK] as python
+  [REST Client] as rest_client  
+  [gRPC Client] as grpc_client
+}
+
+package "API Gateway Layer" as api_layer {
+  component [Load Balancer\n(Nginx/Envoy)] as lb
+  component [Authentication\n& Authorization] as auth
+  component [Rate Limiting\n& Quotas] as rate_limit
+}
+
+package "ProximaDB Unified Server\n(Port 5678)" as server {
+  component [Protocol Detection] as protocol_detect
+  component [gRPC Handler\n(HTTP/2+Protobuf)] as grpc_handler
+  component [REST Handler\n(HTTP/1.1+JSON)] as rest_handler
+  component [Common Service Layer] as service_layer
+}
+
+package "Business Logic Services" as services {
+  component [Collection Service] as collection_svc
+  component [Vector Service] as vector_svc  
+  component [Search Service] as search_svc
+  component [Admin Service] as admin_svc
+}
+
+package "Storage Layer" as storage {
+  component [VIPER Storage Engine] as viper
+  component [Write-Ahead Log (WAL)] as wal
+  component [Metadata Backend] as metadata
+  component [Filesystem Abstraction] as filesystem
+}
+
+package "Index Layer (AXIS)" as indexes {
+  component [Global ID Index\n(Trie + HashMap)] as id_index
+  component [Metadata Index\n(Parquet + Bitmap)] as meta_index
+  component [Dense Vector Index\n(HNSW + PQ)] as dense_index
+  component [Sparse Vector Index\n(LSM + MinHash)] as sparse_index
+  component [Join Engine] as join_engine
+}
+
+package "Multi-Cloud Storage" as cloud_storage {
+  database "Local FileSystem\n(file://)" as local_fs
+  database "Amazon S3\n(s3://)" as s3
+  database "Azure Data Lake\n(adls://)" as adls  
+  database "Google Cloud Storage\n(gcs://)" as gcs
+}
+
+' Client connections
+clients --> lb
+python -.-> grpc_client : uses
+python -.-> rest_client : uses
+
+' API Layer flow
+lb --> auth
+auth --> rate_limit
+rate_limit --> protocol_detect
+
+' Protocol routing
+protocol_detect --> grpc_handler : Content-Type:\napplication/grpc
+protocol_detect --> rest_handler : HTTP Methods:\nGET/POST/PUT/DELETE
+
+' Service layer
+grpc_handler --> service_layer
+rest_handler --> service_layer
+service_layer --> services
+
+' Business services to storage
+collection_svc --> metadata
+vector_svc --> viper
+vector_svc --> wal
+search_svc --> indexes
+admin_svc --> metadata
+
+' Storage layer connections
+viper --> indexes
+wal --> filesystem
+metadata --> filesystem
+indexes --> viper
+
+' Multi-cloud connections
+filesystem --> local_fs
+filesystem --> s3
+filesystem --> adls
+filesystem --> gcs
+
+note right of protocol_detect
+  **Zero-overhead detection**
+  Content-type based routing
+  Single port for both protocols
+end note
+
+note right of viper
+  **Optimized for vectors**
+  Parquet columnar storage
+  Intelligent compression
+  SIMD acceleration
+end note
+
+note right of indexes
+  **AXIS System**
+  Adaptive indexing
+  Multi-strategy search
+  Real-time optimization
+end note
+
+@enduml

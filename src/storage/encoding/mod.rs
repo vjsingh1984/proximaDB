@@ -1,6 +1,6 @@
-pub mod parquet_encoder;
 pub mod column_family;
 pub mod compression;
+pub mod parquet_encoder;
 
 use crate::core::VectorRecord;
 use serde::{Deserialize, Serialize};
@@ -8,18 +8,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageFormat {
     /// Row-based format for transactional workloads
-    RowBased {
-        compression: CompressionType,
-    },
+    RowBased { compression: CompressionType },
     /// Columnar format for analytical workloads (like Parquet)
     Columnar {
         compression: CompressionType,
         row_group_size: usize,
     },
     /// Hybrid format with column families (like HBase)
-    ColumnFamily {
-        families: Vec<ColumnFamilyConfig>,
-    },
+    ColumnFamily { families: Vec<ColumnFamilyConfig> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,9 +77,8 @@ impl SoftDelete for Tombstone {
 
     fn mark_deleted(&self, record: &mut VectorRecord, delete_time: u64) {
         // Add deletion metadata
-        record.metadata.insert(
-            "_deleted_at".to_string(), 
-            serde_json::json!(delete_time)
-        );
+        record
+            .metadata
+            .insert("_deleted_at".to_string(), serde_json::json!(delete_time));
     }
 }

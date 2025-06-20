@@ -1,0 +1,119 @@
+@startuml
+!theme plain
+title ProximaDB Unified Architecture
+
+package "Unified Service Layer" {
+    class UnifiedAvroService {
+        +storage: Arc<RwLock<StorageEngine>>
+        +wal: Arc<WalManager>
+        +vector_coordinator: Arc<VectorStorageCoordinator>
+        +collection_service: Arc<CollectionService>
+        --
+        +insert_vector(record: VectorRecord): Future<Result>
+        +update_vector(id: VectorId, record: VectorRecord): Future<Result>
+        +delete_vector(id: VectorId): Future<Result>
+        +search_vectors(query: SearchQuery): Future<Vec<SearchResult>>
+        +create_collection(config: CollectionConfig): Future<Result>
+        +drop_collection(id: CollectionId): Future<Result>
+    }
+}
+
+package "Vector Storage Coordination" {
+    class VectorStorageCoordinator {
+        +engines: HashMap<String, Arc<dyn VectorStorage>>
+        +index_manager: Arc<UnifiedIndexManager>
+        +config: CoordinatorConfig
+        --
+        +execute_operation(op: VectorOperation): Future<OperationResult>
+        +select_engine(collection: &CollectionConfig): String
+        +coordinate_search(query: SearchQuery): Future<Vec<SearchResult>>
+    }
+
+    interface VectorStorage {
+        +engine_name(): &str
+        +capabilities(): EngineCapabilities
+        +execute_operation(op: VectorOperation): Future<OperationResult>
+        +search(context: SearchContext): Future<Vec<SearchResult>>
+        +get_statistics(): Future<EngineStatistics>
+    }
+
+    class ViperCoreEngine {
+        +config: ViperConfig
+        +pipeline: Arc<ViperPipeline>
+        +compactor: Arc<CompactionEngine>
+        +storage_handler: Arc<StorageLayoutHandler>
+        +ml_optimizer: Arc<MLGuidedOptimizer>
+    }
+
+    class StandardEngine {
+        +storage: Arc<FlatStorage>
+        +config: StandardConfig
+    }
+
+    VectorStorage <|-- ViperCoreEngine
+    VectorStorage <|-- StandardEngine
+}
+
+package "Index Management" {
+    class UnifiedIndexManager {
+        +collection_indexes: HashMap<CollectionId, MultiIndex>
+        +index_builders: IndexBuilderRegistry
+        +optimizer: Arc<IndexOptimizer>
+        --
+        +create_index(collection: CollectionId, spec: IndexSpec): Future<Result>
+        +search(collection: &CollectionId, context: &SearchContext): Future<Vec<SearchResult>>
+        +optimize_indexes(): Future<Result>
+    }
+
+    class MultiIndex {
+        +primary_index: Box<dyn VectorIndex>
+        +metadata_index: Option<Box<dyn MetadataIndex>>
+        +auxiliary_indexes: HashMap<String, Box<dyn VectorIndex>>
+        +selection_strategy: IndexSelectionStrategy
+    }
+}
+
+package "Storage Management" {
+    class StoragePolicy {
+        +collection_name: String
+        +primary_storage: String
+        +secondary_storage: Option<String>
+        +archive_storage: Option<String>
+        +wal_storage: String
+        +metadata_storage: String
+        +index_storage: String
+        +lifecycle: StorageLifecycle
+    }
+
+    class WalManager {
+        +strategy: Box<dyn WalStrategy>
+        +age_monitor: Arc<WalAgeMonitor>
+        +config: WalConfig
+        --
+        +insert(collection_id, vector_id, record): Future<u64>
+        +flush(collection_id: Option<&CollectionId>): Future<FlushResult>
+        +check_immediate_flush_triggers(collection_id): Future<bool>
+    }
+}
+
+package "Collection Management" {
+    class CollectionService {
+        +metadata_backend: Arc<dyn MetadataBackend>
+        +schema_service: Arc<SchemaService>
+        --
+        +create_collection(config: CollectionConfig): Future<Result>
+        +get_collection(id: &CollectionId): Future<Option<Collection>>
+        +update_collection(id: &CollectionId, config: CollectionConfig): Future<Result>
+        +drop_collection(id: &CollectionId): Future<Result>
+    }
+}
+
+UnifiedAvroService --> VectorStorageCoordinator
+UnifiedAvroService --> WalManager
+UnifiedAvroService --> CollectionService
+VectorStorageCoordinator --> VectorStorage
+VectorStorageCoordinator --> UnifiedIndexManager
+VectorStorageCoordinator --> StoragePolicy
+UnifiedIndexManager --> MultiIndex
+
+@enduml

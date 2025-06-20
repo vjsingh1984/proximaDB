@@ -70,14 +70,43 @@ class StorageConfig(BaseModel):
         use_enum_values = True
 
 
+class FlushConfig(BaseModel):
+    """WAL flush configuration for collections"""
+    max_wal_size_mb: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        description="Maximum WAL size in MB before forced flush (None = use global default: 128MB)"
+    )
+    
+    class Config:
+        use_enum_values = True
+
+
 class CollectionConfig(BaseModel):
     """Configuration for creating collections"""
     dimension: int = Field(..., ge=1, le=65536)
     distance_metric: DistanceMetric = DistanceMetric.COSINE
     index_config: Optional[IndexConfig] = None
     storage_config: Optional[StorageConfig] = None
+    
+    # Storage layout configuration
+    storage_layout: str = Field(
+        default="viper",
+        description="Storage layout: 'viper' (default), 'lsm', 'rocksdb', 'memory'"
+    )
+    
     description: Optional[str] = None
     metadata_schema: Optional[Dict[str, str]] = None
+    
+    # VIPER-specific optimization (only used when storage_layout = 'viper')
+    filterable_metadata_fields: Optional[List[str]] = Field(
+        default=None, 
+        description="Up to 16 metadata field names for Parquet column optimization and efficient filtering (VIPER only)"
+    )
+    flush_config: Optional[FlushConfig] = Field(
+        default=None,
+        description="WAL flush configuration (None = use global defaults). SIZE-BASED FLUSH ONLY for stability."
+    )
     
     class Config:
         use_enum_values = True
@@ -86,6 +115,37 @@ class CollectionConfig(BaseModel):
     def validate_dimension(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Dimension must be positive")
+        return v
+    
+    @validator('storage_layout')
+    def validate_storage_layout(cls, v: str) -> str:
+        valid_layouts = {'viper', 'lsm', 'rocksdb', 'memory'}
+        if v not in valid_layouts:
+            raise ValueError(f"Storage layout '{v}' is not supported. Valid options: {', '.join(valid_layouts)}")
+        return v
+    
+    @validator('filterable_metadata_fields')
+    def validate_filterable_fields(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            # Validate field names
+            for field in v:
+                if not isinstance(field, str) or not field.strip():
+                    raise ValueError("Filterable metadata field names must be non-empty strings")
+                if len(field) > 64:
+                    raise ValueError(f"Filterable metadata field name '{field}' exceeds 64 character limit")
+                if not field.replace('_', '').isalnum():
+                    raise ValueError(f"Filterable metadata field name '{field}' must be alphanumeric with underscores")
+            
+            # Check for duplicates
+            if len(v) != len(set(v)):
+                raise ValueError("Filterable metadata field names must be unique")
+            
+            # Check reserved names
+            reserved_names = {'id', 'vector', 'vectors', 'timestamp', 'created_at', 'updated_at', 'expires_at', 'extra_meta'}
+            for field in v:
+                if field.lower() in reserved_names:
+                    raise ValueError(f"Filterable metadata field name '{field}' is reserved")
+        
         return v
 
 

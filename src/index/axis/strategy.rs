@@ -5,24 +5,24 @@
 
 //! Indexing strategies for AXIS
 
-use serde::{Serialize, Deserialize};
 use super::MigrationPriority;
+use serde::{Deserialize, Serialize};
 
 /// Index strategy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStrategy {
     /// Primary index type
     pub primary_index_type: IndexType,
-    
+
     /// Secondary indexes to maintain
     pub secondary_indexes: Vec<IndexType>,
-    
+
     /// Optimization configuration
     pub optimization_config: OptimizationConfig,
-    
+
     /// Migration priority
     pub migration_priority: MigrationPriority,
-    
+
     /// Resource requirements
     pub resource_requirements: ResourceRequirements,
 }
@@ -44,55 +44,55 @@ impl Default for IndexStrategy {
 pub enum IndexType {
     /// Global ID index only (minimal indexing)
     GlobalIdOnly,
-    
+
     /// Global ID index (always present)
     GlobalId,
-    
+
     /// Metadata index for filtering
     Metadata,
-    
+
     /// Dense vector index (HNSW)
     DenseVector,
-    
+
     /// Sparse vector index (LSM + MinHash)
     SparseVector,
-    
+
     /// Join engine for multi-index queries
     JoinEngine,
-    
+
     /// Lightweight HNSW for small collections
     LightweightHNSW,
-    
+
     /// Standard HNSW index
     HNSW,
-    
+
     /// Partitioned HNSW for large collections
     PartitionedHNSW,
-    
+
     /// Product quantization for compression
     ProductQuantization,
-    
+
     /// Vector compression
     VectorCompression,
-    
+
     /// LSM tree for sparse vectors
     LSMTree,
-    
+
     /// MinHash LSH for sparse similarity
     MinHashLSH,
-    
+
     /// Inverted index for sparse vectors
     InvertedIndex,
-    
+
     /// Sparse optimized index
     SparseOptimized,
-    
+
     /// Basic sparse index
     SparseBasic,
-    
+
     /// Hybrid index for small collections
     HybridSmall,
-    
+
     /// Full AXIS deployment
     FullAXIS,
 }
@@ -102,22 +102,22 @@ pub enum IndexType {
 pub struct OptimizationConfig {
     /// Enable caching
     pub enable_caching: bool,
-    
+
     /// Cache size in MB
     pub cache_size_mb: usize,
-    
+
     /// Enable prefetching
     pub enable_prefetching: bool,
-    
+
     /// Batch size for operations
     pub batch_size: usize,
-    
+
     /// Enable SIMD optimizations
     pub enable_simd: bool,
-    
+
     /// Enable GPU acceleration
     pub enable_gpu: bool,
-    
+
     /// Compression settings
     pub compression: CompressionConfig,
 }
@@ -149,12 +149,12 @@ impl OptimizationConfig {
             compression: CompressionConfig::none(),
         }
     }
-    
+
     /// Balanced optimization
     pub fn balanced() -> Self {
         Self::default()
     }
-    
+
     /// High performance optimization
     pub fn high_performance() -> Self {
         Self {
@@ -167,7 +167,7 @@ impl OptimizationConfig {
             compression: CompressionConfig::fast(),
         }
     }
-    
+
     /// Sparse optimized configuration
     pub fn sparse_optimized() -> Self {
         Self {
@@ -180,7 +180,7 @@ impl OptimizationConfig {
             compression: CompressionConfig::high(),
         }
     }
-    
+
     /// Adaptive configuration
     pub fn adaptive() -> Self {
         Self {
@@ -200,10 +200,10 @@ impl OptimizationConfig {
 pub struct CompressionConfig {
     /// Enable compression
     pub enabled: bool,
-    
+
     /// Compression algorithm
     pub algorithm: CompressionAlgorithm,
-    
+
     /// Compression level (1-9)
     pub level: u8,
 }
@@ -227,7 +227,7 @@ impl CompressionConfig {
             level: 0,
         }
     }
-    
+
     /// Fast compression
     pub fn fast() -> Self {
         Self {
@@ -236,7 +236,7 @@ impl CompressionConfig {
             level: 1,
         }
     }
-    
+
     /// High compression
     pub fn high() -> Self {
         Self {
@@ -245,7 +245,7 @@ impl CompressionConfig {
             level: 6,
         }
     }
-    
+
     /// Adaptive compression
     pub fn adaptive() -> Self {
         Self {
@@ -271,13 +271,13 @@ pub enum CompressionAlgorithm {
 pub struct ResourceRequirements {
     /// Memory requirement in GB
     pub memory_gb: f64,
-    
+
     /// CPU cores required
     pub cpu_cores: f64,
-    
+
     /// Disk space in GB
     pub disk_gb: f64,
-    
+
     /// Network bandwidth in Mbps
     pub network_mbps: f64,
 }
@@ -292,7 +292,7 @@ impl ResourceRequirements {
             network_mbps: 10.0,
         }
     }
-    
+
     /// Medium resource requirements
     pub fn medium() -> Self {
         Self {
@@ -302,7 +302,7 @@ impl ResourceRequirements {
             network_mbps: 100.0,
         }
     }
-    
+
     /// High resource requirements
     pub fn high() -> Self {
         Self {
@@ -312,7 +312,7 @@ impl ResourceRequirements {
             network_mbps: 1000.0,
         }
     }
-    
+
     /// Very high resource requirements
     pub fn very_high() -> Self {
         Self {

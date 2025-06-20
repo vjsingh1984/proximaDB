@@ -6,23 +6,23 @@
 //! Comprehensive metrics collection and monitoring system for ProximaDB
 
 pub mod collector;
-pub mod registry;
 pub mod exporters;
-pub mod server_metrics;
 pub mod index_metrics;
-pub mod storage_metrics;
 pub mod query_metrics;
+pub mod registry;
+pub mod server_metrics;
+pub mod storage_metrics;
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
 
 pub use collector::MetricsCollector;
+pub use exporters::{JsonExporter, PrometheusExporter};
 pub use registry::MetricsRegistry;
-pub use exporters::{PrometheusExporter, JsonExporter};
 
 /// Core metric types supported by ProximaDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,7 +211,7 @@ impl Default for MetricsConfig {
             enable_detailed_logging: false,
             alert_thresholds: AlertThresholds::default(),
             histogram_buckets: vec![
-                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
             ],
         }
     }
@@ -230,11 +230,11 @@ impl MetricsRateLimiter {
             min_interval,
         }
     }
-    
+
     pub async fn should_emit(&self) -> bool {
         let now = Instant::now();
         let mut last_emit = self.last_emit.write().await;
-        
+
         if now.duration_since(*last_emit) >= self.min_interval {
             *last_emit = now;
             true
@@ -257,11 +257,11 @@ impl SystemMetrics {
             custom: HashMap::new(),
         }
     }
-    
+
     /// Check if any metrics exceed alert thresholds
     pub fn check_alerts(&self, thresholds: &AlertThresholds) -> Vec<Alert> {
         let mut alerts = Vec::new();
-        
+
         // CPU usage alert
         if self.server.cpu_usage_percent > thresholds.max_cpu_usage_percent {
             alerts.push(Alert {
@@ -275,14 +275,15 @@ impl SystemMetrics {
                 acknowledged: false,
             });
         }
-        
+
         // Memory usage alert
         let memory_usage_percent = if self.server.memory_available_bytes > 0 {
-            ((self.server.memory_usage_bytes as f64) / (self.server.memory_available_bytes as f64)) * 100.0
+            ((self.server.memory_usage_bytes as f64) / (self.server.memory_available_bytes as f64))
+                * 100.0
         } else {
             0.0
         };
-        
+
         if memory_usage_percent > thresholds.max_memory_usage_percent {
             alerts.push(Alert {
                 id: format!("memory_usage_{}", self.timestamp.timestamp()),
@@ -295,13 +296,16 @@ impl SystemMetrics {
                 acknowledged: false,
             });
         }
-        
+
         // Query latency alert
         if self.query.p99_query_latency_ms > thresholds.max_query_latency_ms {
             alerts.push(Alert {
                 id: format!("query_latency_{}", self.timestamp.timestamp()),
                 level: AlertLevel::Critical,
-                message: format!("High query latency: {:.1}ms", self.query.p99_query_latency_ms),
+                message: format!(
+                    "High query latency: {:.1}ms",
+                    self.query.p99_query_latency_ms
+                ),
                 metric_name: "p99_query_latency_ms".to_string(),
                 current_value: self.query.p99_query_latency_ms,
                 threshold_value: thresholds.max_query_latency_ms,
@@ -309,13 +313,16 @@ impl SystemMetrics {
                 acknowledged: false,
             });
         }
-        
+
         // Cache hit rate alert
         if self.storage.cache_hit_rate < thresholds.min_cache_hit_rate {
             alerts.push(Alert {
                 id: format!("cache_hit_rate_{}", self.timestamp.timestamp()),
                 level: AlertLevel::Warning,
-                message: format!("Low cache hit rate: {:.1}%", self.storage.cache_hit_rate * 100.0),
+                message: format!(
+                    "Low cache hit rate: {:.1}%",
+                    self.storage.cache_hit_rate * 100.0
+                ),
                 metric_name: "cache_hit_rate".to_string(),
                 current_value: self.storage.cache_hit_rate,
                 threshold_value: thresholds.min_cache_hit_rate,
@@ -323,7 +330,7 @@ impl SystemMetrics {
                 acknowledged: false,
             });
         }
-        
+
         alerts
     }
 }

@@ -16,7 +16,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from .client import ProximaDBClient, connect
+# Unified client interface (recommended)
+from .unified_client import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
+
+# Specialized clients (for advanced use cases)
+from .client import ProximaDBClient as ProximaDBRestClient
+from .grpc_client import ProximaDBGrpcClient
 from .config import ClientConfig
 from .models import (
     Collection,
@@ -42,9 +47,16 @@ __author__ = "Vijaykumar Singh"
 __email__ = "singhvjd@gmail.com"
 
 __all__ = [
-    # Client classes
+    # Unified client interface (recommended)
     "ProximaDBClient",
-    "connect",
+    "connect", 
+    "connect_grpc",
+    "connect_rest",
+    "Protocol",
+    
+    # Specialized clients (for advanced use cases)
+    "ProximaDBRestClient",
+    "ProximaDBGrpcClient",
     "ClientConfig",
     
     # Models

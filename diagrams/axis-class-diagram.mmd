@@ -1,0 +1,140 @@
+classDiagram
+    class AxisIndexManager {
+        +global_id_index: GlobalIdIndex
+        +metadata_index: MetadataIndex
+        +dense_vector_index: DenseVectorIndex
+        +sparse_vector_index: SparseVectorIndex
+        +join_engine: JoinEngine
+        +adaptive_engine: AdaptiveIndexEngine
+        +migration_engine: IndexMigrationEngine
+        +query(query: HybridQuery) Future~QueryResult~
+        +insert(vector: VectorRecord) Future~()~
+        +update(id: VectorId, vector: VectorRecord) Future~()~
+        +delete(id: VectorId) Future~()~
+        +evolve_index(collection_id: CollectionId) Future~()~
+    }
+    
+    class AdaptiveIndexEngine {
+        +collection_analyzer: CollectionAnalyzer
+        +strategy_selector: IndexStrategySelector
+        +performance_monitor: PerformanceMonitor
+        +analyze_collection(collection_id: CollectionId) Future~CollectionCharacteristics~
+        +recommend_strategy(characteristics: CollectionCharacteristics) IndexStrategy
+        +should_migrate(collection_id: CollectionId) Future~bool~
+        +trigger_migration(collection_id: CollectionId, new_strategy: IndexStrategy) Future~()~
+    }
+    
+    class IndexMigrationEngine {
+        +migration_planner: MigrationPlanner
+        +data_migrator: DataMigrator
+        +rollback_manager: RollbackManager
+        +plan_migration(from: IndexStrategy, to: IndexStrategy) MigrationPlan
+        +execute_migration(plan: MigrationPlan) Future~MigrationResult~
+        +rollback_migration(plan: MigrationPlan) Future~()~
+    }
+    
+    class CollectionCharacteristics {
+        +vector_count: u64
+        +average_sparsity: f32
+        +dimension_variance: Vec~f32~
+        +query_patterns: QueryPatternAnalysis
+        +data_distribution: DataDistributionMetrics
+        +growth_rate: f32
+        +access_frequency: AccessFrequencyMetrics
+    }
+    
+    class IndexStrategy {
+        +primary_index_type: IndexType
+        +secondary_indexes: Vec~IndexType~
+        +optimization_config: OptimizationConfig
+        +migration_priority: MigrationPriority
+        +resource_requirements: ResourceRequirements
+    }
+
+    class GlobalIdIndex {
+        +trie: RadixTrie~VectorId, LocationInfo~
+        +hashmap: HashMap~VectorId, LocationInfo~
+        +lookup(id: VectorId) Option~LocationInfo~
+        +prefix_search(prefix: String) Vec~VectorId~
+        +insert(id: VectorId, location: LocationInfo) Result~()~
+        +remove(id: VectorId) Result~()~
+    }
+
+    class LocationInfo {
+        +partition_id: PartitionId
+        +offset_in_file: u64
+        +vector_type: VectorType
+        +size_bytes: u32
+        +timestamp: DateTime~Utc~
+    }
+
+    class MetadataIndex {
+        +column_store: ParquetMetadataStore
+        +bitmap_filters: RoaringBitmapIndex
+        +filter(predicate: MetadataPredicate) Future~BitSet~
+        +range_filter(field: String, range: Range) Future~BitSet~
+        +insert_metadata(id: VectorId, metadata: Metadata) Future~()~
+        +update_metadata(id: VectorId, metadata: Metadata) Future~()~
+    }
+
+    class RoaringBitmapIndex {
+        +field_bitmaps: HashMap~String, RoaringBitmap~
+        +value_bitmaps: HashMap~(String, Value), RoaringBitmap~
+        +get_rows_for_value(field: String, value: Value) RoaringBitmap
+        +intersect(bitmaps: Vec~RoaringBitmap~) RoaringBitmap
+        +union(bitmaps: Vec~RoaringBitmap~) RoaringBitmap
+    }
+
+    class DenseVectorIndex {
+        +partition_indexes: HashMap~PartitionId, HnswIndex~
+        +row_group_offsets: HashMap~PartitionId, Vec~u64~~
+        +search(query: DenseVector, k: usize) Future~Vec~SimilarityResult~~
+        +build_partition_index(partition: PartitionId) Future~()~
+        +rebuild_index(partition: PartitionId) Future~()~
+    }
+
+    class SparseVectorIndex {
+        +lsm_tree: LsmTree~VectorId, SparseVector~
+        +minhash_lsh: MinHashLSH
+        +count_min_sketch: CountMinSketch
+        +search_similar(query: SparseVector, threshold: f32) Future~Vec~SimilarityResult~~
+        +exact_lookup(id: VectorId) Future~Option~SparseVector~~
+        +insert(id: VectorId, vector: SparseVector) Future~()~
+    }
+
+    class MinHashLSH {
+        +hash_tables: Vec~HashMap~MinHash, Vec~VectorId~~~
+        +num_hashes: usize
+        +bands: usize
+        +query(vector: SparseVector) Vec~VectorId~
+        +insert(id: VectorId, vector: SparseVector) Result~()~
+    }
+
+    class JoinEngine {
+        +bloom_cache: BloomFilterCache
+        +result_merger: ResultMerger
+        +priority_queue: BinaryHeap~RankedResult~
+        +intersect_results(results: Vec~IndexResult~) Future~Vec~RankedResult~~
+        +merge_and_rank(results: Vec~RankedResult~) Vec~RankedResult~
+    }
+
+    class BloomFilterCache {
+        +filters: LruCache~QuerySignature, BloomFilter~
+        +check_membership(signature: QuerySignature, id: VectorId) bool
+        +add_result_set(signature: QuerySignature, ids: Vec~VectorId~) Result~()~
+    }
+
+    AxisIndexManager --> GlobalIdIndex
+    AxisIndexManager --> MetadataIndex
+    AxisIndexManager --> DenseVectorIndex
+    AxisIndexManager --> SparseVectorIndex
+    AxisIndexManager --> JoinEngine
+    AxisIndexManager --> AdaptiveIndexEngine
+    AxisIndexManager --> IndexMigrationEngine
+    AdaptiveIndexEngine --> CollectionCharacteristics
+    AdaptiveIndexEngine --> IndexStrategy
+    IndexMigrationEngine --> IndexStrategy
+    GlobalIdIndex --> LocationInfo
+    MetadataIndex --> RoaringBitmapIndex
+    SparseVectorIndex --> MinHashLSH
+    JoinEngine --> BloomFilterCache

@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-use proximadb::core::{Config, StorageConfig, LsmConfig, ApiConfig, ServerConfig, ConsensusConfig, MonitoringConfig};
+use proximadb::core::{
+    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+};
 use proximadb::ProximaDB;
 use tempfile::TempDir;
 
@@ -65,26 +67,26 @@ async fn test_collections_endpoint() {
 
     // Create ProximaDB instance
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     let client = reqwest::Client::new();
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
-    
+
     println!("Testing against: {}", base_url);
-    
+
     // Test: List collections (should be empty initially)
     let response = client
         .get(&format!("{}/collections", base_url))
         .send()
         .await
         .unwrap();
-    
+
     let status = response.status();
     println!("Collections endpoint status: {}", status);
     if !status.is_success() {
@@ -93,12 +95,12 @@ async fn test_collections_endpoint() {
         panic!("Expected status 200, got {}", status);
     }
     assert_eq!(status, 200);
-    
+
     let collections: Vec<serde_json::Value> = response.json().await.unwrap();
     assert_eq!(collections.len(), 0);
-    
+
     println!("Collections test passed!");
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }

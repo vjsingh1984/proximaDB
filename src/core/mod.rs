@@ -1,13 +1,18 @@
 pub mod config;
 pub mod error;
-pub mod types;
-pub mod serverless;
-pub mod routing;
 pub mod global_coordination;
+pub mod routing;
+pub mod serverless;
+pub mod storage_layout;
+pub mod types;
 
 pub use config::*;
 pub use error::*;
-pub use types::*;
+pub use global_coordination::{
+    DeploymentTopology, GlobalCoordinationConfig, GlobalMetadataCoordinator,
+};
+pub use routing::{
+    AccountTier, CustomerSegment, RoutingContext, RoutingDecision, SmartRouter, WorkloadType,
+};
 pub use serverless::*;
-pub use routing::{SmartRouter, RoutingContext, RoutingDecision, CustomerSegment, AccountTier, WorkloadType};
-pub use global_coordination::{GlobalCoordinationConfig, GlobalMetadataCoordinator, DeploymentTopology};
+pub use types::*;

@@ -1,0 +1,168 @@
+= ProximaDB
+:toc: left
+:toclevels: 2
+:sectlinks:
+:sectanchors:
+:source-highlighter: rouge
+:icons: font
+:imagesdir: docs/images
+
+// Licensed to Vijaykumar Singh under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Vijaykumar Singh licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+image::proximadb-architecture.png[ProximaDB Architecture,800,align=center]
+
+[.lead]
+**Proximity at Scale** +
+_The cloud-native vector database engineered for AI applications_
+
+A high-performance, enterprise-grade vector database built in Rust with intelligent storage tiering, distributed consensus, and comprehensive API support for modern AI workloads.
+
+== Why ProximaDB?
+
+The explosion of AI applications demands vector databases that can handle massive scale while maintaining sub-millisecond performance. Traditional solutions fall short in three critical areas:
+
+**Performance Bottlenecks** 💥:: Existing vector databases struggle with high-throughput writes and concurrent reads, leading to application bottlenecks and poor user experiences.
+
+**Cost Inefficiency** 💸:: Memory-only solutions require expensive hardware scaling, while naive disk storage sacrifices performance. Smart tiering is essential but missing.
+
+**AI Integration Gaps** 🔗:: Most databases treat vectors as generic data, lacking native integration with AI frameworks, embedding models, and real-time inference pipelines.
+
+ProximaDB solves these challenges with a cloud-native, serverless-first architecture designed specifically for AI workloads.
+
+== What is ProximaDB?
+
+ProximaDB is a **cloud-native vector database** that provides:
+
+=== ⚡ Core Capabilities
+- **Sub-millisecond Search**: HNSW indexing with SIMD optimizations
+- **High-Throughput Writes**: LSM tree architecture with WAL durability  
+- **Intelligent Tiering**: 5-tier storage from ultra-hot (MMAP) to archive (Glacier)
+- **Native AI Integration**: Built-in support for BERT, OpenAI, Cohere embeddings
+- **Multi-Protocol APIs**: gRPC and REST with identical feature sets
+
+=== 🏗️ Architecture Highlights
+- **AXIS Indexing**: Adaptive eXtensible Indexing System with ML-driven optimization
+- **VIPER Storage**: Vector-optimized Parquet storage with compression
+- **Serverless Ready**: Auto-scaling with scale-to-zero capabilities
+- **Multi-Tenant**: Collection-based isolation with enterprise security
+
+=== 🌍 Deployment Flexibility
+- **Local Development**: Docker Compose for quick setup
+- **Cloud Production**: Kubernetes with auto-scaling
+- **Edge Computing**: Distributed deployment for low-latency access
+- **Multi-Cloud**: S3, Azure Blob, GCS integration
+
+== How ProximaDB Works
+
+ProximaDB implements a **three-layer architecture** optimized for AI workloads:
+
+=== 1. API Layer
+**Unified Protocol Support**:: Single port serves both gRPC (HTTP/2 + Protobuf) and REST (HTTP/1.1 + JSON) with content-type detection
+**Client SDKs**:: Python, JavaScript, Java with async support and retry logic
+**Authentication**:: JWT, OAuth2, API keys with fine-grained permissions
+
+=== 2. Compute Layer  
+**Query Engine**:: Cost-based optimization with filter pushdown and quantized search
+**Index Management**:: AXIS system with automatic strategy selection and zero-downtime migration
+**Storage Engine**:: LSM trees with intelligent compaction and memory-mapped reads
+
+=== 3. Storage Layer
+**Intelligent Tiering**:: 
+- Ultra-Hot (< 1ms): Memory-mapped files with OS page cache
+- Hot (< 10ms): Local SSDs with LSM optimization  
+- Warm (< 100ms): Local HDDs with compression
+- Cold (< 1s): Object storage with Parquet analytics
+- Archive (< 10s): Long-term retention with compliance
+
+**Write-Ahead Log**:: Multi-format serialization (Avro, Bincode) with cloud-native batching and recovery optimization
+
+== 🚀 Quick Start
+
+[source,bash]
+----
+# Run with Docker
+docker run -p 5678:5678 proximadb/proximadb:latest
+
+# Or build from source  
+git clone https://github.com/vjsingh1984/proximaDB.git
+cd proximadb
+cargo run --bin proximadb-server
+----
+
+**Next Steps:**
+- 📖 **New Users**: Start with the link:docs/user_guide.adoc[User Guide]
+- 🔧 **Developers**: See the link:docs/developer_guide.adoc[Developer Guide]  
+- 🏗️ **Architects**: Review the link:docs/hld.adoc[High-Level Design]
+
+== 📊 Current Status
+
+🎯 **Latest Achievement**: Collection persistence across server restarts with BERT embeddings support (384, 768, 1024 dimensions)
+
+[cols="2,1,3"]
+|===
+|Component |Status |Notes
+
+|**Core Storage Engine** |✅ Complete |LSM trees, WAL, memory-mapped reads
+|**Collection Management** |✅ Complete |Create, list, get with metadata persistence  
+|**BERT Integration** |✅ Complete |Full support for major BERT model dimensions
+|**Dual Protocol APIs** |✅ Complete |gRPC + REST on single port with detection
+|**Vector Operations** |🚧 In Progress |Insert, search, update operations
+|**AXIS Indexing** |🚧 In Progress |Adaptive indexing with 85% completion
+|**Distributed Consensus** |📋 Planned |Raft implementation for clustering
+|===
+
+**See full status**: link:docs/implementation_status.adoc[Implementation Status]
+
+== 📚 Documentation Index
+
+=== Core Documentation
+- **link:docs/requirements.adoc[Requirements Specification]** - Comprehensive feature requirements and priorities
+- **link:docs/hld.adoc[High-Level Design (HLD)]** - System architecture and design decisions  
+- **link:docs/lld.adoc[Low-Level Design (LLD)]** - Detailed technical implementation
+- **link:docs/implementation_status.adoc[Implementation Status]** - Current development progress
+
+=== User & Developer Resources
+- **link:docs/user_guide.adoc[User Guide]** - Complete guide with BERT, OpenAI, Cohere examples
+- **link:docs/developer_guide.adoc[Developer Guide]** - Development workflows, APIs, and SDK usage
+- **link:docs/api/[API Documentation]** - REST and gRPC reference documentation
+
+=== Legacy Documentation
+- **link:docs/archive/[Archive]** - Historical documentation and design iterations
+
+== 🤝 Contributing
+
+**Get Involved:**
+1. 🐛 **Report Issues**: https://github.com/vjsingh1984/proximaDB/issues[GitHub Issues]
+2. 💡 **Request Features**: https://github.com/vjsingh1984/proximaDB/discussions[GitHub Discussions]  
+3. 🔧 **Submit PRs**: Fork, develop, test, submit pull requests
+4. 📖 **Improve Docs**: Documentation improvements always welcome
+
+**Development Setup**: See link:docs/developer_guide.adoc#getting-started[Developer Guide - Getting Started]
+
+== 📄 License & Maintainer
+
+**License**: Apache 2.0 - See link:LICENSE[LICENSE] file
+
+**Author & Maintainer**: Vijaykumar Singh
+- 📧 Email: singhvjd@gmail.com  
+- 🐙 GitHub: https://github.com/vjsingh1984[@vjsingh1984]
+- 💼 LinkedIn: https://www.linkedin.com/in/vijaydsingh/[Profile]
+
+---
+
+**🤖 Built with Rust for the AI revolution** | **⭐ Star us on GitHub** | **🚀 Deploy ProximaDB today**

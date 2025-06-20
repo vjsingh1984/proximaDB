@@ -1,0 +1,566 @@
+= Contributing to ProximaDB
+:toc: left
+:toclevels: 3
+:sectlinks:
+:sectanchors:
+:source-highlighter: rouge
+:icons: font
+
+// Licensed to Vijaykumar Singh under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Vijaykumar Singh licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+Welcome to ProximaDB! We're excited to have you contribute to the future of vector databases for AI. This guide will help you get started.
+
+== 🎯 How to Contribute
+
+=== Ways to Contribute
+* 🐛 Report bugs and issues
+* 💡 Suggest new features
+* 📝 Improve documentation
+* 🔧 Submit code fixes and enhancements
+* 🧪 Write tests and benchmarks
+* 🎨 Improve UI/UX for the dashboard
+* 📦 Package for different distributions
+
+== 🚀 Getting Started
+
+=== Prerequisites
+* Rust 1.70+ installed
+* Git configured with your GitHub account
+* Protocol Buffers compiler (`protoc`)
+* Basic familiarity with vector databases or similarity search
+
+=== Development Setup
+
+. *Fork and Clone*
++
+[source,bash]
+----
+git clone https://github.com/your-username/proximadb.git
+cd proximadb
+----
+
+. *Install Dependencies*
++
+[source,bash]
+----
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install protocol buffers compiler
+sudo apt-get install protobuf-compiler  # Ubuntu/Debian
+brew install protobuf                   # macOS
+
+# Build the project
+cargo build
+----
+
+. *Run Tests*
++
+[source,bash]
+----
+cargo test
+----
+
+. *Start Development Server*
++
+[source,bash]
+----
+cargo run --bin proximadb-server
+----
+
+=== Development Environment
+
+We recommend using:
+* *IDE*: VS Code with rust-analyzer extension
+* *Tools*: cargo-watch for auto-rebuilding
+* *Testing*: cargo-nextest for faster test execution
+
+[source,bash]
+----
+# Install helpful tools
+cargo install cargo-watch cargo-nextest
+
+# Auto-rebuild on changes
+cargo watch -x build
+
+# Fast test execution
+cargo nextest run
+----
+
+== 📝 Contribution Guidelines
+
+=== Issue Reporting
+
+Before creating a new issue:
+
+. *Search existing issues* to avoid duplicates
+. *Use appropriate labels* (bug, enhancement, documentation, etc.)
+. *Follow the issue templates* when available
+
+When reporting bugs, include:
+* ProximaDB version
+* Operating system and version
+* Rust version (`rustc --version`)
+* Steps to reproduce
+* Expected vs. actual behavior
+* Relevant logs or error messages
+
+[source,text]
+----
+**ProximaDB Version**: 0.2.0
+**OS**: Ubuntu 22.04
+**Rust Version**: 1.70.0
+
+**Steps to Reproduce**:
+1. Create collection with dimension 768
+2. Insert 1000 vectors using batch API
+3. Search with k=10
+
+**Expected**: Sub-millisecond response
+**Actual**: 5 second response time
+
+**Logs**:
+[ERROR] Index build timeout after 30s
+----
+
+=== Feature Requests
+
+For feature requests, please include:
+* Clear use case description
+* Expected behavior
+* Alternative solutions considered
+* Implementation suggestions (optional)
+
+=== Pull Request Process
+
+. *Create a Feature Branch*
++
+[source,bash]
+----
+git checkout -b feature/awesome-feature
+# or
+git checkout -b fix/important-bug
+----
+
+. *Make Your Changes*
+   * Follow the coding standards (see below)
+   * Add tests for new functionality
+   * Update documentation as needed
+   * Ensure all tests pass
+
+. *Commit Your Changes*
++
+[source,bash]
+----
+git add .
+git commit -m "feat: add awesome feature for better performance
+
+- Implement SIMD optimizations for distance calculations
+- Add benchmark suite for performance testing
+- Update documentation with usage examples
+
+Closes #123"
+----
+
+. *Push and Create PR*
++
+[source,bash]
+----
+git push origin feature/awesome-feature
+----
+   Then create a pull request on GitHub
+
+=== Commit Message Format
+
+We follow conventional commits:
+
+[source,text]
+----
+<type>(<scope>): <description>
+
+<body>
+
+<footer>
+----
+
+*Types*:
+* `feat`: New feature
+* `fix`: Bug fix
+* `docs`: Documentation only changes
+* `style`: Code style changes (formatting, etc.)
+* `refactor`: Code refactoring
+* `test`: Adding or updating tests
+* `perf`: Performance improvements
+* `ci`: CI/CD changes
+
+*Examples*:
+[source,text]
+----
+feat(api): add batch delete endpoint for vectors
+
+Implement batch delete functionality to improve
+performance when removing multiple vectors.
+
+- Add new REST endpoint POST /collections/{id}/vectors/batch-delete
+- Add gRPC BatchDelete method
+- Include proper error handling and validation
+- Add comprehensive tests
+
+Closes #456
+
+fix(storage): resolve memory leak in LSM compaction
+
+The compaction process was not properly releasing
+memory after processing large SST files.
+
+- Fix memory cleanup in compaction_manager.rs
+- Add memory usage monitoring in tests
+- Update compaction algorithm to use streaming
+
+Fixes #789
+----
+
+== 🧪 Testing Guidelines
+
+=== Test Categories
+
+. *Unit Tests*: Test individual functions and components
++
+[source,bash]
+----
+cargo test unit_tests
+----
+
+. *Integration Tests*: Test component interactions
++
+[source,bash]
+----
+cargo test integration_tests
+----
+
+. *Performance Tests*: Benchmarks and load testing
++
+[source,bash]
+----
+cargo bench
+----
+
+. *End-to-End Tests*: Full system testing
++
+[source,bash]
+----
+cargo test e2e_tests
+----
+
+=== Writing Tests
+
+*Unit Test Example*:
+[source,rust]
+----
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_vector_insert() {
+        let storage = create_test_storage().await;
+        let vector = VectorRecord {
+            id: "test_1".to_string(),
+            collection_id: "test_collection".to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: HashMap::new(),
+            timestamp: Utc::now(),
+            expires_at: None,
+        };
+
+        let result = storage.write(vector.clone()).await;
+        assert!(result.is_ok());
+
+        let retrieved = storage.read("test_collection", "test_1").await.unwrap();
+        assert_eq!(retrieved.unwrap().vector, vector.vector);
+    }
+}
+----
+
+*Integration Test Example*:
+[source,rust]
+----
+#[tokio::test]
+async fn test_rest_api_vector_crud() {
+    let server = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Create collection
+    let collection = client
+        .post(&format!("{}/api/v1/collections", server.url()))
+        .json(&json!({
+            "name": "test_collection",
+            "dimension": 3,
+            "distance_metric": "cosine"
+        }))
+        .send()
+        .await
+        .unwrap();
+    
+    assert_eq!(collection.status(), 201);
+    
+    // Insert vector
+    let vector = client
+        .post(&format!("{}/api/v1/collections/test_collection/vectors", server.url()))
+        .json(&json!({
+            "id": "test_1",
+            "vector": [1.0, 2.0, 3.0],
+            "metadata": {"type": "test"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    
+    assert_eq!(vector.status(), 201);
+}
+----
+
+=== Test Coverage
+
+We aim for high test coverage:
+* Unit tests: >90%
+* Integration tests: >80%
+* Critical paths: 100%
+
+Check coverage with:
+[source,bash]
+----
+cargo install cargo-tarpaulin
+cargo tarpaulin --out Html
+----
+
+== 📋 Code Standards
+
+=== Rust Guidelines
+
+. *Follow Rust standard conventions*
+   * Use `cargo fmt` for formatting
+   * Use `cargo clippy` for linting
+   * Follow naming conventions (snake_case, etc.)
+
+. *Error Handling*
+   * Use `Result<T, E>` for fallible operations
+   * Create custom error types with `thiserror`
+   * Provide meaningful error messages
+
+. *Documentation*
+   * Public APIs must have doc comments
+   * Include examples in doc comments
+   * Use `cargo doc` to generate documentation
+
+. *Performance*
+   * Avoid unnecessary allocations
+   * Use `&str` instead of `String` when possible
+   * Profile performance-critical code
+
+=== Code Example
+
+[source,rust]
+----
+/// Inserts a vector into the specified collection.
+/// 
+/// # Arguments
+/// 
+/// * `collection_id` - The ID of the collection
+/// * `vector` - The vector record to insert
+/// 
+/// # Returns
+/// 
+/// Returns `Ok(VectorId)` on success, or an error if the operation fails.
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use proximadb::storage::StorageEngine;
+/// use proximadb::core::VectorRecord;
+/// 
+/// async fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let storage = StorageEngine::new("./data").await?;
+///     let vector = VectorRecord {
+///         id: "doc_123".to_string(),
+///         collection_id: "documents".to_string(),
+///         vector: vec![0.1, 0.2, 0.3],
+///         metadata: HashMap::new(),
+///         timestamp: chrono::Utc::now(),
+///         expires_at: None,
+///     };
+///     
+///     let id = storage.write(vector).await?;
+///     println!("Inserted vector with ID: {}", id);
+///     Ok(())
+/// }
+/// ```
+/// 
+/// # Errors
+/// 
+/// This function will return an error if:
+/// * The collection does not exist
+/// * The vector dimension doesn't match the collection
+/// * There's a storage I/O error
+pub async fn write(&self, vector: VectorRecord) -> Result<VectorId, StorageError> {
+    // Validate input
+    if vector.vector.is_empty() {
+        return Err(StorageError::InvalidVector("Vector cannot be empty".to_string()));
+    }
+    
+    // Implementation...
+    todo!()
+}
+----
+
+=== Documentation Standards
+
+. *AsciiDoc Format*: All documentation uses AsciiDoc
+. *API Documentation*: Include request/response examples
+. *Architecture Documentation*: Use diagrams and clear explanations
+. *User Guides*: Step-by-step instructions with code examples
+
+== 🏗️ Architecture Overview
+
+Understanding ProximaDB's architecture helps with contributions:
+
+=== Core Components
+
+. *Storage Engine*: LSM tree-based storage with WAL
+. *Vector Index*: HNSW implementation for similarity search
+. *API Layer*: REST and gRPC servers
+. *Client Libraries*: Multi-language SDK implementations
+
+=== Key Directories
+
+[source,text]
+----
+src/
+├── storage/           # Core storage engine
+│   ├── engine.rs      # Main storage interface
+│   ├── lsm/           # LSM tree implementation
+│   ├── wal/           # Write-ahead log
+│   └── memtable.rs    # In-memory tables
+├── api/               # API implementations
+│   ├── rest/          # REST server
+│   └── grpc/          # gRPC server
+├── compute/           # Vector operations
+│   ├── algorithms.rs  # Search algorithms
+│   └── distance.rs    # Distance functions
+├── index/             # Indexing systems
+└── core/              # Common types and utilities
+
+tests/                 # Integration tests
+benches/              # Performance benchmarks
+docs/                 # Documentation
+clients/              # Client libraries
+  └── python/         # Python SDK
+----
+
+=== Contribution Areas
+
+[%header,cols="2,3,1"]
+|===
+|Area |Description |Difficulty
+
+|Storage Engine |LSM trees, compaction, WAL |Hard
+|Vector Algorithms |HNSW, SIMD optimizations |Medium-Hard
+|API Development |REST/gRPC endpoints |Medium
+|Client Libraries |Python, Java, JS SDKs |Medium
+|Documentation |User guides, API docs |Easy-Medium
+|Testing |Unit, integration, performance |Easy-Medium
+|Monitoring |Metrics, dashboards |Medium
+|Deployment |Docker, K8s, cloud |Medium
+|===
+
+== 🎖️ Recognition
+
+We value all contributions! Contributors will be:
+
+* Added to the CONTRIBUTORS file
+* Mentioned in release notes for significant contributions
+* Eligible for ProximaDB contributor swag
+* Invited to community events and discussions
+
+=== Hall of Fame
+
+Special recognition for major contributors:
+
+* *Creator & Lead Maintainer*: Vijaykumar Singh
+* _(Your name could be here!)_
+
+== 📞 Getting Help
+
+=== Communication Channels
+
+* *GitHub Issues*: Bug reports and feature requests
+* *GitHub Discussions*: General questions and ideas
+* *Email*: singhvjd@gmail.com for private matters
+
+=== Office Hours
+
+Vijaykumar Singh holds virtual office hours:
+* *When*: Fridays 2-4 PM IST (UTC+5:30)
+* *Where*: GitHub Discussions
+* *What*: Architecture questions, contribution guidance, roadmap discussions
+
+=== Code Review Process
+
+All contributions go through code review:
+
+. *Automated Checks*: CI/CD pipeline runs tests and linting
+. *Maintainer Review*: Core maintainers review for architecture and quality
+. *Community Review*: Other contributors may provide feedback
+. *Approval*: At least one maintainer approval required for merge
+
+*Review Criteria*:
+* Code quality and style
+* Test coverage
+* Documentation updates
+* Performance impact
+* Security considerations
+
+== 📜 License and Legal
+
+=== License Agreement
+
+By contributing to ProximaDB, you agree that your contributions will be licensed under the Apache License 2.0.
+
+=== Developer Certificate of Origin
+
+All commits must include a "Signed-off-by" line indicating that you have read and agree to the Developer Certificate of Origin:
+
+[source,bash]
+----
+git commit -s -m "Your commit message"
+----
+
+=== Attribution
+
+Significant contributions will be acknowledged in:
+* CONTRIBUTORS file
+* Release notes
+* Project documentation
+
+---
+
+*Thank you for contributing to ProximaDB!* 🚀
+
+*Maintainer*: Vijaykumar Singh (singhvjd@gmail.com) +
+*Repository*: https://github.com/vijaykumarsingh/proximadb +
+*License*: Apache License 2.0

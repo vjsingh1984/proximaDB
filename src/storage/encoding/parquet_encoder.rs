@@ -1,5 +1,5 @@
 use crate::core::VectorRecord;
-use crate::storage::encoding::{Encoder, CompressionType};
+use crate::storage::encoding::{CompressionType, Encoder};
 use arrow::array::{ArrayRef, Float32Array, StringArray, TimestampNanosecondArray};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
@@ -34,11 +34,7 @@ impl ParquetEncoder {
 
         // Add vector dimensions as separate columns for better compression
         for i in 0..dimension {
-            fields.push(Field::new(
-                &format!("vec_{}", i),
-                DataType::Float32,
-                false,
-            ));
+            fields.push(Field::new(&format!("vec_{}", i), DataType::Float32, false));
         }
 
         Schema::new(fields)
@@ -86,7 +82,7 @@ impl ParquetEncoder {
 impl Encoder for ParquetEncoder {
     fn encode(&self, records: &[VectorRecord]) -> crate::Result<Vec<u8>> {
         let batch = self.records_to_batch(records)?;
-        
+
         // Configure compression based on type
         let props = WriterProperties::builder()
             .set_max_row_group_size(self.row_group_size)

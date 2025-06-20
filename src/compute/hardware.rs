@@ -15,10 +15,10 @@
  */
 
 //! Hardware acceleration support for ProximaDB
-//! 
+//!
 //! This module provides GPU acceleration backends:
 //! - CUDA (NVIDIA GPUs)
-//! - ROCm (AMD GPUs) 
+//! - ROCm (AMD GPUs)
 //! - Intel GPU
 //! - CPU optimization with SIMD
 
@@ -30,25 +30,41 @@ use async_trait::async_trait;
 pub trait HardwareAccelerator: Send + Sync {
     /// Initialize the hardware backend
     async fn initialize(&mut self) -> Result<(), String>;
-    
+
     /// Check if hardware is available
     fn is_available(&self) -> bool;
-    
+
     /// Get hardware information
     fn get_info(&self) -> HardwareInfo;
-    
+
     /// Compute dot products in batch
-    async fn batch_dot_product(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String>;
-    
+    async fn batch_dot_product(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String>;
+
     /// Compute cosine similarities in batch
-    async fn batch_cosine_similarity(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String>;
-    
+    async fn batch_cosine_similarity(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String>;
+
     /// Compute euclidean distances in batch
-    async fn batch_euclidean_distance(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String>;
-    
+    async fn batch_euclidean_distance(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String>;
+
     /// Matrix multiplication (for large-scale operations)
-    async fn matrix_multiply(&self, a: &[Vec<f32>], b: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String>;
-    
+    async fn matrix_multiply(
+        &self,
+        a: &[Vec<f32>],
+        b: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String>;
+
     /// Vector normalization
     async fn normalize_vectors(&self, vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String>;
 }
@@ -88,23 +104,25 @@ impl CudaAccelerator {
 impl HardwareAccelerator for CudaAccelerator {
     async fn initialize(&mut self) -> Result<(), String> {
         use cudarc::driver::CudaDevice;
-        
+
         let device = CudaDevice::new(self.device_id)
             .map_err(|e| format!("Failed to initialize CUDA device {}: {}", self.device_id, e))?;
-        
+
         self.context = Some(device);
         self.initialized = true;
         Ok(())
     }
-    
+
     fn is_available(&self) -> bool {
         cudarc::driver::CudaDevice::new(self.device_id).is_ok()
     }
-    
+
     fn get_info(&self) -> HardwareInfo {
         // TODO: Implement actual CUDA device info retrieval
         HardwareInfo {
-            backend: ComputeBackend::CUDA { device_id: Some(self.device_id) },
+            backend: ComputeBackend::CUDA {
+                device_id: Some(self.device_id),
+            },
             device_name: format!("CUDA Device {}", self.device_id),
             memory_total: 8 * 1024 * 1024 * 1024, // 8GB placeholder
             memory_free: 4 * 1024 * 1024 * 1024,  // 4GB placeholder
@@ -113,27 +131,43 @@ impl HardwareAccelerator for CudaAccelerator {
             multiprocessor_count: Some(108),
         }
     }
-    
-    async fn batch_dot_product(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_dot_product(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // TODO: Implement CUDA kernel for batch dot product
         Err("CUDA batch dot product not yet implemented".to_string())
     }
-    
-    async fn batch_cosine_similarity(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_cosine_similarity(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // TODO: Implement CUDA kernel for batch cosine similarity
         Err("CUDA batch cosine similarity not yet implemented".to_string())
     }
-    
-    async fn batch_euclidean_distance(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_euclidean_distance(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // TODO: Implement CUDA kernel for batch Euclidean distance
         Err("CUDA batch euclidean distance not yet implemented".to_string())
     }
-    
-    async fn matrix_multiply(&self, a: &[Vec<f32>], b: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn matrix_multiply(
+        &self,
+        a: &[Vec<f32>],
+        b: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // TODO: Implement CUDA GEMM using cuBLAS
         Err("CUDA matrix multiply not yet implemented".to_string())
     }
-    
+
     async fn normalize_vectors(&self, vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
         // TODO: Implement CUDA vector normalization
         Err("CUDA vector normalization not yet implemented".to_string())
@@ -162,15 +196,17 @@ impl HardwareAccelerator for RocmAccelerator {
         self.initialized = true;
         Ok(())
     }
-    
+
     fn is_available(&self) -> bool {
         // TODO: Check ROCm availability
         false
     }
-    
+
     fn get_info(&self) -> HardwareInfo {
         HardwareInfo {
-            backend: ComputeBackend::ROCm { device_id: Some(self.device_id) },
+            backend: ComputeBackend::ROCm {
+                device_id: Some(self.device_id),
+            },
             device_name: format!("ROCm Device {}", self.device_id),
             memory_total: 16 * 1024 * 1024 * 1024, // 16GB placeholder
             memory_free: 8 * 1024 * 1024 * 1024,   // 8GB placeholder
@@ -179,23 +215,39 @@ impl HardwareAccelerator for RocmAccelerator {
             multiprocessor_count: Some(80),
         }
     }
-    
-    async fn batch_dot_product(&self, _queries: &[Vec<f32>], _vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_dot_product(
+        &self,
+        _queries: &[Vec<f32>],
+        _vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         Err("ROCm batch dot product not yet implemented".to_string())
     }
-    
-    async fn batch_cosine_similarity(&self, _queries: &[Vec<f32>], _vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_cosine_similarity(
+        &self,
+        _queries: &[Vec<f32>],
+        _vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         Err("ROCm batch cosine similarity not yet implemented".to_string())
     }
-    
-    async fn batch_euclidean_distance(&self, _queries: &[Vec<f32>], _vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_euclidean_distance(
+        &self,
+        _queries: &[Vec<f32>],
+        _vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         Err("ROCm batch euclidean distance not yet implemented".to_string())
     }
-    
-    async fn matrix_multiply(&self, _a: &[Vec<f32>], _b: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn matrix_multiply(
+        &self,
+        _a: &[Vec<f32>],
+        _b: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         Err("ROCm matrix multiply not yet implemented".to_string())
     }
-    
+
     async fn normalize_vectors(&self, _vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
         Err("ROCm vector normalization not yet implemented".to_string())
     }
@@ -222,16 +274,18 @@ impl HardwareAccelerator for CpuAccelerator {
         // CPU is always available
         Ok(())
     }
-    
+
     fn is_available(&self) -> bool {
         true
     }
-    
+
     fn get_info(&self) -> HardwareInfo {
         let total_memory = 16 * 1024 * 1024 * 1024; // TODO: Get actual system memory
-        
+
         HardwareInfo {
-            backend: ComputeBackend::CPU { threads: Some(self.thread_count) },
+            backend: ComputeBackend::CPU {
+                threads: Some(self.thread_count),
+            },
             device_name: "CPU".to_string(),
             memory_total: total_memory,
             memory_free: total_memory / 2, // Rough estimate
@@ -240,73 +294,92 @@ impl HardwareAccelerator for CpuAccelerator {
             multiprocessor_count: Some(num_cpus::get() as u32),
         }
     }
-    
-    async fn batch_dot_product(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_dot_product(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // Use CPU SIMD implementation from distance.rs
-        use crate::compute::distance::{DotProductDistance, DistanceCompute};
-        
-        let computer = DotProductDistance::new(self.use_simd);
+        use crate::compute::distance::{DistanceCompute, DotProductDistance};
+
+        let computer = DotProductDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
-        
+
         for query in queries {
-            let query_results: Vec<f32> = vectors.iter()
+            let query_results: Vec<f32> = vectors
+                .iter()
                 .map(|v| computer.distance(query, v))
                 .collect();
             results.push(query_results);
         }
-        
+
         Ok(results)
     }
-    
-    async fn batch_cosine_similarity(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn batch_cosine_similarity(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         use crate::compute::distance::{CosineDistance, DistanceCompute};
-        
-        let computer = CosineDistance::new(self.use_simd);
+
+        let computer = CosineDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
-        
+
         for query in queries {
-            let query_results: Vec<f32> = vectors.iter()
+            let query_results: Vec<f32> = vectors
+                .iter()
                 .map(|v| computer.distance(query, v))
                 .collect();
             results.push(query_results);
         }
-        
+
         Ok(results)
     }
-    
-    async fn batch_euclidean_distance(&self, queries: &[Vec<f32>], vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
-        use crate::compute::distance::{EuclideanDistance, DistanceCompute};
-        
-        let computer = EuclideanDistance::new(self.use_simd);
+
+    async fn batch_euclidean_distance(
+        &self,
+        queries: &[Vec<f32>],
+        vectors: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
+        use crate::compute::distance::{DistanceCompute, EuclideanDistance};
+
+        let computer = EuclideanDistance::new_with_simd(self.use_simd);
         let mut results = Vec::with_capacity(queries.len());
-        
+
         for query in queries {
-            let query_results: Vec<f32> = vectors.iter()
+            let query_results: Vec<f32> = vectors
+                .iter()
                 .map(|v| computer.distance(query, v))
                 .collect();
             results.push(query_results);
         }
-        
+
         Ok(results)
     }
-    
-    async fn matrix_multiply(&self, a: &[Vec<f32>], b: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
+
+    async fn matrix_multiply(
+        &self,
+        a: &[Vec<f32>],
+        b: &[Vec<f32>],
+    ) -> Result<Vec<Vec<f32>>, String> {
         // Simple matrix multiplication - can be optimized with BLAS
         if a.is_empty() || b.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         let rows_a = a.len();
         let cols_a = a[0].len();
         let rows_b = b.len();
         let cols_b = b[0].len();
-        
+
         if cols_a != rows_b {
             return Err("Matrix dimensions incompatible for multiplication".to_string());
         }
-        
+
         let mut result = vec![vec![0.0; cols_b]; rows_a];
-        
+
         for i in 0..rows_a {
             for j in 0..cols_b {
                 for k in 0..cols_a {
@@ -314,16 +387,16 @@ impl HardwareAccelerator for CpuAccelerator {
                 }
             }
         }
-        
+
         Ok(result)
     }
-    
+
     async fn normalize_vectors(&self, vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
         let mut normalized = Vec::with_capacity(vectors.len());
-        
+
         for vector in vectors {
             let norm: f32 = vector.iter().map(|&x| x * x).sum::<f32>().sqrt();
-            
+
             if norm == 0.0 {
                 normalized.push(vector.clone()); // Return zero vector as-is
             } else {
@@ -331,7 +404,7 @@ impl HardwareAccelerator for CpuAccelerator {
                 normalized.push(normalized_vec);
             }
         }
-        
+
         Ok(normalized)
     }
 }
@@ -346,9 +419,7 @@ pub fn create_accelerator(backend: ComputeBackend) -> Box<dyn HardwareAccelerato
         ComputeBackend::ROCm { device_id } => {
             Box::new(RocmAccelerator::new(device_id.unwrap_or(0)))
         }
-        ComputeBackend::CPU { threads } => {
-            Box::new(CpuAccelerator::new(threads, true))
-        }
+        ComputeBackend::CPU { threads } => Box::new(CpuAccelerator::new(threads, true)),
         _ => {
             // Default to CPU
             Box::new(CpuAccelerator::new(None, true))

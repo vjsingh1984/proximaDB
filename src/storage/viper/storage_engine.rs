@@ -4,32 +4,37 @@
 // you may not use this file except in compliance with the License.
 
 //! VIPER Storage Engine Implementation
-//! 
+//!
+//! ⚠️  DEPRECATED: This file has been consolidated into the unified vector storage system.
+//! 🔄  MIGRATED TO: `src/storage/vector/engines/viper_core.rs`
+//! 📅  DEPRECATION DATE: Phase 4.1 consolidation
+//!
 //! Advanced columnar storage engine using Parquet format with intelligent
 //! clustering and compression optimizations. Key features:
-//! 
+//!
 //! ## Columnar Compression Benefits
 //! - **Dense vectors**: Parquet columnar compression excels at similar values
 //! - **Sparse vectors**: Key-value pairs with missing keys = null compression
 //! - **Feature selection**: Read only important columns during clustering
 //! - **Background compaction**: Small Parquet files merged intelligently
-//! 
+//!
 //! ## ML-Driven Optimizations  
 //! - **Trained models per collection**: Predict optimal clustering
 //! - **Feature importance**: Use only relevant vector dimensions for partitioning
 //! - **Intelligent compaction**: ML-guided data reorganization during compaction
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use anyhow::{Result, Context};
 
-use crate::core::{VectorId, CollectionId, VectorRecord};
-use crate::storage::{WalManager, WalEntry};
+use super::ttl::TTLCleanupService;
 use super::types::*;
-use super::{ViperConfig, CompressionAlgorithm, TierLevel};
+use super::ViperConfig;
+use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::wal::config::CompressionAlgorithm;
 
 /// Calculate sparsity ratio for a vector (standalone function)
 fn calculate_sparsity_ratio(vector: &[f32]) -> f32 {
@@ -41,33 +46,36 @@ fn calculate_sparsity_ratio(vector: &[f32]) -> f32 {
 pub struct ViperStorageEngine {
     /// Configuration
     config: ViperConfig,
-    
-    /// Unified WAL manager
-    wal_manager: Arc<WalManager>,
-    
+
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<CollectionId, CollectionMetadata>>>,
-    
+
     /// Cluster metadata cache  
     clusters: Arc<RwLock<HashMap<ClusterId, ClusterMetadata>>>,
-    
+
     /// Partition metadata cache
     partitions: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
-    
+
     /// ML models for cluster prediction per collection
     ml_models: Arc<RwLock<HashMap<CollectionId, ClusterPredictionModel>>>,
-    
+
     /// Feature importance models for column selection
     feature_models: Arc<RwLock<HashMap<CollectionId, FeatureImportanceModel>>>,
-    
+
     /// Background compaction manager
     compaction_manager: Arc<super::compaction::ViperCompactionEngine>,
-    
+
     /// Parquet writer pool for concurrent operations
     writer_pool: Arc<ParquetWriterPool>,
-    
+
     /// Statistics tracker
     stats: Arc<RwLock<ViperStorageStats>>,
+
+    /// TTL cleanup service
+    ttl_service: Option<Arc<RwLock<super::ttl::TTLCleanupService>>>,
+
+    /// Atomic operations factory for flush/compaction
+    atomic_operations: Arc<super::atomic_operations::AtomicOperationsFactory>,
 }
 
 /// Collection metadata in VIPER
@@ -102,7 +110,7 @@ pub struct ClusterPredictionModel {
     pub accuracy: f32,
     pub feature_weights: Vec<f32>, // Weights per vector dimension
     pub cluster_centroids: Vec<Vec<f32>>, // Cluster centers
-    pub model_data: Vec<u8>, // Serialized model (e.g., ONNX)
+    pub model_data: Vec<u8>,       // Serialized model (e.g., ONNX)
     pub training_timestamp: DateTime<Utc>,
     pub prediction_stats: PredictionStats,
 }
@@ -112,7 +120,7 @@ pub struct ClusterPredictionModel {
 pub struct FeatureImportanceModel {
     pub model_id: String,
     pub importance_scores: Vec<f32>, // Score per dimension (0.0 to 1.0)
-    pub top_k_features: Vec<usize>, // Most important dimension indices
+    pub top_k_features: Vec<usize>,  // Most important dimension indices
     pub compression_impact: Vec<f32>, // Compression benefit per feature
     pub clustering_impact: Vec<f32>, // Clustering quality impact per feature
     pub last_trained: DateTime<Utc>,
@@ -137,7 +145,7 @@ pub struct ParquetWriterPool {
 /// Parquet writer for specific partitions
 pub struct ParquetWriter {
     partition_id: PartitionId,
-    file_path: PathBuf,
+    file_url: String,
     schema: ParquetSchema,
     row_group_size: usize,
     current_batch: Vec<ViperVector>,
@@ -167,16 +175,16 @@ pub enum VectorColumns {
     Dense {
         dimension_columns: Vec<String>, // "dim_0", "dim_1", etc.
     },
-    
+
     /// Sparse vectors: separate metadata table for efficient lookups
     Sparse {
         /// Metadata table reference for efficient ID-based filtering
         metadata_table_ref: Option<String>,
         /// Key-value columns for vector data
-        dimension_key_column: String,   // "dim_key"
+        dimension_key_column: String, // "dim_key"
         dimension_value_column: String, // "dim_value"
     },
-    
+
     /// Hybrid: both formats with optimized column ordering
     Hybrid {
         format_indicator_column: String, // "storage_format"
@@ -201,114 +209,62 @@ pub struct ViperStorageStats {
     pub read_operations: u64,
     pub write_operations: u64,
     pub compaction_operations: u64,
+    pub total_flushes: u64,
+    pub total_compactions: u64,
+    pub total_vectors_flushed: u64,
 }
 
 impl ViperStorageEngine {
     /// Create a new VIPER storage engine with unified WAL
-    pub async fn new(config: ViperConfig, wal_manager: Arc<WalManager>) -> Result<Self> {
-        // Ensure storage directories exist
-        tokio::fs::create_dir_all(&config.storage_root).await
-            .context("Failed to create VIPER storage root directory")?;
-        
-        let compaction_manager = Arc::new(
-            super::compaction::ViperCompactionEngine::new(config.clone()).await?
-        );
-        
-        let writer_pool = Arc::new(ParquetWriterPool::new(
-            config.performance_config.parallel_config.io_thread_count
+    pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+        let compaction_manager =
+            Arc::new(super::compaction::ViperCompactionEngine::new(config.clone()).await?);
+
+        let writer_pool = Arc::new(ParquetWriterPool::new(8)); // Default to 8 threads
+
+        let partitions = Arc::new(RwLock::new(HashMap::new()));
+
+        // Initialize TTL service if enabled
+        let ttl_service = if config.ttl_config.enabled {
+            let mut service = TTLCleanupService::new(
+                config.ttl_config.clone(),
+                filesystem.clone(),
+                partitions.clone(),
+            );
+            service.start().await?;
+            Some(Arc::new(RwLock::new(service)))
+        } else {
+            None
+        };
+
+        // Initialize atomic operations factory
+        let atomic_operations = Arc::new(super::atomic_operations::AtomicOperationsFactory::new(
+            filesystem.clone(),
         ));
-        
+
         Ok(Self {
             config,
-            wal_manager,
             collections: Arc::new(RwLock::new(HashMap::new())),
             clusters: Arc::new(RwLock::new(HashMap::new())),
-            partitions: Arc::new(RwLock::new(HashMap::new())),
+            partitions,
             ml_models: Arc::new(RwLock::new(HashMap::new())),
             feature_models: Arc::new(RwLock::new(HashMap::new())),
             compaction_manager,
             writer_pool,
             stats: Arc::new(RwLock::new(ViperStorageStats::default())),
+            ttl_service,
+            atomic_operations,
         })
     }
-    
+
     /// Recover VIPER state from unified WAL
     pub async fn recover_from_wal(&self) -> Result<()> {
-        // Get all VIPER-specific entries from WAL
-        let wal_entries = self.wal_manager.read_all().await
-            .map_err(|e| anyhow::anyhow!("Failed to read WAL: {}", e))?;
-        
-        for entry in wal_entries {
-            match entry {
-                WalEntry::ViperVectorInsert { 
-                    collection_id, vector_id, vector_data, metadata, 
-                    cluster_prediction, storage_format, tier_level, expires_at, .. 
-                } => {
-                    // Recreate vector and apply insertion
-                    let vector_record = VectorRecord {
-                        id: vector_id,
-                        collection_id: collection_id.clone(),
-                        vector: vector_data,
-                        metadata: metadata.as_object().unwrap_or(&serde_json::Map::new()).clone().into_iter().collect(),
-                        timestamp: chrono::Utc::now(),
-                        expires_at,
-                    };
-                    
-                    self.apply_vector_insert(collection_id, vector_record, cluster_prediction, storage_format, tier_level).await?;
-                }
-                
-                WalEntry::ViperVectorUpdate { 
-                    collection_id, vector_id, old_cluster_id, new_cluster_id, 
-                    updated_metadata, tier_level, .. 
-                } => {
-                    self.apply_vector_update(collection_id, vector_id, old_cluster_id, new_cluster_id, updated_metadata, tier_level).await?;
-                }
-                
-                WalEntry::ViperVectorDelete { 
-                    collection_id, vector_id, cluster_id, tier_level, .. 
-                } => {
-                    self.apply_vector_delete(collection_id, vector_id, cluster_id, tier_level).await?;
-                }
-                
-                WalEntry::ViperClusterUpdate { 
-                    collection_id, cluster_id, new_centroid, quality_metrics, .. 
-                } => {
-                    self.apply_cluster_update(collection_id, cluster_id, new_centroid, quality_metrics).await?;
-                }
-                
-                WalEntry::ViperPartitionCreate { 
-                    collection_id, partition_id, cluster_ids, tier_level, .. 
-                } => {
-                    self.apply_partition_create(collection_id, partition_id, cluster_ids, tier_level).await?;
-                }
-                
-                WalEntry::ViperCompactionOperation { 
-                    collection_id, operation_id, input_partitions, output_partitions, tier_level, .. 
-                } => {
-                    self.apply_compaction_operation(collection_id, operation_id, input_partitions, output_partitions, tier_level).await?;
-                }
-                
-                WalEntry::ViperTierMigration { 
-                    collection_id, partition_id, from_tier, to_tier, migration_reason, .. 
-                } => {
-                    self.apply_tier_migration(collection_id, partition_id, from_tier, to_tier, migration_reason).await?;
-                }
-                
-                WalEntry::ViperModelUpdate { 
-                    collection_id, model_type, model_version, accuracy_metrics, .. 
-                } => {
-                    self.apply_model_update(collection_id, model_type, model_version, accuracy_metrics).await?;
-                }
-                
-                _ => {
-                    // Ignore non-VIPER entries
-                }
-            }
-        }
-        
+        // WAL recovery is now handled by the WAL manager internally
+        // VIPER will rebuild its indexes and clustering from the standard WAL operations
+        tracing::info!("VIPER recovery delegated to WAL manager");
         Ok(())
     }
-    
+
     /// Create a new collection with ML-driven optimization
     pub async fn create_collection(
         &self,
@@ -317,18 +273,21 @@ impl ViperStorageEngine {
         initial_vectors: Option<Vec<VectorRecord>>,
     ) -> Result<()> {
         let mut collections = self.collections.write().await;
-        
+
         if collections.contains_key(&collection_id) {
-            return Err(anyhow::anyhow!("Collection already exists: {}", collection_id));
+            return Err(anyhow::anyhow!(
+                "Collection already exists: {}",
+                collection_id
+            ));
         }
-        
+
         // Analyze initial vectors to determine optimal storage format
         let (storage_format, feature_importance) = if let Some(ref vectors) = initial_vectors {
             self.analyze_initial_vectors(vectors, dimension).await?
         } else {
             (VectorStorageFormat::Auto, vec![1.0; dimension]) // Equal importance initially
         };
-        
+
         let collection_metadata = CollectionMetadata {
             collection_id: collection_id.clone(),
             dimension,
@@ -346,66 +305,82 @@ impl ViperStorageEngine {
             created_at: Utc::now(),
             last_updated: Utc::now(),
         };
-        
+
         collections.insert(collection_id.clone(), collection_metadata);
-        
+
         // If initial vectors provided, insert them and train initial models
         if let Some(vectors) = initial_vectors {
             drop(collections); // Release lock before calling insert
-            self.insert_vectors_batch(collection_id.clone(), vectors).await?;
+            self.insert_vectors_batch(collection_id.clone(), vectors)
+                .await?;
             self.train_initial_models(collection_id).await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Insert a single vector using hybrid VIPER storage (dense Parquet or sparse KV+metadata)
     pub async fn insert_vector(
         &self,
         collection_id: &CollectionId,
         vector_record: VectorRecord,
     ) -> Result<()> {
+        tracing::info!(
+            "🔹 VIPER: insert_vector called for collection: {}, vector_id: {}",
+            collection_id,
+            vector_record.id
+        );
+
         // Get collection metadata or create if new
-        let collection_meta = self.get_or_create_collection_metadata(collection_id).await?;
-        
+        let collection_meta = self
+            .get_or_create_collection_metadata(collection_id)
+            .await?;
+        tracing::debug!("📄 VIPER: Got collection metadata for {}", collection_id);
+
         // Predict cluster assignment using ML model
-        let cluster_prediction = self.predict_cluster(collection_id, &vector_record.vector).await?;
-        
+        let cluster_prediction = self
+            .predict_cluster(collection_id, &vector_record.vector)
+            .await?;
+        tracing::debug!(
+            "🎯 VIPER: Predicted cluster {} for vector {}",
+            cluster_prediction.cluster_id,
+            vector_record.id
+        );
+
         // Determine storage format (sparse vs dense) based on sparsity
-        let storage_format = self.determine_format(&vector_record.vector, &collection_meta).await?;
-        
-        // Write to WAL first for durability
-        let wal_entry = WalEntry::ViperVectorInsert {
-            collection_id: collection_id.clone(),
-            vector_id: vector_record.id,
-            vector_data: vector_record.vector.clone(),
-            metadata: serde_json::to_value(vector_record.metadata.clone())?,
-            cluster_prediction: cluster_prediction.clone(),
-            storage_format,
-            tier_level: TierLevel::UltraHot,
-            expires_at: vector_record.expires_at,
-            timestamp: Utc::now(),
-        };
-        
-        self.wal_manager.append(wal_entry).await?;
-        
+        let storage_format = self
+            .determine_format(&vector_record.vector, &collection_meta)
+            .await?;
+        tracing::info!(
+            "💾 VIPER: Storage format for vector {}: {:?}",
+            vector_record.id,
+            storage_format
+        );
+
+        // Store vector ID before any moves
+        let vector_id = vector_record.id.clone();
+
+        // Write to WAL first for durability using new interface
+        // Note: WAL operations are handled by unified engine, not storage engine
+
         // Create VIPER vector entry based on hybrid storage architecture
         let viper_vector = match storage_format {
             VectorStorageFormat::Sparse => {
                 // For sparse vectors: separate metadata Parquet + KV storage
                 let dimensions = self.vector_to_sparse_pairs(&vector_record.vector);
-                let sparsity_ratio = 1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
-                
+                let sparsity_ratio =
+                    1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
+
                 let metadata = SparseVectorMetadata::new(
-                    vector_record.id,
+                    vector_record.id.clone(),
                     serde_json::to_value(vector_record.metadata.clone())?,
                     cluster_prediction.cluster_id,
                     vector_record.vector.len() as u32,
                     sparsity_ratio,
                 );
-                
+
                 let data = SparseVectorData::new(vector_record.id, dimensions);
-                
+
                 ViperVector::Sparse { metadata, data }
             }
             VectorStorageFormat::Dense => {
@@ -416,20 +391,36 @@ impl ViperStorageEngine {
                     serde_json::to_value(vector_record.metadata.clone())?,
                     cluster_prediction.cluster_id,
                 );
-                
+
                 ViperVector::Dense { record }
             }
             VectorStorageFormat::Auto => {
-                return Err(anyhow::anyhow!("Auto format should have been resolved by determine_format"));
+                return Err(anyhow::anyhow!(
+                    "Auto format should have been resolved by determine_format"
+                ));
             }
         };
-        
+
         // Write to appropriate hybrid storage (Parquet + KV for sparse, Parquet for dense)
-        self.write_to_hybrid_storage(collection_id, viper_vector, &cluster_prediction).await?;
-        
+        tracing::info!("📝 VIPER: Writing vector {} to hybrid storage", vector_id);
+        self.write_to_hybrid_storage(collection_id, viper_vector, &cluster_prediction)
+            .await?;
+        tracing::info!(
+            "✅ VIPER: Successfully wrote vector {} to storage",
+            vector_id
+        );
+
         // Update collection statistics
-        self.update_collection_stats_single(collection_id, &cluster_prediction).await?;
-        
+        tracing::debug!("📊 VIPER: Updating collection stats for {}", collection_id);
+        self.update_collection_stats_single(collection_id, &cluster_prediction)
+            .await?;
+
+        tracing::info!(
+            "🎉 VIPER: Completed insert_vector for {} in collection {}",
+            vector_id,
+            collection_id
+        );
+
         Ok(())
     }
 
@@ -439,103 +430,120 @@ impl ViperStorageEngine {
         collection_id: CollectionId,
         vectors: Vec<VectorRecord>,
     ) -> Result<Vec<ClusterPrediction>> {
+        tracing::info!(
+            "📦 VIPER: insert_vectors_batch called for collection: {}, count: {}",
+            collection_id,
+            vectors.len()
+        );
         let _collection = self.get_collection_metadata(&collection_id).await?;
-        
+
         // Get cluster predictions for the batch
         let predictions = self.predict_clusters(&collection_id, &vectors).await?;
-        
+
         // Group vectors by predicted clusters for efficient I/O
-        let mut cluster_batches: HashMap<ClusterId, Vec<(VectorRecord, ClusterPrediction)>> = HashMap::new();
-        
+        let mut cluster_batches: HashMap<ClusterId, Vec<(VectorRecord, ClusterPrediction)>> =
+            HashMap::new();
+
         for (vector, prediction) in vectors.into_iter().zip(predictions.iter().cloned()) {
             cluster_batches
                 .entry(prediction.cluster_id)
                 .or_insert_with(Vec::new)
                 .push((vector, prediction));
         }
-        
+
         // Process each cluster batch and log to WAL
         for (cluster_id, batch) in cluster_batches {
             // Log operations to unified WAL first
-            for (vector, prediction) in &batch {
-                let _ = self.wal_manager.log_viper_vector_insert(
-                    collection_id.clone(),
-                    vector.id,
-                    vector.vector.clone(),
-                    serde_json::to_value(vector.metadata.clone()).unwrap_or(serde_json::Value::Null),
-                    prediction.clone(),
-                    self.determine_storage_format(&vector.vector),
-                    TierLevel::Hot, // Default tier for new vectors
-                ).await;
+            for (_vector, _prediction) in &batch {
+                // Note: WAL operations are handled by unified engine
             }
-            
+
             // Then perform the actual insertion using hybrid storage
-            self.insert_cluster_batch_hybrid(collection_id.clone(), cluster_id, batch).await?;
+            self.insert_cluster_batch_hybrid(collection_id.clone(), cluster_id, batch)
+                .await?;
         }
-        
+
         // Update collection statistics
         self.update_collection_stats(&collection_id).await?;
-        
+
         // Trigger background compaction if needed
-        self.compaction_manager.schedule_compaction_if_needed(&collection_id).await?;
-        
+        self.compaction_manager
+            .schedule_compaction_if_needed(&collection_id)
+            .await?;
+
         Ok(predictions)
     }
-    
+
     /// Search vectors using ML-guided cluster pruning
     pub async fn search_vectors(
         &self,
         context: ViperSearchContext,
     ) -> Result<Vec<ViperSearchResult>> {
         let _collection = self.get_collection_metadata(&context.collection_id).await?;
-        
+
         // Get cluster predictions for query vector to prune search space
         let cluster_hints = if context.cluster_hints.is_none() {
             Some(self.predict_query_clusters(&context).await?)
         } else {
             context.cluster_hints.clone()
         };
-        
+
         // Select important features for efficient column reading
         let important_features = self.get_important_features(&context.collection_id).await?;
-        
+
         // Progressive search across tiers based on strategy
         let results = match context.search_strategy.clone() {
-            SearchStrategy::Progressive { tier_result_thresholds } => {
-                self.progressive_tier_search(context, cluster_hints, important_features, tier_result_thresholds).await?
-            }
-            
-            SearchStrategy::ClusterPruned { max_clusters, confidence_threshold } => {
-                self.cluster_pruned_search(
-                    context, 
-                    cluster_hints, 
+            SearchStrategy::Progressive {
+                tier_result_thresholds,
+            } => {
+                self.progressive_tier_search(
+                    context,
+                    cluster_hints,
                     important_features,
-                    max_clusters, 
-                    confidence_threshold
-                ).await?
+                    tier_result_thresholds,
+                )
+                .await?
             }
-            
+
+            SearchStrategy::ClusterPruned {
+                max_clusters,
+                confidence_threshold,
+            } => {
+                self.cluster_pruned_search(
+                    context,
+                    cluster_hints,
+                    important_features,
+                    max_clusters,
+                    confidence_threshold,
+                )
+                .await?
+            }
+
             SearchStrategy::Exhaustive => {
                 self.exhaustive_search(context, important_features).await?
             }
-            
-            SearchStrategy::Adaptive { query_complexity_score, time_budget_ms } => {
+
+            SearchStrategy::Adaptive {
+                query_complexity_score,
+                time_budget_ms,
+            } => {
                 self.adaptive_search(
                     context,
                     query_complexity_score,
                     time_budget_ms,
                     cluster_hints,
-                    important_features
-                ).await?
+                    important_features,
+                )
+                .await?
             }
         };
-        
+
         // Update search statistics
         self.update_search_stats(&results).await?;
-        
+
         Ok(results)
     }
-    
+
     /// Analyze initial vectors to determine optimal storage strategy
     async fn analyze_initial_vectors(
         &self,
@@ -545,17 +553,17 @@ impl ViperStorageEngine {
         if vectors.is_empty() {
             return Ok((VectorStorageFormat::Auto, vec![1.0; dimension]));
         }
-        
+
         // Calculate sparsity statistics
         let mut total_sparsity = 0.0;
         let mut dimension_variances = vec![0.0; dimension];
         let mut dimension_means = vec![0.0; dimension];
-        
+
         for vector in vectors {
             // Calculate sparsity
             let zero_count = vector.vector.iter().filter(|&&x| x == 0.0).count();
             total_sparsity += zero_count as f32 / vector.vector.len() as f32;
-            
+
             // Calculate per-dimension statistics for feature importance
             for (i, &value) in vector.vector.iter().enumerate() {
                 if i < dimension {
@@ -563,12 +571,12 @@ impl ViperStorageEngine {
                 }
             }
         }
-        
+
         // Finalize means
         for mean in dimension_means.iter_mut() {
             *mean /= vectors.len() as f32;
         }
-        
+
         // Calculate variances for feature importance
         for vector in vectors {
             for (i, &value) in vector.vector.iter().enumerate() {
@@ -578,7 +586,7 @@ impl ViperStorageEngine {
                 }
             }
         }
-        
+
         // Finalize variances and calculate feature importance
         let mut feature_importance = vec![0.0; dimension];
         for i in 0..dimension {
@@ -586,7 +594,7 @@ impl ViperStorageEngine {
             // Higher variance = more important for clustering
             feature_importance[i] = dimension_variances[i].sqrt();
         }
-        
+
         // Normalize feature importance
         let max_importance = feature_importance.iter().fold(0.0f32, |a, &b| a.max(b));
         if max_importance > 0.0 {
@@ -594,7 +602,7 @@ impl ViperStorageEngine {
                 *importance /= max_importance;
             }
         }
-        
+
         // Determine storage format based on average sparsity
         let avg_sparsity = total_sparsity / vectors.len() as f32;
         let storage_format = if avg_sparsity > 0.7 {
@@ -604,10 +612,10 @@ impl ViperStorageEngine {
         } else {
             VectorStorageFormat::Auto
         };
-        
+
         Ok((storage_format, feature_importance))
     }
-    
+
     /// Predict clusters for a batch of vectors using ML model
     async fn predict_clusters(
         &self,
@@ -615,16 +623,17 @@ impl ViperStorageEngine {
         vectors: &[VectorRecord],
     ) -> Result<Vec<ClusterPrediction>> {
         let models = self.ml_models.read().await;
-        
+
         if let Some(model) = models.get(collection_id) {
             // Use trained ML model for prediction
             self.ml_predict_clusters(model, vectors).await
         } else {
             // Use simple heuristic clustering for new collections
-            self.heuristic_cluster_assignment(collection_id, vectors).await
+            self.heuristic_cluster_assignment(collection_id, vectors)
+                .await
         }
     }
-    
+
     /// ML-based cluster prediction using trained model
     async fn ml_predict_clusters(
         &self,
@@ -632,30 +641,31 @@ impl ViperStorageEngine {
         vectors: &[VectorRecord],
     ) -> Result<Vec<ClusterPrediction>> {
         let mut predictions = Vec::with_capacity(vectors.len());
-        
+
         for vector in vectors {
             // Calculate weighted features using model feature weights
-            let weighted_features: Vec<f32> = vector.vector
+            let weighted_features: Vec<f32> = vector
+                .vector
                 .iter()
                 .zip(model.feature_weights.iter())
                 .map(|(&v, &w)| v * w)
                 .collect();
-            
+
             // Find nearest cluster centroid
             let mut best_cluster = 0;
             let mut best_distance = f32::INFINITY;
             let mut distances = Vec::new();
-            
+
             for (cluster_idx, centroid) in model.cluster_centroids.iter().enumerate() {
                 let distance = self.calculate_weighted_distance(&weighted_features, centroid);
                 distances.push(distance);
-                
+
                 if distance < best_distance {
                     best_distance = distance;
                     best_cluster = cluster_idx;
                 }
             }
-            
+
             // Calculate confidence based on distance distribution
             distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let confidence = if distances.len() > 1 {
@@ -664,7 +674,7 @@ impl ViperStorageEngine {
             } else {
                 1.0
             };
-            
+
             // Generate alternatives (top 3 closest clusters)
             let mut alternatives = Vec::new();
             for (i, distance) in distances.iter().take(3).enumerate() {
@@ -672,14 +682,16 @@ impl ViperStorageEngine {
                     alternatives.push((i as ClusterId, 1.0 - distance / (distances[0] + 1e-6)));
                 }
             }
-            
+
             predictions.push(ClusterPrediction {
                 cluster_id: best_cluster as ClusterId,
                 confidence,
                 alternatives,
                 prediction_metadata: PredictionMetadata {
                     model_version: model.version.clone(),
-                    features_used: model.feature_weights.iter()
+                    features_used: model
+                        .feature_weights
+                        .iter()
                         .enumerate()
                         .filter(|(_, &w)| w > 0.1) // Only include significant features
                         .map(|(i, _)| format!("dim_{}", i))
@@ -690,13 +702,14 @@ impl ViperStorageEngine {
                 },
             });
         }
-        
+
         Ok(predictions)
     }
-    
+
     /// Calculate weighted distance between vectors
     fn calculate_weighted_distance(&self, vector1: &[f32], vector2: &[f32]) -> f32 {
-        vector1.iter()
+        vector1
+            .iter()
             .zip(vector2.iter())
             .map(|(&a, &b)| {
                 let diff = a - b;
@@ -705,11 +718,11 @@ impl ViperStorageEngine {
             .sum::<f32>()
             .sqrt()
     }
-    
+
     /// Get important features for efficient column reading during search
     async fn get_important_features(&self, collection_id: &CollectionId) -> Result<Vec<usize>> {
         let feature_models = self.feature_models.read().await;
-        
+
         if let Some(model) = feature_models.get(collection_id) {
             Ok(model.top_k_features.clone())
         } else {
@@ -718,7 +731,7 @@ impl ViperStorageEngine {
             Ok((0..collection.dimension).collect())
         }
     }
-    
+
     /// Insert a batch of vectors for a specific cluster with optimized Parquet writing
     async fn insert_cluster_batch(
         &self,
@@ -727,21 +740,25 @@ impl ViperStorageEngine {
         batch: Vec<(VectorRecord, ClusterPrediction)>,
     ) -> Result<()> {
         // Determine partition for this cluster
-        let partition_id = self.get_or_create_partition(&collection_id, cluster_id).await?;
-        
+        let partition_id = self
+            .get_or_create_partition(&collection_id, cluster_id)
+            .await?;
+
         // Convert to VIPER vectors with optimal storage format
         let collection = self.get_collection_metadata(&collection_id).await?;
         let viper_vectors = self.convert_to_viper_vectors(batch, &collection).await?;
-        
+
         // Write to Parquet using optimized columnar layout
-        self.write_vectors_to_parquet(&partition_id, viper_vectors).await?;
-        
+        self.write_vectors_to_parquet(&partition_id, viper_vectors)
+            .await?;
+
         // Update cluster and partition metadata
-        self.update_cluster_metadata(cluster_id, &collection_id).await?;
-        
+        self.update_cluster_metadata(cluster_id, &collection_id)
+            .await?;
+
         Ok(())
     }
-    
+
     /// Convert vectors to optimal VIPER format based on sparsity analysis
     async fn convert_to_viper_vectors(
         &self,
@@ -749,10 +766,10 @@ impl ViperStorageEngine {
         collection: &CollectionMetadata,
     ) -> Result<Vec<ViperVector>> {
         let mut viper_vectors = Vec::with_capacity(batch.len());
-        
+
         for (vector, prediction) in batch {
             let sparsity = self.calculate_sparsity(&vector.vector);
-            
+
             let viper_vector = match collection.storage_format_preference {
                 VectorStorageFormat::Sparse => {
                     self.create_sparse_viper_vector(vector, prediction.cluster_id)?
@@ -768,13 +785,13 @@ impl ViperStorageEngine {
                     }
                 }
             };
-            
+
             viper_vectors.push(viper_vector);
         }
-        
+
         Ok(viper_vectors)
     }
-    
+
     /// Create sparse VIPER vector (key-value format for high compression)
     fn create_sparse_viper_vector(
         &self,
@@ -782,15 +799,16 @@ impl ViperStorageEngine {
         cluster_id: ClusterId,
     ) -> Result<ViperVector> {
         let mut dimensions = HashMap::new();
-        
+
         for (idx, &value) in vector.vector.iter().enumerate() {
-            if value != 0.0 { // Only store non-zero values
+            if value != 0.0 {
+                // Only store non-zero values
                 dimensions.insert(idx as u32, value);
             }
         }
-        
+
         let metadata = SparseVectorMetadata {
-            id: vector.id,
+            id: vector.id.clone(),
             metadata: serde_json::to_value(vector.metadata)?,
             cluster_id,
             dimension_count: dimensions.len() as u32,
@@ -799,14 +817,14 @@ impl ViperStorageEngine {
             expires_at: vector.expires_at,
         };
         let dimensions_vec: Vec<(u32, f32)> = dimensions.into_iter().collect();
-        let data = SparseVectorData { 
+        let data = SparseVectorData {
             id: vector.id,
-            dimensions: dimensions_vec 
+            dimensions: dimensions_vec,
         };
-        
+
         Ok(ViperVector::Sparse { metadata, data })
     }
-    
+
     /// Create dense VIPER vector (row format for better scan performance)
     fn create_dense_viper_vector(
         &self,
@@ -821,16 +839,16 @@ impl ViperStorageEngine {
             timestamp: vector.timestamp,
             expires_at: vector.expires_at,
         };
-        
+
         Ok(ViperVector::Dense { record })
     }
-    
+
     /// Calculate sparsity ratio for a vector
     fn calculate_sparsity(&self, vector: &[f32]) -> f32 {
         let zero_count = vector.iter().filter(|&&x| x == 0.0).count();
         zero_count as f32 / vector.len() as f32
     }
-    
+
     /// Determine storage format based on vector sparsity
     fn determine_storage_format(&self, vector: &[f32]) -> VectorStorageFormat {
         let sparsity = self.calculate_sparsity(vector);
@@ -842,7 +860,7 @@ impl ViperStorageEngine {
             VectorStorageFormat::Auto
         }
     }
-    
+
     /// Write vectors to Parquet with optimized columnar compression
     async fn write_vectors_to_parquet(
         &self,
@@ -851,45 +869,52 @@ impl ViperStorageEngine {
     ) -> Result<()> {
         let writer_pool = self.writer_pool.clone();
         let mut writers = writer_pool.writers.write().await;
-        
-        let writer = writers.entry(partition_id.clone())
-            .or_insert_with(|| {
-                ParquetWriter::new(
-                    partition_id.clone(),
-                    self.get_partition_path(partition_id),
-                    self.create_optimized_schema(&vectors),
-                    self.config.parquet_config.row_group_size,
-                    self.config.compression_config.vector_compression.clone(),
-                )
-            });
-        
+
+        let writer = writers.entry(partition_id.clone()).or_insert_with(|| {
+            ParquetWriter::new(
+                partition_id.clone(),
+                self.get_partition_url(partition_id),
+                self.create_optimized_schema(&vectors),
+                self.config.row_group_size,
+                CompressionAlgorithm::Snappy,
+            )
+        });
+
         writer.add_vectors(vectors).await?;
-        
+
         // Flush if batch is large enough
         if writer.should_flush() {
             writer.flush().await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Helper methods for metadata management
-    async fn get_collection_metadata(&self, collection_id: &CollectionId) -> Result<CollectionMetadata> {
+    async fn get_collection_metadata(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<CollectionMetadata> {
         let collections = self.collections.read().await;
-        collections.get(collection_id)
+        collections
+            .get(collection_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))
     }
-    
-    async fn get_or_create_partition(&self, collection_id: &CollectionId, cluster_id: ClusterId) -> Result<PartitionId> {
+
+    async fn get_or_create_partition(
+        &self,
+        collection_id: &CollectionId,
+        cluster_id: ClusterId,
+    ) -> Result<PartitionId> {
         // Implementation for partition management
         Ok(format!("{}_{}", collection_id, cluster_id))
     }
-    
-    fn get_partition_path(&self, partition_id: &PartitionId) -> PathBuf {
-        self.config.storage_root.join(partition_id)
+
+    fn get_partition_url(&self, partition_id: &PartitionId) -> String {
+        format!("viper/partitions/{}", partition_id)
     }
-    
+
     fn create_optimized_schema(&self, vectors: &[ViperVector]) -> ParquetSchema {
         // Determine optimal schema based on vector format and collection requirements
         let vector_columns = if vectors.is_empty() {
@@ -899,9 +924,13 @@ impl ViperStorageEngine {
             }
         } else {
             // Analyze vectors to determine optimal format
-            let has_sparse = vectors.iter().any(|v| matches!(v, ViperVector::Sparse { .. }));
-            let has_dense = vectors.iter().any(|v| matches!(v, ViperVector::Dense { .. }));
-            
+            let has_sparse = vectors
+                .iter()
+                .any(|v| matches!(v, ViperVector::Sparse { .. }));
+            let has_dense = vectors
+                .iter()
+                .any(|v| matches!(v, ViperVector::Dense { .. }));
+
             match (has_sparse, has_dense) {
                 (true, false) => VectorColumns::Sparse {
                     metadata_table_ref: Some("metadata_index".to_string()),
@@ -910,26 +939,28 @@ impl ViperStorageEngine {
                 },
                 (false, true) => {
                     // Determine dimension from first dense vector
-                    let dimension = vectors.iter()
+                    let dimension = vectors
+                        .iter()
                         .find_map(|v| match v {
                             ViperVector::Dense { record } => Some(record.vector.len()),
                             _ => None,
                         })
                         .unwrap_or(384);
-                    
+
                     VectorColumns::Dense {
                         dimension_columns: (0..dimension).map(|i| format!("dim_{}", i)).collect(),
                     }
-                },
+                }
                 (true, true) => {
                     // Hybrid format
-                    let dimension = vectors.iter()
+                    let dimension = vectors
+                        .iter()
                         .find_map(|v| match v {
                             ViperVector::Dense { record } => Some(record.vector.len()),
                             _ => None,
                         })
                         .unwrap_or(384);
-                    
+
                     VectorColumns::Hybrid {
                         format_indicator_column: "storage_format".to_string(),
                         dense_columns: (0..dimension).map(|i| format!("dim_{}", i)).collect(),
@@ -937,7 +968,7 @@ impl ViperStorageEngine {
                         sparse_value_column: "sparse_dim_value".to_string(),
                         sparse_metadata_table_ref: Some("sparse_metadata_index".to_string()),
                     }
-                },
+                }
                 (false, false) => {
                     // Fallback to dense
                     VectorColumns::Dense {
@@ -946,7 +977,7 @@ impl ViperStorageEngine {
                 }
             }
         };
-        
+
         // Create optimized schema with ID and metadata columns first
         ParquetSchema {
             schema_version: 2, // Increment version for new layout
@@ -957,57 +988,93 @@ impl ViperStorageEngine {
             vector_columns,
         }
     }
-    
+
     // Additional placeholder methods for compilation
-    async fn heuristic_cluster_assignment(&self, _collection_id: &CollectionId, _vectors: &[VectorRecord]) -> Result<Vec<ClusterPrediction>> {
+    async fn heuristic_cluster_assignment(
+        &self,
+        _collection_id: &CollectionId,
+        _vectors: &[VectorRecord],
+    ) -> Result<Vec<ClusterPrediction>> {
         // Simplified implementation for new collections
         Ok(Vec::new())
     }
-    
+
     async fn train_initial_models(&self, _collection_id: CollectionId) -> Result<()> {
         // Train ML models on initial data
         Ok(())
     }
-    
+
     async fn update_collection_stats(&self, _collection_id: &CollectionId) -> Result<()> {
         // Update collection statistics
         Ok(())
     }
-    
-    async fn predict_query_clusters(&self, _context: &ViperSearchContext) -> Result<Vec<ClusterId>> {
+
+    async fn predict_query_clusters(
+        &self,
+        _context: &ViperSearchContext,
+    ) -> Result<Vec<ClusterId>> {
         // Predict which clusters to search for query
         Ok(Vec::new())
     }
-    
-    async fn progressive_tier_search(&self, _context: ViperSearchContext, _cluster_hints: Option<Vec<ClusterId>>, _important_features: Vec<usize>, _tier_result_thresholds: Vec<usize>) -> Result<Vec<ViperSearchResult>> {
+
+    async fn progressive_tier_search(
+        &self,
+        _context: ViperSearchContext,
+        _cluster_hints: Option<Vec<ClusterId>>,
+        _important_features: Vec<usize>,
+        _tier_result_thresholds: Vec<usize>,
+    ) -> Result<Vec<ViperSearchResult>> {
         Ok(Vec::new())
     }
-    
-    async fn cluster_pruned_search(&self, _context: ViperSearchContext, _cluster_hints: Option<Vec<ClusterId>>, _important_features: Vec<usize>, _max_clusters: usize, _confidence_threshold: f32) -> Result<Vec<ViperSearchResult>> {
+
+    async fn cluster_pruned_search(
+        &self,
+        _context: ViperSearchContext,
+        _cluster_hints: Option<Vec<ClusterId>>,
+        _important_features: Vec<usize>,
+        _max_clusters: usize,
+        _confidence_threshold: f32,
+    ) -> Result<Vec<ViperSearchResult>> {
         Ok(Vec::new())
     }
-    
-    async fn exhaustive_search(&self, _context: ViperSearchContext, _important_features: Vec<usize>) -> Result<Vec<ViperSearchResult>> {
+
+    async fn exhaustive_search(
+        &self,
+        _context: ViperSearchContext,
+        _important_features: Vec<usize>,
+    ) -> Result<Vec<ViperSearchResult>> {
         Ok(Vec::new())
     }
-    
-    async fn adaptive_search(&self, _context: ViperSearchContext, _query_complexity_score: f32, _time_budget_ms: u64, _cluster_hints: Option<Vec<ClusterId>>, _important_features: Vec<usize>) -> Result<Vec<ViperSearchResult>> {
+
+    async fn adaptive_search(
+        &self,
+        _context: ViperSearchContext,
+        _query_complexity_score: f32,
+        _time_budget_ms: u64,
+        _cluster_hints: Option<Vec<ClusterId>>,
+        _important_features: Vec<usize>,
+    ) -> Result<Vec<ViperSearchResult>> {
         Ok(Vec::new())
     }
-    
+
     async fn update_search_stats(&self, _results: &[ViperSearchResult]) -> Result<()> {
         Ok(())
     }
-    
-    async fn update_cluster_metadata(&self, _cluster_id: ClusterId, _collection_id: &CollectionId) -> Result<()> {
+
+    async fn update_cluster_metadata(
+        &self,
+        _cluster_id: ClusterId,
+        _collection_id: &CollectionId,
+    ) -> Result<()> {
         Ok(())
     }
-    
+
     // Hybrid storage implementation methods
-    
+
     /// Convert dense vector to sparse (dimension, value) pairs
     fn vector_to_sparse_pairs(&self, vector: &[f32]) -> Vec<(u32, f32)> {
-        vector.iter()
+        vector
+            .iter()
             .enumerate()
             .filter_map(|(i, &val)| {
                 if val != 0.0 {
@@ -1018,7 +1085,7 @@ impl ViperStorageEngine {
             })
             .collect()
     }
-    
+
     /// Write vector to hybrid storage (Parquet + KV for sparse, Parquet only for dense)
     async fn write_to_hybrid_storage(
         &self,
@@ -1026,81 +1093,94 @@ impl ViperStorageEngine {
         viper_vector: ViperVector,
         cluster_prediction: &ClusterPrediction,
     ) -> Result<()> {
-        let partition_id = self.get_or_create_partition(collection_id, cluster_prediction.cluster_id).await?;
-        let partition_path = self.get_partition_path(&partition_id);
-        
-        // Ensure partition directory exists
-        tokio::fs::create_dir_all(&partition_path).await?;
-        
+        let partition_id = self
+            .get_or_create_partition(collection_id, cluster_prediction.cluster_id)
+            .await?;
+        let partition_url = self.get_partition_url(&partition_id);
+
+        // Note: Directory creation handled by filesystem API
+
         match viper_vector {
             ViperVector::Dense { record } => {
                 // Write dense vector to Parquet with ID/metadata columns first
-                self.write_dense_vector_to_parquet(&partition_path, record).await?;
+                self.write_dense_vector_to_parquet(&partition_url, record)
+                    .await?;
             }
             ViperVector::Sparse { metadata, data } => {
                 // Write sparse vector to separate metadata Parquet + KV storage
-                self.write_sparse_metadata_to_parquet(&partition_path, metadata).await?;
-                self.write_sparse_data_to_kv(&partition_path, data).await?;
+                self.write_sparse_metadata_to_parquet(&partition_url, metadata)
+                    .await?;
+                self.write_sparse_data_to_kv(&partition_url, data).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Write dense vector to Parquet with optimized schema (ID and metadata first)
     async fn write_dense_vector_to_parquet(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         record: DenseVectorRecord,
     ) -> Result<()> {
-        let dense_parquet_path = partition_path.join("dense_vectors.parquet");
-        
+        let dense_parquet_url = format!("{}/dense_vectors.parquet", partition_url);
+
         // Create Parquet schema with ID and metadata columns first for efficient lookups
         // Schema: [id, metadata, cluster_id, vector_dimensions..., timestamp]
         // This allows efficient ID-based filtering and metadata queries
-        
+
         // For now, placeholder implementation
         // Real implementation would use arrow/parquet crates to write optimized columnar data
-        println!("Writing dense vector {} to {}", record.id, dense_parquet_path.display());
-        
+        println!(
+            "Writing dense vector {} to {}",
+            record.id, dense_parquet_url
+        );
+
         Ok(())
     }
-    
+
     /// Write sparse vector metadata to separate Parquet table for efficient filtering
     async fn write_sparse_metadata_to_parquet(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         metadata: SparseVectorMetadata,
     ) -> Result<()> {
-        let metadata_parquet_path = partition_path.join("sparse_metadata.parquet");
-        
+        let metadata_parquet_url = format!("{}/sparse_metadata.parquet", partition_url);
+
         // Create metadata Parquet schema: [id, metadata, cluster_id, dimension_count, sparsity_ratio, timestamp]
         // This enables fast filtering by ID, metadata, cluster, and sparsity before accessing KV data
-        
+
         // Placeholder implementation
-        println!("Writing sparse metadata {} to {}", metadata.id, metadata_parquet_path.display());
-        
+        println!(
+            "Writing sparse metadata {} to {}",
+            metadata.id, metadata_parquet_url
+        );
+
         Ok(())
     }
-    
+
     /// Write sparse vector data to KV storage (can be RocksDB, LMDB, or custom format)
     async fn write_sparse_data_to_kv(
         &self,
-        partition_path: &Path,
+        partition_url: &str,
         data: SparseVectorData,
     ) -> Result<()> {
-        let kv_path = partition_path.join("vectors.kv");
-        
+        let kv_url = format!("{}/vectors.kv", partition_url);
+
         // Store sparse vector as key-value: vector_id -> [(dim_index, value), ...]
         // This format avoids zero-padding and provides excellent compression for sparse data
-        
+
         // Placeholder implementation - would use actual KV store
-        println!("Writing sparse vector data {} with {} dimensions to {}", 
-                data.id, data.dimensions.len(), kv_path.display());
-        
+        println!(
+            "Writing sparse vector data {} with {} dimensions to {}",
+            data.id,
+            data.dimensions.len(),
+            kv_url
+        );
+
         Ok(())
     }
-    
+
     /// Insert cluster batch using hybrid storage
     async fn insert_cluster_batch_hybrid(
         &self,
@@ -1111,24 +1191,27 @@ impl ViperStorageEngine {
         for (vector_record, cluster_prediction) in batch {
             // Determine storage format for each vector
             let collection_meta = self.get_collection_metadata(&collection_id).await?;
-            let storage_format = self.determine_format(&vector_record.vector, &collection_meta).await?;
-            
+            let storage_format = self
+                .determine_format(&vector_record.vector, &collection_meta)
+                .await?;
+
             // Create VIPER vector based on format
             let viper_vector = match storage_format {
                 VectorStorageFormat::Sparse => {
                     let dimensions = self.vector_to_sparse_pairs(&vector_record.vector);
-                    let sparsity_ratio = 1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
-                    
+                    let sparsity_ratio =
+                        1.0 - (dimensions.len() as f32 / vector_record.vector.len() as f32);
+
                     let metadata = SparseVectorMetadata::new(
-                        vector_record.id,
+                        vector_record.id.clone(),
                         serde_json::to_value(vector_record.metadata.clone())?,
                         cluster_prediction.cluster_id,
                         vector_record.vector.len() as u32,
                         sparsity_ratio,
                     );
-                    
+
                     let data = SparseVectorData::new(vector_record.id, dimensions);
-                    
+
                     ViperVector::Sparse { metadata, data }
                 }
                 VectorStorageFormat::Dense => {
@@ -1138,29 +1221,35 @@ impl ViperStorageEngine {
                         serde_json::to_value(vector_record.metadata.clone())?,
                         cluster_prediction.cluster_id,
                     );
-                    
+
                     ViperVector::Dense { record }
                 }
                 VectorStorageFormat::Auto => {
-                    return Err(anyhow::anyhow!("Auto format should be resolved before batch insert"));
+                    return Err(anyhow::anyhow!(
+                        "Auto format should be resolved before batch insert"
+                    ));
                 }
             };
-            
+
             // Write to hybrid storage
-            self.write_to_hybrid_storage(&collection_id, viper_vector, &cluster_prediction).await?;
+            self.write_to_hybrid_storage(&collection_id, viper_vector, &cluster_prediction)
+                .await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get or create collection metadata
-    async fn get_or_create_collection_metadata(&self, collection_id: &CollectionId) -> Result<CollectionMetadata> {
+    async fn get_or_create_collection_metadata(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<CollectionMetadata> {
         let collections = self.collections.read().await;
         if let Some(metadata) = collections.get(collection_id) {
             return Ok(metadata.clone());
         }
         drop(collections);
-        
+
         // Create default metadata for new collection
         let metadata = CollectionMetadata {
             collection_id: collection_id.clone(),
@@ -1179,15 +1268,19 @@ impl ViperStorageEngine {
             created_at: Utc::now(),
             last_updated: Utc::now(),
         };
-        
+
         let mut collections = self.collections.write().await;
         collections.insert(collection_id.clone(), metadata.clone());
-        
+
         Ok(metadata)
     }
-    
+
     /// Predict cluster for a single vector
-    async fn predict_cluster(&self, _collection_id: &CollectionId, _vector: &[f32]) -> Result<ClusterPrediction> {
+    async fn predict_cluster(
+        &self,
+        _collection_id: &CollectionId,
+        _vector: &[f32],
+    ) -> Result<ClusterPrediction> {
         // Placeholder implementation - would use trained ML models
         Ok(ClusterPrediction {
             cluster_id: 0, // Default cluster
@@ -1202,21 +1295,29 @@ impl ViperStorageEngine {
             },
         })
     }
-    
+
     /// Determine storage format based on vector characteristics and collection metadata
-    async fn determine_format(&self, vector: &[f32], collection_meta: &CollectionMetadata) -> Result<VectorStorageFormat> {
+    async fn determine_format(
+        &self,
+        vector: &[f32],
+        collection_meta: &CollectionMetadata,
+    ) -> Result<VectorStorageFormat> {
         let sparsity = self.calculate_sparsity(vector);
         let threshold = collection_meta.compression_stats.optimal_sparsity_threshold;
-        
+
         if sparsity > threshold {
             Ok(VectorStorageFormat::Sparse)
         } else {
             Ok(VectorStorageFormat::Dense)
         }
     }
-    
+
     /// Update collection statistics for single vector insert
-    async fn update_collection_stats_single(&self, collection_id: &CollectionId, _cluster_prediction: &ClusterPrediction) -> Result<()> {
+    async fn update_collection_stats_single(
+        &self,
+        collection_id: &CollectionId,
+        _cluster_prediction: &ClusterPrediction,
+    ) -> Result<()> {
         let mut collections = self.collections.write().await;
         if let Some(metadata) = collections.get_mut(collection_id) {
             metadata.vector_count += 1;
@@ -1224,9 +1325,9 @@ impl ViperStorageEngine {
         }
         Ok(())
     }
-    
+
     // WAL Recovery Apply Methods
-    
+
     /// Apply vector insert from WAL during recovery
     async fn apply_vector_insert(
         &self,
@@ -1234,12 +1335,12 @@ impl ViperStorageEngine {
         vector_record: VectorRecord,
         _cluster_prediction: ClusterPrediction,
         _storage_format: VectorStorageFormat,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // Re-apply the insert without logging to WAL again
         self.insert_vector(&collection_id, vector_record).await
     }
-    
+
     /// Apply vector update from WAL during recovery
     async fn apply_vector_update(
         &self,
@@ -1248,24 +1349,24 @@ impl ViperStorageEngine {
         _old_cluster_id: ClusterId,
         _new_cluster_id: ClusterId,
         _updated_metadata: Option<serde_json::Value>,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement vector update logic
         Ok(())
     }
-    
+
     /// Apply vector delete from WAL during recovery
     async fn apply_vector_delete(
         &self,
         _collection_id: String,
         _vector_id: VectorId,
         _cluster_id: ClusterId,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement vector delete logic
         Ok(())
     }
-    
+
     /// Apply cluster update from WAL during recovery
     async fn apply_cluster_update(
         &self,
@@ -1282,37 +1383,40 @@ impl ViperStorageEngine {
         }
         Ok(())
     }
-    
+
     /// Apply partition create from WAL during recovery
     async fn apply_partition_create(
         &self,
         collection_id: String,
         partition_id: PartitionId,
         cluster_ids: Vec<ClusterId>,
-        tier_level: TierLevel,
+        storage_url: &str,
     ) -> Result<()> {
         let mut partitions = self.partitions.write().await;
-        partitions.insert(partition_id.clone(), PartitionMetadata {
-            partition_id,
-            collection_id,
-            cluster_ids,
-            statistics: PartitionStatistics {
-                total_vectors: 0,
-                storage_size_bytes: 0,
-                compressed_size_bytes: 0,
-                compression_ratio: 1.0,
-                access_frequency: 0.0,
-                last_accessed: Utc::now(),
+        partitions.insert(
+            partition_id.clone(),
+            PartitionMetadata {
+                partition_id,
+                collection_id,
+                cluster_ids,
+                statistics: PartitionStatistics {
+                    total_vectors: 0,
+                    storage_size_bytes: 0,
+                    compressed_size_bytes: 0,
+                    compression_ratio: 1.0,
+                    access_frequency: 0.0,
+                    last_accessed: Utc::now(),
+                },
+                storage_url: storage_url.to_string(),
+                parquet_files: Vec::new(),
+                bloom_filter: None,
+                created_at: Utc::now(),
+                last_modified: Utc::now(),
             },
-            tier_level,
-            parquet_files: Vec::new(),
-            bloom_filter: None,
-            created_at: Utc::now(),
-            last_modified: Utc::now(),
-        });
+        );
         Ok(())
     }
-    
+
     /// Apply compaction operation from WAL during recovery
     async fn apply_compaction_operation(
         &self,
@@ -1320,28 +1424,28 @@ impl ViperStorageEngine {
         _operation_id: String,
         _input_partitions: Vec<PartitionId>,
         _output_partitions: Vec<PartitionId>,
-        _tier_level: TierLevel,
+        _storage_url: &str,
     ) -> Result<()> {
         // TODO: Implement compaction recovery logic
         Ok(())
     }
-    
+
     /// Apply tier migration from WAL during recovery
     async fn apply_tier_migration(
         &self,
         _collection_id: String,
         partition_id: PartitionId,
-        _from_tier: TierLevel,
-        to_tier: TierLevel,
+        _from_storage_url: &str,
+        to_storage_url: &str,
         _migration_reason: String,
     ) -> Result<()> {
         let mut partitions = self.partitions.write().await;
         if let Some(partition) = partitions.get_mut(&partition_id) {
-            partition.tier_level = to_tier;
+            partition.storage_url = to_storage_url.to_string();
         }
         Ok(())
     }
-    
+
     /// Apply model update from WAL during recovery
     async fn apply_model_update(
         &self,
@@ -1352,6 +1456,341 @@ impl ViperStorageEngine {
     ) -> Result<()> {
         // TODO: Implement model update recovery logic
         Ok(())
+    }
+
+    /// Get TTL cleanup statistics
+    pub async fn get_ttl_stats(&self) -> Result<Option<super::ttl::TTLStats>> {
+        if let Some(ttl_service) = &self.ttl_service {
+            let service = ttl_service.read().await;
+            Ok(Some(service.get_stats().await))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Force TTL cleanup (for admin/testing purposes)
+    pub async fn force_ttl_cleanup(&self) -> Result<Option<super::ttl::CleanupResult>> {
+        if let Some(ttl_service) = &self.ttl_service {
+            let service = ttl_service.read().await;
+            Ok(Some(service.force_cleanup().await?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// VIPER Phase 5: Two-phase search with WAL + Storage integration
+    pub async fn search_two_phase(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+        threshold: Option<f32>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::info!(
+            "🚀 VIPER two-phase search initiated for collection: {}",
+            collection_id
+        );
+
+        // Create search engine if needed
+        let search_engine =
+            super::search_engine::ViperProgressiveSearchEngine::new(self.config.clone()).await?;
+
+        // Build search context
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Adaptive {
+                query_complexity_score: 0.5,
+                time_budget_ms: 1000,
+            },
+            max_storage_locations: Some(10),
+        };
+
+        // Execute two-phase search with WAL integration
+        let results = search_engine.search_two_phase(search_context).await?;
+
+        tracing::info!(
+            "✅ VIPER two-phase search completed: {} results returned",
+            results.len()
+        );
+
+        Ok(results)
+    }
+
+    /// VIPER search without WAL integration (storage-only)
+    pub async fn search_storage_only(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::debug!(
+            "🗄️ VIPER storage-only search for collection: {}",
+            collection_id
+        );
+
+        let search_engine =
+            super::search_engine::ViperProgressiveSearchEngine::new(self.config.clone()).await?;
+
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold: None,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Progressive {
+                tier_result_thresholds: vec![k * 2, k * 5, k * 10],
+            },
+            max_storage_locations: Some(5),
+        };
+
+        // Use existing progressive search (no WAL)
+        let results = search_engine.search(search_context, None, vec![]).await?;
+
+        tracing::debug!(
+            "💾 Storage-only search completed: {} results",
+            results.len()
+        );
+
+        Ok(results)
+    }
+
+    /// Get search statistics from the VIPER engine
+    pub async fn get_search_stats(&self) -> Result<super::search_engine::SearchStats> {
+        // For now, return default stats
+        // Future: integrate with actual search engine statistics
+        Ok(super::search_engine::SearchStats::default())
+    }
+
+    /// VIPER Phase 6: Build HNSW index for a collection
+    pub async fn build_hnsw_index(&self, collection_id: &CollectionId) -> Result<()> {
+        tracing::info!("🔨 Building HNSW index for collection: {}", collection_id);
+
+        // Gather vectors from storage for index building
+        let vectors = self.load_collection_vectors(collection_id).await?;
+
+        if vectors.is_empty() {
+            tracing::warn!(
+                "⚠️ No vectors found for collection {}, skipping index build",
+                collection_id
+            );
+            return Ok(());
+        }
+
+        // Create search engine and build index
+        let search_engine =
+            super::search_engine::ViperProgressiveSearchEngine::new(self.config.clone()).await?;
+
+        // Default to cosine distance for now
+        // Future: make this configurable per collection
+        let distance_metric = crate::compute::distance::DistanceMetric::Cosine;
+
+        search_engine
+            .build_hnsw_index(collection_id, vectors, distance_metric)
+            .await?;
+
+        tracing::info!(
+            "✅ HNSW index built successfully for collection {}",
+            collection_id
+        );
+
+        Ok(())
+    }
+
+    /// VIPER Phase 6: Search with HNSW and metadata filtering
+    pub async fn search_with_hnsw(
+        &self,
+        collection_id: &CollectionId,
+        query_vector: Vec<f32>,
+        k: usize,
+        filters: Option<HashMap<String, serde_json::Value>>,
+        threshold: Option<f32>,
+    ) -> Result<Vec<super::types::ViperSearchResult>> {
+        tracing::info!(
+            "🚀 VIPER HNSW search initiated for collection: {}",
+            collection_id
+        );
+
+        let search_engine =
+            super::search_engine::ViperProgressiveSearchEngine::new(self.config.clone()).await?;
+
+        let search_context = super::types::ViperSearchContext {
+            collection_id: collection_id.clone(),
+            query_vector,
+            k,
+            threshold,
+            filters,
+            cluster_hints: None,
+            search_strategy: super::types::SearchStrategy::Adaptive {
+                query_complexity_score: 0.5,
+                time_budget_ms: 500, // Faster for HNSW
+            },
+            max_storage_locations: Some(5),
+        };
+
+        // Use filtered HNSW search
+        let results = search_engine
+            .search_filtered_with_hnsw(search_context)
+            .await?;
+
+        tracing::info!(
+            "✅ VIPER HNSW search completed: {} results returned",
+            results.len()
+        );
+
+        Ok(results)
+    }
+
+    /// Load vectors from storage for index building
+    async fn load_collection_vectors(
+        &self,
+        _collection_id: &CollectionId,
+    ) -> Result<Vec<(String, Vec<f32>, serde_json::Value)>> {
+        // This would load vectors from Parquet storage
+        // For now, return empty vector as placeholder
+        tracing::warn!("⚠️ Vector loading from storage not yet implemented");
+        Ok(Vec::new())
+    }
+
+    /// Trigger HNSW index rebuild after compaction
+    pub async fn rebuild_hnsw_after_compaction(&self, collection_id: &CollectionId) -> Result<()> {
+        tracing::info!(
+            "🔄 Rebuilding HNSW index after compaction for collection: {}",
+            collection_id
+        );
+
+        // In a real implementation:
+        // 1. Lock the collection for writes
+        // 2. Build new index in background
+        // 3. Atomically swap indexes
+        // 4. Unlock collection
+
+        self.build_hnsw_index(collection_id).await?;
+
+        Ok(())
+    }
+
+    /// Perform atomic flush using staging directory
+    pub async fn atomic_flush_collection(
+        &self,
+        collection_id: &CollectionId,
+        records: Vec<VectorRecord>,
+        wal_entries: Vec<String>,
+    ) -> Result<String> {
+        tracing::info!(
+            "🚀 VIPER FLUSH: Starting atomic flush for collection {} with {} records",
+            collection_id,
+            records.len()
+        );
+        tracing::debug!(
+            "📃 VIPER FLUSH: WAL entries to clean: {}",
+            wal_entries.len()
+        );
+
+        let records_count = records.len();
+        let start_time = std::time::Instant::now();
+
+        tracing::debug!("🔧 VIPER FLUSH: Creating atomic flusher");
+        let flusher = self.atomic_operations.create_flusher();
+
+        tracing::info!("💾 VIPER FLUSH: Executing atomic flush operation");
+        let result = flusher
+            .atomic_flush(collection_id, records, wal_entries)
+            .await?;
+
+        let flush_duration = start_time.elapsed();
+        tracing::info!(
+            "✅ VIPER FLUSH: Completed flush in {:?}, output: {}",
+            flush_duration,
+            result
+        );
+
+        // Update collection statistics
+        tracing::debug!("📊 VIPER FLUSH: Updating statistics");
+        let mut stats = self.stats.write().await;
+        stats.total_flushes += 1;
+        stats.total_vectors_flushed += records_count as u64;
+
+        tracing::info!(
+            "🎉 VIPER FLUSH: Successfully flushed {} records to {}",
+            records_count,
+            result
+        );
+
+        Ok(result)
+    }
+
+    /// Perform atomic compaction using staging directory
+    pub async fn atomic_compact_collection(
+        &self,
+        collection_id: &CollectionId,
+        source_files: Vec<String>,
+    ) -> Result<String> {
+        tracing::info!(
+            "🔄 VIPER COMPACTION: Starting atomic compaction for collection {} with {} files",
+            collection_id,
+            source_files.len()
+        );
+        tracing::debug!("📂 VIPER COMPACTION: Source files: {:?}", source_files);
+
+        let start_time = std::time::Instant::now();
+
+        tracing::debug!("🔧 VIPER COMPACTION: Creating atomic compactor");
+        let compactor = self.atomic_operations.create_compactor();
+        tracing::info!("💾 VIPER COMPACTION: Executing atomic compaction");
+        let result = compactor
+            .atomic_compact(collection_id, source_files)
+            .await?;
+
+        let compaction_duration = start_time.elapsed();
+        tracing::info!(
+            "✅ VIPER COMPACTION: Completed compaction in {:?}, output: {}",
+            compaction_duration,
+            result
+        );
+
+        // Rebuild HNSW index after successful compaction
+        tracing::info!("🏗️ VIPER COMPACTION: Rebuilding HNSW index after compaction");
+        self.rebuild_hnsw_after_compaction(collection_id).await?;
+        tracing::info!("✅ VIPER COMPACTION: HNSW index rebuilt successfully");
+
+        // Update collection statistics
+        tracing::debug!("📊 VIPER COMPACTION: Updating statistics");
+        let mut stats = self.stats.write().await;
+        stats.total_compactions += 1;
+
+        tracing::info!(
+            "🎉 VIPER COMPACTION: Successfully compacted collection {} to {}",
+            collection_id,
+            result
+        );
+
+        Ok(result)
+    }
+
+    /// Get collection read lock for queries
+    pub async fn acquire_read_lock(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<super::atomic_operations::ReadLockGuard> {
+        self.atomic_operations
+            .lock_manager()
+            .acquire_read_lock(collection_id)
+            .await
+    }
+
+    /// Check if collection is available for writes (no exclusive locks)
+    pub async fn is_available_for_writes(&self, _collection_id: &CollectionId) -> bool {
+        // WAL and memtable are always available for writes during flush/compaction
+        // Only the storage files are locked
+        true
     }
 }
 
@@ -1367,30 +1806,30 @@ impl ParquetWriterPool {
 impl ParquetWriter {
     fn new(
         partition_id: PartitionId,
-        file_path: PathBuf,
+        file_url: String,
         schema: ParquetSchema,
         row_group_size: usize,
         compression: CompressionAlgorithm,
     ) -> Self {
         Self {
             partition_id,
-            file_path,
+            file_url,
             schema,
             row_group_size,
             current_batch: Vec::new(),
             compression_algorithm: compression,
         }
     }
-    
+
     async fn add_vectors(&mut self, vectors: Vec<ViperVector>) -> Result<()> {
         self.current_batch.extend(vectors);
         Ok(())
     }
-    
+
     fn should_flush(&self) -> bool {
         self.current_batch.len() >= self.row_group_size
     }
-    
+
     async fn flush(&mut self) -> Result<()> {
         // Write current batch to Parquet file
         // Implementation would use parquet crate

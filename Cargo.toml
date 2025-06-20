@@ -28,6 +28,7 @@ path = "src/bin/cli.rs"
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
+tokio-stream = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -37,14 +38,24 @@ bincode = "1.3"
 # Checksums
 crc32fast = "1.4"
 
+# System information
+libc = "0.2"
+
+# Data structures
+art-tree = "0.2.0"
+once_cell = "1.19"
+
 # Networking & gRPC
 tonic = "0.10"
 tonic-build = "0.10"
+tonic-reflection = "0.10"
 prost = "0.12"
 prost-types = "0.12"
 hyper = "0.14"
 tower = "0.4"
 tower-http = { version = "0.4", features = ["cors", "trace"] }
+url = "2.4"
+reqwest = { version = "0.11", features = ["json"] }
 
 # Storage & Memory Management
 memmap2 = "0.9"
@@ -89,6 +100,9 @@ hnsw = "0.11"
 # CPU optimization
 num_cpus = "1.16"
 
+# Random number generation
+rand = "0.8"
+
 # GPU acceleration (optional)
 cudarc = { version = "0.9", optional = true }
 candle-core = { version = "0.3", optional = true }
@@ -100,6 +114,7 @@ intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"], optional
 # Logging & Monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 prometheus = "0.13"
 metrics = "0.21"
 metrics-prometheus = "0.6"
@@ -127,10 +142,17 @@ slog-stdlog = "4.1"
 # REST API
 axum = { version = "0.6", features = ["json"] }
 axum-macros = "0.3"
+urlencoding = "2.1.3"
+crossbeam-skiplist = "0.1.3"
+dashmap = "6.1.0"
 
 # Build dependencies
 [build-dependencies]
 tonic-build = "0.10"
+apache-avro = "0.16"
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 # Development dependencies
 [dev-dependencies]

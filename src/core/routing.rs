@@ -49,13 +49,19 @@ pub struct SizeThreshold {
 pub enum LoadBalancingStrategy {
     RoundRobin,
     LeastConnections,
-    WeightedRoundRobin { weights: HashMap<String, u32> },
-    ConsistentHashing { hash_ring_size: u32 },
-    LatencyBased { health_check_interval_ms: u32 },
-    ResourceBased { 
-        cpu_weight: f32, 
-        memory_weight: f32, 
-        queue_depth_weight: f32 
+    WeightedRoundRobin {
+        weights: HashMap<String, u32>,
+    },
+    ConsistentHashing {
+        hash_ring_size: u32,
+    },
+    LatencyBased {
+        health_check_interval_ms: u32,
+    },
+    ResourceBased {
+        cpu_weight: f32,
+        memory_weight: f32,
+        queue_depth_weight: f32,
     },
 }
 
@@ -88,14 +94,14 @@ pub enum TenantMappingStrategy {
     /// All tenants share infrastructure with logical separation
     Shared,
     /// Dedicated clusters per enterprise customer
-    Dedicated { 
-        enterprise_tenants: HashMap<String, String> // tenant_id -> cluster_id
+    Dedicated {
+        enterprise_tenants: HashMap<String, String>, // tenant_id -> cluster_id
     },
     /// Automatic tiering based on tenant characteristics
     TierBased {
-        starter_tier: Vec<String>,     // Shared infrastructure
-        professional_tier: Vec<String>, // Dedicated containers  
-        enterprise_tier: Vec<String>,  // Dedicated clusters
+        starter_tier: Vec<String>,      // Shared infrastructure
+        professional_tier: Vec<String>, // Dedicated containers
+        enterprise_tier: Vec<String>,   // Dedicated clusters
     },
     /// Hybrid approach with overflow routing
     Hybrid {
@@ -205,7 +211,7 @@ pub struct RoutingContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CustomerSegment {
     Startup,
-    SMB,        // Small/Medium Business
+    SMB, // Small/Medium Business
     Enterprise,
     Government,
     NonProfit,
@@ -244,17 +250,17 @@ pub struct CollectionMetadata {
 
 #[derive(Debug, Clone)]
 pub enum QueryPattern {
-    PointQuery,      // Get specific vectors
+    PointQuery,       // Get specific vectors
     SimilaritySearch, // Vector similarity queries
-    RangeQuery,      // Filtered searches
-    Aggregation,     // Analytics queries
+    RangeQuery,       // Filtered searches
+    Aggregation,      // Analytics queries
 }
 
 #[derive(Debug, Clone)]
 pub enum AccessFrequency {
-    Hot,    // Accessed frequently
-    Warm,   // Accessed occasionally  
-    Cold,   // Rarely accessed
+    Hot,     // Accessed frequently
+    Warm,    // Accessed occasionally
+    Cold,    // Rarely accessed
     Archive, // Long-term storage
 }
 
@@ -297,10 +303,10 @@ pub struct RoutingDecision {
 
 #[derive(Debug, Clone)]
 pub enum RoutingPriority {
-    High,    // Enterprise SLA
-    Medium,  // Professional tier
-    Low,     // Best effort
-    Batch,   // Background processing
+    High,   // Enterprise SLA
+    Medium, // Professional tier
+    Low,    // Best effort
+    Batch,  // Background processing
 }
 
 impl SmartRouter {
@@ -317,7 +323,7 @@ impl SmartRouter {
         let tenant_id = self.extract_tenant_id(headers);
         let customer_segment = self.determine_customer_segment(&tenant_id);
         let account_tier = self.determine_account_tier(&tenant_id);
-        
+
         RoutingContext {
             tenant_id,
             customer_segment,
@@ -332,12 +338,22 @@ impl SmartRouter {
     /// Make routing decision based on context and cluster health
     pub fn route_request(&self, context: &RoutingContext, operation_type: &str) -> RoutingDecision {
         match &self.config.strategy {
-            RoutingStrategy::TenantBased { tenant_key: _, shard_count, consistent_hashing } => {
-                self.route_by_tenant(context, *shard_count, *consistent_hashing)
-            }
-            RoutingStrategy::WorkloadBased { read_replicas, write_primaries, analytics_clusters } => {
-                self.route_by_workload(context, operation_type, read_replicas, write_primaries, analytics_clusters)
-            }
+            RoutingStrategy::TenantBased {
+                tenant_key: _,
+                shard_count,
+                consistent_hashing,
+            } => self.route_by_tenant(context, *shard_count, *consistent_hashing),
+            RoutingStrategy::WorkloadBased {
+                read_replicas,
+                write_primaries,
+                analytics_clusters,
+            } => self.route_by_workload(
+                context,
+                operation_type,
+                read_replicas,
+                write_primaries,
+                analytics_clusters,
+            ),
             _ => {
                 // Default routing logic
                 RoutingDecision {
@@ -358,7 +374,11 @@ impl SmartRouter {
                 return value.clone();
             }
         }
-        self.config.tenant_routing.tenant_extraction.default_tenant.clone()
+        self.config
+            .tenant_routing
+            .tenant_extraction
+            .default_tenant
+            .clone()
     }
 
     fn determine_customer_segment(&self, tenant_id: &str) -> CustomerSegment {
@@ -393,7 +413,12 @@ impl SmartRouter {
         }
     }
 
-    fn route_by_tenant(&self, context: &RoutingContext, shard_count: u32, _consistent_hashing: bool) -> RoutingDecision {
+    fn route_by_tenant(
+        &self,
+        context: &RoutingContext,
+        shard_count: u32,
+        _consistent_hashing: bool,
+    ) -> RoutingDecision {
         // Use consistent hashing to determine shard
         let hash = self.hash_tenant_id(&context.tenant_id);
         let shard = hash % shard_count;
@@ -405,17 +430,26 @@ impl SmartRouter {
             load_balancing_key: context.tenant_id.clone(),
             priority: self.get_priority_for_tier(&context.account_tier),
             fallback_clusters: vec!["shard-0".to_string()], // Always fall back to shard 0
-            reason: format!("Tenant-based routing: tenant {} -> shard {}", context.tenant_id, shard),
+            reason: format!(
+                "Tenant-based routing: tenant {} -> shard {}",
+                context.tenant_id, shard
+            ),
         }
     }
 
-    fn route_by_workload(&self, context: &RoutingContext, operation_type: &str, 
-                        read_replicas: &[String], write_primaries: &[String], 
-                        analytics_clusters: &[String]) -> RoutingDecision {
+    fn route_by_workload(
+        &self,
+        context: &RoutingContext,
+        operation_type: &str,
+        read_replicas: &[String],
+        write_primaries: &[String],
+        analytics_clusters: &[String],
+    ) -> RoutingDecision {
         let target_cluster = match (operation_type, &context.workload_type) {
-            ("read" | "search", WorkloadType::OLAP) => {
-                analytics_clusters.first().unwrap_or(&read_replicas[0]).clone()
-            }
+            ("read" | "search", WorkloadType::OLAP) => analytics_clusters
+                .first()
+                .unwrap_or(&read_replicas[0])
+                .clone(),
             ("read" | "search", _) => {
                 read_replicas[0].clone() // TODO: Implement load balancing
             }
@@ -431,14 +465,17 @@ impl SmartRouter {
             load_balancing_key: context.tenant_id.clone(),
             priority: self.get_priority_for_tier(&context.account_tier),
             fallback_clusters: read_replicas.to_vec(),
-            reason: format!("Workload-based routing: {} operation for {:?} workload", operation_type, context.workload_type),
+            reason: format!(
+                "Workload-based routing: {} operation for {:?} workload",
+                operation_type, context.workload_type
+            ),
         }
     }
 
     fn hash_tenant_id(&self, tenant_id: &str) -> u32 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         tenant_id.hash(&mut hasher);
         hasher.finish() as u32

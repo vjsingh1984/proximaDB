@@ -1,0 +1,121 @@
+@startuml deployment-models
+!theme cerulean-outline
+skinparam backgroundColor #F8F9FA
+
+title ProximaDB Deployment Models
+
+package "Local Development" as local_dev {
+  rectangle "Docker Compose Setup" as docker_setup #E8F4FD {
+    component [ProximaDB Server\nport 5678] as server_local
+    component [Local Storage\n./data] as storage_local
+    component [Prometheus\nport 9090] as prometheus_local
+    component [Grafana\nport 3000] as grafana_local
+    
+    note bottom : Single-node configuration\nAll services in containers\nLocal volume mounts
+  }
+}
+
+package "Cloud Production" as cloud_prod {
+  
+  rectangle "Kubernetes Cluster" as k8s_cluster #E8F8E8 {
+    rectangle "ProximaDB Pods" as proximadb_pods {
+      component [ProximaDB\nReplica 1] as pod1
+      component [ProximaDB\nReplica 2] as pod2
+      component [ProximaDB\nReplica 3] as pod3
+    }
+    
+    rectangle "Storage" as k8s_storage {
+      component [Persistent Volumes] as pv
+      component [Cloud Storage\n(S3/Azure/GCS)] as cloud_storage
+    }
+    
+    rectangle "Services" as k8s_services {
+      component [Load Balancer\nService] as lb_service
+      component [Monitoring\nStack] as monitoring
+      component [Auto-scaler\n(HPA/VPA)] as autoscaler
+    }
+  }
+  
+  rectangle "Multi-Region Setup" as multi_region #FFF4E6 {
+    rectangle "Region A (Primary)" as region_a {
+      component [ProximaDB\nCluster A] as cluster_a
+      component [Storage A] as storage_a
+    }
+    
+    rectangle "Region B (Secondary)" as region_b {
+      component [ProximaDB\nCluster B] as cluster_b
+      component [Storage B] as storage_b
+    }
+    
+    component [Global Load\nBalancer] as global_lb
+    component [Cross-Region\nReplication] as replication
+  }
+}
+
+package "Serverless Deployment" as serverless {
+  rectangle "Auto-scaling Architecture" as serverless_arch #F0E6FF {
+    component [API Gateway] as api_gateway
+    component [Function Runtime\n(Scale to Zero)] as functions
+    component [Object Storage] as object_storage_serverless
+    component [Managed Databases] as managed_db
+    
+    note bottom : Pay-per-use model\nAutomatic scaling\nManaged infrastructure
+  }
+}
+
+package "Edge Deployment" as edge {
+  rectangle "Edge Locations" as edge_locations #FFE6E6 {
+    component [Edge Node 1\n(US-West)] as edge1
+    component [Edge Node 2\n(EU-Central)] as edge2
+    component [Edge Node 3\n(APAC)] as edge3
+    component [Central Hub] as central_hub
+    
+    note bottom : Low-latency access\nData locality\nCDN integration
+  }
+}
+
+' Local development flow
+docker_setup --> storage_local : "Volume mounts"
+server_local --> prometheus_local : "Metrics"
+prometheus_local --> grafana_local : "Visualization"
+
+' Cloud production flow
+proximadb_pods --> pv : "Persistent storage"
+proximadb_pods --> cloud_storage : "Cold storage"
+lb_service --> proximadb_pods : "Load balancing"
+autoscaler --> proximadb_pods : "Scale up/down"
+
+' Multi-region flow
+global_lb --> cluster_a : "Primary traffic"
+global_lb --> cluster_b : "Failover traffic"
+storage_a --> replication : "Data sync"
+replication --> storage_b : "Replica data"
+
+' Serverless flow
+api_gateway --> functions : "Request routing"
+functions --> object_storage_serverless : "Data access"
+functions --> managed_db : "Metadata"
+
+' Edge flow
+central_hub --> edge1 : "Data distribution"
+central_hub --> edge2 : "Data distribution"
+central_hub --> edge3 : "Data distribution"
+
+note as migration_note
+**Migration Paths**
+• Local → Cloud: Export/import with zero downtime
+• Single Region → Multi-Region: Gradual rollout
+• Traditional → Serverless: Incremental adoption
+• Centralized → Edge: Content distribution setup
+end note
+
+note as scaling_note
+**Scaling Characteristics**
+• **Local**: Single node, development/testing
+• **Cloud**: Auto-scaling, production workloads
+• **Multi-Region**: Global distribution, disaster recovery
+• **Serverless**: Elastic scaling, cost optimization
+• **Edge**: Ultra-low latency, geographic distribution
+end note
+
+@enduml

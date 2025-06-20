@@ -8,10 +8,10 @@
 pub mod axis;
 
 // Placeholder index structures for compilation
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
-use crate::core::{VectorRecord, VectorId, CollectionId};
+use crate::core::{CollectionId, VectorId, VectorRecord};
 
 /// Placeholder Global ID Index
 pub struct GlobalIdIndex {
@@ -22,11 +22,16 @@ impl GlobalIdIndex {
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
-    
-    pub async fn insert(&self, _id: VectorId, _collection_id: &CollectionId, _vector: &VectorRecord) -> Result<()> {
+
+    pub async fn insert(
+        &self,
+        _id: VectorId,
+        _collection_id: &CollectionId,
+        _vector: &VectorRecord,
+    ) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -41,11 +46,11 @@ impl MetadataIndex {
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
-    
+
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -60,11 +65,11 @@ impl DenseVectorIndex {
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
-    
+
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -79,11 +84,11 @@ impl SparseVectorIndex {
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
-    
+
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -98,7 +103,7 @@ impl JoinEngine {
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
-    
+
     pub async fn execute_query(
         &self,
         _query: &crate::index::axis::manager::HybridQuery,

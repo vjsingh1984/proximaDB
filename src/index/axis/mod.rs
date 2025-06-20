@@ -4,46 +4,45 @@
 // you may not use this file except in compliance with the License.
 
 //! AXIS - Adaptive eXtensible Indexing System
-//! 
+//!
 //! A sophisticated indexing system that automatically adapts to collection
 //! characteristics and query patterns, providing zero-downtime migration
 //! between indexing strategies as data evolves.
 
-pub mod manager;
 pub mod adaptive_engine;
-pub mod migration_engine;
-pub mod strategy;
 pub mod analyzer;
+pub mod manager;
+pub mod migration_engine;
 pub mod monitor;
+pub mod strategy;
 
-pub use manager::{
-    AxisIndexManager, HybridQuery, VectorQuery, MetadataFilter, FilterOperator,
-    QueryResult, ScoredResult, MigrationStatus
-};
 pub use adaptive_engine::{
-    AdaptiveIndexEngine, CollectionCharacteristics, QueryPatternAnalysis, 
-    PerformanceMetrics, AccessFrequencyMetrics, MetadataComplexity, 
-    QueryDistribution, TemporalPattern, QueryPatternType
+    AccessFrequencyMetrics, AdaptiveIndexEngine, CollectionCharacteristics, MetadataComplexity,
+    PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
+};
+pub use analyzer::CollectionAnalyzer;
+pub use manager::{
+    AxisIndexManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
+    ScoredResult, VectorQuery,
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};
-pub use strategy::{IndexStrategy, IndexType, OptimizationConfig};
-pub use analyzer::CollectionAnalyzer;
 pub use monitor::PerformanceMonitor;
+pub use strategy::{IndexStrategy, IndexType, OptimizationConfig};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// AXIS configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AxisConfig {
     /// Migration settings
     pub migration_config: MigrationConfig,
-    
+
     /// Performance monitoring settings
     pub monitoring_config: MonitoringConfig,
-    
+
     /// Strategy selection parameters
     pub strategy_config: StrategyConfig,
-    
+
     /// Resource limits
     pub resource_limits: ResourceLimits,
 }
@@ -64,16 +63,16 @@ impl Default for AxisConfig {
 pub struct MigrationConfig {
     /// Minimum improvement threshold to trigger migration (0.0-1.0)
     pub improvement_threshold: f64,
-    
+
     /// Maximum concurrent migrations
     pub max_concurrent_migrations: usize,
-    
+
     /// Migration batch size for incremental migration
     pub migration_batch_size: usize,
-    
+
     /// Rollback timeout in seconds
     pub rollback_timeout_seconds: u64,
-    
+
     /// Enable/disable automatic migrations
     pub auto_migration_enabled: bool,
 }
@@ -95,10 +94,10 @@ impl Default for MigrationConfig {
 pub struct MonitoringConfig {
     /// Metrics collection interval in seconds
     pub metrics_interval_seconds: u64,
-    
+
     /// Performance alert thresholds
     pub alert_thresholds: AlertThresholds,
-    
+
     /// Enable detailed performance logging
     pub detailed_logging: bool,
 }
@@ -118,10 +117,10 @@ impl Default for MonitoringConfig {
 pub struct AlertThresholds {
     /// Query latency threshold in milliseconds
     pub max_query_latency_ms: u64,
-    
+
     /// Minimum query throughput (QPS)
     pub min_query_throughput: f64,
-    
+
     /// Maximum error rate (0.0-1.0)
     pub max_error_rate: f64,
 }
@@ -141,10 +140,10 @@ impl Default for AlertThresholds {
 pub struct StrategyConfig {
     /// Enable ML-based strategy selection
     pub use_ml_models: bool,
-    
+
     /// Strategy evaluation interval in seconds
     pub evaluation_interval_seconds: u64,
-    
+
     /// Minimum data size for ML model training
     pub min_training_size: usize,
 }
@@ -164,10 +163,10 @@ impl Default for StrategyConfig {
 pub struct ResourceLimits {
     /// Maximum memory for indexing operations
     pub max_index_memory_gb: f64,
-    
+
     /// Maximum concurrent index operations
     pub max_concurrent_operations: usize,
-    
+
     /// Maximum index rebuild time in seconds
     pub max_rebuild_time_seconds: u64,
 }
@@ -194,9 +193,7 @@ pub enum MigrationDecision {
         estimated_duration: std::time::Duration,
     },
     /// Stay with current strategy
-    Stay {
-        reason: String,
-    },
+    Stay { reason: String },
 }
 
 /// Migration priority

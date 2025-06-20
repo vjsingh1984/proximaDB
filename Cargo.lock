@@ -423,6 +423,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "art-tree"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba8426b68532975e76fe7ddd5f8cdd981d750c87b4a24687b5acc1f26ae3f1f2"
+
+[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1709,6 +1715,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-skiplist"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df29de440c58ca2cc6e587ec3d22347551a32435fbde9d2bff64e78a9ffa151b"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,6 +1835,20 @@ name = "dary_heap"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d2cd9c18b9f454ed67da600630b021a8a80bf33f8c95896ab33aaf1c26b728"
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
 
 [[package]]
 name = "der"
@@ -4506,6 +4536,7 @@ dependencies = [
  "anyhow",
  "apache-avro",
  "arrow",
+ "art-tree",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
@@ -4522,7 +4553,9 @@ dependencies = [
  "crc32fast",
  "criterion",
  "crossbeam",
+ "crossbeam-skiplist",
  "cudarc",
+ "dashmap",
  "faiss",
  "flate2",
  "futures",
@@ -4530,6 +4563,7 @@ dependencies = [
  "hnsw",
  "hyper 0.14.32",
  "intel-mkl-src",
+ "libc",
  "linfa",
  "linfa-clustering",
  "lz4_flex",
@@ -4538,6 +4572,7 @@ dependencies = [
  "metrics-prometheus",
  "ndarray",
  "num_cpus",
+ "once_cell",
  "parking_lot",
  "parquet",
  "prometheus",
@@ -4546,6 +4581,7 @@ dependencies = [
  "prost-types",
  "raft",
  "raft-proto",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "rocksdb",
@@ -4560,14 +4596,19 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "toml 0.8.23",
  "tonic",
  "tonic-build",
+ "tonic-reflection",
  "tower 0.4.13",
  "tower-http",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
+ "url",
+ "urlencoding",
  "uuid",
  "zstd",
 ]
@@ -6131,6 +6172,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-reflection"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fa37c513df1339d197f4ba21d28c918b9ef1ac1768265f11ecb6b7f1cba1b76"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6201,6 +6255,18 @@ dependencies = [
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-appender"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
+dependencies = [
+ "crossbeam-channel",
+ "thiserror 1.0.69",
+ "time",
+ "tracing-subscriber",
 ]
 
 [[package]]

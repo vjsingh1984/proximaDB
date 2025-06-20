@@ -22,5 +22,5 @@
 pub mod auth;
 pub mod rate_limit;
 
-pub use auth::{AuthLayer, AuthConfig};
-pub use rate_limit::{RateLimitLayer, RateLimitConfig};
+pub use auth::{AuthConfig, AuthLayer};
+pub use rate_limit::{RateLimitConfig, RateLimitLayer};

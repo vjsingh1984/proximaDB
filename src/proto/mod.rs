@@ -18,8 +18,16 @@
 //!
 //! This module contains the generated protobuf code for ProximaDB's gRPC API.
 
-pub mod vectordb {
-    pub mod v1 {
-        include!("vectordb.v1.rs");
-    }
+// New unified protobuf v1 protocol
+pub mod proximadb {
+    include!("proximadb.rs");
 }
+
+// Moved to obsolete directory - not currently used in gRPC service
+// pub mod proximadb_avro {
+//     include!("proximadb.avro.rs");  // MOVED: obsolete/proto/proximadb.avro.rs
+// }
+
+/// File descriptor set for gRPC reflection
+/// Note: This will be generated during build - for now we'll use an empty placeholder
+pub const FILE_DESCRIPTOR_SET: &[u8] = &[];
