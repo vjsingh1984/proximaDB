@@ -98,10 +98,8 @@ class ProximaDBRestClient:
             keepalive_expiry=self.config.connection.keepalive_timeout,
         )
         
-        # Ensure base URL includes /api/v1 for REST API
+        # Use the base URL directly - our REST API doesn't use /api/v1 prefix
         base_url = self.config.url.rstrip('/')
-        if not base_url.endswith('/api/v1'):
-            base_url += '/api/v1'
         
         return httpx.Client(
             base_url=base_url,
@@ -191,17 +189,21 @@ class ProximaDBRestClient:
             self._handle_error_response(response)
         
         data = response.json()
-        return HealthStatus(
-            status=data.get("status", "unknown"),
-            version=data.get("version", "0.1.0"),
-            uptime_seconds=0,  # Not provided by simple health check
-            total_operations=0,
-            successful_operations=0,
-            failed_operations=0,
-            storage_healthy=True,
-            wal_healthy=True,
-            timestamp=0
-        )
+        if data.get("success", False) and "data" in data:
+            health_data = data["data"]
+            return HealthStatus(
+                status=health_data.get("status", "unknown"),
+                version=health_data.get("version", "0.1.0"),
+                uptime_seconds=0,  # Not provided by simple health check
+                total_operations=0,
+                successful_operations=0,
+                failed_operations=0,
+                storage_healthy=True,
+                wal_healthy=True,
+                timestamp=0
+            )
+        else:
+            raise ProximaDBError(f"Health check failed: {data.get('error', 'Unknown error')}")
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get system metrics
@@ -248,26 +250,26 @@ class ProximaDBRestClient:
             "name": name,
             "dimension": config.dimension,
             "distance_metric": config.distance_metric,
-            "storage_layout": getattr(config, 'storage_layout', 'viper'),
+            "indexing_algorithm": getattr(config, 'indexing_algorithm', 'hnsw'),
         }
-        
-        if config.description:
-            request_data["config"] = {"description": config.description}
         
         logger.debug(f"🏗️ Creating collection: {name}")
         response = self._make_request("POST", "/collections", json=request_data)
         
         data = response.json()
-        return Collection(
-            id=data["id"],
-            name=data["name"],
-            dimension=data["dimension"],
-            distance_metric=data["distance_metric"],
-            storage_layout=data["storage_layout"],
-            created_at=data["created_at"],
-            vector_count=data["vector_count"],
-            filterable_metadata_fields=[]
-        )
+        if data.get("success", False):
+            # The actual API returns just the collection name on success
+            return Collection(
+                id=data["data"],  # collection name is returned as data
+                name=data["data"],
+                dimension=config.dimension,
+                metric=config.distance_metric,
+                index_type=getattr(config, 'indexing_algorithm', 'hnsw'),
+                created_at=0,  # Will be populated when we get the collection
+                vector_count=0
+            )
+        else:
+            raise ProximaDBError(f"Failed to create collection: {data.get('error', 'Unknown error')}")
     
     def get_collection(self, collection_id: str) -> Collection:
         """Get collection metadata
@@ -281,41 +283,33 @@ class ProximaDBRestClient:
         response = self._make_request("GET", f"/collections/{collection_id}")
         data = response.json()
         
-        return Collection(
-            id=data["id"],
-            name=data["name"],
-            dimension=data["dimension"],
-            distance_metric=data["distance_metric"],
-            storage_layout=data["storage_layout"],
-            created_at=data["created_at"],
-            vector_count=data["vector_count"],
-            filterable_metadata_fields=[]
-        )
+        if data.get("success", False) and "data" in data:
+            coll_data = data["data"]
+            return Collection(
+                id=coll_data["uuid"],
+                name=coll_data["name"],
+                dimension=coll_data["dimension"],
+                metric=coll_data["distance_metric"],
+                index_type=coll_data.get("indexing_algorithm", "hnsw"),
+                created_at=coll_data.get("created_at", 0),
+                vector_count=coll_data.get("vector_count", 0)
+            )
+        else:
+            raise ProximaDBError(f"Failed to get collection: {data.get('error', 'Collection not found')}")
     
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> List[str]:
         """List all collections
         
         Returns:
-            List[Collection]: List of all collections
+            List[str]: List of collection names
         """
         response = self._make_request("GET", "/collections")
         data = response.json()
         
-        collections = []
-        if "collections" in data:
-            for item in data["collections"]:
-                collections.append(Collection(
-                    id=item["id"],
-                    name=item["name"],
-                    dimension=item["dimension"],
-                    distance_metric=item["distance_metric"],
-                    storage_layout=item["storage_layout"],
-                    created_at=item["created_at"],
-                    vector_count=item["vector_count"],
-                    filterable_metadata_fields=[]
-                ))
-        
-        return collections
+        if data.get("success", False) and "data" in data:
+            return data["data"]  # API returns list of collection names
+        else:
+            raise ProximaDBError(f"Failed to list collections: {data.get('error', 'Unknown error')}")
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection
@@ -366,22 +360,20 @@ class ProximaDBRestClient:
         vector_data = self._normalize_vector(vector)
         
         request_data = {
-            "collection_id": collection_id,
             "id": vector_id,
             "vector": vector_data,
             "metadata": metadata or {}
         }
         
         logger.debug(f"📥 Inserting vector: {vector_id} to {collection_id}")
-        response = self._make_request("POST", "/vectors", json=request_data)
+        response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
         
         data = response.json()
         return InsertResult(
-            success=data.get("success", True),
-            count=data.get("affected_count", 1),
-            failed_count=0,
+            count=1 if data.get("success", True) else 0,
+            failed_count=0 if data.get("success", True) else 1,
             duration_ms=data.get("processing_time_us", 0) // 1000,
-            errors=None
+            errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
         )
     
     def insert_vectors(
@@ -424,14 +416,8 @@ class ProximaDBRestClient:
             }
             vector_data.append(item)
         
-        request_data = {
-            "collection_id": collection_id,
-            "vectors": vector_data,
-            "upsert_mode": upsert
-        }
-        
         logger.debug(f"📥 Batch inserting {len(vector_data)} vectors to {collection_id}")
-        response = self._make_request("POST", "/vectors/batch", json=request_data)
+        response = self._make_request("POST", f"/collections/{collection_id}/vectors/batch", json=vector_data)
         
         data = response.json()
         return BatchResult(
@@ -482,24 +468,19 @@ class ProximaDBRestClient:
         query_vector = self._normalize_vector(query)
         
         request_data = {
-            "collection_id": collection_id,
-            "query_vector": query_vector,
-            "top_k": k,
-            "include_vector": include_vectors,
+            "vector": query_vector,
+            "k": k,
+            "include_vectors": include_vectors,
             "include_metadata": include_metadata,
-            "exact_search": exact
         }
         
         if filter:
-            request_data["metadata_filter"] = filter
-        
-        if ef is not None:
-            request_data["ef_search"] = ef
+            request_data["filters"] = filter
         
         logger.debug(f"🔍 Searching in {collection_id}, top_k={k}")
         response = self._make_request(
             "POST", 
-            "/vectors/search", 
+            f"/collections/{collection_id}/search", 
             json=request_data,
             timeout=timeout or self.config.timeout
         )
@@ -507,13 +488,14 @@ class ProximaDBRestClient:
         data = response.json()
         results = []
         
-        for result in data.get("results", []):
-            results.append(SearchResult(
-                id=result["id"],
-                score=result["score"],
-                vector=result.get("vector"),
-                metadata=result.get("metadata")
-            ))
+        if data.get("success", False) and "data" in data:
+            for result in data["data"]:
+                results.append(SearchResult(
+                    id=result["id"],
+                    score=result["score"],
+                    vector=result.get("vector"),
+                    metadata=result.get("metadata")
+                ))
         
         return results
     
@@ -543,10 +525,13 @@ class ProximaDBRestClient:
         try:
             response = self._make_request(
                 "GET",
-                f"/vectors/{collection_id}/{vector_id}",
+                f"/collections/{collection_id}/vectors/{vector_id}",
                 params=params
             )
-            return response.json()
+            data = response.json()
+            if data.get("success", False):
+                return data.get("data")
+            return None
         except Exception:
             return None
     
@@ -562,14 +547,14 @@ class ProximaDBRestClient:
         """
         response = self._make_request(
             "DELETE",
-            f"/vectors/{collection_id}/{vector_id}"
+            f"/collections/{collection_id}/vectors/{vector_id}"
         )
         
         data = response.json()
         return DeleteResult(
-            success=data.get("success", True),
-            count=data.get("affected_count", 1),
-            errors=None
+            deleted_count=1 if data.get("success", True) else 0,
+            count=1 if data.get("success", True) else 0,
+            errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
         )
     
     def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
@@ -595,7 +580,7 @@ class ProximaDBRestClient:
                 errors.append(f"Failed to delete {vector_id}: {e}")
         
         return DeleteResult(
-            success=total_deleted > 0,
+            deleted_count=total_deleted,
             count=total_deleted,
             errors=errors if errors else None
         )
