@@ -213,7 +213,7 @@ pub type ClusterId = String;
 pub type PartitionId = String;
 
 /// Statistics for VIPER core engine
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ViperCoreStats {
     pub total_operations: u64,
     pub insert_operations: u64,
@@ -360,13 +360,13 @@ pub struct DefaultSchemaStrategy {
 /// Parquet writer pool for concurrent operations
 pub struct ParquetWriterPool {
     /// Available writers
-    writers: Arc<Mutex<Vec<Box<dyn ParquetWriter>>>>,
+    writers: Arc<Mutex<Vec<DefaultParquetWriter>>>,
 
     /// Pool configuration
     pool_size: usize,
 
     /// Writer creation factory
-    writer_factory: Arc<dyn ParquetWriterFactory>,
+    writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
 /// Parquet writer interface
@@ -381,7 +381,7 @@ pub trait ParquetWriter: Send + Sync {
 /// Parquet writer factory
 pub trait ParquetWriterFactory: Send + Sync {
     /// Create new parquet writer
-    async fn create_writer(&self) -> Result<Box<dyn ParquetWriter>>;
+    async fn create_writer(&self) -> Result<DefaultParquetWriter>;
 }
 
 // Implementation
@@ -697,7 +697,8 @@ impl ViperCoreEngine {
 
     /// Get engine statistics
     pub async fn get_statistics(&self) -> ViperCoreStats {
-        self.stats.read().await.clone()
+        let stats_guard = self.stats.read().await;
+        stats_guard.clone()
     }
 }
 
@@ -785,7 +786,7 @@ impl SchemaAdapter {
 }
 
 impl ParquetWriterPool {
-    async fn new(_pool_size: usize, _factory: Arc<dyn ParquetWriterFactory>) -> Result<Self> {
+    async fn new(_pool_size: usize, _factory: Arc<DefaultParquetWriterFactory>) -> Result<Self> {
         Ok(Self {
             writers: Arc::new(Mutex::new(Vec::new())),
             pool_size: _pool_size,
@@ -793,12 +794,12 @@ impl ParquetWriterPool {
         })
     }
 
-    async fn acquire_writer(&self) -> Result<Box<dyn ParquetWriter>> {
+    async fn acquire_writer(&self) -> Result<DefaultParquetWriter> {
         // Placeholder implementation
-        Ok(Box::new(DefaultParquetWriter))
+        Ok(DefaultParquetWriter)
     }
 
-    async fn release_writer(&self, _writer: Box<dyn ParquetWriter>) -> Result<()> {
+    async fn release_writer(&self, _writer: DefaultParquetWriter) -> Result<()> {
         // Placeholder implementation
         Ok(())
     }
@@ -819,14 +820,14 @@ impl ParquetWriter for DefaultParquetWriter {
 pub struct DefaultParquetWriterFactory;
 
 impl DefaultParquetWriterFactory {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
 
 impl ParquetWriterFactory for DefaultParquetWriterFactory {
-    async fn create_writer(&self) -> Result<Box<dyn ParquetWriter>> {
-        Ok(Box::new(DefaultParquetWriter))
+    async fn create_writer(&self) -> Result<DefaultParquetWriter> {
+        Ok(DefaultParquetWriter)
     }
 }
 
@@ -903,8 +904,8 @@ impl VectorStorage for ViperCoreEngine {
                 DistanceMetric::Manhattan,
             ],
             supported_indexes: vec![
-                IndexType::HNSW,
-                IndexType::IVF,
+                IndexType::HNSW { m: 16, ef_construction: 200, ef_search: 50 },
+                IndexType::IVF { n_lists: 100, n_probes: 8 },
                 IndexType::Flat,
             ],
         }

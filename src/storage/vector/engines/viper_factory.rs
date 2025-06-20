@@ -729,7 +729,8 @@ impl StandardVectorProcessor {
     }
 }
 
-#[async_trait::async_trait]\nimpl VectorProcessor for StandardVectorProcessor {
+#[async_trait::async_trait]
+impl VectorProcessor for StandardVectorProcessor {
     async fn process_records(&self, mut records: Vec<VectorRecord>) -> Result<ProcessedBatch> {
         let start_time = std::time::Instant::now();
         
@@ -741,6 +742,8 @@ impl StandardVectorProcessor {
         let processing_time = start_time.elapsed().as_millis() as u64;
         
         // Generate schema (placeholder)
+        let record_count = records.len();
+        
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
         ]));
@@ -749,7 +752,7 @@ impl StandardVectorProcessor {
             records,
             schema,
             statistics: ProcessingStatistics {
-                records_processed: records.len(),
+                records_processed: record_count,
                 processing_time_ms: processing_time,
                 optimization_applied: vec!["timestamp_sorting".to_string()],
                 compression_ratio: 1.0,

@@ -25,7 +25,7 @@ use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -162,7 +162,7 @@ pub enum CompressionAlgorithm {
 }
 
 /// Pipeline statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ViperPipelineStats {
     pub total_records_processed: u64,
     pub total_batches_flushed: u64,
@@ -266,31 +266,17 @@ pub struct FlushingStats {
 /// Writer pool for managing parquet writers
 pub struct WriterPool {
     /// Available writers
-    writers: Arc<Mutex<Vec<Box<dyn ParquetWriter>>>>,
+    writers: Arc<Mutex<Vec<DefaultParquetWriter>>>,
     
     /// Pool configuration
     pool_size: usize,
     
     /// Writer factory
-    writer_factory: Arc<dyn ParquetWriterFactory>,
+    writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
-/// Parquet writer trait
-#[async_trait::async_trait]
-pub trait ParquetWriter: Send + Sync {
-    /// Write batch to storage
-    async fn write_batch(&mut self, batch: &RecordBatch, path: &str) -> Result<u64>;
-    
-    /// Close writer and flush
-    async fn close(&mut self) -> Result<()>;
-}
-
-/// Parquet writer factory
-#[async_trait::async_trait]
-pub trait ParquetWriterFactory: Send + Sync {
-    /// Create new parquet writer
-    async fn create_writer(&self) -> Result<Box<dyn ParquetWriter>>;
-}
+// Use ParquetWriter and ParquetWriterFactory from viper_core module
+use super::viper_core::{ParquetWriter, ParquetWriterFactory, DefaultParquetWriter, DefaultParquetWriterFactory};
 
 /// Flush result information
 #[derive(Debug, Clone)]
@@ -320,10 +306,10 @@ pub struct CompactionEngine {
     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
     
     /// Background worker handles
-    worker_handles: Vec<tokio::task::JoinHandle<()>>,
+    worker_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     
     /// Shutdown signal
-    shutdown_sender: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+    shutdown_sender: Arc<Mutex<Option<tokio::sync::broadcast::Sender<()>>>>,
     
     /// Compaction statistics
     stats: Arc<RwLock<CompactionStats>>,
@@ -432,7 +418,7 @@ pub struct CompactionOptimizationHints {
 }
 
 /// Compaction statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CompactionStats {
     pub total_operations: u64,
     pub successful_operations: u64,
@@ -782,7 +768,7 @@ impl CompactionEngine {
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
             optimization_model: Arc::new(RwLock::new(None)),
-            worker_handles: Vec::new(),
+            worker_handles: Arc::new(Mutex::new(Vec::new())),
             shutdown_sender: Arc::new(Mutex::new(None)),
             stats: Arc::new(RwLock::new(CompactionStats::default())),
             filesystem,
@@ -818,8 +804,8 @@ impl CompactionEngine {
     }
     
     /// Start background workers
-    pub async fn start_workers(&mut self) -> Result<()> {
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+    pub async fn start_workers(&self) -> Result<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
         *self.shutdown_sender.lock().await = Some(shutdown_tx);
         
         for worker_id in 0..self.config.worker_count {
@@ -842,19 +828,20 @@ impl CompactionEngine {
                 ).await;
             });
             
-            self.worker_handles.push(handle);
+            self.worker_handles.lock().await.push(handle);
         }
         
         Ok(())
     }
     
     /// Stop background workers
-    pub async fn stop_workers(&mut self) -> Result<()> {
+    pub async fn stop_workers(&self) -> Result<()> {
         if let Some(sender) = self.shutdown_sender.lock().await.take() {
-            let _ = sender.send(()).await;
+            let _ = sender.send(());
         }
         
-        for handle in self.worker_handles.drain(..) {
+        let mut handles = self.worker_handles.lock().await;
+        for handle in handles.drain(..) {
             let _ = handle.await;
         }
         
@@ -873,7 +860,7 @@ impl CompactionEngine {
         stats: Arc<RwLock<CompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
         _config: CompactionConfig,
-        shutdown_receiver: &mut mpsc::Receiver<()>,
+        shutdown_receiver: &mut broadcast::Receiver<()>,
     ) {
         debug!("🔧 Compaction worker {} started", worker_id);
         
@@ -961,7 +948,7 @@ impl SchemaAdapter {
 }
 
 impl WriterPool {
-    async fn new(_pool_size: usize, _factory: Arc<dyn ParquetWriterFactory>) -> Result<Self> {
+    async fn new(_pool_size: usize, _factory: Arc<DefaultParquetWriterFactory>) -> Result<Self> {
         Ok(Self {
             writers: Arc::new(Mutex::new(Vec::new())),
             pool_size: _pool_size,
@@ -970,31 +957,7 @@ impl WriterPool {
     }
 }
 
-pub struct DefaultParquetWriterFactory;
-
-impl DefaultParquetWriterFactory {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ParquetWriterFactory for DefaultParquetWriterFactory {
-    async fn create_writer(&self) -> Result<Box<dyn ParquetWriter>> {
-        Ok(Box::new(DefaultParquetWriter))
-    }
-}
-
-pub struct DefaultParquetWriter;
-
-impl ParquetWriter for DefaultParquetWriter {
-    async fn write_batch(&mut self, _batch: &RecordBatch, _path: &str) -> Result<u64> {
-        Ok(0)
-    }
-    
-    async fn close(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
+// Implementations removed - using ones from viper_core module
 
 impl Default for ViperPipelineConfig {
     fn default() -> Self {

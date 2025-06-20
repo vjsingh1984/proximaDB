@@ -69,7 +69,6 @@ pub struct UnifiedIndexConfig {
 
 /// Multi-index structure for a single collection
 /// Supports multiple indexes for different query patterns
-#[derive(Debug)]
 pub struct MultiIndex {
     /// Primary index for main vector similarity search
     primary_index: Box<dyn VectorIndex>,
@@ -91,7 +90,6 @@ pub struct MultiIndex {
 }
 
 /// Index builder registry for different algorithms
-#[derive(Debug)]
 pub struct IndexBuilderRegistry {
     /// Registered vector index builders
     vector_builders: HashMap<IndexType, Box<dyn IndexBuilder>>,

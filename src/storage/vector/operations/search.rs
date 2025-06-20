@@ -16,6 +16,9 @@ use tracing::{debug, info};
 use super::super::types::*;
 use crate::core::CollectionId;
 
+// Type alias to differentiate from container SearchResult
+type VectorSearchResult = crate::storage::vector::types::SearchResult;
+
 /// Vector search operation handler
 pub struct VectorSearchHandler {
     /// Query planners
@@ -70,9 +73,9 @@ pub trait ResultProcessor: Send + Sync {
     /// Process search results
     fn process_results(
         &self,
-        results: Vec<SearchResult>,
+        results: Vec<VectorSearchResult>,
         context: &SearchContext,
-    ) -> Result<Vec<SearchResult>>;
+    ) -> Result<Vec<VectorSearchResult>>;
     
     /// Get processor name
     fn name(&self) -> &'static str;
@@ -350,9 +353,9 @@ impl VectorSearchHandler {
               processed_results.len(), total_time);
         
         Ok(SearchResult {
-            results: processed_results,
+            results: processed_results.clone(),
             total_count: processed_results.len(),
-            query_plan: Some(query_plan),
+            query_plan: Some(query_plan.clone()),
             performance_info: Some(SearchPerformanceInfo {
                 total_time_ms: total_time.as_millis() as u64,
                 planning_time_ms: planning_time.as_millis() as u64,
@@ -421,7 +424,7 @@ impl VectorSearchHandler {
         &self,
         plan: &QueryPlan,
         context: &SearchContext,
-    ) -> Result<Vec<crate::storage::vector::types::SearchResult>> {
+    ) -> Result<Vec<VectorSearchResult>> {
         debug!("🔄 Executing query plan: {}", plan.plan_id);
         
         // In a real implementation, this would execute the plan steps
@@ -429,7 +432,7 @@ impl VectorSearchHandler {
         let mut results = Vec::new();
         
         for i in 0..context.k.min(100) {
-            results.push(crate::storage::vector::types::SearchResult {
+            results.push(VectorSearchResult {
                 vector_id: format!("vec_{}", i),
                 score: 1.0 - (i as f32 * 0.01),
                 vector: if context.include_vectors { 
@@ -451,9 +454,9 @@ impl VectorSearchHandler {
     /// Process search results
     async fn process_results(
         &self,
-        mut results: Vec<crate::storage::vector::types::SearchResult>,
+        mut results: Vec<VectorSearchResult>,
         context: &SearchContext,
-    ) -> Result<Vec<crate::storage::vector::types::SearchResult>> {
+    ) -> Result<Vec<VectorSearchResult>> {
         for processor in &self.processors {
             results = processor.process_results(results, context)?;
         }
@@ -472,7 +475,7 @@ impl VectorSearchHandler {
     }
     
     /// Calculate accuracy score
-    fn calculate_accuracy_score(&self, _results: &[crate::storage::vector::types::SearchResult]) -> f64 {
+    fn calculate_accuracy_score(&self, _results: &[VectorSearchResult]) -> f64 {
         // In a real implementation, this would calculate actual accuracy
         // For now, return a simulated score
         0.95
@@ -487,7 +490,7 @@ impl VectorSearchHandler {
 /// Search result container
 #[derive(Debug, Clone)]
 pub struct SearchResult {
-    pub results: Vec<crate::storage::vector::types::SearchResult>,
+    pub results: Vec<VectorSearchResult>,
     pub total_count: usize,
     pub query_plan: Option<QueryPlan>,
     pub performance_info: Option<SearchPerformanceInfo>,
@@ -625,14 +628,13 @@ impl ScoreNormalizer {
 impl ResultProcessor for ScoreNormalizer {
     fn process_results(
         &self,
-        mut results: Vec<crate::storage::vector::types::SearchResult>,
+        mut results: Vec<VectorSearchResult>,
         _context: &SearchContext,
-    ) -> Result<Vec<crate::storage::vector::types::SearchResult>> {
+    ) -> Result<Vec<VectorSearchResult>> {
         // Normalize scores to 0-1 range
-        if let (Some(max_score), Some(min_score)) = (
-            results.iter().map(|r| r.score).fold(f32::NEG_INFINITY, f32::max),
-            results.iter().map(|r| r.score).fold(f32::INFINITY, f32::min),
-        ) {
+        if !results.is_empty() {
+            let max_score = results.iter().map(|r| r.score).fold(f32::NEG_INFINITY, f32::max);
+            let min_score = results.iter().map(|r| r.score).fold(f32::INFINITY, f32::min);
             let range = max_score - min_score;
             if range > 0.0 {
                 for result in &mut results {
@@ -661,9 +663,9 @@ impl ResultDeduplicator {
 impl ResultProcessor for ResultDeduplicator {
     fn process_results(
         &self,
-        results: Vec<crate::storage::vector::types::SearchResult>,
+        results: Vec<VectorSearchResult>,
         _context: &SearchContext,
-    ) -> Result<Vec<crate::storage::vector::types::SearchResult>> {
+    ) -> Result<Vec<VectorSearchResult>> {
         let mut seen_ids = std::collections::HashSet::new();
         let deduplicated: Vec<_> = results.into_iter()
             .filter(|result| seen_ids.insert(result.vector_id.clone()))
@@ -689,9 +691,9 @@ impl QualityEnhancer {
 impl ResultProcessor for QualityEnhancer {
     fn process_results(
         &self,
-        mut results: Vec<crate::storage::vector::types::SearchResult>,
+        mut results: Vec<VectorSearchResult>,
         _context: &SearchContext,
-    ) -> Result<Vec<crate::storage::vector::types::SearchResult>> {
+    ) -> Result<Vec<VectorSearchResult>> {
         // Apply quality enhancements
         for result in &mut results {
             // Boost scores based on metadata quality

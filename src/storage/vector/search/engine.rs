@@ -249,6 +249,18 @@ pub trait ScoreNormalizer: Send + Sync {
     fn normalize_score(&self, score: f32, context: &SearchContext) -> f32;
 }
 
+impl ResultMerger {
+    pub async fn merge_results(
+        &self,
+        results: Vec<Vec<SearchResult>>,
+        context: &SearchContext,
+    ) -> Result<Vec<SearchResult>> {
+        let strategy = self.strategies.get(&self.default_strategy)
+            .ok_or_else(|| anyhow::anyhow!("Default merge strategy not found"))?;
+        strategy.merge_results(results, context).await
+    }
+}
+
 // Implementation of UnifiedSearchEngine
 
 impl UnifiedSearchEngine {
@@ -467,7 +479,7 @@ impl UnifiedSearchEngine {
                 ..context.clone()
             };
             
-            self.search(adaptive_context).await
+            Box::pin(self.search(adaptive_context)).await
         } else {
             Err(anyhow::anyhow!("Invalid strategy for adaptive search"))
         }

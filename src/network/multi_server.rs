@@ -362,7 +362,7 @@ impl SharedServices {
         };
         
         let vector_service = Arc::new(
-            UnifiedAvroService::with_existing_wal(storage.clone(), wal_manager, avro_config)
+            UnifiedAvroService::with_existing_wal(storage.clone(), wal_manager, avro_config).await?
         );
         
         // CRITICAL: Restore collection metadata from WAL during startup
@@ -510,16 +510,21 @@ impl MultiServer {
         if self.config.http_config.enable_rest {
             info!("📡 Starting REST Server on port 5678");
             
-            // TODO: Create thin REST handlers with shared services
-            // For now, placeholder that shows the architecture
             let rest_bind_addr = self.config.get_http_bind_address();
+            let unified_service = services.vector_service.clone();
+            let collection_service = services.collection_service.clone();
             
             let rest_handle = tokio::spawn(async move {
-                info!("📡 REST Server placeholder running on {}", rest_bind_addr);
-                // TODO: Implement REST server with thin handlers that delegate to:
-                // - services.collection_service for collection operations
-                // - services.vector_service for vector operations
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                use crate::network::rest::server::RestServer;
+                
+                match RestServer::new(rest_bind_addr, unified_service, collection_service).start().await {
+                    Ok(_) => {
+                        info!("✅ REST Server completed");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ REST Server error: {}", e);
+                    }
+                }
             });
             
             handles.push(rest_handle);

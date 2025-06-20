@@ -21,7 +21,7 @@ use std::fmt;
 
 /// Unified search context for all vector operations
 /// Replaces: ViperSearchContext, SearchOperation variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchContext {
     /// Target collection
     pub collection_id: CollectionId,
@@ -655,7 +655,7 @@ impl SearchStrategy {
         match self {
             SearchStrategy::Exact => 1.0,
             SearchStrategy::Approximate { target_recall, .. } => {
-                (1.0 - target_recall as f64).max(0.1)
+                (1.0 - *target_recall as f64).max(0.1)
             }
             SearchStrategy::Hybrid { exact_threshold, .. } => {
                 0.3 + (exact_threshold * 0.7) as f64

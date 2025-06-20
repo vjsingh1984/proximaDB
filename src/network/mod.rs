@@ -9,6 +9,7 @@ pub mod grpc;
 pub mod metrics_service;
 pub mod middleware;
 pub mod multi_server;
+pub mod rest;
 pub mod server_builder;
 
 use serde::{Deserialize, Serialize};

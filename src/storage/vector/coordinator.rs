@@ -294,7 +294,7 @@ pub struct AlertThresholds {
 }
 
 /// Coordinator statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CoordinatorStats {
     pub total_operations: u64,
     pub operations_by_type: HashMap<VectorOperationType, u64>,
@@ -683,7 +683,8 @@ impl PerformanceMonitor {
         // Limit history size
         let max_size = (self.config.history_retention_days as usize) * 24 * 60; // minutes
         if history.len() > max_size {
-            history.drain(0..history.len() - max_size);
+            let len = history.len();
+            history.drain(0..len - max_size);
         }
         
         Ok(())
