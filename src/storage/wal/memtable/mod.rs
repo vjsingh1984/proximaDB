@@ -9,20 +9,20 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+use super::{WalConfig, WalEntry};
 use crate::core::{CollectionId, VectorId};
-use super::{WalEntry, WalConfig};
 
 // Memtable implementations
-pub mod skiplist;
-pub mod btree;
 pub mod art; // Adaptive Radix Tree
+pub mod btree;
 pub mod hashmap;
+pub mod skiplist;
 
 // Re-exports
-pub use skiplist::SkipListMemTable;
-pub use btree::BTreeMemTable;
 pub use art::ArtMemTable;
+pub use btree::BTreeMemTable;
 pub use hashmap::HashMapMemTable;
+pub use skiplist::SkipListMemTable;
 
 /// Memtable strategy type selection
 #[derive(Debug, Clone, PartialEq)]
@@ -67,52 +67,69 @@ pub struct MemTableMaintenanceStats {
 pub trait MemTableStrategy: Send + Sync + std::fmt::Debug {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
-    
+
     /// Initialize the memtable with configuration
     async fn initialize(&mut self, config: &WalConfig) -> Result<()>;
-    
+
     /// Insert a single entry and return sequence number
     async fn insert_entry(&self, entry: WalEntry) -> Result<u64>;
-    
+
     /// Insert multiple entries in batch for optimization
     async fn insert_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>>;
-    
+
     /// Get latest entry for a vector ID (MVCC support)
-    async fn get_latest_entry(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>>;
-    
+    async fn get_latest_entry(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>>;
+
     /// Get all entries for a vector ID (MVCC history)
-    async fn get_entry_history(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Vec<WalEntry>>;
-    
+    async fn get_entry_history(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Vec<WalEntry>>;
+
     /// Get entries from a sequence number (range scan)
-    async fn get_entries_from(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>>;
-    
+    async fn get_entries_from(
+        &self,
+        collection_id: &CollectionId,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>>;
+
     /// Get all entries for a collection (for flushing)
     async fn get_all_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>>;
-    
+
     /// Search for specific vector entry (optimized lookup)
-    async fn search_vector(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>>;
-    
+    async fn search_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>>;
+
     /// Clear entries up to sequence after flush
     async fn clear_flushed(&self, collection_id: &CollectionId, up_to_sequence: u64) -> Result<()>;
-    
+
     /// Drop entire collection from memtable
     async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()>;
-    
+
     /// Check which collections need flushing
     async fn collections_needing_flush(&self) -> Result<Vec<CollectionId>>;
-    
+
     /// Check if global flush is needed
     async fn needs_global_flush(&self) -> Result<bool>;
-    
+
     /// Get performance and memory statistics
     async fn get_stats(&self) -> Result<HashMap<CollectionId, MemTableStats>>;
-    
+
     /// Perform maintenance (MVCC cleanup, TTL expiration)
     async fn maintenance(&self) -> Result<MemTableMaintenanceStats>;
-    
+
     /// Close and cleanup resources
     async fn close(&self) -> Result<()>;
-    
+
     /// Downcast support for trait objects
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -132,11 +149,11 @@ impl MemTableFactory {
             MemTableType::Art => Box::new(ArtMemTable::new()),
             MemTableType::HashMap => Box::new(HashMapMemTable::new()),
         };
-        
+
         strategy.initialize(config).await?;
         Ok(strategy)
     }
-    
+
     /// Create strategy from configuration
     pub async fn create_from_config(config: &WalConfig) -> Result<Box<dyn MemTableStrategy>> {
         let memtable_type = match config.memtable.memtable_type {
@@ -147,7 +164,7 @@ impl MemTableFactory {
         };
         Self::create_strategy(memtable_type, config).await
     }
-    
+
     /// Get available memtable types
     pub fn available_types() -> Vec<MemTableType> {
         vec![
@@ -157,7 +174,7 @@ impl MemTableFactory {
             MemTableType::HashMap,
         ]
     }
-    
+
     /// Get performance characteristics for selection
     pub fn get_characteristics(memtable_type: &MemTableType) -> MemTableCharacteristics {
         match memtable_type {
@@ -170,7 +187,11 @@ impl MemTableFactory {
                 memory_efficiency: PerformanceRating::Good,
                 concurrency: PerformanceRating::Excellent,
                 ordered: true,
-                best_for: &["High write throughput", "LSM-style storage", "Mixed workloads"],
+                best_for: &[
+                    "High write throughput",
+                    "LSM-style storage",
+                    "Mixed workloads",
+                ],
             },
             MemTableType::BTree => MemTableCharacteristics {
                 name: "B+ Tree",
@@ -246,21 +267,21 @@ impl MemTableSelector {
                 range_queries: false,
                 ..
             } => MemTableType::HashMap,
-            
+
             // Memory-constrained with range queries
             WorkloadCharacteristics {
                 memory_constrained: true,
                 range_queries: true,
                 ..
             } => MemTableType::BTree,
-            
+
             // High concurrency with string-like keys
             WorkloadCharacteristics {
                 high_concurrency: true,
                 string_keys: true,
                 ..
             } => MemTableType::Art,
-            
+
             // Default: balanced write-heavy workload (LSM style)
             _ => MemTableType::SkipList,
         }
@@ -283,7 +304,7 @@ pub struct WorkloadCharacteristics {
 impl Default for WorkloadCharacteristics {
     fn default() -> Self {
         Self {
-            write_heavy: true,  // Default for WAL workloads
+            write_heavy: true, // Default for WAL workloads
             read_heavy: false,
             range_queries: true, // Common for vector databases
             ordered_access: true,
@@ -308,57 +329,74 @@ impl WalMemTable {
         let strategy = MemTableFactory::create_from_config(&config).await?;
         Ok(Self { strategy })
     }
-    
+
     /// Insert a single entry and return sequence number
     pub async fn insert_entry(&self, entry: WalEntry) -> Result<u64> {
         self.strategy.insert_entry(entry).await
     }
-    
+
     /// Insert multiple entries in batch
     pub async fn insert_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
         self.strategy.insert_batch(entries).await
     }
-    
+
     /// Get entries for a collection
-    pub async fn get_entries(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>> {
-        self.strategy.get_entries_from(collection_id, from_sequence, limit).await
+    pub async fn get_entries(
+        &self,
+        collection_id: &CollectionId,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>> {
+        self.strategy
+            .get_entries_from(collection_id, from_sequence, limit)
+            .await
     }
-    
+
     /// Get all entries for a collection
     pub async fn get_all_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>> {
         self.strategy.get_all_entries(collection_id).await
     }
-    
+
     /// Search for specific vector
-    pub async fn search_vector(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>> {
+    pub async fn search_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>> {
         self.strategy.search_vector(collection_id, vector_id).await
     }
-    
+
     /// Clear flushed entries
-    pub async fn clear_flushed(&self, collection_id: &CollectionId, up_to_sequence: u64) -> Result<()> {
-        self.strategy.clear_flushed(collection_id, up_to_sequence).await
+    pub async fn clear_flushed(
+        &self,
+        collection_id: &CollectionId,
+        up_to_sequence: u64,
+    ) -> Result<()> {
+        self.strategy
+            .clear_flushed(collection_id, up_to_sequence)
+            .await
     }
-    
+
     /// Drop collection
     pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
         self.strategy.drop_collection(collection_id).await
     }
-    
+
     /// Get collections needing flush
     pub async fn collections_needing_flush(&self) -> Result<Vec<CollectionId>> {
         self.strategy.collections_needing_flush().await
     }
-    
+
     /// Check if global flush needed
     pub async fn needs_global_flush(&self) -> Result<bool> {
         self.strategy.needs_global_flush().await
     }
-    
+
     /// Get statistics
     pub async fn get_stats(&self) -> Result<HashMap<CollectionId, MemTableStats>> {
         self.strategy.get_stats().await
     }
-    
+
     /// Perform maintenance
     pub async fn maintenance(&self) -> Result<MemTableMaintenanceStats> {
         self.strategy.maintenance().await

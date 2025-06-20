@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! Complete ProximaDB System Integration Demo
-//! 
+//!
 //! This example demonstrates the complete integrated system with:
 //! - Layered builder architecture with proper separation of concerns
 //! - Performance-optimized filesystem strategy pattern
@@ -14,13 +14,13 @@
 //! - Practical usage scenarios
 
 use proximadb::{
-    server::{ServerBuilder, HardwareAcceleration, IndexingAlgorithm, DistanceMetric},
+    server::{DistanceMetric, HardwareAcceleration, IndexingAlgorithm, ServerBuilder},
     storage::{
-        StorageSystemBuilder, ConfigValidator,
-        filesystem::{AuthConfig, AwsAuthMethod, FilesystemPerformanceConfig, RetryConfig},
         builder::StorageLayoutStrategy,
-        wal::{WalFormat, CompressionLevel}
-    }
+        filesystem::{AuthConfig, AwsAuthMethod, FilesystemPerformanceConfig, RetryConfig},
+        wal::{CompressionLevel, WalFormat},
+        ConfigValidator, StorageSystemBuilder,
+    },
 };
 use std::time::Instant;
 
@@ -174,7 +174,7 @@ async fn demo_high_performance_local() -> anyhow::Result<()> {
 async fn demo_disaster_recovery_setup() -> anyhow::Result<()> {
     println!("   Setting up multi-region disaster recovery...");
 
-    use proximadb::storage::wal::{WalSystemBuilder, MultiRegionConfig, ReplicationSettings};
+    use proximadb::storage::wal::{MultiRegionConfig, ReplicationSettings, WalSystemBuilder};
 
     // Multi-region WAL configuration
     let multi_region = MultiRegionConfig {
@@ -308,7 +308,7 @@ async fn demo_performance_analysis() -> anyhow::Result<()> {
     println!("      - WAL managers: Pre-initialized for maximum throughput");
     println!("      - Memory allocation: Optimized pools and zero-copy where possible");
     println!("      - Configuration validation: Sub-millisecond validation time");
-    
+
     // CPU and memory recommendations
     let cpu_count = num_cpus::get();
     println!("      - Detected {} CPU cores", cpu_count);
@@ -334,7 +334,9 @@ fn print_system_summary() {
     println!("   ✅ Separation of Concerns: Network, storage, compute, indexing independently configurable");
     println!("   ✅ Server Builder: Coordinates all subsystems with clean interfaces");
     println!("   ✅ Storage Builder: Focused on storage performance and configuration");
-    println!("   ✅ Validation: Comprehensive configuration validation with helpful error messages");
+    println!(
+        "   ✅ Validation: Comprehensive configuration validation with helpful error messages"
+    );
     println!();
     println!("⚡ **Performance Optimizations**");
     println!("   ✅ Strategy Pattern: Filesystem backends pre-loaded at startup");

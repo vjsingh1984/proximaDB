@@ -11,14 +11,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'clients', 'python', 
 import time
 import numpy as np
 import proximadb
-from proximadb.models import CollectionConfig
+from proximadb.models import CollectionConfig, DistanceMetric
 
 def test_simple_grpc():
     """Simple test to verify basic operations"""
     print("🚀 Starting Simple gRPC API Test")
     
-    # Create gRPC client
-    client = proximadb.connect_grpc(url="127.0.0.1:5678")
+    # Create gRPC client (connecting to dedicated gRPC port)
+    client = proximadb.connect_grpc(url="127.0.0.1:5680")
     
     try:
         # 1. Health check
@@ -32,7 +32,7 @@ def test_simple_grpc():
         
         config = CollectionConfig(
             dimension=128,
-            distance_metric="cosine",
+            distance_metric=DistanceMetric.COSINE,
             storage_layout="viper",
             filterable_metadata_fields=["category", "priority"]
         )
@@ -50,7 +50,7 @@ def test_simple_grpc():
             vector=vector.tolist(),
             metadata={"category": "test", "priority": 5}
         )
-        print(f"✅ Inserted vector: {result.count} vectors")
+        print(f"✅ Inserted vector: {result.successful_count} vectors")
         
         # 4. Insert multiple vectors
         print("\n4️⃣ Inserting multiple vectors...")

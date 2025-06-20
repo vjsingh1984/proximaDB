@@ -19,17 +19,17 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use crate::core::{LsmConfig, VectorId, CollectionId};
-use crate::storage::Result;
 use super::LsmEntry;
-use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{RwLock, Mutex};
-use tokio::task::JoinHandle;
+use crate::core::{CollectionId, LsmConfig, VectorId};
+use crate::storage::Result;
 use chrono::Utc;
-use tracing::{info, warn, error, debug};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
@@ -88,14 +88,14 @@ impl CompactionManager {
     /// Start background compaction workers
     pub async fn start_workers(&mut self, worker_count: usize) -> Result<()> {
         info!("Starting {} compaction workers", worker_count);
-        
+
         for worker_id in 0..worker_count {
             let task_queue = self.task_queue.clone();
             let shutdown_signal = self.shutdown_signal.clone();
             let stats = self.stats.clone();
             let active_compactions = self.active_compactions.clone();
             let config = self.config.clone();
-            
+
             let handle = tokio::spawn(async move {
                 Self::worker_loop(
                     worker_id,
@@ -104,95 +104,111 @@ impl CompactionManager {
                     stats,
                     active_compactions,
                     config,
-                ).await;
+                )
+                .await;
             });
-            
+
             self.worker_handles.push(handle);
         }
-        
+
         Ok(())
     }
 
     /// Stop all compaction workers gracefully
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping compaction manager");
-        
+
         self.shutdown_signal.store(true, Ordering::SeqCst);
-        
+
         // Wait for all workers to finish
         for handle in self.worker_handles.drain(..) {
             if let Err(e) = handle.await {
                 warn!("Compaction worker failed to shutdown cleanly: {}", e);
             }
         }
-        
+
         // Complete any remaining compactions
         let remaining_tasks = {
             let queue = self.task_queue.lock().await;
             queue.len()
         };
-        
+
         if remaining_tasks > 0 {
-            warn!("Compaction manager stopped with {} pending tasks", remaining_tasks);
+            warn!(
+                "Compaction manager stopped with {} pending tasks",
+                remaining_tasks
+            );
         }
-        
+
         info!("Compaction manager stopped successfully");
         Ok(())
     }
 
     /// Schedule a compaction task
     pub async fn schedule_compaction(&self, task: CompactionTask) -> Result<()> {
-        debug!("Scheduling compaction for collection {} level {}", 
-               task.collection_id, task.level);
-        
+        debug!(
+            "Scheduling compaction for collection {} level {}",
+            task.collection_id, task.level
+        );
+
         // Check if there's already an active compaction for this collection
         {
             let active = self.active_compactions.read().await;
             if active.contains_key(&task.collection_id) {
-                debug!("Skipping compaction - already active for collection {}", 
-                       task.collection_id);
+                debug!(
+                    "Skipping compaction - already active for collection {}",
+                    task.collection_id
+                );
                 return Ok(());
             }
         }
-        
+
         let mut queue = self.task_queue.lock().await;
-        
+
         // Insert task in priority order
-        let insert_pos = queue.iter().position(|existing_task| {
-            existing_task.priority < task.priority
-        }).unwrap_or(queue.len());
-        
+        let insert_pos = queue
+            .iter()
+            .position(|existing_task| existing_task.priority < task.priority)
+            .unwrap_or(queue.len());
+
         queue.insert(insert_pos, task);
-        
-        debug!("Compaction task queued (position: {}, queue size: {})", 
-               insert_pos, queue.len());
-        
+
+        debug!(
+            "Compaction task queued (position: {}, queue size: {})",
+            insert_pos,
+            queue.len()
+        );
+
         Ok(())
     }
 
     /// Check if compaction is needed for the given collection and level
-    pub async fn check_compaction_needed(&self, 
-                                        collection_dir: &Path, 
-                                        collection_id: &CollectionId) -> Result<Option<CompactionTask>> {
-        
+    pub async fn check_compaction_needed(
+        &self,
+        collection_dir: &Path,
+        collection_id: &CollectionId,
+    ) -> Result<Option<CompactionTask>> {
         let sst_files = self.get_sst_files_by_level(collection_dir).await?;
-        
+
         for level in 0..self.config.level_count {
             let files_at_level = sst_files.get(&level).map(|v| v.len()).unwrap_or(0);
-            
+
             if files_at_level >= self.config.compaction_threshold as usize {
-                info!("Compaction needed for collection {} level {} ({} files >= {})", 
-                      collection_id, level, files_at_level, self.config.compaction_threshold);
-                
+                info!(
+                    "Compaction needed for collection {} level {} ({} files >= {})",
+                    collection_id, level, files_at_level, self.config.compaction_threshold
+                );
+
                 let input_files = sst_files.get(&level).cloned().unwrap_or_default();
                 let output_file = self.generate_output_file_path(collection_dir, level + 1);
-                
-                let priority = if files_at_level >= (self.config.compaction_threshold * 2) as usize {
+
+                let priority = if files_at_level >= (self.config.compaction_threshold * 2) as usize
+                {
                     CompactionPriority::High
                 } else {
                     CompactionPriority::Medium
                 };
-                
+
                 return Ok(Some(CompactionTask {
                     collection_id: collection_id.clone(),
                     level,
@@ -202,7 +218,7 @@ impl CompactionManager {
                 }));
             }
         }
-        
+
         Ok(None)
     }
 
@@ -221,36 +237,42 @@ impl CompactionManager {
         config: LsmConfig,
     ) {
         debug!("Compaction worker {} started", worker_id);
-        
+
         loop {
             if shutdown_signal.load(Ordering::SeqCst) {
                 break;
             }
-            
+
             // Get next task from queue
             let task = {
                 let mut queue = task_queue.lock().await;
                 queue.pop_front()
             };
-            
+
             if let Some(task) = task {
-                debug!("Worker {} processing compaction for collection {} level {}", 
-                       worker_id, task.collection_id, task.level);
-                
+                debug!(
+                    "Worker {} processing compaction for collection {} level {}",
+                    worker_id, task.collection_id, task.level
+                );
+
                 // Mark as active
                 {
                     let mut active = active_compactions.write().await;
                     active.insert(task.collection_id.clone(), task.clone());
                 }
-                
+
                 let start_time = std::time::Instant::now();
-                
+
                 // Perform compaction
                 match Self::perform_compaction(&task, &config).await {
                     Ok(compaction_stats) => {
-                        info!("Compaction completed for collection {} level {} in {}ms", 
-                              task.collection_id, task.level, start_time.elapsed().as_millis());
-                        
+                        info!(
+                            "Compaction completed for collection {} level {} in {}ms",
+                            task.collection_id,
+                            task.level,
+                            start_time.elapsed().as_millis()
+                        );
+
                         // Update statistics
                         {
                             let mut stats_guard = stats.write().await;
@@ -259,23 +281,25 @@ impl CompactionManager {
                             stats_guard.bytes_read += compaction_stats.bytes_read;
                             stats_guard.files_merged += compaction_stats.files_merged;
                             stats_guard.last_compaction_time = Some(Utc::now());
-                            
+
                             // Update average compaction time
                             let elapsed_ms = start_time.elapsed().as_millis() as u64;
                             if stats_guard.total_compactions == 1 {
                                 stats_guard.avg_compaction_time_ms = elapsed_ms;
                             } else {
-                                stats_guard.avg_compaction_time_ms = 
+                                stats_guard.avg_compaction_time_ms =
                                     (stats_guard.avg_compaction_time_ms + elapsed_ms) / 2;
                             }
                         }
                     }
                     Err(e) => {
-                        error!("Compaction failed for collection {} level {}: {}", 
-                               task.collection_id, task.level, e);
+                        error!(
+                            "Compaction failed for collection {} level {}: {}",
+                            task.collection_id, task.level, e
+                        );
                     }
                 }
-                
+
                 // Remove from active compactions
                 {
                     let mut active = active_compactions.write().await;
@@ -286,47 +310,55 @@ impl CompactionManager {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
-        
+
         debug!("Compaction worker {} stopped", worker_id);
     }
 
     /// Perform the actual compaction operation
-    async fn perform_compaction(task: &CompactionTask, _config: &LsmConfig) -> Result<CompactionStats> {
+    async fn perform_compaction(
+        task: &CompactionTask,
+        _config: &LsmConfig,
+    ) -> Result<CompactionStats> {
         let start_time = std::time::Instant::now();
         let mut merged_data = BTreeMap::<VectorId, LsmEntry>::new();
         let mut bytes_read = 0u64;
-        
-        debug!("Merging {} input files for level {}", task.input_files.len(), task.level);
-        
+
+        debug!(
+            "Merging {} input files for level {}",
+            task.input_files.len(),
+            task.level
+        );
+
         // Read and merge all input files
         for input_file in &task.input_files {
-            let file_data = tokio::fs::read(input_file).await
+            let file_data = tokio::fs::read(input_file)
+                .await
                 .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-            
+
             bytes_read += file_data.len() as u64;
-            
+
             // Parse SST file format: [len:4][data][len:4][data]...
             let mut offset = 0;
             while offset < file_data.len() {
                 if offset + 4 > file_data.len() {
                     break;
                 }
-                
+
                 let entry_len = u32::from_le_bytes([
                     file_data[offset],
                     file_data[offset + 1],
                     file_data[offset + 2],
                     file_data[offset + 3],
                 ]) as usize;
-                
+
                 offset += 4;
-                
+
                 if offset + entry_len > file_data.len() {
                     break;
                 }
-                
+
                 let entry_data = &file_data[offset..offset + entry_len];
-                
+
                 match bincode::deserialize::<(VectorId, LsmEntry)>(entry_data) {
                     Ok((id, entry)) => {
                         // Handle merge logic for LSM entries
@@ -344,16 +376,20 @@ impl CompactionManager {
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to deserialize entry in {}: {}", input_file.display(), e);
+                        warn!(
+                            "Failed to deserialize entry in {}: {}",
+                            input_file.display(),
+                            e
+                        );
                     }
                 }
-                
+
                 offset += entry_len;
             }
         }
-        
+
         debug!("Merged {} unique records", merged_data.len());
-        
+
         // Write merged data to output file, filtering out old tombstones
         let mut output_data = Vec::new();
         for (id, lsm_entry) in merged_data.iter() {
@@ -367,7 +403,7 @@ impl CompactionManager {
                     age.num_hours() < 1
                 }
             };
-            
+
             if should_keep {
                 let entry = bincode::serialize(&(id.clone(), lsm_entry))
                     .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
@@ -375,34 +411,48 @@ impl CompactionManager {
                 output_data.extend_from_slice(&entry);
             }
         }
-        
+
         // Ensure output directory exists
         if let Some(parent) = task.output_file.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| crate::core::StorageError::DiskIO(e))?;
         }
-        
+
         // Write output file atomically (write to temp file, then rename)
         let temp_file = task.output_file.with_extension("tmp");
-        tokio::fs::write(&temp_file, &output_data).await
+        tokio::fs::write(&temp_file, &output_data)
+            .await
             .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-        
-        tokio::fs::rename(&temp_file, &task.output_file).await
+
+        tokio::fs::rename(&temp_file, &task.output_file)
+            .await
             .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-        
+
         let bytes_written = output_data.len() as u64;
-        
-        debug!("Wrote {} bytes to output file {}", bytes_written, task.output_file.display());
-        
+
+        debug!(
+            "Wrote {} bytes to output file {}",
+            bytes_written,
+            task.output_file.display()
+        );
+
         // Remove input files after successful compaction
         for input_file in &task.input_files {
             if let Err(e) = tokio::fs::remove_file(input_file).await {
-                warn!("Failed to remove input file {}: {}", input_file.display(), e);
+                warn!(
+                    "Failed to remove input file {}: {}",
+                    input_file.display(),
+                    e
+                );
             }
         }
-        
-        debug!("Compaction completed in {}ms", start_time.elapsed().as_millis());
-        
+
+        debug!(
+            "Compaction completed in {}ms",
+            start_time.elapsed().as_millis()
+        );
+
         Ok(CompactionStats {
             total_compactions: 1,
             bytes_written,
@@ -414,19 +464,25 @@ impl CompactionManager {
     }
 
     /// Get SST files organized by level
-    async fn get_sst_files_by_level(&self, collection_dir: &Path) -> Result<HashMap<u8, Vec<PathBuf>>> {
+    async fn get_sst_files_by_level(
+        &self,
+        collection_dir: &Path,
+    ) -> Result<HashMap<u8, Vec<PathBuf>>> {
         let mut files_by_level = HashMap::new();
-        
+
         if !collection_dir.exists() {
             return Ok(files_by_level);
         }
-        
-        let mut dir = tokio::fs::read_dir(collection_dir).await
+
+        let mut dir = tokio::fs::read_dir(collection_dir)
+            .await
             .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-        
-        while let Some(entry) = dir.next_entry().await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))? {
-            
+
+        while let Some(entry) = dir
+            .next_entry()
+            .await
+            .map_err(|e| crate::core::StorageError::DiskIO(e))?
+        {
             let path = entry.path();
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                 if filename.starts_with("sst_") && filename.ends_with(".db") {
@@ -436,7 +492,7 @@ impl CompactionManager {
                 }
             }
         }
-        
+
         Ok(files_by_level)
     }
 
@@ -458,19 +514,29 @@ fn should_replace_entry(existing: &LsmEntry, new: &LsmEntry) -> bool {
         (LsmEntry::Record(record), LsmEntry::Tombstone { timestamp, .. }) => {
             *timestamp > record.timestamp
         }
-        (LsmEntry::Tombstone { timestamp: existing_ts, .. }, LsmEntry::Record(record)) => {
-            record.timestamp > *existing_ts
-        }
-        (LsmEntry::Tombstone { timestamp: existing_ts, .. }, LsmEntry::Tombstone { timestamp: new_ts, .. }) => {
-            *new_ts > *existing_ts
-        }
+        (
+            LsmEntry::Tombstone {
+                timestamp: existing_ts,
+                ..
+            },
+            LsmEntry::Record(record),
+        ) => record.timestamp > *existing_ts,
+        (
+            LsmEntry::Tombstone {
+                timestamp: existing_ts,
+                ..
+            },
+            LsmEntry::Tombstone {
+                timestamp: new_ts, ..
+            },
+        ) => *new_ts > *existing_ts,
     }
 }
 
 impl Drop for CompactionManager {
     fn drop(&mut self) {
         self.shutdown_signal.store(true, Ordering::SeqCst);
-        
+
         // Abort remaining worker handles
         for handle in &self.worker_handles {
             handle.abort();
@@ -482,7 +548,7 @@ impl Drop for CompactionManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[tokio::test]
     async fn test_compaction_manager_basic() {
         let config = LsmConfig {
@@ -491,12 +557,12 @@ mod tests {
             compaction_threshold: 2,
             block_size_kb: 4,
         };
-        
+
         let mut manager = CompactionManager::new(config);
         assert!(manager.start_workers(1).await.is_ok());
         assert!(manager.stop().await.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_compaction_task_scheduling() {
         let config = LsmConfig {
@@ -505,9 +571,9 @@ mod tests {
             compaction_threshold: 2,
             block_size_kb: 4,
         };
-        
+
         let manager = CompactionManager::new(config);
-        
+
         let task = CompactionTask {
             collection_id: "test_collection".to_string(),
             level: 0,
@@ -515,7 +581,7 @@ mod tests {
             output_file: PathBuf::from("/tmp/output.db"),
             priority: CompactionPriority::Medium,
         };
-        
+
         assert!(manager.schedule_compaction(task).await.is_ok());
     }
 }

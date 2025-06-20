@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! VIPER Collection Strategy
-//! 
+//!
 //! Implements the VIPER strategy: PQ + VIPER + ML-optimized Search
 //! This strategy is optimized for high-performance workloads with ML-guided optimization.
 
@@ -13,16 +13,15 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::{VectorRecord, VectorId, CollectionId};
-use crate::storage::{CollectionMetadata, WalEntry, WalOperation};
-use crate::storage::viper::{ViperParquetFlusher, ViperStorageEngine, ViperSearchEngine};
-use crate::storage::filesystem::FilesystemFactory;
-use crate::storage::unified_engine::CollectionConfig;
 use super::{
-    CollectionStrategy, CollectionStrategyConfig, StrategyType,
-    FlushResult, CompactionResult, SearchResult, SearchFilter,
-    StrategyStats, OptimizationResult,
+    CollectionStrategy, CollectionStrategyConfig, CompactionResult, FlushResult,
+    OptimizationResult, SearchFilter, SearchResult, StrategyStats, StrategyType,
 };
+use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::storage::filesystem::FilesystemFactory;
+use crate::schema_types::CollectionConfig;
+use crate::storage::viper::{ViperParquetFlusher, ViperSearchEngine, ViperStorageEngine};
+use crate::storage::{CollectionMetadata, WalEntry, WalOperation};
 
 /// VIPER strategy implementation
 pub struct ViperStrategy {
@@ -39,26 +38,30 @@ pub struct ViperStrategy {
 impl ViperStrategy {
     /// Create new VIPER strategy with required components
     pub async fn new(
-        metadata: &CollectionMetadata,
+        _metadata: &CollectionMetadata,
         filesystem: Arc<FilesystemFactory>,
-        viper_config: crate::storage::viper::ViperConfig
+        viper_config: crate::storage::viper::ViperConfig,
     ) -> Result<Self> {
         let mut config = CollectionStrategyConfig::default();
         config.strategy_type = StrategyType::Viper;
-        
+
         // Configure for VIPER-specific algorithms
         config.indexing_config.algorithm = super::IndexingAlgorithm::PQ {
-            m: 8,      // 8 subquantizers
-            nbits: 8,  // 8 bits per subquantizer
+            m: 8,     // 8 subquantizers
+            nbits: 8, // 8 bits per subquantizer
         };
         config.storage_config.engine_type = super::StorageEngineType::VIPER;
-        
+
         // Create VIPER components
-        let flusher = Arc::new(ViperParquetFlusher::new(viper_config.clone(), filesystem.clone()));
-        let storage_engine = Arc::new(ViperStorageEngine::new(viper_config.clone(), filesystem.clone()).await?);
+        let flusher = Arc::new(ViperParquetFlusher::new(
+            viper_config.clone(),
+            filesystem.clone(),
+        ));
+        let storage_engine =
+            Arc::new(ViperStorageEngine::new(viper_config.clone(), filesystem.clone()).await?);
         let search_engine = Arc::new(ViperSearchEngine::new(viper_config.clone()).await?);
-        
-        Ok(Self { 
+
+        Ok(Self {
             config,
             flusher,
             storage_engine,
@@ -72,21 +75,36 @@ impl CollectionStrategy for ViperStrategy {
     fn strategy_name(&self) -> &'static str {
         "viper"
     }
-    
+
     fn get_config(&self) -> CollectionStrategyConfig {
         self.config.clone()
     }
-    
-    async fn initialize(&mut self, collection_id: CollectionId, _metadata: &CollectionMetadata) -> Result<()> {
-        tracing::info!("🚀 Initializing VIPER strategy for collection: {}", collection_id);
+
+    async fn initialize(
+        &mut self,
+        collection_id: CollectionId,
+        _metadata: &CollectionMetadata,
+    ) -> Result<()> {
+        tracing::info!(
+            "🚀 Initializing VIPER strategy for collection: {}",
+            collection_id
+        );
         // TODO: Initialize VIPER components
         Ok(())
     }
-    
-    async fn flush_entries(&self, collection_id: &CollectionId, entries: Vec<WalEntry>) -> Result<FlushResult> {
+
+    async fn flush_entries(
+        &self,
+        collection_id: &CollectionId,
+        entries: Vec<WalEntry>,
+    ) -> Result<FlushResult> {
         let start_time = std::time::Instant::now();
-        tracing::debug!("🔄 VIPER strategy flushing {} entries for collection: {}", entries.len(), collection_id);
-        
+        tracing::debug!(
+            "🔄 VIPER strategy flushing {} entries for collection: {}",
+            entries.len(),
+            collection_id
+        );
+
         // Convert WAL entries to VectorRecords
         let mut vector_records = Vec::new();
         for entry in &entries {
@@ -101,43 +119,53 @@ impl CollectionStrategy for ViperStrategy {
                 _ => {}
             }
         }
-        
+
         if !vector_records.is_empty() {
             // Create collection config for VIPER
             let collection_config = CollectionConfig {
-                collection_id: collection_id.clone(),
-                dimension: vector_records.get(0).map(|r| r.vector.len()).unwrap_or(0),
-                storage_strategy: crate::storage::unified_engine::StorageLayoutStrategy::VIPER,
+                name: collection_id.clone(),
+                dimension: vector_records.get(0).map(|r| r.vector.len()).unwrap_or(0) as i32,
+                distance_metric: crate::schema_types::DistanceMetric::Cosine,
+                storage_engine: crate::schema_types::StorageEngine::Viper,
+                indexing_algorithm: crate::schema_types::IndexingAlgorithm::Hnsw,
                 filterable_metadata_fields: vec![], // TODO: Extract from metadata
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
+                indexing_config: std::collections::HashMap::new(),
             };
-            
+
             // Generate output path for Parquet file
-            let output_url = format!("file://./data/viper/{}/segment_{}.parquet", 
-                collection_id, chrono::Utc::now().timestamp_millis());
-            
+            let output_url = format!(
+                "file://./data/viper/{}/segment_{}.parquet",
+                collection_id,
+                chrono::Utc::now().timestamp_millis()
+            );
+
             // Use atomic flush operation instead of direct flushing
-            let wal_entry_urls: Vec<String> = entries.iter()
+            let wal_entry_urls: Vec<String> = entries
+                .iter()
                 .map(|e| format!("wal_entry_{}", e.sequence))
                 .collect();
-                
+
             // Perform atomic flush through storage engine
-            let flushed_file_url = self.storage_engine.atomic_flush_collection(
-                collection_id,
-                vector_records,
-                wal_entry_urls
-            ).await?;
-            
+            let flushed_file_url = self
+                .storage_engine
+                .atomic_flush_collection(collection_id, vector_records, wal_entry_urls)
+                .await?;
+
             let flush_time_ms = start_time.elapsed().as_millis() as u64;
-            
+
             Ok(FlushResult {
                 entries_flushed: entries.len(),
                 bytes_written: 1024, // Placeholder - atomic flusher would return actual size
                 flush_time_ms,
                 strategy_metadata: HashMap::from([
-                    ("flushed_file".to_string(), serde_json::Value::String(flushed_file_url)),
-                    ("atomic_operation".to_string(), serde_json::Value::Bool(true)),
+                    (
+                        "flushed_file".to_string(),
+                        serde_json::Value::String(flushed_file_url),
+                    ),
+                    (
+                        "atomic_operation".to_string(),
+                        serde_json::Value::Bool(true),
+                    ),
                 ]),
             })
         } else {
@@ -149,26 +177,32 @@ impl CollectionStrategy for ViperStrategy {
             })
         }
     }
-    
+
     async fn compact_collection(&self, collection_id: &CollectionId) -> Result<CompactionResult> {
         let start_time = std::time::Instant::now();
         tracing::debug!("🔄 VIPER strategy compacting collection: {}", collection_id);
-        
+
         // Find Parquet files to compact in collection directory
         let source_files = vec![
-            format!("viper/{}/collections/{}/segment_1.parquet", collection_id, collection_id),
-            format!("viper/{}/collections/{}/segment_2.parquet", collection_id, collection_id),
+            format!(
+                "viper/{}/collections/{}/segment_1.parquet",
+                collection_id, collection_id
+            ),
+            format!(
+                "viper/{}/collections/{}/segment_2.parquet",
+                collection_id, collection_id
+            ),
         ]; // Placeholder - would enumerate actual files
-        
+
         if !source_files.is_empty() {
             // Perform atomic compaction through storage engine
-            let compacted_file_url = self.storage_engine.atomic_compact_collection(
-                collection_id,
-                source_files.clone()
-            ).await?;
-            
+            let compacted_file_url = self
+                .storage_engine
+                .atomic_compact_collection(collection_id, source_files.clone())
+                .await?;
+
             let compaction_time_ms = start_time.elapsed().as_millis() as u64;
-            
+
             Ok(CompactionResult {
                 entries_compacted: source_files.len(),
                 space_reclaimed: 1024 * 1024, // Placeholder - would calculate actual space saved
@@ -188,38 +222,72 @@ impl CollectionStrategy for ViperStrategy {
             })
         }
     }
-    
-    async fn search_vectors(&self, collection_id: &CollectionId, query: Vec<f32>, k: usize, _filter: Option<SearchFilter>) -> Result<Vec<SearchResult>> {
-        tracing::debug!("🔍 VIPER strategy searching collection: {} with k={}", collection_id, k);
-        
+
+    async fn search_vectors(
+        &self,
+        collection_id: &CollectionId,
+        query: Vec<f32>,
+        k: usize,
+        _filter: Option<SearchFilter>,
+    ) -> Result<Vec<SearchResult>> {
+        tracing::debug!(
+            "🔍 VIPER strategy searching collection: {} with k={}",
+            collection_id,
+            k
+        );
+
         // TODO: Implement VIPER-specific search with PQ and ML optimization
-        
+
         Ok(vec![])
     }
-    
-    async fn add_vector(&self, collection_id: &CollectionId, _vector_record: &VectorRecord) -> Result<()> {
-        tracing::debug!("➕ VIPER strategy adding vector to collection: {}", collection_id);
+
+    async fn add_vector(
+        &self,
+        collection_id: &CollectionId,
+        _vector_record: &VectorRecord,
+    ) -> Result<()> {
+        tracing::debug!(
+            "➕ VIPER strategy adding vector to collection: {}",
+            collection_id
+        );
         // TODO: Implement VIPER vector addition
         Ok(())
     }
-    
-    async fn update_vector(&self, collection_id: &CollectionId, _vector_record: &VectorRecord) -> Result<()> {
-        tracing::debug!("🔄 VIPER strategy updating vector in collection: {}", collection_id);
+
+    async fn update_vector(
+        &self,
+        collection_id: &CollectionId,
+        _vector_record: &VectorRecord,
+    ) -> Result<()> {
+        tracing::debug!(
+            "🔄 VIPER strategy updating vector in collection: {}",
+            collection_id
+        );
         // TODO: Implement VIPER vector update
         Ok(())
     }
-    
-    async fn remove_vector(&self, collection_id: &CollectionId, _vector_id: &VectorId) -> Result<bool> {
-        tracing::debug!("➖ VIPER strategy removing vector from collection: {}", collection_id);
+
+    async fn remove_vector(
+        &self,
+        collection_id: &CollectionId,
+        _vector_id: &VectorId,
+    ) -> Result<bool> {
+        tracing::debug!(
+            "➖ VIPER strategy removing vector from collection: {}",
+            collection_id
+        );
         // TODO: Implement VIPER vector removal
         Ok(true)
     }
-    
+
     async fn get_stats(&self, collection_id: &CollectionId) -> Result<StrategyStats> {
-        tracing::debug!("📊 VIPER strategy getting stats for collection: {}", collection_id);
-        
+        tracing::debug!(
+            "📊 VIPER strategy getting stats for collection: {}",
+            collection_id
+        );
+
         // TODO: Implement VIPER-specific stats collection
-        
+
         Ok(StrategyStats {
             strategy_type: StrategyType::Viper,
             total_operations: 0,
@@ -230,12 +298,15 @@ impl CollectionStrategy for ViperStrategy {
             storage_efficiency: 0.0,
         })
     }
-    
-    async fn optimize_collection(&self, collection_id: &CollectionId) -> Result<OptimizationResult> {
+
+    async fn optimize_collection(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<OptimizationResult> {
         tracing::debug!("🔧 VIPER strategy optimizing collection: {}", collection_id);
-        
+
         // TODO: Implement VIPER-specific optimization with ML models
-        
+
         Ok(OptimizationResult {
             improvement_ratio: 1.0,
             optimization_time_ms: 0,

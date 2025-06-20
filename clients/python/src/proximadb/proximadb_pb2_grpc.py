@@ -26,7 +26,14 @@ if _version_not_supported:
 
 
 class ProximaDBStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """============================================================================
+    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
+    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
+    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    - Collection operations: Single unified endpoint for all metadata operations
+    ============================================================================
+
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -34,288 +41,85 @@ class ProximaDBStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.CreateCollection = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/CreateCollection',
-                request_serializer=proximadb__pb2.CreateCollectionRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.CreateCollectionResponse.FromString,
+        self.CollectionOperation = channel.unary_unary(
+                '/proximadb.ProximaDB/CollectionOperation',
+                request_serializer=proximadb__pb2.CollectionRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.CollectionResponse.FromString,
                 _registered_method=True)
-        self.GetCollection = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetCollection',
-                request_serializer=proximadb__pb2.GetCollectionRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetCollectionResponse.FromString,
+        self.VectorInsert = channel.unary_unary(
+                '/proximadb.ProximaDB/VectorInsert',
+                request_serializer=proximadb__pb2.VectorInsertRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.VectorOperationResponse.FromString,
                 _registered_method=True)
-        self.ListCollections = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/ListCollections',
-                request_serializer=proximadb__pb2.ListCollectionsRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.ListCollectionsResponse.FromString,
+        self.VectorMutation = channel.unary_unary(
+                '/proximadb.ProximaDB/VectorMutation',
+                request_serializer=proximadb__pb2.VectorMutationRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.VectorOperationResponse.FromString,
                 _registered_method=True)
-        self.DeleteCollection = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/DeleteCollection',
-                request_serializer=proximadb__pb2.DeleteCollectionRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.DeleteCollectionResponse.FromString,
-                _registered_method=True)
-        self.ListCollectionIds = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/ListCollectionIds',
-                request_serializer=proximadb__pb2.ListCollectionIdsRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.ListCollectionIdsResponse.FromString,
-                _registered_method=True)
-        self.ListCollectionNames = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/ListCollectionNames',
-                request_serializer=proximadb__pb2.ListCollectionNamesRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.ListCollectionNamesResponse.FromString,
-                _registered_method=True)
-        self.GetCollectionIdByName = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetCollectionIdByName',
-                request_serializer=proximadb__pb2.GetCollectionIdByNameRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetCollectionIdByNameResponse.FromString,
-                _registered_method=True)
-        self.GetCollectionNameById = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetCollectionNameById',
-                request_serializer=proximadb__pb2.GetCollectionNameByIdRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetCollectionNameByIdResponse.FromString,
-                _registered_method=True)
-        self.InsertVector = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/InsertVector',
-                request_serializer=proximadb__pb2.InsertVectorRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.InsertVectorResponse.FromString,
-                _registered_method=True)
-        self.GetVector = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetVector',
-                request_serializer=proximadb__pb2.GetVectorRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetVectorResponse.FromString,
-                _registered_method=True)
-        self.GetVectorByClientId = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetVectorByClientId',
-                request_serializer=proximadb__pb2.GetVectorByClientIdRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetVectorByClientIdResponse.FromString,
-                _registered_method=True)
-        self.UpdateVector = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/UpdateVector',
-                request_serializer=proximadb__pb2.UpdateVectorRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.UpdateVectorResponse.FromString,
-                _registered_method=True)
-        self.DeleteVector = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/DeleteVector',
-                request_serializer=proximadb__pb2.DeleteVectorRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.DeleteVectorResponse.FromString,
-                _registered_method=True)
-        self.BatchInsert = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/BatchInsert',
-                request_serializer=proximadb__pb2.BatchInsertRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.BatchInsertResponse.FromString,
-                _registered_method=True)
-        self.BatchGet = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/BatchGet',
-                request_serializer=proximadb__pb2.BatchGetRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.BatchGetResponse.FromString,
-                _registered_method=True)
-        self.BatchUpdate = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/BatchUpdate',
-                request_serializer=proximadb__pb2.BatchUpdateRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.BatchUpdateResponse.FromString,
-                _registered_method=True)
-        self.BatchDelete = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/BatchDelete',
-                request_serializer=proximadb__pb2.BatchDeleteRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.BatchDeleteResponse.FromString,
-                _registered_method=True)
-        self.Search = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/Search',
-                request_serializer=proximadb__pb2.SearchRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.SearchResponse.FromString,
-                _registered_method=True)
-        self.BatchSearch = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/BatchSearch',
-                request_serializer=proximadb__pb2.BatchSearchRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.BatchSearchResponse.FromString,
-                _registered_method=True)
-        self.GetIndexStats = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/GetIndexStats',
-                request_serializer=proximadb__pb2.GetIndexStatsRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.GetIndexStatsResponse.FromString,
-                _registered_method=True)
-        self.OptimizeIndex = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/OptimizeIndex',
-                request_serializer=proximadb__pb2.OptimizeIndexRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.OptimizeIndexResponse.FromString,
+        self.VectorSearch = channel.unary_unary(
+                '/proximadb.ProximaDB/VectorSearch',
+                request_serializer=proximadb__pb2.VectorSearchRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.VectorOperationResponse.FromString,
                 _registered_method=True)
         self.Health = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/Health',
+                '/proximadb.ProximaDB/Health',
                 request_serializer=proximadb__pb2.HealthRequest.SerializeToString,
                 response_deserializer=proximadb__pb2.HealthResponse.FromString,
                 _registered_method=True)
-        self.Readiness = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/Readiness',
-                request_serializer=proximadb__pb2.ReadinessRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.ReadinessResponse.FromString,
-                _registered_method=True)
-        self.Liveness = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/Liveness',
-                request_serializer=proximadb__pb2.LivenessRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.LivenessResponse.FromString,
-                _registered_method=True)
-        self.Status = channel.unary_unary(
-                '/proximadb.v1.ProximaDB/Status',
-                request_serializer=proximadb__pb2.StatusRequest.SerializeToString,
-                response_deserializer=proximadb__pb2.StatusResponse.FromString,
+        self.GetMetrics = channel.unary_unary(
+                '/proximadb.ProximaDB/GetMetrics',
+                request_serializer=proximadb__pb2.MetricsRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.MetricsResponse.FromString,
                 _registered_method=True)
 
 
 class ProximaDBServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """============================================================================
+    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
+    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
+    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    - Collection operations: Single unified endpoint for all metadata operations
+    ============================================================================
 
-    def CreateCollection(self, request, context):
-        """Collection management
+    """
+
+    def CollectionOperation(self, request, context):
+        """Collection management - single unified endpoint for flexibility
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetCollection(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ListCollections(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def DeleteCollection(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ListCollectionIds(self, request, context):
-        """Collection helper endpoints
+    def VectorInsert(self, request, context):
+        """Vector operations - optimized by use case
+        Zero-copy Avro binary
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListCollectionNames(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetCollectionIdByName(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetCollectionNameById(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def InsertVector(self, request, context):
-        """Vector operations - single
+    def VectorMutation(self, request, context):
+        """UPDATE/DELETE via gRPC
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetVector(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetVectorByClientId(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def UpdateVector(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def DeleteVector(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def BatchInsert(self, request, context):
-        """Vector operations - batch
+    def VectorSearch(self, request, context):
+        """Search via gRPC
         """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def BatchGet(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def BatchUpdate(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def BatchDelete(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Search(self, request, context):
-        """Search operations
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def BatchSearch(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetIndexStats(self, request, context):
-        """Index operations
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def OptimizeIndex(self, request, context):
-        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Health(self, request, context):
-        """Health and status
+        """Health and monitoring
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Readiness(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Liveness(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Status(self, request, context):
+    def GetMetrics(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -324,144 +128,56 @@ class ProximaDBServicer(object):
 
 def add_ProximaDBServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'CreateCollection': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateCollection,
-                    request_deserializer=proximadb__pb2.CreateCollectionRequest.FromString,
-                    response_serializer=proximadb__pb2.CreateCollectionResponse.SerializeToString,
+            'CollectionOperation': grpc.unary_unary_rpc_method_handler(
+                    servicer.CollectionOperation,
+                    request_deserializer=proximadb__pb2.CollectionRequest.FromString,
+                    response_serializer=proximadb__pb2.CollectionResponse.SerializeToString,
             ),
-            'GetCollection': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCollection,
-                    request_deserializer=proximadb__pb2.GetCollectionRequest.FromString,
-                    response_serializer=proximadb__pb2.GetCollectionResponse.SerializeToString,
+            'VectorInsert': grpc.unary_unary_rpc_method_handler(
+                    servicer.VectorInsert,
+                    request_deserializer=proximadb__pb2.VectorInsertRequest.FromString,
+                    response_serializer=proximadb__pb2.VectorOperationResponse.SerializeToString,
             ),
-            'ListCollections': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListCollections,
-                    request_deserializer=proximadb__pb2.ListCollectionsRequest.FromString,
-                    response_serializer=proximadb__pb2.ListCollectionsResponse.SerializeToString,
+            'VectorMutation': grpc.unary_unary_rpc_method_handler(
+                    servicer.VectorMutation,
+                    request_deserializer=proximadb__pb2.VectorMutationRequest.FromString,
+                    response_serializer=proximadb__pb2.VectorOperationResponse.SerializeToString,
             ),
-            'DeleteCollection': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeleteCollection,
-                    request_deserializer=proximadb__pb2.DeleteCollectionRequest.FromString,
-                    response_serializer=proximadb__pb2.DeleteCollectionResponse.SerializeToString,
-            ),
-            'ListCollectionIds': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListCollectionIds,
-                    request_deserializer=proximadb__pb2.ListCollectionIdsRequest.FromString,
-                    response_serializer=proximadb__pb2.ListCollectionIdsResponse.SerializeToString,
-            ),
-            'ListCollectionNames': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListCollectionNames,
-                    request_deserializer=proximadb__pb2.ListCollectionNamesRequest.FromString,
-                    response_serializer=proximadb__pb2.ListCollectionNamesResponse.SerializeToString,
-            ),
-            'GetCollectionIdByName': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCollectionIdByName,
-                    request_deserializer=proximadb__pb2.GetCollectionIdByNameRequest.FromString,
-                    response_serializer=proximadb__pb2.GetCollectionIdByNameResponse.SerializeToString,
-            ),
-            'GetCollectionNameById': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCollectionNameById,
-                    request_deserializer=proximadb__pb2.GetCollectionNameByIdRequest.FromString,
-                    response_serializer=proximadb__pb2.GetCollectionNameByIdResponse.SerializeToString,
-            ),
-            'InsertVector': grpc.unary_unary_rpc_method_handler(
-                    servicer.InsertVector,
-                    request_deserializer=proximadb__pb2.InsertVectorRequest.FromString,
-                    response_serializer=proximadb__pb2.InsertVectorResponse.SerializeToString,
-            ),
-            'GetVector': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetVector,
-                    request_deserializer=proximadb__pb2.GetVectorRequest.FromString,
-                    response_serializer=proximadb__pb2.GetVectorResponse.SerializeToString,
-            ),
-            'GetVectorByClientId': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetVectorByClientId,
-                    request_deserializer=proximadb__pb2.GetVectorByClientIdRequest.FromString,
-                    response_serializer=proximadb__pb2.GetVectorByClientIdResponse.SerializeToString,
-            ),
-            'UpdateVector': grpc.unary_unary_rpc_method_handler(
-                    servicer.UpdateVector,
-                    request_deserializer=proximadb__pb2.UpdateVectorRequest.FromString,
-                    response_serializer=proximadb__pb2.UpdateVectorResponse.SerializeToString,
-            ),
-            'DeleteVector': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeleteVector,
-                    request_deserializer=proximadb__pb2.DeleteVectorRequest.FromString,
-                    response_serializer=proximadb__pb2.DeleteVectorResponse.SerializeToString,
-            ),
-            'BatchInsert': grpc.unary_unary_rpc_method_handler(
-                    servicer.BatchInsert,
-                    request_deserializer=proximadb__pb2.BatchInsertRequest.FromString,
-                    response_serializer=proximadb__pb2.BatchInsertResponse.SerializeToString,
-            ),
-            'BatchGet': grpc.unary_unary_rpc_method_handler(
-                    servicer.BatchGet,
-                    request_deserializer=proximadb__pb2.BatchGetRequest.FromString,
-                    response_serializer=proximadb__pb2.BatchGetResponse.SerializeToString,
-            ),
-            'BatchUpdate': grpc.unary_unary_rpc_method_handler(
-                    servicer.BatchUpdate,
-                    request_deserializer=proximadb__pb2.BatchUpdateRequest.FromString,
-                    response_serializer=proximadb__pb2.BatchUpdateResponse.SerializeToString,
-            ),
-            'BatchDelete': grpc.unary_unary_rpc_method_handler(
-                    servicer.BatchDelete,
-                    request_deserializer=proximadb__pb2.BatchDeleteRequest.FromString,
-                    response_serializer=proximadb__pb2.BatchDeleteResponse.SerializeToString,
-            ),
-            'Search': grpc.unary_unary_rpc_method_handler(
-                    servicer.Search,
-                    request_deserializer=proximadb__pb2.SearchRequest.FromString,
-                    response_serializer=proximadb__pb2.SearchResponse.SerializeToString,
-            ),
-            'BatchSearch': grpc.unary_unary_rpc_method_handler(
-                    servicer.BatchSearch,
-                    request_deserializer=proximadb__pb2.BatchSearchRequest.FromString,
-                    response_serializer=proximadb__pb2.BatchSearchResponse.SerializeToString,
-            ),
-            'GetIndexStats': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetIndexStats,
-                    request_deserializer=proximadb__pb2.GetIndexStatsRequest.FromString,
-                    response_serializer=proximadb__pb2.GetIndexStatsResponse.SerializeToString,
-            ),
-            'OptimizeIndex': grpc.unary_unary_rpc_method_handler(
-                    servicer.OptimizeIndex,
-                    request_deserializer=proximadb__pb2.OptimizeIndexRequest.FromString,
-                    response_serializer=proximadb__pb2.OptimizeIndexResponse.SerializeToString,
+            'VectorSearch': grpc.unary_unary_rpc_method_handler(
+                    servicer.VectorSearch,
+                    request_deserializer=proximadb__pb2.VectorSearchRequest.FromString,
+                    response_serializer=proximadb__pb2.VectorOperationResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
                     request_deserializer=proximadb__pb2.HealthRequest.FromString,
                     response_serializer=proximadb__pb2.HealthResponse.SerializeToString,
             ),
-            'Readiness': grpc.unary_unary_rpc_method_handler(
-                    servicer.Readiness,
-                    request_deserializer=proximadb__pb2.ReadinessRequest.FromString,
-                    response_serializer=proximadb__pb2.ReadinessResponse.SerializeToString,
-            ),
-            'Liveness': grpc.unary_unary_rpc_method_handler(
-                    servicer.Liveness,
-                    request_deserializer=proximadb__pb2.LivenessRequest.FromString,
-                    response_serializer=proximadb__pb2.LivenessResponse.SerializeToString,
-            ),
-            'Status': grpc.unary_unary_rpc_method_handler(
-                    servicer.Status,
-                    request_deserializer=proximadb__pb2.StatusRequest.FromString,
-                    response_serializer=proximadb__pb2.StatusResponse.SerializeToString,
+            'GetMetrics': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMetrics,
+                    request_deserializer=proximadb__pb2.MetricsRequest.FromString,
+                    response_serializer=proximadb__pb2.MetricsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'proximadb.v1.ProximaDB', rpc_method_handlers)
+            'proximadb.ProximaDB', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('proximadb.v1.ProximaDB', rpc_method_handlers)
+    server.add_registered_method_handlers('proximadb.ProximaDB', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
 class ProximaDB(object):
-    """Missing associated documentation comment in .proto file."""
+    """============================================================================
+    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
+    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
+    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    - Collection operations: Single unified endpoint for all metadata operations
+    ============================================================================
+
+    """
 
     @staticmethod
-    def CreateCollection(request,
+    def CollectionOperation(request,
             target,
             options=(),
             channel_credentials=None,
@@ -474,9 +190,9 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/CreateCollection',
-            proximadb__pb2.CreateCollectionRequest.SerializeToString,
-            proximadb__pb2.CreateCollectionResponse.FromString,
+            '/proximadb.ProximaDB/CollectionOperation',
+            proximadb__pb2.CollectionRequest.SerializeToString,
+            proximadb__pb2.CollectionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -488,7 +204,7 @@ class ProximaDB(object):
             _registered_method=True)
 
     @staticmethod
-    def GetCollection(request,
+    def VectorInsert(request,
             target,
             options=(),
             channel_credentials=None,
@@ -501,9 +217,9 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/GetCollection',
-            proximadb__pb2.GetCollectionRequest.SerializeToString,
-            proximadb__pb2.GetCollectionResponse.FromString,
+            '/proximadb.ProximaDB/VectorInsert',
+            proximadb__pb2.VectorInsertRequest.SerializeToString,
+            proximadb__pb2.VectorOperationResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -515,7 +231,7 @@ class ProximaDB(object):
             _registered_method=True)
 
     @staticmethod
-    def ListCollections(request,
+    def VectorMutation(request,
             target,
             options=(),
             channel_credentials=None,
@@ -528,9 +244,9 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/ListCollections',
-            proximadb__pb2.ListCollectionsRequest.SerializeToString,
-            proximadb__pb2.ListCollectionsResponse.FromString,
+            '/proximadb.ProximaDB/VectorMutation',
+            proximadb__pb2.VectorMutationRequest.SerializeToString,
+            proximadb__pb2.VectorOperationResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -542,7 +258,7 @@ class ProximaDB(object):
             _registered_method=True)
 
     @staticmethod
-    def DeleteCollection(request,
+    def VectorSearch(request,
             target,
             options=(),
             channel_credentials=None,
@@ -555,468 +271,9 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/DeleteCollection',
-            proximadb__pb2.DeleteCollectionRequest.SerializeToString,
-            proximadb__pb2.DeleteCollectionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ListCollectionIds(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/ListCollectionIds',
-            proximadb__pb2.ListCollectionIdsRequest.SerializeToString,
-            proximadb__pb2.ListCollectionIdsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ListCollectionNames(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/ListCollectionNames',
-            proximadb__pb2.ListCollectionNamesRequest.SerializeToString,
-            proximadb__pb2.ListCollectionNamesResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetCollectionIdByName(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/GetCollectionIdByName',
-            proximadb__pb2.GetCollectionIdByNameRequest.SerializeToString,
-            proximadb__pb2.GetCollectionIdByNameResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetCollectionNameById(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/GetCollectionNameById',
-            proximadb__pb2.GetCollectionNameByIdRequest.SerializeToString,
-            proximadb__pb2.GetCollectionNameByIdResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def InsertVector(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/InsertVector',
-            proximadb__pb2.InsertVectorRequest.SerializeToString,
-            proximadb__pb2.InsertVectorResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetVector(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/GetVector',
-            proximadb__pb2.GetVectorRequest.SerializeToString,
-            proximadb__pb2.GetVectorResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetVectorByClientId(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/GetVectorByClientId',
-            proximadb__pb2.GetVectorByClientIdRequest.SerializeToString,
-            proximadb__pb2.GetVectorByClientIdResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def UpdateVector(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/UpdateVector',
-            proximadb__pb2.UpdateVectorRequest.SerializeToString,
-            proximadb__pb2.UpdateVectorResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def DeleteVector(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/DeleteVector',
-            proximadb__pb2.DeleteVectorRequest.SerializeToString,
-            proximadb__pb2.DeleteVectorResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def BatchInsert(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/BatchInsert',
-            proximadb__pb2.BatchInsertRequest.SerializeToString,
-            proximadb__pb2.BatchInsertResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def BatchGet(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/BatchGet',
-            proximadb__pb2.BatchGetRequest.SerializeToString,
-            proximadb__pb2.BatchGetResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def BatchUpdate(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/BatchUpdate',
-            proximadb__pb2.BatchUpdateRequest.SerializeToString,
-            proximadb__pb2.BatchUpdateResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def BatchDelete(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/BatchDelete',
-            proximadb__pb2.BatchDeleteRequest.SerializeToString,
-            proximadb__pb2.BatchDeleteResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Search(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/Search',
-            proximadb__pb2.SearchRequest.SerializeToString,
-            proximadb__pb2.SearchResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def BatchSearch(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/BatchSearch',
-            proximadb__pb2.BatchSearchRequest.SerializeToString,
-            proximadb__pb2.BatchSearchResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetIndexStats(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/GetIndexStats',
-            proximadb__pb2.GetIndexStatsRequest.SerializeToString,
-            proximadb__pb2.GetIndexStatsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def OptimizeIndex(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/OptimizeIndex',
-            proximadb__pb2.OptimizeIndexRequest.SerializeToString,
-            proximadb__pb2.OptimizeIndexResponse.FromString,
+            '/proximadb.ProximaDB/VectorSearch',
+            proximadb__pb2.VectorSearchRequest.SerializeToString,
+            proximadb__pb2.VectorOperationResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1041,7 +298,7 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/Health',
+            '/proximadb.ProximaDB/Health',
             proximadb__pb2.HealthRequest.SerializeToString,
             proximadb__pb2.HealthResponse.FromString,
             options,
@@ -1055,7 +312,7 @@ class ProximaDB(object):
             _registered_method=True)
 
     @staticmethod
-    def Readiness(request,
+    def GetMetrics(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1068,63 +325,9 @@ class ProximaDB(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.ProximaDB/Readiness',
-            proximadb__pb2.ReadinessRequest.SerializeToString,
-            proximadb__pb2.ReadinessResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Liveness(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/Liveness',
-            proximadb__pb2.LivenessRequest.SerializeToString,
-            proximadb__pb2.LivenessResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Status(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/proximadb.v1.ProximaDB/Status',
-            proximadb__pb2.StatusRequest.SerializeToString,
-            proximadb__pb2.StatusResponse.FromString,
+            '/proximadb.ProximaDB/GetMetrics',
+            proximadb__pb2.MetricsRequest.SerializeToString,
+            proximadb__pb2.MetricsResponse.FromString,
             options,
             channel_credentials,
             insecure,

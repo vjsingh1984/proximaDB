@@ -1837,6 +1837,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d2cd9c18b9f454ed67da600630b021a8a80bf33f8c95896ab33aaf1c26b728"
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "der"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4541,6 +4555,7 @@ dependencies = [
  "crossbeam",
  "crossbeam-skiplist",
  "cudarc",
+ "dashmap",
  "faiss",
  "flate2",
  "futures",
@@ -4557,6 +4572,7 @@ dependencies = [
  "metrics-prometheus",
  "ndarray",
  "num_cpus",
+ "once_cell",
  "parking_lot",
  "parquet",
  "prometheus",
@@ -4580,10 +4596,12 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "toml 0.8.23",
  "tonic",
  "tonic-build",
+ "tonic-reflection",
  "tower 0.4.13",
  "tower-http",
  "tracing",
@@ -6151,6 +6169,19 @@ dependencies = [
  "prost-build",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tonic-reflection"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fa37c513df1339d197f4ba21d28c918b9ef1ac1768265f11ecb6b7f1cba1b76"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]

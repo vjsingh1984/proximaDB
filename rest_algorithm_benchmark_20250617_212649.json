@@ -1,0 +1,35 @@
+{
+  "start_time": "2025-06-17T21:26:49.123740",
+  "test_type": "REST API Algorithm Benchmark",
+  "base_url": "http://localhost:5678",
+  "test_configurations": [
+    {
+      "distance_metric": "cosine",
+      "storage_layout": "standard",
+      "name": "cosine_standard"
+    },
+    {
+      "distance_metric": "euclidean",
+      "storage_layout": "standard",
+      "name": "euclidean_standard"
+    },
+    {
+      "distance_metric": "dot_product",
+      "storage_layout": "standard",
+      "name": "dot_standard"
+    },
+    {
+      "distance_metric": "manhattan",
+      "storage_layout": "viper",
+      "name": "manhattan_viper"
+    },
+    {
+      "distance_metric": "cosine",
+      "storage_layout": "viper",
+      "name": "cosine_viper"
+    }
+  ],
+  "collections_created": 0,
+  "error": "No collections were created successfully",
+  "end_time": "2025-06-17T21:26:49.137696"
+}

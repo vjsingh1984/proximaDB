@@ -1,5 +1,5 @@
 //! VIPER Performance Statistics and Monitoring
-//! 
+//!
 //! This module provides comprehensive statistics collection and monitoring
 //! for VIPER operations, enabling performance analysis and optimization.
 
@@ -78,22 +78,23 @@ impl ViperStatsCollector {
             },
         }
     }
-    
+
     /// Start timing the overall operation
     pub fn start_operation(&mut self) {
         self.operation_start = Some(Instant::now());
     }
-    
+
     /// Start timing a specific phase
     pub fn start_phase(&mut self, phase_name: &str) {
-        self.phase_timers.insert(phase_name.to_string(), Instant::now());
+        self.phase_timers
+            .insert(phase_name.to_string(), Instant::now());
     }
-    
+
     /// End timing a specific phase and record the duration
     pub fn end_phase(&mut self, phase_name: &str) {
         if let Some(start_time) = self.phase_timers.remove(phase_name) {
             let duration_ms = start_time.elapsed().as_millis() as u64;
-            
+
             match phase_name {
                 "schema_generation" => self.metrics.schema_generation_time_ms = duration_ms,
                 "preprocessing" => self.metrics.preprocessing_time_ms = duration_ms,
@@ -104,36 +105,36 @@ impl ViperStatsCollector {
             }
         }
     }
-    
+
     /// Record the number of records processed
     pub fn set_records_processed(&mut self, count: u64) {
         self.metrics.records_processed = count;
     }
-    
+
     /// Record the number of bytes written
     pub fn set_bytes_written(&mut self, bytes: u64) {
         self.metrics.bytes_written = bytes;
     }
-    
+
     /// Record the compression ratio
     pub fn set_compression_ratio(&mut self, ratio: f64) {
         self.metrics.compression_ratio = ratio;
     }
-    
+
     /// Finalize the operation and calculate derived metrics
     pub fn finalize_operation(mut self) -> ViperPerformanceMetrics {
         if let Some(start_time) = self.operation_start {
             self.metrics.total_time_ms = start_time.elapsed().as_millis() as u64;
-            
+
             // Calculate derived metrics
             if self.metrics.total_time_ms > 0 {
-                self.metrics.records_per_second = 
-                    (self.metrics.records_processed as f64 * 1000.0) / self.metrics.total_time_ms as f64;
-                self.metrics.bytes_per_second = 
-                    (self.metrics.bytes_written as f64 * 1000.0) / self.metrics.total_time_ms as f64;
+                self.metrics.records_per_second = (self.metrics.records_processed as f64 * 1000.0)
+                    / self.metrics.total_time_ms as f64;
+                self.metrics.bytes_per_second = (self.metrics.bytes_written as f64 * 1000.0)
+                    / self.metrics.total_time_ms as f64;
             }
         }
-        
+
         self.metrics
     }
 }
@@ -192,21 +193,25 @@ impl ViperStatsAggregator {
             max_recent_metrics,
         }
     }
-    
+
     /// Add metrics from a completed operation
     pub fn add_metrics(&mut self, metrics: ViperPerformanceMetrics) {
         // Update aggregate stats
         self.aggregate_stats.total_operations += 1;
         self.aggregate_stats.total_records_processed += metrics.records_processed;
         self.aggregate_stats.total_bytes_written += metrics.bytes_written;
-        
+
         // Update operation type counts
-        *self.aggregate_stats.operations_by_type
+        *self
+            .aggregate_stats
+            .operations_by_type
             .entry(metrics.operation_type.clone())
             .or_insert(0) += 1;
-        
+
         // Update collection-specific stats
-        let collection_stats = self.aggregate_stats.performance_by_collection
+        let collection_stats = self
+            .aggregate_stats
+            .performance_by_collection
             .entry(metrics.collection_id.clone())
             .or_insert(CollectionPerformanceStats {
                 operations_count: 0,
@@ -214,80 +219,98 @@ impl ViperStatsAggregator {
                 avg_compression_ratio: 0.0,
                 avg_throughput_records_per_sec: 0.0,
             });
-        
+
         collection_stats.operations_count += 1;
-        collection_stats.avg_records_per_operation = 
-            (collection_stats.avg_records_per_operation * (collection_stats.operations_count - 1) as f64 + 
-             metrics.records_processed as f64) / collection_stats.operations_count as f64;
-        collection_stats.avg_compression_ratio = 
-            (collection_stats.avg_compression_ratio * (collection_stats.operations_count - 1) as f64 + 
-             metrics.compression_ratio) / collection_stats.operations_count as f64;
-        collection_stats.avg_throughput_records_per_sec = 
-            (collection_stats.avg_throughput_records_per_sec * (collection_stats.operations_count - 1) as f64 + 
-             metrics.records_per_second) / collection_stats.operations_count as f64;
-        
+        collection_stats.avg_records_per_operation = (collection_stats.avg_records_per_operation
+            * (collection_stats.operations_count - 1) as f64
+            + metrics.records_processed as f64)
+            / collection_stats.operations_count as f64;
+        collection_stats.avg_compression_ratio = (collection_stats.avg_compression_ratio
+            * (collection_stats.operations_count - 1) as f64
+            + metrics.compression_ratio)
+            / collection_stats.operations_count as f64;
+        collection_stats.avg_throughput_records_per_sec = (collection_stats
+            .avg_throughput_records_per_sec
+            * (collection_stats.operations_count - 1) as f64
+            + metrics.records_per_second)
+            / collection_stats.operations_count as f64;
+
         // Recalculate averages
         self.recalculate_averages();
-        
+
         // Store recent metrics (with rotation)
         self.recent_metrics.push(metrics);
         if self.recent_metrics.len() > self.max_recent_metrics {
             self.recent_metrics.remove(0);
         }
     }
-    
+
     /// Get current aggregate statistics
     pub fn get_aggregate_stats(&self) -> &ViperAggregateStats {
         &self.aggregate_stats
     }
-    
+
     /// Get recent performance metrics
     pub fn get_recent_metrics(&self) -> &[ViperPerformanceMetrics] {
         &self.recent_metrics
     }
-    
+
     /// Get performance trend analysis
     pub fn get_performance_trend(&self) -> Option<PerformanceTrend> {
         if self.recent_metrics.len() < 2 {
             return None;
         }
-        
+
         let recent_half = &self.recent_metrics[self.recent_metrics.len() / 2..];
         let earlier_half = &self.recent_metrics[..self.recent_metrics.len() / 2];
-        
-        let recent_avg_throughput: f64 = recent_half.iter()
+
+        let recent_avg_throughput: f64 = recent_half
+            .iter()
             .map(|m| m.records_per_second)
-            .sum::<f64>() / recent_half.len() as f64;
-        
-        let earlier_avg_throughput: f64 = earlier_half.iter()
+            .sum::<f64>()
+            / recent_half.len() as f64;
+
+        let earlier_avg_throughput: f64 = earlier_half
+            .iter()
             .map(|m| m.records_per_second)
-            .sum::<f64>() / earlier_half.len() as f64;
-        
+            .sum::<f64>()
+            / earlier_half.len() as f64;
+
         let throughput_change = recent_avg_throughput - earlier_avg_throughput;
         let throughput_change_percent = if earlier_avg_throughput > 0.0 {
             (throughput_change / earlier_avg_throughput) * 100.0
         } else {
             0.0
         };
-        
+
         Some(PerformanceTrend {
             throughput_change_percent,
             is_improving: throughput_change > 0.0,
-            confidence: if self.recent_metrics.len() >= 10 { ConfidenceLevel::High } else { ConfidenceLevel::Low },
+            confidence: if self.recent_metrics.len() >= 10 {
+                ConfidenceLevel::High
+            } else {
+                ConfidenceLevel::Low
+            },
         })
     }
-    
+
     fn recalculate_averages(&mut self) {
         if self.aggregate_stats.total_operations > 0 {
-            self.aggregate_stats.avg_compression_ratio = 
-                self.aggregate_stats.performance_by_collection.values()
-                    .map(|stats| stats.avg_compression_ratio)
-                    .sum::<f64>() / self.aggregate_stats.performance_by_collection.len() as f64;
-            
-            self.aggregate_stats.avg_records_per_second = 
-                self.aggregate_stats.performance_by_collection.values()
-                    .map(|stats| stats.avg_throughput_records_per_sec)
-                    .sum::<f64>() / self.aggregate_stats.performance_by_collection.len() as f64;
+            self.aggregate_stats.avg_compression_ratio = self
+                .aggregate_stats
+                .performance_by_collection
+                .values()
+                .map(|stats| stats.avg_compression_ratio)
+                .sum::<f64>()
+                / self.aggregate_stats.performance_by_collection.len() as f64;
+
+            self.aggregate_stats.avg_records_per_second = self
+                .aggregate_stats
+                .performance_by_collection
+                .values()
+                .map(|stats| stats.avg_throughput_records_per_sec)
+                .sum::<f64>()
+                / self.aggregate_stats.performance_by_collection.len() as f64;
         }
     }
 }

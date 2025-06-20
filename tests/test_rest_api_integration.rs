@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-use proximadb::core::{Config, StorageConfig, LsmConfig, ApiConfig, ServerConfig, ConsensusConfig, MonitoringConfig};
+use proximadb::core::{
+    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+};
 use proximadb::ProximaDB;
-use tempfile::TempDir;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_rest_api_integration() {
@@ -66,20 +68,20 @@ async fn test_rest_api_integration() {
 
     // Create ProximaDB instance
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Start the database (this will start the HTTP server)
     db.start().await.unwrap();
-    
+
     // Verify that the HTTP server is running
     assert!(db.is_http_running());
-    
+
     // Get the HTTP address
     let address = db.http_address().unwrap();
     println!("HTTP server started on: {}", address);
-    
+
     // Stop the database
     db.stop().await.unwrap();
-    
+
     // Verify that the HTTP server is stopped
     assert!(!db.is_http_running());
 }
@@ -131,13 +133,13 @@ async fn test_rest_api_health_check() {
 
     // Create ProximaDB instance
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Test health endpoint using reqwest
     let client = reqwest::Client::new();
     let response = client
@@ -145,22 +147,22 @@ async fn test_rest_api_health_check() {
         .send()
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), 200);
-    
+
     let health_response: serde_json::Value = response.json().await.unwrap();
     assert_eq!(health_response["status"], "healthy");
     assert_eq!(health_response["version"], "0.1.0");
-    
+
     // Test readiness endpoint
     let response = client
         .get("http://127.0.0.1:8081/health/ready")
         .send()
         .await
         .unwrap();
-    
+
     assert_eq!(response.status(), 200);
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }

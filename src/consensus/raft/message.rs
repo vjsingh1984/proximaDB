@@ -5,10 +5,10 @@
 
 //! Raft message types and command handling
 
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::core::{VectorRecord, CollectionId, VectorId};
+use crate::core::{CollectionId, VectorId, VectorRecord};
 
 /// Inter-node Raft messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,13 +20,10 @@ pub enum RaftMessage {
         last_log_index: u64,
         last_log_term: u64,
     },
-    
+
     /// Vote response
-    VoteResponse {
-        term: u64,
-        vote_granted: bool,
-    },
-    
+    VoteResponse { term: u64, vote_granted: bool },
+
     /// Append entries (heartbeat or log replication)
     AppendEntries {
         term: u64,
@@ -36,14 +33,14 @@ pub enum RaftMessage {
         entries: Vec<LogEntry>,
         leader_commit: u64,
     },
-    
+
     /// Append entries response
     AppendEntriesResponse {
         term: u64,
         success: bool,
         match_index: Option<u64>,
     },
-    
+
     /// Install snapshot message
     InstallSnapshot {
         term: u64,
@@ -53,12 +50,9 @@ pub enum RaftMessage {
         data: Vec<u8>,
         done: bool,
     },
-    
+
     /// Install snapshot response
-    InstallSnapshotResponse {
-        term: u64,
-        success: bool,
-    },
+    InstallSnapshotResponse { term: u64, success: bool },
 }
 
 /// Raft log entry
@@ -78,22 +72,18 @@ pub enum RaftCommand {
         collection_id: CollectionId,
         vector_record: VectorRecord,
     },
-    
+
     /// Delete a vector from a collection
     VectorDelete {
         collection_id: CollectionId,
         vector_id: VectorId,
     },
-    
+
     /// Create a new collection
-    CollectionCreate {
-        collection: CollectionDefinition,
-    },
-    
+    CollectionCreate { collection: CollectionDefinition },
+
     /// Delete a collection
-    CollectionDelete {
-        collection_id: CollectionId,
-    },
+    CollectionDelete { collection_id: CollectionId },
 }
 
 /// Collection definition for Raft commands
@@ -110,32 +100,17 @@ pub struct CollectionDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RaftResponse {
     /// Vector insertion result
-    VectorInserted {
-        id: VectorId,
-        success: bool,
-    },
-    
+    VectorInserted { id: VectorId, success: bool },
+
     /// Vector deletion result
-    VectorDeleted {
-        id: VectorId,
-        success: bool,
-    },
-    
+    VectorDeleted { id: VectorId, success: bool },
+
     /// Collection creation result
-    CollectionCreated {
-        id: CollectionId,
-        success: bool,
-    },
-    
+    CollectionCreated { id: CollectionId, success: bool },
+
     /// Collection deletion result
-    CollectionDeleted {
-        id: CollectionId,
-        success: bool,
-    },
-    
+    CollectionDeleted { id: CollectionId, success: bool },
+
     /// Error response
-    Error {
-        message: String,
-        code: String,
-    },
+    Error { message: String, code: String },
 }

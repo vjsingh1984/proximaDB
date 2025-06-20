@@ -15,7 +15,7 @@
  */
 
 //! High-performance vector computation engine for ProximaDB
-//! 
+//!
 //! This module provides optimized vector similarity search algorithms with support for:
 //! - CPU vectorization (AVX-512, AVX2, SSE)
 //! - GPU acceleration (CUDA, ROCm, Intel GPU)
@@ -143,19 +143,19 @@ pub struct AlgorithmConfig {
 pub enum IndexAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {
-        m: usize,              // Number of bi-directional links
+        m: usize,               // Number of bi-directional links
         ef_construction: usize, // Size of candidate set
         max_elements: usize,    // Maximum number of elements
     },
     /// Inverted File Index
     IVF {
-        nlist: usize,          // Number of clusters
-        nprobe: usize,         // Number of clusters to search
+        nlist: usize,  // Number of clusters
+        nprobe: usize, // Number of clusters to search
     },
     /// Locality Sensitive Hashing
     LSH {
-        num_tables: usize,     // Number of hash tables
-        hash_size: usize,      // Size of each hash
+        num_tables: usize, // Number of hash tables
+        hash_size: usize,  // Size of each hash
     },
     /// Product Quantization
     PQ {
@@ -171,7 +171,7 @@ pub enum IndexAlgorithm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchParams {
     /// Search accuracy vs speed trade-off
-    pub accuracy_target: f32,  // 0.0 = fastest, 1.0 = most accurate
+    pub accuracy_target: f32, // 0.0 = fastest, 1.0 = most accurate
     /// Maximum search time (milliseconds)
     pub max_search_time_ms: u32,
     /// Early termination threshold
@@ -312,8 +312,8 @@ impl Default for ComputeConfig {
                     numa_node: None,
                 },
                 cache_config: CacheConfig {
-                    l1_cache_size: 100_000,    // 100K vectors
-                    l2_cache_size: 1_000_000,  // 1M vectors compressed
+                    l1_cache_size: 100_000,   // 100K vectors
+                    l2_cache_size: 1_000_000, // 1M vectors compressed
                     replacement_policy: CachePolicy::ARC,
                 },
             },
@@ -416,10 +416,10 @@ fn detect_cpu_features() -> CpuFeatures {
         core_count: num_cpus::get_physical(),
         thread_count: num_cpus::get(),
         cache_sizes: CacheSizes {
-            l1_data: 32 * 1024,    // 32KB typical
+            l1_data: 32 * 1024, // 32KB typical
             l1_instruction: 32 * 1024,
-            l2: 256 * 1024,        // 256KB typical
-            l3: 8 * 1024 * 1024,   // 8MB typical
+            l2: 256 * 1024,      // 256KB typical
+            l3: 8 * 1024 * 1024, // 8MB typical
         },
     }
 }
@@ -432,7 +432,7 @@ fn detect_gpu_devices() -> Vec<GpuDevice> {
 fn detect_memory_info() -> MemoryInfo {
     // TODO: Implement memory info detection
     MemoryInfo {
-        total_memory: 16 * 1024 * 1024 * 1024, // 16GB placeholder
+        total_memory: 16 * 1024 * 1024 * 1024,    // 16GB placeholder
         available_memory: 8 * 1024 * 1024 * 1024, // 8GB placeholder
         page_size: 4096,
         huge_page_size: Some(2 * 1024 * 1024), // 2MB

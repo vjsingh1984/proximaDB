@@ -5,7 +5,7 @@
 
 //! Web dashboard for monitoring ProximaDB
 
-use std::sync::Arc;
+use anyhow::Result;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -14,10 +14,9 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
+use std::sync::Arc;
 
 use crate::monitoring::metrics::{MetricsCollector, SystemMetrics};
-
 
 /// Dashboard server state
 #[derive(Clone)]
@@ -28,7 +27,7 @@ pub struct DashboardState {
 /// Query parameters for metrics endpoint
 #[derive(Debug, Deserialize)]
 pub struct MetricsQuery {
-    since: Option<String>, // ISO 8601 timestamp
+    since: Option<String>,  // ISO 8601 timestamp
     format: Option<String>, // json, prometheus, html
 }
 
@@ -41,13 +40,13 @@ pub struct HealthResponse {
     pub uptime_seconds: f64,
 }
 
-
 /// Dashboard home page
 async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
     let metrics = state.metrics_collector.get_current_metrics().await;
     let summary = state.metrics_collector.get_metrics_summary().await;
-    
-    let html = format!(r#"
+
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -136,7 +135,13 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
 </body>
 </html>
     "#,
-        if summary.system_health > 0.8 { "health-good" } else if summary.system_health > 0.5 { "health-warning" } else { "health-critical" },
+        if summary.system_health > 0.8 {
+            "health-good"
+        } else if summary.system_health > 0.5 {
+            "health-warning"
+        } else {
+            "health-critical"
+        },
         summary.system_health * 100.0,
         summary.cpu_usage,
         summary.memory_usage_percent / 1024.0 / 1024.0,
@@ -157,14 +162,14 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
         metrics.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     );
-    
+
     Ok(Html(html))
 }
 
 /// Health check endpoint
 async fn health_check(State(state): State<DashboardState>) -> Json<HealthResponse> {
     let metrics = state.metrics_collector.get_current_metrics().await;
-    
+
     Json(HealthResponse {
         status: "healthy".to_string(),
         timestamp: chrono::Utc::now(),
@@ -176,21 +181,21 @@ async fn health_check(State(state): State<DashboardState>) -> Json<HealthRespons
 /// Metrics endpoint (Prometheus format)
 async fn metrics_endpoint(
     Query(params): Query<MetricsQuery>,
-    State(state): State<DashboardState>
+    State(state): State<DashboardState>,
 ) -> Result<String, StatusCode> {
     let format = params.format.unwrap_or_else(|| "prometheus".to_string());
-    
+
     match format.as_str() {
         "json" => {
             let metrics = state.metrics_collector.get_current_metrics().await;
-            serde_json::to_string_pretty(&metrics)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
             let metrics = state.metrics_collector.get_current_metrics().await;
-            use crate::monitoring::metrics::exporters::{PrometheusExporter, MetricsExporter};
+            use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
             let exporter = PrometheusExporter::new();
-            exporter.export_system_metrics(&metrics)
+            exporter
+                .export_system_metrics(&metrics)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -199,7 +204,7 @@ async fn metrics_endpoint(
 /// API metrics endpoint (JSON)
 async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
-    State(state): State<DashboardState>
+    State(state): State<DashboardState>,
 ) -> Json<SystemMetrics> {
     let _since = params.since; // TODO: Use this for historical data
     let metrics = state.metrics_collector.get_current_metrics().await;
@@ -207,7 +212,9 @@ async fn api_metrics_endpoint(
 }
 
 /// Alerts endpoint
-async fn alerts_endpoint(State(state): State<DashboardState>) -> Json<Vec<crate::monitoring::metrics::Alert>> {
+async fn alerts_endpoint(
+    State(state): State<DashboardState>,
+) -> Json<Vec<crate::monitoring::metrics::Alert>> {
     let alerts = state.metrics_collector.get_active_alerts().await;
     Json(alerts)
 }
@@ -215,33 +222,39 @@ async fn alerts_endpoint(State(state): State<DashboardState>) -> Json<Vec<crate:
 /// Alerts page
 async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
     let alerts = state.metrics_collector.get_active_alerts().await;
-    
+
     let alerts_html = if alerts.is_empty() {
         "<p>🎉 No active alerts</p>".to_string()
     } else {
-        alerts.iter().map(|alert| {
-            format!(r#"
+        alerts
+            .iter()
+            .map(|alert| {
+                format!(
+                    r#"
                 <div class="alert alert-{}">
                     <h3>{}</h3>
                     <p>{}</p>
                     <small>Current: {:.2} | Threshold: {:.2} | Time: {}</small>
                 </div>
             "#,
-                match alert.level {
-                    crate::monitoring::metrics::AlertLevel::Critical => "critical",
-                    crate::monitoring::metrics::AlertLevel::Warning => "warning",
-                    crate::monitoring::metrics::AlertLevel::Info => "info",
-                },
-                alert.metric_name,
-                alert.message,
-                alert.current_value,
-                alert.threshold_value,
-                alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
-            )
-        }).collect::<Vec<_>>().join("\n")
+                    match alert.level {
+                        crate::monitoring::metrics::AlertLevel::Critical => "critical",
+                        crate::monitoring::metrics::AlertLevel::Warning => "warning",
+                        crate::monitoring::metrics::AlertLevel::Info => "info",
+                    },
+                    alert.metric_name,
+                    alert.message,
+                    alert.current_value,
+                    alert.threshold_value,
+                    alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
-    
-    let html = format!(r#"
+
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -279,15 +292,17 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
     </div>
 </body>
 </html>
-    "#, alerts_html);
-    
+    "#,
+        alerts_html
+    );
+
     Ok(Html(html))
 }
 
 /// Create dashboard router for integration with UnifiedServer
 pub fn create_dashboard_router(metrics_collector: Arc<MetricsCollector>) -> Router {
     let state = DashboardState { metrics_collector };
-    
+
     Router::new()
         .route("/", get(dashboard_home))
         .route("/health", get(health_check))

@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! Comprehensive Write-Ahead Log System with Strategy Pattern
-//! 
+//!
 //! This module provides a high-performance WAL system supporting:
 //! - Multiple serialization strategies (Avro with schema evolution, Bincode for speed)
 //! - Memory + Disk organization by collection
@@ -13,34 +13,36 @@
 //! - Configurable compression and smart defaults
 //! - Batch operations for optimal performance
 
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use anyhow::Result;
 
-use crate::core::{VectorRecord, VectorId, CollectionId};
+use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
 
 // Sub-modules
+pub mod avro;
+pub mod background_manager;
+pub mod bincode;
+pub mod config;
 pub mod disk;
 pub mod factory;
-pub mod config;
 pub mod memtable;
-pub mod avro;
-pub mod bincode;
-pub mod background_manager;
 // Note: age_monitor removed - using size-based flush on write operations only
 
 // Re-exports
+pub use background_manager::{
+    BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
+};
+pub use config::WalStrategyType;
+pub use config::{CompressionConfig, PerformanceConfig, WalConfig};
 pub use disk::WalDiskManager;
 pub use factory::WalFactory;
-pub use config::WalStrategyType;
-pub use config::{WalConfig, CompressionConfig, PerformanceConfig};
-pub use background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus, BackgroundMaintenanceStats};
 pub use memtable::WalMemTable;
 
-/// WAL operation types with MVCC support
+/// WAL operation types with MVCC support and binary Avro payload
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalOperation {
     Insert {
@@ -64,6 +66,11 @@ pub enum WalOperation {
     DropCollection {
         collection_id: CollectionId,
     },
+    /// Binary Avro payload operation (zero-copy)
+    AvroPayload {
+        operation_type: String,
+        avro_data: Vec<u8>,
+    },
 }
 
 /// WAL entry with MVCC versioning
@@ -71,25 +78,25 @@ pub enum WalOperation {
 pub struct WalEntry {
     /// Vector ID (client-provided or system-generated)
     pub entry_id: String,
-    
+
     /// Collection this entry belongs to
     pub collection_id: CollectionId,
-    
+
     /// Operation being logged
     pub operation: WalOperation,
-    
+
     /// Entry timestamp
     pub timestamp: DateTime<Utc>,
-    
+
     /// Sequence number for ordering (per collection)
     pub sequence: u64,
-    
+
     /// Global sequence number across all collections
     pub global_sequence: u64,
-    
+
     /// Entry expires at (for TTL and soft deletes)
     pub expires_at: Option<DateTime<Utc>>,
-    
+
     /// Entry version for MVCC
     pub version: u64,
 }
@@ -124,19 +131,23 @@ pub struct FlushResult {
 pub trait WalStrategy: Send + Sync {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
-    
+
     /// Initialize the strategy with configuration
-    async fn initialize(&mut self, config: &WalConfig, filesystem: Arc<FilesystemFactory>) -> Result<()>;
-    
+    async fn initialize(
+        &mut self,
+        config: &WalConfig,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<()>;
+
     /// Serialize entries to bytes (strategy-specific format)
     async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>>;
-    
+
     /// Deserialize entries from bytes (strategy-specific format)
     async fn deserialize_entries(&self, data: &[u8]) -> Result<Vec<WalEntry>>;
-    
+
     /// Write single entry atomically (memory + disk)
     async fn write_entry(&self, entry: WalEntry) -> Result<u64>;
-    
+
     /// Write batch of entries atomically (default implementation using single writes)
     async fn write_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
         let mut sequences = Vec::with_capacity(entries.len());
@@ -145,31 +156,47 @@ pub trait WalStrategy: Send + Sync {
         }
         Ok(sequences)
     }
-    
+
     /// Read entries for a collection starting from sequence
-    async fn read_entries(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>>;
-    
+    async fn read_entries(
+        &self,
+        collection_id: &CollectionId,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>>;
+
     /// Search entries by vector ID (checks both memory and disk)
-    async fn search_by_vector_id(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>>;
-    
+    async fn search_by_vector_id(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>>;
+
     /// Get latest entry for a vector (for MVCC)
-    async fn get_latest_entry(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>>;
-    
+    async fn get_latest_entry(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>>;
+
+    /// Get all entries for a collection from memtable (for similarity search)
+    async fn get_collection_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>>;
+
     /// Flush memory entries to disk
     async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<FlushResult>;
-    
+
     /// Compact entries for a collection (MVCC cleanup)
     async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64>;
-    
+
     /// Drop all entries for a collection
     async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()>;
-    
+
     /// Get WAL statistics
     async fn get_stats(&self) -> Result<WalStats>;
-    
+
     /// Recover from disk on startup
     async fn recover(&self) -> Result<u64>;
-    
+
     /// Close and cleanup resources
     async fn close(&self) -> Result<()>;
 }
@@ -185,13 +212,21 @@ pub struct WalManager {
 impl WalManager {
     /// Create new WAL manager with specified strategy
     pub async fn new(strategy: Box<dyn WalStrategy>, config: WalConfig) -> Result<Self> {
-        tracing::debug!("🚀 Creating WalManager with strategy: {}", strategy.strategy_name());
-        tracing::debug!("📋 WAL Config: strategy_type={:?}, memtable_type={:?}", 
-                       config.strategy_type, config.memtable.memtable_type);
-        tracing::debug!("💾 Multi-disk config: {} directories, distribution={:?}",
-                       config.multi_disk.data_directories.len(), 
-                       config.multi_disk.distribution_strategy);
-        
+        tracing::debug!(
+            "🚀 Creating WalManager with strategy: {}",
+            strategy.strategy_name()
+        );
+        tracing::debug!(
+            "📋 WAL Config: strategy_type={:?}, memtable_type={:?}",
+            config.strategy_type,
+            config.memtable.memtable_type
+        );
+        tracing::debug!(
+            "💾 Multi-disk config: {} directories, distribution={:?}",
+            config.multi_disk.data_directories.len(),
+            config.multi_disk.distribution_strategy
+        );
+
         let stats = Arc::new(tokio::sync::RwLock::new(WalStats {
             total_entries: 0,
             memory_entries: 0,
@@ -204,7 +239,7 @@ impl WalManager {
             read_throughput_entries_per_sec: 0.0,
             compression_ratio: 1.0,
         }));
-        
+
         Ok(Self {
             strategy,
             config,
@@ -212,13 +247,16 @@ impl WalManager {
             atomicity_manager: None,
         })
     }
-    
+
     /// Set atomicity manager for transaction support
-    pub fn set_atomicity_manager(&mut self, atomicity_manager: Arc<crate::storage::atomicity::AtomicityManager>) {
+    pub fn set_atomicity_manager(
+        &mut self,
+        atomicity_manager: Arc<crate::storage::atomicity::AtomicityManager>,
+    ) {
         self.atomicity_manager = Some(atomicity_manager);
         tracing::info!("🔒 Atomicity manager attached to WAL manager");
     }
-    
+
     /// Execute atomic operation with transaction support
     pub async fn execute_atomic_operation(
         &self,
@@ -226,23 +264,29 @@ impl WalManager {
     ) -> Result<crate::storage::atomicity::OperationResult> {
         if let Some(atomicity_manager) = &self.atomicity_manager {
             // Begin transaction
-            let transaction_id = atomicity_manager.begin_transaction(None, None).await
+            let transaction_id = atomicity_manager
+                .begin_transaction(None, None)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
-            
+
             // Execute operation
-            match atomicity_manager.execute_operation(transaction_id, operation).await {
+            match atomicity_manager
+                .execute_operation(transaction_id, operation)
+                .await
+            {
                 Ok(result) => {
                     // Commit transaction
-                    atomicity_manager.commit_transaction(transaction_id).await
+                    atomicity_manager
+                        .commit_transaction(transaction_id)
+                        .await
                         .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
                     Ok(result)
-                },
+                }
                 Err(e) => {
                     // Rollback transaction
-                    let _ = atomicity_manager.rollback_transaction(
-                        transaction_id, 
-                        format!("Operation failed: {}", e)
-                    ).await;
+                    let _ = atomicity_manager
+                        .rollback_transaction(transaction_id, format!("Operation failed: {}", e))
+                        .await;
                     Err(e)
                 }
             }
@@ -250,7 +294,7 @@ impl WalManager {
             Err(anyhow::anyhow!("Atomicity manager not configured"))
         }
     }
-    
+
     /// Execute atomic operation within existing transaction
     pub async fn execute_in_transaction(
         &self,
@@ -258,45 +302,65 @@ impl WalManager {
         operation: Box<dyn crate::storage::atomicity::AtomicOperation>,
     ) -> Result<crate::storage::atomicity::OperationResult> {
         if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager.execute_operation(transaction_id, operation).await
+            atomicity_manager
+                .execute_operation(transaction_id, operation)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to execute operation in transaction: {}", e))
         } else {
             Err(anyhow::anyhow!("Atomicity manager not configured"))
         }
     }
-    
+
     /// Begin a new transaction
     pub async fn begin_transaction(&self) -> Result<crate::storage::atomicity::TransactionId> {
         if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager.begin_transaction(None, None).await
+            atomicity_manager
+                .begin_transaction(None, None)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))
         } else {
             Err(anyhow::anyhow!("Atomicity manager not configured"))
         }
     }
-    
+
     /// Commit a transaction
-    pub async fn commit_transaction(&self, transaction_id: crate::storage::atomicity::TransactionId) -> Result<()> {
+    pub async fn commit_transaction(
+        &self,
+        transaction_id: crate::storage::atomicity::TransactionId,
+    ) -> Result<()> {
         if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager.commit_transaction(transaction_id).await
+            atomicity_manager
+                .commit_transaction(transaction_id)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))
         } else {
             Err(anyhow::anyhow!("Atomicity manager not configured"))
         }
     }
-    
+
     /// Rollback a transaction
-    pub async fn rollback_transaction(&self, transaction_id: crate::storage::atomicity::TransactionId, reason: String) -> Result<()> {
+    pub async fn rollback_transaction(
+        &self,
+        transaction_id: crate::storage::atomicity::TransactionId,
+        reason: String,
+    ) -> Result<()> {
         if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager.rollback_transaction(transaction_id, reason).await
+            atomicity_manager
+                .rollback_transaction(transaction_id, reason)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to rollback transaction: {}", e))
         } else {
             Err(anyhow::anyhow!("Atomicity manager not configured"))
         }
     }
-    
+
     /// Insert single vector record
-    pub async fn insert(&self, collection_id: CollectionId, vector_id: VectorId, record: VectorRecord) -> Result<u64> {
+    pub async fn insert(
+        &self,
+        collection_id: CollectionId,
+        vector_id: VectorId,
+        record: VectorRecord,
+    ) -> Result<u64> {
         let entry = WalEntry {
             entry_id: vector_id.clone(),
             collection_id: collection_id.clone(),
@@ -306,43 +370,58 @@ impl WalManager {
                 expires_at: None,
             },
             timestamp: Utc::now(),
-            sequence: 0, // Will be set by strategy
+            sequence: 0,        // Will be set by strategy
             global_sequence: 0, // Will be set by strategy
             expires_at: None,
             version: 1,
         };
-        
+
         self.strategy.write_entry(entry).await
     }
-    
+
     /// Insert batch of vector records
-    pub async fn insert_batch(&self, collection_id: CollectionId, records: Vec<(VectorId, VectorRecord)>) -> Result<Vec<u64>> {
-        let entries: Vec<WalEntry> = records.into_iter().map(|(vector_id, record)| {
-            WalEntry {
-                entry_id: vector_id.clone(),
-                collection_id: collection_id.clone(),
-                operation: WalOperation::Insert {
-                    vector_id,
-                    record,
+    pub async fn insert_batch(
+        &self,
+        collection_id: CollectionId,
+        records: Vec<(VectorId, VectorRecord)>,
+    ) -> Result<Vec<u64>> {
+        let entries: Vec<WalEntry> = records
+            .into_iter()
+            .map(|(vector_id, record)| {
+                WalEntry {
+                    entry_id: vector_id.clone(),
+                    collection_id: collection_id.clone(),
+                    operation: WalOperation::Insert {
+                        vector_id,
+                        record,
+                        expires_at: None,
+                    },
+                    timestamp: Utc::now(),
+                    sequence: 0,        // Will be set by strategy
+                    global_sequence: 0, // Will be set by strategy
                     expires_at: None,
-                },
-                timestamp: Utc::now(),
-                sequence: 0, // Will be set by strategy
-                global_sequence: 0, // Will be set by strategy
-                expires_at: None,
-                version: 1,
-            }
-        }).collect();
-        
+                    version: 1,
+                }
+            })
+            .collect();
+
         self.strategy.write_batch(entries).await
     }
-    
+
     /// Update vector record
-    pub async fn update(&self, collection_id: CollectionId, vector_id: VectorId, record: VectorRecord) -> Result<u64> {
+    pub async fn update(
+        &self,
+        collection_id: CollectionId,
+        vector_id: VectorId,
+        record: VectorRecord,
+    ) -> Result<u64> {
         // Get current version for MVCC
-        let current = self.strategy.get_latest_entry(&collection_id, &vector_id).await?;
+        let current = self
+            .strategy
+            .get_latest_entry(&collection_id, &vector_id)
+            .await?;
         let next_version = current.map(|e| e.version + 1).unwrap_or(1);
-        
+
         let entry = WalEntry {
             entry_id: vector_id.clone(),
             collection_id: collection_id.clone(),
@@ -357,10 +436,10 @@ impl WalManager {
             expires_at: None,
             version: next_version,
         };
-        
+
         self.strategy.write_entry(entry).await
     }
-    
+
     /// Delete vector record (soft delete with TTL)
     pub async fn delete(&self, collection_id: CollectionId, vector_id: VectorId) -> Result<u64> {
         let entry = WalEntry {
@@ -376,12 +455,16 @@ impl WalManager {
             expires_at: Some(Utc::now() + chrono::Duration::days(30)),
             version: 1,
         };
-        
+
         self.strategy.write_entry(entry).await
     }
-    
+
     /// Create collection
-    pub async fn create_collection(&self, collection_id: CollectionId, config: serde_json::Value) -> Result<u64> {
+    pub async fn create_collection(
+        &self,
+        collection_id: CollectionId,
+        config: serde_json::Value,
+    ) -> Result<u64> {
         let entry = WalEntry {
             entry_id: collection_id.clone(),
             collection_id: collection_id.clone(),
@@ -395,10 +478,10 @@ impl WalManager {
             expires_at: None,
             version: 1,
         };
-        
+
         self.strategy.write_entry(entry).await
     }
-    
+
     /// Drop collection and all its data
     pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
         // Record the drop operation
@@ -414,49 +497,127 @@ impl WalManager {
             expires_at: None,
             version: 1,
         };
-        
+
         let _ = self.strategy.write_entry(entry).await?;
-        
+
         // Actually drop the collection data
         self.strategy.drop_collection(collection_id).await
     }
-    
+
     /// Search for vector entries (for queries that need to check WAL)
-    pub async fn search(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<Option<WalEntry>> {
-        self.strategy.search_by_vector_id(collection_id, vector_id).await
+    pub async fn search(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<Option<WalEntry>> {
+        self.strategy
+            .search_by_vector_id(collection_id, vector_id)
+            .await
     }
-    
+
     /// Read entries for recovery or replication
-    pub async fn read_entries(&self, collection_id: &CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>> {
-        self.strategy.read_entries(collection_id, from_sequence, limit).await
+    pub async fn read_entries(
+        &self,
+        collection_id: &CollectionId,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>> {
+        self.strategy
+            .read_entries(collection_id, from_sequence, limit)
+            .await
     }
-    
+
     /// Force flush to disk
     pub async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<FlushResult> {
         let result = self.strategy.flush(collection_id).await?;
-        
+
         // Update stats
         let mut stats = self.stats.write().await;
         stats.last_flush_time = Some(Utc::now());
-        
+
         Ok(result)
     }
-    
+
     /// Compact collection (clean up old MVCC versions)
     pub async fn compact(&self, collection_id: &CollectionId) -> Result<u64> {
         self.strategy.compact_collection(collection_id).await
     }
-    
+
+    /// Append binary Avro entry directly (zero-copy WAL operation)
+    /// 
+    /// RESILIENCE GUARANTEES:
+    /// - Treats vector data as opaque binary blobs (never parsed)
+    /// - Only extracts metadata fields (id, expires_at) for compaction
+    /// - Corrupted vector data CANNOT crash server or compaction
+    /// - Invalid payloads are logged and skipped during background processing
+    /// - WAL writes succeed regardless of vector content validity
+    pub async fn append_avro_entry(
+        &self,
+        operation_type: &str,
+        avro_payload: &[u8],
+    ) -> Result<u64> {
+        // Create WAL entry with raw Avro payload (NO VALIDATION)
+        // Vector content is stored as opaque bytes
+        let entry = WalEntry {
+            entry_id: format!("avro_{}_{}", operation_type, Utc::now().timestamp_nanos_opt().unwrap_or_default()),
+            collection_id: "avro_ops".to_string(), // Generic collection for Avro operations
+            operation: WalOperation::AvroPayload {
+                operation_type: operation_type.to_string(),
+                avro_data: avro_payload.to_vec(), // Raw bytes - never parsed
+            },
+            timestamp: Utc::now(),
+            sequence: 0,        // Will be set by strategy
+            global_sequence: 0, // Will be set by strategy
+            expires_at: None,   // Extracted during compaction if needed
+            version: 1,
+        };
+
+        // Write to WAL immediately - no validation, maximum throughput
+        self.strategy.write_entry(entry).await
+    }
+
+    /// Read binary Avro entries by operation type
+    pub async fn read_avro_entries(
+        &self,
+        operation_type: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let entries = self
+            .strategy
+            .read_entries(&"avro_ops".to_string(), 0, limit)
+            .await?;
+
+        let mut avro_payloads = Vec::new();
+        for entry in entries {
+            if let WalOperation::AvroPayload {
+                operation_type: op_type,
+                avro_data,
+            } = entry.operation
+            {
+                if op_type == operation_type {
+                    avro_payloads.push(avro_data);
+                }
+            }
+        }
+
+        Ok(avro_payloads)
+    }
+
+    /// Get all entries for a collection from memtable (for similarity search)
+    pub async fn get_collection_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>> {
+        self.strategy.get_collection_entries(collection_id).await
+    }
+
     /// Get WAL statistics
     pub async fn stats(&self) -> Result<WalStats> {
         self.strategy.get_stats().await
     }
-    
+
     /// Recover WAL from disk on startup
     pub async fn recover(&self) -> Result<u64> {
         self.strategy.recover().await
     }
-    
+
     /// Graceful shutdown
     pub async fn close(&self) -> Result<()> {
         self.strategy.close().await

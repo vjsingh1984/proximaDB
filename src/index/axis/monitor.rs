@@ -5,34 +5,34 @@
 
 //! Performance Monitor - Real-time monitoring and alerting for AXIS
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
-use anyhow::Result;
-use chrono::{DateTime, Utc};
 
+use super::{AlertThresholds, AxisConfig, MonitoringConfig};
 use crate::core::CollectionId;
-use super::{AxisConfig, AlertThresholds, MonitoringConfig};
 
 /// Performance monitor for AXIS with real-time alerting
 pub struct PerformanceMonitor {
     /// Configuration
     config: MonitoringConfig,
-    
+
     /// Metrics collector
     metrics_collector: Arc<MetricsCollector>,
-    
+
     /// Alert manager
     alert_manager: Arc<AlertManager>,
-    
+
     /// Performance tracker
     performance_tracker: Arc<PerformanceTracker>,
-    
+
     /// Health checker
     health_checker: Arc<HealthChecker>,
-    
+
     /// Event broadcaster
     event_broadcaster: broadcast::Sender<MonitoringEvent>,
 }
@@ -41,13 +41,13 @@ pub struct PerformanceMonitor {
 struct MetricsCollector {
     /// Current metrics per collection
     collection_metrics: Arc<RwLock<HashMap<CollectionId, CollectionMetrics>>>,
-    
+
     /// System-wide metrics
     system_metrics: Arc<RwLock<SystemMetrics>>,
-    
+
     /// Historical metrics
     historical_metrics: Arc<RwLock<Vec<HistoricalMetric>>>,
-    
+
     /// Metrics retention period
     retention_period: Duration,
 }
@@ -56,13 +56,13 @@ struct MetricsCollector {
 struct AlertManager {
     /// Alert thresholds
     thresholds: AlertThresholds,
-    
+
     /// Active alerts
     active_alerts: Arc<RwLock<HashMap<String, Alert>>>,
-    
+
     /// Alert history
     alert_history: Arc<RwLock<Vec<AlertHistory>>>,
-    
+
     /// Alert subscribers
     subscribers: Arc<RwLock<Vec<Box<dyn AlertSubscriber + Send + Sync>>>>,
 }
@@ -71,10 +71,10 @@ struct AlertManager {
 struct PerformanceTracker {
     /// Performance trends per collection
     trends: Arc<RwLock<HashMap<CollectionId, PerformanceTrend>>>,
-    
+
     /// Baseline performance metrics
     baselines: Arc<RwLock<HashMap<CollectionId, BaselineMetrics>>>,
-    
+
     /// Anomaly detector
     anomaly_detector: Arc<AnomalyDetector>,
 }
@@ -83,7 +83,7 @@ struct PerformanceTracker {
 struct HealthChecker {
     /// Component health status
     component_health: Arc<RwLock<HashMap<String, ComponentHealth>>>,
-    
+
     /// Health check interval
     check_interval: Duration,
 }
@@ -317,7 +317,7 @@ impl PerformanceMonitor {
     /// Create new performance monitor
     pub async fn new(config: AxisConfig) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
-        
+
         let monitor = Self {
             config: config.monitoring_config.clone(),
             metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(3600 * 24))),
@@ -326,13 +326,13 @@ impl PerformanceMonitor {
             health_checker: Arc::new(HealthChecker::new(Duration::from_secs(60))),
             event_broadcaster: event_tx,
         };
-        
+
         // Start background monitoring tasks
         monitor.start_monitoring_tasks().await?;
-        
+
         Ok(monitor)
     }
-    
+
     /// Record performance metrics for a collection
     pub async fn record_metrics(
         &self,
@@ -340,58 +340,63 @@ impl PerformanceMonitor {
         metrics: CollectionMetrics,
     ) -> Result<()> {
         // Update current metrics
-        self.metrics_collector.update_metrics(collection_id, metrics.clone()).await;
-        
+        self.metrics_collector
+            .update_metrics(collection_id, metrics.clone())
+            .await;
+
         // Check for alerts
-        self.alert_manager.check_thresholds(collection_id, &metrics).await;
-        
+        self.alert_manager
+            .check_thresholds(collection_id, &metrics)
+            .await;
+
         // Update performance trends
-        self.performance_tracker.update_trends(collection_id, &metrics).await;
-        
+        self.performance_tracker
+            .update_trends(collection_id, &metrics)
+            .await;
+
         // Broadcast event
-        let _ = self.event_broadcaster.send(MonitoringEvent::MetricsUpdated {
-            collection_id: collection_id.clone(),
-            metrics,
-        });
-        
+        let _ = self
+            .event_broadcaster
+            .send(MonitoringEvent::MetricsUpdated {
+                collection_id: collection_id.clone(),
+                metrics,
+            });
+
         Ok(())
     }
-    
+
     /// Get current metrics for a collection
     pub async fn get_metrics(&self, collection_id: &CollectionId) -> Option<CollectionMetrics> {
         self.metrics_collector.get_metrics(collection_id).await
     }
-    
+
     /// Get system-wide metrics
     pub async fn get_system_metrics(&self) -> SystemMetrics {
         self.metrics_collector.get_system_metrics().await
     }
-    
+
     /// Get active alerts
     pub async fn get_active_alerts(&self) -> Vec<Alert> {
         self.alert_manager.get_active_alerts().await
     }
-    
+
     /// Subscribe to monitoring events
     pub fn subscribe(&self) -> broadcast::Receiver<MonitoringEvent> {
         self.event_broadcaster.subscribe()
     }
-    
+
     /// Add alert subscriber
-    pub async fn add_alert_subscriber(
-        &self,
-        subscriber: Box<dyn AlertSubscriber + Send + Sync>,
-    ) {
+    pub async fn add_alert_subscriber(&self, subscriber: Box<dyn AlertSubscriber + Send + Sync>) {
         self.alert_manager.add_subscriber(subscriber).await;
     }
-    
+
     /// Start background monitoring tasks
     async fn start_monitoring_tasks(&self) -> Result<()> {
         let metrics_collector = self.metrics_collector.clone();
         let alert_manager = self.alert_manager.clone();
         let health_checker = self.health_checker.clone();
         let interval_seconds = self.config.metrics_interval_seconds;
-        
+
         // Metrics collection task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(interval_seconds));
@@ -402,7 +407,7 @@ impl PerformanceMonitor {
                 }
             }
         });
-        
+
         // Alert processing task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(30));
@@ -411,7 +416,7 @@ impl PerformanceMonitor {
                 alert_manager.process_alerts().await;
             }
         });
-        
+
         // Health check task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -422,7 +427,7 @@ impl PerformanceMonitor {
                 }
             }
         });
-        
+
         Ok(())
     }
 }
@@ -437,13 +442,13 @@ impl MetricsCollector {
             retention_period,
         }
     }
-    
+
     /// Update metrics for a collection
     async fn update_metrics(&self, collection_id: &CollectionId, metrics: CollectionMetrics) {
         let mut collection_metrics = self.collection_metrics.write().await;
         collection_metrics.insert(collection_id.clone(), metrics.clone());
         drop(collection_metrics);
-        
+
         // Add to historical metrics
         let mut historical = self.historical_metrics.write().await;
         historical.push(HistoricalMetric {
@@ -452,38 +457,39 @@ impl MetricsCollector {
             metric_type: MetricType::QueryLatency,
             value: metrics.query_latency_ms.average,
         });
-        
+
         // Clean up old metrics
         let cutoff = Utc::now() - chrono::Duration::from_std(self.retention_period).unwrap();
         historical.retain(|m| m.timestamp > cutoff);
     }
-    
+
     /// Get metrics for a collection
     async fn get_metrics(&self, collection_id: &CollectionId) -> Option<CollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
         collection_metrics.get(collection_id).cloned()
     }
-    
+
     /// Get system-wide metrics
     async fn get_system_metrics(&self) -> SystemMetrics {
         let system_metrics = self.system_metrics.read().await;
         system_metrics.clone()
     }
-    
+
     /// Collect system-wide metrics
     async fn collect_system_metrics(&self) -> Result<()> {
         let collection_metrics = self.collection_metrics.read().await;
-        
+
         let total_collections = collection_metrics.len() as u64;
-        let total_qps = collection_metrics.values()
+        let total_qps = collection_metrics
+            .values()
             .map(|m| m.throughput_qps)
             .sum::<f64>();
-        
+
         let mut system_metrics = self.system_metrics.write().await;
         system_metrics.total_collections = total_collections;
         system_metrics.total_queries_per_second = total_qps;
         system_metrics.last_updated = Utc::now();
-        
+
         Ok(())
     }
 }
@@ -498,15 +504,11 @@ impl AlertManager {
             subscribers: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Check thresholds and trigger alerts if needed
-    async fn check_thresholds(
-        &self,
-        collection_id: &CollectionId,
-        metrics: &CollectionMetrics,
-    ) {
+    async fn check_thresholds(&self, collection_id: &CollectionId, metrics: &CollectionMetrics) {
         let mut alerts_to_trigger = Vec::new();
-        
+
         // Check latency threshold
         if metrics.query_latency_ms.p99 > self.thresholds.max_query_latency_ms as f64 {
             alerts_to_trigger.push(Alert {
@@ -516,8 +518,7 @@ impl AlertManager {
                 collection_id: Some(collection_id.clone()),
                 message: format!(
                     "High query latency detected: {:.2}ms (threshold: {}ms)",
-                    metrics.query_latency_ms.p99,
-                    self.thresholds.max_query_latency_ms
+                    metrics.query_latency_ms.p99, self.thresholds.max_query_latency_ms
                 ),
                 triggered_at: Utc::now(),
                 metric_value: metrics.query_latency_ms.p99,
@@ -525,7 +526,7 @@ impl AlertManager {
                 resolved: false,
             });
         }
-        
+
         // Check throughput threshold
         if metrics.throughput_qps < self.thresholds.min_query_throughput {
             alerts_to_trigger.push(Alert {
@@ -535,8 +536,7 @@ impl AlertManager {
                 collection_id: Some(collection_id.clone()),
                 message: format!(
                     "Low query throughput detected: {:.2} QPS (threshold: {} QPS)",
-                    metrics.throughput_qps,
-                    self.thresholds.min_query_throughput
+                    metrics.throughput_qps, self.thresholds.min_query_throughput
                 ),
                 triggered_at: Utc::now(),
                 metric_value: metrics.throughput_qps,
@@ -544,7 +544,7 @@ impl AlertManager {
                 resolved: false,
             });
         }
-        
+
         // Check error rate threshold
         if metrics.error_rate > self.thresholds.max_error_rate {
             alerts_to_trigger.push(Alert {
@@ -563,22 +563,22 @@ impl AlertManager {
                 resolved: false,
             });
         }
-        
+
         // Trigger alerts
         for alert in alerts_to_trigger {
             self.trigger_alert(alert).await;
         }
     }
-    
+
     /// Trigger an alert
     async fn trigger_alert(&self, alert: Alert) {
         let alert_id = alert.alert_id.clone();
-        
+
         // Add to active alerts
         let mut active_alerts = self.active_alerts.write().await;
         active_alerts.insert(alert_id.clone(), alert.clone());
         drop(active_alerts);
-        
+
         // Notify subscribers
         let subscribers = self.subscribers.read().await;
         for subscriber in subscribers.iter() {
@@ -587,19 +587,19 @@ impl AlertManager {
             }
         }
     }
-    
+
     /// Get active alerts
     async fn get_active_alerts(&self) -> Vec<Alert> {
         let active_alerts = self.active_alerts.read().await;
         active_alerts.values().cloned().collect()
     }
-    
+
     /// Add alert subscriber
     async fn add_subscriber(&self, subscriber: Box<dyn AlertSubscriber + Send + Sync>) {
         let mut subscribers = self.subscribers.write().await;
         subscribers.push(subscriber);
     }
-    
+
     /// Process alerts (check for resolution, cleanup, etc.)
     async fn process_alerts(&self) {
         // TODO: Implement alert resolution logic
@@ -615,7 +615,7 @@ impl PerformanceTracker {
             anomaly_detector: Arc::new(AnomalyDetector::new()),
         }
     }
-    
+
     /// Update performance trends
     async fn update_trends(&self, _collection_id: &CollectionId, _metrics: &CollectionMetrics) {
         // TODO: Implement trend analysis
@@ -639,7 +639,7 @@ impl HealthChecker {
             check_interval,
         }
     }
-    
+
     /// Check system health
     async fn check_system_health(&self) -> Result<()> {
         // TODO: Implement health checks for system components

@@ -4,39 +4,39 @@
 // you may not use this file except in compliance with the License.
 
 //! VIPER ML-Guided Partitioning System
-//! 
+//!
 //! Dynamic partitioning using ML clustering models (K-means, HDBSCAN) that
 //! automatically adapts to changing data distributions. Each partition maps
 //! to a cluster for efficient query routing and storage optimization.
 
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
 
-use crate::core::{CollectionId, VectorRecord, VectorId};
 use super::types::*;
+use crate::core::{CollectionId, VectorId, VectorRecord};
 
 /// Filesystem-based partitioner with ML-guided organization
 pub struct FilesystemPartitioner {
     /// Root storage directory
     storage_root: PathBuf,
-    
+
     /// Partition metadata cache
     partitions: Arc<RwLock<HashMap<PartitionId, PartitionInfo>>>,
-    
+
     /// Collection partition models
     partition_models: Arc<RwLock<HashMap<CollectionId, PartitionModel>>>,
-    
+
     /// Directory metadata cache
     directory_cache: Arc<RwLock<DirectoryCache>>,
-    
+
     /// Partition statistics tracker
     stats_tracker: Arc<RwLock<PartitionMetadataTracker>>,
-    
+
     /// Reorganization scheduler
     reorg_scheduler: Arc<ReorganizationScheduler>,
 }
@@ -46,25 +46,25 @@ pub struct FilesystemPartitioner {
 pub struct PartitionInfo {
     /// Unique partition ID
     pub partition_id: PartitionId,
-    
+
     /// Collection this partition belongs to
     pub collection_id: CollectionId,
-    
+
     /// Cluster ID this partition maps to
     pub cluster_id: ClusterId,
-    
+
     /// Storage layout for this partition
     pub storage_layout: StorageLayout,
-    
+
     /// Partition directory path
     pub directory_path: PathBuf,
-    
+
     /// Vector count and statistics
     pub statistics: PartitionStatistics,
-    
+
     /// Centroid for fast routing decisions
     pub centroid: Vec<f32>,
-    
+
     /// Created and last modified timestamps
     pub created_at: DateTime<Utc>,
     pub last_modified: DateTime<Utc>,
@@ -79,14 +79,14 @@ pub enum StorageLayout {
         row_group_size: usize,
         compression: String,
     },
-    
+
     /// Sparse vectors stored as key-value pairs
     SparseKeyValue {
         kv_path: PathBuf,
         format: SparseFormat,
         compression: String,
     },
-    
+
     /// Hybrid storage for mixed density vectors
     Hybrid {
         dense_path: PathBuf,
@@ -100,10 +100,10 @@ pub enum StorageLayout {
 pub enum SparseFormat {
     /// Coordinate list format (dim_idx, value) pairs
     COO,
-    
+
     /// Compressed sparse row format
     CSR,
-    
+
     /// Custom key-value format optimized for vector search
     CustomKV,
 }
@@ -114,22 +114,22 @@ pub struct PartitionModel {
     /// Model identifier and version
     pub model_id: String,
     pub version: String,
-    
+
     /// Clustering algorithm used
     pub algorithm: ClusteringAlgorithm,
-    
+
     /// Number of clusters/partitions
     pub num_clusters: usize,
-    
+
     /// Cluster centroids for routing
     pub centroids: Vec<Vec<f32>>,
-    
+
     /// Model quality metrics
     pub quality_metrics: ModelQualityMetrics,
-    
+
     /// Training metadata
     pub training_info: ModelTrainingInfo,
-    
+
     /// Serialized model data (e.g., sklearn pickle, ONNX)
     pub model_data: Vec<u8>,
 }
@@ -143,20 +143,20 @@ pub enum ClusteringAlgorithm {
         max_iterations: usize,
         tolerance: f32,
     },
-    
+
     /// HDBSCAN density-based clustering
     HDBSCAN {
         min_cluster_size: usize,
         min_samples: usize,
         cluster_selection_epsilon: f32,
     },
-    
+
     /// Balanced K-means for equal-sized partitions
     BalancedKMeans {
         n_clusters: usize,
         balance_factor: f32,
     },
-    
+
     /// Custom neural clustering
     NeuralClustering {
         architecture: String,
@@ -169,16 +169,16 @@ pub enum ClusteringAlgorithm {
 pub struct ModelQualityMetrics {
     /// Silhouette score for cluster quality
     pub silhouette_score: f32,
-    
+
     /// Davies-Bouldin index (lower is better)
     pub davies_bouldin_index: f32,
-    
+
     /// Calinski-Harabasz index (higher is better)
     pub calinski_harabasz_index: f32,
-    
+
     /// Intra-cluster distances
     pub avg_intra_cluster_distance: f32,
-    
+
     /// Inter-cluster distances
     pub avg_inter_cluster_distance: f32,
 }
@@ -188,16 +188,16 @@ pub struct ModelQualityMetrics {
 pub struct ModelTrainingInfo {
     /// Number of vectors used for training
     pub training_samples: usize,
-    
+
     /// Training duration
     pub training_duration_ms: u64,
-    
+
     /// Training timestamp
     pub trained_at: DateTime<Utc>,
-    
+
     /// Next scheduled retraining
     pub next_training_due: DateTime<Utc>,
-    
+
     /// Data drift detection
     pub drift_metrics: DataDriftMetrics,
 }
@@ -207,13 +207,13 @@ pub struct ModelTrainingInfo {
 pub struct DataDriftMetrics {
     /// KL divergence from original distribution
     pub kl_divergence: f32,
-    
+
     /// Wasserstein distance
     pub wasserstein_distance: f32,
-    
+
     /// Feature-wise drift scores
     pub feature_drift: Vec<f32>,
-    
+
     /// Drift detection threshold exceeded
     pub drift_detected: bool,
 }
@@ -223,10 +223,10 @@ pub struct DataDriftMetrics {
 pub struct DirectoryCache {
     /// Collection to partition directory mapping
     collection_dirs: HashMap<CollectionId, PathBuf>,
-    
+
     /// Partition to file listing cache
     partition_files: HashMap<PartitionId, Vec<FileMetadata>>,
-    
+
     /// Last cache refresh time
     last_refresh: Option<DateTime<Utc>>,
 }
@@ -256,10 +256,10 @@ pub enum FileType {
 pub struct PartitionMetadataTracker {
     /// Per-partition access statistics
     access_stats: HashMap<PartitionId, AccessStatistics>,
-    
+
     /// Per-partition storage statistics
     storage_stats: HashMap<PartitionId, StorageStatistics>,
-    
+
     /// Global partition health metrics
     health_metrics: PartitionHealthMetrics,
 }
@@ -270,7 +270,7 @@ pub struct AccessStatistics {
     pub total_reads: u64,
     pub total_writes: u64,
     pub last_access: Option<DateTime<Utc>>,
-    pub access_frequency: f32, // Exponentially weighted average
+    pub access_frequency: f32,      // Exponentially weighted average
     pub hot_vectors: Vec<VectorId>, // Frequently accessed vectors
 }
 
@@ -307,10 +307,10 @@ pub struct PartitionHealthMetrics {
 pub struct ReorganizationScheduler {
     /// Reorganization tasks queue
     task_queue: Arc<RwLock<Vec<ReorganizationTask>>>,
-    
+
     /// Active reorganization operations
     active_operations: Arc<RwLock<HashMap<CollectionId, ReorganizationOperation>>>,
-    
+
     /// Reorganization policies
     policies: Arc<RwLock<ReorganizationPolicies>>,
 }
@@ -331,16 +331,16 @@ pub struct ReorganizationTask {
 pub enum ReorganizationTrigger {
     /// Scheduled periodic reorganization
     Scheduled { interval: std::time::Duration },
-    
+
     /// Data drift detected
     DriftDetected { drift_score: f32 },
-    
+
     /// Manual API trigger
     Manual { reason: String },
-    
+
     /// Performance degradation
     PerformanceDegradation { metric: String, threshold: f32 },
-    
+
     /// Storage optimization needed
     StorageOptimization { current_efficiency: f32 },
 }
@@ -407,16 +407,16 @@ pub struct ReorganizationResult {
 pub struct ReorganizationPolicies {
     /// Automatic reorganization enabled
     pub auto_reorg_enabled: bool,
-    
+
     /// Minimum interval between reorganizations
     pub min_reorg_interval: std::time::Duration,
-    
+
     /// Data drift threshold for triggering reorg
     pub drift_threshold: f32,
-    
+
     /// Minimum vectors for reorganization
     pub min_vectors_threshold: usize,
-    
+
     /// Performance impact limits
     pub max_concurrent_reorgs: usize,
     pub max_io_impact_percent: f32,
@@ -425,15 +425,16 @@ pub struct ReorganizationPolicies {
 impl FilesystemPartitioner {
     /// Create a new filesystem partitioner
     pub async fn new(storage_root: PathBuf) -> Result<Self> {
-        tokio::fs::create_dir_all(&storage_root).await
+        tokio::fs::create_dir_all(&storage_root)
+            .await
             .context("Failed to create storage root directory")?;
-        
+
         let reorg_scheduler = Arc::new(ReorganizationScheduler {
             task_queue: Arc::new(RwLock::new(Vec::new())),
             active_operations: Arc::new(RwLock::new(HashMap::new())),
             policies: Arc::new(RwLock::new(ReorganizationPolicies::default())),
         });
-        
+
         Ok(Self {
             storage_root,
             partitions: Arc::new(RwLock::new(HashMap::new())),
@@ -443,7 +444,7 @@ impl FilesystemPartitioner {
             reorg_scheduler,
         })
     }
-    
+
     /// Create initial partitions for a collection
     pub async fn create_collection_partitions(
         &self,
@@ -453,40 +454,46 @@ impl FilesystemPartitioner {
     ) -> Result<Vec<PartitionInfo>> {
         let collection_dir = self.storage_root.join(&collection_id);
         tokio::fs::create_dir_all(&collection_dir).await?;
-        
+
         // Train initial partition model if vectors provided
         let (model, cluster_assignments) = if let Some(vectors) = initial_vectors {
-            self.train_partition_model(&collection_id, vectors, &config).await?
+            self.train_partition_model(&collection_id, vectors, &config)
+                .await?
         } else {
             // Create default single partition for empty collection
             let model = self.create_default_model(&collection_id, &config);
-            (model, vec![0; initial_vectors.map(|v| v.len()).unwrap_or(0)])
+            (
+                model,
+                vec![0; initial_vectors.map(|v| v.len()).unwrap_or(0)],
+            )
         };
-        
+
         // Save partition model
         self.save_partition_model(&collection_id, &model).await?;
-        
+
         // Create partition directories and metadata
-        let partitions = self.create_partition_directories(
-            &collection_id,
-            &model,
-            initial_vectors,
-            &cluster_assignments,
-            &config,
-        ).await?;
-        
+        let partitions = self
+            .create_partition_directories(
+                &collection_id,
+                &model,
+                initial_vectors,
+                &cluster_assignments,
+                &config,
+            )
+            .await?;
+
         // Update caches
         let mut partition_cache = self.partitions.write().await;
         for partition in &partitions {
             partition_cache.insert(partition.partition_id.clone(), partition.clone());
         }
-        
+
         let mut model_cache = self.partition_models.write().await;
         model_cache.insert(collection_id, model);
-        
+
         Ok(partitions)
     }
-    
+
     /// Route a vector to appropriate partition using ML model
     pub async fn route_vector(
         &self,
@@ -494,13 +501,14 @@ impl FilesystemPartitioner {
         vector: &[f32],
     ) -> Result<PartitionId> {
         let models = self.partition_models.read().await;
-        let model = models.get(collection_id)
+        let model = models
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No partition model for collection"))?;
-        
+
         // Find nearest centroid
         let mut best_cluster = 0;
         let mut best_distance = f32::INFINITY;
-        
+
         for (idx, centroid) in model.centroids.iter().enumerate() {
             let distance = self.calculate_distance(vector, centroid);
             if distance < best_distance {
@@ -508,10 +516,13 @@ impl FilesystemPartitioner {
                 best_cluster = idx;
             }
         }
-        
-        Ok(format!("{}/partitions/cluster_{:03}", collection_id, best_cluster))
+
+        Ok(format!(
+            "{}/partitions/cluster_{:03}",
+            collection_id, best_cluster
+        ))
     }
-    
+
     /// Get multiple partitions for approximate search
     pub async fn get_search_partitions(
         &self,
@@ -520,32 +531,35 @@ impl FilesystemPartitioner {
         top_k_partitions: usize,
     ) -> Result<Vec<PartitionInfo>> {
         let models = self.partition_models.read().await;
-        let model = models.get(collection_id)
+        let model = models
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No partition model for collection"))?;
-        
+
         // Calculate distances to all centroids
-        let mut centroid_distances: Vec<(usize, f32)> = model.centroids
+        let mut centroid_distances: Vec<(usize, f32)> = model
+            .centroids
             .iter()
             .enumerate()
             .map(|(idx, centroid)| (idx, self.calculate_distance(query_vector, centroid)))
             .collect();
-        
+
         // Sort by distance and take top-k
         centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        
+
         let partitions = self.partitions.read().await;
         let selected_partitions: Vec<PartitionInfo> = centroid_distances
             .iter()
             .take(top_k_partitions)
             .filter_map(|(cluster_idx, _)| {
-                let partition_id = format!("{}/partitions/cluster_{:03}", collection_id, cluster_idx);
+                let partition_id =
+                    format!("{}/partitions/cluster_{:03}", collection_id, cluster_idx);
                 partitions.get(&partition_id).cloned()
             })
             .collect();
-        
+
         Ok(selected_partitions)
     }
-    
+
     /// Determine optimal storage layout based on vector density
     pub fn determine_storage_layout(
         &self,
@@ -559,17 +573,18 @@ impl FilesystemPartitioner {
                 compression: "zstd".to_string(),
             };
         }
-        
+
         // Calculate average density
-        let total_density: f32 = vectors.iter()
+        let total_density: f32 = vectors
+            .iter()
             .map(|v| {
                 let non_zero = v.vector.iter().filter(|&&x| x != 0.0).count();
                 non_zero as f32 / v.vector.len() as f32
             })
             .sum();
-        
+
         let avg_density = total_density / vectors.len() as f32;
-        
+
         match config.storage_strategy {
             StorageStrategy::Auto => {
                 if avg_density < config.sparsity_threshold {
@@ -586,30 +601,24 @@ impl FilesystemPartitioner {
                     }
                 }
             }
-            StorageStrategy::ForceDense => {
-                StorageLayout::DenseParquet {
-                    file_path: PathBuf::from("dense_vectors.parquet"),
-                    row_group_size: config.row_group_size,
-                    compression: config.compression.clone(),
-                }
-            }
-            StorageStrategy::ForceSparse => {
-                StorageLayout::SparseKeyValue {
-                    kv_path: PathBuf::from("sparse_vectors.kv"),
-                    format: config.sparse_format.clone(),
-                    compression: config.compression.clone(),
-                }
-            }
-            StorageStrategy::Hybrid => {
-                StorageLayout::Hybrid {
-                    dense_path: PathBuf::from("dense_vectors.parquet"),
-                    sparse_path: PathBuf::from("sparse_vectors.kv"),
-                    density_threshold: config.sparsity_threshold,
-                }
-            }
+            StorageStrategy::ForceDense => StorageLayout::DenseParquet {
+                file_path: PathBuf::from("dense_vectors.parquet"),
+                row_group_size: config.row_group_size,
+                compression: config.compression.clone(),
+            },
+            StorageStrategy::ForceSparse => StorageLayout::SparseKeyValue {
+                kv_path: PathBuf::from("sparse_vectors.kv"),
+                format: config.sparse_format.clone(),
+                compression: config.compression.clone(),
+            },
+            StorageStrategy::Hybrid => StorageLayout::Hybrid {
+                dense_path: PathBuf::from("dense_vectors.parquet"),
+                sparse_path: PathBuf::from("sparse_vectors.kv"),
+                density_threshold: config.sparsity_threshold,
+            },
         }
     }
-    
+
     /// Schedule a reorganization task
     pub async fn schedule_reorganization(
         &self,
@@ -625,19 +634,16 @@ impl FilesystemPartitioner {
             estimated_duration: std::time::Duration::from_secs(300), // 5 minutes estimate
             created_at: Utc::now(),
         };
-        
+
         let mut task_queue = self.reorg_scheduler.task_queue.write().await;
         task_queue.push(task);
         task_queue.sort_by(|a, b| b.priority.cmp(&a.priority));
-        
+
         Ok(())
     }
-    
+
     /// Check if reorganization is needed based on drift
-    pub async fn check_reorganization_needed(
-        &self,
-        collection_id: &CollectionId,
-    ) -> Result<bool> {
+    pub async fn check_reorganization_needed(&self, collection_id: &CollectionId) -> Result<bool> {
         let models = self.partition_models.read().await;
         if let Some(model) = models.get(collection_id) {
             let drift = &model.training_info.drift_metrics;
@@ -645,16 +651,16 @@ impl FilesystemPartitioner {
                 return Ok(true);
             }
         }
-        
+
         // Check other conditions like partition imbalance, access patterns, etc.
         let stats = self.stats_tracker.read().await;
         if stats.health_metrics.imbalanced_partitions > 0 {
             return Ok(true);
         }
-        
+
         Ok(false)
     }
-    
+
     /// Train partition model using clustering algorithm
     async fn train_partition_model(
         &self,
@@ -664,12 +670,12 @@ impl FilesystemPartitioner {
     ) -> Result<(PartitionModel, Vec<usize>)> {
         // In a real implementation, this would call out to Python/scikit-learn
         // or use a Rust ML library for clustering
-        
+
         // Placeholder implementation
         let num_clusters = config.num_partitions;
         let centroids = self.compute_kmeans_centroids(vectors, num_clusters);
         let assignments = self.assign_vectors_to_clusters(vectors, &centroids);
-        
+
         let model = PartitionModel {
             model_id: uuid::Uuid::new_v4().to_string(),
             version: "1.0".to_string(),
@@ -697,26 +703,28 @@ impl FilesystemPartitioner {
             },
             model_data: Vec::new(), // Would contain serialized model
         };
-        
+
         Ok((model, assignments))
     }
-    
+
     /// Simple k-means implementation (placeholder)
     fn compute_kmeans_centroids(&self, vectors: &[VectorRecord], k: usize) -> Vec<Vec<f32>> {
         // Simplified: just take first k vectors as initial centroids
-        vectors.iter()
-            .take(k)
-            .map(|v| v.vector.clone())
-            .collect()
+        vectors.iter().take(k).map(|v| v.vector.clone()).collect()
     }
-    
+
     /// Assign vectors to nearest clusters
-    fn assign_vectors_to_clusters(&self, vectors: &[VectorRecord], centroids: &[Vec<f32>]) -> Vec<usize> {
-        vectors.iter()
+    fn assign_vectors_to_clusters(
+        &self,
+        vectors: &[VectorRecord],
+        centroids: &[Vec<f32>],
+    ) -> Vec<usize> {
+        vectors
+            .iter()
             .map(|v| {
                 let mut best_cluster = 0;
                 let mut best_distance = f32::INFINITY;
-                
+
                 for (idx, centroid) in centroids.iter().enumerate() {
                     let distance = self.calculate_distance(&v.vector, centroid);
                     if distance < best_distance {
@@ -724,12 +732,12 @@ impl FilesystemPartitioner {
                         best_cluster = idx;
                     }
                 }
-                
+
                 best_cluster
             })
             .collect()
     }
-    
+
     /// Calculate Euclidean distance between vectors
     fn calculate_distance(&self, v1: &[f32], v2: &[f32]) -> f32 {
         v1.iter()
@@ -741,9 +749,13 @@ impl FilesystemPartitioner {
             .sum::<f32>()
             .sqrt()
     }
-    
+
     /// Create default model for empty collection
-    fn create_default_model(&self, _collection_id: &CollectionId, config: &PartitionConfig) -> PartitionModel {
+    fn create_default_model(
+        &self,
+        _collection_id: &CollectionId,
+        config: &PartitionConfig,
+    ) -> PartitionModel {
         PartitionModel {
             model_id: uuid::Uuid::new_v4().to_string(),
             version: "1.0".to_string(),
@@ -761,7 +773,7 @@ impl FilesystemPartitioner {
             model_data: Vec::new(),
         }
     }
-    
+
     /// Save partition model to disk
     async fn save_partition_model(
         &self,
@@ -770,14 +782,14 @@ impl FilesystemPartitioner {
     ) -> Result<()> {
         let model_dir = self.storage_root.join(collection_id).join("model");
         tokio::fs::create_dir_all(&model_dir).await?;
-        
+
         let model_path = model_dir.join("partition_model.bin");
         // In real implementation, serialize and save model
         tokio::fs::write(model_path, &model.model_data).await?;
-        
+
         Ok(())
     }
-    
+
     /// Create partition directories and initial files
     async fn create_partition_directories(
         &self,
@@ -788,12 +800,12 @@ impl FilesystemPartitioner {
         config: &PartitionConfig,
     ) -> Result<Vec<PartitionInfo>> {
         let mut partitions = Vec::new();
-        
+
         for cluster_idx in 0..model.num_clusters {
             let partition_id = format!("{}/partitions/cluster_{:03}", collection_id, cluster_idx);
             let partition_dir = self.storage_root.join(&partition_id);
             tokio::fs::create_dir_all(&partition_dir).await?;
-            
+
             // Get vectors for this cluster
             let cluster_vectors: Vec<&VectorRecord> = if let Some(vecs) = vectors {
                 vecs.iter()
@@ -809,13 +821,13 @@ impl FilesystemPartitioner {
             } else {
                 Vec::new()
             };
-            
+
             // Determine storage layout
             let storage_layout = self.determine_storage_layout(
                 &cluster_vectors.into_iter().cloned().collect::<Vec<_>>(),
                 config,
             );
-            
+
             let partition_info = PartitionInfo {
                 partition_id: partition_id.clone(),
                 collection_id: collection_id.clone(),
@@ -834,13 +846,13 @@ impl FilesystemPartitioner {
                 created_at: Utc::now(),
                 last_modified: Utc::now(),
             };
-            
+
             partitions.push(partition_info);
         }
-        
+
         Ok(partitions)
     }
-    
+
     /// Determine reorganization priority based on trigger
     fn determine_reorg_priority(&self, trigger: &ReorganizationTrigger) -> ReorganizationPriority {
         match trigger {

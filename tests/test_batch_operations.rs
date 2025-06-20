@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-use proximadb::core::{Config, StorageConfig, LsmConfig, ApiConfig, ServerConfig, ConsensusConfig, MonitoringConfig};
+use proximadb::core::{
+    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+};
 use proximadb::ProximaDB;
-use tempfile::TempDir;
 use serde_json::json;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_batch_operations_api() {
@@ -66,19 +68,19 @@ async fn test_batch_operations_api() {
 
     // Create ProximaDB instance
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     let client = reqwest::Client::new();
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
-    
+
     println!("Testing batch operations against: {}", base_url);
-    
+
     // Test 1: Create a collection first
     let create_request = json!({
         "name": "batch_test_collection",
@@ -86,7 +88,7 @@ async fn test_batch_operations_api() {
         "distance_metric": "cosine",
         "indexing_algorithm": "hnsw"
     });
-    
+
     let response = client
         .post(&format!("{}/collections", base_url))
         .json(&create_request)
@@ -94,10 +96,10 @@ async fn test_batch_operations_api() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let collection_response: serde_json::Value = response.json().await.unwrap();
     let collection_id = collection_response["id"].as_str().unwrap();
-    
+
     // Test 2: Batch insert multiple vectors
     let batch_insert_request = json!({
         "vectors": [
@@ -131,14 +133,17 @@ async fn test_batch_operations_api() {
             }
         ]
     });
-    
+
     let response = client
-        .post(&format!("{}/collections/{}/vectors/batch", base_url, collection_id))
+        .post(&format!(
+            "{}/collections/{}/vectors/batch",
+            base_url, collection_id
+        ))
         .json(&batch_insert_request)
         .send()
         .await
         .unwrap();
-    
+
     let status = response.status();
     println!("Batch insert status: {}", status);
     if !status.is_success() {
@@ -147,11 +152,17 @@ async fn test_batch_operations_api() {
         panic!("Expected status 200, got {}", status);
     }
     assert_eq!(status, 200);
-    
+
     let batch_insert_response: serde_json::Value = response.json().await.unwrap();
     assert_eq!(batch_insert_response["total_count"], 4);
-    assert_eq!(batch_insert_response["inserted_ids"].as_array().unwrap().len(), 4);
-    
+    assert_eq!(
+        batch_insert_response["inserted_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+
     // Test 3: Batch search across multiple queries
     let batch_search_request = json!({
         "queries": [
@@ -170,14 +181,14 @@ async fn test_batch_operations_api() {
             }
         ]
     });
-    
+
     let response = client
         .post(&format!("{}/batch/search", base_url))
         .json(&batch_search_request)
         .send()
         .await
         .unwrap();
-    
+
     let status = response.status();
     println!("Batch search status: {}", status);
     if !status.is_success() {
@@ -186,24 +197,27 @@ async fn test_batch_operations_api() {
         panic!("Expected status 200, got {}", status);
     }
     assert_eq!(status, 200);
-    
+
     let batch_search_response: serde_json::Value = response.json().await.unwrap();
     assert_eq!(batch_search_response["total_queries"], 2);
-    
+
     let results = batch_search_response["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
-    
+
     // First query should return 2 results
     let first_query_results = results[0].as_array().unwrap();
     assert!(first_query_results.len() <= 2); // May be less due to HNSW behavior
-    
+
     // Second query should return results (may be filtered)
     let second_query_results = results[1].as_array().unwrap();
     // Note: Filtered search may not return results due to HNSW algorithm behavior
-    println!("Second query returned {} results", second_query_results.len());
-    
+    println!(
+        "Second query returned {} results",
+        second_query_results.len()
+    );
+
     println!("Batch operations test completed successfully!");
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }

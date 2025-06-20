@@ -4,10 +4,10 @@
 // you may not use this file except in compliance with the License.
 
 //! Collection Strategy System
-//! 
+//!
 //! Provides collection-specific flush and compaction strategies based on
 //! the combination of indexing algorithm, storage engine, and search configuration.
-//! 
+//!
 //! ## Strategy Combinations:
 //! - **Standard Strategy**: HNSW + LSM + Standard Search
 //! - **High-Performance Strategy**: IVF + LSM + Optimized Search
@@ -16,52 +16,79 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::core::{VectorRecord, VectorId, CollectionId};
+use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::{CollectionMetadata, WalEntry};
 
+pub mod custom;
 pub mod standard;
 pub mod viper;
-pub mod custom;
 
 /// Collection flush strategy trait
 #[async_trait]
 pub trait CollectionStrategy: Send + Sync {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
-    
+
     /// Get strategy configuration
     fn get_config(&self) -> CollectionStrategyConfig;
-    
+
     /// Initialize strategy for a collection
-    async fn initialize(&mut self, collection_id: CollectionId, metadata: &CollectionMetadata) -> Result<()>;
-    
+    async fn initialize(
+        &mut self,
+        collection_id: CollectionId,
+        metadata: &CollectionMetadata,
+    ) -> Result<()>;
+
     /// Flush WAL entries to collection-specific storage
-    async fn flush_entries(&self, collection_id: &CollectionId, entries: Vec<WalEntry>) -> Result<FlushResult>;
-    
+    async fn flush_entries(
+        &self,
+        collection_id: &CollectionId,
+        entries: Vec<WalEntry>,
+    ) -> Result<FlushResult>;
+
     /// Compact collection data using strategy-specific algorithm
     async fn compact_collection(&self, collection_id: &CollectionId) -> Result<CompactionResult>;
-    
+
     /// Search vectors using strategy-specific search engine
-    async fn search_vectors(&self, collection_id: &CollectionId, query: Vec<f32>, k: usize, filter: Option<SearchFilter>) -> Result<Vec<SearchResult>>;
-    
+    async fn search_vectors(
+        &self,
+        collection_id: &CollectionId,
+        query: Vec<f32>,
+        k: usize,
+        filter: Option<SearchFilter>,
+    ) -> Result<Vec<SearchResult>>;
+
     /// Add vector to strategy-specific index
-    async fn add_vector(&self, collection_id: &CollectionId, vector_record: &VectorRecord) -> Result<()>;
-    
+    async fn add_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_record: &VectorRecord,
+    ) -> Result<()>;
+
     /// Update vector in strategy-specific index
-    async fn update_vector(&self, collection_id: &CollectionId, vector_record: &VectorRecord) -> Result<()>;
-    
+    async fn update_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_record: &VectorRecord,
+    ) -> Result<()>;
+
     /// Remove vector from strategy-specific index
-    async fn remove_vector(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<bool>;
-    
+    async fn remove_vector(
+        &self,
+        collection_id: &CollectionId,
+        vector_id: &VectorId,
+    ) -> Result<bool>;
+
     /// Get strategy-specific statistics
     async fn get_stats(&self, collection_id: &CollectionId) -> Result<StrategyStats>;
-    
+
     /// Optimize collection using strategy-specific algorithm
-    async fn optimize_collection(&self, collection_id: &CollectionId) -> Result<OptimizationResult>;
+    async fn optimize_collection(&self, collection_id: &CollectionId)
+        -> Result<OptimizationResult>;
 }
 
 /// Collection strategy configuration
@@ -69,16 +96,16 @@ pub trait CollectionStrategy: Send + Sync {
 pub struct CollectionStrategyConfig {
     /// Strategy type
     pub strategy_type: StrategyType,
-    
+
     /// Indexing algorithm configuration
     pub indexing_config: IndexingConfig,
-    
+
     /// Storage engine configuration
     pub storage_config: StorageConfig,
-    
+
     /// Search engine configuration
     pub search_config: SearchConfig,
-    
+
     /// Performance tuning parameters
     pub performance_config: PerformanceConfig,
 }
@@ -112,27 +139,24 @@ pub struct IndexingConfig {
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {
-        m: usize,           // Number of connections
+        m: usize,               // Number of connections
         ef_construction: usize, // Size of dynamic candidate list
-        ef_search: usize,   // Size of search candidate list
+        ef_search: usize,       // Size of search candidate list
     },
     /// Inverted File Index
     IVF {
-        nlist: usize,       // Number of clusters
-        nprobe: usize,      // Number of clusters to search
+        nlist: usize,  // Number of clusters
+        nprobe: usize, // Number of clusters to search
     },
     /// Product Quantization
     PQ {
-        m: usize,           // Number of subquantizers
-        nbits: usize,       // Number of bits per subquantizer
+        m: usize,     // Number of subquantizers
+        nbits: usize, // Number of bits per subquantizer
     },
     /// Flat (brute force) search
     Flat,
     /// Approximate Random Projection Trees
-    AnnoyTrees {
-        num_trees: usize,
-        search_k: usize,
-    },
+    AnnoyTrees { num_trees: usize, search_k: usize },
 }
 
 /// Storage engine configuration
@@ -359,7 +383,8 @@ pub struct StrategyRegistry {
     /// Registered strategies by collection ID
     strategies: HashMap<CollectionId, Arc<dyn CollectionStrategy>>,
     /// Default strategy factory
-    default_strategy_factory: Box<dyn Fn(&CollectionMetadata) -> Result<Arc<dyn CollectionStrategy>> + Send + Sync>,
+    default_strategy_factory:
+        Box<dyn Fn(&CollectionMetadata) -> Result<Arc<dyn CollectionStrategy>> + Send + Sync>,
 }
 
 impl StrategyRegistry {
@@ -373,33 +398,48 @@ impl StrategyRegistry {
             }),
         }
     }
-    
+
     /// Register strategy for collection
-    pub fn register_strategy(&mut self, collection_id: CollectionId, strategy: Arc<dyn CollectionStrategy>) {
+    pub fn register_strategy(
+        &mut self,
+        collection_id: CollectionId,
+        strategy: Arc<dyn CollectionStrategy>,
+    ) {
         self.strategies.insert(collection_id, strategy);
     }
-    
+
     /// Get strategy for collection
-    pub fn get_strategy(&self, collection_id: &CollectionId) -> Option<Arc<dyn CollectionStrategy>> {
+    pub fn get_strategy(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Option<Arc<dyn CollectionStrategy>> {
         self.strategies.get(collection_id).cloned()
     }
-    
+
     /// Get or create strategy for collection
-    pub fn get_or_create_strategy(&mut self, collection_id: &CollectionId, metadata: &CollectionMetadata) -> Result<Arc<dyn CollectionStrategy>> {
+    pub fn get_or_create_strategy(
+        &mut self,
+        collection_id: &CollectionId,
+        metadata: &CollectionMetadata,
+    ) -> Result<Arc<dyn CollectionStrategy>> {
         if let Some(strategy) = self.strategies.get(collection_id) {
             Ok(strategy.clone())
         } else {
             let strategy = (self.default_strategy_factory)(metadata)?;
-            self.strategies.insert(collection_id.clone(), strategy.clone());
+            self.strategies
+                .insert(collection_id.clone(), strategy.clone());
             Ok(strategy)
         }
     }
-    
+
     /// Remove strategy for collection
-    pub fn remove_strategy(&mut self, collection_id: &CollectionId) -> Option<Arc<dyn CollectionStrategy>> {
+    pub fn remove_strategy(
+        &mut self,
+        collection_id: &CollectionId,
+    ) -> Option<Arc<dyn CollectionStrategy>> {
         self.strategies.remove(collection_id)
     }
-    
+
     /// List all registered collections
     pub fn list_collections(&self) -> Vec<CollectionId> {
         self.strategies.keys().cloned().collect()

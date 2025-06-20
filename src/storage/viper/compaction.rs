@@ -4,9 +4,9 @@
 // you may not use this file except in compliance with the License.
 
 //! VIPER Compaction Engine
-//! 
+//!
 //! Intelligent background compaction for VIPER storage with ML-guided optimizations:
-//! 
+//!
 //! ## Key Features
 //! - **Small Parquet file merging**: Combine small files for better I/O efficiency
 //! - **ML-guided reorganization**: Use trained models to optimize data layout
@@ -14,38 +14,38 @@
 //! - **Compression optimization**: Re-compress with better algorithms during compaction
 //! - **Cluster quality improvement**: Recluster data based on access patterns
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 
-use crate::core::CollectionId;
 use super::types::*;
 use super::ViperConfig;
+use crate::core::CollectionId;
 use crate::storage::wal::config::CompressionAlgorithm;
 
 /// VIPER Compaction Engine with ML-guided optimization
 pub struct ViperCompactionEngine {
     /// Configuration
     config: ViperConfig,
-    
+
     /// Compaction task queue
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
-    
+
     /// Active compaction operations
     active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
-    
+
     /// Compaction statistics
     stats: Arc<RwLock<CompactionStats>>,
-    
+
     /// ML model for compaction optimization
     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
-    
+
     /// Background worker handles
     worker_handles: Vec<tokio::task::JoinHandle<()>>,
-    
+
     /// Shutdown signal
     shutdown_sender: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 }
@@ -55,28 +55,28 @@ pub struct ViperCompactionEngine {
 pub struct CompactionTask {
     /// Task ID for tracking
     pub task_id: String,
-    
+
     /// Collection to compact
     pub collection_id: CollectionId,
-    
+
     /// Compaction type
     pub compaction_type: CompactionType,
-    
+
     /// Priority level
     pub priority: CompactionPriority,
-    
+
     /// Input partitions/files to compact
     pub input_partitions: Vec<PartitionId>,
-    
+
     /// Expected output partitions
     pub expected_outputs: usize,
-    
+
     /// Optimization hints from ML model
     pub optimization_hints: Option<CompactionOptimizationHints>,
-    
+
     /// Task creation time
     pub created_at: DateTime<Utc>,
-    
+
     /// Estimated duration
     pub estimated_duration: Duration,
 }
@@ -89,25 +89,25 @@ pub enum CompactionType {
         target_file_size_mb: usize,
         max_files_per_merge: usize,
     },
-    
+
     /// Recluster vectors based on new ML model
     Reclustering {
         new_cluster_count: usize,
         quality_threshold: f32,
     },
-    
+
     /// Reorganize by feature importance
     FeatureReorganization {
         important_features: Vec<usize>,
         partition_strategy: PartitionStrategy,
     },
-    
+
     /// Compression optimization
     CompressionOptimization {
         new_algorithm: CompressionAlgorithm,
         expected_ratio_improvement: f32,
     },
-    
+
     /// Tier migration during compaction
     TierMigration {
         source_tier: String,
@@ -124,18 +124,16 @@ pub enum PartitionStrategy {
         primary_features: Vec<usize>,
         partition_count: usize,
     },
-    
+
     /// Partition by cluster similarity
-    ClusterSimilarity {
-        similarity_threshold: f32,
-    },
-    
+    ClusterSimilarity { similarity_threshold: f32 },
+
     /// Partition by access patterns
     AccessPattern {
         hot_threshold: f32,
         cold_threshold: f32,
     },
-    
+
     /// Hybrid strategy combining multiple factors
     Hybrid {
         feature_weight: f32,
@@ -175,19 +173,19 @@ pub enum CompactionPriority {
 pub struct CompactionOptimizationModel {
     pub model_id: String,
     pub version: String,
-    
+
     /// Feature importance for partitioning decisions
     pub feature_importance: Vec<f32>,
-    
+
     /// Cluster quality predictors
     pub cluster_quality_model: ClusterQualityModel,
-    
+
     /// Compression ratio predictors
     pub compression_model: CompressionModel,
-    
+
     /// Access pattern predictors
     pub access_pattern_model: AccessPatternModel,
-    
+
     /// Model training metadata
     pub training_metadata: ModelTrainingMetadata,
 }
@@ -229,7 +227,7 @@ pub struct AccessPatternModel {
 #[derive(Debug, Clone)]
 pub struct TemporalPattern {
     pub pattern_type: TemporalPatternType,
-    pub strength: f32, // How strong this pattern is (0.0 to 1.0)
+    pub strength: f32,        // How strong this pattern is (0.0 to 1.0)
     pub time_scale: Duration, // Time scale of the pattern
 }
 
@@ -238,13 +236,16 @@ pub struct TemporalPattern {
 pub enum TemporalPatternType {
     /// Regular periodic access
     Periodic { period: Duration },
-    
+
     /// Declining access over time
     Decay { half_life: Duration },
-    
+
     /// Burst access patterns
-    Bursty { burst_duration: Duration, quiet_duration: Duration },
-    
+    Bursty {
+        burst_duration: Duration,
+        quiet_duration: Duration,
+    },
+
     /// Random access
     Random,
 }
@@ -264,13 +265,13 @@ pub struct ModelTrainingMetadata {
 pub struct CompactionOptimizationHints {
     /// Suggested partition reorganization
     pub partition_suggestions: Vec<PartitionSuggestion>,
-    
+
     /// Compression algorithm recommendations
     pub compression_recommendations: Vec<CompressionRecommendation>,
-    
+
     /// Cluster quality improvements
     pub cluster_improvements: Vec<ClusterImprovement>,
-    
+
     /// Performance impact estimation
     pub performance_impact: PerformanceImpact,
 }
@@ -287,7 +288,7 @@ pub struct PartitionSuggestion {
 /// Expected benefits from partition changes
 #[derive(Debug, Clone)]
 pub struct PartitionBenefit {
-    pub io_improvement: f32, // Expected I/O performance improvement
+    pub io_improvement: f32,          // Expected I/O performance improvement
     pub compression_improvement: f32, // Expected compression ratio improvement
     pub search_performance_improvement: f32, // Expected search speed improvement
 }
@@ -297,7 +298,7 @@ pub struct PartitionBenefit {
 pub struct CompressionRecommendation {
     pub algorithm: CompressionAlgorithm,
     pub expected_ratio: f32,
-    pub performance_impact: f32, // CPU cost vs compression benefit
+    pub performance_impact: f32,  // CPU cost vs compression benefit
     pub compatibility_score: f32, // How well it works with access patterns
 }
 
@@ -315,13 +316,13 @@ pub struct ClusterImprovement {
 pub enum ClusterImprovementStrategy {
     /// Split large cluster
     Split { suggested_split_count: usize },
-    
+
     /// Merge small clusters
     Merge { merge_with: Vec<ClusterId> },
-    
+
     /// Refine cluster boundaries
     Refine { new_centroid: Vec<f32> },
-    
+
     /// Remove outliers
     RemoveOutliers { outlier_threshold: f32 },
 }
@@ -434,7 +435,7 @@ impl ViperCompactionEngine {
     /// Create a new VIPER compaction engine
     pub async fn new(config: ViperConfig) -> Result<Self> {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
-        
+
         let mut engine = Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -444,78 +445,91 @@ impl ViperCompactionEngine {
             worker_handles: Vec::new(),
             shutdown_sender: Arc::new(Mutex::new(Some(shutdown_tx))),
         };
-        
+
         // Start background workers
         engine.start_background_workers(shutdown_rx).await?;
-        
+
         Ok(engine)
     }
-    
+
     /// Schedule compaction if needed for a collection
     pub async fn schedule_compaction_if_needed(&self, collection_id: &CollectionId) -> Result<()> {
         // Analyze collection to determine if compaction is needed
-        let analysis = self.analyze_collection_for_compaction(collection_id).await?;
-        
+        let analysis = self
+            .analyze_collection_for_compaction(collection_id)
+            .await?;
+
         if analysis.needs_compaction {
-            self.schedule_compaction_task(analysis.recommended_task).await?;
+            self.schedule_compaction_task(analysis.recommended_task)
+                .await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Force schedule a compaction task
     pub async fn schedule_compaction_task(&self, task: CompactionTask) -> Result<()> {
         let mut queue = self.task_queue.lock().await;
-        
+
         // Insert task based on priority
-        let insert_position = queue.iter()
+        let insert_position = queue
+            .iter()
             .position(|existing_task| existing_task.priority < task.priority)
             .unwrap_or(queue.len());
-        
+
         queue.insert(insert_position, task);
-        
+
         Ok(())
     }
-    
+
     /// Get compaction progress for a collection
-    pub async fn get_compaction_progress(&self, collection_id: &CollectionId) -> Option<CompactionProgress> {
+    pub async fn get_compaction_progress(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Option<CompactionProgress> {
         let compactions = self.active_compactions.read().await;
         compactions.get(collection_id).map(|op| op.progress.clone())
     }
-    
+
     /// Get compaction statistics
     pub async fn get_compaction_stats(&self) -> CompactionStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Train ML model for compaction optimization
-    pub async fn train_optimization_model(&self, training_data: Vec<CompactionTrainingData>) -> Result<()> {
+    pub async fn train_optimization_model(
+        &self,
+        training_data: Vec<CompactionTrainingData>,
+    ) -> Result<()> {
         // Train ML model based on historical compaction data
         let model = self.train_model(training_data).await?;
-        
+
         let mut optimization_model = self.optimization_model.write().await;
         *optimization_model = Some(model);
-        
+
         Ok(())
     }
-    
+
     /// Analyze collection to determine compaction needs
-    async fn analyze_collection_for_compaction(&self, collection_id: &CollectionId) -> Result<CompactionAnalysis> {
+    async fn analyze_collection_for_compaction(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<CompactionAnalysis> {
         // Get compaction configuration defaults
         let compaction_config = &self.config.compaction_config;
-        
+
         // TODO: Analyze actual collection files from filesystem
         // For now, simulate the analysis with testing-friendly mock data
         let file_count = 4; // Mock: >2 files (testing trigger threshold)
         let total_size_kb = 48 * 1024; // Mock: 4 files * 12MB average = <16MB threshold
         let avg_file_size_kb = total_size_kb / file_count;
-        
+
         // Apply MVP trigger logic:
         // Compaction triggers when: file_count > min_files_for_compaction AND avg_size < max_avg_file_size_kb
-        let needs_compaction = compaction_config.enabled 
+        let needs_compaction = compaction_config.enabled
             && file_count > compaction_config.min_files_for_compaction
             && avg_file_size_kb < compaction_config.max_avg_file_size_kb;
-        
+
         if needs_compaction {
             tracing::info!(
                 "🔄 Compaction triggered for collection {}: {} files (>{}) with avg size {}KB (<{}KB)",
@@ -526,23 +540,34 @@ impl ViperCompactionEngine {
                 compaction_config.max_avg_file_size_kb
             );
         }
-        
+
         let recommended_task = CompactionTask {
-            task_id: format!("compaction_{}_{}_{}", collection_id, file_count, Utc::now().timestamp()),
+            task_id: format!(
+                "compaction_{}_{}_{}",
+                collection_id,
+                file_count,
+                Utc::now().timestamp()
+            ),
             collection_id: collection_id.clone(),
             compaction_type: CompactionType::FileMerging {
                 target_file_size_mb: compaction_config.target_file_size_mb,
                 max_files_per_merge: compaction_config.max_files_per_compaction,
             },
-            priority: if needs_compaction { CompactionPriority::High } else { CompactionPriority::Low },
+            priority: if needs_compaction {
+                CompactionPriority::High
+            } else {
+                CompactionPriority::Low
+            },
             input_partitions: Vec::new(), // TODO: Populate with actual file list
-            expected_outputs: (file_count as f32 / compaction_config.max_files_per_compaction as f32).ceil() as usize,
+            expected_outputs: (file_count as f32
+                / compaction_config.max_files_per_compaction as f32)
+                .ceil() as usize,
             optimization_hints: Some(CompactionOptimizationHints {
                 partition_suggestions: Vec::new(),
                 compression_recommendations: vec![CompressionRecommendation {
                     algorithm: CompressionAlgorithm::Lz4,
                     expected_ratio: 0.8,
-                    performance_impact: 0.2, // Low CPU cost
+                    performance_impact: 0.2,  // Low CPU cost
                     compatibility_score: 0.9, // High compatibility
                 }],
                 cluster_improvements: Vec::new(),
@@ -557,21 +582,24 @@ impl ViperCompactionEngine {
             created_at: Utc::now(),
             estimated_duration: Duration::from_secs(file_count as u64 * 30), // 30s per file estimate
         };
-        
+
         Ok(CompactionAnalysis {
             needs_compaction,
             recommended_task,
         })
     }
-    
+
     /// Start background worker tasks
-    async fn start_background_workers(&mut self, mut shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
+    async fn start_background_workers(
+        &mut self,
+        mut shutdown_rx: mpsc::Receiver<()>,
+    ) -> Result<()> {
         // Start compaction worker
         let task_queue = self.task_queue.clone();
         let active_compactions = self.active_compactions.clone();
         let stats = self.stats.clone();
         let optimization_model = self.optimization_model.clone();
-        
+
         let worker_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -583,7 +611,7 @@ impl ViperCompactionEngine {
                         if let Ok(mut queue) = task_queue.try_lock() {
                             if let Some(task) = queue.pop_front() {
                                 drop(queue);
-                                
+
                                 // Execute compaction task
                                 Self::execute_compaction_task(
                                     task,
@@ -597,12 +625,12 @@ impl ViperCompactionEngine {
                 }
             }
         });
-        
+
         self.worker_handles.push(worker_handle);
-        
+
         Ok(())
     }
-    
+
     /// Execute a compaction task
     async fn execute_compaction_task(
         task: CompactionTask,
@@ -612,7 +640,7 @@ impl ViperCompactionEngine {
     ) {
         let _task_id = task.task_id.clone();
         let collection_id = task.collection_id.clone();
-        
+
         // Create progress tracker
         let progress = CompactionProgress {
             phase: CompactionPhase::Planning,
@@ -623,15 +651,14 @@ impl ViperCompactionEngine {
             files_processed: 0,
             files_total: task.input_partitions.len(),
         };
-        
+
         // Clone task for tracking before moving it
         let task_clone = task.clone();
-        
+
         // Start compaction work
-        let worker_handle = tokio::spawn(async move {
-            Self::perform_compaction(task, optimization_model).await
-        });
-        
+        let worker_handle =
+            tokio::spawn(async move { Self::perform_compaction(task, optimization_model).await });
+
         // Track active compaction
         let operation = CompactionOperation {
             task: task_clone,
@@ -640,43 +667,43 @@ impl ViperCompactionEngine {
             current_phase: CompactionPhase::Planning,
             worker_handle,
         };
-        
+
         {
             let mut active = active_compactions.write().await;
             active.insert(collection_id.clone(), operation);
         }
-        
+
         // Note: In a real implementation, we'd need to properly handle the completion
         // and update statistics. This is a simplified version.
     }
-    
+
     /// Perform the actual compaction work
     async fn perform_compaction(
         task: CompactionTask,
         _optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
     ) -> Result<CompactionResult> {
         let start_time = Instant::now();
-        
+
         // Phase 1: Planning and Analysis
         // - Analyze input files
         // - Get ML optimization hints
         // - Plan optimal reorganization
-        
+
         // Phase 2: Data Processing
         // - Read input Parquet files (only important columns)
         // - Apply ML-guided clustering improvements
         // - Reorganize data based on feature importance
-        
+
         // Phase 3: Optimization
         // - Apply improved compression algorithms
         // - Optimize data layout for access patterns
         // - Generate optimized Parquet files
-        
+
         // Phase 4: Verification and Cleanup
         // - Verify output data integrity
         // - Update metadata and indexes
         // - Clean up old files
-        
+
         // Placeholder result
         Ok(CompactionResult {
             task_id: task.task_id,
@@ -707,9 +734,12 @@ impl ViperCompactionEngine {
             error: None,
         })
     }
-    
+
     /// Train ML model for optimization (placeholder)
-    async fn train_model(&self, _training_data: Vec<CompactionTrainingData>) -> Result<CompactionOptimizationModel> {
+    async fn train_model(
+        &self,
+        _training_data: Vec<CompactionTrainingData>,
+    ) -> Result<CompactionOptimizationModel> {
         // Placeholder implementation
         Ok(CompactionOptimizationModel {
             model_id: "default".to_string(),
@@ -760,7 +790,7 @@ impl Drop for ViperCompactionEngine {
                 let _ = tx.try_send(());
             }
         }
-        
+
         // Note: In a real implementation, we'd properly wait for workers to finish
     }
 }

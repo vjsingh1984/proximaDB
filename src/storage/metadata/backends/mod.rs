@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! Metadata Storage Backends
-//! 
+//!
 //! Supports serverless and lightweight storage backends for metadata management:
 //! - WAL-based (default) - Filesystem-based storage supporting S3/GCS/ADLS
 //! - PostgreSQL/MySQL - For ACID transactions and SQL queries  
@@ -13,37 +13,42 @@
 //! - Cosmos DB (Azure) - For multi-model serverless database
 //! - Firestore (GCP) - For serverless NoSQL document store
 
-pub mod wal_backend;
-pub mod postgres_backend;
-pub mod mysql_backend;
-pub mod sqlite_backend;
-pub mod dynamodb_backend;
-pub mod cosmosdb_backend;
-pub mod firestore_backend;
+// Obsolete backends moved to obsolete/ directory
+// pub mod cosmosdb_backend;    // MOVED: obsolete/storage/metadata/backends/
+// pub mod dynamodb_backend;    // MOVED: obsolete/storage/metadata/backends/
+// pub mod firestore_backend;   // MOVED: obsolete/storage/metadata/backends/
+// pub mod mongodb_backend;     // MOVED: obsolete/storage/metadata/backends/
+// pub mod mysql_backend;       // MOVED: obsolete/storage/metadata/backends/
+// pub mod postgres_backend;    // MOVED: obsolete/storage/metadata/backends/
+// pub mod sqlite_backend;      // MOVED: obsolete/storage/metadata/backends/
+
+// Active backends used in metadata-first architecture
+pub mod filestore_backend;    // Primary filestore-based backend with Avro and filesystem API
+pub mod memory_backend;       // In-memory backend for testing
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::{CollectionMetadata, MetadataFilter, MetadataOperation, SystemMetadata};
 use crate::core::CollectionId;
-use super::{CollectionMetadata, SystemMetadata, MetadataFilter, MetadataOperation};
 
 /// Metadata backend configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataBackendConfig {
     /// Backend type
     pub backend_type: MetadataBackendType,
-    
+
     /// Connection configuration
     pub connection: BackendConnectionConfig,
-    
+
     /// Performance tuning
     pub performance: BackendPerformanceConfig,
-    
+
     /// High availability configuration
     pub ha_config: Option<HAConfig>,
-    
+
     /// Backup and recovery
     pub backup_config: Option<BackendBackupConfig>,
 }
@@ -51,19 +56,21 @@ pub struct MetadataBackendConfig {
 /// Supported metadata backend types (serverless and lightweight only)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MetadataBackendType {
-    /// WAL-based filesystem storage (default) - Supports S3/GCS/ADLS
-    Wal,
-    /// PostgreSQL database (RDBMS)
+    /// Disk-based filesystem storage with Avro (default) - Supports S3/GCS/ADLS
+    Disk,
+    /// In-memory backend (for testing)
+    Memory,
+    /// PostgreSQL database (RDBMS) - OBSOLETE
     PostgreSQL,
-    /// MySQL database (RDBMS) 
+    /// MySQL database (RDBMS) - OBSOLETE
     MySQL,
-    /// SQLite embedded database (for development/testing)
+    /// SQLite embedded database (for development/testing) - OBSOLETE
     SQLite,
-    /// Amazon DynamoDB (AWS serverless key-value)
+    /// Amazon DynamoDB (AWS serverless key-value) - OBSOLETE
     DynamoDB,
-    /// Azure Cosmos DB (Azure serverless multi-model)
+    /// Azure Cosmos DB (Azure serverless multi-model) - OBSOLETE
     CosmosDB,
-    /// Google Firestore (GCP serverless NoSQL)
+    /// Google Firestore (GCP serverless NoSQL) - OBSOLETE
     Firestore,
     /// Multi-backend with primary/fallback
     MultiBackend {
@@ -74,7 +81,7 @@ pub enum MetadataBackendType {
 
 impl Default for MetadataBackendType {
     fn default() -> Self {
-        Self::Wal // Default to WAL-based filesystem storage
+        Self::Disk // Default to disk-based filesystem storage with Avro
     }
 }
 
@@ -83,19 +90,19 @@ impl Default for MetadataBackendType {
 pub struct BackendConnectionConfig {
     /// Connection string/URL
     pub connection_string: String,
-    
+
     /// Authentication credentials
     pub auth: Option<AuthConfig>,
-    
+
     /// Connection pool settings
     pub pool_config: PoolConfig,
-    
+
     /// SSL/TLS configuration
     pub ssl_config: Option<SSLConfig>,
-    
+
     /// Region (for cloud services)
     pub region: Option<String>,
-    
+
     /// Additional connection parameters
     pub parameters: HashMap<String, String>,
 }
@@ -105,19 +112,19 @@ pub struct BackendConnectionConfig {
 pub struct AuthConfig {
     /// Username
     pub username: Option<String>,
-    
+
     /// Password
     pub password: Option<String>,
-    
+
     /// API key (for cloud services)
     pub api_key: Option<String>,
-    
+
     /// IAM role ARN (for AWS)
     pub iam_role: Option<String>,
-    
+
     /// Service account (for GCP)
     pub service_account: Option<String>,
-    
+
     /// Token-based authentication
     pub token: Option<String>,
 }
@@ -127,16 +134,16 @@ pub struct AuthConfig {
 pub struct PoolConfig {
     /// Minimum pool size
     pub min_connections: u32,
-    
+
     /// Maximum pool size
     pub max_connections: u32,
-    
+
     /// Connection timeout in seconds
     pub connect_timeout_secs: u64,
-    
+
     /// Idle timeout in seconds
     pub idle_timeout_secs: u64,
-    
+
     /// Maximum lifetime in seconds
     pub max_lifetime_secs: u64,
 }
@@ -158,16 +165,16 @@ impl Default for PoolConfig {
 pub struct SSLConfig {
     /// Enable SSL/TLS
     pub enabled: bool,
-    
+
     /// Verify certificates
     pub verify_certificates: bool,
-    
+
     /// Client certificate path
     pub client_cert_path: Option<String>,
-    
+
     /// Client key path
     pub client_key_path: Option<String>,
-    
+
     /// CA certificate path
     pub ca_cert_path: Option<String>,
 }
@@ -177,22 +184,22 @@ pub struct SSLConfig {
 pub struct BackendPerformanceConfig {
     /// Enable read replicas
     pub enable_read_replicas: bool,
-    
+
     /// Read replica endpoints
     pub read_replica_endpoints: Vec<String>,
-    
+
     /// Enable caching
     pub enable_caching: bool,
-    
+
     /// Cache TTL in seconds
     pub cache_ttl_secs: u64,
-    
+
     /// Batch size for bulk operations
     pub batch_size: usize,
-    
+
     /// Query timeout in seconds
     pub query_timeout_secs: u64,
-    
+
     /// Enable compression
     pub enable_compression: bool,
 }
@@ -216,16 +223,16 @@ impl Default for BackendPerformanceConfig {
 pub struct HAConfig {
     /// Enable multi-region replication
     pub multi_region: bool,
-    
+
     /// Replication regions
     pub regions: Vec<String>,
-    
+
     /// Consistency level
     pub consistency_level: ConsistencyLevel,
-    
+
     /// Failover configuration
     pub failover: FailoverConfig,
-    
+
     /// Enable automatic backups
     pub auto_backup: bool,
 }
@@ -248,13 +255,13 @@ pub enum ConsistencyLevel {
 pub struct FailoverConfig {
     /// Enable automatic failover
     pub auto_failover: bool,
-    
+
     /// Failover timeout in seconds
     pub failover_timeout_secs: u64,
-    
+
     /// Health check interval in seconds
     pub health_check_interval_secs: u64,
-    
+
     /// Maximum retries before failover
     pub max_retries: u32,
 }
@@ -264,19 +271,19 @@ pub struct FailoverConfig {
 pub struct BackendBackupConfig {
     /// Enable automatic backups
     pub enabled: bool,
-    
+
     /// Backup frequency in hours
     pub frequency_hours: u32,
-    
+
     /// Backup retention in days
     pub retention_days: u32,
-    
+
     /// Backup storage location
     pub backup_location: String,
-    
+
     /// Enable incremental backups
     pub incremental: bool,
-    
+
     /// Enable point-in-time recovery
     pub point_in_time_recovery: bool,
 }
@@ -286,28 +293,28 @@ pub struct BackendBackupConfig {
 pub struct BackendStats {
     /// Backend type
     pub backend_type: MetadataBackendType,
-    
+
     /// Connection status
     pub connected: bool,
-    
+
     /// Active connections
     pub active_connections: u32,
-    
+
     /// Total operations
     pub total_operations: u64,
-    
+
     /// Failed operations
     pub failed_operations: u64,
-    
+
     /// Average latency in milliseconds
     pub avg_latency_ms: f64,
-    
+
     /// Cache hit rate (if applicable)
     pub cache_hit_rate: Option<f64>,
-    
+
     /// Last backup time
     pub last_backup_time: Option<chrono::DateTime<chrono::Utc>>,
-    
+
     /// Storage size in bytes
     pub storage_size_bytes: u64,
 }
@@ -317,58 +324,73 @@ pub struct BackendStats {
 pub trait MetadataBackend: Send + Sync {
     /// Backend name for identification
     fn backend_name(&self) -> &'static str;
-    
+
     /// Initialize the backend
     async fn initialize(&mut self, config: MetadataBackendConfig) -> Result<()>;
-    
+
     /// Health check
     async fn health_check(&self) -> Result<bool>;
-    
+
     /// Create collection metadata
     async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()>;
-    
+
     /// Get collection metadata
-    async fn get_collection(&self, collection_id: &CollectionId) -> Result<Option<CollectionMetadata>>;
-    
+    async fn get_collection(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<Option<CollectionMetadata>>;
+
     /// Update collection metadata
-    async fn update_collection(&self, collection_id: &CollectionId, metadata: CollectionMetadata) -> Result<()>;
-    
+    async fn update_collection(
+        &self,
+        collection_id: &CollectionId,
+        metadata: CollectionMetadata,
+    ) -> Result<()>;
+
     /// Delete collection metadata
     async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool>;
-    
+
     /// List collections with filtering
-    async fn list_collections(&self, filter: Option<MetadataFilter>) -> Result<Vec<CollectionMetadata>>;
-    
+    async fn list_collections(
+        &self,
+        filter: Option<MetadataFilter>,
+    ) -> Result<Vec<CollectionMetadata>>;
+
     /// Update collection statistics atomically
-    async fn update_stats(&self, collection_id: &CollectionId, vector_delta: i64, size_delta: i64) -> Result<()>;
-    
+    async fn update_stats(
+        &self,
+        collection_id: &CollectionId,
+        vector_delta: i64,
+        size_delta: i64,
+    ) -> Result<()>;
+
     /// Batch operations (atomic if supported)
     async fn batch_operations(&self, operations: Vec<MetadataOperation>) -> Result<()>;
-    
+
     /// Begin transaction (if supported)
     async fn begin_transaction(&self) -> Result<Option<String>>;
-    
+
     /// Commit transaction (if supported)
     async fn commit_transaction(&self, transaction_id: &str) -> Result<()>;
-    
+
     /// Rollback transaction (if supported)
     async fn rollback_transaction(&self, transaction_id: &str) -> Result<()>;
-    
+
     /// Get system metadata
     async fn get_system_metadata(&self) -> Result<SystemMetadata>;
-    
+
     /// Update system metadata
     async fn update_system_metadata(&self, metadata: SystemMetadata) -> Result<()>;
-    
+
     /// Get backend statistics
     async fn get_stats(&self) -> Result<BackendStats>;
-    
+
     /// Backup metadata
     async fn backup(&self, location: &str) -> Result<String>; // Returns backup ID
-    
+
     /// Restore from backup
     async fn restore(&self, backup_id: &str, location: &str) -> Result<()>;
-    
+
     /// Close/cleanup backend
     async fn close(&self) -> Result<()>;
 }
@@ -383,53 +405,51 @@ impl MetadataBackendFactory {
         config: MetadataBackendConfig,
     ) -> Result<Box<dyn MetadataBackend>> {
         match backend_type {
-            MetadataBackendType::Wal => {
-                let mut backend = Box::new(wal_backend::WalMetadataBackend::new());
+            MetadataBackendType::Disk => {
+                // Use filestore backend for disk storage with pluggable filesystem support
+                // This will be replaced with a proper wrapper that implements MetadataBackend trait
+                Err(anyhow::anyhow!("Disk backend is being migrated to filestore architecture. Use the filestore backend directly."))
+            }
+            MetadataBackendType::Memory => {
+                let mut backend = Box::new(memory_backend::MemoryMetadataBackend::new());
                 backend.initialize(config).await?;
                 Ok(backend)
             }
+            // Obsolete backends - return error for now, could be re-enabled if needed
             MetadataBackendType::PostgreSQL => {
-                let mut backend = Box::new(postgres_backend::PostgresMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("PostgreSQL backend moved to obsolete/ directory. Use Disk backend instead."))
             }
             MetadataBackendType::MySQL => {
-                let mut backend = Box::new(mysql_backend::MySQLMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("MySQL backend moved to obsolete/ directory. Use Disk backend instead."))
             }
             MetadataBackendType::SQLite => {
-                let mut backend = Box::new(sqlite_backend::SQLiteMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("SQLite backend moved to obsolete/ directory. Use Disk backend instead."))
             }
             MetadataBackendType::DynamoDB => {
-                let mut backend = Box::new(dynamodb_backend::DynamoDBMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("DynamoDB backend moved to obsolete/ directory. Use Disk backend instead."))
             }
             MetadataBackendType::CosmosDB => {
-                let mut backend = Box::new(cosmosdb_backend::CosmosDBMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("CosmosDB backend moved to obsolete/ directory. Use Disk backend instead."))
             }
             MetadataBackendType::Firestore => {
-                let mut backend = Box::new(firestore_backend::FirestoreMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+                Err(anyhow::anyhow!("Firestore backend moved to obsolete/ directory. Use Disk backend instead."))
             }
-            MetadataBackendType::MultiBackend { primary, fallback: _ } => {
+            MetadataBackendType::MultiBackend {
+                primary,
+                fallback: _,
+            } => {
                 // TODO: Implement multi-backend with primary/fallback
                 tracing::warn!("MultiBackend not implemented yet, falling back to primary");
                 Box::pin(Self::create_backend(*primary, config)).await
             }
         }
     }
-    
+
     /// Get available backend types
     pub fn available_backends() -> Vec<MetadataBackendType> {
         vec![
-            MetadataBackendType::Wal,
+            MetadataBackendType::Disk,
+            MetadataBackendType::Memory,
             MetadataBackendType::PostgreSQL,
             MetadataBackendType::MySQL,
             MetadataBackendType::SQLite,
@@ -438,21 +458,33 @@ impl MetadataBackendFactory {
             MetadataBackendType::Firestore,
         ]
     }
-    
+
     /// Get backend capabilities
     pub fn backend_capabilities(backend_type: &MetadataBackendType) -> BackendCapabilities {
         match backend_type {
-            MetadataBackendType::Wal => BackendCapabilities {
+            MetadataBackendType::Disk => BackendCapabilities {
                 supports_transactions: true,
                 supports_schemas: true,
                 supports_secondary_indexes: false,
                 supports_full_text_search: false,
                 supports_geo_queries: false,
                 supports_auto_scaling: false,
-                supports_multi_region: false,
-                supports_encryption_at_rest: false,
+                supports_multi_region: true, // Supports S3/GCS/ADLS
+                supports_encryption_at_rest: true, // Via filesystem encryption
                 max_document_size_mb: 16,
                 max_connections: 1000,
+            },
+            MetadataBackendType::Memory => BackendCapabilities {
+                supports_transactions: false,
+                supports_schemas: false,
+                supports_secondary_indexes: false,
+                supports_full_text_search: false,
+                supports_geo_queries: false,
+                supports_auto_scaling: false,
+                supports_multi_region: false,
+                supports_encryption_at_rest: false,
+                max_document_size_mb: 1,
+                max_connections: 1,
             },
             MetadataBackendType::PostgreSQL => BackendCapabilities {
                 supports_transactions: true,

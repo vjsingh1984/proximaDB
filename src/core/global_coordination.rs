@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalCoordinationConfig {
@@ -52,20 +52,20 @@ pub struct RegionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LatencyZone {
-    UltraLow,  // < 10ms
-    Low,       // < 50ms  
-    Medium,    // < 100ms
-    High,      // < 500ms
-    Best,      // Best effort
+    UltraLow, // < 10ms
+    Low,      // < 50ms
+    Medium,   // < 100ms
+    High,     // < 500ms
+    Best,     // Best effort
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DRTier {
-    Primary,   // Main serving region
-    Hot,       // Hot standby (real-time sync)
-    Warm,      // Warm standby (near real-time sync)
-    Cold,      // Cold backup (periodic sync)
-    Archive,   // Long-term archive
+    Primary, // Main serving region
+    Hot,     // Hot standby (real-time sync)
+    Warm,    // Warm standby (near real-time sync)
+    Cold,    // Cold backup (periodic sync)
+    Archive, // Long-term archive
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,10 +94,7 @@ pub enum ConsistencyModel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReplicationStrategy {
     /// Synchronous replication (strong consistency, high latency)
-    Synchronous {
-        min_replicas: u32,
-        timeout_ms: u32,
-    },
+    Synchronous { min_replicas: u32, timeout_ms: u32 },
     /// Asynchronous replication (eventual consistency, low latency)
     Asynchronous {
         replication_lag_target_ms: u32,
@@ -142,8 +139,8 @@ pub enum CRDTType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisasterRecoveryConfig {
     pub enabled: bool,
-    pub rto_seconds: u32,  // Recovery Time Objective
-    pub rpo_seconds: u32,  // Recovery Point Objective
+    pub rto_seconds: u32, // Recovery Time Objective
+    pub rpo_seconds: u32, // Recovery Point Objective
     pub backup_strategy: BackupStrategy,
     pub failover_automation: FailoverAutomation,
     pub testing_schedule: DRTestingSchedule,
@@ -154,10 +151,10 @@ pub enum BackupStrategy {
     /// Continuous backup with point-in-time recovery
     Continuous { retention_days: u32 },
     /// Scheduled snapshots
-    Snapshot { 
+    Snapshot {
         frequency_hours: u32,
         retention_days: u32,
-        cross_region_copy: bool 
+        cross_region_copy: bool,
     },
     /// Hybrid approach
     Hybrid {
@@ -186,9 +183,9 @@ pub struct DRTestingSchedule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DRTestType {
-    NonDisruptive,  // Test without affecting production
-    Failover,       // Actual failover test
-    FullDR,         // Complete disaster recovery simulation
+    NonDisruptive, // Test without affecting production
+    Failover,      // Actual failover test
+    FullDR,        // Complete disaster recovery simulation
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,12 +203,14 @@ pub enum MetadataShardingStrategy {
     /// Range-based sharding by tenant ID
     RangeByTenant { ranges: Vec<TenantRange> },
     /// Geographic sharding
-    Geographic { region_assignments: HashMap<String, Vec<String>> },
+    Geographic {
+        region_assignments: HashMap<String, Vec<String>>,
+    },
     /// Workload-based sharding
-    WorkloadBased { 
+    WorkloadBased {
         oltp_shards: Vec<u32>,
         olap_shards: Vec<u32>,
-        ml_shards: Vec<u32>
+        ml_shards: Vec<u32>,
     },
     /// Hierarchical sharding (tenant -> collection -> data)
     Hierarchical {
@@ -230,17 +229,22 @@ pub struct TenantRange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardRebalancingConfig {
     pub enabled: bool,
-    pub trigger_threshold: f32,  // Imbalance threshold (0.1 = 10%)
+    pub trigger_threshold: f32, // Imbalance threshold (0.1 = 10%)
     pub rebalancing_strategy: RebalancingStrategy,
-    pub migration_rate_limit: u32,  // MB/s
+    pub migration_rate_limit: u32, // MB/s
     pub maintenance_window: Option<MaintenanceWindow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RebalancingStrategy {
     Immediate,
-    Scheduled { schedule: String },  // Cron-like schedule
-    LoadThreshold { cpu_threshold: f32, memory_threshold: f32 },
+    Scheduled {
+        schedule: String,
+    }, // Cron-like schedule
+    LoadThreshold {
+        cpu_threshold: f32,
+        memory_threshold: f32,
+    },
     Manual,
 }
 
@@ -249,7 +253,7 @@ pub struct MaintenanceWindow {
     pub timezone: String,
     pub start_hour: u8,
     pub duration_hours: u8,
-    pub days_of_week: Vec<u8>,  // 0=Sunday, 1=Monday, etc.
+    pub days_of_week: Vec<u8>, // 0=Sunday, 1=Monday, etc.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,8 +311,8 @@ pub struct GlobalHealthCheckConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficDistributionConfig {
-    pub default_weights: HashMap<String, f32>,  // region -> weight
-    pub tenant_overrides: HashMap<String, HashMap<String, f32>>,  // tenant -> region -> weight
+    pub default_weights: HashMap<String, f32>, // region -> weight
+    pub tenant_overrides: HashMap<String, HashMap<String, f32>>, // tenant -> region -> weight
     pub canary_traffic_percent: f32,
     pub circuit_breaker_enabled: bool,
 }
@@ -325,7 +329,7 @@ pub struct DataLocalityConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataResidencyRule {
-    pub tenant_pattern: String,  // Regex pattern for tenant matching
+    pub tenant_pattern: String, // Regex pattern for tenant matching
     pub allowed_regions: Vec<String>,
     pub prohibited_regions: Vec<String>,
     pub encryption_required: bool,
@@ -343,11 +347,14 @@ pub struct TransferRestriction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ComplianceFramework {
-    GDPR,      // European Union
-    CCPA,      // California
-    PIPEDA,    // Canada
-    LGPD,      // Brazil
-    Custom { name: String, requirements: Vec<String> },
+    GDPR,   // European Union
+    CCPA,   // California
+    PIPEDA, // Canada
+    LGPD,   // Brazil
+    Custom {
+        name: String,
+        requirements: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,7 +444,7 @@ pub struct TenantMetadata {
     pub data_residency_requirements: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub last_updated: DateTime<Utc>,
-    pub version: u64,  // For conflict resolution
+    pub version: u64, // For conflict resolution
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,7 +518,7 @@ pub struct TenantRoute {
 #[derive(Debug, Clone)]
 pub struct CollectionRoute {
     pub collection_id: String,
-    pub shard_locations: HashMap<u32, String>,  // shard_id -> region
+    pub shard_locations: HashMap<u32, String>, // shard_id -> region
     pub read_preferences: ReadPreference,
     pub write_preference: WritePreference,
 }
@@ -535,7 +542,7 @@ pub enum WritePreference {
 #[derive(Debug, Clone)]
 pub struct RegionTopology {
     pub regions: HashMap<String, RegionInfo>,
-    pub latency_matrix: HashMap<(String, String), u32>,  // (from, to) -> latency_ms
+    pub latency_matrix: HashMap<(String, String), u32>, // (from, to) -> latency_ms
     pub bandwidth_matrix: HashMap<(String, String), u32>, // (from, to) -> bandwidth_mbps
 }
 
@@ -543,16 +550,16 @@ pub struct RegionTopology {
 pub struct RegionInfo {
     pub region_id: String,
     pub availability_zones: Vec<String>,
-    pub coordinates: Option<(f32, f32)>,  // lat, lon for distance calculations
+    pub coordinates: Option<(f32, f32)>, // lat, lon for distance calculations
     pub tier: RegionTier,
     pub capacity: RegionCapacity,
 }
 
 #[derive(Debug, Clone)]
 pub enum RegionTier {
-    Tier1,  // Primary regions with full capabilities
-    Tier2,  // Secondary regions with most capabilities
-    Edge,   // Edge locations with caching only
+    Tier1, // Primary regions with full capabilities
+    Tier2, // Secondary regions with most capabilities
+    Edge,  // Edge locations with caching only
 }
 
 #[derive(Debug, Clone)]
@@ -595,22 +602,24 @@ impl Default for GlobalCoordinationConfig {
                 availability_zones: vec!["us-east-1a".to_string(), "us-east-1b".to_string()],
                 cross_az_replication: true,
             },
-            consistency_model: ConsistencyModel::EventualBounded { max_staleness_seconds: 60 },
+            consistency_model: ConsistencyModel::EventualBounded {
+                max_staleness_seconds: 60,
+            },
             replication_strategy: ReplicationStrategy::Hybrid {
-                intra_region: Box::new(ReplicationStrategy::Synchronous { 
-                    min_replicas: 2, 
-                    timeout_ms: 5000 
+                intra_region: Box::new(ReplicationStrategy::Synchronous {
+                    min_replicas: 2,
+                    timeout_ms: 5000,
                 }),
-                inter_region: Box::new(ReplicationStrategy::Asynchronous { 
+                inter_region: Box::new(ReplicationStrategy::Asynchronous {
                     replication_lag_target_ms: 30000,
-                    batch_size: 1000 
+                    batch_size: 1000,
                 }),
             },
             conflict_resolution: ConflictResolution::VectorClock,
             disaster_recovery: DisasterRecoveryConfig {
                 enabled: true,
-                rto_seconds: 300,   // 5 minutes
-                rpo_seconds: 60,    // 1 minute
+                rto_seconds: 300, // 5 minutes
+                rpo_seconds: 60,  // 1 minute
                 backup_strategy: BackupStrategy::Continuous { retention_days: 30 },
                 failover_automation: FailoverAutomation {
                     enabled: true,
@@ -632,15 +641,15 @@ impl Default for GlobalCoordinationConfig {
                 rebalancing: ShardRebalancingConfig {
                     enabled: true,
                     trigger_threshold: 0.2,
-                    rebalancing_strategy: RebalancingStrategy::Scheduled { 
-                        schedule: "0 2 * * SUN".to_string()  // Sunday 2 AM
+                    rebalancing_strategy: RebalancingStrategy::Scheduled {
+                        schedule: "0 2 * * SUN".to_string(), // Sunday 2 AM
                     },
-                    migration_rate_limit: 100,  // 100 MB/s
+                    migration_rate_limit: 100, // 100 MB/s
                     maintenance_window: Some(MaintenanceWindow {
                         timezone: "UTC".to_string(),
                         start_hour: 2,
                         duration_hours: 4,
-                        days_of_week: vec![0, 6],  // Sunday, Saturday
+                        days_of_week: vec![0, 6], // Sunday, Saturday
                     }),
                 },
                 hot_shard_detection: HotShardConfig {
@@ -650,7 +659,9 @@ impl Default for GlobalCoordinationConfig {
                     request_rate_threshold: 1000.0,
                     mitigation_strategies: vec![
                         HotShardMitigation::ScaleOut { max_replicas: 5 },
-                        HotShardMitigation::AggressiveCaching { cache_ttl_seconds: 300 },
+                        HotShardMitigation::AggressiveCaching {
+                            cache_ttl_seconds: 300,
+                        },
                     ],
                 },
             },

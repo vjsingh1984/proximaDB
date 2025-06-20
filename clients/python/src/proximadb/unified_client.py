@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 class Protocol(Enum):
     """Communication protocol options"""
     AUTO = "auto"      # Auto-select best available (gRPC preferred)
-    GRPC = "grpc"      # Force gRPC
-    REST = "rest"      # Force REST
+    GRPC = "grpc"      # Force gRPC (high performance, binary protocol)
+    REST = "rest"      # Force REST (web compatibility)
 
 
 class ProximaDBClient:
@@ -75,25 +75,25 @@ class ProximaDBClient:
     def _setup_client(self):
         """Setup the underlying client based on protocol preference"""
         if self.protocol == Protocol.AUTO:
-            # Try gRPC first, fallback to REST
+            # Try gRPC first (high performance), then fallback to REST
             try:
                 self._client = self._create_grpc_client()
                 self._active_protocol = Protocol.GRPC
-                logger.info("🚀 Using gRPC client for optimal performance")
+                logger.info("🔗 Using gRPC client for high performance")
             except ImportError:
                 logger.warning("⚠️ gRPC dependencies not available, falling back to REST")
                 self._client = self._create_rest_client()
                 self._active_protocol = Protocol.REST
             except Exception as e:
-                logger.warning(f"⚠️ gRPC client failed to initialize: {e}, falling back to REST")
+                logger.warning(f"⚠️ gRPC client failed: {e}, falling back to REST")
                 self._client = self._create_rest_client()
                 self._active_protocol = Protocol.REST
-                
+                    
         elif self.protocol == Protocol.GRPC:
             # Force gRPC
             self._client = self._create_grpc_client()
             self._active_protocol = Protocol.GRPC
-            logger.info("🚀 Using gRPC client (forced)")
+            logger.info("🔗 Using gRPC client (forced)")
             
         elif self.protocol == Protocol.REST:
             # Force REST
@@ -125,8 +125,8 @@ class ProximaDBClient:
     
     def _create_rest_client(self):
         """Create REST client"""
-        from .client import ProximaDBClient as RestClient
-        return RestClient(config=self.config)
+        from .rest_client import ProximaDBRestClient
+        return ProximaDBRestClient(config=self.config)
     
     @property
     def active_protocol(self) -> Protocol:
@@ -276,12 +276,13 @@ def connect(
     return ProximaDBClient(url=url, api_key=api_key, protocol=protocol, **kwargs)
 
 
+
 def connect_grpc(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
     **kwargs
 ) -> ProximaDBClient:
-    """Create a ProximaDB client using gRPC protocol"""
+    """Create a ProximaDB client using gRPC protocol (good performance, ecosystem compatibility)"""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
 
 
@@ -290,5 +291,5 @@ def connect_rest(
     api_key: Optional[str] = None,
     **kwargs
 ) -> ProximaDBClient:
-    """Create a ProximaDB client using REST protocol"""
+    """Create a ProximaDB client using REST protocol (web compatibility)"""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.REST, **kwargs)

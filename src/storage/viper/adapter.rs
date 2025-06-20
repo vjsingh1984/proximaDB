@@ -1,16 +1,16 @@
 //! VIPER Record to Schema Adaptation
-//! 
+//!
 //! This module implements the Adapter pattern for converting vector records
 //! to different schema formats efficiently.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::Schema;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::VectorRecord;
 use super::schema::SchemaGenerationStrategy;
+use crate::core::VectorRecord;
 
 /// Adapter Pattern: Adapts vector records to different schema formats
 pub struct VectorRecordSchemaAdapter<'a> {
@@ -21,36 +21,42 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
     pub fn new(strategy: &'a dyn SchemaGenerationStrategy) -> Self {
         Self { strategy }
     }
-    
-    pub fn adapt_records_to_schema(&self, records: &[VectorRecord], schema: &Arc<Schema>) -> Result<RecordBatch> {
+
+    pub fn adapt_records_to_schema(
+        &self,
+        records: &[VectorRecord],
+        schema: &Arc<Schema>,
+    ) -> Result<RecordBatch> {
         let mut id_builder = arrow::array::StringBuilder::new();
-        let mut vectors_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-        
+        let mut vectors_builder =
+            arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+
         // Dynamic metadata builders for filterable fields
         let mut meta_builders: HashMap<String, arrow::array::StringBuilder> = HashMap::new();
         for field_name in self.strategy.get_filterable_fields() {
             meta_builders.insert(field_name.clone(), arrow::array::StringBuilder::new());
         }
-        
+
         // Extra metadata and timestamp builders
-        let mut extra_meta_builder = arrow::array::MapBuilder::new(None, 
-            arrow::array::StringBuilder::new(), 
-            arrow::array::StringBuilder::new()
+        let mut extra_meta_builder = arrow::array::MapBuilder::new(
+            None,
+            arrow::array::StringBuilder::new(),
+            arrow::array::StringBuilder::new(),
         );
         let mut expires_at_builder = arrow::array::TimestampMillisecondBuilder::new();
         let mut created_at_builder = arrow::array::TimestampMillisecondBuilder::new();
         let mut updated_at_builder = arrow::array::TimestampMillisecondBuilder::new();
-        
+
         for record in records {
             // ID
             id_builder.append_value(&record.id);
-            
+
             // Vectors
             for &val in &record.vector {
                 vectors_builder.values().append_value(val);
             }
             vectors_builder.append(true);
-            
+
             // Filterable metadata fields
             for field_name in self.strategy.get_filterable_fields() {
                 let builder = meta_builders.get_mut(field_name).unwrap();
@@ -60,9 +66,10 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
                     builder.append_null();
                 }
             }
-            
+
             // Extra metadata (non-filterable fields)
-            let filterable_set: std::collections::HashSet<_> = self.strategy.get_filterable_fields().iter().collect();
+            let filterable_set: std::collections::HashSet<_> =
+                self.strategy.get_filterable_fields().iter().collect();
             for (key, value) in &record.metadata {
                 if !filterable_set.contains(key) {
                     extra_meta_builder.keys().append_value(key);
@@ -70,7 +77,7 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
                 }
             }
             extra_meta_builder.append(true);
-            
+
             // Timestamps
             if let Some(expires_at) = record.expires_at {
                 expires_at_builder.append_value(expires_at.timestamp_millis());
@@ -80,24 +87,24 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
             created_at_builder.append_value(record.timestamp.timestamp_millis());
             updated_at_builder.append_value(record.timestamp.timestamp_millis());
         }
-        
+
         // Build arrays
         let mut arrays: Vec<ArrayRef> = Vec::new();
         arrays.push(Arc::new(id_builder.finish()));
         arrays.push(Arc::new(vectors_builder.finish()));
-        
+
         // Add filterable metadata arrays
         for field_name in self.strategy.get_filterable_fields() {
             let mut builder = meta_builders.remove(field_name).unwrap();
             arrays.push(Arc::new(builder.finish()));
         }
-        
+
         // Add extra metadata and timestamps
         arrays.push(Arc::new(extra_meta_builder.finish()));
         arrays.push(Arc::new(expires_at_builder.finish()));
         arrays.push(Arc::new(created_at_builder.finish()));
         arrays.push(Arc::new(updated_at_builder.finish()));
-        
+
         RecordBatch::try_new(schema.clone(), arrays)
             .context("Failed to create RecordBatch from adapted records")
     }
@@ -124,8 +131,12 @@ impl<'a> TimeSeriesAdapter<'a> {
             time_precision,
         }
     }
-    
-    pub fn adapt_with_time_bucketing(&self, records: &[VectorRecord], schema: &Arc<Schema>) -> Result<RecordBatch> {
+
+    pub fn adapt_with_time_bucketing(
+        &self,
+        records: &[VectorRecord],
+        schema: &Arc<Schema>,
+    ) -> Result<RecordBatch> {
         // Could implement time bucketing logic here
         // For now, delegate to base adapter
         self.base_adapter.adapt_records_to_schema(records, schema)
@@ -147,14 +158,21 @@ pub enum VectorCompressionType {
 }
 
 impl<'a> CompressedVectorAdapter<'a> {
-    pub fn new(strategy: &'a dyn SchemaGenerationStrategy, compression_type: VectorCompressionType) -> Self {
+    pub fn new(
+        strategy: &'a dyn SchemaGenerationStrategy,
+        compression_type: VectorCompressionType,
+    ) -> Self {
         Self {
             base_adapter: VectorRecordSchemaAdapter::new(strategy),
             compression_type,
         }
     }
-    
-    pub fn adapt_with_compression(&self, records: &[VectorRecord], schema: &Arc<Schema>) -> Result<RecordBatch> {
+
+    pub fn adapt_with_compression(
+        &self,
+        records: &[VectorRecord],
+        schema: &Arc<Schema>,
+    ) -> Result<RecordBatch> {
         // Could implement vector compression logic here
         // For now, delegate to base adapter
         self.base_adapter.adapt_records_to_schema(records, schema)

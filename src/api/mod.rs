@@ -1,5 +1,4 @@
-pub mod v1;
 pub mod internal;
 pub mod rest;
+pub mod v1;
 
-pub use rest::*;

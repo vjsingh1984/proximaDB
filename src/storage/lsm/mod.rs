@@ -1,14 +1,14 @@
-use crate::core::{VectorRecord, VectorId, LsmConfig, CollectionId};
+use crate::core::{CollectionId, LsmConfig, VectorId, VectorRecord};
 use crate::storage::{Result, WalManager};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::path::PathBuf;
-use chrono::Utc;
-use serde::{Serialize, Deserialize};
 
 pub mod compaction;
-pub use compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
+pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 
 /// Entry in the LSM tree that can be either a vector record or a tombstone
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,11 +35,11 @@ pub struct LsmTree {
 
 impl LsmTree {
     pub fn new(
-        config: &LsmConfig, 
-        collection_id: CollectionId, 
-        wal_manager: Arc<WalManager>, 
+        config: &LsmConfig,
+        collection_id: CollectionId,
+        wal_manager: Arc<WalManager>,
         data_dir: PathBuf,
-        compaction_manager: Option<Arc<CompactionManager>>
+        compaction_manager: Option<Arc<CompactionManager>>,
     ) -> Self {
         Self {
             config: config.clone(),
@@ -53,22 +53,24 @@ impl LsmTree {
 
     pub async fn put(&self, id: VectorId, record: VectorRecord) -> Result<()> {
         // Write to WAL first for durability using new WAL system
-        let _sequence = self.wal_manager.insert(
-            self.collection_id.clone(),
-            id.clone(),
-            record.clone()
-        ).await.map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
-        
+        let _sequence = self
+            .wal_manager
+            .insert(self.collection_id.clone(), id.clone(), record.clone())
+            .await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
+
         // Then write to memtable as a record entry
         let mut memtable = self.memtable.write().await;
         memtable.insert(id, LsmEntry::Record(record));
-        
+
         // Check if memtable size exceeds threshold and flush to SST
-        if memtable.len() * std::mem::size_of::<LsmEntry>() > (self.config.memtable_size_mb as usize * 1024 * 1024) {
+        if memtable.len() * std::mem::size_of::<LsmEntry>()
+            > (self.config.memtable_size_mb as usize * 1024 * 1024)
+        {
             drop(memtable);
             self.flush().await?;
         }
-        
+
         Ok(())
     }
 
@@ -77,24 +79,25 @@ impl LsmTree {
         match memtable.get(id) {
             Some(LsmEntry::Record(record)) => Ok(Some(record.clone())),
             Some(LsmEntry::Tombstone { .. }) => Ok(None), // Deleted record
-            None => Ok(None), // Record not found
+            None => Ok(None),                             // Record not found
         }
     }
-    
+
     /// Mark a vector as deleted by inserting a tombstone
     pub async fn delete(&self, id: VectorId) -> Result<bool> {
         // Write to WAL first for durability using new WAL system
-        let _sequence = self.wal_manager.delete(
-            self.collection_id.clone(),
-            id.clone()
-        ).await.map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
-        
+        let _sequence = self
+            .wal_manager
+            .delete(self.collection_id.clone(), id.clone())
+            .await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
+
         // Check if the record currently exists
         let exists = {
             let memtable = self.memtable.read().await;
             matches!(memtable.get(&id), Some(LsmEntry::Record(_)))
         };
-        
+
         // Insert tombstone in memtable
         let mut memtable = self.memtable.write().await;
         let tombstone = LsmEntry::Tombstone {
@@ -103,13 +106,15 @@ impl LsmTree {
             timestamp: Utc::now(),
         };
         memtable.insert(id, tombstone);
-        
+
         // Check if memtable size exceeds threshold and flush to SST
-        if memtable.len() * std::mem::size_of::<LsmEntry>() > (self.config.memtable_size_mb as usize * 1024 * 1024) {
+        if memtable.len() * std::mem::size_of::<LsmEntry>()
+            > (self.config.memtable_size_mb as usize * 1024 * 1024)
+        {
             drop(memtable);
             self.flush().await?;
         }
-        
+
         Ok(exists)
     }
 
@@ -122,38 +127,47 @@ impl LsmTree {
     /// Force flush memtable to SST files
     pub async fn flush(&self) -> Result<()> {
         let mut memtable = self.memtable.write().await;
-        
+
         if memtable.is_empty() {
             return Ok(());
         }
-        
+
         // Create SST file path
         let sst_filename = format!("sst_{}_{}.sst", self.collection_id, Utc::now().timestamp());
         let sst_path = self.data_dir.join(&self.collection_id).join(sst_filename);
-        
+
         // Ensure directory exists
         if let Some(parent) = sst_path.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| crate::core::StorageError::DiskIO(e))?;
         }
-        
+
         // Serialize memtable to file
-        let data = bincode::serialize(&*memtable)
-            .map_err(|e| crate::core::StorageError::SerializationError(format!("Failed to serialize memtable: {}", e)))?;
-        
-        tokio::fs::write(&sst_path, data).await
+        let data = bincode::serialize(&*memtable).map_err(|e| {
+            crate::core::StorageError::SerializationError(format!(
+                "Failed to serialize memtable: {}",
+                e
+            ))
+        })?;
+
+        tokio::fs::write(&sst_path, data)
+            .await
             .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-        
+
         // Clear memtable
         memtable.clear();
-        
+
         // Force flush WAL to ensure durability
-        let _flush_result = self.wal_manager.flush(Some(&self.collection_id)).await
+        let _flush_result = self
+            .wal_manager
+            .flush(Some(&self.collection_id))
+            .await
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
-        
+
         // Trigger compaction if manager is available
-        if let Some(compaction_manager) = &self.compaction_manager {
-            let task = CompactionTask {
+        if let Some(_compaction_manager) = &self.compaction_manager {
+            let _task = CompactionTask {
                 collection_id: self.collection_id.clone(),
                 level: 0, // Start at level 0
                 input_files: vec![sst_path.clone()],
@@ -161,10 +175,13 @@ impl LsmTree {
                 priority: CompactionPriority::Medium,
             };
             // For now, just log that we would trigger compaction
-            tracing::debug!("Would trigger compaction for collection: {}", self.collection_id);
+            tracing::debug!(
+                "Would trigger compaction for collection: {}",
+                self.collection_id
+            );
             // compaction_manager.add_task(task).await?;
         }
-        
+
         Ok(())
     }
 

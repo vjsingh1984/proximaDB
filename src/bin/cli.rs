@@ -7,7 +7,7 @@ use std::path::PathBuf;
 struct Cli {
     #[arg(short, long, default_value = "http://localhost:8080")]
     server: String,
-    
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -59,9 +59,13 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
+
     match cli.command {
-        Commands::CreateCollection { id, name, dimension } => {
+        Commands::CreateCollection {
+            id,
+            name,
+            dimension,
+        } => {
             println!("Creating collection: {} ({}D)", name, dimension);
             // TODO: Implement gRPC client call
         }
@@ -69,25 +73,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Listing collections...");
             // TODO: Implement gRPC client call
         }
-        Commands::Insert { collection, vector, metadata } => {
+        Commands::Insert {
+            collection,
+            vector,
+            metadata,
+        } => {
             println!("Inserting vector into collection: {}", collection);
             // TODO: Parse vector JSON and implement gRPC client call
         }
-        Commands::Search { collection, vector, k } => {
-            println!("Searching for {} similar vectors in collection: {}", k, collection);
+        Commands::Search {
+            collection,
+            vector,
+            k,
+        } => {
+            println!(
+                "Searching for {} similar vectors in collection: {}",
+                k, collection
+            );
             // TODO: Parse vector JSON and implement gRPC client call
         }
         Commands::Status => {
             println!("Checking server status...");
             // TODO: Implement gRPC client call
         }
-        Commands::Import { collection, file, batch_size } => {
-            println!("Importing data from {:?} to collection: {} (batch size: {})", 
-                     file, collection, batch_size);
+        Commands::Import {
+            collection,
+            file,
+            batch_size,
+        } => {
+            println!(
+                "Importing data from {:?} to collection: {} (batch size: {})",
+                file, collection, batch_size
+            );
             // TODO: Implement file parsing and batch import
         }
     }
-    
+
     println!("CLI command executed (implementation pending)");
     Ok(())
 }

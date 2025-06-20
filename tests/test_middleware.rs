@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-use proximadb::core::{Config, StorageConfig, LsmConfig, ApiConfig, ServerConfig, ConsensusConfig, MonitoringConfig};
-use proximadb::network::middleware::{AuthConfig, RateLimitConfig};
+use proximadb::core::{
+    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+};
 use proximadb::network::middleware::auth::UserInfo;
+use proximadb::network::middleware::{AuthConfig, RateLimitConfig};
 use proximadb::ProximaDB;
-use tempfile::TempDir;
 use std::collections::HashMap;
 use std::time::Duration;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_authentication_middleware() {
@@ -80,26 +82,26 @@ async fn test_authentication_middleware() {
 
     // Create ProximaDB instance with authentication enabled
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Enable authentication in the HTTP server
     db.configure_auth(AuthConfig {
         enabled: true,
         api_keys: api_keys.clone(),
         require_auth_for_health: false,
     });
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     let client = reqwest::Client::new();
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
-    
+
     println!("Testing authentication against: {}", base_url);
-    
+
     // Test 1: Health endpoint should work without authentication (when require_auth_for_health is false)
     let response = client
         .get(&format!("{}/health", base_url))
@@ -107,7 +109,7 @@ async fn test_authentication_middleware() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     // Test 2: Collections endpoint should require authentication
     let response = client
         .get(&format!("{}/collections", base_url))
@@ -115,7 +117,7 @@ async fn test_authentication_middleware() {
         .await
         .unwrap();
     assert_eq!(response.status(), 401); // Unauthorized
-    
+
     // Test 3: Valid API key should allow access
     let response = client
         .get(&format!("{}/collections", base_url))
@@ -124,7 +126,7 @@ async fn test_authentication_middleware() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200); // Should work with valid API key
-    
+
     // Test 4: Invalid API key should be rejected
     let response = client
         .get(&format!("{}/collections", base_url))
@@ -133,9 +135,9 @@ async fn test_authentication_middleware() {
         .await
         .unwrap();
     assert_eq!(response.status(), 401); // Unauthorized
-    
+
     println!("Authentication middleware test passed!");
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }
@@ -187,7 +189,7 @@ async fn test_rate_limiting_middleware() {
 
     // Create ProximaDB instance with rate limiting enabled
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Enable rate limiting in the HTTP server (very low limit for testing)
     db.configure_rate_limiting(RateLimitConfig {
         enabled: true,
@@ -196,19 +198,19 @@ async fn test_rate_limiting_middleware() {
         limit_health_endpoints: false,
         global_max_requests: None,
     });
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     let client = reqwest::Client::new();
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
-    
+
     println!("Testing rate limiting against: {}", base_url);
-    
+
     // Test 1: Health endpoint should work without rate limiting (when limit_health_endpoints is false)
     let response = client
         .get(&format!("{}/health", base_url))
@@ -216,7 +218,7 @@ async fn test_rate_limiting_middleware() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     // Test 2: First few requests to collections should work
     for i in 1..=3 {
         let response = client
@@ -227,7 +229,7 @@ async fn test_rate_limiting_middleware() {
         println!("Request {}: {}", i, response.status());
         assert_eq!(response.status(), 200); // Should work within limit
     }
-    
+
     // Test 3: Request beyond limit should be rate limited
     let response = client
         .get(&format!("{}/collections", base_url))
@@ -236,9 +238,9 @@ async fn test_rate_limiting_middleware() {
         .unwrap();
     println!("Rate limited request: {}", response.status());
     assert_eq!(response.status(), 429); // Too Many Requests
-    
+
     println!("Rate limiting middleware test passed!");
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }

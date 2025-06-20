@@ -5,7 +5,7 @@
 
 //! WAL Configuration with Smart Defaults for Performance
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Compression algorithms for WAL data
@@ -34,13 +34,13 @@ impl Default for CompressionAlgorithm {
 pub struct CompressionConfig {
     /// Algorithm to use
     pub algorithm: CompressionAlgorithm,
-    
+
     /// Enable compression for memory structures
     pub compress_memory: bool,
-    
+
     /// Enable compression for disk storage
     pub compress_disk: bool,
-    
+
     /// Minimum entry size to compress (bytes)
     pub min_compress_size: usize,
 }
@@ -61,28 +61,28 @@ impl Default for CompressionConfig {
 pub struct PerformanceConfig {
     /// Memory table flush threshold (bytes) - ONLY size-based trigger
     pub memory_flush_size_bytes: usize,
-    
+
     /// Disk segment size (bytes) for each collection
     pub disk_segment_size: usize,
-    
+
     /// Global WAL size threshold for forced flush (bytes)
     pub global_flush_threshold: usize,
-    
+
     /// Write buffer size for disk operations
     pub write_buffer_size: usize,
-    
+
     /// Number of concurrent flush operations
     pub concurrent_flushes: usize,
-    
+
     /// Batch write optimization threshold
     pub batch_threshold: usize,
-    
+
     /// MVCC cleanup interval (seconds)
     pub mvcc_cleanup_interval_secs: u64,
-    
+
     /// TTL cleanup interval (seconds)
     pub ttl_cleanup_interval_secs: u64,
-    
+
     /// Sync mode for disk writes
     pub sync_mode: SyncMode,
 }
@@ -92,14 +92,14 @@ impl Default for PerformanceConfig {
         Self {
             // Optimized for write-triggered size-based flush only
             memory_flush_size_bytes: 128 * 1024 * 1024, // 128MB memory limit for immediate write-based flush
-            disk_segment_size: 512 * 1024 * 1024,     // 512MB segments optimized for large vectors
+            disk_segment_size: 512 * 1024 * 1024, // 512MB segments optimized for large vectors
             global_flush_threshold: 512 * 1024 * 1024, // 512MB global limit for write-triggered flush
-            write_buffer_size: 8 * 1024 * 1024,       // 8MB write buffer for large vector throughput
+            write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput
             concurrent_flushes: num_cpus::get().min(4), // Max 4 concurrent flushes to avoid I/O contention
-            batch_threshold: 500,                       // Larger batches for bulk insert optimization
-            mvcc_cleanup_interval_secs: 3600,          // Clean up old versions every hour
-            ttl_cleanup_interval_secs: 300,            // Check TTL every 5 minutes
-            sync_mode: SyncMode::PerBatch,             // Balance safety and bulk insert performance
+            batch_threshold: 500, // Larger batches for bulk insert optimization
+            mvcc_cleanup_interval_secs: 3600, // Clean up old versions every hour
+            ttl_cleanup_interval_secs: 300, // Check TTL every 5 minutes
+            sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
         }
     }
 }
@@ -138,10 +138,10 @@ impl Default for WalStrategyType {
 pub struct MultiDiskConfig {
     /// Data directories on different disks
     pub data_directories: Vec<PathBuf>,
-    
+
     /// Distribution strategy
     pub distribution_strategy: DiskDistributionStrategy,
-    
+
     /// Enable collection affinity (collection stays on one disk)
     pub collection_affinity: bool,
 }
@@ -172,13 +172,13 @@ impl Default for MultiDiskConfig {
 pub struct MemTableConfig {
     /// Memtable strategy type
     pub memtable_type: MemTableType,
-    
+
     /// Global memory limit across all collections (size-based only)
     pub global_memory_limit: usize,
-    
+
     /// MVCC version retention count
     pub mvcc_versions_retained: usize,
-    
+
     /// Enable concurrent operations
     pub enable_concurrency: bool,
 }
@@ -207,9 +207,9 @@ impl Default for MemTableConfig {
     fn default() -> Self {
         Self {
             memtable_type: MemTableType::default(),
-            global_memory_limit: 512 * 1024 * 1024,  // 512MB for write-triggered flush
-            mvcc_versions_retained: 3,                 // Keep last 3 versions for MVCC
-            enable_concurrency: true,                  // Enable concurrent operations
+            global_memory_limit: 512 * 1024 * 1024, // 512MB for write-triggered flush
+            mvcc_versions_retained: 3,              // Keep last 3 versions for MVCC
+            enable_concurrency: true,               // Enable concurrent operations
         }
     }
 }
@@ -219,28 +219,28 @@ impl Default for MemTableConfig {
 pub struct WalConfig {
     /// Strategy type to use
     pub strategy_type: WalStrategyType,
-    
+
     /// Memtable configuration
     pub memtable: MemTableConfig,
-    
+
     /// Multi-disk configuration
     pub multi_disk: MultiDiskConfig,
-    
+
     /// Compression settings
     pub compression: CompressionConfig,
-    
+
     /// Performance tuning
     pub performance: PerformanceConfig,
-    
+
     /// Enable MVCC versioning
     pub enable_mvcc: bool,
-    
+
     /// Enable TTL support
     pub enable_ttl: bool,
-    
+
     /// Enable background compaction
     pub enable_background_compaction: bool,
-    
+
     /// Collection-specific overrides
     pub collection_overrides: std::collections::HashMap<String, CollectionWalConfig>,
 }
@@ -248,13 +248,13 @@ pub struct WalConfig {
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
-            strategy_type: WalStrategyType::default(),  // Avro for schema evolution and recovery
-            memtable: MemTableConfig::default(),        // ART for metadata filtering efficiency
-            multi_disk: MultiDiskConfig::default(),     // LoadBalanced for bulk insert optimization
-            compression: CompressionConfig::default(),  // Snappy for balanced performance
-            performance: PerformanceConfig::default(),  // Optimized for large vectors and bulk processing
-            enable_mvcc: true,  // Enable for consistency and document versioning
-            enable_ttl: true,   // Enable for data lifecycle management
+            strategy_type: WalStrategyType::default(), // Avro for schema evolution and recovery
+            memtable: MemTableConfig::default(),       // ART for metadata filtering efficiency
+            multi_disk: MultiDiskConfig::default(),    // LoadBalanced for bulk insert optimization
+            compression: CompressionConfig::default(), // Snappy for balanced performance
+            performance: PerformanceConfig::default(), // Optimized for large vectors and bulk processing
+            enable_mvcc: true, // Enable for consistency and document versioning
+            enable_ttl: true,  // Enable for data lifecycle management
             enable_background_compaction: true, // Enable for maintenance and space reclamation
             collection_overrides: std::collections::HashMap::new(),
         }
@@ -266,13 +266,13 @@ impl Default for WalConfig {
 pub struct CollectionWalConfig {
     /// Override memory flush size threshold for this collection (bytes)
     pub memory_flush_size_bytes: Option<usize>,
-    
+
     /// Override disk segment size for this collection
     pub disk_segment_size: Option<usize>,
-    
+
     /// Override compression settings
     pub compression: Option<CompressionConfig>,
-    
+
     /// Override TTL settings
     pub default_ttl_days: Option<u32>,
 }
@@ -289,29 +289,29 @@ impl WalConfig {
         config.performance.sync_mode = SyncMode::PerBatch; // Less frequent syncing
         config
     }
-    
+
     /// Create configuration optimized for low-latency reads
     pub fn low_latency() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest point lookups
         config.compression.compress_memory = false; // Faster memory access
-        config.compression.compress_disk = false;   // Faster disk reads
+        config.compression.compress_disk = false; // Faster disk reads
         config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB smaller memory footprint
-        config.performance.sync_mode = SyncMode::Always;   // Immediate consistency
+        config.performance.sync_mode = SyncMode::Always; // Immediate consistency
         config
     }
-    
+
     /// Create configuration optimized for storage efficiency
     pub fn storage_optimized() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Most memory-efficient
         config.compression.algorithm = CompressionAlgorithm::Zstd { level: 3 }; // Better compression
-        config.compression.compress_memory = true;  // Compress everything
-        config.compression.min_compress_size = 64;  // Compress smaller entries
+        config.compression.compress_memory = true; // Compress everything
+        config.compression.min_compress_size = 64; // Compress smaller entries
         config.performance.disk_segment_size = 512 * 1024 * 1024; // Larger segments
         config
     }
-    
+
     /// Create configuration optimized for range queries and analytics
     pub fn range_query_optimized() -> Self {
         let mut config = Self::default();
@@ -321,7 +321,7 @@ impl WalConfig {
         config.performance.memory_flush_size_bytes = 64 * 1024 * 1024; // 64MB moderate memory usage
         config
     }
-    
+
     /// Create configuration optimized for high concurrency and string keys
     pub fn high_concurrency() -> Self {
         let mut config = Self::default();
@@ -331,11 +331,14 @@ impl WalConfig {
         config.memtable.enable_concurrency = true;
         config
     }
-    
+
     /// Get effective configuration for a collection (with overrides)
-    pub fn effective_config_for_collection(&self, collection_id: &str) -> CollectionEffectiveConfig {
+    pub fn effective_config_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> CollectionEffectiveConfig {
         let overrides = self.collection_overrides.get(collection_id);
-        
+
         CollectionEffectiveConfig {
             memory_flush_size_bytes: overrides
                 .and_then(|o| o.memory_flush_size_bytes)

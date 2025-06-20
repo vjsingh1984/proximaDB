@@ -27,9 +27,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
+use crate::monitoring::metrics::{Alert, SystemMetrics};
 use crate::monitoring::MetricsCollector;
-use crate::monitoring::metrics::{SystemMetrics, Alert};
-use crate::monitoring::metrics::exporters::{PrometheusExporter, MetricsExporter};
 
 /// Metrics Service configuration
 #[derive(Debug, Clone)]
@@ -122,17 +122,17 @@ async fn metrics_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Result<String, StatusCode> {
     let format = params.format.unwrap_or_else(|| "prometheus".to_string());
-    
+
     match format.as_str() {
         "json" => {
             let metrics = metrics_collector.get_current_metrics().await;
-            serde_json::to_string_pretty(&metrics)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
             let metrics = metrics_collector.get_current_metrics().await;
             let exporter = PrometheusExporter::new();
-            exporter.export_system_metrics(&metrics)
+            exporter
+                .export_system_metrics(&metrics)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -154,7 +154,8 @@ async fn prometheus_metrics_endpoint(
 ) -> Result<String, StatusCode> {
     let metrics = metrics_collector.get_current_metrics().await;
     let exporter = PrometheusExporter::new();
-    exporter.export_system_metrics(&metrics)
+    exporter
+        .export_system_metrics(&metrics)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
@@ -163,7 +164,7 @@ async fn metrics_health_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<MetricsHealthResponse> {
     let metrics = metrics_collector.get_current_metrics().await;
-    
+
     Json(MetricsHealthResponse {
         status: "healthy".to_string(),
         metrics_enabled: true,

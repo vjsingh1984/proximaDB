@@ -12,8 +12,7 @@ impl DiskManager {
         // Create directories if they don't exist
         for dir in &data_dirs {
             if !dir.exists() {
-                std::fs::create_dir_all(dir)
-                    .map_err(|e| StorageError::DiskIO(e))?;
+                std::fs::create_dir_all(dir).map_err(|e| StorageError::DiskIO(e))?;
             }
         }
 

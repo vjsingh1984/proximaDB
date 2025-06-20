@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-use proximadb::core::{Config, StorageConfig, LsmConfig, ApiConfig, ServerConfig, ConsensusConfig, MonitoringConfig};
+use proximadb::core::{
+    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+};
 use proximadb::ProximaDB;
-use tempfile::TempDir;
 use serde_json::json;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_complete_rest_api_workflow() {
@@ -66,17 +68,17 @@ async fn test_complete_rest_api_workflow() {
 
     // Create ProximaDB instance
     let mut db = ProximaDB::new(config).await.unwrap();
-    
+
     // Start the database
     db.start().await.unwrap();
-    
+
     // Give the server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     let client = reqwest::Client::new();
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
-    
+
     // Test 1: Health check
     let response = client
         .get(&format!("{}/health", base_url))
@@ -84,7 +86,7 @@ async fn test_complete_rest_api_workflow() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     // Test 2: List collections (should be empty initially)
     let response = client
         .get(&format!("{}/collections", base_url))
@@ -94,7 +96,7 @@ async fn test_complete_rest_api_workflow() {
     assert_eq!(response.status(), 200);
     let collections: Vec<serde_json::Value> = response.json().await.unwrap();
     assert_eq!(collections.len(), 0);
-    
+
     // Test 3: Create a new collection
     let create_request = json!({
         "name": "test_collection",
@@ -102,7 +104,7 @@ async fn test_complete_rest_api_workflow() {
         "distance_metric": "cosine",
         "indexing_algorithm": "hnsw"
     });
-    
+
     let response = client
         .post(&format!("{}/collections", base_url))
         .json(&create_request)
@@ -110,12 +112,12 @@ async fn test_complete_rest_api_workflow() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let collection_response: serde_json::Value = response.json().await.unwrap();
     let collection_id = collection_response["id"].as_str().unwrap();
     assert_eq!(collection_response["name"], "test_collection");
     assert_eq!(collection_response["dimension"], 3);
-    
+
     // Test 4: Get the created collection
     let response = client
         .get(&format!("{}/collections/{}", base_url, collection_id))
@@ -123,10 +125,10 @@ async fn test_complete_rest_api_workflow() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let collection: serde_json::Value = response.json().await.unwrap();
     assert_eq!(collection["name"], "test_collection");
-    
+
     // Test 5: Insert a vector
     let insert_request = json!({
         "vector": [1.0, 2.0, 3.0],
@@ -135,31 +137,37 @@ async fn test_complete_rest_api_workflow() {
             "category": "test"
         }
     });
-    
+
     let response = client
-        .post(&format!("{}/collections/{}/vectors", base_url, collection_id))
+        .post(&format!(
+            "{}/collections/{}/vectors",
+            base_url, collection_id
+        ))
         .json(&insert_request)
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let vector_response: serde_json::Value = response.json().await.unwrap();
     let vector_id = vector_response["id"].as_str().unwrap();
     assert_eq!(vector_response["vector"], json!([1.0, 2.0, 3.0]));
-    
+
     // Test 6: Get the inserted vector
     let response = client
-        .get(&format!("{}/collections/{}/vectors/{}", base_url, collection_id, vector_id))
+        .get(&format!(
+            "{}/collections/{}/vectors/{}",
+            base_url, collection_id, vector_id
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let vector: serde_json::Value = response.json().await.unwrap();
     assert_eq!(vector["vector"], json!([1.0, 2.0, 3.0]));
     assert_eq!(vector["metadata"]["type"], "document");
-    
+
     // Test 7: Insert another vector for search testing
     let insert_request2 = json!({
         "vector": [1.1, 2.1, 3.1],
@@ -168,33 +176,39 @@ async fn test_complete_rest_api_workflow() {
             "category": "similar"
         }
     });
-    
+
     let response = client
-        .post(&format!("{}/collections/{}/vectors", base_url, collection_id))
+        .post(&format!(
+            "{}/collections/{}/vectors",
+            base_url, collection_id
+        ))
         .json(&insert_request2)
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     // Test 8: Search for similar vectors
     let search_request = json!({
         "vector": [1.0, 2.0, 3.0],
         "k": 2
     });
-    
+
     let response = client
-        .post(&format!("{}/collections/{}/search", base_url, collection_id))
+        .post(&format!(
+            "{}/collections/{}/search",
+            base_url, collection_id
+        ))
         .json(&search_request)
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let search_results: Vec<serde_json::Value> = response.json().await.unwrap();
     // We should get back at least 1 result (exact match should have very high score)
     assert!(!search_results.is_empty());
-    
+
     // Test 9: Search with metadata filter
     let search_request_with_filter = json!({
         "vector": [1.0, 2.0, 3.0],
@@ -203,43 +217,55 @@ async fn test_complete_rest_api_workflow() {
             "type": "document"
         }
     });
-    
+
     let response = client
-        .post(&format!("{}/collections/{}/search", base_url, collection_id))
+        .post(&format!(
+            "{}/collections/{}/search",
+            base_url, collection_id
+        ))
         .json(&search_request_with_filter)
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    
+
     let filtered_results: Vec<serde_json::Value> = response.json().await.unwrap();
     assert!(!filtered_results.is_empty());
-    
+
     // Test 10: Delete a vector
     let response = client
-        .delete(&format!("{}/collections/{}/vectors/{}", base_url, collection_id, vector_id))
+        .delete(&format!(
+            "{}/collections/{}/vectors/{}",
+            base_url, collection_id, vector_id
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 204); // No Content
-    
+
     // Test 11: Try to get the deleted vector (should be 404)
     let response = client
-        .get(&format!("{}/collections/{}/vectors/{}", base_url, collection_id, vector_id))
+        .get(&format!(
+            "{}/collections/{}/vectors/{}",
+            base_url, collection_id, vector_id
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
-    
+
     // Test 12: Get index statistics
     let response = client
-        .get(&format!("{}/collections/{}/index/stats", base_url, collection_id))
+        .get(&format!(
+            "{}/collections/{}/index/stats",
+            base_url, collection_id
+        ))
         .send()
         .await
         .unwrap();
     // This might return 404 if index doesn't exist, which is okay for now
     assert!(response.status() == 200 || response.status() == 404);
-    
+
     // Test 13: Delete the collection
     let response = client
         .delete(&format!("{}/collections/{}", base_url, collection_id))
@@ -247,7 +273,7 @@ async fn test_complete_rest_api_workflow() {
         .await
         .unwrap();
     assert_eq!(response.status(), 204); // No Content
-    
+
     // Test 14: Try to get the deleted collection (should be 404)
     let response = client
         .get(&format!("{}/collections/{}", base_url, collection_id))
@@ -255,7 +281,7 @@ async fn test_complete_rest_api_workflow() {
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
-    
+
     // Stop the database
     db.stop().await.unwrap();
 }

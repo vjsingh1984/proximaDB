@@ -34,24 +34,22 @@ impl ColumnFamilyStorage {
                 name: "metadata".to_string(),
                 compression: CompressionType::Zstd { level: 3 }, // Better compression for text
                 ttl_seconds: None,
-                storage_format: ColumnStorageFormat::Document { 
-                    max_document_size_kb: 64 
+                storage_format: ColumnStorageFormat::Document {
+                    max_document_size_kb: 64,
                 },
             },
             // Analytics data - optimized for OLAP queries
             ColumnFamilyConfig {
                 name: "analytics".to_string(),
                 compression: CompressionType::Zstd { level: 6 }, // High compression
-                ttl_seconds: Some(86400 * 30), // 30 days TTL
-                storage_format: ColumnStorageFormat::ParquetRowGroup { 
-                    batch_size: 1000 
-                },
+                ttl_seconds: Some(86400 * 30),                   // 30 days TTL
+                storage_format: ColumnStorageFormat::ParquetRowGroup { batch_size: 1000 },
             },
             // Hot cache - frequently accessed data
             ColumnFamilyConfig {
                 name: "hot_cache".to_string(),
                 compression: CompressionType::None, // No compression for speed
-                ttl_seconds: Some(3600), // 1 hour TTL
+                ttl_seconds: Some(3600),            // 1 hour TTL
                 storage_format: ColumnStorageFormat::KeyValue,
             },
         ]
@@ -92,19 +90,27 @@ impl ColumnFamilyStorage {
         routed_data
     }
 
-    fn encode_vector_data(&self, record: &VectorRecord, config: &ColumnFamilyConfig) -> crate::Result<Vec<u8>> {
+    fn encode_vector_data(
+        &self,
+        record: &VectorRecord,
+        config: &ColumnFamilyConfig,
+    ) -> crate::Result<Vec<u8>> {
         // Encode just the vector with metadata for reconstruction
         let vector_data = serde_json::json!({
             "id": record.id,
             "vector": record.vector,
             "timestamp": record.timestamp,
         });
-        
+
         let encoded = serde_json::to_vec(&vector_data)?;
         self.apply_compression(&encoded, &config.compression)
     }
 
-    fn encode_metadata(&self, record: &VectorRecord, config: &ColumnFamilyConfig) -> crate::Result<Vec<u8>> {
+    fn encode_metadata(
+        &self,
+        record: &VectorRecord,
+        config: &ColumnFamilyConfig,
+    ) -> crate::Result<Vec<u8>> {
         // Encode metadata with ID for joins
         let metadata_record = serde_json::json!({
             "id": record.id,
@@ -112,31 +118,38 @@ impl ColumnFamilyStorage {
             "metadata": record.metadata,
             "timestamp": record.timestamp,
         });
-        
+
         let encoded = serde_json::to_vec(&metadata_record)?;
         self.apply_compression(&encoded, &config.compression)
     }
 
-    fn encode_for_analytics(&self, record: &VectorRecord, _config: &ColumnFamilyConfig) -> crate::Result<Vec<u8>> {
+    fn encode_for_analytics(
+        &self,
+        record: &VectorRecord,
+        _config: &ColumnFamilyConfig,
+    ) -> crate::Result<Vec<u8>> {
         // This would typically be batched and stored as Parquet
         // For now, just serialize the record
         let encoded = bincode::serialize(record)?;
         Ok(encoded)
     }
 
-    fn apply_compression(&self, data: &[u8], compression: &CompressionType) -> crate::Result<Vec<u8>> {
+    fn apply_compression(
+        &self,
+        data: &[u8],
+        compression: &CompressionType,
+    ) -> crate::Result<Vec<u8>> {
         match compression {
             CompressionType::None => Ok(data.to_vec()),
             CompressionType::Lz4 => {
                 // lz4_flex::compress_prepend_size returns Vec<u8> directly
                 Ok(lz4_flex::compress_prepend_size(data))
             }
-            CompressionType::Zstd { level } => {
-                Ok(zstd::encode_all(data, *level)?)
-            }
+            CompressionType::Zstd { level } => Ok(zstd::encode_all(data, *level)?),
             CompressionType::Gzip => {
                 use std::io::Write;
-                let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                let mut encoder =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
                 encoder.write_all(data)?;
                 Ok(encoder.finish()?)
             }

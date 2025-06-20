@@ -1,0 +1,13 @@
+{
+  "collection_creation": false,
+  "vector_insertion": false,
+  "server_restart": false,
+  "collection_persistence": false,
+  "id_search_existing": false,
+  "id_search_nonexistent": false,
+  "metadata_filter_existing": false,
+  "metadata_filter_nonexistent": false,
+  "vector_deletion": false,
+  "similarity_search": false,
+  "overall_success": false
+}

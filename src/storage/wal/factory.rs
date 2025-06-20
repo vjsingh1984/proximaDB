@@ -8,8 +8,8 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use super::{WalStrategy, WalConfig};
 use super::config::WalStrategyType;
+use super::{WalConfig, WalStrategy};
 use crate::storage::filesystem::FilesystemFactory;
 
 // Re-exports for factory users (avoid duplicate import)
@@ -38,7 +38,7 @@ impl WalFactory {
             }
         }
     }
-    
+
     /// Create strategy with automatic type detection from config
     pub async fn create_from_config(
         config: &WalConfig,
@@ -46,24 +46,22 @@ impl WalFactory {
     ) -> Result<Box<dyn WalStrategy>> {
         Self::create_strategy(config.strategy_type.clone(), config, filesystem).await
     }
-    
+
     /// List available strategy types
     pub fn available_strategies() -> Vec<WalStrategyType> {
-        vec![
-            WalStrategyType::Avro,
-            WalStrategyType::Bincode,
-        ]
+        vec![WalStrategyType::Avro, WalStrategyType::Bincode]
     }
-    
+
     /// Get strategy information
     pub fn strategy_info(strategy_type: &WalStrategyType) -> StrategyInfo {
         match strategy_type {
             WalStrategyType::Avro => StrategyInfo {
                 name: "Avro",
-                description: "Schema evolution support, cross-language compatibility, built-in compression",
+                description:
+                    "Schema evolution support, cross-language compatibility, built-in compression",
                 features: vec![
                     "Schema evolution",
-                    "Cross-language support", 
+                    "Cross-language support",
                     "Built-in compression",
                     "Field-level compatibility",
                 ],
@@ -162,26 +160,26 @@ impl StrategySelector {
                 cross_language: false,
                 ..
             } => WalStrategyType::Bincode, // High-write performance
-            
+
             WorkloadCharacteristics {
                 schema_evolution: true,
                 ..
             } => WalStrategyType::Avro, // Schema evolution needed
-            
+
             WorkloadCharacteristics {
                 cross_language: true,
                 ..
             } => WalStrategyType::Avro, // Cross-language compatibility
-            
+
             WorkloadCharacteristics {
                 storage_efficiency: true,
                 ..
             } => WalStrategyType::Avro, // Better compression
-            
+
             _ => WalStrategyType::Avro, // Safe default
         }
     }
-    
+
     /// Get strategy comparison matrix
     pub fn compare_strategies() -> StrategyComparison {
         StrategyComparison {
@@ -227,7 +225,7 @@ pub struct StrategyComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_strategy_recommendation() {
         let workload = WorkloadCharacteristics {
@@ -236,23 +234,23 @@ mod tests {
             cross_language: false,
             ..Default::default()
         };
-        
+
         assert_eq!(
             StrategySelector::recommend_strategy(&workload),
             WalStrategyType::Bincode
         );
-        
+
         let workload = WorkloadCharacteristics {
             schema_evolution: true,
             ..Default::default()
         };
-        
+
         assert_eq!(
             StrategySelector::recommend_strategy(&workload),
             WalStrategyType::Avro
         );
     }
-    
+
     #[test]
     fn test_available_strategies() {
         let strategies = WalFactory::available_strategies();
@@ -260,13 +258,13 @@ mod tests {
         assert!(strategies.contains(&WalStrategyType::Avro));
         assert!(strategies.contains(&WalStrategyType::Bincode));
     }
-    
+
     #[test]
     fn test_strategy_info() {
         let avro_info = WalFactory::strategy_info(&WalStrategyType::Avro);
         assert_eq!(avro_info.name, "Avro");
         assert!(avro_info.features.contains(&"Schema evolution"));
-        
+
         let bincode_info = WalFactory::strategy_info(&WalStrategyType::Bincode);
         assert_eq!(bincode_info.name, "Bincode");
         assert!(bincode_info.features.contains(&"Zero-copy deserialization"));

@@ -15,24 +15,22 @@
  */
 
 //! Search trait and optimization framework for ProximaDB storage engines
-//! 
+//!
 //! This module defines the search interfaces that each storage engine must implement,
 //! allowing for storage-specific optimizations and pushdown operations.
 
-use std::collections::HashMap;
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
 
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{CollectionId, VectorId};
 
 /// Search operation type for cost estimation and optimization
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchOperation {
     /// Exact vector lookup by ID - O(1) or O(log n) depending on storage
-    ExactLookup {
-        vector_id: VectorId,
-    },
+    ExactLookup { vector_id: VectorId },
     /// Similarity search with vector - computational cost varies by algorithm
     SimilaritySearch {
         query_vector: Vec<f32>,
@@ -70,8 +68,8 @@ pub enum FilterCondition {
     LessThanOrEqual(Value),
     In(Vec<Value>),
     NotIn(Vec<Value>),
-    Contains(String),       // For string/array fields
-    StartsWith(String),     // For string fields
+    Contains(String),   // For string/array fields
+    StartsWith(String), // For string fields
     IsNull,
     IsNotNull,
     And(Vec<FilterCondition>),
@@ -97,9 +95,9 @@ pub struct SearchResult {
     pub id: VectorId,
     pub vector: Option<Vec<f32>>,
     pub metadata: HashMap<String, Value>,
-    pub score: Option<f32>,        // Similarity score if applicable
-    pub distance: Option<f32>,     // Distance if applicable
-    pub rank: Option<usize>,       // Rank in result set
+    pub score: Option<f32>,    // Similarity score if applicable
+    pub distance: Option<f32>, // Distance if applicable
+    pub rank: Option<usize>,   // Rank in result set
 }
 
 /// Search execution plan with cost estimates
@@ -115,11 +113,11 @@ pub struct SearchPlan {
 /// Cost estimation for search operations
 #[derive(Debug, Clone)]
 pub struct SearchCost {
-    pub cpu_cost: f64,           // Computational cost
-    pub io_cost: f64,            // Disk I/O cost
-    pub memory_cost: f64,        // Memory usage cost
-    pub network_cost: f64,       // Network I/O cost (for distributed)
-    pub total_estimated_ms: f64, // Total estimated time in milliseconds
+    pub cpu_cost: f64,               // Computational cost
+    pub io_cost: f64,                // Disk I/O cost
+    pub memory_cost: f64,            // Memory usage cost
+    pub network_cost: f64,           // Network I/O cost (for distributed)
+    pub total_estimated_ms: f64,     // Total estimated time in milliseconds
     pub cardinality_estimate: usize, // Expected result count
 }
 
@@ -142,9 +140,9 @@ pub enum ExecutionStrategy {
 #[derive(Debug, Clone)]
 pub struct IndexUsage {
     pub index_name: String,
-    pub index_type: String,     // "btree", "hash", "hnsw", "ivf", etc.
-    pub selectivity: f64,       // Fraction of data selected (0.0 to 1.0)
-    pub scan_type: String,      // "eq", "range", "vector_sim", etc.
+    pub index_type: String, // "btree", "hash", "hnsw", "ivf", etc.
+    pub selectivity: f64,   // Fraction of data selected (0.0 to 1.0)
+    pub scan_type: String,  // "eq", "range", "vector_sim", etc.
 }
 
 /// Operations that can be pushed down to storage
@@ -180,21 +178,21 @@ pub struct SearchStats {
 pub trait SearchEngine: Send + Sync {
     /// Get the name of this search engine
     fn engine_name(&self) -> &'static str;
-    
+
     /// Create an execution plan for the given search operation
     async fn create_plan(
         &self,
         collection_id: &CollectionId,
         operation: SearchOperation,
     ) -> Result<SearchPlan>;
-    
+
     /// Execute a search operation with the given plan
     async fn execute_search(
         &self,
         collection_id: &CollectionId,
         plan: SearchPlan,
     ) -> Result<Vec<SearchResult>>;
-    
+
     /// Execute search operation (convenience method that creates plan automatically)
     async fn search(
         &self,
@@ -204,40 +202,30 @@ pub trait SearchEngine: Send + Sync {
         let plan = self.create_plan(collection_id, operation).await?;
         self.execute_search(collection_id, plan).await
     }
-    
+
     /// Get search statistics for optimization
     async fn get_search_stats(
         &self,
         collection_id: &CollectionId,
     ) -> Result<HashMap<String, SearchStats>>;
-    
+
     /// Update search statistics (called after each operation)
     async fn update_search_stats(
         &self,
         collection_id: &CollectionId,
         stats: SearchStats,
     ) -> Result<()>;
-    
+
     /// Get available indexes for the collection
-    async fn list_indexes(
-        &self,
-        collection_id: &CollectionId,
-    ) -> Result<Vec<IndexInfo>>;
-    
+    async fn list_indexes(&self, collection_id: &CollectionId) -> Result<Vec<IndexInfo>>;
+
     /// Create index for optimization
-    async fn create_index(
-        &self,
-        collection_id: &CollectionId,
-        index_spec: IndexSpec,
-    ) -> Result<()>;
-    
+    async fn create_index(&self, collection_id: &CollectionId, index_spec: IndexSpec)
+        -> Result<()>;
+
     /// Drop index
-    async fn drop_index(
-        &self,
-        collection_id: &CollectionId,
-        index_name: &str,
-    ) -> Result<()>;
-    
+    async fn drop_index(&self, collection_id: &CollectionId, index_name: &str) -> Result<()>;
+
     /// Explain query execution plan (for debugging)
     async fn explain_plan(
         &self,
@@ -262,7 +250,7 @@ pub struct IndexInfo {
 #[derive(Debug, Clone)]
 pub struct IndexSpec {
     pub name: String,
-    pub index_type: String,     // "btree", "hash", "hnsw", "ivf", etc.
+    pub index_type: String, // "btree", "hash", "hnsw", "ivf", etc.
     pub columns: Vec<String>,
     pub unique: bool,
     pub parameters: HashMap<String, Value>, // Index-specific parameters
@@ -270,23 +258,22 @@ pub struct IndexSpec {
 
 /// Storage engine specific search implementations
 pub mod engines {
-    use super::*;
-    
+
     /// VIPER storage engine search implementation
     pub struct ViperSearchEngine {
         // Implementation will be in viper/search_engine.rs
     }
-    
+
     /// LSM storage engine search implementation  
     pub struct LsmSearchEngine {
         // Implementation will be in lsm/search_engine.rs
     }
-    
+
     /// RocksDB storage engine search implementation
     pub struct RocksDbSearchEngine {
         // Implementation will be in rocksdb/search_engine.rs
     }
-    
+
     /// Memory storage engine search implementation
     pub struct MemorySearchEngine {
         // Implementation will be in memory/search_engine.rs
@@ -296,13 +283,13 @@ pub mod engines {
 /// Search optimization utilities
 pub mod optimizer {
     use super::*;
-    
+
     /// Cost-based optimizer for search operations
     pub struct SearchOptimizer {
         pub collection_stats: HashMap<CollectionId, CollectionStats>,
         pub index_stats: HashMap<String, IndexStats>,
     }
-    
+
     #[derive(Debug, Clone)]
     pub struct CollectionStats {
         pub total_vectors: usize,
@@ -310,14 +297,14 @@ pub mod optimizer {
         pub metadata_cardinality: HashMap<String, usize>,
         pub data_distribution: DataDistribution,
     }
-    
+
     #[derive(Debug, Clone)]
     pub struct IndexStats {
         pub selectivity: f64,
         pub access_frequency: usize,
         pub last_used: chrono::DateTime<chrono::Utc>,
     }
-    
+
     #[derive(Debug, Clone)]
     pub enum DataDistribution {
         Uniform,
@@ -325,7 +312,7 @@ pub mod optimizer {
         Skewed { skew_factor: f64 },
         Clustered { cluster_count: usize },
     }
-    
+
     impl SearchOptimizer {
         pub fn new() -> Self {
             Self {
@@ -333,23 +320,23 @@ pub mod optimizer {
                 index_stats: HashMap::new(),
             }
         }
-        
+
         /// Choose optimal execution strategy based on cost estimates
         pub async fn optimize_search(
             &self,
-            collection_id: &CollectionId,
-            operation: &SearchOperation,
+            _collection_id: &CollectionId,
+            _operation: &SearchOperation,
         ) -> Result<SearchPlan> {
             // Implementation will analyze costs and choose best strategy
             todo!("Implement cost-based optimization")
         }
-        
+
         /// Update statistics based on execution results
         pub async fn update_stats(
             &mut self,
-            collection_id: &CollectionId,
-            operation: &SearchOperation,
-            stats: &SearchStats,
+            _collection_id: &CollectionId,
+            _operation: &SearchOperation,
+            _stats: &SearchStats,
         ) -> Result<()> {
             // Implementation will update cost models
             todo!("Implement stats update")

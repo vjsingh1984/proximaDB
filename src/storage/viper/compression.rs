@@ -4,14 +4,14 @@
 // you may not use this file except in compliance with the License.
 
 //! VIPER SIMD-Optimized Compression Engine
-//! 
+//!
 //! High-performance compression optimized for vector data with SIMD acceleration
 //! and adaptive algorithm selection based on data characteristics.
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::{Result, Context};
 
 use crate::compute::hardware_detection::SimdLevel;
 use crate::storage::wal::config::CompressionAlgorithm;
@@ -20,13 +20,13 @@ use crate::storage::wal::config::CompressionAlgorithm;
 pub struct SimdCompressionEngine {
     /// Available compression backends
     backends: Arc<RwLock<HashMap<CompressionAlgorithm, Box<dyn CompressionBackend>>>>,
-    
+
     /// SIMD instruction set detection
     simd_capabilities: SimdCapabilities,
-    
+
     /// Compression statistics for adaptive selection
     stats: Arc<RwLock<CompressionStats>>,
-    
+
     /// Algorithm selection model
     selection_model: Arc<RwLock<Option<CompressionSelectionModel>>>,
 }
@@ -36,13 +36,13 @@ pub struct SimdCompressionEngine {
 pub trait CompressionBackend: Send + Sync {
     /// Compress data using this backend
     async fn compress(&self, data: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// Decompress data using this backend
     async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// Get compression characteristics
     fn characteristics(&self) -> CompressionCharacteristics;
-    
+
     /// Get algorithm identifier
     fn algorithm(&self) -> CompressionAlgorithm;
 }
@@ -84,13 +84,13 @@ pub struct SimdCapabilities {
 pub struct CompressionStats {
     /// Per-algorithm performance metrics
     pub algorithm_performance: HashMap<CompressionAlgorithm, AlgorithmPerformance>,
-    
+
     /// Data type compression ratios
     pub data_type_ratios: HashMap<DataType, f32>,
-    
+
     /// Adaptive selection accuracy
     pub selection_accuracy: f32,
-    
+
     /// Total operations
     pub total_compressions: u64,
     pub total_decompressions: u64,
@@ -113,13 +113,13 @@ pub struct AlgorithmPerformance {
 pub struct CompressionSelectionModel {
     /// Feature weights for algorithm selection
     pub feature_weights: Vec<f32>,
-    
+
     /// Algorithm preferences per data type
     pub data_type_preferences: HashMap<DataType, Vec<(CompressionAlgorithm, f32)>>,
-    
+
     /// Performance predictors
     pub performance_predictors: PerformancePredictors,
-    
+
     /// Model training metadata
     pub training_metadata: ModelTrainingMetadata,
 }
@@ -129,10 +129,10 @@ pub struct CompressionSelectionModel {
 pub struct PerformancePredictors {
     /// Compression ratio predictor
     pub ratio_predictor: RatioPredictor,
-    
+
     /// Speed predictor
     pub speed_predictor: SpeedPredictor,
-    
+
     /// Memory usage predictor  
     pub memory_predictor: MemoryPredictor,
 }
@@ -223,35 +223,36 @@ impl SimdCompressionEngine {
     /// Create new SIMD compression engine
     pub async fn new() -> Result<Self> {
         let simd_capabilities = Self::get_default_simd_capabilities();
-        
-        let mut backends: HashMap<CompressionAlgorithm, Box<dyn CompressionBackend>> = HashMap::new();
-        
+
+        let mut backends: HashMap<CompressionAlgorithm, Box<dyn CompressionBackend>> =
+            HashMap::new();
+
         // Initialize compression backends
         backends.insert(
             CompressionAlgorithm::None,
             Box::new(NoCompressionBackend::new()),
         );
-        
+
         backends.insert(
             CompressionAlgorithm::Lz4,
             Box::new(Lz4Backend::new(simd_capabilities.clone())),
         );
-        
+
         backends.insert(
             CompressionAlgorithm::Zstd { level: 3 },
             Box::new(ZstdBackend::new(3, simd_capabilities.clone())),
         );
-        
+
         backends.insert(
             CompressionAlgorithm::Snappy,
             Box::new(SnappyBackend::new(simd_capabilities.clone())),
         );
-        
+
         backends.insert(
             CompressionAlgorithm::Zstd { level: 6 },
             Box::new(ZstdBackend::new(6, simd_capabilities.clone())),
         );
-        
+
         Ok(Self {
             backends: Arc::new(RwLock::new(backends)),
             simd_capabilities,
@@ -259,29 +260,33 @@ impl SimdCompressionEngine {
             selection_model: Arc::new(RwLock::new(None)),
         })
     }
-    
+
     /// Compress data with adaptive algorithm selection
     pub async fn compress(&self, request: CompressionRequest) -> Result<CompressionResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Select optimal algorithm
         let algorithm = self.select_compression_algorithm(&request).await?;
-        
+
         // Get backend
         let backends = self.backends.read().await;
-        let backend = backends.get(&algorithm)
+        let backend = backends
+            .get(&algorithm)
             .ok_or_else(|| anyhow::anyhow!("Compression backend not found: {:?}", algorithm))?;
-        
+
         // Perform compression
-        let compressed_data = backend.compress(&request.data).await
+        let compressed_data = backend
+            .compress(&request.data)
+            .await
             .context("Compression failed")?;
-        
+
         let elapsed_ms = start_time.elapsed().as_millis() as f32;
         let compression_ratio = request.data.len() as f32 / compressed_data.len() as f32;
-        
+
         // Update statistics
-        self.update_compression_stats(&algorithm, compression_ratio, elapsed_ms).await?;
-        
+        self.update_compression_stats(&algorithm, compression_ratio, elapsed_ms)
+            .await?;
+
         let memory_usage = self.estimate_memory_usage(&algorithm, request.data.len());
         Ok(CompressionResult {
             compressed_data,
@@ -292,7 +297,7 @@ impl SimdCompressionEngine {
             simd_used: request.simd_enabled && backend.characteristics().supports_simd,
         })
     }
-    
+
     /// Decompress data
     pub async fn decompress(
         &self,
@@ -300,21 +305,25 @@ impl SimdCompressionEngine {
         algorithm: CompressionAlgorithm,
     ) -> Result<DecompressionResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Get backend
         let backends = self.backends.read().await;
-        let backend = backends.get(&algorithm)
+        let backend = backends
+            .get(&algorithm)
             .ok_or_else(|| anyhow::anyhow!("Compression backend not found: {:?}", algorithm))?;
-        
+
         // Perform decompression
-        let decompressed_data = backend.decompress(compressed_data).await
+        let decompressed_data = backend
+            .decompress(compressed_data)
+            .await
             .context("Decompression failed")?;
-        
+
         let elapsed_ms = start_time.elapsed().as_millis() as f32;
-        
+
         // Update statistics
-        self.update_decompression_stats(&algorithm, elapsed_ms).await?;
-        
+        self.update_decompression_stats(&algorithm, elapsed_ms)
+            .await?;
+
         let memory_usage = self.estimate_memory_usage(&algorithm, compressed_data.len());
         Ok(DecompressionResult {
             decompressed_data,
@@ -324,20 +333,23 @@ impl SimdCompressionEngine {
             simd_used: backend.characteristics().supports_simd,
         })
     }
-    
+
     /// Select optimal compression algorithm based on request characteristics
-    async fn select_compression_algorithm(&self, request: &CompressionRequest) -> Result<CompressionAlgorithm> {
+    async fn select_compression_algorithm(
+        &self,
+        request: &CompressionRequest,
+    ) -> Result<CompressionAlgorithm> {
         // Check if we have a trained model
         let model = self.selection_model.read().await;
         if let Some(selection_model) = model.as_ref() {
             // Use ML model for selection
             return self.ml_select_algorithm(request, selection_model).await;
         }
-        
+
         // Fall back to heuristic selection
         self.heuristic_select_algorithm(request).await
     }
-    
+
     /// ML-based algorithm selection
     async fn ml_select_algorithm(
         &self,
@@ -346,73 +358,71 @@ impl SimdCompressionEngine {
     ) -> Result<CompressionAlgorithm> {
         // Extract features from request
         let features = self.extract_request_features(request);
-        
+
         // Get data type preferences
         if let Some(preferences) = model.data_type_preferences.get(&request.data_type) {
             // Score algorithms based on features and preferences
             let mut best_algorithm = CompressionAlgorithm::Lz4;
             let mut best_score = 0.0;
-            
+
             for (algorithm, base_score) in preferences {
-                let feature_score = features.iter()
+                let feature_score = features
+                    .iter()
                     .zip(model.feature_weights.iter())
                     .map(|(f, w)| f * w)
                     .sum::<f32>();
-                
+
                 let total_score = base_score + feature_score;
                 if total_score > best_score {
                     best_score = total_score;
                     best_algorithm = algorithm.clone();
                 }
             }
-            
+
             return Ok(best_algorithm);
         }
-        
+
         // Fall back to heuristic
         self.heuristic_select_algorithm(request).await
     }
-    
+
     /// Heuristic algorithm selection
-    async fn heuristic_select_algorithm(&self, request: &CompressionRequest) -> Result<CompressionAlgorithm> {
+    async fn heuristic_select_algorithm(
+        &self,
+        request: &CompressionRequest,
+    ) -> Result<CompressionAlgorithm> {
         match request.optimization_target {
-            OptimizationTarget::MaxSpeed => {
-                match request.data_type {
-                    DataType::DenseVectors => Ok(CompressionAlgorithm::Lz4),
-                    DataType::SparseVectors => Ok(CompressionAlgorithm::Snappy),
-                    DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
-                    DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
-                    DataType::Timestamps => Ok(CompressionAlgorithm::None),
-                }
-            }
-            
-            OptimizationTarget::MaxCompression => {
-                match request.data_type {
-                    DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 6 }),
-                    DataType::SparseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::Metadata => Ok(CompressionAlgorithm::Snappy),
-                    DataType::ClusterIds => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
-                }
-            }
-            
-            OptimizationTarget::Balanced => {
-                match request.data_type {
-                    DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
-                    DataType::SparseVectors => Ok(CompressionAlgorithm::Lz4),
-                    DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
-                    DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
-                    DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
-                }
-            }
-            
+            OptimizationTarget::MaxSpeed => match request.data_type {
+                DataType::DenseVectors => Ok(CompressionAlgorithm::Lz4),
+                DataType::SparseVectors => Ok(CompressionAlgorithm::Snappy),
+                DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
+                DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
+                DataType::Timestamps => Ok(CompressionAlgorithm::None),
+            },
+
+            OptimizationTarget::MaxCompression => match request.data_type {
+                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 6 }),
+                DataType::SparseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::Metadata => Ok(CompressionAlgorithm::Snappy),
+                DataType::ClusterIds => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
+            },
+
+            OptimizationTarget::Balanced => match request.data_type {
+                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::SparseVectors => Ok(CompressionAlgorithm::Lz4),
+                DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
+                DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
+                DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
+            },
+
             OptimizationTarget::MinMemory => {
                 // Prefer algorithms with low memory overhead
                 Ok(CompressionAlgorithm::Lz4)
             }
         }
     }
-    
+
     /// Extract features from compression request
     fn extract_request_features(&self, request: &CompressionRequest) -> Vec<f32> {
         vec![
@@ -431,33 +441,33 @@ impl SimdCompressionEngine {
             },
         ]
     }
-    
+
     /// Calculate data entropy
     fn calculate_entropy(&self, data: &[u8]) -> f32 {
         let mut counts = [0u64; 256];
         for &byte in data {
             counts[byte as usize] += 1;
         }
-        
+
         let len = data.len() as f64;
         let mut entropy = 0.0;
-        
+
         for count in counts.iter() {
             if *count > 0 {
                 let probability = *count as f64 / len;
                 entropy -= probability * probability.log2();
             }
         }
-        
+
         entropy as f32
     }
-    
+
     /// Calculate data sparsity (approximate)
     fn calculate_sparsity(&self, data: &[u8]) -> f32 {
         let zero_count = data.iter().filter(|&&b| b == 0).count();
         zero_count as f32 / data.len() as f32
     }
-    
+
     /// Get default SIMD capabilities (hardware detection done at server startup)
     fn get_default_simd_capabilities() -> SimdCapabilities {
         SimdCapabilities {
@@ -468,7 +478,7 @@ impl SimdCompressionEngine {
             detected_instruction_set: SimdLevel::None, // Let distance algorithms handle optimization
         }
     }
-    
+
     /// Estimate memory usage for algorithm
     fn estimate_memory_usage(&self, algorithm: &CompressionAlgorithm, data_size: usize) -> f32 {
         match algorithm {
@@ -481,7 +491,7 @@ impl SimdCompressionEngine {
             CompressionAlgorithm::Snappy { .. } => (data_size / 1024) as f32 * 0.3,
         }
     }
-    
+
     /// Update compression statistics
     async fn update_compression_stats(
         &self,
@@ -491,8 +501,9 @@ impl SimdCompressionEngine {
     ) -> Result<()> {
         let mut stats = self.stats.write().await;
         stats.total_compressions += 1;
-        
-        let perf = stats.algorithm_performance
+
+        let perf = stats
+            .algorithm_performance
             .entry(algorithm.clone())
             .or_insert(AlgorithmPerformance {
                 compression_count: 0,
@@ -503,15 +514,15 @@ impl SimdCompressionEngine {
                 avg_memory_usage_mb: 0.0,
                 error_count: 0,
             });
-        
+
         // Update with exponential moving average
         let alpha = 0.1;
         perf.compression_count += 1;
         perf.avg_compression_ratio = perf.avg_compression_ratio * (1.0 - alpha) + ratio * alpha;
-        
+
         Ok(())
     }
-    
+
     /// Update decompression statistics
     async fn update_decompression_stats(
         &self,
@@ -520,8 +531,9 @@ impl SimdCompressionEngine {
     ) -> Result<()> {
         let mut stats = self.stats.write().await;
         stats.total_decompressions += 1;
-        
-        let perf = stats.algorithm_performance
+
+        let perf = stats
+            .algorithm_performance
             .entry(algorithm.clone())
             .or_insert(AlgorithmPerformance {
                 compression_count: 0,
@@ -532,9 +544,9 @@ impl SimdCompressionEngine {
                 avg_memory_usage_mb: 0.0,
                 error_count: 0,
             });
-        
+
         perf.decompression_count += 1;
-        
+
         Ok(())
     }
 }
@@ -553,11 +565,11 @@ impl CompressionBackend for NoCompressionBackend {
     async fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         Ok(data.to_vec())
     }
-    
+
     async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         Ok(compressed.to_vec())
     }
-    
+
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
             algorithm: CompressionAlgorithm::None,
@@ -569,7 +581,7 @@ impl CompressionBackend for NoCompressionBackend {
             best_for_data_types: vec![DataType::Timestamps],
         }
     }
-    
+
     fn algorithm(&self) -> CompressionAlgorithm {
         CompressionAlgorithm::None
     }
@@ -593,11 +605,11 @@ impl CompressionBackend for Lz4Backend {
         // with SIMD optimizations when available
         Ok(data.to_vec())
     }
-    
+
     async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         Ok(compressed.to_vec())
     }
-    
+
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
             algorithm: CompressionAlgorithm::Lz4,
@@ -609,7 +621,7 @@ impl CompressionBackend for Lz4Backend {
             best_for_data_types: vec![DataType::DenseVectors, DataType::ClusterIds],
         }
     }
-    
+
     fn algorithm(&self) -> CompressionAlgorithm {
         CompressionAlgorithm::Lz4
     }
@@ -623,7 +635,10 @@ struct ZstdBackend {
 
 impl ZstdBackend {
     fn new(level: i32, simd_capabilities: SimdCapabilities) -> Self {
-        Self { level, simd_capabilities }
+        Self {
+            level,
+            simd_capabilities,
+        }
     }
 }
 
@@ -633,11 +648,11 @@ impl CompressionBackend for ZstdBackend {
         // Implementation would use zstd crate
         Ok(data.to_vec())
     }
-    
+
     async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         Ok(compressed.to_vec())
     }
-    
+
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
             algorithm: CompressionAlgorithm::Zstd { level: self.level },
@@ -649,7 +664,7 @@ impl CompressionBackend for ZstdBackend {
             best_for_data_types: vec![DataType::DenseVectors, DataType::SparseVectors],
         }
     }
-    
+
     fn algorithm(&self) -> CompressionAlgorithm {
         CompressionAlgorithm::Zstd { level: self.level }
     }
@@ -671,11 +686,11 @@ impl CompressionBackend for SnappyBackend {
     async fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         Ok(data.to_vec())
     }
-    
+
     async fn decompress(&self, compressed: &[u8]) -> Result<Vec<u8>> {
         Ok(compressed.to_vec())
     }
-    
+
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
             algorithm: CompressionAlgorithm::Snappy,
@@ -687,9 +702,8 @@ impl CompressionBackend for SnappyBackend {
             best_for_data_types: vec![DataType::SparseVectors, DataType::Metadata],
         }
     }
-    
+
     fn algorithm(&self) -> CompressionAlgorithm {
         CompressionAlgorithm::Snappy
     }
 }
-

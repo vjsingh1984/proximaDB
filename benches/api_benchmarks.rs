@@ -5,10 +5,10 @@
 
 //! API layer performance benchmarks
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use serde_json::json;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use serde_json::json;
 
 use super::{BenchmarkConfig, BenchmarkDataGenerator, BenchmarkRunner};
 
@@ -17,23 +17,24 @@ pub fn benchmark_rest_api_performance(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let generator = BenchmarkDataGenerator::new(config.clone());
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("rest_api_performance");
     group.measurement_time(Duration::from_secs(30));
-    
+
     let request_counts = vec![10, 100, 500];
     let dimension = 256;
-    
+
     for &request_count in &request_counts {
         group.throughput(Throughput::Elements(request_count as u64));
-        
+
         // Vector insertion via REST API
         group.bench_with_input(
             BenchmarkId::new("rest_insert", format!("{}requests", request_count)),
             &request_count,
             |b, &request_count| {
-                let vectors = generator.generate_vectors(request_count, dimension, 0.1, "rest_bench");
-                
+                let vectors =
+                    generator.generate_vectors(request_count, dimension, 0.1, "rest_bench");
+
                 b.iter(|| {
                     // Simulate REST API calls
                     for vector in &vectors {
@@ -45,7 +46,7 @@ pub fn benchmark_rest_api_performance(c: &mut Criterion) {
                             "timestamp": vector.timestamp.to_rfc3339(),
                             "expires_at": vector.expires_at.map(|t| t.to_rfc3339())
                         });
-                        
+
                         // Simulate JSON serialization overhead
                         let _serialized = serde_json::to_string(&payload).unwrap();
                         black_box(_serialized);
@@ -53,14 +54,14 @@ pub fn benchmark_rest_api_performance(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // Vector search via REST API
         group.bench_with_input(
             BenchmarkId::new("rest_search", format!("{}requests", request_count)),
             &request_count,
             |b, &request_count| {
                 let queries = generator.generate_query_vectors(request_count, dimension, 0.1);
-                
+
                 b.iter(|| {
                     for query in &queries {
                         let search_payload = json!({
@@ -70,7 +71,7 @@ pub fn benchmark_rest_api_performance(c: &mut Criterion) {
                             "similarity_threshold": 0.8,
                             "metadata_filters": {}
                         });
-                        
+
                         // Simulate JSON serialization overhead
                         let _serialized = serde_json::to_string(&search_payload).unwrap();
                         black_box(_serialized);
@@ -79,7 +80,7 @@ pub fn benchmark_rest_api_performance(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -88,23 +89,24 @@ pub fn benchmark_grpc_api_performance(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let generator = BenchmarkDataGenerator::new(config.clone());
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("grpc_api_performance");
     group.measurement_time(Duration::from_secs(25));
-    
+
     let request_counts = vec![10, 100, 500];
     let dimension = 256;
-    
+
     for &request_count in &request_counts {
         group.throughput(Throughput::Elements(request_count as u64));
-        
+
         // gRPC vector insertion
         group.bench_with_input(
             BenchmarkId::new("grpc_insert", format!("{}requests", request_count)),
             &request_count,
             |b, &request_count| {
-                let vectors = generator.generate_vectors(request_count, dimension, 0.1, "grpc_bench");
-                
+                let vectors =
+                    generator.generate_vectors(request_count, dimension, 0.1, "grpc_bench");
+
                 b.iter(|| {
                     for vector in &vectors {
                         // Simulate Protocol Buffer serialization
@@ -114,14 +116,15 @@ pub fn benchmark_grpc_api_performance(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // gRPC streaming operations
         group.bench_with_input(
             BenchmarkId::new("grpc_stream", format!("{}requests", request_count)),
             &request_count,
             |b, &request_count| {
-                let vectors = generator.generate_vectors(request_count, dimension, 0.1, "grpc_stream");
-                
+                let vectors =
+                    generator.generate_vectors(request_count, dimension, 0.1, "grpc_stream");
+
                 b.iter(|| {
                     // Simulate streaming batch insert
                     let mut total_size = 0;
@@ -133,7 +136,7 @@ pub fn benchmark_grpc_api_performance(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -141,15 +144,15 @@ pub fn benchmark_grpc_api_performance(c: &mut Criterion) {
 pub fn benchmark_api_routing_auth(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("api_routing_auth");
     group.measurement_time(Duration::from_secs(20));
-    
+
     let request_counts = vec![100, 1000, 5000];
-    
+
     for &request_count in &request_counts {
         group.throughput(Throughput::Elements(request_count as u64));
-        
+
         // Authentication overhead
         group.bench_with_input(
             BenchmarkId::new("auth_validation", format!("{}requests", request_count)),
@@ -165,7 +168,7 @@ pub fn benchmark_api_routing_auth(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // Request routing overhead
         group.bench_with_input(
             BenchmarkId::new("request_routing", format!("{}requests", request_count)),
@@ -182,7 +185,7 @@ pub fn benchmark_api_routing_auth(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -190,20 +193,24 @@ pub fn benchmark_api_routing_auth(c: &mut Criterion) {
 pub fn benchmark_api_rate_limiting(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("api_rate_limiting");
     group.measurement_time(Duration::from_secs(20));
-    
+
     let request_counts = vec![100, 1000, 5000];
     let tenant_counts = vec![1, 10, 100];
-    
+
     for &request_count in &request_counts {
         for &tenant_count in &tenant_counts {
-            if request_count <= 1000 || tenant_count <= 10 { // Skip large combinations
+            if request_count <= 1000 || tenant_count <= 10 {
+                // Skip large combinations
                 group.throughput(Throughput::Elements(request_count as u64));
-                
+
                 group.bench_with_input(
-                    BenchmarkId::new("rate_limit_check", format!("{}req_{}tenants", request_count, tenant_count)),
+                    BenchmarkId::new(
+                        "rate_limit_check",
+                        format!("{}req_{}tenants", request_count, tenant_count),
+                    ),
                     &(request_count, tenant_count),
                     |b, &(request_count, tenant_count)| {
                         b.iter(|| {
@@ -218,7 +225,7 @@ pub fn benchmark_api_rate_limiting(c: &mut Criterion) {
             }
         }
     }
-    
+
     group.finish();
 }
 
@@ -227,23 +234,24 @@ pub fn benchmark_api_serialization(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let generator = BenchmarkDataGenerator::new(config.clone());
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("api_serialization");
     group.measurement_time(Duration::from_secs(25));
-    
+
     let result_counts = vec![10, 100, 1000];
     let dimension = 256;
-    
+
     for &result_count in &result_counts {
         group.throughput(Throughput::Elements(result_count as u64));
-        
+
         // JSON serialization benchmark
         group.bench_with_input(
             BenchmarkId::new("json_serialization", format!("{}results", result_count)),
             &result_count,
             |b, &result_count| {
-                let vectors = generator.generate_vectors(result_count, dimension, 0.1, "serial_bench");
-                
+                let vectors =
+                    generator.generate_vectors(result_count, dimension, 0.1, "serial_bench");
+
                 b.iter(|| {
                     let response = json!({
                         "results": vectors.iter().map(|v| json!({
@@ -257,20 +265,21 @@ pub fn benchmark_api_serialization(c: &mut Criterion) {
                         "total_found": result_count,
                         "query_time_ms": 15.2
                     });
-                    
+
                     let _serialized = serde_json::to_string(&response).unwrap();
                     black_box(_serialized);
                 });
             },
         );
-        
+
         // Protocol Buffer serialization benchmark
         group.bench_with_input(
             BenchmarkId::new("protobuf_serialization", format!("{}results", result_count)),
             &result_count,
             |b, &result_count| {
-                let vectors = generator.generate_vectors(result_count, dimension, 0.1, "proto_bench");
-                
+                let vectors =
+                    generator.generate_vectors(result_count, dimension, 0.1, "proto_bench");
+
                 b.iter(|| {
                     let mut total_size = 0;
                     for vector in &vectors {
@@ -281,7 +290,7 @@ pub fn benchmark_api_serialization(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -289,10 +298,10 @@ pub fn benchmark_api_serialization(c: &mut Criterion) {
 pub fn benchmark_api_error_handling(c: &mut Criterion) {
     let config = BenchmarkConfig::default();
     let runner = BenchmarkRunner::new(config.clone());
-    
+
     let mut group = c.benchmark_group("api_error_handling");
     group.measurement_time(Duration::from_secs(15));
-    
+
     let error_counts = vec![100, 1000];
     let error_types = vec![
         ("validation_error", "Invalid vector dimension"),
@@ -300,11 +309,11 @@ pub fn benchmark_api_error_handling(c: &mut Criterion) {
         ("auth_error", "Unauthorized access"),
         ("rate_limit_error", "Rate limit exceeded"),
     ];
-    
+
     for &error_count in &error_counts {
         for (error_type, error_message) in &error_types {
             group.throughput(Throughput::Elements(error_count as u64));
-            
+
             group.bench_with_input(
                 BenchmarkId::new("error_handling", format!("{}_{}", error_type, error_count)),
                 &(error_count, error_message),
@@ -321,7 +330,7 @@ pub fn benchmark_api_error_handling(c: &mut Criterion) {
                                     }
                                 }
                             });
-                            
+
                             let _serialized = serde_json::to_string(&error_response).unwrap();
                             black_box(_serialized);
                         }
@@ -330,7 +339,7 @@ pub fn benchmark_api_error_handling(c: &mut Criterion) {
             );
         }
     }
-    
+
     group.finish();
 }
 

@@ -4,22 +4,24 @@
 // you may not use this file except in compliance with the License.
 
 //! Comprehensive Atomicity Framework for ProximaDB
-//! 
+//!
 //! This module implements ACID properties for all WAL operations using trait-based
 //! patterns and sophisticated transaction management. It ensures data consistency
 //! across distributed operations and provides rollback capabilities.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
-use std::time::{SystemTime, Duration, Instant};
-use tokio::sync::{RwLock, Mutex, oneshot, broadcast};
-use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
+use uuid::Uuid;
 
-use crate::core::{VectorId, CollectionId, VectorRecord};
 use super::{WalEntry, WalOperation};
+use crate::core::{CollectionId, VectorId, VectorRecord};
 
 /// Transaction ID type for tracking operations
 pub type TransactionId = Uuid;
@@ -32,22 +34,22 @@ pub type SequenceNumber = u64;
 pub trait AtomicOperation: Send + Sync + std::fmt::Debug {
     /// Execute the operation within a transaction context
     async fn execute(&self, context: &mut TransactionContext) -> Result<OperationResult>;
-    
+
     /// Rollback the operation if transaction fails
     async fn rollback(&self, context: &TransactionContext) -> Result<()>;
-    
+
     /// Validate operation before execution
     async fn validate(&self, context: &TransactionContext) -> Result<()>;
-    
+
     /// Get operation type for logging and metrics
     fn operation_type(&self) -> OperationType;
-    
+
     /// Get affected resources for conflict detection
     fn affected_resources(&self) -> Vec<ResourceId>;
-    
+
     /// Get operation priority for scheduling
     fn priority(&self) -> OperationPriority;
-    
+
     /// Estimate operation duration for timeout management
     fn estimated_duration(&self) -> Duration;
 }
@@ -57,28 +59,28 @@ pub trait AtomicOperation: Send + Sync + std::fmt::Debug {
 pub struct TransactionContext {
     /// Unique transaction identifier
     pub transaction_id: TransactionId,
-    
+
     /// Transaction start time
     pub start_time: DateTime<Utc>,
-    
+
     /// Current state of the transaction
     pub state: TransactionState,
-    
+
     /// Operations executed in this transaction
     pub executed_operations: Vec<Box<dyn AtomicOperation>>,
-    
+
     /// Rollback operations (undo log)
     pub rollback_operations: VecDeque<Box<dyn AtomicOperation>>,
-    
+
     /// Transaction isolation level
     pub isolation_level: IsolationLevel,
-    
+
     /// Timeout for the transaction
     pub timeout: Duration,
-    
+
     /// Resources locked by this transaction
     pub locked_resources: HashMap<ResourceId, LockType>,
-    
+
     /// Transaction metadata
     pub metadata: TransactionMetadata,
 }
@@ -88,22 +90,22 @@ pub struct TransactionContext {
 pub enum TransactionState {
     /// Transaction is being prepared
     Preparing,
-    
+
     /// Transaction is active and executing operations
     Active,
-    
+
     /// Transaction is being committed (two-phase commit)
     Committing,
-    
+
     /// Transaction is being rolled back
     RollingBack,
-    
+
     /// Transaction completed successfully
     Committed,
-    
+
     /// Transaction was aborted/rolled back
     Aborted,
-    
+
     /// Transaction timed out
     TimedOut,
 }
@@ -113,13 +115,13 @@ pub enum TransactionState {
 pub enum IsolationLevel {
     /// Read uncommitted (lowest isolation)
     ReadUncommitted,
-    
+
     /// Read committed
     ReadCommitted,
-    
+
     /// Repeatable read
     RepeatableRead,
-    
+
     /// Serializable (highest isolation)
     Serializable,
 }
@@ -129,30 +131,30 @@ pub enum IsolationLevel {
 pub enum OperationType {
     /// Vector insertion
     Insert,
-    
+
     /// Vector update
     Update,
-    
+
     /// Vector deletion
     Delete,
-    
+
     /// Bulk operations
     BulkInsert,
     BulkUpdate,
     BulkDelete,
-    
+
     /// Collection operations
     CreateCollection,
     DeleteCollection,
-    
+
     /// Index operations
     BuildIndex,
     UpdateIndex,
     DropIndex,
-    
+
     /// Compaction operations
     Compact,
-    
+
     /// Schema operations
     SchemaChange,
 }
@@ -162,16 +164,16 @@ pub enum OperationType {
 pub enum ResourceId {
     /// Vector resource
     Vector(VectorId),
-    
+
     /// Collection resource
     Collection(CollectionId),
-    
+
     /// Index resource
     Index(String),
-    
+
     /// Partition resource
     Partition(String),
-    
+
     /// Global resource
     Global(String),
 }
@@ -181,13 +183,13 @@ pub enum ResourceId {
 pub enum LockType {
     /// Shared lock (read)
     Shared,
-    
+
     /// Exclusive lock (write)
     Exclusive,
-    
+
     /// Intent shared lock
     IntentShared,
-    
+
     /// Intent exclusive lock
     IntentExclusive,
 }
@@ -206,16 +208,16 @@ pub enum OperationPriority {
 pub struct OperationResult {
     /// Whether the operation succeeded
     pub success: bool,
-    
+
     /// Result data (if any)
     pub data: Option<serde_json::Value>,
-    
+
     /// WAL entries generated by this operation
     pub wal_entries: Vec<WalEntry>,
-    
+
     /// Affected rows/vectors count
     pub affected_count: usize,
-    
+
     /// Operation execution time
     pub execution_time: Duration,
 }
@@ -225,16 +227,16 @@ pub struct OperationResult {
 pub struct TransactionMetadata {
     /// Client that initiated the transaction
     pub client_id: Option<String>,
-    
+
     /// Session identifier
     pub session_id: Option<String>,
-    
+
     /// Transaction tags
     pub tags: HashMap<String, String>,
-    
+
     /// Operation count
     pub operation_count: usize,
-    
+
     /// Total estimated duration
     pub estimated_duration: Duration,
 }
@@ -243,25 +245,25 @@ pub struct TransactionMetadata {
 pub struct AtomicityManager {
     /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, Arc<Mutex<TransactionContext>>>>>,
-    
+
     /// Transaction ID generator
     next_transaction_id: AtomicU64,
-    
+
     /// Global lock manager
     lock_manager: Arc<LockManager>,
-    
+
     /// Transaction timeout monitor
     timeout_monitor: Arc<TimeoutMonitor>,
-    
+
     /// Deadlock detector
     deadlock_detector: Arc<DeadlockDetector>,
-    
+
     /// Configuration
     config: AtomicityConfig,
-    
+
     /// Statistics
     stats: Arc<RwLock<AtomicityStats>>,
-    
+
     /// Event broadcast channel
     event_tx: broadcast::Sender<TransactionEvent>,
 }
@@ -270,10 +272,10 @@ pub struct AtomicityManager {
 pub struct LockManager {
     /// Resource locks
     locks: Arc<RwLock<HashMap<ResourceId, LockEntry>>>,
-    
+
     /// Lock wait queue
     wait_queue: Arc<Mutex<VecDeque<LockRequest>>>,
-    
+
     /// Configuration
     config: LockManagerConfig,
 }
@@ -283,13 +285,13 @@ pub struct LockManager {
 struct LockEntry {
     /// Current lock holders
     holders: Vec<LockHolder>,
-    
+
     /// Lock mode
     mode: LockType,
-    
+
     /// Wait queue for this resource
     waiters: VecDeque<LockRequest>,
-    
+
     /// Lock acquisition time
     acquired_at: Instant,
 }
@@ -299,10 +301,10 @@ struct LockEntry {
 struct LockHolder {
     /// Transaction ID
     transaction_id: TransactionId,
-    
+
     /// Lock type held
     lock_type: LockType,
-    
+
     /// Acquisition time
     acquired_at: Instant,
 }
@@ -312,16 +314,16 @@ struct LockHolder {
 struct LockRequest {
     /// Transaction requesting the lock
     transaction_id: TransactionId,
-    
+
     /// Resource being requested
     resource_id: ResourceId,
-    
+
     /// Type of lock requested
     lock_type: LockType,
-    
+
     /// Response channel
     response_tx: oneshot::Sender<Result<()>>,
-    
+
     /// Request timestamp
     requested_at: Instant,
 }
@@ -330,7 +332,7 @@ struct LockRequest {
 pub struct TimeoutMonitor {
     /// Running flag
     running: AtomicBool,
-    
+
     /// Monitor task handle
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -339,13 +341,13 @@ pub struct TimeoutMonitor {
 pub struct DeadlockDetector {
     /// Wait-for graph
     wait_graph: Arc<RwLock<HashMap<TransactionId, Vec<TransactionId>>>>,
-    
+
     /// Detection interval
     detection_interval: Duration,
-    
+
     /// Running flag
     running: AtomicBool,
-    
+
     /// Detection task handle
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -355,19 +357,19 @@ pub struct DeadlockDetector {
 pub struct AtomicityConfig {
     /// Default transaction timeout
     pub default_timeout: Duration,
-    
+
     /// Maximum concurrent transactions
     pub max_concurrent_transactions: usize,
-    
+
     /// Default isolation level
     pub default_isolation_level: IsolationLevel,
-    
+
     /// Enable deadlock detection
     pub enable_deadlock_detection: bool,
-    
+
     /// Lock timeout
     pub lock_timeout: Duration,
-    
+
     /// Transaction log retention
     pub transaction_log_retention: Duration,
 }
@@ -390,10 +392,10 @@ impl Default for AtomicityConfig {
 pub struct LockManagerConfig {
     /// Maximum lock wait time
     pub max_lock_wait_time: Duration,
-    
+
     /// Lock escalation threshold
     pub lock_escalation_threshold: usize,
-    
+
     /// Enable lock debugging
     pub enable_lock_debugging: bool,
 }
@@ -413,16 +415,16 @@ impl Default for LockManagerConfig {
 pub enum TransactionEvent {
     /// Transaction started
     Started(TransactionId),
-    
+
     /// Transaction committed
     Committed(TransactionId, Duration),
-    
+
     /// Transaction aborted
     Aborted(TransactionId, String),
-    
+
     /// Transaction timed out
     TimedOut(TransactionId),
-    
+
     /// Deadlock detected
     DeadlockDetected(Vec<TransactionId>),
 }
@@ -432,25 +434,25 @@ pub enum TransactionEvent {
 pub struct AtomicityStats {
     /// Total transactions
     pub total_transactions: u64,
-    
+
     /// Committed transactions
     pub committed_transactions: u64,
-    
+
     /// Aborted transactions
     pub aborted_transactions: u64,
-    
+
     /// Timed out transactions
     pub timed_out_transactions: u64,
-    
+
     /// Average transaction duration
     pub avg_transaction_duration_ms: f64,
-    
+
     /// Deadlocks detected
     pub deadlocks_detected: u64,
-    
+
     /// Active transaction count
     pub active_transaction_count: usize,
-    
+
     /// Lock contention events
     pub lock_contention_events: u64,
 }
@@ -459,7 +461,7 @@ impl AtomicityManager {
     /// Create new atomicity manager
     pub fn new(config: AtomicityConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1000);
-        
+
         Self {
             active_transactions: Arc::new(RwLock::new(HashMap::new())),
             next_transaction_id: AtomicU64::new(1),
@@ -471,24 +473,24 @@ impl AtomicityManager {
             event_tx,
         }
     }
-    
+
     /// Start the atomicity manager
     pub async fn start(&self) -> Result<()> {
         // TODO: Fix Arc<Mutex<>> pattern for monitor starts
         // Start timeout monitor
         // self.timeout_monitor.start(...).await?;
-        
+
         // Start deadlock detector if enabled
         // if self.config.enable_deadlock_detection {
         //     self.deadlock_detector.start(...).await?;
         // }
-        
+
         tracing::info!("🔒 Atomicity manager started (monitors disabled for compilation)");
-        
+
         tracing::info!("🔒 Atomicity manager started");
         Ok(())
     }
-    
+
     /// Begin a new transaction
     pub async fn begin_transaction(
         &self,
@@ -496,7 +498,7 @@ impl AtomicityManager {
         timeout: Option<Duration>,
     ) -> Result<TransactionId> {
         let transaction_id = TransactionId::new_v4();
-        
+
         let context = TransactionContext {
             transaction_id,
             start_time: Utc::now(),
@@ -514,32 +516,34 @@ impl AtomicityManager {
                 estimated_duration: Duration::from_secs(0),
             },
         };
-        
+
         // Check transaction limit
         let active_count = self.active_transactions.read().await.len();
         if active_count >= self.config.max_concurrent_transactions {
             return Err(anyhow::anyhow!("Maximum concurrent transactions exceeded"));
         }
-        
+
         // Register transaction
         self.active_transactions
             .write()
             .await
             .insert(transaction_id, Arc::new(Mutex::new(context)));
-        
+
         // Update statistics
         let mut stats = self.stats.write().await;
         stats.total_transactions += 1;
         stats.active_transaction_count = active_count + 1;
-        
+
         // Send event
-        let _ = self.event_tx.send(TransactionEvent::Started(transaction_id));
-        
+        let _ = self
+            .event_tx
+            .send(TransactionEvent::Started(transaction_id));
+
         tracing::debug!("🆕 Transaction {} started", transaction_id);
-        
+
         Ok(transaction_id)
     }
-    
+
     /// Execute an atomic operation within a transaction
     pub async fn execute_operation(
         &self,
@@ -547,7 +551,7 @@ impl AtomicityManager {
         operation: Box<dyn AtomicOperation>,
     ) -> Result<OperationResult> {
         let start_time = Instant::now();
-        
+
         // Get transaction context
         let transactions = self.active_transactions.read().await;
         let transaction_context = transactions
@@ -555,19 +559,23 @@ impl AtomicityManager {
             .ok_or_else(|| anyhow::anyhow!("Transaction not found: {}", transaction_id))?
             .clone();
         drop(transactions);
-        
+
         let mut context = transaction_context.lock().await;
-        
+
         // Validate transaction state
-        if context.state != TransactionState::Active && context.state != TransactionState::Preparing {
-            return Err(anyhow::anyhow!("Transaction {} is not active", transaction_id));
+        if context.state != TransactionState::Active && context.state != TransactionState::Preparing
+        {
+            return Err(anyhow::anyhow!(
+                "Transaction {} is not active",
+                transaction_id
+            ));
         }
-        
+
         // Set transaction to active if preparing
         if context.state == TransactionState::Preparing {
             context.state = TransactionState::Active;
         }
-        
+
         // Acquire locks for resources
         for resource_id in operation.affected_resources() {
             self.lock_manager
@@ -575,18 +583,20 @@ impl AtomicityManager {
                 .await
                 .context("Failed to acquire resource lock")?;
         }
-        
+
         // Validate operation
-        operation.validate(&context).await
+        operation
+            .validate(&context)
+            .await
             .context("Operation validation failed")?;
-        
+
         // Execute operation
         let result = match operation.execute(&mut context).await {
             Ok(result) => {
                 // Add to executed operations for potential rollback
                 context.executed_operations.push(operation);
                 result
-            },
+            }
             Err(e) => {
                 // Operation failed, rollback if needed
                 if let Err(rollback_err) = operation.rollback(&context).await {
@@ -595,18 +605,21 @@ impl AtomicityManager {
                 return Err(e);
             }
         };
-        
+
         let execution_time = start_time.elapsed();
-        tracing::debug!("⚡ Operation executed in transaction {} in {:?}", 
-                       transaction_id, execution_time);
-        
+        tracing::debug!(
+            "⚡ Operation executed in transaction {} in {:?}",
+            transaction_id,
+            execution_time
+        );
+
         Ok(result)
     }
-    
+
     /// Commit a transaction
     pub async fn commit_transaction(&self, transaction_id: TransactionId) -> Result<()> {
         let start_time = Instant::now();
-        
+
         // Get transaction context
         let transactions = self.active_transactions.read().await;
         let transaction_context = transactions
@@ -614,51 +627,65 @@ impl AtomicityManager {
             .ok_or_else(|| anyhow::anyhow!("Transaction not found: {}", transaction_id))?
             .clone();
         drop(transactions);
-        
+
         let mut context = transaction_context.lock().await;
-        
+
         // Validate transaction state
         if context.state != TransactionState::Active {
-            return Err(anyhow::anyhow!("Transaction {} is not active", transaction_id));
+            return Err(anyhow::anyhow!(
+                "Transaction {} is not active",
+                transaction_id
+            ));
         }
-        
+
         // Set committing state
         context.state = TransactionState::Committing;
         drop(context);
-        
+
         // Two-phase commit would go here for distributed scenarios
         // For now, just mark as committed
-        
+
         let mut context = transaction_context.lock().await;
         context.state = TransactionState::Committed;
-        
+
         // Release all locks
         for resource_id in context.locked_resources.keys() {
-            self.lock_manager.release_lock(transaction_id, resource_id.clone()).await?;
+            self.lock_manager
+                .release_lock(transaction_id, resource_id.clone())
+                .await?;
         }
-        
+
         let duration = start_time.elapsed();
-        
+
         // Update statistics
         let mut stats = self.stats.write().await;
         stats.committed_transactions += 1;
         stats.active_transaction_count -= 1;
-        stats.avg_transaction_duration_ms = 
+        stats.avg_transaction_duration_ms =
             (stats.avg_transaction_duration_ms + duration.as_millis() as f64) / 2.0;
-        
+
         // Send event
-        let _ = self.event_tx.send(TransactionEvent::Committed(transaction_id, duration));
-        
+        let _ = self
+            .event_tx
+            .send(TransactionEvent::Committed(transaction_id, duration));
+
         // Remove from active transactions
         drop(stats);
         drop(context);
-        self.active_transactions.write().await.remove(&transaction_id);
-        
-        tracing::info!("✅ Transaction {} committed in {:?}", transaction_id, duration);
-        
+        self.active_transactions
+            .write()
+            .await
+            .remove(&transaction_id);
+
+        tracing::info!(
+            "✅ Transaction {} committed in {:?}",
+            transaction_id,
+            duration
+        );
+
         Ok(())
     }
-    
+
     /// Rollback a transaction
     pub async fn rollback_transaction(
         &self,
@@ -666,7 +693,7 @@ impl AtomicityManager {
         reason: String,
     ) -> Result<()> {
         let start_time = Instant::now();
-        
+
         // Get transaction context
         let transactions = self.active_transactions.read().await;
         let transaction_context = transactions
@@ -674,51 +701,62 @@ impl AtomicityManager {
             .ok_or_else(|| anyhow::anyhow!("Transaction not found: {}", transaction_id))?
             .clone();
         drop(transactions);
-        
+
         let mut context = transaction_context.lock().await;
-        
+
         // Set rolling back state
         context.state = TransactionState::RollingBack;
-        
+
         // Execute rollback operations in reverse order
         while let Some(rollback_op) = context.rollback_operations.pop_back() {
             if let Err(e) = rollback_op.rollback(&context).await {
                 tracing::error!("Rollback operation failed: {}", e);
             }
         }
-        
+
         // Release all locks
         for resource_id in context.locked_resources.keys() {
-            self.lock_manager.release_lock(transaction_id, resource_id.clone()).await?;
+            self.lock_manager
+                .release_lock(transaction_id, resource_id.clone())
+                .await?;
         }
-        
+
         context.state = TransactionState::Aborted;
-        
+
         let duration = start_time.elapsed();
-        
+
         // Update statistics
         let mut stats = self.stats.write().await;
         stats.aborted_transactions += 1;
         stats.active_transaction_count -= 1;
-        
+
         // Send event
-        let _ = self.event_tx.send(TransactionEvent::Aborted(transaction_id, reason));
-        
+        let _ = self
+            .event_tx
+            .send(TransactionEvent::Aborted(transaction_id, reason));
+
         // Remove from active transactions
         drop(stats);
         drop(context);
-        self.active_transactions.write().await.remove(&transaction_id);
-        
-        tracing::warn!("🔄 Transaction {} rolled back in {:?}", transaction_id, duration);
-        
+        self.active_transactions
+            .write()
+            .await
+            .remove(&transaction_id);
+
+        tracing::warn!(
+            "🔄 Transaction {} rolled back in {:?}",
+            transaction_id,
+            duration
+        );
+
         Ok(())
     }
-    
+
     /// Get transaction statistics
     pub async fn get_stats(&self) -> AtomicityStats {
         (*self.stats.read().await).clone()
     }
-    
+
     /// Get active transaction count
     pub async fn get_active_transaction_count(&self) -> usize {
         self.active_transactions.read().await.len()
@@ -734,7 +772,7 @@ impl LockManager {
             config,
         }
     }
-    
+
     /// Acquire a lock on a resource
     pub async fn acquire_lock(
         &self,
@@ -743,7 +781,7 @@ impl LockManager {
         lock_type: LockType,
     ) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        
+
         let request = LockRequest {
             transaction_id,
             resource_id: resource_id.clone(),
@@ -751,13 +789,13 @@ impl LockManager {
             response_tx: tx,
             requested_at: Instant::now(),
         };
-        
+
         // Add to wait queue
         self.wait_queue.lock().await.push_back(request);
-        
+
         // Process lock requests
         self.process_lock_requests().await;
-        
+
         // Wait for response with timeout
         match tokio::time::timeout(self.config.max_lock_wait_time, rx).await {
             Ok(Ok(result)) => result,
@@ -765,7 +803,7 @@ impl LockManager {
             Err(_) => Err(anyhow::anyhow!("Lock acquisition timed out")),
         }
     }
-    
+
     /// Release a lock on a resource
     pub async fn release_lock(
         &self,
@@ -773,40 +811,42 @@ impl LockManager {
         resource_id: ResourceId,
     ) -> Result<()> {
         let mut locks = self.locks.write().await;
-        
+
         if let Some(lock_entry) = locks.get_mut(&resource_id) {
-            lock_entry.holders.retain(|holder| holder.transaction_id != transaction_id);
-            
+            lock_entry
+                .holders
+                .retain(|holder| holder.transaction_id != transaction_id);
+
             if lock_entry.holders.is_empty() {
                 locks.remove(&resource_id);
             }
         }
-        
+
         drop(locks);
-        
+
         // Process waiting lock requests
         self.process_lock_requests().await;
-        
+
         Ok(())
     }
-    
+
     /// Process pending lock requests
     async fn process_lock_requests(&self) {
         let mut queue = self.wait_queue.lock().await;
         let mut processed = Vec::new();
-        
+
         while let Some(request) = queue.pop_front() {
             if self.can_grant_lock(&request).await {
                 // Clone what we need before moving
-                let resource_id = request.resource_id.clone();
-                let transaction_id = request.transaction_id;
-                let lock_type = request.lock_type.clone();
-                
+                let _resource_id = request.resource_id.clone();
+                let _transaction_id = request.transaction_id;
+                let _lock_type = request.lock_type.clone();
+
                 if let Err(_) = request.response_tx.send(Ok(())) {
                     // Request was cancelled
                     continue;
                 }
-                
+
                 // Grant the lock using copied values
                 // TODO: Implement grant_lock with lock_id, transaction_id, lock_type
             } else {
@@ -814,17 +854,17 @@ impl LockManager {
                 processed.push(request);
             }
         }
-        
+
         // Put unprocessed requests back
         for request in processed {
             queue.push_back(request);
         }
     }
-    
+
     /// Check if a lock can be granted
     async fn can_grant_lock(&self, request: &LockRequest) -> bool {
         let locks = self.locks.read().await;
-        
+
         if let Some(lock_entry) = locks.get(&request.resource_id) {
             // Check compatibility with existing locks
             self.is_compatible(&request.lock_type, &lock_entry.mode)
@@ -833,17 +873,17 @@ impl LockManager {
             true
         }
     }
-    
+
     /// Grant a lock
     async fn grant_lock(&self, request: LockRequest) {
         let mut locks = self.locks.write().await;
-        
+
         let holder = LockHolder {
             transaction_id: request.transaction_id,
             lock_type: request.lock_type.clone(),
             acquired_at: Instant::now(),
         };
-        
+
         if let Some(lock_entry) = locks.get_mut(&request.resource_id) {
             lock_entry.holders.push(holder);
         } else {
@@ -856,7 +896,7 @@ impl LockManager {
             locks.insert(request.resource_id, lock_entry);
         }
     }
-    
+
     /// Check lock compatibility
     fn is_compatible(&self, requested: &LockType, existing: &LockType) -> bool {
         use LockType::*;
@@ -878,7 +918,7 @@ impl TimeoutMonitor {
             task_handle: None,
         }
     }
-    
+
     /// Start timeout monitoring
     pub async fn start(
         &mut self,
@@ -888,42 +928,42 @@ impl TimeoutMonitor {
         if self.running.load(Ordering::Relaxed) {
             return Ok(()); // Already running
         }
-        
+
         self.running.store(true, Ordering::Relaxed);
-        
+
         // TODO: Fix AtomicBool sharing in async context
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
-            
+
             // Simplified timeout check - will be fixed in refactoring
             for _ in 0..10 {
                 interval.tick().await;
-                
+
                 let now = Utc::now();
                 let mut timed_out_transactions = Vec::new();
-                
+
                 // Check for timed out transactions
                 {
                     let transactions_read = transactions.read().await;
                     for (tx_id, tx_context) in transactions_read.iter() {
                         let context = tx_context.lock().await;
                         let elapsed = now.signed_duration_since(context.start_time);
-                        
+
                         if elapsed.num_milliseconds() > context.timeout.as_millis() as i64 {
                             timed_out_transactions.push(*tx_id);
                         }
                     }
                 }
-                
+
                 // Send timeout events
                 for tx_id in timed_out_transactions {
                     let _ = event_tx.send(TransactionEvent::TimedOut(tx_id));
                 }
             }
         });
-        
+
         self.task_handle = Some(task);
-        
+
         Ok(())
     }
 }
@@ -938,58 +978,58 @@ impl DeadlockDetector {
             task_handle: None,
         }
     }
-    
+
     /// Start deadlock detection
     pub async fn start(
         &mut self,
-        transactions: Arc<RwLock<HashMap<TransactionId, Arc<Mutex<TransactionContext>>>>>,
+        _transactions: Arc<RwLock<HashMap<TransactionId, Arc<Mutex<TransactionContext>>>>>,
         event_tx: broadcast::Sender<TransactionEvent>,
     ) -> Result<()> {
         if self.running.load(Ordering::Relaxed) {
             return Ok(()); // Already running
         }
-        
+
         self.running.store(true, Ordering::Relaxed);
-        
-        // TODO: Fix AtomicBool sharing in async context  
+
+        // TODO: Fix AtomicBool sharing in async context
         let wait_graph = self.wait_graph.clone();
         let interval = self.detection_interval;
-        
+
         let task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
-            
+
             // Simplified deadlock detection - will be fixed in refactoring
             for _ in 0..10 {
                 ticker.tick().await;
-                
+
                 // Build wait-for graph and detect cycles
                 if let Some(deadlocked) = Self::detect_deadlock(&wait_graph).await {
                     let _ = event_tx.send(TransactionEvent::DeadlockDetected(deadlocked));
                 }
             }
         });
-        
+
         self.task_handle = Some(task);
-        
+
         Ok(())
     }
-    
+
     /// Detect deadlocks using cycle detection in wait-for graph
     async fn detect_deadlock(
         wait_graph: &Arc<RwLock<HashMap<TransactionId, Vec<TransactionId>>>>,
     ) -> Option<Vec<TransactionId>> {
         let graph = wait_graph.read().await;
-        
+
         // Simple cycle detection using DFS
         for &start_node in graph.keys() {
             if let Some(cycle) = Self::find_cycle(&graph, start_node) {
                 return Some(cycle);
             }
         }
-        
+
         None
     }
-    
+
     /// Find cycle in wait-for graph using DFS
     fn find_cycle(
         graph: &HashMap<TransactionId, Vec<TransactionId>>,
@@ -997,7 +1037,7 @@ impl DeadlockDetector {
     ) -> Option<Vec<TransactionId>> {
         let mut visited = std::collections::HashSet::new();
         let mut path = Vec::new();
-        
+
         fn dfs(
             graph: &HashMap<TransactionId, Vec<TransactionId>>,
             current: TransactionId,
@@ -1009,14 +1049,14 @@ impl DeadlockDetector {
                 let cycle_start = path.iter().position(|&x| x == current).unwrap();
                 return Some(path[cycle_start..].to_vec());
             }
-            
+
             if visited.contains(&current) {
                 return None;
             }
-            
+
             visited.insert(current);
             path.push(current);
-            
+
             if let Some(neighbors) = graph.get(&current) {
                 for &neighbor in neighbors {
                     if let Some(cycle) = dfs(graph, neighbor, visited, path) {
@@ -1024,11 +1064,11 @@ impl DeadlockDetector {
                     }
                 }
             }
-            
+
             path.pop();
             None
         }
-        
+
         dfs(graph, start, &mut visited, &mut path)
     }
 }
@@ -1066,15 +1106,18 @@ pub struct BulkVectorOperation {
 #[derive(Debug)]
 pub enum BulkOperation {
     Insert(VectorRecord),
-    Update { vector_id: VectorId, record: VectorRecord },
+    Update {
+        vector_id: VectorId,
+        record: VectorRecord,
+    },
     Delete(VectorId),
 }
 
 #[async_trait::async_trait]
 impl AtomicOperation for VectorInsertOperation {
-    async fn execute(&self, context: &mut TransactionContext) -> Result<OperationResult> {
+    async fn execute(&self, _context: &mut TransactionContext) -> Result<OperationResult> {
         let start_time = Instant::now();
-        
+
         // Create WAL entry
         let wal_entry = WalEntry {
             entry_id: self.vector_record.id.clone(),
@@ -1085,15 +1128,15 @@ impl AtomicOperation for VectorInsertOperation {
                 expires_at: None,
             },
             timestamp: Utc::now(),
-            sequence: 0, // Will be assigned by WAL manager
+            sequence: 0,        // Will be assigned by WAL manager
             global_sequence: 0, // Will be assigned by WAL manager
             expires_at: None,
             version: 1,
         };
-        
+
         // Simulate operation execution
         tokio::time::sleep(Duration::from_millis(1)).await;
-        
+
         Ok(OperationResult {
             success: true,
             data: Some(serde_json::json!({"vector_id": self.vector_record.id})),
@@ -1102,13 +1145,13 @@ impl AtomicOperation for VectorInsertOperation {
             execution_time: start_time.elapsed(),
         })
     }
-    
+
     async fn rollback(&self, _context: &TransactionContext) -> Result<()> {
         // Create compensating delete operation
         tracing::debug!("Rolling back vector insert for {}", self.vector_record.id);
         Ok(())
     }
-    
+
     async fn validate(&self, _context: &TransactionContext) -> Result<()> {
         // Validate vector dimensions, collection exists, etc.
         if self.vector_record.vector.is_empty() {
@@ -1116,22 +1159,22 @@ impl AtomicOperation for VectorInsertOperation {
         }
         Ok(())
     }
-    
+
     fn operation_type(&self) -> OperationType {
         OperationType::Insert
     }
-    
+
     fn affected_resources(&self) -> Vec<ResourceId> {
         vec![
             ResourceId::Vector(self.vector_record.id.clone()),
             ResourceId::Collection(self.collection_id.clone()),
         ]
     }
-    
+
     fn priority(&self) -> OperationPriority {
         OperationPriority::Normal
     }
-    
+
     fn estimated_duration(&self) -> Duration {
         Duration::from_millis(10)
     }
@@ -1139,9 +1182,9 @@ impl AtomicOperation for VectorInsertOperation {
 
 #[async_trait::async_trait]
 impl AtomicOperation for VectorUpdateOperation {
-    async fn execute(&self, context: &mut TransactionContext) -> Result<OperationResult> {
+    async fn execute(&self, _context: &mut TransactionContext) -> Result<OperationResult> {
         let start_time = Instant::now();
-        
+
         // Create WAL entry for update
         let wal_entry = WalEntry {
             entry_id: self.vector_id.clone(),
@@ -1152,15 +1195,15 @@ impl AtomicOperation for VectorUpdateOperation {
                 expires_at: None,
             },
             timestamp: Utc::now(),
-            sequence: 0, // Will be assigned by WAL manager
+            sequence: 0,        // Will be assigned by WAL manager
             global_sequence: 0, // Will be assigned by WAL manager
             expires_at: None,
             version: 1,
         };
-        
+
         // Simulate operation execution
         tokio::time::sleep(Duration::from_millis(1)).await;
-        
+
         Ok(OperationResult {
             success: true,
             data: Some(serde_json::json!({
@@ -1172,34 +1215,34 @@ impl AtomicOperation for VectorUpdateOperation {
             execution_time: start_time.elapsed(),
         })
     }
-    
+
     async fn rollback(&self, _context: &TransactionContext) -> Result<()> {
         tracing::debug!("Rolling back vector update for {}", self.vector_id);
         Ok(())
     }
-    
+
     async fn validate(&self, _context: &TransactionContext) -> Result<()> {
         if self.vector_record.vector.is_empty() {
             return Err(anyhow::anyhow!("Empty vector not allowed"));
         }
         Ok(())
     }
-    
+
     fn operation_type(&self) -> OperationType {
         OperationType::Update
     }
-    
+
     fn affected_resources(&self) -> Vec<ResourceId> {
         vec![
             ResourceId::Vector(self.vector_id.clone()),
             ResourceId::Collection(self.collection_id.clone()),
         ]
     }
-    
+
     fn priority(&self) -> OperationPriority {
         OperationPriority::Normal
     }
-    
+
     fn estimated_duration(&self) -> Duration {
         Duration::from_millis(10)
     }
@@ -1207,9 +1250,9 @@ impl AtomicOperation for VectorUpdateOperation {
 
 #[async_trait::async_trait]
 impl AtomicOperation for VectorDeleteOperation {
-    async fn execute(&self, context: &mut TransactionContext) -> Result<OperationResult> {
+    async fn execute(&self, _context: &mut TransactionContext) -> Result<OperationResult> {
         let start_time = Instant::now();
-        
+
         // Create WAL entry for delete
         let wal_entry = WalEntry {
             entry_id: self.vector_id.clone(),
@@ -1219,15 +1262,15 @@ impl AtomicOperation for VectorDeleteOperation {
                 expires_at: Some(Utc::now() + chrono::Duration::days(30)), // 30-day soft delete
             },
             timestamp: Utc::now(),
-            sequence: 0, // Will be assigned by WAL manager
+            sequence: 0,        // Will be assigned by WAL manager
             global_sequence: 0, // Will be assigned by WAL manager
             expires_at: Some(Utc::now() + chrono::Duration::days(30)),
             version: 1,
         };
-        
+
         // Simulate operation execution
         tokio::time::sleep(Duration::from_millis(1)).await;
-        
+
         Ok(OperationResult {
             success: true,
             data: Some(serde_json::json!({
@@ -1239,32 +1282,32 @@ impl AtomicOperation for VectorDeleteOperation {
             execution_time: start_time.elapsed(),
         })
     }
-    
+
     async fn rollback(&self, _context: &TransactionContext) -> Result<()> {
         tracing::debug!("Rolling back vector delete for {}", self.vector_id);
         Ok(())
     }
-    
+
     async fn validate(&self, _context: &TransactionContext) -> Result<()> {
         // Could check if vector exists, etc.
         Ok(())
     }
-    
+
     fn operation_type(&self) -> OperationType {
         OperationType::Delete
     }
-    
+
     fn affected_resources(&self) -> Vec<ResourceId> {
         vec![
             ResourceId::Vector(self.vector_id.clone()),
             ResourceId::Collection(self.collection_id.clone()),
         ]
     }
-    
+
     fn priority(&self) -> OperationPriority {
         OperationPriority::Normal
     }
-    
+
     fn estimated_duration(&self) -> Duration {
         Duration::from_millis(5)
     }
@@ -1272,11 +1315,11 @@ impl AtomicOperation for VectorDeleteOperation {
 
 #[async_trait::async_trait]
 impl AtomicOperation for BulkVectorOperation {
-    async fn execute(&self, context: &mut TransactionContext) -> Result<OperationResult> {
+    async fn execute(&self, _context: &mut TransactionContext) -> Result<OperationResult> {
         let start_time = Instant::now();
         let mut wal_entries = Vec::new();
         let mut affected_count = 0;
-        
+
         for operation in &self.operations {
             let wal_entry = match operation {
                 BulkOperation::Insert(record) => {
@@ -1290,12 +1333,12 @@ impl AtomicOperation for BulkVectorOperation {
                             expires_at: None,
                         },
                         timestamp: Utc::now(),
-                        sequence: 0, // Will be assigned by WAL manager
+                        sequence: 0,        // Will be assigned by WAL manager
                         global_sequence: 0, // Will be assigned by WAL manager
                         expires_at: None,
                         version: 1,
                     }
-                },
+                }
                 BulkOperation::Update { vector_id, record } => {
                     affected_count += 1;
                     WalEntry {
@@ -1307,12 +1350,12 @@ impl AtomicOperation for BulkVectorOperation {
                             expires_at: None,
                         },
                         timestamp: Utc::now(),
-                        sequence: 0, // Will be assigned by WAL manager
+                        sequence: 0,        // Will be assigned by WAL manager
                         global_sequence: 0, // Will be assigned by WAL manager
                         expires_at: None,
                         version: 1,
                     }
-                },
+                }
                 BulkOperation::Delete(vector_id) => {
                     affected_count += 1;
                     WalEntry {
@@ -1323,19 +1366,19 @@ impl AtomicOperation for BulkVectorOperation {
                             expires_at: Some(Utc::now() + chrono::Duration::days(30)),
                         },
                         timestamp: Utc::now(),
-                        sequence: 0, // Will be assigned by WAL manager
+                        sequence: 0,        // Will be assigned by WAL manager
                         global_sequence: 0, // Will be assigned by WAL manager
                         expires_at: Some(Utc::now() + chrono::Duration::days(30)),
                         version: 1,
                     }
-                },
+                }
             };
             wal_entries.push(wal_entry);
         }
-        
+
         // Simulate bulk operation execution
         tokio::time::sleep(Duration::from_millis(self.operations.len() as u64)).await;
-        
+
         Ok(OperationResult {
             success: true,
             data: Some(serde_json::json!({
@@ -1348,17 +1391,20 @@ impl AtomicOperation for BulkVectorOperation {
             execution_time: start_time.elapsed(),
         })
     }
-    
+
     async fn rollback(&self, _context: &TransactionContext) -> Result<()> {
-        tracing::debug!("Rolling back bulk operation for collection {}", self.collection_id);
+        tracing::debug!(
+            "Rolling back bulk operation for collection {}",
+            self.collection_id
+        );
         Ok(())
     }
-    
+
     async fn validate(&self, _context: &TransactionContext) -> Result<()> {
         if self.operations.is_empty() {
             return Err(anyhow::anyhow!("Empty bulk operation not allowed"));
         }
-        
+
         // Validate each operation
         for operation in &self.operations {
             match operation {
@@ -1366,60 +1412,72 @@ impl AtomicOperation for BulkVectorOperation {
                     if record.vector.is_empty() {
                         return Err(anyhow::anyhow!("Empty vector not allowed in bulk insert"));
                     }
-                },
+                }
                 BulkOperation::Update { record, .. } => {
                     if record.vector.is_empty() {
                         return Err(anyhow::anyhow!("Empty vector not allowed in bulk update"));
                     }
-                },
+                }
                 BulkOperation::Delete(_) => {
                     // Delete validation can be added here
-                },
+                }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn operation_type(&self) -> OperationType {
         // Determine the primary operation type
-        if self.operations.iter().all(|op| matches!(op, BulkOperation::Insert(_))) {
+        if self
+            .operations
+            .iter()
+            .all(|op| matches!(op, BulkOperation::Insert(_)))
+        {
             OperationType::BulkInsert
-        } else if self.operations.iter().all(|op| matches!(op, BulkOperation::Update { .. })) {
+        } else if self
+            .operations
+            .iter()
+            .all(|op| matches!(op, BulkOperation::Update { .. }))
+        {
             OperationType::BulkUpdate
-        } else if self.operations.iter().all(|op| matches!(op, BulkOperation::Delete(_))) {
+        } else if self
+            .operations
+            .iter()
+            .all(|op| matches!(op, BulkOperation::Delete(_)))
+        {
             OperationType::BulkDelete
         } else {
             OperationType::BulkInsert // Mixed operations default to bulk insert
         }
     }
-    
+
     fn affected_resources(&self) -> Vec<ResourceId> {
         let mut resources = vec![ResourceId::Collection(self.collection_id.clone())];
-        
+
         // Add individual vector resources
         for operation in &self.operations {
             match operation {
                 BulkOperation::Insert(record) => {
                     resources.push(ResourceId::Vector(record.id.clone()));
-                },
+                }
                 BulkOperation::Update { vector_id, .. } => {
                     resources.push(ResourceId::Vector(vector_id.clone()));
-                },
+                }
                 BulkOperation::Delete(vector_id) => {
                     resources.push(ResourceId::Vector(vector_id.clone()));
-                },
+                }
             }
         }
-        
+
         resources
     }
-    
+
     fn priority(&self) -> OperationPriority {
         // Bulk operations get higher priority due to their batch nature
         OperationPriority::High
     }
-    
+
     fn estimated_duration(&self) -> Duration {
         // Estimate based on number of operations
         Duration::from_millis((self.operations.len() as u64).min(1000))
