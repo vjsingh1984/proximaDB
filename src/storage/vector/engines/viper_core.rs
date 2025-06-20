@@ -903,8 +903,8 @@ impl VectorStorage for ViperCoreEngine {
                 DistanceMetric::Manhattan,
             ],
             supported_indexes: vec![
-                IndexType::Hnsw,
-                IndexType::Ivf,
+                IndexType::HNSW,
+                IndexType::IVF,
                 IndexType::Flat,
             ],
         }

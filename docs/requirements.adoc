@@ -197,7 +197,7 @@ Deliver a cloud-native vector database that provides:
 |ST-008
 |Schema evolution with backward compatibility
 |Medium
-|✅ IMPLEMENTED
+|🚧 IN PROGRESS (Basic schema service implemented)
 
 |ST-009
 |Point-in-time recovery with configurable retention
@@ -217,7 +217,7 @@ Deliver a cloud-native vector database that provides:
 |ST-012
 |Avro-based WAL serialization with schema evolution and compression
 |Critical
-|✅ IMPLEMENTED
+|🚧 IN PROGRESS (JSON currently, Avro planned)
 
 |ST-013
 |Recovery-optimized compression (LZ4 >2GB/s decompression, Zstd adaptive)

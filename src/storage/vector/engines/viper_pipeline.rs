@@ -276,6 +276,7 @@ pub struct WriterPool {
 }
 
 /// Parquet writer trait
+#[async_trait::async_trait]
 pub trait ParquetWriter: Send + Sync {
     /// Write batch to storage
     async fn write_batch(&mut self, batch: &RecordBatch, path: &str) -> Result<u64>;
@@ -285,6 +286,7 @@ pub trait ParquetWriter: Send + Sync {
 }
 
 /// Parquet writer factory
+#[async_trait::async_trait]
 pub trait ParquetWriterFactory: Send + Sync {
     /// Create new parquet writer
     async fn create_writer(&self) -> Result<Box<dyn ParquetWriter>>;

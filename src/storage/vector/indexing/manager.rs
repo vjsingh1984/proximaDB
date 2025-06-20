@@ -707,7 +707,7 @@ impl UnifiedIndexManager {
             Ok(DataDistribution::Uniform)
         } else {
             // Analyze vector clustering
-            Ok(DataDistribution::Clustered { cluster_count: 10, separation: 0.5 })
+            Ok(DataDistribution::Clustered { cluster_count: 10 })
         }
     }
     

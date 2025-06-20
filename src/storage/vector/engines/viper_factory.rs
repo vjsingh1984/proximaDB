@@ -282,6 +282,7 @@ pub trait ProcessorFactory: Send + Sync {
 }
 
 /// Vector processor trait
+#[async_trait::async_trait]
 pub trait VectorProcessor: Send + Sync {
     /// Process vector records
     async fn process_records(&self, records: Vec<VectorRecord>) -> Result<ProcessedBatch>;
@@ -728,7 +729,7 @@ impl StandardVectorProcessor {
     }
 }
 
-impl VectorProcessor for StandardVectorProcessor {
+#[async_trait::async_trait]\nimpl VectorProcessor for StandardVectorProcessor {
     async fn process_records(&self, mut records: Vec<VectorRecord>) -> Result<ProcessedBatch> {
         let start_time = std::time::Instant::now();
         

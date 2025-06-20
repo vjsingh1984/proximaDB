@@ -12,140 +12,280 @@ v1.0, {docdate}
 
 This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native serverless vector database optimized for the AI era. The LLD details the technical implementation of each architectural component, including data structures, algorithms, performance optimizations, and deployment strategies.
 
-== 1. Core Storage Engine Implementation
+== 1. Unified Service Layer Implementation
 
-=== 1.1 LSM Tree Storage Architecture
+=== 1.1 UnifiedAvroService Architecture
 
-==== Data Structure Layout
-
-[source,rust]
-----
-/// LSM Tree storage engine with write-ahead logging
-pub struct LSMTreeEngine {
-    /// In-memory buffer (MemTable)
-    memtable: Arc<RwLock<MemTable>>,
-    /// Immutable MemTables awaiting flush
-    immutable_memtables: Arc<RwLock<Vec<MemTable>>>,
-    /// Sorted String Tables on disk
-    sstables: Arc<RwLock<Vec<SSTableHandle>>>,
-    /// Write-ahead log for durability
-    wal: Arc<Mutex<WriteAheadLog>>,
-    /// Compaction manager
-    compaction: Arc<CompactionManager>,
-    /// Bloom filters for read optimization
-    bloom_filters: Arc<RwLock<HashMap<u64, BloomFilter>>>,
-}
-
-/// Memory table implementation with skip list
-pub struct MemTable {
-    /// Skip list for O(log n) insertions and range queries
-    data: SkipMap<VectorKey, VectorEntry>,
-    /// Current size in bytes
-    size: AtomicUsize,
-    /// Creation timestamp
-    created_at: Instant,
-}
-
-/// Vector key with composite structure
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VectorKey {
-    /// Collection identifier
-    collection_id: u64,
-    /// Vector unique identifier
-    vector_id: String,
-    /// Timestamp for versioning
-    timestamp: u64,
-}
-
-/// Vector entry with metadata and data
-#[derive(Debug, Clone)]
-pub struct VectorEntry {
-    /// Vector data (f32 array)
-    vector: Vec<f32>,
-    /// User-defined metadata
-    metadata: Option<HashMap<String, Value>>,
-    /// Entry size in bytes
-    size: usize,
-    /// Deletion marker
-    deleted: bool,
-}
-----
-
-==== Write Path Implementation
+==== Service Structure and Integration
 
 [source,rust]
 ----
-impl LSMTreeEngine {
-    /// High-throughput vector insertion
-    pub async fn insert_vector(
-        &self,
-        collection_id: u64,
-        vector_id: String,
-        vector: Vec<f32>,
-        metadata: Option<HashMap<String, Value>>,
-    ) -> Result<(), StorageError> {
-        // 1. Write to WAL for durability
-        let wal_entry = WALEntry {
-            operation: WALOperation::Insert,
-            key: VectorKey::new(collection_id, vector_id.clone(), SystemTime::now()),
-            data: vector.clone(),
-            metadata: metadata.clone(),
-        };
+/// Central service handling all database operations with Avro serialization
+pub struct UnifiedAvroService {
+    /// Storage engine with filesystem abstraction
+    storage: Arc<RwLock<StorageEngine>>,
+    /// Write-ahead log manager
+    wal: Arc<WalManager>,
+    /// Vector storage coordinator
+    vector_coordinator: Arc<VectorStorageCoordinator>,
+    /// Collection service for lifecycle management
+    collection_service: Arc<CollectionService>,
+    /// Schema service for evolution
+    schema_service: Arc<SchemaService>,
+    /// Background task scheduler
+    scheduler: Arc<TaskScheduler>,
+}
+
+impl UnifiedAvroService {
+    /// Create new unified service with all components
+    pub async fn new(config: ServiceConfig) -> Result<Self> {
+        // Initialize storage with filesystem factory
+        let storage = StorageEngine::new(
+            FilesystemFactory::from_url(&config.storage_url)?,
+            config.storage_config.clone(),
+        ).await?;
         
-        self.wal.lock().await.append(&wal_entry).await?;
+        // Initialize WAL with strategy pattern
+        let wal_strategy = WalFactory::create_strategy(&config.wal_config)?;
+        let wal = Arc::new(WalManager::new(wal_strategy, config.wal_config.clone()));
         
-        // 2. Insert into MemTable
-        let entry = VectorEntry {
-            vector,
-            metadata,
-            size: calculate_entry_size(&vector_id, &vector, &metadata),
-            deleted: false,
-        };
+        // Initialize vector coordinator with engines
+        let mut coordinator_config = CoordinatorConfig::default();
+        coordinator_config.register_engine("viper", Arc::new(ViperCoreEngine::new(config.viper_config).await?));
+        coordinator_config.register_engine("standard", Arc::new(StandardEngine::new()));
         
-        let key = VectorKey::new(collection_id, vector_id, SystemTime::now());
+        let vector_coordinator = Arc::new(VectorStorageCoordinator::new(coordinator_config).await?);
         
-        {
-            let mut memtable = self.memtable.write().await;
-            memtable.insert(key, entry)?;
-            
-            // Check if MemTable exceeds threshold (64MB default)
-            if memtable.size() > MEMTABLE_SIZE_THRESHOLD {
-                self.flush_memtable().await?;
-            }
-        }
+        // Initialize services
+        let collection_service = Arc::new(CollectionService::new(
+            config.metadata_backend.clone(),
+            storage.clone(),
+        ).await?);
         
-        Ok(())
+        let schema_service = Arc::new(SchemaService::new());
+        let scheduler = Arc::new(TaskScheduler::new());
+        
+        Ok(Self {
+            storage,
+            wal,
+            vector_coordinator,
+            collection_service,
+            schema_service,
+            scheduler,
+        })
     }
     
-    /// Asynchronous MemTable flushing
-    async fn flush_memtable(&self) -> Result<(), StorageError> {
-        // 1. Move current MemTable to immutable list
-        let memtable_to_flush = {
-            let mut current = self.memtable.write().await;
-            let old_memtable = std::mem::replace(&mut *current, MemTable::new());
+    /// Vector insertion with coordinated operations
+    pub async fn insert_vector(&self, request: InsertVectorRequest) -> Result<InsertVectorResponse> {
+        // 1. Validate request
+        let collection = self.collection_service
+            .get_collection(&request.collection_id)
+            .await?
+            .ok_or_else(|| anyhow!("Collection not found"))?;
             
-            self.immutable_memtables.write().await.push(old_memtable.clone());
-            old_memtable
+        self.validate_vector(&request.vector, &collection)?;
+        
+        // 2. Write to WAL
+        let sequence = self.wal.insert(
+            &request.collection_id,
+            request.vector_id.clone(),
+            VectorRecord {
+                id: request.vector_id.clone(),
+                vector: request.vector.clone(),
+                metadata: request.metadata.clone(),
+                timestamp: Utc::now(),
+            },
+        ).await?;
+        
+        // 3. Delegate to vector coordinator
+        let operation = VectorOperation::Insert {
+            record: VectorRecord {
+                id: request.vector_id,
+                vector: request.vector,
+                metadata: request.metadata,
+                timestamp: Utc::now(),
+            },
+            index_immediately: request.index_immediately.unwrap_or(true),
         };
         
-        // 2. Create SSTable from MemTable
-        let sstable_path = self.generate_sstable_path();
-        let sstable_handle = self.create_sstable(memtable_to_flush, &sstable_path).await?;
-        
-        // 3. Add to SSTable list
-        self.sstables.write().await.push(sstable_handle);
-        
-        // 4. Remove from immutable list
-        self.immutable_memtables.write().await.retain(|mt| mt.created_at != memtable_to_flush.created_at);
-        
-        // 5. Trigger compaction if needed
-        if self.should_compact().await {
-            self.compaction.schedule_compaction().await?;
-        }
-        
-        Ok(())
+        let result = self.vector_coordinator
+            .execute_operation(&request.collection_id, operation)
+            .await?;
+            
+        // 4. Update collection statistics
+        self.collection_service
+            .update_statistics(&request.collection_id, |stats| {
+                stats.vector_count += 1;
+                stats.last_modified = Utc::now();
+            })
+            .await?;
+            
+        Ok(InsertVectorResponse {
+            success: true,
+            sequence_number: sequence,
+            message: "Vector inserted successfully".to_string(),
+        })
     }
 }
+----
+
+=== 1.2 VectorStorageCoordinator Implementation
+
+==== Coordinator Architecture
+
+[source,rust]
+----
+[source,rust]
+----
+/// Coordinator for managing multiple vector storage engines
+pub struct VectorStorageCoordinator {
+    /// Registered storage engines
+    engines: HashMap<String, Arc<dyn VectorStorage>>,
+    /// Index manager for all collections
+    index_manager: Arc<UnifiedIndexManager>,
+    /// Engine selection strategy
+    selection_strategy: Arc<EngineSelectionStrategy>,
+    /// Operation metrics
+    metrics: Arc<OperationMetrics>,
+    /// Configuration
+    config: CoordinatorConfig,
+}
+
+/// Vector storage trait for engine implementations
+#[async_trait]
+pub trait VectorStorage: Send + Sync {
+    /// Get engine name
+    fn engine_name(&self) -> &'static str;
+    
+    /// Get engine capabilities
+    fn capabilities(&self) -> EngineCapabilities;
+    
+    /// Execute vector operation
+    async fn execute_operation(
+        &self,
+        operation: VectorOperation,
+    ) -> Result<OperationResult>;
+    
+    /// Search vectors
+    async fn search(
+        &self,
+        context: &SearchContext,
+    ) -> Result<Vec<SearchResult>>;
+    
+    /// Get engine statistics
+    async fn get_statistics(&self) -> Result<EngineStatistics>;
+}
+
+Impl VectorStorageCoordinator {
+    /// Execute operation with engine routing
+    pub async fn execute_operation(
+        &self,
+        collection_id: &CollectionId,
+        operation: VectorOperation,
+    ) -> Result<OperationResult> {
+        // 1. Get collection configuration
+        let collection = self.get_collection_config(collection_id).await?;
+        
+        // 2. Select appropriate engine
+        let engine_name = self.selection_strategy
+            .select_engine(&collection, &operation)?;
+            
+        let engine = self.engines
+            .get(&engine_name)
+            .ok_or_else(|| anyhow!("Engine {} not found", engine_name))?;
+            
+        // 3. Record metrics
+        let start_time = Instant::now();
+        
+        // 4. Execute operation
+        let result = engine.execute_operation(operation).await?;
+        
+        // 5. Update metrics
+        self.metrics.record_operation(
+            engine_name,
+            operation.op_type(),
+            start_time.elapsed(),
+            result.is_ok(),
+        ).await;
+        
+        // 6. Update indexes if needed
+        match &operation {
+            VectorOperation::Insert { record, index_immediately } => {
+                if *index_immediately {
+                    self.index_manager.add_vector(collection_id, &record.id, &record.vector).await?;
+                }
+            }
+            VectorOperation::Delete { vector_id } => {
+                self.index_manager.remove_vector(collection_id, vector_id).await?;
+            }
+            _ => {}
+        }
+        
+        Ok(result)
+    }
+    
+    /// Coordinated search across engines
+    pub async fn search(
+        &self,
+        collection_id: &CollectionId,
+        query: SearchQuery,
+    ) -> Result<Vec<SearchResult>> {
+        let collection = self.get_collection_config(collection_id).await?;
+        
+        // Create search context
+        let context = SearchContext {
+            collection_id: collection_id.clone(),
+            query_vector: query.vector,
+            k: query.k,
+            filters: query.filters,
+            distance_metric: collection.distance_metric.clone(),
+            include_vectors: query.include_vectors,
+            include_metadata: query.include_metadata,
+        };
+        
+        // Determine search strategy
+        match self.selection_strategy.get_search_strategy(&collection)? {
+            SearchStrategy::SingleEngine(engine_name) => {
+                // Search using single engine
+                let engine = self.engines.get(&engine_name)
+                    .ok_or_else(|| anyhow!("Engine {} not found", engine_name))?;
+                engine.search(&context).await
+            }
+            SearchStrategy::MultiEngine(engine_names) => {
+                // Parallel search across multiple engines
+                let futures: Vec<_> = engine_names
+                    .into_iter()
+                    .filter_map(|name| self.engines.get(&name))
+                    .map(|engine| engine.search(&context))
+                    .collect();
+                    
+                let results = futures::future::try_join_all(futures).await?;
+                
+                // Merge and rank results
+                self.merge_search_results(results, query.k)
+            }
+            SearchStrategy::Hybrid { primary, secondary } => {
+                // Two-phase search: primary for candidates, secondary for refinement
+                let primary_engine = self.engines.get(&primary)
+                    .ok_or_else(|| anyhow!("Primary engine {} not found", primary))?;
+                    
+                let candidates = primary_engine.search(&context).await?;
+                
+                if let Some(secondary_name) = secondary {
+                    let secondary_engine = self.engines.get(&secondary_name)
+                        .ok_or_else(|| anyhow!("Secondary engine {} not found", secondary_name))?;
+                        
+                    // Refine results with secondary engine
+                    let refined_context = context.with_candidates(candidates);
+                    secondary_engine.search(&refined_context).await
+                } else {
+                    Ok(candidates)
+                }
+            }
+        }
+    }
+}
+----
 ----
 
 === 1.2 Write-Ahead Log (WAL) Implementation

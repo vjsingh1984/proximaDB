@@ -61,18 +61,46 @@ ProximaDB follows a **layered, cloud-native architecture** with clear separation
 - **Burst handling**: Short-term quota overages with automatic throttling
 - **Fair sharing**: Prevent noisy neighbor problems in multi-tenant environments
 
-=== Serverless Compute Layer
+=== Unified Service Architecture
 
-==== Query Service
-**Primary Responsibility**: Vector similarity search and retrieval
+ProximaDB employs a **unified service architecture** that consolidates functionality into cohesive, well-defined services:
 
-- **Technology Stack**: Rust with Tokio async runtime
-- **Vector Algorithms**: 
-  * HNSW (Hierarchical Navigable Small World) for high-recall search
-  * IVF (Inverted File) for large-scale datasets
-  * Product Quantization for memory efficiency
-- **Caching Strategy**: Multi-level caching (L1: memory, L2: local SSD, L3: distributed)
-- **Auto-scaling**: Based on query latency and throughput metrics
+==== UnifiedAvroService
+**Primary Responsibility**: Central entry point for all database operations
+
+- **JSON Protocol**: Currently uses JSON serialization (Avro planned for future)
+- **Operation Types**: 
+  * Vector operations (insert, update, delete, search)
+  * Collection management (create, drop, configure)
+  * Metadata operations (schema updates, indexing)
+- **Integration Points**:
+  * Delegates to VectorStorageCoordinator for vector operations
+  * Uses CollectionService for collection lifecycle
+  * Integrates with WAL for durability
+- **Current Status**: 🚧 JSON-based implementation with Avro migration planned
+
+==== VectorStorageCoordinator
+**Primary Responsibility**: Orchestrates all vector storage operations
+
+- **Engine Management**: Routes operations to registered storage engines
+- **Currently Supported**:
+  * VIPER: Primary ML-driven clustering with Parquet storage
+  * Architecture supports pluggable engines
+- **Operation Pipeline**:
+  * Pre-processing and validation
+  * Engine routing (currently defaults to VIPER)
+  * Result aggregation and ranking
+- **Current Status**: ✅ Implemented with VIPER engine, multi-engine routing planned
+
+==== UnifiedIndexManager
+**Primary Responsibility**: Manages all indexing strategies across collections
+
+- **Planned Index Types**:
+  * HNSW: Graph-based similarity search
+  * IVF: Inverted file for large-scale datasets
+  * Flat: Brute-force for small datasets
+- **Current Status**: 🚧 Architecture implemented, index builders in development
+- **Future Features**: ML-based strategy selection and automatic optimization
 
 ==== Advanced Vector Search Strategies
 
@@ -395,54 +423,68 @@ impl QueryPlanner {
 
 === Intelligent Storage Tiers
 
-image::images/storage-tiers.png[Storage Tiering Architecture, 800, align="center"]
+image::images/storage-policy.png[Storage Policy Architecture, 800, align="center"]
 
-VectorFlow implements a **5-tier storage hierarchy** optimized for different access patterns and cost requirements:
+ProximaDB implements a **flexible storage policy system** with direct filesystem URL configuration optimized for different access patterns and cost requirements:
 
-==== Ultra-Hot Tier (< 1ms latency)
-- **Technology**: Memory-mapped files with OS page cache
-- **Use Case**: Recently accessed vectors, frequent queries
-- **Characteristics**:
-  * Zero-copy reads using `mmap()`
-  * Automatic page cache optimization
-  * NUMA-aware memory allocation
-  * Up to 100K+ IOPS
+==== Storage Policy Architecture
 
-==== Hot Tier (< 10ms latency)  
-- **Technology**: Local NVMe/SATA SSDs with LSM trees
-- **Use Case**: Frequently accessed data
-- **Characteristics**:
-  * Read-optimized LSM tree structure
-  * Bloom filters for efficient lookups
-  * Background compaction
-  * Up to 50K+ IOPS
+ProximaDB uses **direct filesystem URLs** instead of predefined storage tiers, allowing flexible configuration per collection:
 
-==== Warm Tier (< 100ms latency)
-- **Technology**: Local HDDs with compression
-- **Use Case**: Occasionally accessed data
-- **Characteristics**:
-  * Zstd compression for space efficiency
-  * Batch read optimization
-  * Configurable prefetching
-  * Cost-optimized storage
+[source,rust]
+----
+pub struct StoragePolicy {
+    pub collection_name: String,
+    pub primary_storage: String,      // e.g., "file:///mnt/nvme/vectors"
+    pub secondary_storage: Option<String>, // e.g., "s3://bucket/warm-data"
+    pub archive_storage: Option<String>,   // e.g., "s3://bucket/archive?class=GLACIER"
+    pub wal_storage: String,              // e.g., "file:///mnt/ssd/wal"
+    pub metadata_storage: String,         // e.g., "file:///mnt/ssd/metadata"
+    pub index_storage: String,           // e.g., "file:///mnt/nvme/indexes"
+    pub lifecycle: StorageLifecycle,
+}
+----
 
-==== Cold Tier (< 1s latency)
-- **Technology**: Cloud object storage (S3, Azure Blob, GCS)
-- **Use Case**: Rarely accessed historical data
-- **Characteristics**:
-  * Parquet format for analytics workloads
-  * Intelligent tiering (S3 IA, Glacier)
-  * Cross-region replication
-  * 90% cost reduction vs hot storage
+==== Supported Storage Backends
 
-==== Archive Tier (< 10s latency)
-- **Technology**: Long-term archival storage (Glacier, Archive)
-- **Use Case**: Compliance and long-term retention
-- **Characteristics**:
-  * 7+ year retention policies
-  * Immutable storage for compliance
-  * Retrieval SLAs for legal discovery
-  * 99% cost reduction vs hot storage
+**Local Filesystem** (`file://`)
+- **Use Case**: High-performance local storage
+- **Examples**: 
+  * `file:///mnt/nvme/vectors` - NVMe for ultra-hot data
+  * `file:///mnt/ssd/indexes` - SSD for index storage
+  * `file:///mnt/hdd/archive` - HDD for cost-effective storage
+
+**Amazon S3** (`s3://`)
+- **Use Case**: Scalable cloud object storage
+- **Examples**:
+  * `s3://my-bucket/vectors` - Standard storage
+  * `s3://my-bucket/archive?class=GLACIER` - Archive storage
+  * `s3://my-bucket/data?region=us-east-1` - Region-specific
+
+**Azure Data Lake Storage** (`adls://`)
+- **Use Case**: Azure-native data lake storage
+- **Examples**:
+  * `adls://account/container/vectors` - Hot tier
+  * `adls://account/container/archive?tier=COOL` - Cool tier
+
+**Google Cloud Storage** (`gcs://`)
+- **Use Case**: Google Cloud object storage
+- **Examples**:
+  * `gcs://bucket/vectors` - Standard storage
+  * `gcs://bucket/archive?class=ARCHIVE` - Archive storage
+
+==== Storage Lifecycle Management
+
+[source,rust]
+----
+pub struct StorageLifecycle {
+    pub hot_duration: Duration,      // Keep in primary storage
+    pub warm_duration: Duration,     // Move to secondary storage
+    pub archive_after: Duration,     // Move to archive storage
+    pub delete_after: Option<Duration>, // Optional deletion
+    pub access_pattern_override: bool,  // ML-based optimization
+}
+----
 
 === VIPER Atomic Operations
 
@@ -631,96 +673,97 @@ async fn flush_with_compaction_check(collection_id: &str) -> Result<()> {
 - Configurable compression (LZ4, Zstd)
 - Atomic operations and batch writes
 
-==== WAL Class Diagram (Current Implementation)
+==== Unified Architecture Class Diagram
 
 [source,mermaid]
 ----
 classDiagram
+    class UnifiedAvroService {
+        +storage: Arc~RwLock~StorageEngine~~
+        +wal: Arc~WalManager~
+        +vector_coordinator: Arc~VectorStorageCoordinator~
+        +collection_service: Arc~CollectionService~
+        +insert_vector(record: VectorRecord) Future~Result~
+        +update_vector(id: VectorId, record: VectorRecord) Future~Result~
+        +delete_vector(id: VectorId) Future~Result~
+        +search_vectors(query: SearchQuery) Future~Vec~SearchResult~~
+        +create_collection(config: CollectionConfig) Future~Result~
+        +drop_collection(id: CollectionId) Future~Result~
+    }
+
+    class VectorStorageCoordinator {
+        +engines: HashMap~String, Arc~dyn VectorStorage~~
+        +index_manager: Arc~UnifiedIndexManager~
+        +config: CoordinatorConfig
+        +execute_operation(op: VectorOperation) Future~OperationResult~
+        +select_engine(collection: &CollectionConfig) String
+        +coordinate_search(query: SearchQuery) Future~Vec~SearchResult~~
+    }
+
+    class VectorStorage {
+        <<interface>>
+        +engine_name() &str
+        +capabilities() EngineCapabilities
+        +execute_operation(op: VectorOperation) Future~OperationResult~
+        +search(context: SearchContext) Future~Vec~SearchResult~~
+        +get_statistics() Future~EngineStatistics~
+    }
+
+    class ViperCoreEngine {
+        +config: ViperConfig
+        +pipeline: Arc~ViperPipeline~
+        +compactor: Arc~CompactionEngine~
+        +storage_handler: Arc~StorageLayoutHandler~
+        +ml_optimizer: Arc~MLGuidedOptimizer~
+    }
+
+    class UnifiedIndexManager {
+        +collection_indexes: HashMap~CollectionId, MultiIndex~
+        +index_builders: IndexBuilderRegistry
+        +optimizer: Arc~IndexOptimizer~
+        +create_index(collection: CollectionId, spec: IndexSpec) Future~Result~
+        +search(collection: &CollectionId, context: &SearchContext) Future~Vec~SearchResult~~
+        +optimize_indexes() Future~Result~
+    }
+
+    class StoragePolicy {
+        +collection_name: String
+        +primary_storage: String
+        +secondary_storage: Option~String~
+        +archive_storage: Option~String~
+        +wal_storage: String
+        +metadata_storage: String
+        +index_storage: String
+        +lifecycle: StorageLifecycle
+    }
+
     class WalManager {
         +strategy: Box~dyn WalStrategy~
+        +age_monitor: Arc~WalAgeMonitor~
         +config: WalConfig
         +insert(collection_id, vector_id, record) Future~u64~
-        +update(collection_id, vector_id, record) Future~u64~
-        +delete(collection_id, vector_id) Future~u64~
-        +create_collection(collection_id, config) Future~u64~
-        +drop_collection(collection_id) Future~()~
-        +flush(collection_id) Future~FlushResult~
-        +search(collection_id, vector_id) Future~Option~WalEntry~~
+        +flush(collection_id: Option~&CollectionId~) Future~FlushResult~
+        +check_immediate_flush_triggers(collection_id) Future~bool~
     }
 
-    class WalStorageBackend {
-        <<enumeration>>
-        LocalDisk
-        S3
-        AzureDataLake
-        GoogleCloudStorage
-        Hybrid
+    class CollectionService {
+        +metadata_backend: Arc~dyn MetadataBackend~
+        +schema_service: Arc~SchemaService~
+        +create_collection(config: CollectionConfig) Future~Result~
+        +get_collection(id: &CollectionId) Future~Option~Collection~~
+        +update_collection(id: &CollectionId, config: CollectionConfig) Future~Result~
+        +drop_collection(id: &CollectionId) Future~Result~
     }
 
-    class RecoveryOptimizedCompression {
-        <<enumeration>>
-        LZ4
-        Snappy
-        ZstdFast
-        Adaptive
-    }
-
-    class MultiStorageConfig {
-        +replication_factor: usize
-        +distribution_strategy: StorageDistributionStrategy
-        +enable_parallel_recovery: bool
-        +failure_handling: StorageFailureHandling
-    }
-
-    class RecoveryConfig {
-        +parallel_threads: usize
-        +prefetch_buffer_mb: usize
-        +recovery_mode: RecoveryMode
-        +memory_limits: RecoveryMemoryLimits
-    }
-
-    class AvroWalEntry {
-        +schema_version: u8
-        +sequence: u64
-        +entry_type: WalEntryType
-        +vector_record: Option~AvroVectorRecord~
-        +viper_data: Option~ViperOperationData~
-        +cloud_data: Option~CloudOperationData~
-    }
-
-    class UnifiedStorageEngine {
-        +wal_manager: Arc~AvroWalManager~
-        +memtable: Arc~Memtable~
-        +storage_handlers: HashMap~CollectionId, StorageLayoutHandler~
-        +insert_vector(record: VectorRecord) Future~()~
-        +get_vector(id: VectorId) Future~Option~VectorRecord~~
-        +search_with_metadata_filters() Future~Vec~VectorRecord~~
-    }
-
-    class Memtable {
-        +data: HashMap~CollectionId, CollectionMemtable~
-        +put(record: VectorRecord) Future~u64~
-        +get(id: VectorId) Future~Option~VectorRecord~~
-        +filter_by_metadata() Future~Vec~VectorRecord~~
-        +search_with_filters() Future~Vec~VectorRecord~~
-    }
-
-    class ViperStorageEngine {
-        +hybrid_storage: ViperHybridStorage
-        +compression_engine: CompressionEngine
-        +ml_models: HashMap~CollectionId, ClusterModel~
-        +insert_vector_hybrid() Future~()~
-        +search_vectors() Future~Vec~ViperSearchResult~~
-    }
-
-    AvroWalManager --> WalStorageBackend
-    AvroWalManager --> RecoveryOptimizedCompression
-    AvroWalManager --> MultiStorageConfig
-    AvroWalManager --> RecoveryConfig
-    AvroWalManager --> AvroWalEntry
-    UnifiedStorageEngine --> AvroWalManager
-    UnifiedStorageEngine --> Memtable
-    UnifiedStorageEngine --> ViperStorageEngine
+    UnifiedAvroService --> VectorStorageCoordinator
+    UnifiedAvroService --> WalManager
+    UnifiedAvroService --> CollectionService
+    VectorStorageCoordinator --> VectorStorage
+    VectorStorageCoordinator --> UnifiedIndexManager
+    VectorStorageCoordinator --> StoragePolicy
+    ViperCoreEngine ..|> VectorStorage
+    UnifiedIndexManager --> MultiIndex
+    WalManager --> WalStrategy
 ----
 
 ==== Recovery Performance Characteristics
@@ -1360,27 +1403,33 @@ pub struct TenantConfig {
 
 == API Design
 
-=== Unified Dual-Protocol Server ✅ IMPLEMENTED
-**Single Port Architecture**: ProximaDB runs both gRPC and REST APIs on port 5678 with intelligent protocol detection.
+=== Multi-Server Architecture ✅ IMPLEMENTED
+**Dual-Port Architecture**: ProximaDB runs separate dedicated servers for optimal protocol handling:
+- **Port 5678**: REST API, Dashboard, Metrics, and Health endpoints (HTTP/HTTPS)
+- **Port 5679**: gRPC API with binary Avro payloads (HTTP/2 with optional TLS)
 
-==== Protocol Detection Strategy
-- **Content-Type Based Routing**: Requests with `content-type: application/grpc` are routed to native gRPC handlers
-- **HTTP Method Detection**: Traditional HTTP methods (GET, POST, PUT, DELETE) are routed to REST handlers
-- **Zero Overhead**: Direct protocol detection without parsing overhead
-- **Shared Business Logic**: Both protocols delegate to common service layer ensuring identical behavior
+==== Server Separation Benefits
+- **Protocol Optimization**: Each server optimized for its specific protocol
+- **Independent Scaling**: REST and gRPC servers can scale independently
+- **Clear Separation**: No protocol detection overhead or ambiguity
+- **TLS Flexibility**: Different TLS configurations per protocol
+- **Shared Business Logic**: Both servers use UnifiedAvroService ensuring identical behavior
 
 === gRPC Primary API ✅ IMPLEMENTED
 - **Protocol Buffers**: Strongly typed, version-safe contracts using `proximadb.v1` package
 - **HTTP/2 Native**: Pure HTTP/2 implementation for maximum performance
-- **Binary Efficiency**: Protobuf serialization vs JSON for reduced bandwidth
+- **Binary Efficiency**: Protobuf serialization for gRPC interface
 - **Service Methods**: Complete CRUD operations (CreateCollection, InsertVector, SearchVector, etc.)
 - **Error Handling**: Native gRPC status codes and error propagation
+- **Port**: 5679 (dedicated gRPC server)
 
-=== REST Compatibility Layer ✅ IMPLEMENTED
-- **OpenAPI Specification**: Auto-generated documentation
-- **HTTP/2 Support**: Connection multiplexing and server push
-- **CORS Handling**: Cross-origin request support for web applications
-- **JSON over HTTP**: Traditional REST semantics with JSON payloads
+=== REST Compatibility Layer 🚧 IN DEVELOPMENT
+- **Architecture**: Dedicated HTTP server on port 5678
+- **Planned Features**:
+  * OpenAPI Specification with auto-generated documentation
+  * JSON over HTTP with traditional REST semantics
+  * CORS handling for web applications
+- **Current Status**: Server structure implemented, handlers in development
 
 === SDK Strategy
 - **Auto-generated Clients**: Protocol buffer definitions generate clients
@@ -1495,6 +1544,6 @@ pub struct TenantConfig {
 
 == Conclusion
 
-VectorFlow's high-level architecture provides a solid foundation for building a cloud-native, enterprise-grade vector database. The modular design, intelligent tiering, and multi-tenant architecture enable VectorFlow to serve a wide range of use cases while maintaining high performance, cost efficiency, and operational simplicity.
+ProximaDB's high-level architecture provides a solid foundation for building a cloud-native, enterprise-grade vector database. The modular design with unified services (UnifiedAvroService, VectorStorageCoordinator, UnifiedIndexManager) and flexible storage policies enable ProximaDB to serve a wide range of use cases while maintaining high performance, cost efficiency, and operational simplicity.
 
 The next phase involves detailed implementation of core components, starting with the storage engine and vector indexing algorithms outlined in the Low-Level Design document.
