@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Main gradient -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3B82F6;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Secondary gradient -->
+    <linearGradient id="accentGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Shadow filter -->
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  
+  <!-- Outer circle representing cloud/completeness -->
+  <circle cx="100" cy="100" r="90" fill="none" stroke="url(#mainGradient)" stroke-width="2" opacity="0.3"/>
+  
+  <!-- Main symbol: Stylized "P" that forms a vector/database shape -->
+  <g id="mainSymbol" filter="url(#shadow)">
+    <!-- The "P" shape that also looks like a database cylinder -->
+    <path d="M 60 40 L 60 140 M 60 40 Q 60 30 70 30 L 130 30 Q 140 30 140 40 L 140 70 Q 140 80 130 80 L 70 80"
+          fill="none" stroke="url(#mainGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Vector dots forming neural network inside the P -->
+    <circle cx="85" cy="55" r="6" fill="url(#accentGradient)"/>
+    <circle cx="115" cy="55" r="6" fill="url(#accentGradient)"/>
+    <circle cx="100" cy="75" r="6" fill="url(#accentGradient)"/>
+    
+    <!-- Connecting lines -->
+    <line x1="85" y1="55" x2="100" y2="75" stroke="url(#accentGradient)" stroke-width="2" opacity="0.4"/>
+    <line x1="115" y1="55" x2="100" y2="75" stroke="url(#accentGradient)" stroke-width="2" opacity="0.4"/>
+    
+    <!-- Cloud element integrated into design -->
+    <path d="M 120 100 Q 110 90 120 80 Q 130 70 140 80 Q 150 80 150 90 Q 150 100 140 100 Z"
+          fill="url(#mainGradient)" opacity="0.2"/>
+    
+    <!-- AI/Lightning spark -->
+    <path d="M 140 110 L 135 120 L 142 120 L 137 130" 
+          stroke="#F59E0B" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  
+  <!-- Abstract data points floating around -->
+  <g id="dataPoints" opacity="0.6">
+    <circle cx="30" cy="40" r="3" fill="#8B5CF6"/>
+    <circle cx="170" cy="50" r="3" fill="#3B82F6"/>
+    <circle cx="160" cy="160" r="3" fill="#10B981"/>
+    <circle cx="40" cy="150" r="3" fill="#06B6D4"/>
+  </g>
+</svg>

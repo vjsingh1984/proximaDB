@@ -175,7 +175,7 @@ Deliver a cloud-native vector database that provides:
 |🚧 IN PROGRESS
 
 |ST-004
-|Intelligent 5-tier storage: Ultra-Hot → Hot → Warm → Cold → Archive
+|Flexible storage policies with direct filesystem URL configuration (file://, s3://, gcs://, adls://)
 |Critical
 |✅ IMPLEMENTED
 

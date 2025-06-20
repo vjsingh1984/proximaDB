@@ -26,6 +26,12 @@ use crate::storage::wal::factory::WalFactory;
 use crate::storage::wal::{WalManager, WalStrategyType};
 use crate::storage::FilesystemFactory;
 use crate::storage::StorageEngine;
+use crate::storage::vector::{
+    VectorStorageCoordinator, CoordinatorConfig, VectorOperation, OperationResult,
+    SearchContext, SearchStrategy, VectorStorage, ViperCoreEngine, ViperCoreConfig,
+    UnifiedSearchEngine, UnifiedSearchConfig, UnifiedIndexManager, UnifiedIndexConfig,
+};
+use crate::core::VectorRecord;
 
 /// Unified service that operates exclusively on binary Avro records
 /// All protocol handlers (REST, gRPC) delegate to this service
@@ -33,6 +39,7 @@ use crate::storage::StorageEngine;
 pub struct UnifiedAvroService {
     storage: Arc<RwLock<StorageEngine>>,
     wal: Arc<WalManager>,
+    vector_coordinator: Arc<VectorStorageCoordinator>,
     performance_metrics: Arc<RwLock<ServiceMetrics>>,
     wal_strategy_type: WalStrategyType,
     avro_schema_version: u32,
@@ -74,24 +81,28 @@ pub struct ServiceMetrics {
 
 impl UnifiedAvroService {
     /// Create new unified Avro service with strategy-based configuration
-    pub fn new(
+    pub async fn new(
         storage: Arc<RwLock<StorageEngine>>,
         wal: Arc<WalManager>,
         config: UnifiedServiceConfig,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         info!("🚀 Initializing UnifiedAvroService with binary Avro operations");
         info!(
             "📋 Service Config: WAL strategy={:?}, memtable={:?}, schema_version={}",
             config.wal_strategy, config.memtable_type, config.avro_schema_version
         );
 
-        Self {
+        // Create vector storage coordinator with VIPER engine
+        let vector_coordinator = Self::create_vector_coordinator().await?;
+
+        Ok(Self {
             storage,
             wal,
+            vector_coordinator,
             performance_metrics: Arc::new(RwLock::new(ServiceMetrics::default())),
             wal_strategy_type: config.wal_strategy,
             avro_schema_version: config.avro_schema_version,
-        }
+        })
     }
 
     /// Create new service with WAL factory (recommended for production)
@@ -123,22 +134,55 @@ impl UnifiedAvroService {
             .await
             .context("Failed to create WAL manager")?;
 
-        Ok(Self::new(storage, Arc::new(wal_manager), config))
+        Self::new(storage, Arc::new(wal_manager), config).await
     }
 
     /// Create new service with existing WAL manager (shares WAL with StorageEngine)
-    pub fn with_existing_wal(
+    pub async fn with_existing_wal(
         storage: Arc<RwLock<StorageEngine>>,
         wal_manager: Arc<WalManager>,
         config: UnifiedServiceConfig,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         info!("🏗️ Creating UnifiedAvroService with shared WAL manager");
         info!(
             "🔧 WAL Strategy: {:?}, Memtable: {:?}",
             config.wal_strategy, config.memtable_type
         );
 
-        Self::new(storage, wal_manager, config)
+        Self::new(storage, wal_manager, config).await
+    }
+    
+    /// Create vector storage coordinator with VIPER engine
+    async fn create_vector_coordinator() -> anyhow::Result<Arc<VectorStorageCoordinator>> {
+        info!("🔧 Creating Vector Storage Coordinator with VIPER engine");
+        
+        // Create search engine
+        let search_config = UnifiedSearchConfig::default();
+        let search_engine = Arc::new(UnifiedSearchEngine::new(search_config).await?);
+        
+        // Create index manager
+        let index_config = UnifiedIndexConfig::default();
+        let index_manager = Arc::new(UnifiedIndexManager::new(index_config).await?);
+        
+        // Create coordinator
+        let coordinator_config = CoordinatorConfig::default();
+        let coordinator = Arc::new(
+            VectorStorageCoordinator::new(search_engine, index_manager, coordinator_config).await?
+        );
+        
+        // Create and register VIPER engine
+        let filesystem_config = crate::storage::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let viper_config = ViperCoreConfig::default();
+        let viper_engine = ViperCoreEngine::new(viper_config, filesystem).await?;
+        
+        coordinator.register_engine(
+            "VIPER".to_string(),
+            Box::new(viper_engine)
+        ).await?;
+        
+        info!("✅ Vector Storage Coordinator created with VIPER engine");
+        Ok(coordinator)
     }
 
     /// Validate Avro schema version compatibility
@@ -272,8 +316,8 @@ impl UnifiedAvroService {
             .and_then(|v| v.as_array())
             .context("Missing vectors array in insert request")?;
         
-        // Create WAL entries for each vector with proper collection ID
-        let mut wal_entries = Vec::new();
+        // Process vectors through the vector coordinator
+        let mut vector_operations = Vec::new();
         for (i, vector_data) in vectors.iter().enumerate() {
             let vector_id = vector_data
                 .get("id")
@@ -295,7 +339,7 @@ impl UnifiedAvroService {
                 .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
             
-            let record = crate::core::types::VectorRecord {
+            let record = VectorRecord {
                 id: vector_id.clone(),
                 collection_id: collection_id.clone(),
                 vector,
@@ -307,14 +351,24 @@ impl UnifiedAvroService {
                 expires_at: None,
             };
             
-            wal_entries.push((vector_id, record));
+            // Create vector operation for coordinator
+            let operation = VectorOperation::Insert {
+                record,
+                index_immediately: false, // Use background indexing for performance
+            };
+            vector_operations.push(operation);
         }
         
-        // Write vectors to WAL with proper collection ID
-        self.wal
-            .insert_batch(collection_id, wal_entries)
+        // Execute batch operation through vector coordinator
+        let batch_operation = VectorOperation::Batch {
+            operations: vector_operations,
+            transactional: false, // Use non-transactional for zero-copy performance
+        };
+        
+        let batch_result = self.vector_coordinator
+            .execute_operation(batch_operation)
             .await
-            .context("Failed to write vectors to WAL")?;
+            .context("Failed to execute vector batch operation")?;
         
         let wal_write_time = wal_start.elapsed().as_micros() as i64;
 
@@ -397,7 +451,7 @@ impl UnifiedAvroService {
             collection_id, queries.len(), top_k, distance_metric, index_algorithm, metadata_filters.is_some()
         );
 
-        // Process multiple queries
+        // Process multiple queries through vector coordinator
         let mut all_results = Vec::new();
         
         for (query_idx, query) in queries.iter().enumerate() {
@@ -413,50 +467,35 @@ impl UnifiedAvroService {
                 return Err(anyhow!("Empty query vector at index {}", query_idx));
             }
 
-            // Perform search with specified distance metric and algorithm
-            let search_results = {
-                let storage = self.storage.read().await;
-                
-                // Apply metadata filtering if specified
-                if let Some(filters) = metadata_filters {
-                    debug!("Applying metadata filters: {:?}", filters);
-                    // For now, perform basic search and filter results
-                    // TODO: Push filters down to storage layer for efficiency
-                    let raw_results = storage
-                        .search_vectors(&collection_id, query_vector, top_k * 2) // Get more to account for filtering
-                        .await
-                        .context("Failed to perform vector search")?;
-                    
-                    // Filter results based on metadata
-                    raw_results.into_iter()
-                        .filter(|result| {
-                            // Check if all filter conditions are met
-                            filters.iter().all(|(key, expected_value)| {
-                                if let Some(metadata) = &result.metadata {
-                                    metadata.get(key).map_or(false, |actual_value| {
-                                        // Simple equality check - can be extended for range queries, etc.
-                                        actual_value.to_string() == expected_value.to_string()
-                                    })
-                                } else {
-                                    false
-                                }
-                            })
-                        })
-                        .take(top_k)
-                        .collect()
-                } else {
-                    // No filtering, direct search
-                    storage
-                        .search_vectors(&collection_id, query_vector, top_k)
-                        .await
-                        .context("Failed to perform vector search")?
-                }
+            // Create search context for the coordinator
+            let mut search_context = SearchContext {
+                collection_id: collection_id.clone(),
+                query_vector,
+                k: top_k,
+                filters: None, // TODO: Convert metadata_filters to MetadataFilter
+                strategy: SearchStrategy::Adaptive {
+                    query_complexity_score: 0.5,
+                    time_budget_ms: 1000,
+                    accuracy_preference: 0.8,
+                },
+                algorithm_hints: std::collections::HashMap::new(),
+                threshold: None,
+                timeout_ms: Some(5000),
+                include_debug_info: false,
+                include_vectors: include_vectors,
             };
+
+            // Execute search through coordinator
+            let search_results = self.vector_coordinator
+                .unified_search(search_context)
+                .await
+                .context("Failed to perform vector search through coordinator")?;
             
             // Add query index to results
             for mut result in search_results {
-                if let Some(ref mut metadata) = result.metadata {
-                    metadata.insert("query_index".to_string(), json!(query_idx));
+                // Inject query index into metadata
+                if let serde_json::Value::Object(ref mut obj) = result.metadata {
+                    obj.insert("query_index".to_string(), json!(query_idx));
                 }
                 all_results.push(result);
             }
@@ -472,8 +511,8 @@ impl UnifiedAvroService {
                 json!({
                     "vector_id": result.vector_id,
                     "score": result.score,
-                    "vector": if include_vectors { Vec::<f32>::new() } else { Vec::<f32>::new() }, // TODO: Include vectors when requested
-                    "metadata": if include_metadata { result.metadata.unwrap_or_default() } else { HashMap::new() }
+                    "vector": if include_vectors { result.vector.unwrap_or_default() } else { Vec::<f32>::new() },
+                    "metadata": if include_metadata { result.metadata } else { json!({}) }
                 })
             })
             .collect();

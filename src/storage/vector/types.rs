@@ -257,7 +257,7 @@ pub struct StorageLocationInfo {
 }
 
 /// Storage tier enumeration
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StorageTier {
     UltraHot,  // MMAP + OS cache
     Hot,       // Local SSD

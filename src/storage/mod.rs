@@ -19,8 +19,7 @@ pub mod viper;       // 🚨 OBSOLETE: Use vector/engines/viper.rs instead (Phas
 pub mod wal;
 
 // 🔥 NEW: Unified Vector Storage System (Phase 1-4 Consolidation)
-// TODO: Re-enable after fixing compilation issues
-// pub mod vector;
+pub mod vector;
 
 pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
 pub use engine::StorageEngine;

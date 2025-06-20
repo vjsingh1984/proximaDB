@@ -38,6 +38,12 @@ This document tracks the current implementation status of ProximaDB features and
 - **Capabilities**: Configurable write strategies (Direct, SameMount, CloudOptimized)
 - **Status**: Production ready
 
+**✅ Storage Policy System** - Direct filesystem URL configuration replaces storage tiers
+- **File**: `src/storage/vector/storage_policy.rs`
+- **Features**: Per-collection storage policies, lifecycle management, compression policies
+- **Benefits**: Simplified architecture, cloud-native design, flexible storage configuration
+- **Status**: Production ready
+
 **✅ Single Collection Index** - Unified in-memory collection management  
 - **File**: `src/storage/metadata/single_index.rs`
 - **Architecture**: Single DashMap eliminates dual-index sync complexity

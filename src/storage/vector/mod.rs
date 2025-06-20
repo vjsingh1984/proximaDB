@@ -43,12 +43,21 @@ pub mod operations;
 // Phase 4: Consolidated Storage Engines (COMPLETE)
 pub mod engines;
 
+// Storage policy module (replaces storage tiers)
+pub mod storage_policy;
+
 // Re-export key types for easy access
 pub use types::{
     SearchContext, SearchResult, SearchStrategy, MetadataFilter, FieldCondition,
     VectorOperation, OperationResult, VectorStorage, SearchAlgorithm, VectorIndex,
-    IndexType, StorageTier, DistanceMetric, SearchDebugInfo, StorageCapabilities,
+    IndexType, DistanceMetric, SearchDebugInfo, StorageCapabilities,
     StorageStatistics, IndexStatistics, HealthStatus, IndexSpec,
+};
+
+// Re-export storage policy types
+pub use storage_policy::{
+    StoragePolicy, StorageLifecycle, CompressionPolicy, StorageLocation,
+    StoragePolicyManager,
 };
 
 // Re-export search system

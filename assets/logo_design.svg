@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="100" viewBox="0 0 400 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradient for AI/cloud feel -->
+    <linearGradient id="primaryGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6B46C1;stop-opacity:1" /> <!-- Purple -->
+      <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" /> <!-- Blue -->
+      <stop offset="100%" style="stop-color:#10B981;stop-opacity:1" /> <!-- Teal -->
+    </linearGradient>
+    
+    <!-- Glow effect -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Cloud gradient -->
+    <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#E0E7FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#C7D2FE;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Logo Mark -->
+  <g id="logoMark">
+    <!-- Cloud shape with database -->
+    <path d="M 25 40 Q 25 25 40 25 Q 45 15 60 15 Q 75 15 80 25 Q 95 25 95 40 Q 95 45 90 50 L 85 50 Q 85 55 80 60 L 30 60 Q 25 55 25 50 Q 20 50 20 45 Q 20 40 25 40 Z" 
+          fill="url(#cloudGradient)" stroke="#3B82F6" stroke-width="1.5" opacity="0.9"/>
+    
+    <!-- Database cylinder inside cloud -->
+    <ellipse cx="55" cy="35" rx="20" ry="8" fill="#6B46C1" opacity="0.8"/>
+    <rect x="35" y="35" width="40" height="15" fill="#6B46C1" opacity="0.8"/>
+    <ellipse cx="55" cy="50" rx="20" ry="8" fill="#6B46C1"/>
+    
+    <!-- Vector representation as neural network nodes -->
+    <circle cx="45" cy="38" r="3" fill="#10B981" filter="url(#glow)"/>
+    <circle cx="55" cy="33" r="3" fill="#10B981" filter="url(#glow)"/>
+    <circle cx="65" cy="38" r="3" fill="#10B981" filter="url(#glow)"/>
+    <circle cx="50" cy="45" r="3" fill="#10B981" filter="url(#glow)"/>
+    <circle cx="60" cy="45" r="3" fill="#10B981" filter="url(#glow)"/>
+    
+    <!-- Connecting lines for neural network -->
+    <line x1="45" y1="38" x2="50" y2="45" stroke="#10B981" stroke-width="1" opacity="0.6"/>
+    <line x1="55" y1="33" x2="50" y2="45" stroke="#10B981" stroke-width="1" opacity="0.6"/>
+    <line x1="55" y1="33" x2="60" y2="45" stroke="#10B981" stroke-width="1" opacity="0.6"/>
+    <line x1="65" y1="38" x2="60" y2="45" stroke="#10B981" stroke-width="1" opacity="0.6"/>
+    
+    <!-- AI spark/lightning effect -->
+    <path d="M 70 25 L 65 35 L 72 35 L 67 45" stroke="#F59E0B" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  </g>
+  
+  <!-- Text: ProximaDB -->
+  <g id="logoText">
+    <!-- "Proxima" with gradient -->
+    <text x="110" y="50" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="url(#primaryGradient)">
+      Proxima
+    </text>
+    
+    <!-- "DB" with solid color -->
+    <text x="240" y="50" font-family="Arial, sans-serif" font-size="32" font-weight="300" fill="#1F2937">
+      DB
+    </text>
+    
+    <!-- Tagline -->
+    <text x="110" y="70" font-family="Arial, sans-serif" font-size="12" fill="#6B7280">
+      AI-Native Vector Database for the Cloud
+    </text>
+  </g>
+  
+  <!-- Modern decorative elements -->
+  <g id="decorativeElements" opacity="0.6">
+    <!-- Small dots representing data points -->
+    <circle cx="350" cy="25" r="2" fill="#3B82F6"/>
+    <circle cx="360" cy="20" r="2" fill="#10B981"/>
+    <circle cx="370" cy="25" r="2" fill="#6B46C1"/>
+    <circle cx="355" cy="30" r="2" fill="#F59E0B"/>
+    
+    <!-- Curved line suggesting motion/speed -->
+    <path d="M 340 50 Q 360 45 380 50" stroke="#3B82F6" stroke-width="2" fill="none" opacity="0.5"/>
+  </g>
+</svg>

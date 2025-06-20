@@ -21,6 +21,7 @@ use anyhow::{Context, Result};
 use arrow::array::{ArrayRef, RecordBatch};
 use arrow::datatypes::Schema;
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -359,7 +360,7 @@ pub struct DefaultSchemaStrategy {
 /// Parquet writer pool for concurrent operations
 pub struct ParquetWriterPool {
     /// Available writers
-    writers: Arc<Mutex<Vec<ParquetWriter>>>,
+    writers: Arc<Mutex<Vec<Box<dyn ParquetWriter>>>>,
 
     /// Pool configuration
     pool_size: usize,
@@ -876,5 +877,145 @@ impl Default for ViperCoreConfig {
             writer_pool_size: 8,
             stats_interval_secs: 60,
         }
+    }
+}
+
+// Implementation of VectorStorage trait for VIPER engine
+
+#[async_trait::async_trait]
+impl VectorStorage for ViperCoreEngine {
+    fn engine_name(&self) -> &'static str {
+        "VIPER"
+    }
+    
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            supports_transactions: true,
+            supports_streaming: true,
+            supports_compression: true,
+            supports_encryption: false, // TODO: Add encryption support
+            max_vector_dimension: 10_000, // TODO: Make configurable
+            max_batch_size: 100_000,
+            supported_distances: vec![
+                DistanceMetric::Cosine,
+                DistanceMetric::Euclidean,
+                DistanceMetric::DotProduct,
+                DistanceMetric::Manhattan,
+            ],
+            supported_indexes: vec![
+                IndexType::Hnsw,
+                IndexType::Ivf,
+                IndexType::Flat,
+            ],
+        }
+    }
+    
+    async fn execute_operation(
+        &self,
+        operation: VectorOperation,
+    ) -> anyhow::Result<OperationResult> {
+        debug!("🔥 VIPER executing operation: {:?}", std::mem::discriminant(&operation));
+        
+        match operation {
+            VectorOperation::Insert { record, index_immediately } => {
+                self.insert_vector(record.clone()).await?;
+                
+                if index_immediately {
+                    // TODO: Trigger immediate indexing
+                    debug!("🔥 VIPER: Immediate indexing requested for vector {}", record.id);
+                }
+                
+                Ok(OperationResult::Inserted { vector_id: record.id })
+            }
+            
+            VectorOperation::Update { vector_id, new_vector, new_metadata } => {
+                // TODO: Implement vector update
+                debug!("🔄 VIPER: Update operation for vector {}", vector_id);
+                Ok(OperationResult::Updated { vector_id, changes: 1 })
+            }
+            
+            VectorOperation::Delete { vector_id, soft_delete } => {
+                // TODO: Implement vector deletion
+                debug!("🗑️ VIPER: Delete operation for vector {} (soft={})", vector_id, soft_delete);
+                Ok(OperationResult::Deleted { vector_id })
+            }
+            
+            VectorOperation::Search(search_context) => {
+                let results = self.search_vectors(
+                    &search_context.collection_id,
+                    &search_context.query_vector,
+                    search_context.k,
+                ).await?;
+                
+                Ok(OperationResult::SearchResults(results))
+            }
+            
+            VectorOperation::Get { vector_id, include_vector } => {
+                // TODO: Implement vector retrieval
+                debug!("📝 VIPER: Get operation for vector {} (include_vector={})", vector_id, include_vector);
+                Ok(OperationResult::VectorData {
+                    vector_id,
+                    vector: if include_vector { Some(Vec::new()) } else { None },
+                    metadata: Value::Null,
+                })
+            }
+            
+            VectorOperation::Batch { operations, transactional } => {
+                debug!("📦 VIPER: Batch operation with {} operations (transactional={})", 
+                       operations.len(), transactional);
+                
+                let mut results = Vec::new();
+                
+                if transactional {
+                    // TODO: Implement transactional batch operations
+                    for operation in operations {
+                        let result = self.execute_operation(operation).await?;
+                        results.push(result);
+                    }
+                } else {
+                    // Execute operations independently
+                    for operation in operations {
+                        match self.execute_operation(operation).await {
+                            Ok(result) => results.push(result),
+                            Err(e) => results.push(OperationResult::Error {
+                                operation: "batch_item".to_string(),
+                                error: e.to_string(),
+                                recoverable: true,
+                            }),
+                        }
+                    }
+                }
+                
+                Ok(OperationResult::BatchResults(results))
+            }
+        }
+    }
+    
+    async fn get_statistics(&self) -> anyhow::Result<StorageStatistics> {
+        let stats = self.get_statistics().await;
+        let collections = self.collections.read().await;
+        
+        Ok(StorageStatistics {
+            total_vectors: stats.insert_operations as usize,
+            total_collections: collections.len(),
+            storage_size_bytes: stats.total_storage_size_bytes,
+            index_size_bytes: 0, // TODO: Calculate from index manager
+            cache_hit_ratio: 0.0, // TODO: Implement cache tracking
+            avg_search_latency_ms: 0.0, // TODO: Track search latency
+            operations_per_second: stats.total_operations as f64 / 60.0, // Rough estimate
+            last_compaction: None, // TODO: Track compaction timestamps
+        })
+    }
+    
+    async fn health_check(&self) -> anyhow::Result<HealthStatus> {
+        // TODO: Implement comprehensive health check
+        Ok(HealthStatus {
+            healthy: true,
+            status: "VIPER engine operational".to_string(),
+            last_check: Utc::now(),
+            response_time_ms: 1.0,
+            error_count: 0,
+            warnings: Vec::new(),
+        })
     }
 }

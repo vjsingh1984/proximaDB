@@ -67,7 +67,7 @@ impl ProximaDbGrpcService {
                 storage, 
                 wal_manager,
                 avro_config
-            )
+            ).await.expect("Failed to create UnifiedAvroService")
         );
         
         // Create CollectionService with configured metadata backend
