@@ -157,6 +157,19 @@ pub trait WalStrategy: Send + Sync {
         Ok(sequences)
     }
 
+    /// Write batch of entries with immediate disk sync for durability
+    async fn write_batch_with_sync(&self, entries: Vec<WalEntry>, immediate_sync: bool) -> Result<Vec<u64>> {
+        // Default implementation falls back to regular write_batch
+        // Individual strategies can override for optimized immediate sync
+        self.write_batch(entries).await
+    }
+
+    /// Force immediate sync of in-memory data to disk
+    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
+        // Default implementation performs a flush
+        self.flush(collection_id).await.map(|_| ())
+    }
+
     /// Read entries for a collection starting from sequence
     async fn read_entries(
         &self,
@@ -406,6 +419,41 @@ impl WalManager {
             .collect();
 
         self.strategy.write_batch(entries).await
+    }
+
+    /// Insert batch of vector records with immediate sync option
+    pub async fn insert_batch_with_sync(
+        &self,
+        collection_id: CollectionId,
+        records: Vec<(VectorId, VectorRecord)>,
+        immediate_sync: bool,
+    ) -> Result<Vec<u64>> {
+        let entries: Vec<WalEntry> = records
+            .into_iter()
+            .map(|(vector_id, record)| {
+                WalEntry {
+                    entry_id: vector_id.clone(),
+                    collection_id: collection_id.clone(),
+                    operation: WalOperation::Insert {
+                        vector_id,
+                        record,
+                        expires_at: None,
+                    },
+                    timestamp: Utc::now(),
+                    sequence: 0,        // Will be set by strategy
+                    global_sequence: 0, // Will be set by strategy
+                    expires_at: None,
+                    version: 1,
+                }
+            })
+            .collect();
+
+        self.strategy.write_batch_with_sync(entries, immediate_sync).await
+    }
+
+    /// Force immediate sync of WAL data to disk
+    pub async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
+        self.strategy.force_sync(collection_id).await
     }
 
     /// Update vector record

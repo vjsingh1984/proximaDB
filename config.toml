@@ -5,12 +5,12 @@
 node_id = "proximadb-node-1"
 bind_address = "0.0.0.0"
 port = 5678
-data_dir = "/data/proximadb/1"
+data_dir = "/workspace/data"
 
 [storage]
 # Legacy fields (deprecated, use storage_layout instead)
-data_dirs = ["/data/proximadb/1", "/data/proximadb/2"]
-wal_dir = "/data/proximadb/1/wal"
+data_dirs = ["/workspace/data"]
+wal_dir = "/workspace/data/wal"
 
 # Storage engine configuration
 mmap_enabled = true
@@ -24,35 +24,22 @@ level_count = 7
 compaction_threshold = 4
 block_size_kb = 64
 
-# ProximaDB hierarchical storage layout - 2 Disk Configuration
+# ProximaDB hierarchical storage layout - Local Development Configuration
 [storage.storage_layout]
 node_instance = 1
 assignment_strategy = "HashBased"
 
-# Disk 1: Primary disk with metadata, WAL and storage
+# Single local disk configuration for development
 [[storage.storage_layout.base_paths]]
-base_dir = "/data/proximadb"
+base_dir = "/workspace/data"
 instance_id = 1
-mount_point = "/data"
+mount_point = "/workspace"
 disk_type = { NvmeSsd = { max_iops = 100000 } }
 
 [storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 2048        # 2GB per collection WAL on primary disk
+max_wal_size_mb = 2048        # 2GB per collection WAL 
 # max_storage_size_mb = unlimited    # Unlimited storage per collection
-metadata_reserved_mb = 512    # 512MB reserved for metadata (metadata lives here)
-warning_threshold_percent = 85.0
-
-# Disk 2: Secondary disk for WAL and storage distribution
-[[storage.storage_layout.base_paths]]
-base_dir = "/data/proximadb"
-instance_id = 2
-mount_point = "/data2"
-disk_type = { SataSsd = { max_iops = 75000 } }
-
-[storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 2048        # 2GB per collection WAL on secondary disk
-# max_storage_size_mb = unlimited    # Unlimited storage per collection
-metadata_reserved_mb = 0      # No metadata on secondary disk
+metadata_reserved_mb = 512    # 512MB reserved for metadata
 warning_threshold_percent = 85.0
 
 # Temp directory configuration
@@ -80,7 +67,7 @@ cleanup_temp_on_startup = true
 # Option 1: Local filesystem (default)
 [storage.metadata_backend]
 backend_type = "filestore"
-storage_url = "file:///data/proximadb/1/metadata"
+storage_url = "file:///workspace/data/metadata"
 cache_size_mb = 128
 flush_interval_secs = 30
 

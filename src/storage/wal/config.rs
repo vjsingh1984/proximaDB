@@ -91,7 +91,7 @@ impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
             // Optimized for write-triggered size-based flush only
-            memory_flush_size_bytes: 128 * 1024 * 1024, // 128MB memory limit for immediate write-based flush
+            memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB memory limit for testing metadata filtering performance
             disk_segment_size: 512 * 1024 * 1024, // 512MB segments optimized for large vectors
             global_flush_threshold: 512 * 1024 * 1024, // 512MB global limit for write-triggered flush
             write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput

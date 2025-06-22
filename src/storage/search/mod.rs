@@ -269,10 +269,11 @@ pub mod engines {
         // Implementation will be in lsm/search_engine.rs
     }
 
-    /// RocksDB storage engine search implementation
-    pub struct RocksDbSearchEngine {
-        // Implementation will be in rocksdb/search_engine.rs
-    }
+    // /// RocksDB storage engine search implementation
+    // pub struct RocksDbSearchEngine {
+    //     // Implementation will be in rocksdb/search_engine.rs
+    // }
+    // Note: RocksDB was planned for sparse vectors KV store but never implemented
 
     /// Memory storage engine search implementation
     pub struct MemorySearchEngine {

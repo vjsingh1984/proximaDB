@@ -37,6 +37,7 @@ pub struct CollectionConfig {
     pub storage_engine: i32,
     #[prost(enumeration = "IndexingAlgorithm", tag = "5")]
     pub indexing_algorithm: i32,
+    /// Legacy - simple field names
     #[prost(string, repeated, tag = "6")]
     pub filterable_metadata_fields: ::prost::alloc::vec::Vec<
         ::prost::alloc::string::String,
@@ -47,6 +48,28 @@ pub struct CollectionConfig {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+    /// Enhanced filterable column specs
+    #[prost(message, repeated, tag = "8")]
+    pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FilterableColumnSpec {
+    /// Column name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Data type for Parquet schema
+    #[prost(enumeration = "FilterableDataType", tag = "2")]
+    pub data_type: i32,
+    /// Whether to create an index
+    #[prost(bool, tag = "3")]
+    pub indexed: bool,
+    /// Whether this column supports range queries
+    #[prost(bool, tag = "4")]
+    pub supports_range: bool,
+    /// Estimated cardinality for optimization
+    #[prost(int32, optional, tag = "5")]
+    pub estimated_cardinality: ::core::option::Option<i32>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -604,6 +627,53 @@ impl MutationType {
             "MUTATION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
             "MUTATION_UPDATE" => Some(Self::MutationUpdate),
             "MUTATION_DELETE" => Some(Self::MutationDelete),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FilterableDataType {
+    Unspecified = 0,
+    FilterableString = 1,
+    FilterableInteger = 2,
+    FilterableFloat = 3,
+    FilterableBoolean = 4,
+    FilterableDatetime = 5,
+    FilterableArrayString = 6,
+    FilterableArrayInteger = 7,
+    FilterableArrayFloat = 8,
+}
+impl FilterableDataType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            FilterableDataType::Unspecified => "FILTERABLE_DATA_TYPE_UNSPECIFIED",
+            FilterableDataType::FilterableString => "FILTERABLE_STRING",
+            FilterableDataType::FilterableInteger => "FILTERABLE_INTEGER",
+            FilterableDataType::FilterableFloat => "FILTERABLE_FLOAT",
+            FilterableDataType::FilterableBoolean => "FILTERABLE_BOOLEAN",
+            FilterableDataType::FilterableDatetime => "FILTERABLE_DATETIME",
+            FilterableDataType::FilterableArrayString => "FILTERABLE_ARRAY_STRING",
+            FilterableDataType::FilterableArrayInteger => "FILTERABLE_ARRAY_INTEGER",
+            FilterableDataType::FilterableArrayFloat => "FILTERABLE_ARRAY_FLOAT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FILTERABLE_DATA_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "FILTERABLE_STRING" => Some(Self::FilterableString),
+            "FILTERABLE_INTEGER" => Some(Self::FilterableInteger),
+            "FILTERABLE_FLOAT" => Some(Self::FilterableFloat),
+            "FILTERABLE_BOOLEAN" => Some(Self::FilterableBoolean),
+            "FILTERABLE_DATETIME" => Some(Self::FilterableDatetime),
+            "FILTERABLE_ARRAY_STRING" => Some(Self::FilterableArrayString),
+            "FILTERABLE_ARRAY_INTEGER" => Some(Self::FilterableArrayInteger),
+            "FILTERABLE_ARRAY_FLOAT" => Some(Self::FilterableArrayFloat),
             _ => None,
         }
     }

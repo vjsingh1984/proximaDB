@@ -203,6 +203,7 @@ impl CollectionRecord {
             storage_engine,
             filterable_metadata_fields: vec![],
             indexing_config,
+            filterable_columns: Vec::new(), // Empty by default for new filterable column API
         }
     }
     

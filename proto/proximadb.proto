@@ -96,8 +96,29 @@ message CollectionConfig {
   DistanceMetric distance_metric = 3;
   StorageEngine storage_engine = 4;
   IndexingAlgorithm indexing_algorithm = 5;
-  repeated string filterable_metadata_fields = 6;
-  map<string, string> indexing_config = 7;   // Algorithm-specific parameters
+  repeated string filterable_metadata_fields = 6;  // Legacy - simple field names
+  map<string, string> indexing_config = 7;         // Algorithm-specific parameters
+  repeated FilterableColumnSpec filterable_columns = 8;  // Enhanced filterable column specs
+}
+
+message FilterableColumnSpec {
+  string name = 1;                          // Column name
+  FilterableDataType data_type = 2;         // Data type for Parquet schema
+  bool indexed = 3;                         // Whether to create an index
+  bool supports_range = 4;                  // Whether this column supports range queries
+  optional int32 estimated_cardinality = 5; // Estimated cardinality for optimization
+}
+
+enum FilterableDataType {
+  FILTERABLE_DATA_TYPE_UNSPECIFIED = 0;
+  FILTERABLE_STRING = 1;
+  FILTERABLE_INTEGER = 2;
+  FILTERABLE_FLOAT = 3;
+  FILTERABLE_BOOLEAN = 4;
+  FILTERABLE_DATETIME = 5;
+  FILTERABLE_ARRAY_STRING = 6;
+  FILTERABLE_ARRAY_INTEGER = 7;
+  FILTERABLE_ARRAY_FLOAT = 8;
 }
 
 message Collection {

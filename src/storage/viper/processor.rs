@@ -4,8 +4,8 @@
 //! allowing for configurable preprocessing, conversion, and postprocessing steps.
 
 use anyhow::Result;
-use arrow::array::RecordBatch;
-use arrow::datatypes::Schema;
+use arrow_array::RecordBatch;
+use arrow_schema::Schema;
 use std::sync::Arc;
 
 use super::adapter::VectorRecordSchemaAdapter;

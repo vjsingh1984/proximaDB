@@ -525,13 +525,156 @@ impl ProximaDb for ProximaDbGrpcService {
         request: Request<VectorMutationRequest>,
     ) -> Result<Response<VectorOperationResponse>, Status> {
         let req = request.into_inner();
+        let mutation_type = crate::proto::proximadb::MutationType::try_from(req.operation)
+            .map_err(|_| Status::invalid_argument("Invalid mutation type"))?;
+        
         debug!("📦 gRPC vector_mutation: collection={}, operation={:?}", 
-               req.collection_id, req.operation);
+               req.collection_id, mutation_type);
         
-        // TODO: Implement vector mutation with regular gRPC patterns
-        // This provides flexibility for complex update operations
+        let start_time = std::time::Instant::now();
         
-        Err(Status::unimplemented("Vector mutation not yet implemented"))
+        match mutation_type {
+            crate::proto::proximadb::MutationType::MutationUpdate => {
+                // Extract update data
+                let selector = req.selector.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing selector for update"))?;
+                let updates = req.updates.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing updates for update operation"))?;
+                
+                // Create update request for UnifiedAvroService
+                let update_request = json!({
+                    "collection_id": req.collection_id,
+                    "operation": "update",
+                    "selector": {
+                        "ids": selector.ids,
+                        "metadata_filter": selector.metadata_filter,
+                        "vector_match": selector.vector_match,
+                    },
+                    "updates": {
+                        "vector": updates.vector,
+                        "metadata": updates.metadata,
+                        "expires_at": updates.expires_at,
+                    }
+                });
+                
+                let json_data = serde_json::to_vec(&update_request)
+                    .map_err(|e| Status::internal(format!("Failed to serialize update request: {}", e)))?;
+                
+                // Create versioned payload
+                let avro_payload = Self::create_versioned_payload("vector_update", &json_data);
+                
+                // Execute update via unified service
+                let result = self.avro_service
+                    .handle_vector_mutation(&avro_payload)
+                    .instrument(span!(Level::DEBUG, "grpc_vector_update"))
+                    .await
+                    .map_err(|e| Status::internal(format!("Vector update failed: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                // Parse response
+                let response: JsonValue = serde_json::from_slice(&result)
+                    .map_err(|e| Status::internal(format!("Failed to parse update response: {}", e)))?;
+                
+                let affected_count = response.get("affected_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                let vector_ids = response.get("vector_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                
+                Ok(Response::new(VectorOperationResponse {
+                    success: response.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+                    operation: VectorOperation::VectorUpdate as i32,
+                    metrics: Some(OperationMetrics {
+                        total_processed: affected_count,
+                        successful_count: affected_count,
+                        failed_count: 0,
+                        updated_count: affected_count,
+                        processing_time_us: processing_time,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    result_payload: None,
+                    vector_ids,
+                    error_message: response.get("error_message").and_then(|v| v.as_str()).map(String::from),
+                    error_code: response.get("error_code").and_then(|v| v.as_str()).map(String::from),
+                    result_info: Some(ResultMetadata {
+                        result_count: affected_count,
+                        estimated_size_bytes: 0,
+                        is_avro_binary: false,
+                        avro_schema_version: "1".to_string(),
+                    }),
+                }))
+            }
+            
+            crate::proto::proximadb::MutationType::MutationDelete => {
+                // Extract delete selector
+                let selector = req.selector.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing selector for delete"))?;
+                
+                // Create delete request
+                let delete_request = json!({
+                    "collection_id": req.collection_id,
+                    "operation": "delete",
+                    "selector": {
+                        "ids": selector.ids,
+                        "metadata_filter": selector.metadata_filter,
+                        "vector_match": selector.vector_match,
+                    }
+                });
+                
+                let json_data = serde_json::to_vec(&delete_request)
+                    .map_err(|e| Status::internal(format!("Failed to serialize delete request: {}", e)))?;
+                
+                // Create versioned payload
+                let avro_payload = Self::create_versioned_payload("vector_delete", &json_data);
+                
+                // Execute delete via unified service
+                let result = self.avro_service
+                    .handle_vector_mutation(&avro_payload)
+                    .instrument(span!(Level::DEBUG, "grpc_vector_delete"))
+                    .await
+                    .map_err(|e| Status::internal(format!("Vector delete failed: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                // Parse response
+                let response: JsonValue = serde_json::from_slice(&result)
+                    .map_err(|e| Status::internal(format!("Failed to parse delete response: {}", e)))?;
+                
+                let affected_count = response.get("affected_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                let vector_ids = response.get("vector_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                
+                Ok(Response::new(VectorOperationResponse {
+                    success: response.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+                    operation: VectorOperation::VectorDelete as i32,
+                    metrics: Some(OperationMetrics {
+                        total_processed: affected_count,
+                        successful_count: affected_count,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: processing_time,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    result_payload: None,
+                    vector_ids,
+                    error_message: response.get("error_message").and_then(|v| v.as_str()).map(String::from),
+                    error_code: response.get("error_code").and_then(|v| v.as_str()).map(String::from),
+                    result_info: Some(ResultMetadata {
+                        result_count: affected_count,
+                        estimated_size_bytes: 0,
+                        is_avro_binary: false,
+                        avro_schema_version: "1".to_string(),
+                    }),
+                }))
+            }
+            
+            _ => Err(Status::invalid_argument("Unknown mutation type"))
+        }
     }
 
     /// Vector search with multiple search types: similarity, metadata filters, ID lookup
