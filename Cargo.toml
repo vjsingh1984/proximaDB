@@ -19,10 +19,6 @@ members = [
 name = "proximadb-server"
 path = "src/bin/server.rs"
 
-[[bin]]
-name = "proximadb-cli"
-path = "src/bin/cli.rs"
-
 
 [dependencies]
 # Core async runtime
@@ -90,10 +86,10 @@ azure_storage = "0.19"
 azure_storage_blobs = "0.19"
 google-cloud-storage = "0.15"
 
-# ML clustering algorithms for VIPER
-linfa = "0.7"
-linfa-clustering = "0.7"
-smartcore = "0.3"
+# ML clustering algorithms for VIPER (unused - basic clustering implemented)
+# linfa = "0.7"
+# linfa-clustering = "0.7"
+# smartcore = "0.3"
 
 # Consensus (temporarily disabled for testing)
 # raft = "0.7"
@@ -101,7 +97,7 @@ smartcore = "0.3"
 
 # Vector operations & SIMD
 ndarray = "0.15"
-faiss = { version = "0.11", optional = true }
+# faiss = { version = "0.11", optional = true }  # Unused - no FAISS integration implemented
 hnsw = "0.11"
 
 # CPU optimization
@@ -110,10 +106,7 @@ num_cpus = "1.16"
 # Random number generation
 rand = "0.8"
 
-# GPU acceleration (optional)
-cudarc = { version = "0.9", optional = true }
-candle-core = { version = "0.3", optional = true }
-candle-nn = { version = "0.3", optional = true }
+# GPU acceleration (removed - was placeholder code)
 
 # Intel MKL (optional) - Disabled on ARM64
 # intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"], optional = true }
@@ -178,14 +171,11 @@ simd = []  # Placeholder - would need ARM NEON implementation
 # cpu-optimized = ["intel-mkl"]
 # intel-mkl = ["intel-mkl-src"]
 
-# GPU acceleration
-cuda = ["cudarc", "candle-core", "candle-nn"]
-rocm = [] # ROCm support (placeholder)
-intel-gpu = [] # Intel GPU support (placeholder)
+# GPU acceleration (removed - was placeholder code)
 
 # External libraries
-faiss-cpu = ["faiss"]
-faiss-gpu = ["faiss", "cuda"]
+# faiss-cpu = ["faiss"]  # Unused - no FAISS integration
+# faiss-gpu = ["faiss"]  # Unused - no FAISS integration
 
 [profile.release]
 lto = true
