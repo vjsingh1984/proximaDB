@@ -25,13 +25,12 @@ use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::{CollectionId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
-use crate::storage::vector::types::*;
 
 /// VIPER Data Processing Pipeline coordinator
 pub struct ViperPipeline {
@@ -276,7 +275,7 @@ pub struct WriterPool {
 }
 
 // Use ParquetWriter and ParquetWriterFactory from viper_core module
-use super::viper_core::{ParquetWriter, ParquetWriterFactory, DefaultParquetWriter, DefaultParquetWriterFactory};
+use super::viper_core::{DefaultParquetWriter, DefaultParquetWriterFactory};
 
 /// Flush result information
 #[derive(Debug, Clone)]

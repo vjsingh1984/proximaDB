@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 
 use crate::core::storage_layout::{
     StoragePathResolver, StorageLayoutConfig, CollectionPaths, 
-    TempOperationType, StorageType, StorageLayoutError
+    TempOperationType, StorageType
 };
 use anyhow::Result;
 

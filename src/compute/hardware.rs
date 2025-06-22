@@ -80,28 +80,7 @@ pub struct HardwareInfo {
     pub multiprocessor_count: Option<u32>,
 }
 
-/// CUDA GPU accelerator
-#[cfg(feature = "cuda")]
-pub struct CudaAccelerator {
-    device_id: u32,
-    initialized: bool,
-    context: Option<cudarc::driver::CudaContext>,
-}
-
-#[cfg(feature = "cuda")]
-impl CudaAccelerator {
-    pub fn new(device_id: u32) -> Self {
-        Self {
-            device_id,
-            initialized: false,
-            context: None,
-        }
-    }
-}
-
-#[cfg(feature = "cuda")]
-#[async_trait]
-impl HardwareAccelerator for CudaAccelerator {
+// CUDA GPU accelerator removed - was placeholder code
     async fn initialize(&mut self) -> Result<(), String> {
         use cudarc::driver::CudaDevice;
 
@@ -301,7 +280,7 @@ impl HardwareAccelerator for CpuAccelerator {
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
         // Use CPU SIMD implementation from distance.rs
-        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
+        use crate::compute::distance::{create_distance_calculator, DistanceMetric};
 
         let computer = create_distance_calculator(DistanceMetric::DotProduct);
         let mut results = Vec::with_capacity(queries.len());
@@ -322,7 +301,7 @@ impl HardwareAccelerator for CpuAccelerator {
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
-        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
+        use crate::compute::distance::{create_distance_calculator, DistanceMetric};
 
         let computer = create_distance_calculator(DistanceMetric::Cosine);
         let mut results = Vec::with_capacity(queries.len());
@@ -343,7 +322,7 @@ impl HardwareAccelerator for CpuAccelerator {
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
-        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
+        use crate::compute::distance::{create_distance_calculator, DistanceMetric};
 
         let computer = create_distance_calculator(DistanceMetric::Euclidean);
         let mut results = Vec::with_capacity(queries.len());

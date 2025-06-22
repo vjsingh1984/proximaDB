@@ -17,8 +17,8 @@
 //! - **Schema Adaptation**: Flexible record-to-schema conversion
 //! - **Performance Optimization**: SIMD-aware operations and background processing
 
-use anyhow::{Context, Result};
-use arrow_array::{ArrayRef, RecordBatch};
+use anyhow::Result;
+use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{CollectionId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
 use crate::storage::vector::types::*;
 

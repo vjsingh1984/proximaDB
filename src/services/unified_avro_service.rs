@@ -27,7 +27,7 @@ use crate::storage::wal::{WalManager, WalStrategyType};
 use crate::storage::FilesystemFactory;
 use crate::storage::StorageEngine;
 use crate::storage::vector::{
-    VectorStorageCoordinator, CoordinatorConfig, VectorOperation, OperationResult,
+    VectorStorageCoordinator, CoordinatorConfig, VectorOperation,
     SearchContext, SearchStrategy, VectorStorage, ViperCoreEngine, ViperCoreConfig,
     UnifiedSearchEngine, UnifiedSearchConfig, UnifiedIndexManager, UnifiedIndexConfig,
 };
@@ -365,7 +365,7 @@ impl UnifiedAvroService {
             transactional: false, // Use non-transactional for zero-copy performance
         };
         
-        let batch_result = self.vector_coordinator
+        let _batch_result = self.vector_coordinator
             .execute_operation(batch_operation)
             .await
             .context("Failed to execute vector batch operation")?;
@@ -468,7 +468,7 @@ impl UnifiedAvroService {
             }
 
             // Create search context for the coordinator
-            let mut search_context = SearchContext {
+            let search_context = SearchContext {
                 collection_id: collection_id.clone(),
                 query_vector,
                 k: top_k,

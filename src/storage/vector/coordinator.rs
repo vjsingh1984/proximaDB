@@ -15,7 +15,6 @@
 //! - **Performance Optimization**: Cache and optimize based on access patterns
 
 use anyhow::Result;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,7 +23,7 @@ use tracing::{debug, info, warn};
 use super::types::*;
 use super::search::{UnifiedSearchEngine, DataDistribution};
 use super::indexing::UnifiedIndexManager;
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::CollectionId;
 
 /// Vector Storage Coordinator - Central coordination point for all vector operations
 /// Replaces direct coupling between StorageEngine and vector-specific logic

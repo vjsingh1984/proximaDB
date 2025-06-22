@@ -19,17 +19,16 @@
 //! - **Advanced Compression**: Adaptive compression with format optimization
 //! - **Staging Operations**: Optimized Parquet operations with atomic writes
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{interval, Instant};
-use tracing::{debug, error, info, warn};
+use tokio::time::Instant;
+use tracing::info;
 
 use crate::core::{CollectionId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
-use crate::storage::vector::types::*;
 
 /// VIPER Utilities coordinator - Central management for all utility services
 pub struct ViperUtilities {

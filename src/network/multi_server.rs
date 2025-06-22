@@ -17,7 +17,7 @@ use crate::storage::StorageEngine;
 use crate::services::collection_service::CollectionService;
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
-use crate::storage::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::storage::filesystem::FilesystemFactory;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 #[derive(Debug, Clone)]
