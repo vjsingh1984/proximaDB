@@ -479,6 +479,8 @@ mod tests {
 pub struct SearchResult {
     /// Vector identifier - null for anonymous results
     pub id: Option<String>,
+    /// Vector identifier (alternative field name for compatibility)
+    pub vector_id: Option<String>,
     /// Similarity score - REQUIRED field
     pub score: f32,
     /// Vector data - optional for network efficiency
@@ -487,6 +489,89 @@ pub struct SearchResult {
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     /// Result rank (1-based) - optional
     pub rank: Option<i32>,
+    /// Distance value (if different from score)
+    pub distance: Option<f32>,
+}
+
+/// Vector search result - alias for SearchResult for compatibility
+pub type VectorSearchResult = SearchResult;
+
+/// Vector search response containing results and metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorSearchResponse {
+    /// Search results array
+    pub results: Vec<VectorSearchResult>,
+    /// Total number of matching vectors
+    pub total_found: i64,
+    /// Search metadata
+    pub search_metadata: SearchMetadata,
+    /// Debug information (optional)
+    pub debug_info: Option<SearchDebugInfo>,
+    /// Processing time in microseconds
+    pub processing_time_us: i64,
+}
+
+/// Search metadata for query information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchMetadata {
+    /// Algorithm used for search
+    pub algorithm_used: String,
+    /// Query identifier
+    pub query_id: Option<String>,
+    /// Query complexity score
+    pub query_complexity: f32,
+    /// Total results found
+    pub total_results: i64,
+    /// Search time in milliseconds
+    pub search_time_ms: f64,
+    /// Performance hint for optimization
+    pub performance_hint: Option<String>,
+    /// Index statistics during search
+    pub index_stats: Option<IndexStats>,
+}
+
+/// Index statistics during search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexStats {
+    /// Total vectors in index
+    pub total_vectors: i64,
+    /// Vectors compared during search
+    pub vectors_compared: i64,
+    /// Vectors scanned during search
+    pub vectors_scanned: i64,
+    /// Distance calculations performed
+    pub distance_calculations: i64,
+    /// Index nodes visited
+    pub nodes_visited: i64,
+    /// Filter efficiency ratio
+    pub filter_efficiency: f32,
+    /// Cache hits during search
+    pub cache_hits: i64,
+    /// Cache misses during search
+    pub cache_misses: i64,
+}
+
+/// Search debug information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchDebugInfo {
+    /// Search steps taken
+    pub search_steps: Vec<String>,
+    /// Clusters searched
+    pub clusters_searched: Vec<String>,
+    /// Filter pushdown enabled
+    pub filter_pushdown_enabled: bool,
+    /// Parquet columns scanned
+    pub parquet_columns_scanned: Vec<String>,
+    /// Timing breakdown
+    pub timing_breakdown: HashMap<String, f64>,
+    /// Memory usage stats
+    pub memory_usage_mb: Option<f64>,
+    /// Estimated total cost
+    pub estimated_total_cost: f64,
+    /// Actual cost incurred
+    pub actual_cost: f64,
+    /// Cost breakdown by component
+    pub cost_breakdown: HashMap<String, f64>,
 }
 
 /// Zero-copy search results for large datasets - matches Avro SearchResultsBinary schema
@@ -510,11 +595,13 @@ impl SearchResult {
     /// Create a new search result
     pub fn new(id: Option<String>, score: f32) -> Self {
         Self {
-            id,
+            id: id.clone(),
+            vector_id: id,
             score,
             vector: None,
             metadata: None,
             rank: None,
+            distance: None,
         }
     }
     
@@ -525,11 +612,13 @@ impl SearchResult {
         metadata: HashMap<String, serde_json::Value>
     ) -> Self {
         Self {
-            id,
+            id: id.clone(),
+            vector_id: id,
             score,
             vector: None,
             metadata: Some(metadata),
             rank: None,
+            distance: None,
         }
     }
 }

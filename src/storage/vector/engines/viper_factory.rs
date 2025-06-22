@@ -17,7 +17,7 @@
 //! - **Adaptive Selection**: ML-driven optimization based on data patterns
 
 use anyhow::Result;
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use chrono::Duration;
 use std::collections::HashMap;
 use std::sync::Arc;

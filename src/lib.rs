@@ -32,7 +32,7 @@
 
 pub mod api;
 pub mod compute;
-pub mod consensus;
+// pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;
 pub mod index;
 pub mod monitoring;
@@ -46,6 +46,7 @@ pub mod server;
 pub mod services;
 pub mod storage;
 pub mod utils;
+
 
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
@@ -61,7 +62,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 /// Main ProximaDB database instance
 pub struct ProximaDB {
     storage: Arc<RwLock<storage::StorageEngine>>,
-    consensus: consensus::ConsensusEngine,
+    // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
     _query_engine: query::QueryEngine,
     multi_server: Option<network::MultiServer>,
     _config: core::Config,
@@ -74,7 +75,7 @@ impl ProximaDB {
         tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
 
-        let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?;
+        // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
 
         // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
         // For now, we'll create a placeholder
@@ -124,7 +125,7 @@ impl ProximaDB {
 
         Ok(Self {
             storage,
-            consensus,
+            // consensus,  // Disabled
             _query_engine: query_engine,
             multi_server: Some(multi_server),
             _config: config,
@@ -138,8 +139,8 @@ impl ProximaDB {
             storage.start().await?;
         }
 
-        // Start consensus engine
-        self.consensus.start().await?;
+        // Start consensus engine (disabled)
+        // self.consensus.start().await?;
 
         // Start multi-server (HTTP and gRPC on separate ports)
         if let Some(ref mut multi_server) = self.multi_server {
@@ -167,8 +168,8 @@ impl ProximaDB {
             storage.stop().await?;
         }
 
-        // Stop consensus engine
-        self.consensus.stop().await?;
+        // Stop consensus engine (disabled)
+        // self.consensus.stop().await?;
 
         Ok(())
     }

@@ -187,13 +187,7 @@ impl HNSWIndex {
         layer: usize,
     ) -> Result<Vec<(VectorId, f32)>> {
         let vectors = self.vectors.read().await;
-        let distance_computer: Box<dyn DistanceCompute> = match self.distance_metric {
-            DistanceMetric::Cosine => Box::new(crate::compute::distance::CosineDistance::new()),
-            DistanceMetric::Euclidean => {
-                Box::new(crate::compute::distance::EuclideanDistance::new())
-            }
-            _ => Box::new(crate::compute::distance::CosineDistance::new()), // Default to cosine
-        };
+        let distance_computer = crate::compute::distance::create_distance_calculator(self.distance_metric.clone());
 
         // Priority queue for candidates (min-heap by distance)
         let mut candidates = BinaryHeap::new();
@@ -271,13 +265,7 @@ impl HNSWIndex {
         }
 
         let vectors = self.vectors.read().await;
-        let distance_computer: Box<dyn DistanceCompute> = match self.distance_metric {
-            DistanceMetric::Cosine => Box::new(crate::compute::distance::CosineDistance::new()),
-            DistanceMetric::Euclidean => {
-                Box::new(crate::compute::distance::EuclideanDistance::new())
-            }
-            _ => Box::new(crate::compute::distance::CosineDistance::new()), // Default to cosine
-        };
+        let distance_computer = crate::compute::distance::create_distance_calculator(self.distance_metric.clone());
 
         let mut pruned = Vec::new();
         let mut candidates_queue: BinaryHeap<_> = candidates
@@ -480,19 +468,7 @@ impl VectorIndex for HNSWIndex {
                                 .iter()
                                 .filter_map(|id| {
                                     vectors_read.get(id).map(|v| {
-                                        let dist_computer: Box<dyn DistanceCompute> = match self
-                                            .distance_metric
-                                        {
-                                            DistanceMetric::Cosine => Box::new(
-                                                crate::compute::distance::CosineDistance::new(),
-                                            ),
-                                            DistanceMetric::Euclidean => Box::new(
-                                                crate::compute::distance::EuclideanDistance::new(),
-                                            ),
-                                            _ => Box::new(
-                                                crate::compute::distance::CosineDistance::new(),
-                                            ),
-                                        };
+                                        let dist_computer = crate::compute::distance::create_distance_calculator(self.distance_metric.clone());
                                         let dist =
                                             dist_computer.distance(&neighbor_vector_clone, v);
                                         (id.clone(), dist)
@@ -524,13 +500,7 @@ impl VectorIndex for HNSWIndex {
             vectors.get(&self.entry_point.clone().unwrap()),
             vectors.get(&vector.id),
         ) {
-            let dist_computer: Box<dyn DistanceCompute> = match self.distance_metric {
-                DistanceMetric::Cosine => Box::new(crate::compute::distance::CosineDistance::new()),
-                DistanceMetric::Euclidean => {
-                    Box::new(crate::compute::distance::EuclideanDistance::new())
-                }
-                _ => Box::new(crate::compute::distance::CosineDistance::new()),
-            };
+            let dist_computer = crate::compute::distance::create_distance_calculator(self.distance_metric.clone());
             let dist_to_query = dist_computer.distance(&vector.vector, new_vector);
             let dist_to_entry = dist_computer.distance(&vector.vector, entry_vector);
 

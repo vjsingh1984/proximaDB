@@ -17,8 +17,8 @@
 //! - **Performance Monitoring**: Comprehensive statistics and analytics
 
 use anyhow::{Context, Result};
-use arrow::array::RecordBatch;
-use arrow::datatypes::Schema;
+use arrow_array::RecordBatch;
+use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};

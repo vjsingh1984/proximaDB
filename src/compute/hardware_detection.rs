@@ -19,6 +19,14 @@
 //! This module provides robust runtime detection of CPU and GPU capabilities
 //! to prevent illegal instruction crashes and optimize performance paths.
 
+// ARM64 compatibility: Mock x86 feature detection on non-x86 platforms
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+macro_rules! is_x86_feature_detected {
+    ($feature:literal) => {
+        false // Always return false on non-x86 platforms
+    };
+}
+
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tracing::{debug, info, warn};

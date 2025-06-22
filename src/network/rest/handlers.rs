@@ -172,6 +172,7 @@ pub async fn create_collection(
         indexing_algorithm,
         filterable_metadata_fields: Vec::new(), // Default to no filterable fields
         indexing_config: HashMap::new(), // Default empty config
+        filterable_columns: Vec::new(), // Empty by default for new filterable column API
     };
     
     match state.collection_service.create_collection_from_grpc(&config).await {
@@ -352,8 +353,8 @@ pub async fn search_vectors(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    // Search through UnifiedAvroService
-    match state.unified_service.search_vectors(&json_payload).await {
+    // Search through UnifiedAvroService using simplified method
+    match state.unified_service.search_vectors_simple(&json_payload).await {
         Ok(result_bytes) => {
             // Parse the result bytes as JSON
             match serde_json::from_slice::<serde_json::Value>(&result_bytes) {

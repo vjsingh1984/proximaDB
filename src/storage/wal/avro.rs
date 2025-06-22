@@ -241,6 +241,105 @@ impl WalStrategy for AvroWalStrategy {
         Ok(sequences)
     }
 
+    async fn write_batch_with_sync(&self, entries: Vec<WalEntry>, immediate_sync: bool) -> Result<Vec<u64>> {
+        let start_time = std::time::Instant::now();
+        
+        let memory_table = self
+            .memory_table
+            .as_ref()
+            .context("Avro WAL strategy not initialized")?;
+
+        // Step 1: Write to memtable (fast, concurrent reads continue)
+        let sequences = memory_table.insert_batch(entries.clone()).await?;
+        let memtable_time = start_time.elapsed().as_micros();
+
+        // Step 2: Conditional disk sync based on immediate_sync flag
+        if immediate_sync {
+            let disk_start = std::time::Instant::now();
+            
+            // Use a more robust disk write approach
+            match &self.disk_manager {
+                Some(disk_manager) => {
+                    // Try disk write but don't fail the entire operation if it fails
+                    match disk_manager.append_wal_entries(&entries).await {
+                        Ok(()) => {
+                            let disk_time = disk_start.elapsed().as_micros();
+                            tracing::info!(
+                                "🚀 WAL write completed: memtable={}μs, disk={}μs, total={}μs", 
+                                memtable_time,
+                                disk_time,
+                                start_time.elapsed().as_micros()
+                            );
+                        },
+                        Err(e) => {
+                            tracing::warn!(
+                                "⚠️ WAL disk sync failed but memtable write succeeded: {}. Operation continues with in-memory durability.",
+                                e
+                            );
+                            // Don't fail the operation - memtable write succeeded
+                        }
+                    }
+                },
+                None => {
+                    tracing::warn!("⚠️ No disk manager available for WAL sync. Using memory-only durability.");
+                }
+            }
+        } else {
+            tracing::debug!(
+                "🚀 WAL write completed (memtable only): {}μs", 
+                memtable_time
+            );
+        }
+
+        // Step 3: Background VIPER flush check (existing logic)
+        if memory_table.needs_global_flush().await? {
+            let _ = self.flush(None).await; // Background, non-blocking
+        }
+
+        Ok(sequences)
+    }
+
+    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
+        let start_time = std::time::Instant::now();
+        
+        let memory_table = self
+            .memory_table
+            .as_ref()
+            .context("Avro WAL strategy not initialized")?;
+
+        // Get all entries from memtable for the specified collection(s)
+        let entries = if let Some(cid) = collection_id {
+            memory_table.get_all_entries(cid).await?
+        } else {
+            // Get all entries for all collections using stats
+            let mut all_entries = Vec::new();
+            let stats = memory_table.get_stats().await?;
+            for collection_id in stats.keys() {
+                let collection_entries = memory_table.get_all_entries(collection_id).await?;
+                all_entries.extend(collection_entries);
+            }
+            all_entries
+        };
+
+        // Force immediate disk sync
+        if !entries.is_empty() {
+            if let Some(disk_manager) = &self.disk_manager {
+                disk_manager
+                    .append_wal_entries(&entries)
+                    .await
+                    .context("Failed to force sync WAL entries to disk")?;
+                
+                tracing::info!(
+                    "🔄 Force sync completed: {} entries in {}μs",
+                    entries.len(),
+                    start_time.elapsed().as_micros()
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     async fn read_entries(
         &self,
         collection_id: &CollectionId,

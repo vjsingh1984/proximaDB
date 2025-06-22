@@ -4,8 +4,9 @@
 //! to different schema formats efficiently.
 
 use anyhow::{Context, Result};
-use arrow::array::{ArrayRef, RecordBatch};
-use arrow::datatypes::Schema;
+use arrow_array::{ArrayRef, RecordBatch};
+use arrow_array::builder::{StringBuilder, ListBuilder, Float32Builder, MapBuilder, TimestampMillisecondBuilder};
+use arrow_schema::Schema;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,25 +28,25 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
         records: &[VectorRecord],
         schema: &Arc<Schema>,
     ) -> Result<RecordBatch> {
-        let mut id_builder = arrow::array::StringBuilder::new();
+        let mut id_builder = StringBuilder::new();
         let mut vectors_builder =
-            arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+            ListBuilder::new(Float32Builder::new());
 
         // Dynamic metadata builders for filterable fields
-        let mut meta_builders: HashMap<String, arrow::array::StringBuilder> = HashMap::new();
+        let mut meta_builders: HashMap<String, StringBuilder> = HashMap::new();
         for field_name in self.strategy.get_filterable_fields() {
-            meta_builders.insert(field_name.clone(), arrow::array::StringBuilder::new());
+            meta_builders.insert(field_name.clone(), StringBuilder::new());
         }
 
         // Extra metadata and timestamp builders
-        let mut extra_meta_builder = arrow::array::MapBuilder::new(
+        let mut extra_meta_builder = MapBuilder::new(
             None,
-            arrow::array::StringBuilder::new(),
-            arrow::array::StringBuilder::new(),
+            StringBuilder::new(),
+            StringBuilder::new(),
         );
-        let mut expires_at_builder = arrow::array::TimestampMillisecondBuilder::new();
-        let mut created_at_builder = arrow::array::TimestampMillisecondBuilder::new();
-        let mut updated_at_builder = arrow::array::TimestampMillisecondBuilder::new();
+        let mut expires_at_builder = TimestampMillisecondBuilder::new();
+        let mut created_at_builder = TimestampMillisecondBuilder::new();
+        let mut updated_at_builder = TimestampMillisecondBuilder::new();
 
         for record in records {
             // ID

@@ -16,8 +16,10 @@ pub mod atomic;
 pub mod backends;
 pub mod compaction;
 // filestore_backend moved to backends/filestore_backend.rs
+pub mod indexes;
 pub mod single_index;
 pub mod store;
+pub mod unified_index;
 pub mod wal;
 
 use crate::core::CollectionId;

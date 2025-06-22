@@ -301,9 +301,9 @@ impl HardwareAccelerator for CpuAccelerator {
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
         // Use CPU SIMD implementation from distance.rs
-        use crate::compute::distance::{DistanceCompute, DotProductDistance};
+        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
 
-        let computer = DotProductDistance::new_with_simd(self.use_simd);
+        let computer = create_distance_calculator(DistanceMetric::DotProduct);
         let mut results = Vec::with_capacity(queries.len());
 
         for query in queries {
@@ -322,9 +322,9 @@ impl HardwareAccelerator for CpuAccelerator {
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
-        use crate::compute::distance::{CosineDistance, DistanceCompute};
+        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
 
-        let computer = CosineDistance::new_with_simd(self.use_simd);
+        let computer = create_distance_calculator(DistanceMetric::Cosine);
         let mut results = Vec::with_capacity(queries.len());
 
         for query in queries {
@@ -343,9 +343,9 @@ impl HardwareAccelerator for CpuAccelerator {
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
     ) -> Result<Vec<Vec<f32>>, String> {
-        use crate::compute::distance::{DistanceCompute, EuclideanDistance};
+        use crate::compute::distance::{DistanceCompute, create_distance_calculator, DistanceMetric};
 
-        let computer = EuclideanDistance::new_with_simd(self.use_simd);
+        let computer = create_distance_calculator(DistanceMetric::Euclidean);
         let mut results = Vec::with_capacity(queries.len());
 
         for query in queries {

@@ -4,8 +4,8 @@
 //! with core Parquet writing functionality and clustering capabilities.
 
 use anyhow::{Context, Result};
-use arrow::array::RecordBatch;
-use arrow::datatypes::Schema;
+use arrow_array::RecordBatch;
+use arrow_schema::Schema;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
@@ -241,10 +241,10 @@ impl ViperParquetFlusher {
 
     /// Convert WAL entries to Arrow RecordBatch (legacy support)
     fn convert_to_arrow_batch(&self, entries: &[WalEntry]) -> Result<RecordBatch> {
-        use arrow::array::{
+        use arrow_array::{
             ArrayRef, BinaryArray, StringArray, TimestampMillisecondArray, UInt64Array,
         };
-        use arrow::datatypes::{DataType, Field, TimeUnit};
+        use arrow_schema::{DataType, Field, TimeUnit};
 
         let mut entry_ids = Vec::new();
         let mut collection_ids = Vec::new();

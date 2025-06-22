@@ -4,7 +4,7 @@
 //! based on collection configuration and metadata requirements.
 
 use anyhow::Result;
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use std::sync::Arc;
 
 use super::config::ViperSchemaBuilder;
