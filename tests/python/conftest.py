@@ -17,15 +17,27 @@ from proximadb import ProximaDBClient
 
 
 @pytest.fixture(scope="session")
-def server_url():
-    """ProximaDB server URL for testing."""
+def rest_server_url():
+    """ProximaDB REST server URL for testing."""
     return "http://localhost:5678"
 
 
 @pytest.fixture(scope="session")
-def client(server_url):
-    """ProximaDB client instance."""
-    return ProximaDBClient(server_url)
+def grpc_server_url():
+    """ProximaDB gRPC server URL for testing."""
+    return "localhost:5679"
+
+
+@pytest.fixture(scope="session")
+def client(rest_server_url):
+    """ProximaDB REST client instance."""
+    return ProximaDBClient(rest_server_url)
+
+
+@pytest.fixture(scope="session")
+def grpc_client(grpc_server_url):
+    """ProximaDB gRPC client instance."""
+    return ProximaDBClient(grpc_server_url)
 
 
 @pytest.fixture
