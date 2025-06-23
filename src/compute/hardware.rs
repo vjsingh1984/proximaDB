@@ -80,78 +80,7 @@ pub struct HardwareInfo {
     pub multiprocessor_count: Option<u32>,
 }
 
-// CUDA GPU accelerator removed - was placeholder code
-    async fn initialize(&mut self) -> Result<(), String> {
-        use cudarc::driver::CudaDevice;
-
-        let device = CudaDevice::new(self.device_id)
-            .map_err(|e| format!("Failed to initialize CUDA device {}: {}", self.device_id, e))?;
-
-        self.context = Some(device);
-        self.initialized = true;
-        Ok(())
-    }
-
-    fn is_available(&self) -> bool {
-        cudarc::driver::CudaDevice::new(self.device_id).is_ok()
-    }
-
-    fn get_info(&self) -> HardwareInfo {
-        // TODO: Implement actual CUDA device info retrieval
-        HardwareInfo {
-            backend: ComputeBackend::CUDA {
-                device_id: Some(self.device_id),
-            },
-            device_name: format!("CUDA Device {}", self.device_id),
-            memory_total: 8 * 1024 * 1024 * 1024, // 8GB placeholder
-            memory_free: 4 * 1024 * 1024 * 1024,  // 4GB placeholder
-            compute_capability: Some("8.6".to_string()),
-            max_threads_per_block: Some(1024),
-            multiprocessor_count: Some(108),
-        }
-    }
-
-    async fn batch_dot_product(
-        &self,
-        queries: &[Vec<f32>],
-        vectors: &[Vec<f32>],
-    ) -> Result<Vec<Vec<f32>>, String> {
-        // TODO: Implement CUDA kernel for batch dot product
-        Err("CUDA batch dot product not yet implemented".to_string())
-    }
-
-    async fn batch_cosine_similarity(
-        &self,
-        queries: &[Vec<f32>],
-        vectors: &[Vec<f32>],
-    ) -> Result<Vec<Vec<f32>>, String> {
-        // TODO: Implement CUDA kernel for batch cosine similarity
-        Err("CUDA batch cosine similarity not yet implemented".to_string())
-    }
-
-    async fn batch_euclidean_distance(
-        &self,
-        queries: &[Vec<f32>],
-        vectors: &[Vec<f32>],
-    ) -> Result<Vec<Vec<f32>>, String> {
-        // TODO: Implement CUDA kernel for batch Euclidean distance
-        Err("CUDA batch euclidean distance not yet implemented".to_string())
-    }
-
-    async fn matrix_multiply(
-        &self,
-        a: &[Vec<f32>],
-        b: &[Vec<f32>],
-    ) -> Result<Vec<Vec<f32>>, String> {
-        // TODO: Implement CUDA GEMM using cuBLAS
-        Err("CUDA matrix multiply not yet implemented".to_string())
-    }
-
-    async fn normalize_vectors(&self, vectors: &[Vec<f32>]) -> Result<Vec<Vec<f32>>, String> {
-        // TODO: Implement CUDA vector normalization
-        Err("CUDA vector normalization not yet implemented".to_string())
-    }
-}
+// GPU support removed during cleanup - CPU-only implementation
 
 /// ROCm GPU accelerator (AMD)
 pub struct RocmAccelerator {
@@ -391,10 +320,6 @@ impl HardwareAccelerator for CpuAccelerator {
 /// Factory function to create hardware accelerators
 pub fn create_accelerator(backend: ComputeBackend) -> Box<dyn HardwareAccelerator> {
     match backend {
-        #[cfg(feature = "cuda")]
-        ComputeBackend::CUDA { device_id } => {
-            Box::new(CudaAccelerator::new(device_id.unwrap_or(0)))
-        }
         ComputeBackend::ROCm { device_id } => {
             Box::new(RocmAccelerator::new(device_id.unwrap_or(0)))
         }

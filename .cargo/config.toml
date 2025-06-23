@@ -1,0 +1,4 @@
+[patch.crates-io]
+# Patch arrow-arith to fix chrono quarter method conflict
+# This uses a local copy with the disambiguation fix applied
+# arrow-arith = { path = "arrow-arith-patched" }
