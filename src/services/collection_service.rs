@@ -21,7 +21,6 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 use crate::proto::proximadb::{CollectionConfig, CollectionResponse};
 use crate::storage::metadata::backends::filestore_backend::{CollectionRecord, FilestoreMetadataBackend};

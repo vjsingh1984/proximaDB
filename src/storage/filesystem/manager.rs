@@ -16,18 +16,9 @@
 
 //! Filesystem Manager - URL-based filesystem instances with authentication and caching
 
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use url::Url;
 
 use super::{FileSystem, FilesystemError, FsResult};
-use super::local::LocalFileSystem;
-use super::s3::S3FileSystem;
-use super::azure::AzureFileSystem;
-use super::gcs::GcsFileSystem;
 
 /// Retry configuration for filesystem operations
 #[derive(Debug, Clone)]

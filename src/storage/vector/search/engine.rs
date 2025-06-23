@@ -19,15 +19,15 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+
+use crate::core::CollectionId;
 
 use super::super::types::*;
-use crate::compute::distance::DistanceMetric;
-use crate::core::{CollectionId, VectorId};
 
 /// Unified search engine that consolidates all search functionality
 /// Replaces: SearchEngine, ViperProgressiveSearchEngine, search implementations

@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 
 use super::types::*;
 use super::ViperConfig;
-use crate::compute::distance::{DistanceCompute, DistanceMetric};
+use crate::compute::distance::DistanceMetric;
 use crate::compute::hardware_detection::SimdLevel;
 use crate::core::VectorId;
 

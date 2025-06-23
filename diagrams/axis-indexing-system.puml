@@ -1,0 +1,103 @@
+@startuml AXIS Indexing System
+!theme plain
+title AXIS (Adaptive eXtensible Indexing System) - 60% Complete
+
+package "AXIS Framework" {
+  class "AdaptiveIndexEngine" {
+    -collection_analyzer: CollectionAnalyzer
+    -strategy_selector: IndexStrategySelector
+    -performance_predictor: PerformancePredictor
+    -migration_manager: MigrationManager
+    +analyze_collection()
+    +select_optimal_strategy()
+    +should_migrate()
+    +execute_migration()
+  }
+  
+  class "CollectionAnalyzer" {
+    -vector_analyzer: VectorDistributionAnalyzer
+    -query_analyzer: QueryPatternAnalyzer
+    -workload_analyzer: WorkloadAnalyzer
+    +analyze_vector_distribution()
+    +analyze_query_patterns()
+    +analyze_workload_characteristics()
+  }
+  
+  class "IndexStrategySelector" {
+    -strategy_evaluators: Map<IndexType, Evaluator>
+    -performance_weights: PerformanceWeights
+    +evaluate_strategies()
+    +select_best_strategy()
+    +estimate_resource_usage()
+  }
+}
+
+package "Index Implementations" {
+  interface "VectorIndex" {
+    +build(vectors) : Result
+    +insert(vector) : Result<VectorId>
+    +search(query, k) : Result<Vec<SearchResult>>
+    +delete(vector_id) : Result
+    +get_statistics() : IndexStatistics
+  }
+  
+  class "HNSWIndex" <<partial>> {
+    -graph: HNSWGraph
+    -config: HNSWConfig
+    -entry_point: Option<NodeId>
+    +insert_node()
+    +search_layer()
+    +prune_connections()
+    <i>Status: Basic implementation</i>
+  }
+  
+  class "IVFIndex" <<planned>> {
+    -centroids: Vec<Vector>
+    -inverted_lists: Map<ClusterId, Vec<VectorId>>
+    +train_centroids()
+    +assign_to_cluster()
+    +search_clusters()
+    <i>Status: Not implemented</i>
+  }
+  
+  class "FlatIndex" <<complete>> {
+    -vectors: Vec<Vector>
+    -distance_calculator: DistanceCalculator
+    +linear_search()
+    +batch_search()
+    <i>Status: Working (fallback)</i>
+  }
+}
+
+package "Performance Monitoring" {
+  class "IndexPerformanceMonitor" {
+    -metrics_collector: MetricsCollector
+    -performance_history: Map<CollectionId, Vec<Snapshot>>
+    +record_search_performance()
+    +detect_performance_degradation()
+    +get_performance_trends()
+  }
+  
+  class "PerformancePredictor" {
+    -ml_models: Map<IndexType, MLModel>
+    -training_data: TrainingDataset
+    +predict_performance()
+    +update_training_data()
+    +retrain_models()
+  }
+}
+
+' Relationships
+AdaptiveIndexEngine --> CollectionAnalyzer
+AdaptiveIndexEngine --> IndexStrategySelector
+AdaptiveIndexEngine --> PerformancePredictor
+
+HNSWIndex ..|> VectorIndex
+IVFIndex ..|> VectorIndex
+FlatIndex ..|> VectorIndex
+
+IndexPerformanceMonitor --> PerformancePredictor
+
+note bottom : Status: Framework 85% complete\nHNSW basic implementation\nIVF planned\nIntegration with VectorStorageCoordinator pending
+
+@enduml

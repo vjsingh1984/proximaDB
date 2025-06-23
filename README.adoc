@@ -24,7 +24,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-image::proximadb-architecture.png[ProximaDB Architecture,800,align=center]
+image::ProximaDB Architecture Overview.png[ProximaDB Architecture,800,align=center]
 
 [.lead]
 **Proximity at Scale** +
@@ -34,13 +34,13 @@ A high-performance, enterprise-grade vector database built in Rust with intellig
 
 == Why ProximaDB?
 
-The explosion of AI applications demands vector databases that can handle massive scale while maintaining sub-millisecond performance. Traditional solutions fall short in three critical areas:
+The explosion of AI applications demands vector databases that can handle scale while maintaining performance. ProximaDB addresses key challenges:
 
-**Performance Bottlenecks** 💥:: Existing vector databases struggle with high-throughput writes and concurrent reads, leading to application bottlenecks and poor user experiences.
+**Flexible Storage** 💾:: VIPER engine with Parquet columnar format provides efficient vector storage with compression support.
 
-**Cost Inefficiency** 💸:: Memory-only solutions require expensive hardware scaling, while naive disk storage sacrifices performance. Smart tiering is essential but missing.
+**Cloud-Native Design** ☁️:: Multi-cloud filesystem abstraction supports file://, s3://, adls://, and gcs:// URLs for flexible deployment.
 
-**AI Integration Gaps** 🔗:: Most databases treat vectors as generic data, lacking native integration with AI frameworks, embedding models, and real-time inference pipelines.
+**AI Integration** 🤖:: Native BERT embedding support tested with 384, 768, and 1024 dimensional vectors.
 
 ProximaDB solves these challenges with a cloud-native, serverless-first architecture designed specifically for AI workloads.
 
@@ -49,17 +49,17 @@ ProximaDB solves these challenges with a cloud-native, serverless-first architec
 ProximaDB is a **cloud-native vector database** that provides:
 
 === ⚡ Core Capabilities
-- **Sub-millisecond Search**: HNSW indexing with SIMD optimizations
-- **High-Throughput Writes**: LSM tree architecture with WAL durability  
-- **Intelligent Tiering**: 5-tier storage from ultra-hot (MMAP) to archive (Glacier)
-- **Native AI Integration**: Built-in support for BERT, OpenAI, Cohere embeddings
-- **Multi-Protocol APIs**: gRPC and REST with identical feature sets
+- **Collection Management**: Full CRUD operations with metadata persistence
+- **Vector Storage**: VIPER engine with Parquet-based columnar format  
+- **WAL Durability**: Write-ahead logging with Avro/Bincode serialization
+- **BERT Integration**: Tested support for common BERT model dimensions
+- **Dual-Protocol APIs**: gRPC (port 5679) and REST (port 5678) with separate servers
 
 === 🏗️ Architecture Highlights
-- **AXIS Indexing**: Adaptive eXtensible Indexing System with ML-driven optimization
-- **VIPER Storage**: Vector-optimized Parquet storage with compression
-- **Serverless Ready**: Auto-scaling with scale-to-zero capabilities
-- **Multi-Tenant**: Collection-based isolation with enterprise security
+- **AXIS Indexing**: Adaptive indexing system (85% complete, integration pending)
+- **VIPER Storage**: Vector-optimized Parquet storage engine (implemented)
+- **Unified Services**: Consolidated architecture for all database operations
+- **Atomic Operations**: Filesystem-level atomicity for data consistency
 
 === 🌍 Deployment Flexibility
 - **Local Development**: Docker Compose for quick setup
@@ -72,7 +72,7 @@ ProximaDB is a **cloud-native vector database** that provides:
 ProximaDB implements a **three-layer architecture** optimized for AI workloads:
 
 === 1. API Layer
-**Unified Protocol Support**:: Single port serves both gRPC (HTTP/2 + Protobuf) and REST (HTTP/1.1 + JSON) with content-type detection
+**Multi-Server Protocol Support**:: Separate servers for gRPC (port 5679, HTTP/2 + Protobuf) and REST (port 5678, HTTP/1.1 + JSON)
 **Client SDKs**:: Python, JavaScript, Java with async support and retry logic
 **Authentication**:: JWT, OAuth2, API keys with fine-grained permissions
 
@@ -82,12 +82,11 @@ ProximaDB implements a **three-layer architecture** optimized for AI workloads:
 **Storage Engine**:: LSM trees with intelligent compaction and memory-mapped reads
 
 === 3. Storage Layer
-**Intelligent Tiering**:: 
-- Ultra-Hot (< 1ms): Memory-mapped files with OS page cache
-- Hot (< 10ms): Local SSDs with LSM optimization  
-- Warm (< 100ms): Local HDDs with compression
-- Cold (< 1s): Object storage with Parquet analytics
-- Archive (< 10s): Long-term retention with compliance
+**Flexible Storage**:: 
+- Memory-mapped files for fast access via OS page cache
+- Parquet columnar format for efficient vector storage
+- Multi-cloud support via filesystem URLs
+- Atomic write strategies for data consistency
 
 **Write-Ahead Log**:: Multi-format serialization (Avro, Bincode) with cloud-native batching and recovery optimization
 
@@ -96,7 +95,7 @@ ProximaDB implements a **three-layer architecture** optimized for AI workloads:
 [source,bash]
 ----
 # Run with Docker
-docker run -p 5678:5678 proximadb/proximadb:latest
+docker run -p 5678:5678 -p 5679:5679 proximadb/proximadb:latest
 
 # Or build from source  
 git clone https://github.com/vjsingh1984/proximaDB.git
@@ -111,19 +110,19 @@ cargo run --bin proximadb-server
 
 == 📊 Current Status
 
-🎯 **Latest Achievement**: Collection persistence across server restarts with BERT embeddings support (384, 768, 1024 dimensions)
+🎯 **Latest Achievement**: Major codebase cleanup removing 4,457 lines of obsolete code. Collection persistence and BERT support fully functional.
 
 [cols="2,1,3"]
 |===
 |Component |Status |Notes
 
-|**Core Storage Engine** |✅ Complete |LSM trees, WAL, memory-mapped reads
-|**Collection Management** |✅ Complete |Create, list, get with metadata persistence  
-|**BERT Integration** |✅ Complete |Full support for major BERT model dimensions
-|**Dual Protocol APIs** |✅ Complete |gRPC + REST on single port with detection
-|**Vector Operations** |🚧 In Progress |Insert, search, update operations
-|**AXIS Indexing** |🚧 In Progress |Adaptive indexing with 85% completion
-|**Distributed Consensus** |📋 Planned |Raft implementation for clustering
+|**Core Storage Engine** |✅ Complete |VIPER engine with Parquet format
+|**Collection Management** |✅ Complete |Full CRUD with persistence across restarts  
+|**BERT Integration** |✅ Complete |384, 768, 1024 dimensional embeddings
+|**Dual Protocol APIs** |✅ Complete |gRPC on port 5679, REST on port 5678
+|**Vector Operations** |🚧 In Progress |Infrastructure ready, implementation pending
+|**AXIS Indexing** |🚧 In Progress |85% complete, integration needed
+|**GPU/Consensus** |❌ Removed |Cleaned up in June 2025 (was placeholder code)
 |===
 
 **See full status**: link:docs/implementation_status.adoc[Implementation Status]

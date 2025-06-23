@@ -17,7 +17,7 @@
 //! REST API handlers that delegate to unified services
 
 use axum::{
-    extract::{Json, Path, Query, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::Json as JsonResponse,
     routing::{get, post, put, delete},
@@ -272,7 +272,7 @@ pub async fn insert_vector(
     
     // Use the UnifiedAvroService handle_vector_insert_v2 method
     match state.unified_service.handle_vector_insert_v2(&collection_id, false, &json_payload).await {
-        Ok(result) => {
+        Ok(_result) => {
             tracing::info!("✅ REST: Vector {} inserted successfully", vector_id);
             Ok(JsonResponse(ApiResponse::success_with_message(
                 vector_id,

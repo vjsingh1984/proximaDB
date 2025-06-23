@@ -28,8 +28,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use uuid::Uuid;
+use std::path::PathBuf;
 
 /// ProximaDB hierarchical storage layout configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -20,7 +20,7 @@
 
 use anyhow::{Context, Result};
 use apache_avro::Schema;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

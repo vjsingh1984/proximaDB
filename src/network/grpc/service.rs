@@ -3,7 +3,6 @@
  */
 
 use std::sync::Arc;
-use anyhow::Result;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, span, Instrument, Level};
 use serde_json::{json, Value as JsonValue};
@@ -17,12 +16,9 @@ use crate::proto::proximadb::{
 };
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::services::collection_service::CollectionService;
-use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
-use crate::storage::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::storage::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
 use crate::schema_types::{
-    CollectionRequest as SchemaCollectionRequest, 
-    CollectionConfig as SchemaCollectionConfig,
     VectorRecord as SchemaVectorRecord,
     VectorInsertResponse as SchemaVectorInsertResponse,
     VectorOperationMetrics as SchemaVectorOperationMetrics,

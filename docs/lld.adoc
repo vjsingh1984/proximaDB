@@ -10,9 +10,23 @@ v1.0, {docdate}
 
 == Executive Summary
 
-This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native serverless vector database optimized for the AI era. The LLD details the technical implementation of each architectural component, including data structures, algorithms, performance optimizations, and deployment strategies.
+This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native vector database optimized for AI applications. The LLD details the technical implementation of each architectural component after major cleanup (December 2024).
 
-== 1. Unified Service Layer Implementation
+**Implementation Status**: 80% complete with honest, working implementations
+**Major Cleanup**: Removed 4,457 lines of obsolete code (GPU, consensus, CLI placeholders)
+**Architecture**: Multi-server design with REST (port 5678) and gRPC (port 5679)
+
+== 1. Multi-Server Architecture Implementation
+
+ProximaDB uses separate servers for REST and gRPC protocols:
+
+- **REST Server**: Port 5678, HTTP/1.1 + JSON
+- **gRPC Server**: Port 5679, HTTP/2 + Protobuf
+- **Shared Services**: Common business logic layer
+
+image::Storage Architecture.png[Storage Architecture,width=100%]
+
+== 2. Service Layer Implementation
 
 === 1.1 UnifiedAvroService Architecture
 
@@ -20,7 +34,8 @@ This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native 
 
 [source,rust]
 ----
-/// Central service handling all database operations with Avro serialization
+/// Central service handling all database operations
+/// NOTE: Currently using JSON serialization, Avro migration planned
 pub struct UnifiedAvroService {
     /// Storage engine with filesystem abstraction
     storage: Arc<RwLock<StorageEngine>>,
@@ -480,6 +495,8 @@ pub struct CompactionConfig {
 
 ==== MMAP Storage Layer
 
+image::Storage Architecture.png[Storage Architecture,width=100%]
+
 [source,rust]
 ----
 /// Memory-mapped file wrapper with performance optimizations
@@ -735,6 +752,8 @@ impl SSTableReader {
 == 2. Vector Search Algorithm Implementation
 
 === 2.1 HNSW Index Architecture
+
+image::AXIS Indexing System.png[AXIS Indexing System,width=100%]
 
 ==== Graph Structure and Navigation
 
@@ -3900,3 +3919,57 @@ impl VectorFlowBenchmarks {
 This comprehensive Low-Level Design document provides detailed technical implementation specifications for VectorFlow, covering all major components from storage engines to deployment strategies. Each section includes production-ready code examples with performance optimizations, security measures, and operational considerations suitable for enterprise deployment.
 
 The LLD demonstrates how theoretical concepts from the HLD translate into concrete, optimized implementations that can achieve the performance targets outlined in the requirements while maintaining the flexibility and scalability needed for a modern vector database.
+
+== Current Implementation Status
+
+=== Implemented Components
+
+**Storage Layer**
+- VIPER Storage Engine with Parquet format ✅
+- WAL with Avro/Bincode serialization ✅
+- Filesystem abstraction (file://, s3://, adls://, gcs://) ✅
+- Atomic write strategies ✅
+
+**Service Layer**
+- UnifiedAvroService (using JSON, Avro planned) ✅
+- VectorStorageCoordinator ✅
+- CollectionService with full CRUD ✅
+- Metadata persistence with recovery ✅
+
+**API Layer**
+- Dual-protocol server (gRPC + REST) ✅
+- Python SDK with async support ✅
+- Content-type based routing ✅
+
+=== Partially Implemented
+
+**Vector Operations**
+- Insert infrastructure ready 🚧
+- Search returns 500 error 🚧
+- Metadata filtering schema ready 🚧
+
+**Indexing**
+- AXIS system 85% complete 🚧
+- HNSW algorithm implemented but not integrated 🚧
+
+=== Not Implemented
+
+**Removed Components**
+- GPU acceleration (removed - was placeholder) ❌
+- Consensus module (removed - was commented out) ❌
+- CLI binary (removed - was placeholder) ❌
+
+**Planned Features**
+- SQL query interface ❌
+- Distributed scaling ❌
+- Advanced caching strategies ❌
+
+=== Performance Reality Check
+
+**Current Performance**:
+- Collection operations: Fast (~5ms create, ~1ms get)
+- Vector search: Linear scan only (no acceleration)
+- No GPU optimization
+- Single-node deployment only
+
+**Note**: The "100K+ QPS" and "sub-millisecond search" mentioned in early sections refer to theoretical capabilities with full implementation. Current system provides a solid foundation but requires index integration and optimization to achieve these targets.

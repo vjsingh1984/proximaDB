@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::super::types::*;
 use crate::core::{CollectionId, VectorId};

@@ -21,25 +21,26 @@ This User Guide provides comprehensive instructions for using ProximaDB, a cloud
 
 == What is ProximaDB?
 
-ProximaDB is a high-performance vector database built specifically for AI and machine learning applications. It provides:
+ProximaDB is a cloud-native vector database built specifically for AI and machine learning applications. It provides:
 
-- **Fast Vector Similarity Search**: Sub-millisecond search across millions of vectors
-- **Flexible Storage**: Support for dense and sparse vectors with metadata
-- **AI Framework Integration**: Native support for BERT, OpenAI, Cohere embeddings
-- **Dual API Support**: Both gRPC and REST APIs for maximum compatibility
-- **Cloud-Native Design**: Serverless deployment with intelligent storage tiering
+- **Vector Storage & Management**: Collection-based organization with metadata support
+- **Flexible Storage**: VIPER engine with Parquet-based columnar storage
+- **BERT Integration**: Native support for BERT embeddings (384, 768, 1024 dimensions)
+- **Multi-Server APIs**: Separate REST (port 5678) and gRPC (port 5679) servers
+- **Cloud-Native Design**: Multi-cloud filesystem abstraction with configurable storage URLs
 
 === Key Features
 
 **🚀 Performance**
-- Sub-millisecond vector similarity search
-- 100K+ queries per second throughput
-- Intelligent caching and storage tiering
+- Fast collection operations (~5ms create, ~1ms get)
+- Efficient metadata persistence with Avro serialization
+- Multi-cloud storage with atomic operations
+- Note: Vector search uses linear search (indexing 60% complete)
 
 **🎯 AI-Optimized**
 - Native BERT embedding support (384, 768, 1024 dimensions)
-- OpenAI and Cohere integration ready
-- Automatic dimension detection and optimization
+- Collection persistence across server restarts
+- Tested with real BERT embeddings
 
 **🔧 Developer-Friendly**
 - Simple REST API and high-performance gRPC
@@ -47,9 +48,9 @@ ProximaDB is a high-performance vector database built specifically for AI and ma
 - Comprehensive documentation and examples
 
 **☁️ Cloud-Ready**
-- Multi-cloud storage support (S3, Azure, GCS)
-- Kubernetes deployment ready
-- Auto-scaling and serverless capabilities
+- Multi-cloud storage support (S3, Azure, GCS) via filesystem abstraction
+- Docker deployment ready
+- Configurable storage URLs for flexible deployment
 
 == Quick Start
 
@@ -106,6 +107,8 @@ pip install proximadb-python
 == Getting Started Tutorial
 
 === Step 1: Create Your First Collection
+
+image::Collection Lifecycle.png[Collection Lifecycle,width=100%]
 
 A collection in ProximaDB is a container for vectors with the same dimensions and distance metric.
 
@@ -1285,6 +1288,59 @@ async def performance_monitoring_example():
     
     print(f"📊 Search returned {len(results)} results")
 ----
+
+== Current Implementation Status
+
+=== ✅ What's Working
+
+**Collection Management**
+- Create, get, list, and delete collections
+- Persistence across server restarts
+- BERT dimension support (384, 768, 1024)
+- Metadata schema configuration
+
+**Storage & Persistence**
+- VIPER storage engine with Parquet format
+- WAL (Write-Ahead Log) with Avro serialization
+- Multi-cloud filesystem abstraction
+- Atomic write operations
+
+**API Layer**
+- Multi-server architecture (REST:5678, gRPC:5679)
+- Python SDK with async support
+- Content-type based protocol detection
+- Health check endpoints
+
+=== 🚧 In Progress
+
+**Vector Operations**
+- Vector insert: Infrastructure ready, implementation pending
+- Vector search: Currently returns 500 error
+- Similarity search: Algorithms implemented, integration needed
+- Metadata filtering: Schema ready, query execution pending
+
+**Indexing**
+- AXIS indexing system: 85% complete
+- HNSW index: Implemented but not integrated
+- Index persistence and recovery
+
+=== ❌ Not Yet Implemented
+
+**Advanced Features**
+- GPU acceleration (removed in cleanup)
+- Distributed consensus (Raft preparation only)
+- Multi-vector search
+- Streaming operations
+- SQL query interface
+
+=== 📊 Performance Notes
+
+**Current Performance**
+- Collection operations: ~5ms create, ~1ms get
+- Vector search: Linear scan only (no index acceleration yet)
+- Storage: Memory-mapped files for fast access
+
+**Note**: Claims of "100K+ QPS" and "sub-millisecond search" from early documentation refer to planned capabilities with full indexing implementation. Current implementation uses linear search.
 
 == Troubleshooting
 
