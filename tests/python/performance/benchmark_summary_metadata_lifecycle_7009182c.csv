@@ -1,0 +1,12 @@
+Operation,Phase,Records,Time_ms,Throughput_ops_per_sec,Metadata_Fields
+insert,as_is_storage,50,62.79,796.2,23
+insert,as_is_storage,125,151.66,824.2,23
+insert,as_is_storage,250,273.72,913.3,23
+insert,as_is_storage,500,532.15,939.6,23
+similarity_only,memtable_search,1000,53.36,18740.2,23
+metadata_filter,memtable_search,1000,154.28,6481.5,23
+hybrid_search,memtable_search,1000,124.67,8021.1,23
+flush,metadata_transformation,500,1563.22,319.9,23
+similarity_only,viper_search,1000,37.60,26596.9,5
+metadata_filter,viper_search,1000,42.25,23666.5,5
+hybrid_search,viper_search,1000,47.32,21131.9,5
