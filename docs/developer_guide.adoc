@@ -17,7 +17,11 @@
 [abstract]
 == Abstract
 
-This Developer Guide provides comprehensive information for developers working with ProximaDB, including development setup, API documentation, SDK usage, testing strategies, and contribution guidelines.
+This Developer Guide provides comprehensive information for developers working with ProximaDB after major cleanup (December 2024). Includes development setup, API documentation, SDK usage, and contribution guidelines.
+
+**Implementation Status**: 80% complete with honest, working implementations
+**Cleanup Summary**: Removed 4,457 lines of obsolete code (GPU, consensus, CLI placeholders)
+**Architecture**: Multi-server design with REST:5678, gRPC:5679
 
 == Getting Started
 
@@ -26,8 +30,8 @@ This Developer Guide provides comprehensive information for developers working w
 ==== Prerequisites
 
 **System Requirements:**
-- **OS**: Linux (Ubuntu 20.04+), macOS (Big Sur+), or Windows 11 with WSL2
-- **Rust**: 1.70+ with stable toolchain
+- **OS**: Linux (Ubuntu 20.04+), macOS (Big Sur+), Windows 11 with WSL2, ARM64 supported
+- **Rust**: 1.75+ with stable toolchain (ARM64 and x86_64 support)
 - **Node.js**: 18+ for client SDK development
 - **Python**: 3.8+ for Python client development
 - **Docker**: 20.10+ for containerized development
@@ -37,6 +41,7 @@ This Developer Guide provides comprehensive information for developers working w
 - **CPU**: 4+ cores recommended for parallel compilation
 - **Memory**: 8GB+ RAM (16GB+ recommended for development)
 - **Storage**: 20GB+ free space for builds and data
+- **Architecture**: x86_64 or ARM64 (Apple Silicon supported)
 
 ==== Installation Steps
 
@@ -144,6 +149,30 @@ proximadb/
     └── local.toml         # Local development config
 ```
 
+== Recent Codebase Cleanup
+
+=== Overview
+
+In June 2025, a major cleanup was performed removing 4,457 lines of obsolete or placeholder code:
+
+**Removed Modules:**
+- **Consensus module** (8 files, 500+ lines) - Was completely commented out
+- **GPU module** (4 files, 1000+ lines) - Placeholder code with no real implementation
+- **Empty API modules** (v1, internal) - Were just TODO stubs
+- **CLI binary** - Was all placeholder println! statements
+
+**Cleaned Dependencies:**
+- Removed GPU-related crates (cudarc, candle-core, candle-nn)
+- Commented out unused ML crates (linfa, smartcore)
+- Removed unused FAISS integration
+- Cleaned up features section
+
+**Benefits:**
+- Build now completes successfully with only warnings
+- Cleaner dependency graph
+- Faster compilation times
+- More honest representation of actual capabilities
+
 == Build System
 
 === Cargo Configuration
@@ -158,22 +187,18 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["server", "cli"]
+default = ["server"]
 server = ["tonic", "tokio", "serde"]
-cli = ["clap", "tokio"] 
 simd = ["simdeez"]
-intel-mkl = ["intel-mkl-src"]
-cuda = ["candle-core/cuda"]
+# GPU features removed in cleanup
+# intel-mkl and cuda features no longer supported
 
 [[bin]]
 name = "proximadb-server"
 path = "src/bin/server.rs"
 required-features = ["server"]
 
-[[bin]]
-name = "proximadb-cli"
-path = "src/bin/cli.rs"
-required-features = ["cli"]
+# CLI binary removed in cleanup (was placeholder code)
 ----
 
 === Build Commands

@@ -1,0 +1,65 @@
+@startuml Collection Lifecycle
+!theme plain
+title ProximaDB Collection Lifecycle
+
+participant "Client" as Client
+participant "REST Server\n(5678)" as REST
+participant "gRPC Server\n(5679)" as gRPC
+participant "CollectionService" as CS
+participant "FilestoreMetadata\nBackend" as FMB
+participant "Filesystem\n(Local/Cloud)" as FS
+
+== Collection Creation ==
+Client -> REST : POST /collections
+REST -> CS : create_collection()
+CS -> CS : validate_config()
+CS -> FMB : store_collection()
+FMB -> FS : atomic_write(\nmetadata.json)
+FS --> FMB : success
+FMB --> CS : collection_id
+CS --> REST : 201 Created
+REST --> Client : {id, name, config}
+
+== Collection Retrieval ==
+Client -> gRPC : GetCollection()
+gRPC -> CS : get_collection()
+CS -> CS : check_cache()
+alt Cache Miss
+  CS -> FMB : get_collection()
+  FMB -> FS : read(metadata.json)
+  FS --> FMB : data
+  FMB --> CS : collection
+  CS -> CS : update_cache()
+end
+CS --> gRPC : Collection
+gRPC --> Client : CollectionResponse
+
+== Collection Persistence Across Restart ==
+note over FS : Server Restart
+Client -> REST : GET /collections
+REST -> CS : list_collections()
+CS -> FMB : list_collections()
+FMB -> FS : list(collections/)
+FS --> FMB : [collection_dirs]
+loop for each collection
+  FMB -> FS : read(metadata.json)
+  FS --> FMB : collection_data
+end
+FMB --> CS : [collections]
+CS --> REST : 200 OK
+REST --> Client : [collections]
+
+== Collection Deletion ==
+Client -> REST : DELETE /collections/{name}
+REST -> CS : delete_collection()
+CS -> FMB : delete_collection()
+FMB -> FS : delete(collection_dir)
+FS --> FMB : success
+FMB --> CS : success
+CS -> CS : invalidate_cache()
+CS --> REST : 204 No Content
+REST --> Client : success
+
+note bottom : All operations use atomic writes\nfor data consistency
+
+@enduml
