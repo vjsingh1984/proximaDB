@@ -335,6 +335,7 @@ mod tests {
             indexing_algorithm: 1,
             filterable_metadata_fields: vec![],
             indexing_config: std::collections::HashMap::new(),
+            filterable_columns: vec![],
         };
         assert!(service.validate_collection_config(&valid_config).is_ok());
 

@@ -8,32 +8,15 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Compression algorithms for WAL data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CompressionAlgorithm {
-    /// No compression (fastest)
-    None,
-    /// LZ4 - fast compression/decompression, good for CPU-bound workloads
-    Lz4,
-    /// Snappy - balanced compression/speed, good default
-    Snappy,
-    /// ZSTD - configurable compression levels
-    Zstd { level: i32 },
-}
-
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        // Smart default: Snappy provides good balance of compression ratio and speed
-        // without significant CPU overhead, improving IOPS on most storage
-        Self::Snappy
-    }
-}
+// NOTE: CompressionAlgorithm moved to unified_types.rs
+// WAL-specific configuration uses the unified type
+pub use crate::core::unified_types::CompressionAlgorithm;
 
 /// Compression configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionConfig {
     /// Algorithm to use
-    pub algorithm: CompressionAlgorithm,
+    pub algorithm: crate::core::unified_types::CompressionAlgorithm,
 
     /// Enable compression for memory structures
     pub compress_memory: bool,

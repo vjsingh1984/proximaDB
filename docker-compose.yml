@@ -1,0 +1,137 @@
+# ProximaDB MVP Demo - Docker Compose Configuration
+# Usage: docker-compose up
+
+version: '3.8'
+
+services:
+  # Main ProximaDB MVP Demo Service
+  proximadb-mvp:
+    image: proximadb:mvp-demo
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-runtime}
+    container_name: proximadb-mvp-demo
+    hostname: proximadb-mvp
+    restart: unless-stopped
+    
+    # Port mappings
+    ports:
+      - "5678:5678"   # REST API
+      - "5679:5679"   # gRPC API  
+      - "9090:9090"   # Metrics
+    
+    # Environment variables
+    environment:
+      - RUST_LOG=info
+      - PROXIMADB_CONFIG=/opt/proximadb/config/mvp-demo.toml
+      - PROXIMADB_DATA_DIR=/data
+      - PROXIMADB_LOG_LEVEL=info
+    
+    # Persistent data volume
+    volumes:
+      - proximadb-mvp-data:/data
+      - ./config.toml:/opt/proximadb/config/config.toml:ro
+    
+    # Resource limits for demo
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # Health check
+    healthcheck:
+      test: ["/opt/proximadb/bin/health-check.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    
+    # Labels for organization
+    labels:
+      - "com.proximadb.service=mvp-demo"
+      - "com.proximadb.version=0.1.0"
+      - "traefik.enable=true"
+      - "traefik.http.routers.proximadb.rule=Host(\`localhost\`)"
+
+  # Optional: Monitoring stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: proximadb-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+    depends_on:
+      - proximadb-mvp
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: proximadb-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    profiles:
+      - monitoring
+    depends_on:
+      - prometheus
+
+  # Optional: Vector search UI (development)
+  proximadb-ui:
+    image: proximadb/ui:latest
+    container_name: proximadb-ui
+    ports:
+      - "8080:80"
+    environment:
+      - PROXIMADB_API_URL=http://proximadb-mvp:5678
+    profiles:
+      - ui
+    depends_on:
+      - proximadb-mvp
+
+# Named volumes for persistence
+volumes:
+  proximadb-mvp-data:
+    driver: local
+    name: proximadb_mvp_data
+  prometheus-data:
+    driver: local
+    name: proximadb_prometheus_data
+  grafana-data:
+    driver: local
+    name: proximadb_grafana_data
+
+# Custom network for service communication
+networks:
+  default:
+    name: proximadb-mvp-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,113 @@
+= ProximaDB Documentation
+ProximaDB Development Team
+:version: 0.1.0-mvp
+:doctype: book
+:toc: left
+:toclevels: 2
+:sectlinks:
+:sectanchors:
+:source-highlighter: highlight.js
+:icons: font
+:experimental:
+
+== Overview
+
+Welcome to ProximaDB documentation. This directory contains comprehensive documentation for the cloud-native vector database designed for high-performance similarity search and AI applications.
+
+== Documentation Structure
+
+=== Core Documentation
+
+[cols="1,3,1"]
+|===
+|Document |Description |Audience
+
+|link:requirements.adoc[Requirements] |Complete requirements specification and MVP scope |All
+|link:hld.adoc[High-Level Design] |Architecture overview and system design |Developers, Architects
+|link:lld.adoc[Low-Level Design] |Detailed implementation specifications |Developers
+|link:lld_axis.adoc[AXIS Index Design] |AXIS indexing system detailed design |Developers
+|===
+
+=== User Documentation
+
+[cols="1,3,1"]
+|===
+|Document |Description |Audience
+
+|link:user_guide.adoc[User Guide] |Complete user guide with API examples |End Users, Developers
+|link:REST_API_REFERENCE.adoc[API Reference] |REST and gRPC API documentation |Developers, Integrators
+|===
+
+=== Developer Documentation
+
+[cols="1,3,1"]
+|===
+|Document |Description |Audience
+
+|link:developer_guide.adoc[Developer Guide] |Development setup, contribution guidelines |Contributors
+|link:implementation_status.adoc[Implementation Status] |Current implementation status and roadmap |Developers, PM
+|link:test_results.adoc[Test Results] |Comprehensive test results and coverage |QA, Developers
+|===
+
+=== Demo and Deployment
+
+[cols="1,3,1"]
+|===
+|Document |Description |Audience
+
+|link:../docker-demo.adoc[Docker Demo Guide] |Complete Docker deployment and testing guide |DevOps, Users
+|===
+
+=== Additional Resources
+
+[cols="1,3,1"]
+|===
+|Resource |Description |Location
+
+|Archive Documentation |Legacy and archived documentation |link:archive/[docs/archive/]
+|Python Client |Python SDK documentation |link:../clients/python/README.adoc[clients/python/]
+|Changelog |Version history and release notes |link:../CHANGELOG.adoc[CHANGELOG.adoc]
+|Contributing |Contribution guidelines |link:../CONTRIBUTING.adoc[CONTRIBUTING.adoc]
+|===
+
+== Quick Start
+
+=== For Users
+1. Read the link:user_guide.adoc[User Guide] for API usage
+2. Follow the link:../docker-demo.adoc[Docker Demo Guide] to get started
+3. Refer to link:REST_API_REFERENCE.adoc[API Reference] for integration
+
+=== For Developers
+1. Start with link:requirements.adoc[Requirements] to understand the scope
+2. Review link:hld.adoc[High-Level Design] for architecture overview
+3. Follow link:developer_guide.adoc[Developer Guide] for development setup
+4. Check link:implementation_status.adoc[Implementation Status] for current progress
+
+=== For System Architects
+1. Review link:requirements.adoc[Requirements] for system scope
+2. Study link:hld.adoc[High-Level Design] for architecture decisions
+3. Examine link:lld.adoc[Low-Level Design] for implementation details
+4. Check link:lld_axis.adoc[AXIS Index Design] for indexing architecture
+
+== MVP Status (v0.1.0)
+
+The current MVP includes:
+
+* ✅ **Collection Management**: Create, list, get, delete collections
+* ✅ **Vector Operations**: Insert, search, get, delete vectors with metadata
+* ✅ **BERT Integration**: Support for 384/768/1024 dimensional embeddings
+* ✅ **Dual Protocol**: REST and gRPC APIs on unified server
+* ✅ **Storage**: VIPER engine with Parquet compression and persistence
+* ✅ **Indexing**: HNSW implementation with metadata filtering
+* ✅ **Cloud Storage**: Multi-cloud support (File, S3, Azure, GCS)
+* ✅ **Production Ready**: Health checks, metrics, monitoring, Docker deployment
+
+== Support
+
+* **Issues**: https://github.com/your-org/proximadb/issues
+* **Discussions**: https://github.com/your-org/proximadb/discussions
+* **Discord**: https://discord.gg/proximadb
+
+---
+
+_ProximaDB v0.1.0-mvp - Built with ❤️ for the AI community_

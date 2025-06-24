@@ -60,9 +60,13 @@ def cleanup_collection(client, test_collection_name):
 @pytest.fixture(scope="session")
 def bert_service():
     """BERT embedding service for tests."""
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from bert_embedding_service import BERTEmbeddingService
-    return BERTEmbeddingService("all-MiniLM-L6-v2")
+    integration_path = Path(__file__).parent / "integration"
+    sys.path.insert(0, str(integration_path))
+    try:
+        from bert_embedding_service import BERTEmbeddingService
+        return BERTEmbeddingService("all-MiniLM-L6-v2")
+    except ImportError:
+        pytest.skip("BERT embedding service not available")
 
 
 @pytest.fixture(scope="session")

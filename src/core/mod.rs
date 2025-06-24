@@ -5,6 +5,7 @@ pub mod routing;
 pub mod serverless;
 pub mod storage_layout;
 pub mod types;
+pub mod unified_types;
 
 pub use config::*;
 pub use error::*;
@@ -16,3 +17,4 @@ pub use routing::{
 };
 pub use serverless::*;
 pub use types::*;
+pub use unified_types::*;

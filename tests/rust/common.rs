@@ -3,7 +3,8 @@
 use anyhow::Result;
 use std::sync::Once;
 use tokio::sync::Mutex;
-use proximadb::core::{CollectionId, VectorRecord};
+use proximadb::core::{CollectionId};
+use proximadb::schema_types::VectorRecord;
 use proximadb::schema_types::{CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -15,7 +16,7 @@ static SERVER_LOCK: Mutex<()> = Mutex::const_new(());
 pub fn init_test_env() {
     INIT.call_once(|| {
         env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
+            .filter_level(env_logger::LevelFilter::Info)
             .init();
     });
 }
@@ -45,7 +46,7 @@ pub fn create_test_collection_config(name: String, dimension: i32) -> Collection
 /// Create test vector record
 pub fn create_test_vector_record(
     id: String,
-    collection_id: String,
+    _collection_id: String,
     dimension: usize,
 ) -> VectorRecord {
     let vector: Vec<f32> = (0..dimension)
@@ -59,11 +60,11 @@ pub fn create_test_vector_record(
     metadata.insert("test_id".to_string(), serde_json::Value::String(id.clone()));
     
     VectorRecord {
-        id,
-        collection_id,
+        id: Some(id),
         vector,
-        metadata,
-        timestamp: chrono::Utc::now(),
+        metadata: Some(metadata),
+        timestamp: None, // Will be auto-generated
+        version: 0,
         expires_at: None,
     }
 }

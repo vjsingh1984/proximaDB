@@ -32,7 +32,7 @@ use crate::storage::filesystem::FilesystemFactory;
 use crate::storage::vector::types::*;
 
 /// Filterable column configuration for server-side metadata filtering
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FilterableColumn {
     /// Column name in metadata
     pub name: String,
@@ -47,7 +47,7 @@ pub struct FilterableColumn {
 }
 
 /// Supported data types for filterable columns
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FilterableDataType {
     String,
     Integer,
@@ -123,14 +123,8 @@ pub struct ProcessedVectorRecord {
     pub extra_meta: HashMap<String, Value>,
 }
 
-/// Search result for vector similarity searches
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub id: String,
-    pub score: f32,
-    pub vector: Vec<f32>,
-    pub metadata: HashMap<String, Value>,
-}
+// NOTE: SearchResult moved to unified_types.rs to avoid duplication
+pub use crate::core::unified_types::SearchResult;
 
 /// VIPER Core Storage Engine with ML-driven clustering and Parquet optimization
 pub struct ViperCoreEngine {
@@ -1427,7 +1421,7 @@ impl VectorStorage for ViperCoreEngine {
                 Ok(OperationResult::Inserted { vector_id: record.id })
             }
             
-            VectorOperation::Update { vector_id, new_vector, new_metadata } => {
+            VectorOperation::Update { vector_id, new_vector: _, new_metadata: _ } => {
                 // TODO: Implement vector update
                 debug!("🔄 VIPER: Update operation for vector {}", vector_id);
                 Ok(OperationResult::Updated { vector_id, changes: 1 })
@@ -1451,7 +1445,7 @@ impl VectorStorage for ViperCoreEngine {
                     crate::storage::vector::types::SearchResult {
                         vector_id: r.id,
                         score: r.score,
-                        vector: Some(r.vector),
+                        vector: r.vector,
                         metadata: serde_json::Value::Object(
                             r.metadata.into_iter().collect()
                         ),

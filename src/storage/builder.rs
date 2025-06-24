@@ -61,7 +61,7 @@ pub struct DataStorageConfig {
     pub cache_size_mb: usize,
 
     /// Compaction settings
-    pub compaction_config: CompactionConfig,
+    pub compaction_config: crate::core::unified_types::CompactionConfig,
 
     /// Tiering configuration
     pub tiering_config: Option<DataTieringConfig>,
@@ -113,32 +113,8 @@ pub enum CompressionLevel {
     High,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionConfig {
-    /// Enable automatic compaction
-    pub enable_auto_compaction: bool,
-
-    /// Compaction trigger threshold (ratio of deleted data)
-    pub trigger_threshold: f32,
-
-    /// Max compaction parallelism
-    pub max_parallelism: usize,
-
-    /// Compaction strategy
-    pub strategy: CompactionStrategy,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CompactionStrategy {
-    /// Size-tiered compaction
-    SizeTiered,
-    /// Level-based compaction
-    Leveled,
-    /// Universal compaction
-    Universal,
-    /// Adaptive based on workload
-    Adaptive,
-}
+// NOTE: CompactionConfig and CompactionStrategy moved to unified_types.rs
+pub use crate::core::unified_types::{CompactionConfig, CompactionStrategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataTieringConfig {
@@ -275,11 +251,14 @@ impl Default for StorageSystemConfig {
                 segment_size: 128 * 1024 * 1024, // 128MB
                 enable_mmap: true,
                 cache_size_mb: 512,
-                compaction_config: CompactionConfig {
-                    enable_auto_compaction: true,
+                compaction_config: crate::core::unified_types::CompactionConfig {
+                    enabled: true,
+                    strategy: crate::core::unified_types::CompactionStrategy::Adaptive,
                     trigger_threshold: 0.3,
                     max_parallelism: 4,
-                    strategy: CompactionStrategy::Adaptive,
+                    target_file_size: 128 * 1024 * 1024, // 128MB
+                    min_files_to_compact: 3,
+                    max_files_to_compact: 10,
                 },
                 tiering_config: None,
             },
@@ -868,5 +847,26 @@ mod tests {
             4 * 1024 * 1024
         );
         assert!(builder.config.storage_performance.enable_zero_copy);
+    }
+}
+
+impl Default for DataStorageConfig {
+    fn default() -> Self {
+        Self {
+            data_urls: vec![],
+            layout_strategy: StorageLayoutStrategy::Viper,
+            compression: DataCompressionConfig {
+                compress_vectors: false,
+                compress_metadata: false,
+                vector_compression: VectorCompressionAlgorithm::None,
+                metadata_compression: CompressionLevel::None,
+                compression_level: 0,
+            },
+            segment_size: 64 * 1024 * 1024, // 64MB default
+            enable_mmap: true,
+            cache_size_mb: 512,
+            compaction_config: crate::core::unified_types::CompactionConfig::default(),
+            tiering_config: None,
+        }
     }
 }
