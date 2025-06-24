@@ -484,11 +484,13 @@ impl SimdCompressionEngine {
         match algorithm {
             CompressionAlgorithm::None => 0.0,
             CompressionAlgorithm::Lz4 => (data_size / 1024) as f32 * 0.1, // 10% overhead
+            CompressionAlgorithm::Lz4Hc => (data_size / 1024) as f32 * 0.12, // slightly higher overhead
             CompressionAlgorithm::Zstd { level } => {
                 (data_size / 1024) as f32 * (0.2 + (*level as f32 * 0.1))
             }
             CompressionAlgorithm::Snappy => (data_size / 1024) as f32 * 0.15,
-            CompressionAlgorithm::Snappy { .. } => (data_size / 1024) as f32 * 0.3,
+            CompressionAlgorithm::Gzip => (data_size / 1024) as f32 * 0.25,
+            CompressionAlgorithm::Deflate => (data_size / 1024) as f32 * 0.25,
         }
     }
 

@@ -30,12 +30,8 @@ pub struct SearchQuery {
     pub threshold: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResult {
-    pub id: VectorId,
-    pub score: f32,
-    pub metadata: HashMap<String, serde_json::Value>,
-}
+// NOTE: SearchResult moved to unified_types.rs to avoid duplication
+pub use crate::core::unified_types::SearchResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSearchRequest {

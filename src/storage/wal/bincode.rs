@@ -92,12 +92,16 @@ impl BincodeWalStrategy {
         // Apply compression if enabled
         if config.compression.compress_disk && serialized.len() > 128 {
             match config.compression.algorithm {
-                super::config::CompressionAlgorithm::None => Ok(serialized),
-                super::config::CompressionAlgorithm::Lz4 => {
+                crate::core::unified_types::CompressionAlgorithm::None => Ok(serialized),
+                crate::core::unified_types::CompressionAlgorithm::Lz4 => {
                     // Use LZ4 for maximum speed with reasonable compression
                     Ok(lz4_flex::compress_prepend_size(&serialized))
                 }
-                super::config::CompressionAlgorithm::Snappy => {
+                crate::core::unified_types::CompressionAlgorithm::Lz4Hc => {
+                    // Use LZ4 HC for better compression
+                    Ok(lz4_flex::compress_prepend_size(&serialized))
+                }
+                crate::core::unified_types::CompressionAlgorithm::Snappy => {
                     // Snappy for balanced performance
                     let mut compressed = Vec::new();
                     {
@@ -108,10 +112,24 @@ impl BincodeWalStrategy {
                     }
                     Ok(compressed)
                 }
-                super::config::CompressionAlgorithm::Zstd { .. } => {
+                crate::core::unified_types::CompressionAlgorithm::Gzip => {
+                    // Use gzip compression
+                    use std::io::Write;
+                    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                    encoder.write_all(&serialized).context("Gzip compression failed")?;
+                    Ok(encoder.finish().context("Gzip finish failed")?)
+                }
+                crate::core::unified_types::CompressionAlgorithm::Deflate => {
+                    // Use deflate compression
+                    use std::io::Write;
+                    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                    encoder.write_all(&serialized).context("Deflate compression failed")?;
+                    Ok(encoder.finish().context("Deflate finish failed")?)
+                }
+                crate::core::unified_types::CompressionAlgorithm::Zstd { level } => {
                     // Use Zstd for higher compression ratio
                     let compressed =
-                        zstd::bulk::compress(&serialized, 3).context("Zstd compression failed")?;
+                        zstd::bulk::compress(&serialized, level).context("Zstd compression failed")?;
                     Ok(compressed)
                 }
             }

@@ -1,0 +1,938 @@
+= ProximaDB MVP Docker Demo Guide
+ProximaDB Development Team
+:version: 0.1.0-mvp
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectlinks:
+:sectanchors:
+:source-highlighter: highlight.js
+:icons: font
+:experimental:
+
+== Overview
+
+ProximaDB is a cloud-native vector database designed for high-performance similarity search and AI applications. This guide provides comprehensive instructions for running and testing the ProximaDB MVP demo using Docker containers.
+
+=== Key Features
+
+* **Unified Dual-Protocol API**: REST (HTTP/1.1) and gRPC (HTTP/2) on the same port
+* **VIPER Storage Engine**: Vector-optimized Parquet storage with intelligent compression  
+* **AXIS Indexing**: Adaptive eXtensible Indexing System with ML-driven optimization
+* **Multi-Cloud Support**: File://, S3://, Azure Blob, Google Cloud Storage
+* **Production Ready**: Health checks, metrics, logging, and monitoring
+
+=== MVP Capabilities
+
+[cols="1,3,1"]
+|===
+|Feature |Description |Status
+
+|Collection Management |Create, list, get, delete collections |✅ Complete
+|Vector Operations |Insert, search, get, delete vectors |✅ Complete  
+|Metadata Filtering |Server-side filtering with indexing |✅ Complete
+|BERT Integration |384/768/1024 dimensional embeddings |✅ Complete
+|Health & Metrics |Comprehensive monitoring endpoints |✅ Complete
+|Persistence |Collection and vector data persistence |✅ Complete
+|===
+
+== Quick Start
+
+=== Prerequisites
+
+* Docker Engine 20.10+ or Docker Desktop
+* Docker Compose v2.0+
+* 4GB RAM (minimum), 8GB RAM (recommended)
+* Available ports: 5678 (REST), 5679 (gRPC), 9090 (metrics)
+
+=== 1. Build the Demo Container
+
+[source,bash]
+----
+# Clone the repository (if not already done)
+git clone https://github.com/your-org/proximadb.git
+cd proximadb
+
+# Build MVP demo container (recommended)
+./build-docker.sh
+
+# Or build manually
+docker build -t proximadb:mvp-demo .
+----
+
+=== 2. Run with Docker Compose (Recommended)
+
+[source,bash]
+----
+# Start the MVP demo stack
+docker-compose up -d
+
+# View logs  
+docker-compose logs -f proximadb-mvp
+
+# Check container health
+docker-compose ps
+----
+
+=== 3. Run with Docker (Standalone)
+
+[source,bash]
+----
+# Create a data volume for persistence
+docker volume create proximadb-mvp-data
+
+# Run the container
+docker run -d \
+  --name proximadb-mvp-demo \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -p 9090:9090 \
+  -v proximadb-mvp-data:/data \
+  --restart unless-stopped \
+  proximadb:mvp-demo
+
+# View logs
+docker logs proximadb-mvp-demo -f
+----
+
+=== 4. Verify Installation
+
+[source,bash]
+----
+# Check health endpoint
+curl http://localhost:5678/health
+
+# Expected response:
+# {
+#   "status": "healthy",
+#   "version": "0.1.0-mvp",
+#   "timestamp": "2025-06-24T00:00:00Z",
+#   "components": {
+#     "storage": "healthy",
+#     "indexing": "healthy", 
+#     "api": "healthy"
+#   }
+# }
+
+# List demo collections
+curl http://localhost:5678/v1/collections
+
+# Expected response:
+# {
+#   "collections": [
+#     {"name": "documents", "dimension": 384, "vectors": 0},
+#     {"name": "products", "dimension": 768, "vectors": 0}, 
+#     {"name": "images", "dimension": 512, "vectors": 0}
+#   ]
+# }
+----
+
+== Container Configurations
+
+=== Docker Build Options
+
+[cols="1,2,2,1"]
+|===
+|Build Type |Command |Purpose |Size
+
+|Standard |`./build-docker.sh` |MVP demo container |~120MB
+|Development |`./build-docker.sh --dev` |With build tools |~1.2GB
+|Production |`./build-docker.sh --prod` |Optimized binary |~110MB
+|===
+
+=== Optimization Features
+
+The optimized container includes:
+
+* **Alpine Linux Base**: Minimal 120MB runtime image
+* **Multi-stage Build**: Separate build and runtime environments
+* **Dependency Caching**: Faster rebuilds with layer optimization
+* **Signal Handling**: Graceful shutdown with dumb-init
+* **Security**: Non-root user execution
+* **Monitoring**: Built-in health checks and metrics
+
+=== Resource Requirements
+
+[cols="1,1,1,1"]
+|===
+|Deployment |Memory |CPU |Storage
+
+|Demo |512MB |0.5 cores |1GB
+|Development |2GB |2 cores |10GB
+|Production |4GB+ |4+ cores |50GB+
+|===
+
+== API Usage Examples
+
+=== Collection Management
+
+==== Create a Collection
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_documents",
+    "dimension": 384,
+    "distance_metric": "cosine",
+    "storage_engine": "viper",
+    "indexing_algorithm": "hnsw",
+    "filterable_metadata_fields": ["category", "author", "date"],
+    "config": {
+      "hnsw_m": 16,
+      "hnsw_ef_construction": 200,
+      "enable_compression": true
+    }
+  }'
+----
+
+==== List Collections
+
+[source,bash]
+----
+curl http://localhost:5678/v1/collections
+
+# Response:
+# {
+#   "collections": [
+#     {
+#       "name": "my_documents",
+#       "dimension": 384,
+#       "distance_metric": "cosine",
+#       "vectors": 0,
+#       "created_at": "2025-06-24T00:00:00Z"
+#     }
+#   ]
+# }
+----
+
+==== Get Collection Details
+
+[source,bash]
+----
+curl http://localhost:5678/v1/collections/my_documents
+
+# Response:
+# {
+#   "name": "my_documents",
+#   "dimension": 384,
+#   "distance_metric": "cosine", 
+#   "storage_engine": "viper",
+#   "indexing_algorithm": "hnsw",
+#   "vector_count": 0,
+#   "size_bytes": 0,
+#   "created_at": "2025-06-24T00:00:00Z",
+#   "config": {...}
+# }
+----
+
+=== Vector Operations
+
+==== Insert Vectors
+
+[source,bash]
+----
+# Insert a single vector
+curl -X POST http://localhost:5678/v1/collections/my_documents/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "doc_001",
+    "vector": [0.1, 0.2, 0.3, ...], # 384 dimensions
+    "metadata": {
+      "title": "Introduction to Vector Databases",
+      "author": "John Doe",
+      "category": "technical",
+      "date": "2025-06-24"
+    }
+  }'
+
+# Insert multiple vectors (batch)
+curl -X POST http://localhost:5678/v1/collections/my_documents/vectors/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": [
+      {
+        "id": "doc_002", 
+        "vector": [0.4, 0.5, 0.6, ...],
+        "metadata": {"title": "Advanced AI Techniques", "author": "Jane Smith"}
+      },
+      {
+        "id": "doc_003",
+        "vector": [0.7, 0.8, 0.9, ...], 
+        "metadata": {"title": "Machine Learning Fundamentals", "author": "Bob Wilson"}
+      }
+    ]
+  }'
+----
+
+==== Search Vectors
+
+[source,bash]
+----
+# Basic similarity search
+curl -X POST http://localhost:5678/v1/collections/my_documents/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, ...], # Query vector (384 dimensions)
+    "k": 5,
+    "include_vectors": false,
+    "include_metadata": true
+  }'
+
+# Search with metadata filtering
+curl -X POST http://localhost:5678/v1/collections/my_documents/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, ...],
+    "k": 10,
+    "filter": {
+      "category": "technical",
+      "author": {"$in": ["John Doe", "Jane Smith"]}
+    },
+    "include_vectors": true,
+    "include_metadata": true
+  }'
+
+# Response format:
+# {
+#   "results": [
+#     {
+#       "id": "doc_001",
+#       "score": 0.95,
+#       "vector": [0.1, 0.2, 0.3, ...], # if include_vectors=true
+#       "metadata": {
+#         "title": "Introduction to Vector Databases",
+#         "author": "John Doe",
+#         "category": "technical"
+#       }
+#     }
+#   ],
+#   "query_time_ms": 15
+# }
+----
+
+==== Get Vectors
+
+[source,bash]
+----
+# Get vector by ID
+curl http://localhost:5678/v1/collections/my_documents/vectors/doc_001
+
+# Get multiple vectors
+curl -X POST http://localhost:5678/v1/collections/my_documents/vectors/get \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ids": ["doc_001", "doc_002", "doc_003"],
+    "include_vectors": true
+  }'
+----
+
+==== Delete Vectors
+
+[source,bash]
+----
+# Delete single vector
+curl -X DELETE http://localhost:5678/v1/collections/my_documents/vectors/doc_001
+
+# Delete multiple vectors
+curl -X POST http://localhost:5678/v1/collections/my_documents/vectors/delete \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ids": ["doc_002", "doc_003"]
+  }'
+
+# Delete by filter (careful!)
+curl -X POST http://localhost:5678/v1/collections/my_documents/vectors/delete_by_filter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filter": {
+      "category": "outdated"
+    },
+    "dry_run": true  # Check what would be deleted first
+  }'
+----
+
+=== BERT Integration Example
+
+[source,bash]
+----
+# Using a BERT embedding service to create vectors
+# This assumes you have a BERT service running or use a library
+
+# Example with sentence-transformers (Python)
+python3 -c "
+from sentence_transformers import SentenceTransformer
+import requests
+import json
+
+# Load BERT model (384 dimensions)
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Create embeddings
+texts = [
+    'Machine learning is a subset of artificial intelligence.',
+    'Deep learning uses neural networks with multiple layers.',
+    'Natural language processing helps computers understand text.'
+]
+
+embeddings = model.encode(texts)
+
+# Insert into ProximaDB
+for i, (text, embedding) in enumerate(zip(texts, embeddings)):
+    data = {
+        'id': f'bert_doc_{i+1}',
+        'vector': embedding.tolist(),
+        'metadata': {'text': text, 'source': 'bert_example'}
+    }
+    
+    response = requests.post(
+        'http://localhost:5678/v1/collections/documents/vectors',
+        headers={'Content-Type': 'application/json'},
+        data=json.dumps(data)
+    )
+    print(f'Inserted {data[\"id\"]}: {response.status_code}')
+
+# Search for similar text
+query_text = 'What is artificial intelligence?'
+query_embedding = model.encode([query_text])[0]
+
+search_data = {
+    'vector': query_embedding.tolist(),
+    'k': 3,
+    'include_metadata': True
+}
+
+response = requests.post(
+    'http://localhost:5678/v1/collections/documents/search',
+    headers={'Content-Type': 'application/json'},
+    data=json.dumps(search_data)
+)
+
+results = response.json()
+print('Search results:')
+for result in results['results']:
+    print(f'  Score: {result[\"score\"]:.3f} - {result[\"metadata\"][\"text\"]}')
+"
+----
+
+== Testing and Validation
+
+=== Automated Test Suites
+
+The repository includes comprehensive test suites:
+
+[source,bash]
+----
+# Run Python test suite
+./docker-demo-test.py
+
+# Run shell test suite
+./docker-demo-test.sh
+
+# Run with Docker Compose
+docker-compose -f docker-compose.mvp.yml run --rm test-suite
+----
+
+=== Manual Health Checks
+
+[source,bash]
+----
+# 1. Container health
+docker ps --filter "name=proximadb-mvp"
+
+# 2. API health
+curl http://localhost:5678/health
+
+# 3. Metrics endpoint
+curl http://localhost:9090/metrics
+
+# 4. Log inspection
+docker logs proximadb-mvp-demo --tail 50
+
+# 5. Performance test
+curl -X POST http://localhost:5678/v1/collections/documents/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": '$(python3 -c "import random; print([random.random() for _ in range(384)])")'),
+    "k": 10
+  }' -w "Response time: %{time_total}s\n"
+----
+
+=== Performance Benchmarks
+
+Expected MVP performance metrics:
+
+[cols="1,1,1,1"]
+|===
+|Operation |Latency |Throughput |Memory
+
+|Vector Insert |<5ms |1000 ops/sec |10MB/1M vectors
+|Vector Search |<10ms |500 ops/sec |50MB working set
+|Collection Create |<100ms |10 ops/sec |1MB metadata
+|Health Check |<1ms |1000 ops/sec |1KB response
+|===
+
+== Monitoring and Observability
+
+=== Built-in Monitoring
+
+The demo container includes comprehensive monitoring:
+
+==== Health Endpoints
+
+[source,bash]
+----
+# Basic health check
+curl http://localhost:5678/health
+
+# Detailed health with components
+curl http://localhost:5678/health/detailed
+
+# Readiness check (for Kubernetes)
+curl http://localhost:5678/health/ready
+
+# Liveness check
+curl http://localhost:5678/health/live
+----
+
+==== Metrics Endpoints
+
+[source,bash]
+----
+# Prometheus metrics
+curl http://localhost:9090/metrics
+
+# JSON metrics
+curl http://localhost:5678/metrics
+
+# Performance metrics
+curl http://localhost:5678/metrics/performance
+
+# Storage metrics
+curl http://localhost:5678/metrics/storage
+----
+
+=== Log Management
+
+[source,bash]
+----
+# View container logs
+docker logs proximadb-mvp-demo -f
+
+# View structured logs (JSON format)
+docker logs proximadb-mvp-demo --since=1h | jq '.level,.message'
+
+# Export logs for analysis
+docker logs proximadb-mvp-demo --since=1h > proximadb-logs.json
+
+# Log inside container (persistent)
+docker exec proximadb-mvp-demo tail -f /data/logs/proximadb.log
+----
+
+=== Optional Monitoring Stack
+
+Enable full monitoring with Prometheus and Grafana:
+
+[source,bash]
+----
+# Start with monitoring stack
+docker-compose -f docker-compose.mvp.yml --profile monitoring up -d
+
+# Access Grafana dashboard
+open http://localhost:3000
+# Login: admin/admin
+
+# Access Prometheus
+open http://localhost:9091
+----
+
+== Development and Customization
+
+=== Custom Configuration
+
+==== Override Default Configuration
+
+[source,bash]
+----
+# Create custom config
+cat > custom-config.toml << EOF
+[server]
+rest_port = 8678
+grpc_port = 8679
+log_level = "debug"
+
+[storage.performance] 
+cache_size_mb = 1024
+enable_compression = true
+compression_level = 6
+
+[indexing]
+default_algorithm = "hnsw"
+hnsw_m = 32
+hnsw_ef_construction = 400
+EOF
+
+# Run with custom config
+docker run -d \
+  --name proximadb-custom \
+  -p 8678:8678 \
+  -p 8679:8679 \
+  -v $(pwd)/custom-config.toml:/opt/proximadb/config/mvp-demo.toml \
+  -v proximadb-custom-data:/data \
+  proximadb:mvp-demo
+----
+
+==== Environment Variables
+
+[source,bash]
+----
+docker run -d \
+  --name proximadb-env \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -e RUST_LOG=debug \
+  -e PROXIMADB_LOG_LEVEL=debug \
+  -e PROXIMADB_CACHE_SIZE_MB=512 \
+  -e PROXIMADB_ENABLE_COMPRESSION=true \
+  proximadb:mvp-demo
+----
+
+=== Building from Source
+
+[source,bash]
+----
+# Build development version
+docker build -f Dockerfile.optimized \
+  --target builder \
+  -t proximadb:dev .
+
+# Build with custom optimizations
+docker build -f Dockerfile.optimized \
+  --build-arg RUSTFLAGS="-C target-cpu=native -C opt-level=3" \
+  -t proximadb:optimized .
+
+# Build for production
+docker build -f Dockerfile.optimized \
+  --build-arg BUILD_TARGET=release \
+  -t proximadb:production .
+----
+
+=== Development Workflow
+
+[source,bash]
+----
+# Development with hot reload (requires source mount)
+docker run -it \
+  --name proximadb-dev \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v $(pwd):/workspace \
+  -v proximadb-dev-data:/data \
+  -w /workspace \
+  rust:1.75-slim \
+  bash -c "
+    apt-get update && apt-get install -y pkg-config libssl-dev protobuf-compiler cmake
+    cargo run --bin proximadb-server -- --config config.toml
+  "
+
+# Code formatting and linting
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  rust:1.75-slim \
+  bash -c "
+    cargo fmt --check
+    cargo clippy -- -D warnings
+    cargo test
+  "
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Container Won't Start
+
+[source,bash]
+----
+# Check Docker daemon
+systemctl status docker
+
+# Check port availability
+netstat -tlnp | grep -E '(5678|5679|9090)'
+
+# Check container logs
+docker logs proximadb-mvp-demo
+
+# Check resource usage
+docker stats proximadb-mvp-demo
+----
+
+==== API Connection Issues
+
+[source,bash]
+----
+# Verify container is running
+docker ps --filter "name=proximadb"
+
+# Check network connectivity
+docker exec proximadb-mvp-demo netstat -tlnp
+
+# Test from inside container
+docker exec proximadb-mvp-demo curl localhost:5678/health
+
+# Check firewall/iptables
+iptables -L -n | grep -E '(5678|5679)'
+----
+
+==== Performance Issues
+
+[source,bash]
+----
+# Check resource limits
+docker exec proximadb-mvp-demo cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+
+# Monitor CPU/memory usage
+docker stats proximadb-mvp-demo --no-stream
+
+# Check disk I/O
+docker exec proximadb-mvp-demo iostat -x 1 5
+
+# Analyze logs for slow queries
+docker logs proximadb-mvp-demo | grep -i "slow\|timeout\|error"
+----
+
+==== Data Persistence Issues
+
+[source,bash]
+----
+# Check volume mounts
+docker inspect proximadb-mvp-demo | jq '.[].Mounts'
+
+# Verify data directory permissions
+docker exec proximadb-mvp-demo ls -la /data
+
+# Check disk space
+docker exec proximadb-mvp-demo df -h /data
+
+# Backup data volume
+docker run --rm \
+  -v proximadb-mvp-data:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/proximadb-backup.tar.gz -C /data .
+----
+
+=== Debug Mode
+
+[source,bash]
+----
+# Run in debug mode
+docker run -it \
+  --name proximadb-debug \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -e RUST_LOG=debug \
+  -e RUST_BACKTRACE=1 \
+  proximadb:mvp-demo
+
+# Interactive debugging session
+docker exec -it proximadb-mvp-demo bash
+
+# Check process status
+docker exec proximadb-mvp-demo ps aux | grep proximadb
+
+# Network debugging
+docker exec proximadb-mvp-demo netstat -tlnp
+docker exec proximadb-mvp-demo ss -tlnp
+----
+
+=== Log Analysis
+
+[source,bash]
+----
+# Extract error logs
+docker logs proximadb-mvp-demo 2>&1 | grep -i error
+
+# Monitor real-time logs with filtering
+docker logs proximadb-mvp-demo -f | grep -E "(ERROR|WARN|search|insert)"
+
+# Export logs for support
+docker logs proximadb-mvp-demo --since=24h > proximadb-debug.log
+
+# Analyze performance from logs
+docker logs proximadb-mvp-demo | grep -o 'took [0-9]*ms' | sort -n
+----
+
+== Production Deployment
+
+=== Docker Swarm
+
+[source,yaml]
+----
+# docker-stack.yml
+version: '3.8'
+
+services:
+  proximadb:
+    image: proximadb:mvp-demo
+    ports:
+      - "5678:5678"
+      - "5679:5679" 
+    volumes:
+      - proximadb-data:/data
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    networks:
+      - proximadb-network
+
+volumes:
+  proximadb-data:
+    driver: local
+
+networks:
+  proximadb-network:
+    driver: overlay
+----
+
+[source,bash]
+----
+# Deploy to swarm
+docker stack deploy -c docker-stack.yml proximadb-stack
+
+# Scale service
+docker service scale proximadb-stack_proximadb=5
+
+# Update service
+docker service update --image proximadb:v0.2.0 proximadb-stack_proximadb
+----
+
+=== Kubernetes
+
+[source,yaml]
+----
+# k8s-deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proximadb-mvp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb:mvp-demo
+        ports:
+        - containerPort: 5678
+        - containerPort: 5679
+        env:
+        - name: RUST_LOG
+          value: "info"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi" 
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5678
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 5678
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: proximadb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proximadb-service
+spec:
+  selector:
+    app: proximadb
+  ports:
+  - name: rest
+    port: 5678
+    targetPort: 5678
+  - name: grpc
+    port: 5679
+    targetPort: 5679
+  type: LoadBalancer
+----
+
+=== Security Considerations
+
+[source,bash]
+----
+# Run security scan
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy image proximadb:mvp-demo
+
+# Check for vulnerabilities
+docker run --rm \
+  -v $(pwd):/workspace \
+  securecodewarrior/docker-security-checker \
+  /workspace/Dockerfile.optimized
+
+# Network security
+docker run --rm --net container:proximadb-mvp-demo \
+  nicolaka/netshoot nmap -sT localhost
+
+# Runtime security
+docker run --rm --pid container:proximadb-mvp-demo \
+  --cap-add SYS_PTRACE \
+  alpine ps aux
+----
+
+== Conclusion
+
+This comprehensive Docker demo guide provides everything needed to run, test, and deploy ProximaDB MVP in containerized environments. The optimized containers and configurations ensure reliable performance for development, testing, and production use cases.
+
+=== Next Steps
+
+1. **Explore API Features**: Try the complete REST and gRPC APIs
+2. **Performance Testing**: Run benchmarks with your data
+3. **Integration**: Connect with your AI/ML pipelines  
+4. **Scaling**: Deploy in production with orchestration
+5. **Monitoring**: Set up comprehensive observability
+
+=== Support and Resources
+
+* **Documentation**: https://docs.proximadb.io
+* **API Reference**: http://localhost:5678/docs (when running)
+* **GitHub Issues**: https://github.com/your-org/proximadb/issues
+* **Community**: https://discord.gg/proximadb
+* **Commercial Support**: support@proximadb.io
+
+---
+
+_ProximaDB MVP Docker Demo v0.1.0 - Built with ❤️ for the AI community_

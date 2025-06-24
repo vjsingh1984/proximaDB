@@ -441,13 +441,13 @@ mod tests {
     #[test]
     fn test_http_server_builder() {
         let config = RestHttpServerBuilder::new()
-            .bind_address("127.0.0.1:8080".parse().unwrap())
+            .bind_address("127.0.0.1:8080".parse::<std::net::SocketAddr>().unwrap())
             .enable_rest(true)
             .enable_dashboard(false)
             .build()
             .unwrap();
 
-        assert_eq!(config.bind_address.port(), 8080);
+        assert_eq!(config.port, 8080);
         assert!(config.enable_rest);
         assert!(!config.enable_dashboard);
     }
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn test_grpc_server_builder() {
         let config = GrpcHttpServerBuilder::new()
-            .bind_address("127.0.0.1:9090".parse().unwrap())
+            .bind_address("127.0.0.1:9090".parse::<std::net::SocketAddr>().unwrap())
             .max_message_size(8 * 1024 * 1024)
             .enable_reflection(false)
             .build()
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_development_config() {
         let config = MultiServerBuilder::development().unwrap();
-        assert_eq!(config.http_config.bind_address.port(), 5678);
+        assert_eq!(config.http_config.port, 5678);
         assert_eq!(config.grpc_config.bind_address.port(), 5680);
         assert!(!config.http_config.is_tls_enabled());
         assert!(!config.grpc_config.is_tls_enabled());

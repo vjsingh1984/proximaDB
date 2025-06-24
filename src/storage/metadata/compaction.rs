@@ -27,11 +27,12 @@ use crate::storage::metadata::backends::filestore_backend::{
     COLLECTION_AVRO_SCHEMA,
 };
 
-/// Compaction configuration
+// NOTE: Using unified CompactionConfig from unified_types.rs
+// This specific metadata compaction config extends the base config
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
-    /// Enable automatic compaction
-    pub enabled: bool,
+pub struct MetadataCompactionConfig {
+    /// Base compaction configuration
+    pub base: crate::core::unified_types::CompactionConfig,
     /// Maximum number of incremental operations before triggering compaction
     pub max_incremental_operations: usize,
     /// Maximum size of incremental logs before triggering compaction (bytes)
@@ -42,10 +43,10 @@ pub struct CompactionConfig {
     pub compress_snapshots: bool,
 }
 
-impl Default for CompactionConfig {
+impl Default for MetadataCompactionConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            base: crate::core::unified_types::CompactionConfig::default(),
             max_incremental_operations: 1000,
             max_incremental_size_bytes: 100 * 1024 * 1024, // 100MB
             keep_snapshots: 5,
@@ -69,7 +70,7 @@ pub struct CompactionStats {
 
 /// Compaction manager for filestore backend
 pub struct FilestoreCompactionManager {
-    config: CompactionConfig,
+    config: MetadataCompactionConfig,
     filesystem: Arc<FilesystemFactory>,
     filestore_url: String,
     metadata_path: PathBuf,
@@ -79,7 +80,7 @@ pub struct FilestoreCompactionManager {
 impl FilestoreCompactionManager {
     /// Create new compaction manager
     pub fn new(
-        config: CompactionConfig,
+        config: MetadataCompactionConfig,
         filesystem: Arc<FilesystemFactory>,
         filestore_url: String,
     ) -> Self {
@@ -94,7 +95,7 @@ impl FilestoreCompactionManager {
 
     /// Check if compaction is needed
     pub async fn needs_compaction(&self) -> Result<bool> {
-        if !self.config.enabled {
+        if !self.config.base.enabled {
             return Ok(false);
         }
 
@@ -469,8 +470,8 @@ mod tests {
 
     #[test]
     fn test_compaction_config_defaults() {
-        let config = CompactionConfig::default();
-        assert!(config.enabled);
+        let config = MetadataCompactionConfig::default();
+        assert!(config.base.enabled);
         assert_eq!(config.max_incremental_operations, 1000);
         assert_eq!(config.keep_snapshots, 5);
         assert!(config.compress_snapshots);

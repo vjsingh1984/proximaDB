@@ -525,19 +525,19 @@ impl ViperCompactionEngine {
         let avg_file_size_kb = total_size_kb / file_count;
 
         // Apply MVP trigger logic:
-        // Compaction triggers when: file_count > min_files_for_compaction AND avg_size < max_avg_file_size_kb
+        // Compaction triggers when: file_count > min_files_to_compact AND avg_size < target_file_size
         let needs_compaction = compaction_config.enabled
-            && file_count > compaction_config.min_files_for_compaction
-            && avg_file_size_kb < compaction_config.max_avg_file_size_kb;
+            && file_count > compaction_config.min_files_to_compact
+            && avg_file_size_kb < (compaction_config.target_file_size / 1024) as usize;
 
         if needs_compaction {
             tracing::info!(
                 "🔄 Compaction triggered for collection {}: {} files (>{}) with avg size {}KB (<{}KB)",
                 collection_id,
                 file_count,
-                compaction_config.min_files_for_compaction,
+                compaction_config.min_files_to_compact,
                 avg_file_size_kb,
-                compaction_config.max_avg_file_size_kb
+                compaction_config.target_file_size / 1024
             );
         }
 
@@ -550,8 +550,8 @@ impl ViperCompactionEngine {
             ),
             collection_id: collection_id.clone(),
             compaction_type: CompactionType::FileMerging {
-                target_file_size_mb: compaction_config.target_file_size_mb,
-                max_files_per_merge: compaction_config.max_files_per_compaction,
+                target_file_size_mb: (compaction_config.target_file_size / (1024 * 1024)) as usize,
+                max_files_per_merge: compaction_config.max_files_to_compact,
             },
             priority: if needs_compaction {
                 CompactionPriority::High
@@ -560,7 +560,7 @@ impl ViperCompactionEngine {
             },
             input_partitions: Vec::new(), // TODO: Populate with actual file list
             expected_outputs: (file_count as f32
-                / compaction_config.max_files_per_compaction as f32)
+                / compaction_config.max_files_to_compact as f32)
                 .ceil() as usize,
             optimization_hints: Some(CompactionOptimizationHints {
                 partition_suggestions: Vec::new(),
