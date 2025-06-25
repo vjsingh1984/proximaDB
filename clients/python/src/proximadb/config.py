@@ -21,7 +21,7 @@ from typing import Dict, Optional, Union
 from urllib.parse import urlparse
 from enum import Enum
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class Protocol(str, Enum):
@@ -120,10 +120,9 @@ class ClientConfig(BaseModel):
     auto_convert_numpy: bool = True
     default_batch_size: int = Field(default=1000, ge=1, le=10000)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
     
-    @validator('url')
+    @field_validator('url')
     def validate_url(cls, v: str) -> str:
         """Validate and normalize URL"""
         if not v:
@@ -143,7 +142,7 @@ class ClientConfig(BaseModel):
         
         return v
     
-    @validator('api_key')
+    @field_validator('api_key')
     def validate_api_key(cls, v: Optional[str]) -> Optional[str]:
         """Validate API key format"""
         if v and len(v) < 10:

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod metadata_lifecycle_tests {
     use super::*;
+    use crate::measure_performance;
 
     #[tokio::test]
     async fn test_filterable_column_configuration() -> Result<()> {

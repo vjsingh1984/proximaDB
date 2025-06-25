@@ -32,7 +32,7 @@ test-integration:
 
 test-python:
 	@echo "🐍 Running Python tests..."
-	cd tests/python && python -m pytest -v
+	cd tests/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v
 
 test-python-install:
 	@echo "📦 Installing Python test dependencies..."

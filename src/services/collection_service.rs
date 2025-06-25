@@ -321,11 +321,35 @@ impl Default for CollectionServiceBuilder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_collection_validation() {
-        let service = CollectionService {
-            metadata_backend: Arc::new(todo!("Mock metadata backend")),
+    #[tokio::test]
+    async fn test_collection_validation() {
+        // Use filestore backend with temporary directory for testing
+        use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
+        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use tempfile::TempDir;
+        
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        
+        let filestore_config = FilestoreMetadataConfig {
+            filestore_url: temp_path.clone(),
+            enable_compression: false,
+            enable_backup: false,
+            enable_snapshot_archival: false,
+            max_archived_snapshots: 1,
+            temp_directory: None,
         };
+        
+        let filesystem_config = FilesystemConfig::default();
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(filesystem_config).await.unwrap()
+        );
+        
+        let backend = Arc::new(
+            FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await.unwrap()
+        );
+        
+        let service = CollectionService::new(backend);
 
         // Valid config
         let valid_config = CollectionConfig {

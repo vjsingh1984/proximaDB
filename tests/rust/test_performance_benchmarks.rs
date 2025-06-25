@@ -3,10 +3,12 @@
 use super::common::*;
 use anyhow::Result;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 #[cfg(test)]
 mod performance_tests {
     use super::*;
+    use crate::measure_performance;
 
     #[tokio::test]
     async fn test_vector_insertion_performance() -> Result<()> {
@@ -62,7 +64,10 @@ mod performance_tests {
                 {
                     let mut results = Vec::new();
                     for _ in 0..num_calculations {
-                        let sim = proximadb::compute::distance::cosine_similarity(&vec1, &vec2);
+                        let calculator = proximadb::compute::distance::create_distance_calculator(
+                            proximadb::compute::distance::DistanceMetric::Cosine
+                        );
+                        let sim = calculator.distance(&vec1, &vec2);
                         results.push(sim);
                     }
                     results
@@ -71,9 +76,9 @@ mod performance_tests {
             
             assert_eq!(similarities.len(), num_calculations);
             
-            // All similarities should be valid
-            for sim in similarities {
-                assert!(sim >= -1.0 && sim <= 1.0);
+            // All distances should be valid (0 to 2 for cosine distance)
+            for distance in similarities {
+                assert!(distance >= 0.0 && distance <= 2.0);
             }
             
             // Performance expectations (calculations per second)
@@ -195,7 +200,10 @@ mod performance_tests {
                     let mut similarities = Vec::new();
                     for i in 0..dataset_size {
                         let candidate_vector = generate_random_vector(384);
-                        let sim = proximadb::compute::distance::cosine_similarity(&query_vector, &candidate_vector);
+                        let calculator = proximadb::compute::distance::create_distance_calculator(
+                            proximadb::compute::distance::DistanceMetric::Cosine
+                        );
+                        let sim = calculator.distance(&query_vector, &candidate_vector);
                         similarities.push((i, sim));
                     }
                     
@@ -220,7 +228,10 @@ mod performance_tests {
                     let mut similarities = Vec::new();
                     for i in 0..filtered_size {
                         let candidate_vector = generate_random_vector(384);
-                        let sim = proximadb::compute::distance::cosine_similarity(&query_vector, &candidate_vector);
+                        let calculator = proximadb::compute::distance::create_distance_calculator(
+                            proximadb::compute::distance::DistanceMetric::Cosine
+                        );
+                        let sim = calculator.distance(&query_vector, &candidate_vector);
                         similarities.push((i, sim));
                     }
                     

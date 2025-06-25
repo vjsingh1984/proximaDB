@@ -1,11 +1,8 @@
 //! Common utilities for integration tests
 
-use anyhow::Result;
 use std::sync::Once;
 use tokio::sync::Mutex;
-use proximadb::core::{CollectionId};
-use proximadb::schema_types::VectorRecord;
-use proximadb::schema_types::{CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm};
+use proximadb::core::{VectorRecord, CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -15,9 +12,8 @@ static SERVER_LOCK: Mutex<()> = Mutex::const_new(());
 /// Initialize test environment
 pub fn init_test_env() {
     INIT.call_once(|| {
-        env_logger::builder()
-            .filter_level(env_logger::LevelFilter::Info)
-            .init();
+        // Simple test initialization - logging setup would go here
+        println!("🧪 Test environment initialized");
     });
 }
 
@@ -40,13 +36,18 @@ pub fn create_test_collection_config(name: String, dimension: i32) -> Collection
             "doc_type".to_string(),
         ],
         indexing_config: HashMap::new(),
+        filterable_columns: vec![
+            "category".to_string(),
+            "author".to_string(),
+            "doc_type".to_string(),
+        ],
     }
 }
 
 /// Create test vector record
 pub fn create_test_vector_record(
     id: String,
-    _collection_id: String,
+    collection_id: String,
     dimension: usize,
 ) -> VectorRecord {
     let vector: Vec<f32> = (0..dimension)
@@ -59,14 +60,7 @@ pub fn create_test_vector_record(
     metadata.insert("doc_type".to_string(), serde_json::Value::String("unit_test".to_string()));
     metadata.insert("test_id".to_string(), serde_json::Value::String(id.clone()));
     
-    VectorRecord {
-        id: Some(id),
-        vector,
-        metadata: Some(metadata),
-        timestamp: None, // Will be auto-generated
-        version: 0,
-        expires_at: None,
-    }
+    VectorRecord::new(id, collection_id, vector, metadata)
 }
 
 /// Create batch of test vector records

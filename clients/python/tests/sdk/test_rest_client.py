@@ -7,7 +7,7 @@ Tests the new REST client implementation against the documented API.
 import json
 import numpy as np
 import traceback
-from clients.python.src.proximadb.rest_client import ProximaDBRestClient
+from proximadb.rest_client import ProximaDBRestClient
 import hashlib
 
 def generate_client_id():
@@ -40,7 +40,7 @@ def test_rest_client():
         
         # 3. Create Collection
         print("\n3️⃣ Testing Collection Creation...")
-        from clients.python.src.proximadb.models import CollectionConfig
+        from proximadb.models import CollectionConfig
         
         config = CollectionConfig(
             dimension=4,
