@@ -27,8 +27,8 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::core::{CollectionId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::core::{CollectionId, VectorRecord, SearchResult};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::vector::types::*;
 
 /// Filterable column configuration for server-side metadata filtering
@@ -123,8 +123,7 @@ pub struct ProcessedVectorRecord {
     pub extra_meta: HashMap<String, Value>,
 }
 
-// NOTE: SearchResult moved to unified_types.rs to avoid duplication
-pub use crate::core::SearchResult;
+// NOTE: SearchResult moved to avro_unified.rs - use from crate::core (re-exported there)
 
 /// VIPER Core Storage Engine with ML-driven clustering and Parquet optimization
 pub struct ViperCoreEngine {
@@ -1447,7 +1446,7 @@ impl VectorStorage for ViperCoreEngine {
                         score: r.score,
                         vector: r.vector,
                         metadata: serde_json::Value::Object(
-                            r.metadata.into_iter().collect()
+                            r.metadata.into_iter().collect::<serde_json::Map<String, serde_json::Value>>()
                         ),
                         debug_info: None,
                         storage_info: None,

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, warn, debug};
 
-use crate::storage::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::metadata::backends::filestore_backend::{
     CollectionRecord, IncrementalOperation, OperationType,
     COLLECTION_AVRO_SCHEMA,

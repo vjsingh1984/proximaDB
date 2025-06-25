@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use super::config::TTLConfig;
 use super::types::{PartitionId, PartitionMetadata};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// TTL cleanup service for automatic vector expiration
 #[derive(Debug)]

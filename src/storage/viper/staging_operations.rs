@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 
 use crate::core::VectorRecord;
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Staging operations coordinator for optimal Parquet operations
 pub struct StagingOperationsCoordinator {

@@ -1,5 +1,19 @@
-//! Unified Types for ProximaDB
+//! DEPRECATED: Unified Types for ProximaDB
 //! 
+//! ⚠️  WARNING: This module is OBSOLETE and will be removed in a future version.
+//! All unified type definitions have been migrated to `crate::core::avro_unified` with
+//! proper Avro schema support for zero-copy serialization and schema evolution.
+//! 
+//! ## Migration Path
+//! - Use `crate::core::avro_unified::CompressionAlgorithm` instead of `CompressionAlgorithm`
+//! - Use `crate::core::avro_unified::SearchResult` instead of `SearchResult` 
+//! - Use `crate::core::avro_unified::CompactionConfig` instead of `CompactionConfig`
+//! - Use `crate::core::avro_unified::DistanceMetric` instead of `DistanceMetric`
+//! - All other types are available in `avro_unified` with better schema evolution support
+//!
+//! ## Removal Timeline
+//! This file will be removed once all references are migrated to avro_unified types.
+//!
 //! This module consolidates duplicate type definitions found across the codebase.
 //! It serves as the single source of truth for core data structures.
 

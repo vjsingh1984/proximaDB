@@ -43,7 +43,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::proto::proximadb::CollectionConfig;
-use crate::storage::filesystem::{FilesystemFactory, atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory, AtomicWriteConfig}};
+use crate::storage::persistence::filesystem::{FilesystemFactory, atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory, AtomicWriteConfig}};
 use crate::storage::metadata::single_index::{SingleCollectionIndex, SingleIndexMetrics};
 
 /// Canonical Avro schema for collection metadata - tightly coupled to filestore backend
@@ -311,6 +311,7 @@ pub struct FilestoreMetadataBackend {
     single_index: SingleCollectionIndex,
     
     // Atomic write executor for robust persistence
+    #[allow(dead_code)]
     atomic_writer: Box<dyn AtomicWriteExecutor>,
     
     // Recovery lock - blocks all API operations during recovery
@@ -322,6 +323,20 @@ pub struct FilestoreMetadataBackend {
     // Avro schemas
     collection_schema: Schema,
     operation_schema: Schema,
+}
+
+impl std::fmt::Debug for FilestoreMetadataBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilestoreMetadataBackend")
+            .field("config", &self.config)
+            .field("filestore_url", &self.filestore_url)
+            .field("metadata_path", &self.metadata_path)
+            .field("single_index", &self.single_index)
+            .field("atomic_writer", &"<AtomicWriteExecutor>")
+            .field("recovery_lock", &"<RwLock>")
+            .field("sequence_counter", &self.sequence_counter)
+            .finish()
+    }
 }
 
 impl FilestoreMetadataBackend {
@@ -605,9 +620,9 @@ impl FilestoreMetadataBackend {
     }
     
     /// Fast atomic write using pre-computed write strategy (performance optimized)
-    async fn write_atomically(&self, fs: &dyn crate::storage::filesystem::FileSystem, 
+    async fn write_atomically(&self, fs: &dyn crate::storage::persistence::filesystem::FileSystem, 
                              final_path: &std::path::Path, data: &[u8]) -> Result<()> {
-        use crate::storage::filesystem::write_strategy::{WriteStrategyFactory};
+        use crate::storage::persistence::filesystem::write_strategy::{WriteStrategyFactory};
         
         // Create metadata-optimized write strategy (computed once, not per write)
         let strategy = WriteStrategyFactory::create_metadata_strategy(fs, self.config.temp_directory.as_deref())?;

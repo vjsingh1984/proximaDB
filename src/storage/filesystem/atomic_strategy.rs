@@ -324,11 +324,8 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         let data_to_write = self.compress_data(data).await?;
         
         // Write to local temp file first
-        let local_fs = crate::storage::filesystem::local::LocalFileSystem::new(
-            crate::storage::filesystem::local::LocalConfig::default()
-        ).await?;
-        
-        local_fs.write(&local_temp_path.to_string_lossy(), &data_to_write, None).await?;
+        std::fs::write(&local_temp_path, &data_to_write)
+            .map_err(|e| FilesystemError::Io(e))?;
         
         // Atomic flush to cloud storage
         let cloud_data = if self.enable_compression {
@@ -346,7 +343,7 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         }
         
         // Cleanup local temp file
-        local_fs.delete(&local_temp_path.to_string_lossy()).await.ok();
+        std::fs::remove_file(&local_temp_path).ok();
         
         Ok(())
     }

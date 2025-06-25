@@ -17,7 +17,7 @@ use crate::storage::StorageEngine;
 use crate::services::collection_service::CollectionService;
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 #[derive(Debug, Clone)]
@@ -314,7 +314,7 @@ impl SharedServices {
                                       config.storage_url.starts_with("adls://") {
                 info!("☁️ SharedServices: Configuring cloud filesystem for metadata");
                 // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
-                crate::storage::filesystem::FilesystemConfig::default()
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
             } else {
                 info!("📁 SharedServices: Configuring local filesystem for metadata");
                 
@@ -328,7 +328,7 @@ impl SharedServices {
                 
                 info!("📂 SharedServices: Setting local filesystem root_dir to: {:?}", base_path);
                 
-                let mut fs_config = crate::storage::filesystem::FilesystemConfig::default();
+                let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
                 if let Some(ref mut local_config) = fs_config.local {
                     local_config.root_dir = base_path;
                 }
@@ -338,7 +338,7 @@ impl SharedServices {
             (filestore_config, filesystem_config)
         } else {
             info!("📂 SharedServices: Using default metadata configuration");
-            (FilestoreMetadataConfig::default(), crate::storage::filesystem::FilesystemConfig::default())
+            (FilestoreMetadataConfig::default(), crate::storage::persistence::filesystem::FilesystemConfig::default())
         };
         
         info!("📁 SharedServices: Unified metadata backend URL: {}", filestore_config.filestore_url);
@@ -362,7 +362,7 @@ impl SharedServices {
         };
         
         let vector_service = Arc::new(
-            UnifiedAvroService::with_existing_wal(storage.clone(), wal_manager, avro_config).await?
+            UnifiedAvroService::with_existing_wal(storage.clone(), wal_manager, collection_service.clone(), avro_config).await?
         );
         
         // CRITICAL: Restore collection metadata from WAL during startup

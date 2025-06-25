@@ -33,7 +33,7 @@ use super::ttl::TTLCleanupService;
 use super::types::*;
 use super::ViperConfig;
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::CompressionAlgorithm;
 
 /// Calculate sparsity ratio for a vector (standalone function)
@@ -78,7 +78,8 @@ pub struct ViperStorageEngine {
     atomic_operations: Arc<super::atomic_operations::AtomicOperationsFactory>,
 }
 
-/// Collection metadata in VIPER
+/// DEPRECATED: Collection metadata in VIPER
+/// ⚠️  This struct is OBSOLETE - use crate::core::avro_unified::Collection instead
 #[derive(Debug, Clone)]
 pub struct CollectionMetadata {
     pub collection_id: CollectionId,

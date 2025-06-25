@@ -12,7 +12,7 @@
 //! - Cloud authentication setup
 //! - MMAP-optimized local storage
 
-use proximadb::storage::filesystem::{AuthConfig, AwsAuthMethod, AzureAuthMethod, GcsAuthMethod};
+use proximadb::storage::persistence::filesystem::{AuthConfig, AwsAuthMethod, AzureAuthMethod, GcsAuthMethod};
 use proximadb::storage::wal::{CompressionLevel, WalFormat, WalSystemBuilder};
 use proximadb::storage::{
     builder::StorageLayoutStrategy, FilesystemConfig, FilesystemPerformanceConfig,
@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         enable_keep_alive: true,
         request_timeout_seconds: 60,
         enable_compression: true,
-        retry_config: proximadb::storage::filesystem::RetryConfig {
+        retry_config: proximadb::storage::persistence::filesystem::RetryConfig {
             max_retries: 5,
             initial_delay_ms: 100,
             max_delay_ms: 10000,

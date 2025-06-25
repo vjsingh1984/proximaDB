@@ -16,7 +16,7 @@ use crate::proto::proximadb::{
 };
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::services::collection_service::CollectionService;
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
 use crate::schema_types::{
     VectorRecord as SchemaVectorRecord,
@@ -57,17 +57,18 @@ impl ProximaDbGrpcService {
             storage_ref.get_wal_manager()
         };
         
+        // Create CollectionService with configured metadata backend
+        let collection_service = Self::create_collection_service(metadata_config).await;
+        
         // Create UnifiedAvroService with shared WAL manager
         let avro_service = Arc::new(
             crate::services::unified_avro_service::UnifiedAvroService::with_existing_wal(
                 storage, 
                 wal_manager,
+                collection_service.clone(),
                 avro_config
             ).await.expect("Failed to create UnifiedAvroService")
         );
-        
-        // Create CollectionService with configured metadata backend
-        let collection_service = Self::create_collection_service(metadata_config).await;
         
         Self { 
             avro_service,
@@ -99,16 +100,16 @@ impl ProximaDbGrpcService {
                                       config.storage_url.starts_with("adls://") {
                 info!("☁️ Detected cloud storage URL, configuring cloud filesystem");
                 // TODO: Configure cloud-specific filesystem settings
-                crate::storage::filesystem::FilesystemConfig::default()
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
             } else {
                 info!("📁 Using local filesystem configuration");
-                crate::storage::filesystem::FilesystemConfig::default()
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
             };
             
             (filestore_config, filesystem_config)
         } else {
             info!("📂 Using default metadata backend configuration");
-            (FilestoreMetadataConfig::default(), crate::storage::filesystem::FilesystemConfig::default())
+            (FilestoreMetadataConfig::default(), crate::storage::persistence::filesystem::FilesystemConfig::default())
         };
         
         info!("📁 Filestore URL: {}", filestore_config.filestore_url);

@@ -1,3 +1,17 @@
+//! DEPRECATED: Legacy type definitions
+//! 
+//! ⚠️  WARNING: This module is OBSOLETE and will be removed in a future version.
+//! All type definitions have been migrated to `crate::core::avro_unified`.
+//! 
+//! ## Migration Path
+//! - Use `crate::core::avro_unified::VectorRecord` instead of `VectorRecord`
+//! - Use `crate::core::avro_unified::SearchResult` instead of `SearchResult`
+//! - Use `crate::core::avro_unified::Collection` instead of `Collection`
+//! - All other types are available in `avro_unified` with improved schema evolution support
+//!
+//! ## Removal Timeline
+//! This file will be removed once all references are migrated to avro_unified types.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 // use uuid::Uuid; // Unused import - using String for IDs now
@@ -30,8 +44,7 @@ pub struct SearchQuery {
     pub threshold: Option<f32>,
 }
 
-// NOTE: SearchResult moved to unified_types.rs to avoid duplication
-pub use crate::core::SearchResult;
+// NOTE: SearchResult moved to avro_unified.rs - no longer needed here
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSearchRequest {

@@ -71,7 +71,28 @@ pub struct ProximaDB {
 impl ProximaDB {
     pub async fn new(config: core::Config) -> Result<Self> {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
-        let storage_engine = storage::StorageEngine::new(config.storage.clone()).await?;
+        
+        // Create collection service
+        use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
+        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use crate::services::collection_service::CollectionService;
+        
+        let filestore_config = FilestoreMetadataConfig::default();
+        let filesystem_config = FilesystemConfig::default();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(filesystem_config).await
+                .map_err(|e| format!("Failed to create filesystem factory: {}", e))?
+        );
+        
+        let filestore_backend = Arc::new(
+            FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await
+                .map_err(|e| format!("Failed to create filestore backend: {}", e))?
+        );
+        
+        let collection_service = Arc::new(CollectionService::new(filestore_backend));
+        
+        let storage_engine = storage::StorageEngine::new(config.storage.clone(), collection_service).await?;
         tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
 

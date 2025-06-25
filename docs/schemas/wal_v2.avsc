@@ -1,0 +1,31 @@
+{
+  "type": "record",
+  "name": "WalEntry",
+  "namespace": "ai.proximadb.wal",
+  "fields": [
+    {"name": "schema_version", "type": "int"},
+    {"name": "sequence", "type": "long"},
+    {"name": "timestamp", "type": "string"},
+    {"name": "entry_type", "type": "string"},
+    {"name": "collection_id", "type": ["null", "string"], "default": null},
+    {"name": "vector_record", "type": ["null", {
+      "type": "record",
+      "name": "VectorRecord",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "vector", "type": {"type": "array", "items": "float"}},
+        {"name": "metadata", "type": "string"},
+        {"name": "timestamp", "type": "string"},
+        {"name": "source_stream", "type": ["null", "string"], "default": null},
+        {"name": "batch_id", "type": ["null", "string"], "default": null}
+      ]
+    }], "default": null},
+    {"name": "vector_id", "type": ["null", "string"], "default": null},
+    {"name": "viper_data", "type": ["null", "string"], "default": null},
+    {"name": "checkpoint_sequence", "type": ["null", "long"], "default": null},
+    {"name": "stream_data", "type": ["null", "string"], "default": null},
+    {"name": "metadata_index_data", "type": ["null", "string"], "default": null},
+    {"name": "batch_data", "type": ["null", "string"], "default": null}
+  ]
+}
+EOF < /dev/null
