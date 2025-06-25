@@ -25,7 +25,7 @@ use super::{
     MetadataStoreInterface, SystemMetadata,
 };
 use crate::core::CollectionId;
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::strategy::CollectionStrategyConfig;
 
 /// Transaction identifier

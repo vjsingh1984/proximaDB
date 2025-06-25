@@ -30,7 +30,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use crate::core::{CollectionId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
 pub struct ViperPipeline {

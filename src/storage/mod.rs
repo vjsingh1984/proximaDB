@@ -1,30 +1,67 @@
+// =============================================================================
+// ORGANIZED STORAGE MODULE STRUCTURE
+// =============================================================================
+
 pub mod builder;
+pub mod validation;
+pub mod traits;
+
+// Core storage engines (organized)
+pub mod engines;
+
+// Data persistence layer (organized)
+pub mod persistence;
+
+// Legacy modules (being reorganized)
+#[deprecated(note = "Use engines/lsm/ instead")]
+pub mod lsm;
+#[deprecated(note = "Use persistence/filesystem/ instead")]
+pub mod filesystem;
+#[deprecated(note = "Use persistence/disk_manager/ instead")]
 pub mod disk_manager;
+#[deprecated(note = "Use persistence/wal/ instead")]
+pub mod wal;
+#[deprecated(note = "Use engines/viper/ instead")]
+pub mod viper;
+
+// Other legacy modules
 pub mod encoding;
 pub mod engine;
-pub mod filesystem;
-pub mod lsm;
 pub mod mmap;
 pub mod tiered;
-pub mod validation;
-// Comprehensive WAL system with strategy pattern
 pub mod atomicity;
 pub mod memtable;
 pub mod metadata;
-pub mod search;      // 🚨 OBSOLETE: Use vector/search/ instead (Phase 1.2)
-pub mod search_index; // 🚨 OBSOLETE: Use vector/indexing/ instead (Phase 2)
+#[deprecated(note = "Use indexing/ instead")]
+pub mod search_index;
+#[deprecated(note = "Use query/ instead")]
+pub mod search;
 pub mod strategy;
-// pub mod unified_engine;  // MOVED: obsolete/storage/unified_engine.rs
-pub mod viper;       // 🚨 OBSOLETE: Use vector/engines/viper.rs instead (Phase 4)
-pub mod wal;
 
 // 🔥 NEW: Unified Vector Storage System (Phase 1-4 Consolidation)
 pub mod vector;
 
+// Main exports from organized structure
 pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
-pub use engine::StorageEngine;
-pub use filesystem::{FilesystemConfig, FilesystemFactory};
 pub use validation::ConfigValidator;
+
+// Strategy pattern exports
+pub use traits::{
+    UnifiedStorageEngine, StorageEngineStrategy,
+    FlushParameters, CompactionParameters,
+    FlushResult as TraitFlushResult, CompactionResult,
+    EngineStatistics, EngineHealth
+};
+
+// Engine exports
+pub use engines::{lsm::LsmTree, viper::ViperCoreEngine};
+
+// Persistence exports  
+pub use persistence::{FilesystemConfig, FilesystemFactory, DiskManager};
+
+// Legacy exports (deprecated)
+#[deprecated(note = "Use engines directly instead")]
+pub use engine::StorageEngine;
 // WAL system exports
 use crate::core::StorageError;
 pub use atomicity::{
@@ -66,12 +103,12 @@ pub use viper::ViperSchemaFactory;
     note = "Use unified vector storage configuration from `proximadb::storage::vector` instead"
 )]
 pub use viper::{
-    FlushResult, SearchStrategy, VectorRecordProcessor, VectorRecordSchemaAdapter, ViperConfig,
+    FlushResult as ViperFlushResult, SearchStrategy, VectorRecordProcessor, VectorRecordSchemaAdapter, ViperConfig,
     ViperSchemaBuilder, ViperSchemaStrategy,
 };
-pub use wal::avro::AvroWalStrategy;
-pub use wal::bincode::BincodeWalStrategy;
-pub use wal::{WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy};
+pub use persistence::wal::avro::AvroWalStrategy;
+pub use persistence::wal::bincode::BincodeWalStrategy;
+pub use persistence::wal::{WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy};
 
 // 🔥 NEW: Unified Vector Storage System Exports
 // TODO: Re-enable after fixing compilation issues

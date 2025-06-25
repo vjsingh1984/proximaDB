@@ -5,9 +5,10 @@ use crate::storage::{
     disk_manager::DiskManager,
     lsm::{CompactionManager, LsmTree},
     mmap::MmapReader,
-    WalConfig, WalManager,
+    CollectionMetadata,
 };
 use crate::services::collection_service::CollectionService;
+use crate::storage::persistence::wal::{WalConfig, WalManager};
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -89,7 +90,7 @@ impl StorageEngine {
 
         // Initialize comprehensive WAL manager with optimized defaults (Avro + ART)
         let wal_config = WalConfig {
-            multi_disk: crate::storage::wal::config::MultiDiskConfig {
+            multi_disk: crate::storage::persistence::wal::config::MultiDiskConfig {
                 data_directories: vec![config.wal_dir.clone()],
                 ..Default::default()
             },
@@ -98,8 +99,8 @@ impl StorageEngine {
 
         // Create filesystem factory for WAL
         let filesystem = Arc::new(
-            crate::storage::filesystem::FilesystemFactory::new(
-                crate::storage::filesystem::FilesystemConfig::default(),
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
             .map_err(|e| {
@@ -112,7 +113,7 @@ impl StorageEngine {
 
         // Create WAL strategy and manager using factory pattern
         let wal_strategy =
-            crate::storage::wal::WalFactory::create_from_config(&wal_config, filesystem)
+            crate::storage::persistence::wal::WalFactory::create_from_config(&wal_config, filesystem)
                 .await
                 .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
         let wal_manager = Arc::new(
@@ -356,11 +357,11 @@ impl StorageEngine {
         let collection_uuid = self.collection_service
             .get_collection_uuid(&collection_id)
             .await
-            .map_err(|e| crate::core::StorageError::MetadataError(e.to_string()))?;
+            .map_err(|e| crate::core::StorageError::MetadataError(anyhow::anyhow!(e)))?;
             
         if collection_uuid.is_none() {
             return Err(crate::core::StorageError::MetadataError(
-                format!("Collection {} not found in collection service", collection_id)
+                anyhow::anyhow!("Collection {} not found in collection service", collection_id)
             ));
         }
 
@@ -508,7 +509,7 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(entry) = entries.first() {
-                                    if let crate::storage::wal::WalOperation::Insert { record, .. } = &entry.operation {
+                                    if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } = &entry.operation {
                                         let mut metadata = CollectionMetadata::default();
                                         metadata.id = collection_id.to_string();
                                         metadata.name = collection_id.to_string();
@@ -640,7 +641,7 @@ impl StorageEngine {
         let collection_record = self.collection_service
             .get_collection_by_name(collection_id)
             .await
-            .map_err(|e| crate::core::StorageError::MetadataError(e.to_string()))?;
+            .map_err(|e| crate::core::StorageError::MetadataError(anyhow::anyhow!(e)))?;
             
         let collection_record = collection_record.ok_or_else(|| {
             crate::core::StorageError::CollectionNotFound(collection_id.clone())
@@ -749,7 +750,7 @@ impl StorageEngine {
 
         // Brute-force search through memtable entries
         for entry in entries {
-            if let crate::storage::wal::WalOperation::Insert { record, .. } = &entry.operation {
+            if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } = &entry.operation {
                 // Skip if vector dimensions don't match (should not happen due to validation above)
                 if record.vector.len() != query.len() {
                     tracing::warn!(

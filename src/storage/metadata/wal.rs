@@ -27,7 +27,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::core::CollectionId;
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::CompressionAlgorithm;
 use crate::storage::wal::{
     config::{MemTableType, WalStrategyType},

@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use super::staging_operations::{StagingOperationType, StagingOperationsCoordinator};
 use crate::core::{CollectionId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Collection-level locking coordinator for atomic operations
 pub struct CollectionLockManager {

@@ -1,0 +1,431 @@
+{
+  "type": "record",
+  "name": "VectorRecord", 
+  "namespace": "proximadb.unified",
+  "doc": "Unified vector record - replaces all schema_types and unified_types versions",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Unique vector identifier"
+    },
+    {
+      "name": "collection_id", 
+      "type": "string",
+      "doc": "Collection this vector belongs to"
+    },
+    {
+      "name": "vector",
+      "type": {
+        "type": "array",
+        "items": "float"
+      },
+      "doc": "Vector embeddings as float array"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": [
+          "null",
+          "string", 
+          "long",
+          "double",
+          "boolean",
+          {
+            "type": "array",
+            "items": "string"
+          }
+        ]
+      },
+      "default": {},
+      "doc": "Flexible metadata supporting multiple types"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Unix timestamp in milliseconds"
+    },
+    {
+      "name": "created_at",
+      "type": "long", 
+      "doc": "Creation timestamp in milliseconds"
+    },
+    {
+      "name": "updated_at",
+      "type": "long",
+      "doc": "Last update timestamp in milliseconds"
+    },
+    {
+      "name": "expires_at",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Optional expiration timestamp for TTL"
+    },
+    {
+      "name": "version",
+      "type": "long",
+      "default": 1,
+      "doc": "Record version for optimistic concurrency"
+    },
+    {
+      "name": "rank",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Search result rank (1-based)"
+    },
+    {
+      "name": "score", 
+      "type": ["null", "float"],
+      "default": null,
+      "doc": "Similarity score for search results"
+    },
+    {
+      "name": "distance",
+      "type": ["null", "float"], 
+      "default": null,
+      "doc": "Distance value for search results"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "SearchResult",
+  "namespace": "proximadb.unified", 
+  "doc": "Unified search result - zero-copy from storage to client",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Vector/document identifier"
+    },
+    {
+      "name": "vector_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Alternative identifier for compatibility"
+    },
+    {
+      "name": "score",
+      "type": "float",
+      "doc": "Similarity score (higher = more similar)"
+    },
+    {
+      "name": "distance", 
+      "type": ["null", "float"],
+      "default": null,
+      "doc": "Distance value (lower = more similar)"
+    },
+    {
+      "name": "rank",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Result rank (1-based)"
+    },
+    {
+      "name": "vector",
+      "type": ["null", {"type": "array", "items": "float"}],
+      "default": null,
+      "doc": "Original vector data (optional for bandwidth optimization)"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": [
+          "null",
+          "string",
+          "long", 
+          "double",
+          "boolean"
+        ]
+      },
+      "default": {},
+      "doc": "Associated metadata"
+    },
+    {
+      "name": "collection_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Collection identifier"
+    },
+    {
+      "name": "created_at",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Creation timestamp"
+    },
+    {
+      "name": "algorithm_used",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Search algorithm used for this result"
+    },
+    {
+      "name": "processing_time_us",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Processing time in microseconds"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "Collection",
+  "namespace": "proximadb.unified",
+  "doc": "Unified collection metadata",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string", 
+      "doc": "Unique collection identifier"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "doc": "Human-readable collection name"
+    },
+    {
+      "name": "dimension",
+      "type": "int",
+      "doc": "Vector dimension"
+    },
+    {
+      "name": "distance_metric",
+      "type": {
+        "type": "enum",
+        "name": "DistanceMetric",
+        "symbols": ["COSINE", "EUCLIDEAN", "MANHATTAN", "DOT_PRODUCT", "HAMMING"]
+      },
+      "default": "COSINE",
+      "doc": "Distance metric for similarity calculations"
+    },
+    {
+      "name": "storage_engine",
+      "type": {
+        "type": "enum", 
+        "name": "StorageEngine",
+        "symbols": ["VIPER", "LSM", "MMAP", "HYBRID", "MEMORY", "OBJECT_STORE"]
+      },
+      "default": "VIPER",
+      "doc": "Storage engine for persistence"
+    },
+    {
+      "name": "indexing_algorithm",
+      "type": {
+        "type": "enum",
+        "name": "IndexingAlgorithm", 
+        "symbols": ["HNSW", "IVF", "PQ", "FLAT", "ANNOY", "LSH"]
+      },
+      "default": "HNSW",
+      "doc": "Indexing algorithm for search optimization"
+    },
+    {
+      "name": "created_at",
+      "type": "long",
+      "doc": "Creation timestamp"
+    },
+    {
+      "name": "updated_at", 
+      "type": "long",
+      "doc": "Last update timestamp"
+    },
+    {
+      "name": "vector_count",
+      "type": "long", 
+      "default": 0,
+      "doc": "Total number of vectors"
+    },
+    {
+      "name": "total_size_bytes",
+      "type": "long",
+      "default": 0, 
+      "doc": "Total size in bytes"
+    },
+    {
+      "name": "config",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {},
+      "doc": "Configuration parameters as key-value pairs"
+    },
+    {
+      "name": "filterable_metadata_fields",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "default": [],
+      "doc": "Metadata fields that can be filtered on"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "VectorInsertRequest",
+  "namespace": "proximadb.unified",
+  "doc": "Unified vector insert request for zero-copy operations",
+  "fields": [
+    {
+      "name": "collection_id",
+      "type": "string",
+      "doc": "Target collection identifier"
+    },
+    {
+      "name": "vectors",
+      "type": {
+        "type": "array",
+        "items": "proximadb.unified.VectorRecord"
+      },
+      "doc": "Vectors to insert"
+    },
+    {
+      "name": "options",
+      "type": {
+        "type": "map",
+        "values": "boolean"
+      },
+      "default": {},
+      "doc": "Insert options (e.g., upsert, async)"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "VectorInsertResponse",
+  "namespace": "proximadb.unified",
+  "doc": "Unified vector insert response",
+  "fields": [
+    {
+      "name": "success",
+      "type": "boolean",
+      "doc": "Operation success status"
+    },
+    {
+      "name": "inserted_count",
+      "type": "long", 
+      "doc": "Number of vectors successfully inserted"
+    },
+    {
+      "name": "failed_count",
+      "type": "long",
+      "default": 0,
+      "doc": "Number of vectors that failed to insert"
+    },
+    {
+      "name": "processing_time_us",
+      "type": "long",
+      "doc": "Processing time in microseconds"
+    },
+    {
+      "name": "error_message",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Error message if operation failed"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "VectorSearchRequest", 
+  "namespace": "proximadb.unified",
+  "doc": "Unified vector search request",
+  "fields": [
+    {
+      "name": "collection_id",
+      "type": "string",
+      "doc": "Collection to search in"
+    },
+    {
+      "name": "query_vector",
+      "type": {
+        "type": "array",
+        "items": "float"
+      },
+      "doc": "Query vector for similarity search"
+    },
+    {
+      "name": "k",
+      "type": "int",
+      "default": 10,
+      "doc": "Number of results to return"
+    },
+    {
+      "name": "metadata_filter",
+      "type": {
+        "type": "map",
+        "values": [
+          "null",
+          "string",
+          "long", 
+          "double",
+          "boolean"
+        ]
+      },
+      "default": {},
+      "doc": "Metadata filters to apply"
+    },
+    {
+      "name": "include_vector",
+      "type": "boolean",
+      "default": false,
+      "doc": "Whether to include vector data in results"
+    },
+    {
+      "name": "include_metadata",
+      "type": "boolean", 
+      "default": true,
+      "doc": "Whether to include metadata in results"
+    }
+  ]
+}
+
+{
+  "type": "record",
+  "name": "VectorSearchResponse",
+  "namespace": "proximadb.unified",
+  "doc": "Unified vector search response",
+  "fields": [
+    {
+      "name": "success",
+      "type": "boolean",
+      "doc": "Operation success status"
+    },
+    {
+      "name": "results",
+      "type": {
+        "type": "array",
+        "items": "proximadb.unified.SearchResult"
+      },
+      "doc": "Search results"
+    },
+    {
+      "name": "total_count",
+      "type": "long",
+      "doc": "Total number of matching vectors (before k limit)"
+    },
+    {
+      "name": "processing_time_us",
+      "type": "long", 
+      "doc": "Processing time in microseconds"
+    },
+    {
+      "name": "algorithm_used",
+      "type": "string",
+      "doc": "Search algorithm used"
+    },
+    {
+      "name": "error_message",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Error message if operation failed"
+    }
+  ]
+}

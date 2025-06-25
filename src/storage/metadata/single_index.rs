@@ -73,6 +73,7 @@ pub struct SingleIndexMetrics {
 /// Single unified index using UUID as primary key with secondary name lookup
 /// This eliminates the dual-index sync problem by using a single memory table
 /// with built-in secondary key indexing through efficient iteration
+#[derive(Debug)]
 pub struct SingleCollectionIndex {
     /// Primary store: UUID -> CollectionIndexEntry
     /// DashMap provides lock-free concurrent access with excellent performance

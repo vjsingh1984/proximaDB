@@ -6,8 +6,10 @@ pub mod serverless;
 pub mod storage_layout;
 pub mod avro_unified;
 
-// Legacy modules - kept temporarily for compatibility during migration
+// DEPRECATED: Legacy modules marked as obsolete - will be removed after full migration
+#[deprecated(note = "Use avro_unified types instead")]
 mod types;
+#[deprecated(note = "Use avro_unified types instead")]  
 mod unified_types;
 
 pub use config::*;

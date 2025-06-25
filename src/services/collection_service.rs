@@ -26,6 +26,7 @@ use crate::proto::proximadb::{CollectionConfig, CollectionResponse};
 use crate::storage::metadata::backends::filestore_backend::{CollectionRecord, FilestoreMetadataBackend};
 
 /// Collection service for unified business logic
+#[derive(Debug)]
 pub struct CollectionService {
     metadata_backend: Arc<FilestoreMetadataBackend>,
 }

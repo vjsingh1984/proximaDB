@@ -13,8 +13,8 @@ use std::path::Path;
 use url::Url;
 
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
-use super::filesystem::FilesystemConfig;
-use super::wal::WalConfig;
+use super::persistence::filesystem::FilesystemConfig;
+use super::persistence::wal::WalConfig;
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator

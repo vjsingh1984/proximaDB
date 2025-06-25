@@ -1,4 +1,18 @@
-//! Hardcoded Avro schema types for ProximaDB
+//! DEPRECATED: Hardcoded Avro schema types for ProximaDB
+//! 
+//! ⚠️  WARNING: This module is OBSOLETE and will be removed in a future version.
+//! All schema types have been migrated to `crate::core::avro_unified` with proper
+//! Avro schema support and zero-copy serialization.
+//! 
+//! ## Migration Path
+//! - Use `crate::core::avro_unified::SearchResult` instead of `SearchResult`
+//! - Use `crate::core::avro_unified::Collection` instead of `Collection`
+//! - Use `crate::core::avro_unified::CollectionRequest` instead of `CollectionRequest`
+//! - Use `crate::core::avro_unified::VectorInsertRequest` instead of manual structs
+//! - All other types are available in `avro_unified` with better schema evolution support
+//!
+//! ## Removal Timeline
+//! This file will be removed once all services migrate to avro_unified types.
 //! 
 //! This module contains Rust structs that mirror the Avro schemas defined in 
 //! schemas/proximadb_core.avsc. Using hardcoded structs eliminates runtime

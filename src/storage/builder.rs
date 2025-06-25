@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::core::CompressionAlgorithm;
-use super::wal::config::{MemTableType, WalStrategyType};
-use super::wal::{WalConfig, WalFactory, WalManager};
-use crate::storage::filesystem::{FilesystemConfig, FilesystemFactory};
+use super::persistence::wal::config::{MemTableType, WalStrategyType};
+use super::persistence::wal::{WalConfig, WalFactory, WalManager};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

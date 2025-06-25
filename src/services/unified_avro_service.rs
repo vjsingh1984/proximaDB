@@ -21,9 +21,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, span, warn, Level};
 
-use crate::storage::wal::config::WalConfig;
-use crate::storage::wal::factory::WalFactory;
-use crate::storage::wal::{WalManager, WalStrategyType};
+use crate::storage::persistence::wal::config::WalConfig;
+use crate::storage::persistence::wal::factory::WalFactory;
+use crate::storage::persistence::wal::{WalManager, WalStrategyType};
 use crate::storage::FilesystemFactory;
 use crate::storage::StorageEngine;
 use crate::storage::vector::{
@@ -32,6 +32,7 @@ use crate::storage::vector::{
     UnifiedSearchEngine, UnifiedSearchConfig, UnifiedIndexManager, UnifiedIndexConfig,
 };
 use crate::core::VectorRecord;
+use crate::services::collection_service::CollectionService;
 
 /// Unified service that operates exclusively on binary Avro records
 /// All protocol handlers (REST, gRPC) delegate to this service
@@ -40,6 +41,7 @@ pub struct UnifiedAvroService {
     storage: Arc<RwLock<StorageEngine>>,
     wal: Arc<WalManager>,
     vector_coordinator: Arc<VectorStorageCoordinator>,
+    collection_service: Arc<CollectionService>,
     performance_metrics: Arc<RwLock<ServiceMetrics>>,
     wal_strategy_type: WalStrategyType,
     avro_schema_version: u32,
@@ -51,7 +53,7 @@ pub struct UnifiedServiceConfig {
     /// WAL strategy to use (Avro or Bincode)
     pub wal_strategy: WalStrategyType,
     /// Memtable type selection
-    pub memtable_type: crate::storage::wal::config::MemTableType,
+    pub memtable_type: crate::storage::persistence::wal::config::MemTableType,
     /// Avro schema version for compatibility
     pub avro_schema_version: u32,
     /// Enable schema evolution checks
@@ -62,7 +64,7 @@ impl Default for UnifiedServiceConfig {
     fn default() -> Self {
         Self {
             wal_strategy: WalStrategyType::Avro, // Default to Avro for consistency
-            memtable_type: crate::storage::wal::config::MemTableType::BTree, // RT memtable
+            memtable_type: crate::storage::persistence::wal::config::MemTableType::BTree, // RT memtable
             avro_schema_version: 1,
             enable_schema_evolution: true,
         }
@@ -84,6 +86,7 @@ impl UnifiedAvroService {
     pub async fn new(
         storage: Arc<RwLock<StorageEngine>>,
         wal: Arc<WalManager>,
+        collection_service: Arc<CollectionService>,
         config: UnifiedServiceConfig,
     ) -> anyhow::Result<Self> {
         info!("🚀 Initializing UnifiedAvroService with binary Avro operations");
@@ -99,6 +102,7 @@ impl UnifiedAvroService {
             storage,
             wal,
             vector_coordinator,
+            collection_service,
             performance_metrics: Arc::new(RwLock::new(ServiceMetrics::default())),
             wal_strategy_type: config.wal_strategy,
             avro_schema_version: config.avro_schema_version,
@@ -108,6 +112,7 @@ impl UnifiedAvroService {
     /// Create new service with WAL factory (recommended for production)
     pub async fn with_wal_factory(
         storage: Arc<RwLock<StorageEngine>>,
+        collection_service: Arc<CollectionService>,
         config: UnifiedServiceConfig,
         wal_config: WalConfig,
     ) -> Result<Self> {
@@ -118,7 +123,7 @@ impl UnifiedAvroService {
         );
 
         // Create WAL strategy using factory
-        let fs_config = crate::storage::filesystem::FilesystemConfig::default();
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             FilesystemFactory::new(fs_config)
                 .await
@@ -134,13 +139,14 @@ impl UnifiedAvroService {
             .await
             .context("Failed to create WAL manager")?;
 
-        Self::new(storage, Arc::new(wal_manager), config).await
+        Self::new(storage, Arc::new(wal_manager), collection_service, config).await
     }
 
     /// Create new service with existing WAL manager (shares WAL with StorageEngine)
     pub async fn with_existing_wal(
         storage: Arc<RwLock<StorageEngine>>,
         wal_manager: Arc<WalManager>,
+        collection_service: Arc<CollectionService>,
         config: UnifiedServiceConfig,
     ) -> anyhow::Result<Self> {
         info!("🏗️ Creating UnifiedAvroService with shared WAL manager");
@@ -149,7 +155,7 @@ impl UnifiedAvroService {
             config.wal_strategy, config.memtable_type
         );
 
-        Self::new(storage, wal_manager, config).await
+        Self::new(storage, wal_manager, collection_service, config).await
     }
     
     /// Create vector storage coordinator with VIPER engine
@@ -171,7 +177,7 @@ impl UnifiedAvroService {
         );
         
         // Create and register VIPER engine
-        let filesystem_config = crate::storage::filesystem::FilesystemConfig::default();
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
         let viper_config = ViperCoreConfig::default();
         let viper_engine = ViperCoreEngine::new(viper_config, filesystem).await?;
@@ -685,45 +691,57 @@ impl UnifiedAvroService {
             .await
             .context("Failed to write collection creation to WAL")?;
 
-        // Create in storage with full metadata
-        {
-            use crate::storage::metadata::CollectionMetadata;
-            use std::collections::HashMap;
-            
-            let collection_metadata = CollectionMetadata {
-                id: collection_id.clone(),
-                name: collection_name.clone(),
-                dimension: dimension as usize,
-                distance_metric: distance_metric.clone(),
-                indexing_algorithm: storage_layout.clone().to_lowercase(),
-                created_at: chrono::DateTime::from_timestamp_micros(created_at).unwrap_or_else(|| chrono::Utc::now()),
-                updated_at: chrono::DateTime::from_timestamp_micros(updated_at).unwrap_or_else(|| chrono::Utc::now()),
-                vector_count: 0,
-                total_size_bytes: 0,
-                config: HashMap::new(),
-                access_pattern: crate::storage::metadata::AccessPattern::Normal,
-                retention_policy: None,
-                tags: Vec::new(),
-                owner: None,
-                description: None,
-                strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(),
-                strategy_change_history: Vec::new(),
-                flush_config: None,
-            };
+        // Create collection using collection service (new pattern)
+        use crate::proto::proximadb::CollectionConfig;
+        let grpc_config = CollectionConfig {
+            name: collection_name.clone(),
+            dimension: dimension as i32,
+            distance_metric: match config.distance_metric {
+                crate::schema_types::DistanceMetric::Cosine => 1,
+                crate::schema_types::DistanceMetric::Euclidean => 2,
+                crate::schema_types::DistanceMetric::DotProduct => 3,
+                crate::schema_types::DistanceMetric::Hamming => 4,
+            },
+            storage_engine: match config.storage_engine {
+                crate::schema_types::StorageEngine::Viper => 1,
+                crate::schema_types::StorageEngine::Lsm => 2,
+                crate::schema_types::StorageEngine::Mmap => 3,
+                crate::schema_types::StorageEngine::Hybrid => 4,
+            },
+            indexing_algorithm: 1, // Default to HNSW
+            filterable_metadata_fields: vec![],
+            indexing_config: std::collections::HashMap::new(),
+            filterable_columns: vec![],
+        };
 
+        let collection_response = self.collection_service
+            .create_collection_from_grpc(&grpc_config)
+            .await
+            .context("Failed to create collection via collection service")?;
+
+        if !collection_response.success {
+            return Err(anyhow::anyhow!(
+                "Collection creation failed: {}",
+                collection_response.error_message.unwrap_or("Unknown error".to_string())
+            ));
+        }
+
+        // Create storage for the collection (storage layer only handles storage concerns)
+        {
             let storage = self.storage.read().await;
             storage
-                .create_collection_with_metadata(collection_id.clone(), Some(collection_metadata), None)
+                .create_collection_with_metadata(collection_id.clone(), None, None)
                 .await
-                .context("Failed to create collection in storage")?;
+                .context("Failed to create collection storage")?;
         }
 
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(true, processing_time).await;
 
-        // Return collection metadata
+        // Return collection metadata using the UUID from collection service
+        let actual_collection_id = collection_response.collection_uuid.unwrap_or(collection_id);
         let collection_data = json!({
-            "id": collection_id,
+            "id": actual_collection_id,
             "name": collection_name,
             "dimension": dimension,
             "distance_metric": distance_metric,
@@ -740,13 +758,10 @@ impl UnifiedAvroService {
         let _span = span!(Level::DEBUG, "get_collection", collection_id);
         let start_time = std::time::Instant::now();
 
-        let collection = {
-            let storage = self.storage.read().await;
-            storage
-                .get_collection_metadata(&collection_id.to_string())
-                .await
-                .context("Failed to get collection from storage")?
-        };
+        let collection = self.collection_service
+            .get_collection_by_name(collection_id)
+            .await
+            .context("Failed to get collection from collection service")?;
 
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(collection.is_some(), processing_time)
@@ -773,13 +788,10 @@ impl UnifiedAvroService {
         let _span = span!(Level::DEBUG, "list_collections");
         let start_time = std::time::Instant::now();
 
-        let collections = {
-            let storage = self.storage.read().await;
-            storage
-                .list_collections()
-                .await
-                .context("Failed to list collections from storage")?
-        };
+        let collections = self.collection_service
+            .list_collections()
+            .await
+            .context("Failed to list collections from collection service")?;
 
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(true, processing_time).await;

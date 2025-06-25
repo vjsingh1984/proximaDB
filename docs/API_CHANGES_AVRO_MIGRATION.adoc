@@ -1,0 +1,266 @@
+= API Changes - Avro Unified Schema Migration
+:toc:
+:toclevels: 2
+:icons: font
+
+== Quick Reference
+
+This document provides a quick reference for developers updating their code to use the new Avro unified schema.
+
+== Import Changes
+
+[cols="1,1", options="header"]
+|===
+| Old Import | New Import
+
+| `use crate::schema_types::VectorRecord;`
+| `use crate::core::avro_unified::VectorRecord;`
+
+| `use crate::core::unified_types::VectorRecord;`
+| `use crate::core::avro_unified::VectorRecord;`
+
+| `use crate::schema_types::SearchResult;`
+| `use crate::core::avro_unified::SearchResult;`
+
+| `use crate::core::unified_types::Collection;`
+| `use crate::core::avro_unified::Collection;`
+|===
+
+== Type Changes
+
+=== VectorRecord Fields
+
+[cols="1,1,1", options="header"]
+|===
+| Field | Old Type | New Type
+
+| `id` | `String` | `String` (no change)
+| `collection_id` | `String` | `String` (no change)
+| `vector` | `Vec<f32>` | `Vec<f32>` (no change)
+| `metadata` | `Option<HashMap<String, Value>>` | `HashMap<String, Value>` (not optional)
+| `timestamp` | `DateTime<Utc>` | `i64` (milliseconds)
+| `created_at` | `DateTime<Utc>` | `i64` (milliseconds)
+| `updated_at` | `DateTime<Utc>` | `i64` (milliseconds)
+| `expires_at` | `Option<DateTime<Utc>>` | `Option<i64>` (milliseconds)
+|===
+
+=== SearchResult Fields
+
+[cols="1,1,1", options="header"]
+|===
+| Field | Old Type | New Type
+
+| `id` | `String` or `Option<String>` | `String` (required)
+| `vector_id` | Not present | `Option<String>` (new field)
+| `score` | `f32` | `f32` (no change)
+| `distance` | `Option<f32>` | `Option<f32>` (no change)
+| `rank` | Not present | `Option<i32>` (new field)
+| `metadata` | `Option<HashMap<String, Value>>` | `HashMap<String, Value>` (not optional)
+|===
+
+== Code Migration Examples
+
+=== Creating a VectorRecord
+
+.Old Code
+[source,rust]
+----
+use crate::schema_types::VectorRecord;
+use chrono::Utc;
+
+let record = VectorRecord {
+    id: "vec_123".to_string(),
+    vector: vec![0.1, 0.2, 0.3],
+    metadata: Some(metadata_map),
+    timestamp: Utc::now(),
+    version: 1,
+    expires_at: None,
+};
+----
+
+.New Code
+[source,rust]
+----
+use crate::core::avro_unified::VectorRecord;
+
+let record = VectorRecord::new(
+    "vec_123".to_string(),
+    "my_collection".to_string(),
+    vec![0.1, 0.2, 0.3],
+    metadata_map,  // Not wrapped in Option
+);
+// Or manually:
+let record = VectorRecord {
+    id: "vec_123".to_string(),
+    collection_id: "my_collection".to_string(),
+    vector: vec![0.1, 0.2, 0.3],
+    metadata: metadata_map,
+    timestamp: Utc::now().timestamp_millis(),
+    created_at: Utc::now().timestamp_millis(),
+    updated_at: Utc::now().timestamp_millis(),
+    expires_at: None,
+    version: 1,
+    rank: None,
+    score: None,
+    distance: None,
+};
+----
+
+=== Working with Timestamps
+
+.Converting DateTime to i64
+[source,rust]
+----
+// Old: DateTime<Utc>
+record.timestamp = Utc::now();
+
+// New: i64 milliseconds
+record.timestamp = Utc::now().timestamp_millis();
+----
+
+.Converting i64 to DateTime
+[source,rust]
+----
+// When you need a DateTime from stored timestamp
+let datetime = DateTime::from_timestamp_millis(record.timestamp)
+    .unwrap_or_else(|| Utc::now());
+----
+
+=== Zero-Copy Serialization
+
+.New Serialization Methods
+[source,rust]
+----
+// Serialize to Avro binary
+let bytes = record.to_avro_bytes()?;
+
+// Deserialize from Avro binary
+let record = VectorRecord::from_avro_bytes(&bytes)?;
+----
+
+=== Handling Optional Metadata
+
+.Old Code
+[source,rust]
+----
+if let Some(metadata) = record.metadata {
+    // Process metadata
+}
+----
+
+.New Code
+[source,rust]
+----
+// Metadata is always present (may be empty)
+if !record.metadata.is_empty() {
+    // Process metadata
+}
+// Or directly use it
+for (key, value) in &record.metadata {
+    // Process each entry
+}
+----
+
+== Common Patterns
+
+=== Pattern 1: Creating Search Results
+
+[source,rust]
+----
+use crate::core::avro_unified::SearchResult;
+
+let search_result = SearchResult {
+    id: vector.id.clone(),
+    vector_id: Some(vector.id.clone()),  // For compatibility
+    score: 0.95,
+    distance: Some(0.05),
+    rank: Some(1),
+    vector: Some(vector.vector.clone()),
+    metadata: vector.metadata.clone(),
+    collection_id: Some(collection_id),
+    created_at: Some(vector.created_at),
+    algorithm_used: Some("hnsw".to_string()),
+    processing_time_us: Some(1234),
+};
+----
+
+=== Pattern 2: TTL Support
+
+[source,rust]
+----
+// Set TTL to 24 hours from now
+let ttl_ms = (Utc::now() + Duration::hours(24)).timestamp_millis();
+record.expires_at = Some(ttl_ms);
+
+// Check if expired
+if let Some(expires_at) = record.expires_at {
+    if Utc::now().timestamp_millis() > expires_at {
+        // Record has expired
+    }
+}
+----
+
+=== Pattern 3: Batch Operations
+
+[source,rust]
+----
+// Efficient batch serialization
+let records: Vec<VectorRecord> = get_records();
+let mut serialized_batch = Vec::new();
+
+for record in records {
+    let bytes = record.to_avro_bytes()?;
+    serialized_batch.extend_from_slice(&bytes);
+}
+----
+
+== Troubleshooting
+
+=== Compilation Errors
+
+[cols="1,1", options="header"]
+|===
+| Error | Solution
+
+| `no method named timestamp() found for type i64`
+| The timestamp is already in milliseconds. Remove `.timestamp()` call.
+
+| `expected DateTime<Utc>, found i64`
+| Use `DateTime::from_timestamp_millis(value)` to convert.
+
+| `expected HashMap<String, Value>, found Option<HashMap<String, Value>>`
+| Remove `Some()` wrapper - metadata is no longer optional.
+
+| `VectorRecord is ambiguous`
+| Add explicit import: `use crate::core::avro_unified::VectorRecord;`
+|===
+
+=== Runtime Issues
+
+[cols="1,1", options="header"]
+|===
+| Issue | Solution
+
+| Timestamp appears as large number
+| The value is in milliseconds. Divide by 1000 for seconds if needed.
+
+| Metadata missing after migration
+| Check if old code used `None` - now use empty HashMap instead.
+
+| Serialization size increased
+| Normal - Avro includes schema info. Use batch operations for efficiency.
+|===
+
+== Performance Tips
+
+1. **Use batch operations**: Serialize multiple records together
+2. **Reuse schemas**: The schema is cached in `lazy_static`
+3. **Direct binary paths**: Use `to_avro_bytes()` → WAL → Storage
+4. **Avoid unnecessary conversions**: Keep timestamps as i64
+5. **Preallocate vectors**: When creating many records
+
+== Further Reading
+
+* link:AVRO_UNIFIED_SCHEMA_MIGRATION.adoc[Full Migration Guide]
+* link:../REST_API_REFERENCE.adoc[REST API Reference]
+* Apache Avro Documentation: https://avro.apache.org/

@@ -1,0 +1,309 @@
+syntax = "proto3";
+
+package proximadb;
+
+import "google/protobuf/struct.proto";
+
+// ============================================================================
+// ProximaDB gRPC Protocol - Zero-Copy Aligned Version
+// ============================================================================
+
+service ProximaDB {
+  // Collection management - single unified endpoint for flexibility
+  rpc CollectionOperation(CollectionRequest) returns (CollectionResponse);
+  
+  // Vector operations - optimized by use case
+  rpc VectorInsert(VectorInsertRequest) returns (VectorOperationResponse);        // Zero-copy Avro binary
+  rpc VectorMutation(VectorMutationRequest) returns (VectorOperationResponse);    // UPDATE/DELETE via gRPC
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);        // Search via gRPC
+  
+  // Health and monitoring
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
+}
+
+// ============================================================================
+// ZERO-COPY ALIGNED VectorRecord - Matches Avro schema exactly
+// ============================================================================
+message VectorRecord {
+  string id = 1;                                          // Required, matches Avro
+  string collection_id = 2;                               // Required, matches Avro
+  repeated float vector = 3;                              // Required, matches Avro
+  map<string, google.protobuf.Value> metadata = 4;        // JSON values, matches Avro
+  int64 timestamp = 5;                                    // Milliseconds, matches Avro
+  int64 created_at = 6;                                   // Required, matches Avro
+  int64 updated_at = 7;                                   // Required, matches Avro
+  optional int64 expires_at = 8;                          // Optional, matches Avro
+  int64 version = 9;                                      // Required, matches Avro
+  optional int32 rank = 10;                               // For search results, matches Avro
+  optional float score = 11;                              // For search results, matches Avro
+  optional float distance = 12;                           // For search results, matches Avro
+}
+
+// ============================================================================
+// ENUMS - Aligned with Avro schema
+// ============================================================================
+
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+  COSINE = 1;
+  EUCLIDEAN = 2;
+  DOT_PRODUCT = 3;
+  HAMMING = 4;
+}
+
+enum StorageEngine {
+  STORAGE_ENGINE_UNSPECIFIED = 0;
+  VIPER = 1;
+  LSM = 2;
+  MMAP = 3;
+  HYBRID = 4;
+}
+
+enum IndexingAlgorithm {
+  INDEXING_ALGORITHM_UNSPECIFIED = 0;
+  HNSW = 1;
+  IVF = 2;
+  PQ = 3;
+  FLAT = 4;
+  LSH = 5;
+}
+
+enum CollectionOperation {
+  COLLECTION_OPERATION_UNSPECIFIED = 0;
+  GET = 1;
+  LIST = 2;
+  CREATE = 3;
+  UPDATE = 4;
+  DELETE = 5;
+  MIGRATE = 6;
+}
+
+enum VectorOperation {
+  VECTOR_OPERATION_UNSPECIFIED = 0;
+  INSERT = 1;
+  UPSERT = 2;
+  UPDATE = 3;
+  DELETE = 4;
+  SEARCH = 5;
+  HYBRID_SEARCH = 6;
+}
+
+enum FilterableFieldType {
+  FILTERABLE_FIELD_TYPE_UNSPECIFIED = 0;
+  FILTERABLE_STRING = 1;
+  FILTERABLE_INTEGER = 2;
+  FILTERABLE_FLOAT = 3;
+  FILTERABLE_BOOLEAN = 4;
+  FILTERABLE_DATETIME = 5;
+  FILTERABLE_ARRAY_STRING = 6;
+  FILTERABLE_ARRAY_INTEGER = 7;
+  FILTERABLE_ARRAY_FLOAT = 8;
+}
+
+message Collection {
+  string id = 1;
+  CollectionConfig config = 2;
+  CollectionStats stats = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+}
+
+message CollectionStats {
+  int64 vector_count = 1;
+  int64 index_size_bytes = 2;
+  int64 data_size_bytes = 3;
+}
+
+message SearchResult {
+  optional string id = 1;
+  float score = 2;                          // REQUIRED
+  repeated float vector = 3;                // Optional - for network efficiency
+  map<string, string> metadata = 4;        // Optional - for network efficiency
+  optional int32 rank = 5;                 // 1-based ranking
+}
+
+// ============================================================================
+// COLLECTION OPERATIONS - Unified flexible schema
+// ============================================================================
+
+message CollectionRequest {
+  CollectionOperation operation = 1;
+  optional string collection_id = 2;
+  optional CollectionConfig collection_config = 3;
+  map<string, string> query_params = 4;      // limit, offset, filters, etc.
+  map<string, bool> options = 5;             // force, include_stats, etc.
+  map<string, string> migration_config = 6;  // For MIGRATE operations
+}
+
+message CollectionResponse {
+  bool success = 1;
+  CollectionOperation operation = 2;
+  optional Collection collection = 3;        // Single result (GET, CREATE)
+  repeated Collection collections = 4;       // Multiple results (LIST)
+  int64 affected_count = 5;                  // Items affected
+  optional string error_message = 6;
+  optional string error_code = 7;
+  optional CollectionStats stats = 8;
+  map<string, string> metadata = 9;
+  int64 processing_time_us = 10;
+}
+
+// ============================================================================
+// VECTOR OPERATIONS - Performance-optimized schemas
+// ============================================================================
+
+// ZERO-COPY INSERT - Uses Avro binary for vector data only
+// vectors_avro_payload format: Avro-serialized array of VectorRecord
+message VectorInsertRequest {
+  string collection_id = 1;                 // Collection identifier (gRPC field)
+  bool upsert_mode = 2;                     // Insert vs upsert behavior (gRPC field)
+  bytes vectors_avro_payload = 3;           // Serialized vector data only (Avro binary)
+  optional int64 batch_timeout_ms = 4;      // Optional batch processing timeout
+  optional string request_id = 5;           // Optional request tracking ID
+}
+
+// FLEXIBLE MUTATION - UPDATE and DELETE via regular gRPC
+message VectorMutationRequest {
+  string collection_id = 1;
+  VectorOperation operation = 2;             // UPDATE or DELETE
+  repeated string vector_ids = 3;            // IDs to mutate
+  optional VectorUpdatePayload update_payload = 4;  // For UPDATE operations
+  map<string, bool> options = 5;             // force_delete, etc.
+}
+
+message VectorUpdatePayload {
+  repeated float vector = 1;                // New vector data
+  map<string, google.protobuf.Value> metadata = 2;  // Metadata updates
+  optional UpdateMode update_mode = 3;      // REPLACE or MERGE
+}
+
+enum UpdateMode {
+  UPDATE_MODE_UNSPECIFIED = 0;
+  REPLACE = 1;     // Replace entire metadata
+  MERGE = 2;       // Merge with existing metadata
+}
+
+// SEARCH - Flexible query via gRPC
+message VectorSearchRequest {
+  string collection_id = 1;
+  repeated float query_vector = 2;           // Primary query vector
+  int32 top_k = 3;                          // Number of results (default: 10)
+  optional FilterExpression filter = 4;      // Metadata filtering
+  optional float score_threshold = 5;        // Minimum similarity score
+  repeated string include_fields = 6;        // Fields to include in response
+  map<string, string> search_params = 7;     // Algorithm-specific parameters
+  optional HybridSearchConfig hybrid_config = 8;  // For hybrid search
+}
+
+message HybridSearchConfig {
+  string text_query = 1;                    // Text search query
+  float alpha = 2;                          // Weight: 0=pure vector, 1=pure text
+}
+
+message FilterExpression {
+  oneof expression {
+    MetadataFilter metadata_filter = 1;
+    LogicalFilter logical_filter = 2;
+  }
+}
+
+message MetadataFilter {
+  string field = 1;
+  FilterOperator operator = 2;
+  google.protobuf.Value value = 3;
+}
+
+message LogicalFilter {
+  LogicalOperator operator = 1;
+  repeated FilterExpression filters = 2;
+}
+
+enum FilterOperator {
+  FILTER_OPERATOR_UNSPECIFIED = 0;
+  EQUALS = 1;
+  NOT_EQUALS = 2;
+  GREATER_THAN = 3;
+  GREATER_THAN_OR_EQUALS = 4;
+  LESS_THAN = 5;
+  LESS_THAN_OR_EQUALS = 6;
+  IN = 7;
+  NOT_IN = 8;
+  CONTAINS = 9;
+  NOT_CONTAINS = 10;
+}
+
+enum LogicalOperator {
+  LOGICAL_OPERATOR_UNSPECIFIED = 0;
+  AND = 1;
+  OR = 2;
+  NOT = 3;
+}
+
+// Unified response for all vector operations
+message VectorOperationResponse {
+  bool success = 1;
+  VectorOperation operation = 2;
+  int64 affected_count = 3;                 // Vectors affected
+  repeated SearchResult search_results = 4;  // For SEARCH operations
+  optional string error_message = 5;
+  optional string error_code = 6;
+  map<string, string> metadata = 7;         // Operation metadata
+  int64 processing_time_us = 8;
+}
+
+// ============================================================================
+// CONFIGURATION MESSAGES
+// ============================================================================
+
+message CollectionConfig {
+  string name = 1;
+  int32 dimension = 2;
+  DistanceMetric distance_metric = 3;
+  StorageEngine storage_engine = 4;
+  IndexingAlgorithm indexing_algorithm = 5;
+  repeated string filterable_metadata_fields = 6;  // Legacy - simple field names
+  map<string, string> indexing_config = 7;         // Algorithm-specific parameters
+  repeated FilterableColumnSpec filterable_columns = 8;  // Enhanced filterable column specs
+}
+
+message FilterableColumnSpec {
+  string field_name = 1;
+  FilterableFieldType field_type = 2;
+  optional bool indexed = 3;                // Whether to create an index
+  optional bool stored = 4;                 // Whether to store the value
+  optional bool multi_valued = 5;           // Whether field can have multiple values
+}
+
+// ============================================================================
+// HEALTH AND MONITORING
+// ============================================================================
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+  map<string, ComponentHealth> components = 3;
+}
+
+message ComponentHealth {
+  bool healthy = 1;
+  string status = 2;
+  map<string, string> metadata = 3;
+}
+
+message MetricsRequest {
+  repeated string metric_names = 1;
+}
+
+message MetricsResponse {
+  map<string, Metric> metrics = 1;
+}
+
+message Metric {
+  string name = 1;
+  double value = 2;
+  map<string, string> labels = 3;
+  int64 timestamp = 4;
+}

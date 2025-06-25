@@ -21,7 +21,7 @@ use super::{
     MetadataStoreInterface, SystemMetadata,
 };
 use crate::core::CollectionId;
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::strategy::CollectionStrategyConfig;
 
 /// Configuration for metadata store
@@ -193,7 +193,7 @@ impl MetadataStore {
             })?;
 
         // Create filesystem factory with metadata-specific configuration
-        let filesystem_config = crate::storage::filesystem::FilesystemConfig {
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig {
             default_fs: Some(config.metadata_storage_urls[0].clone()),
             ..Default::default()
         };

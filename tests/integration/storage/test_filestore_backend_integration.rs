@@ -17,7 +17,7 @@ use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig, CollectionRecord
 };
-use proximadb::storage::filesystem::{FilesystemFactory, FilesystemConfig};
+use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::proto::proximadb::CollectionConfig;
 
 /// Helper to create a test collection config

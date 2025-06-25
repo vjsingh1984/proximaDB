@@ -15,7 +15,7 @@ use super::config::ViperConfig;
 use super::processor::VectorRecordProcessor;
 use super::schema::ViperSchemaStrategy;
 use crate::core::{CollectionId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::schema_types::CollectionConfig;
 use crate::storage::{WalEntry, WalOperation};
 

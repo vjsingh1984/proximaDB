@@ -18,7 +18,7 @@ use super::{
     OptimizationResult, SearchFilter, SearchResult, StrategyStats, StrategyType,
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::storage::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::schema_types::CollectionConfig;
 use crate::storage::viper::{ViperParquetFlusher, ViperSearchEngine, ViperStorageEngine};
 use crate::storage::{CollectionMetadata, WalEntry, WalOperation};
