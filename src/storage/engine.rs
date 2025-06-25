@@ -2,8 +2,8 @@ use crate::compute::algorithms::SearchResult;
 use crate::core::{BatchSearchRequest, CollectionId, StorageConfig, VectorId, VectorRecord};
 use crate::storage::search_index::{SearchIndexManager, SearchRequest};
 use crate::storage::{
-    disk_manager::DiskManager,
-    lsm::{CompactionManager, LsmTree},
+    persistence::disk_manager::DiskManager,
+    engines::lsm::{CompactionManager, LsmTree},
     mmap::MmapReader,
     CollectionMetadata,
 };

@@ -19,10 +19,28 @@ use super::{
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::schema_types::CollectionConfig;
-use crate::storage::viper::{ViperParquetFlusher, ViperSearchEngine, ViperStorageEngine};
-use crate::storage::{CollectionMetadata, WalEntry, WalOperation};
+// Note: schema_types module has been removed, types moved to crate::core
+// Note: storage::viper module has been moved to storage::engines::viper
+// TODO: This entire strategy file needs to be refactored
+// The referenced types no longer exist or have been moved
 
+/*
+use crate::core::{Collection as CollectionConfig};
+use crate::storage::engines::viper::core::ViperCoreEngine as ViperStorageEngine;
+// TODO: Define ViperParquetFlusher and ViperSearchEngine or remove references
+use crate::storage::{CollectionMetadata, WalEntry, WalOperation};
+*/
+
+// This entire file is commented out because the VIPER strategy needs to be refactored
+// to work with the new module structure. The types it depends on have been moved
+// or no longer exist in their original form.
+
+// TODO: Refactor ViperStrategy to work with:
+// - crate::core types instead of schema_types
+// - crate::storage::engines::viper instead of crate::storage::viper
+// - Properly defined ViperParquetFlusher and ViperSearchEngine types
+
+/*
 /// VIPER strategy implementation
 pub struct ViperStrategy {
     /// Strategy configuration
@@ -40,7 +58,7 @@ impl ViperStrategy {
     pub async fn new(
         _metadata: &CollectionMetadata,
         filesystem: Arc<FilesystemFactory>,
-        viper_config: crate::storage::viper::ViperConfig,
+        // viper_config: crate::storage::engines::viper::core::ViperCoreConfig, // TODO: Fix type
     ) -> Result<Self> {
         let mut config = CollectionStrategyConfig::default();
         config.strategy_type = StrategyType::Viper;
@@ -316,3 +334,4 @@ impl CollectionStrategy for ViperStrategy {
         })
     }
 }
+*/

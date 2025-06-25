@@ -18,7 +18,7 @@ use proximadb::{
     storage::{
         builder::StorageLayoutStrategy,
         filesystem::{AuthConfig, AwsAuthMethod, FilesystemPerformanceConfig, RetryConfig},
-        wal::{CompressionLevel, WalFormat},
+        persistence::wal::{CompressionLevel, WalFormat},
         ConfigValidator, StorageSystemBuilder,
     },
 };
@@ -174,7 +174,7 @@ async fn demo_high_performance_local() -> anyhow::Result<()> {
 async fn demo_disaster_recovery_setup() -> anyhow::Result<()> {
     println!("   Setting up multi-region disaster recovery...");
 
-    use proximadb::storage::wal::{MultiRegionConfig, ReplicationSettings, WalSystemBuilder};
+    use proximadb::storage::persistence::wal::{MultiRegionConfig, ReplicationSettings, WalSystemBuilder};
 
     // Multi-region WAL configuration
     let multi_region = MultiRegionConfig {

@@ -115,7 +115,7 @@ async fn test_compaction_integration() {
 #[tokio::test]
 async fn test_compaction_manager_lifecycle() {
     use proximadb::core::LsmConfig;
-    use proximadb::storage::lsm::CompactionManager;
+    use proximadb::storage::engines::lsm::CompactionManager;
 
     let config = LsmConfig {
         memtable_size_mb: 1,

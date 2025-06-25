@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
                     "/nvme2/proximadb/data".to_string(),
                     "/nvme3/proximadb/data".to_string(),
                 ])
-                .with_wal_format(proximadb::storage::wal::manager::WalFormat::Avro)
+                .with_wal_format(proximadb::storage::persistence::wal::manager::WalFormat::Avro)
                 .with_high_data_compression() // Compress for storage efficiency
         })
         .with_hnsw_params(32, 400) // High-quality HNSW index
@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
                     "proximadb-prod-data-us-east-1".to_string(),
                     "proximadb-prod-data-us-west-2".to_string(),
                 ])
-                .with_wal_format(proximadb::storage::wal::manager::WalFormat::Avro)
+                .with_wal_format(proximadb::storage::persistence::wal::manager::WalFormat::Avro)
                 .with_fast_data_compression() // Fast compression for cloud
                 .with_storage_memory_config(8192, 4096) // 8GB cache, 4GB pool
         })
