@@ -9,8 +9,7 @@ use crate::storage::{
 };
 use crate::services::collection_service::CollectionService;
 use crate::storage::persistence::wal::{WalConfig, WalManager};
-use chrono::Utc;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;

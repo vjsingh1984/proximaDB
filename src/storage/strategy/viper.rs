@@ -8,7 +8,7 @@
 //! Implements the VIPER strategy: PQ + VIPER + ML-optimized Search
 //! This strategy is optimized for high-performance workloads with ML-guided optimization.
 
-use anyhow::Result;
+// Result type imported as needed
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
