@@ -646,14 +646,12 @@ mod tests {
     async fn test_memtable_basic_operations() {
         let memtable = Memtable::new(1); // 1MB limit
 
-        let record = VectorRecord {
-            id: Uuid::new_v4().to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
-            timestamp: Utc::now(),
-            expires_at: None,
-        };
+        let record = VectorRecord::new(
+            Uuid::new_v4().to_string(),
+            "test_collection".to_string(),
+            vec![1.0, 2.0, 3.0],
+            HashMap::new(),
+        );
 
         // Test put
         let seq = memtable.put(record.clone()).await.unwrap();
@@ -669,7 +667,7 @@ mod tests {
 
         // Test delete
         let del_seq = memtable
-            .delete(record.collection_id.clone(), record.id)
+            .delete(record.collection_id.clone(), record.id.clone())
             .await
             .unwrap();
         assert_eq!(del_seq, 2);
@@ -686,14 +684,12 @@ mod tests {
     async fn test_memtable_size_tracking() {
         let memtable = Memtable::new(1); // 1MB limit
 
-        let record = VectorRecord {
-            id: Uuid::new_v4().to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![1.0; 1000], // Large vector
-            metadata: HashMap::new(),
-            timestamp: Utc::now(),
-            expires_at: None,
-        };
+        let record = VectorRecord::new(
+            Uuid::new_v4().to_string(),
+            "test_collection".to_string(),
+            vec![1.0; 1000], // Large vector
+            HashMap::new(),
+        );
 
         let initial_size = memtable.size_bytes().await;
         memtable.put(record.clone()).await.unwrap();

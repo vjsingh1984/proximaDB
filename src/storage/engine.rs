@@ -5,8 +5,9 @@ use crate::storage::{
     disk_manager::DiskManager,
     lsm::{CompactionManager, LsmTree},
     mmap::MmapReader,
-    CollectionMetadata, WalConfig, WalManager,
+    WalConfig, WalManager,
 };
+use crate::services::collection_service::CollectionService;
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -75,12 +76,15 @@ pub struct StorageEngine {
     search_index_manager: Arc<SearchIndexManager>,
     compaction_manager: Arc<CompactionManager>,
     
-    /// Fast in-memory cache for collection metadata (BTreeMap for ordered access)
-    metadata_cache: Arc<RwLock<BTreeMap<CollectionId, Arc<CollectionMetadata>>>>,
+    /// Collection service for metadata operations (separation of concerns)
+    collection_service: Arc<CollectionService>,
 }
 
 impl StorageEngine {
-    pub async fn new(config: StorageConfig) -> crate::storage::Result<Self> {
+    pub async fn new(
+        config: StorageConfig, 
+        collection_service: Arc<CollectionService>
+    ) -> crate::storage::Result<Self> {
         let disk_manager = Arc::new(DiskManager::new(config.data_dirs.clone())?);
 
         // Initialize comprehensive WAL manager with optimized defaults (Avro + ART)
@@ -140,7 +144,7 @@ impl StorageEngine {
             wal_manager,
             search_index_manager,
             compaction_manager,
-            metadata_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            collection_service,
         })
     }
 
@@ -150,9 +154,6 @@ impl StorageEngine {
 
         // Initialize existing collections
         self.load_collections().await?;
-
-        // Preload collection metadata cache for fast lookups
-        self.preload_metadata_cache().await?;
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
@@ -344,43 +345,24 @@ impl StorageEngine {
     pub async fn create_collection_with_metadata(
         &self,
         collection_id: CollectionId,
-        metadata: Option<CollectionMetadata>,
+        _metadata: Option<()>, // Remove CollectionMetadata dependency from storage
         _filterable_metadata_fields: Option<Vec<String>>,
     ) -> crate::storage::Result<()> {
-        // Create metadata or use provided
-        let collection_metadata = metadata.unwrap_or_else(|| CollectionMetadata {
-            id: collection_id.clone(),
-            name: collection_id.clone(),
-            dimension: 128, // Default dimension
-            distance_metric: "cosine".to_string(),
-            indexing_algorithm: "hnsw".to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            vector_count: 0,
-            total_size_bytes: 0,
-            config: HashMap::new(),
-            access_pattern: crate::storage::metadata::AccessPattern::Normal,
-            retention_policy: None,
-            tags: Vec::new(),
-            owner: None,
-            description: None,
-            strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(),
-            strategy_change_history: Vec::new(),
-            flush_config: None, // Use global defaults
-        });
-
-        // TODO: Store metadata through SharedServices
-        // self.metadata_store.create_collection(collection_metadata.clone()).await?;
-
-        // Update metadata cache with new collection
-        {
-            let mut cache = self.metadata_cache.write().await;
-            cache.insert(collection_id.clone(), Arc::new(collection_metadata));
-            tracing::debug!("🔍 Added new collection to metadata cache: {}", collection_id);
+        // NOTE: Collection metadata should be managed by CollectionService
+        // Storage layer should only handle storage concerns, not metadata
+        tracing::debug!("💾 Creating storage for collection: {}", collection_id);
+        
+        // Verify collection exists in collection service before creating storage
+        let collection_uuid = self.collection_service
+            .get_collection_uuid(&collection_id)
+            .await
+            .map_err(|e| crate::core::StorageError::MetadataError(e.to_string()))?;
+            
+        if collection_uuid.is_none() {
+            return Err(crate::core::StorageError::MetadataError(
+                format!("Collection {} not found in collection service", collection_id)
+            ));
         }
-
-        // WAL entry for collection creation is handled internally by LSM tree during first write
-        // No explicit WAL write needed here as metadata operations are tracked separately
 
         // Create LSM tree
         let mut trees = self.lsm_trees.write().await;
@@ -562,21 +544,9 @@ impl StorageEngine {
     }
 
     /// Get collection metadata
-    pub async fn get_collection_metadata(
-        &self,
-        collection_id: &CollectionId,
-    ) -> crate::storage::Result<Option<CollectionMetadata>> {
-        // TODO: Get collection metadata through SharedServices
-        // For now, return None as placeholder
-        Ok(None)
-    }
-
-    /// List all collections
-    pub async fn list_collections(&self) -> crate::storage::Result<Vec<CollectionMetadata>> {
-        // TODO: List collections through SharedServices
-        // For now, return empty vector as placeholder
-        Ok(Vec::new())
-    }
+    // NOTE: Collection metadata operations removed from storage layer.
+    // These operations should be performed directly through CollectionService.
+    // Storage layer focuses only on data persistence, not metadata management.
 
     /// Delete collection and all its data
     pub async fn delete_collection(
@@ -620,50 +590,6 @@ impl StorageEngine {
         }
     }
 
-    /// Get collection metadata with fast cache lookup (BTreeMap for ordered access)
-    async fn get_collection_metadata_cached(
-        &self,
-        collection_id: &CollectionId,
-    ) -> crate::storage::Result<Arc<CollectionMetadata>> {
-        // First, try to get from cache
-        {
-            let cache = self.metadata_cache.read().await;
-            if let Some(metadata) = cache.get(collection_id) {
-                tracing::debug!("🔍 Collection metadata cache HIT for: {}", collection_id);
-                return Ok(metadata.clone());
-            }
-        }
-
-        tracing::debug!("🔍 Collection metadata cache MISS for: {}", collection_id);
-
-        // TODO: Cache miss - load from SharedServices
-        // For now, return error as placeholder until SharedServices integration
-        Err(crate::storage::StorageError::CollectionNotFound(collection_id.clone()))
-    }
-
-    /// Invalidate metadata cache entry (call when collection is updated/deleted)
-    async fn invalidate_metadata_cache(&self, collection_id: &CollectionId) {
-        let mut cache = self.metadata_cache.write().await;
-        if cache.remove(collection_id).is_some() {
-            tracing::debug!("🔍 Invalidated metadata cache for collection: {}", collection_id);
-        }
-    }
-
-    /// Preload frequently accessed collections into cache (call during startup)
-    pub async fn preload_metadata_cache(&self) -> crate::storage::Result<()> {
-        tracing::info!("🔍 Preloading collection metadata cache...");
-        
-        // TODO: Load collections from SharedServices
-        let collections: Vec<CollectionMetadata> = Vec::new(); // Placeholder
-
-        let mut cache = self.metadata_cache.write().await;
-        for metadata in collections {
-            cache.insert(metadata.id.clone(), Arc::new(metadata.clone()));
-        }
-
-        tracing::info!("🔍 Preloaded {} collections into metadata cache", cache.len());
-        Ok(())
-    }
 
     /// Calculate distance/similarity based on collection's configured metric
     fn calculate_distance_metric(
@@ -710,23 +636,29 @@ impl StorageEngine {
             collection_id, query.len(), k
         );
 
-        // STEP 1: Query collection metadata first (CRITICAL for proper search)
-        // Try cache first, then fallback to metadata store
-        let collection_metadata = self.get_collection_metadata_cached(collection_id).await?;
+        // STEP 1: Query collection metadata from collection service (proper separation of concerns)
+        let collection_record = self.collection_service
+            .get_collection_by_name(collection_id)
+            .await
+            .map_err(|e| crate::core::StorageError::MetadataError(e.to_string()))?;
+            
+        let collection_record = collection_record.ok_or_else(|| {
+            crate::core::StorageError::CollectionNotFound(collection_id.clone())
+        })?;
 
         // STEP 2: Validate query vector dimensions against collection metadata
-        if query.len() != collection_metadata.dimension {
-            return Err(crate::storage::StorageError::InvalidDimension { 
-                expected: collection_metadata.dimension, 
+        if query.len() != collection_record.dimension as usize {
+            return Err(crate::core::StorageError::InvalidDimension { 
+                expected: collection_record.dimension as usize, 
                 actual: query.len() 
             });
         }
 
         tracing::debug!(
             "🔍 Collection metadata: dim={}, distance_metric={}, index_algo={}",
-            collection_metadata.dimension,
-            collection_metadata.distance_metric,
-            collection_metadata.indexing_algorithm
+            collection_record.dimension,
+            collection_record.distance_metric,
+            collection_record.indexing_algorithm
         );
 
         // Two-part search implementation:
@@ -737,7 +669,7 @@ impl StorageEngine {
         let mut all_results = Vec::new();
 
         // Part 1: Search memtable for recent unflushed data (with collection-specific distance metric)
-        match self.search_memtable_with_metadata(collection_id, &query, k * 2, &collection_metadata).await {
+        match self.search_memtable_with_metadata(collection_id, &query, k * 2, &collection_record).await {
             Ok(memtable_results) => {
                 tracing::debug!(
                     "🔍 Found {} results from memtable",
@@ -796,12 +728,12 @@ impl StorageEngine {
         collection_id: &CollectionId,
         query: &[f32],
         k: usize,
-        collection_metadata: &CollectionMetadata,
+        collection_record: &crate::storage::metadata::backends::filestore_backend::CollectionRecord,
     ) -> crate::storage::Result<Vec<SearchResult>> {
         tracing::debug!(
             "🔍 Searching memtable for collection: {} with distance_metric: {}",
             collection_id,
-            collection_metadata.distance_metric
+            collection_record.distance_metric
         );
 
         // Get all entries for the collection from WAL/memtable
@@ -828,7 +760,7 @@ impl StorageEngine {
                 }
 
                 // Calculate similarity using collection-specific distance metric
-                let similarity = self.calculate_distance_metric(query, &record.vector, &collection_metadata.distance_metric)?;
+                let similarity = self.calculate_distance_metric(query, &record.vector, &collection_record.distance_metric)?;
                 
                 candidates.push(SearchResult {
                     vector_id: if record.id.is_empty() { 

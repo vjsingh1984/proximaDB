@@ -52,7 +52,7 @@ impl ParquetEncoder {
         let collection_ids: Vec<String> = records.iter().map(|r| r.collection_id.clone()).collect();
         let timestamps: Vec<i64> = records
             .iter()
-            .map(|r| r.timestamp.timestamp_nanos_opt().unwrap_or(0))
+            .map(|r| r.timestamp * 1_000_000) // Convert millis to nanos
             .collect();
         let metadata_json: Vec<Option<String>> = records
             .iter()

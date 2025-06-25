@@ -140,8 +140,8 @@ impl<'a> VectorProcessor for TimeSeriesVectorProcessor<'a> {
     fn preprocess_records(&self, records: &mut [VectorRecord]) -> Result<()> {
         // Time-series specific preprocessing: Group by time windows
         records.sort_by(|a, b| {
-            let window_a = a.timestamp.timestamp() / self.time_window_seconds as i64;
-            let window_b = b.timestamp.timestamp() / self.time_window_seconds as i64;
+            let window_a = (a.timestamp / 1000) / self.time_window_seconds as i64;
+            let window_b = (b.timestamp / 1000) / self.time_window_seconds as i64;
             window_a
                 .cmp(&window_b)
                 .then_with(|| a.timestamp.cmp(&b.timestamp))
