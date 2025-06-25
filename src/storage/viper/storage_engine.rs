@@ -813,8 +813,8 @@ impl ViperStorageEngine {
             cluster_id,
             dimension_count: dimensions.len() as u32,
             sparsity_ratio: self.calculate_sparsity(&vector.vector),
-            timestamp: vector.timestamp,
-            expires_at: vector.expires_at,
+            timestamp: chrono::DateTime::from_timestamp_millis(vector.timestamp).unwrap_or_else(|| Utc::now()),
+            expires_at: vector.expires_at.map(|ts| chrono::DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
         };
         let dimensions_vec: Vec<(u32, f32)> = dimensions.into_iter().collect();
         let data = SparseVectorData {
@@ -836,8 +836,8 @@ impl ViperStorageEngine {
             metadata: serde_json::to_value(vector.metadata)?,
             cluster_id,
             vector: vector.vector,
-            timestamp: vector.timestamp,
-            expires_at: vector.expires_at,
+            timestamp: chrono::DateTime::from_timestamp_millis(vector.timestamp).unwrap_or_else(|| Utc::now()),
+            expires_at: vector.expires_at.map(|ts| chrono::DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
         };
 
         Ok(ViperVector::Dense { record })

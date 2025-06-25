@@ -436,6 +436,14 @@ mod tests {
             vector_count: 0,
             total_size_bytes: 0,
             config: HashMap::new(),
+            access_pattern: crate::storage::metadata::AccessPattern::Normal,
+            retention_policy: None,
+            tags: Vec::new(),
+            owner: None,
+            description: None,
+            strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(),
+            strategy_change_history: Vec::new(),
+            flush_config: None,
         };
 
         // Create index
@@ -446,30 +454,24 @@ mod tests {
 
         // Add test vectors
         let vectors = vec![
-            VectorRecord {
-                id: Uuid::new_v4().to_string(),
-                collection_id: "test_collection".to_string(),
-                vector: vec![1.0, 0.0, 0.0],
-                metadata: HashMap::new(),
-                timestamp: Utc::now(),
-                expires_at: None,
-            },
-            VectorRecord {
-                id: Uuid::new_v4().to_string(),
-                collection_id: "test_collection".to_string(),
-                vector: vec![0.0, 1.0, 0.0],
-                metadata: HashMap::new(),
-                timestamp: Utc::now(),
-                expires_at: None,
-            },
-            VectorRecord {
-                id: Uuid::new_v4().to_string(),
-                collection_id: "test_collection".to_string(),
-                vector: vec![0.0, 0.0, 1.0],
-                metadata: HashMap::new(),
-                timestamp: Utc::now(),
-                expires_at: None,
-            },
+            VectorRecord::new(
+                Uuid::new_v4().to_string(),
+                "test_collection".to_string(),
+                vec![1.0, 0.0, 0.0],
+                HashMap::new(),
+            ),
+            VectorRecord::new(
+                Uuid::new_v4().to_string(),
+                "test_collection".to_string(),
+                vec![0.0, 1.0, 0.0],
+                HashMap::new(),
+            ),
+            VectorRecord::new(
+                Uuid::new_v4().to_string(),
+                "test_collection".to_string(),
+                vec![0.0, 0.0, 1.0],
+                HashMap::new(),
+            ),
         ];
 
         for vector in &vectors {

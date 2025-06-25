@@ -968,7 +968,7 @@ impl Default for CompressionConfig {
     fn default() -> Self {
         Self {
             enable_adaptive_compression: true,
-            default_algorithm: CompressionAlgorithm::Zstd { level: 3 },
+            default_algorithm: CompressionAlgorithm::Zstd,
             compression_level_range: (1, 9),
             enable_format_optimization: true,
             enable_benchmarking: true,

@@ -548,13 +548,20 @@ impl MetadataWalManager {
         let json = serde_json::to_vec(metadata)?;
         let vector = json.iter().map(|&b| b as f32).collect();
 
+        let timestamp = metadata.updated_at.timestamp_millis();
         Ok(crate::core::VectorRecord {
             id: format!("metadata_{}", metadata.id),
             collection_id: metadata.id.clone(),
             vector,
             metadata: HashMap::new(),
-            timestamp: metadata.updated_at,
+            timestamp,
+            created_at: timestamp,
+            updated_at: timestamp,
             expires_at: None,
+            version: 1,
+            rank: None,
+            score: None,
+            distance: None,
         })
     }
 

@@ -81,12 +81,12 @@ impl<'a> VectorRecordSchemaAdapter<'a> {
 
             // Timestamps
             if let Some(expires_at) = record.expires_at {
-                expires_at_builder.append_value(expires_at.timestamp_millis());
+                expires_at_builder.append_value(expires_at);
             } else {
                 expires_at_builder.append_null();
             }
-            created_at_builder.append_value(record.timestamp.timestamp_millis());
-            updated_at_builder.append_value(record.timestamp.timestamp_millis());
+            created_at_builder.append_value(record.timestamp);
+            updated_at_builder.append_value(record.timestamp);
         }
 
         // Build arrays

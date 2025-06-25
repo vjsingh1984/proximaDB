@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn test_compaction_config_defaults() {
         let config = MetadataCompactionConfig::default();
-        assert!(config.base.enabled);
+        assert!(config.base.enable_background_compaction);
         assert_eq!(config.max_incremental_operations, 1000);
         assert_eq!(config.keep_snapshots, 5);
         assert!(config.compress_snapshots);

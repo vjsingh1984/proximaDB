@@ -512,7 +512,7 @@ fn should_replace_entry(existing: &LsmEntry, new: &LsmEntry) -> bool {
             new_record.timestamp > existing_record.timestamp
         }
         (LsmEntry::Record(record), LsmEntry::Tombstone { timestamp, .. }) => {
-            *timestamp > record.timestamp
+            timestamp.timestamp_millis() > record.timestamp
         }
         (
             LsmEntry::Tombstone {
@@ -520,7 +520,7 @@ fn should_replace_entry(existing: &LsmEntry, new: &LsmEntry) -> bool {
                 ..
             },
             LsmEntry::Record(record),
-        ) => record.timestamp > *existing_ts,
+        ) => record.timestamp > existing_ts.timestamp_millis(),
         (
             LsmEntry::Tombstone {
                 timestamp: existing_ts,

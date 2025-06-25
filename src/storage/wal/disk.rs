@@ -762,7 +762,7 @@ impl WalDiskManager {
                     "collection_id": record.collection_id,
                     "vector": record.vector,
                     "metadata": record.metadata,
-                    "timestamp": record.timestamp.timestamp_micros()
+                    "timestamp": record.timestamp * 1000 // Convert millis to micros
                 },
                 "expires_at": expires_at.map(|t| t.timestamp_micros())
             }),
@@ -774,7 +774,7 @@ impl WalDiskManager {
                     "collection_id": record.collection_id,
                     "vector": record.vector,
                     "metadata": record.metadata,
-                    "timestamp": record.timestamp.timestamp_micros()
+                    "timestamp": record.timestamp * 1000 // Convert millis to micros
                 },
                 "expires_at": expires_at.map(|t| t.timestamp_micros())
             }),

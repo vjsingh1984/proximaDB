@@ -288,7 +288,7 @@ impl WalConfig {
     pub fn storage_optimized() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Most memory-efficient
-        config.compression.algorithm = CompressionAlgorithm::Zstd { level: 3 }; // Better compression
+        config.compression.algorithm = CompressionAlgorithm::Zstd; // Better compression
         config.compression.compress_memory = true; // Compress everything
         config.compression.min_compress_size = 64; // Compress smaller entries
         config.performance.disk_segment_size = 512 * 1024 * 1024; // Larger segments

@@ -995,7 +995,7 @@ impl ViperCoreEngine {
             Ok(ProcessedVectorRecord {
                 id: record.id.clone(),
                 vector: record.vector.clone(),
-                timestamp: record.timestamp,
+                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp).unwrap_or_else(|| Utc::now()),
                 filterable_data,
                 extra_meta,
             })
@@ -1006,7 +1006,7 @@ impl ViperCoreEngine {
             Ok(ProcessedVectorRecord {
                 id: record.id.clone(),
                 vector: record.vector.clone(),
-                timestamp: record.timestamp,
+                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp).unwrap_or_else(|| Utc::now()),
                 filterable_data: HashMap::new(),
                 extra_meta: record.metadata.clone(),
             })
@@ -1703,6 +1703,7 @@ impl ViperCoreEngine {
                 }
             }
 
+            let now = Utc::now().timestamp_millis();
             let mock_record = VectorRecord {
                 id: format!("parquet_filtered_{}_{}", cluster_id, i),
                 collection_id: cluster_id.clone(),
@@ -1714,8 +1715,14 @@ impl ViperCoreEngine {
                     ("year".to_string(), Value::String("2023".to_string())),
                     ("text".to_string(), Value::String(format!("Parquet-filtered document {} from cluster {}", i, cluster_id))),
                 ].iter().cloned().collect(),
-                timestamp: Utc::now(),
-                expires_at: None, // No expiration by default
+                timestamp: now,
+                created_at: now,
+                updated_at: now,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
             };
 
             // Apply simple filter matching for demonstration
