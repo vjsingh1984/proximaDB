@@ -13,7 +13,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::wal::config::{CompressionAlgorithm, MemTableType, WalStrategyType};
+use crate::core::CompressionAlgorithm;
+use super::wal::config::{MemTableType, WalStrategyType};
 use super::wal::{WalConfig, WalFactory, WalManager};
 use crate::storage::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -61,7 +62,7 @@ pub struct DataStorageConfig {
     pub cache_size_mb: usize,
 
     /// Compaction settings
-    pub compaction_config: crate::core::unified_types::CompactionConfig,
+    pub compaction_config: crate::core::CompactionConfig,
 
     /// Tiering configuration
     pub tiering_config: Option<DataTieringConfig>,
@@ -114,7 +115,7 @@ pub enum CompressionLevel {
 }
 
 // NOTE: CompactionConfig and CompactionStrategy moved to unified_types.rs
-pub use crate::core::unified_types::{CompactionConfig, CompactionStrategy};
+pub use crate::core::{CompactionConfig, CompactionStrategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataTieringConfig {
@@ -251,14 +252,13 @@ impl Default for StorageSystemConfig {
                 segment_size: 128 * 1024 * 1024, // 128MB
                 enable_mmap: true,
                 cache_size_mb: 512,
-                compaction_config: crate::core::unified_types::CompactionConfig {
-                    enabled: true,
-                    strategy: crate::core::unified_types::CompactionStrategy::Adaptive,
-                    trigger_threshold: 0.3,
-                    max_parallelism: 4,
-                    target_file_size: 128 * 1024 * 1024, // 128MB
-                    min_files_to_compact: 3,
-                    max_files_to_compact: 10,
+                compaction_config: crate::core::CompactionConfig {
+                    strategy: crate::core::CompactionStrategy::SizeTiered,
+                    max_sstable_size_mb: 128, // 128MB
+                    max_level_size_mb: 512,
+                    compaction_threads: 4,
+                    enable_background_compaction: true,
+                    compaction_interval_seconds: 300,
                 },
                 tiering_config: None,
             },
@@ -865,7 +865,7 @@ impl Default for DataStorageConfig {
             segment_size: 64 * 1024 * 1024, // 64MB default
             enable_mmap: true,
             cache_size_mb: 512,
-            compaction_config: crate::core::unified_types::CompactionConfig::default(),
+            compaction_config: crate::core::CompactionConfig::default(),
             tiering_config: None,
         }
     }

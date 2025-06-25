@@ -32,7 +32,7 @@ use crate::storage::metadata::backends::filestore_backend::{
 #[derive(Debug, Clone)]
 pub struct MetadataCompactionConfig {
     /// Base compaction configuration
-    pub base: crate::core::unified_types::CompactionConfig,
+    pub base: crate::core::CompactionConfig,
     /// Maximum number of incremental operations before triggering compaction
     pub max_incremental_operations: usize,
     /// Maximum size of incremental logs before triggering compaction (bytes)
@@ -46,7 +46,7 @@ pub struct MetadataCompactionConfig {
 impl Default for MetadataCompactionConfig {
     fn default() -> Self {
         Self {
-            base: crate::core::unified_types::CompactionConfig::default(),
+            base: crate::core::CompactionConfig::default(),
             max_incremental_operations: 1000,
             max_incremental_size_bytes: 100 * 1024 * 1024, // 100MB
             keep_snapshots: 5,
@@ -95,7 +95,7 @@ impl FilestoreCompactionManager {
 
     /// Check if compaction is needed
     pub async fn needs_compaction(&self) -> Result<bool> {
-        if !self.config.base.enabled {
+        if !self.config.base.enable_background_compaction {
             return Ok(false);
         }
 

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::compute::hardware_detection::SimdLevel;
-use crate::storage::wal::config::CompressionAlgorithm;
+use crate::core::CompressionAlgorithm;
 
 /// SIMD-optimized compression engine for VIPER storage
 pub struct SimdCompressionEngine {
@@ -239,7 +239,7 @@ impl SimdCompressionEngine {
         );
 
         backends.insert(
-            CompressionAlgorithm::Zstd { level: 3 },
+            CompressionAlgorithm::Zstd,
             Box::new(ZstdBackend::new(3, simd_capabilities.clone())),
         );
 
@@ -249,7 +249,7 @@ impl SimdCompressionEngine {
         );
 
         backends.insert(
-            CompressionAlgorithm::Zstd { level: 6 },
+            CompressionAlgorithm::Zstd,
             Box::new(ZstdBackend::new(6, simd_capabilities.clone())),
         );
 
@@ -401,15 +401,15 @@ impl SimdCompressionEngine {
             },
 
             OptimizationTarget::MaxCompression => match request.data_type {
-                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 6 }),
-                DataType::SparseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd),
+                DataType::SparseVectors => Ok(CompressionAlgorithm::Zstd),
                 DataType::Metadata => Ok(CompressionAlgorithm::Snappy),
-                DataType::ClusterIds => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::ClusterIds => Ok(CompressionAlgorithm::Zstd),
                 DataType::Timestamps => Ok(CompressionAlgorithm::Lz4),
             },
 
             OptimizationTarget::Balanced => match request.data_type {
-                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd { level: 3 }),
+                DataType::DenseVectors => Ok(CompressionAlgorithm::Zstd),
                 DataType::SparseVectors => Ok(CompressionAlgorithm::Lz4),
                 DataType::Metadata => Ok(CompressionAlgorithm::Lz4),
                 DataType::ClusterIds => Ok(CompressionAlgorithm::Lz4),
@@ -484,13 +484,15 @@ impl SimdCompressionEngine {
         match algorithm {
             CompressionAlgorithm::None => 0.0,
             CompressionAlgorithm::Lz4 => (data_size / 1024) as f32 * 0.1, // 10% overhead
-            CompressionAlgorithm::Lz4Hc => (data_size / 1024) as f32 * 0.12, // slightly higher overhead
-            CompressionAlgorithm::Zstd { level } => {
-                (data_size / 1024) as f32 * (0.2 + (*level as f32 * 0.1))
+            // Note: Lz4Hc not available in new enum, using Lz4
+            // CompressionAlgorithm::Lz4Hc => (data_size / 1024) as f32 * 0.12,
+            CompressionAlgorithm::Zstd => {
+                (data_size / 1024) as f32 * 0.5 // Use fixed overhead since level is not available
             }
             CompressionAlgorithm::Snappy => (data_size / 1024) as f32 * 0.15,
             CompressionAlgorithm::Gzip => (data_size / 1024) as f32 * 0.25,
-            CompressionAlgorithm::Deflate => (data_size / 1024) as f32 * 0.25,
+            // Note: Deflate not available in new enum, mapping to Gzip
+            // CompressionAlgorithm::Deflate => (data_size / 1024) as f32 * 0.25,
         }
     }
 
@@ -657,7 +659,7 @@ impl CompressionBackend for ZstdBackend {
 
     fn characteristics(&self) -> CompressionCharacteristics {
         CompressionCharacteristics {
-            algorithm: CompressionAlgorithm::Zstd { level: self.level },
+            algorithm: CompressionAlgorithm::Zstd,
             compression_speed_mbps: 100.0 - (self.level as f32 * 10.0),
             decompression_speed_mbps: 400.0,
             typical_compression_ratio: 3.0 + (self.level as f32 * 0.3),
@@ -668,7 +670,7 @@ impl CompressionBackend for ZstdBackend {
     }
 
     fn algorithm(&self) -> CompressionAlgorithm {
-        CompressionAlgorithm::Zstd { level: self.level }
+        CompressionAlgorithm::Zstd
     }
 }
 

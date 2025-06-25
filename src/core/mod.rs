@@ -4,8 +4,11 @@ pub mod global_coordination;
 pub mod routing;
 pub mod serverless;
 pub mod storage_layout;
-pub mod types;
-pub mod unified_types;
+pub mod avro_unified;
+
+// Legacy modules - kept temporarily for compatibility during migration
+mod types;
+mod unified_types;
 
 pub use config::*;
 pub use error::*;
@@ -16,5 +19,5 @@ pub use routing::{
     AccountTier, CustomerSegment, RoutingContext, RoutingDecision, SmartRouter, WorkloadType,
 };
 pub use serverless::*;
-pub use types::*;
-pub use unified_types::*;
+// Use avro_unified types as the single source of truth
+pub use avro_unified::*;

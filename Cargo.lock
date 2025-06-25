@@ -3680,6 +3680,7 @@ dependencies = [
  "google-cloud-storage",
  "hnsw",
  "hyper 0.14.32",
+ "lazy_static",
  "libc",
  "lz4_flex",
  "memmap2",

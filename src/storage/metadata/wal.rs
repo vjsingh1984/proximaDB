@@ -28,8 +28,9 @@ use uuid::Uuid;
 
 use crate::core::CollectionId;
 use crate::storage::filesystem::FilesystemFactory;
+use crate::core::CompressionAlgorithm;
 use crate::storage::wal::{
-    config::{CompressionAlgorithm, MemTableType, WalStrategyType},
+    config::{MemTableType, WalStrategyType},
     WalConfig, WalEntry, WalOperation, WalStrategy,
 };
 
@@ -424,7 +425,7 @@ impl MetadataWalManager {
             Ok(stats) => {
                 // Extract collection IDs from WAL stats
                 // This is a simple implementation - in practice, the WAL might track collection IDs
-                let mut collection_ids = Vec::new();
+                let collection_ids = Vec::new();
                 
                 // For now, try common collection patterns since WAL stats doesn't expose collection list
                 // This is a temporary solution until WAL exposes collection enumeration

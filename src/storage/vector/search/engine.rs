@@ -266,7 +266,7 @@ impl ResultMerger {
 impl UnifiedSearchEngine {
     /// Create new unified search engine
     pub async fn new(config: UnifiedSearchConfig) -> Result<Self> {
-        let mut algorithms: HashMap<String, Box<dyn SearchAlgorithm>> = HashMap::new();
+        let algorithms: HashMap<String, Box<dyn SearchAlgorithm>> = HashMap::new();
         
         // Register built-in algorithms
         // algorithms.insert("hnsw".to_string(), Box::new(HnswSearchAlgorithm::new()));
