@@ -850,6 +850,148 @@ pub type CollectionId = String;
 pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
+/// Metadata filter for server-side filtering operations
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MetadataFilter {
+    /// Field-based filter with specific condition
+    Field { field: String, condition: FieldCondition },
+    /// Logical AND of multiple filters
+    And(Vec<MetadataFilter>),
+    /// Logical OR of multiple filters
+    Or(Vec<MetadataFilter>),
+    /// Logical NOT of a filter
+    Not(Box<MetadataFilter>),
+}
+
+/// Conditions for field-based filtering
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FieldCondition {
+    /// Equal to value
+    Equals(serde_json::Value),
+    /// Not equal to value
+    NotEquals(serde_json::Value),
+    /// Greater than value
+    GreaterThan(serde_json::Value),
+    /// Less than value
+    LessThan(serde_json::Value),
+    /// Greater than or equal to value
+    GreaterThanOrEqual(serde_json::Value),
+    /// Less than or equal to value
+    LessThanOrEqual(serde_json::Value),
+    /// Value in list
+    In(Vec<serde_json::Value>),
+    /// Value not in list
+    NotIn(Vec<serde_json::Value>),
+    /// String contains substring
+    Contains(String),
+    /// String starts with prefix
+    StartsWith(String),
+    /// String ends with suffix
+    EndsWith(String),
+    /// Value is null
+    IsNull,
+    /// Value is not null
+    IsNotNull,
+    /// Range query
+    Range { min: serde_json::Value, max: serde_json::Value },
+}
+
+/// Vector operations for batch processing
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum VectorOperation {
+    /// Insert a new vector
+    Insert {
+        record: VectorRecord,
+        index_immediately: bool,
+    },
+    /// Update an existing vector
+    Update {
+        vector_id: String,
+        new_vector: Option<Vec<f32>>,
+        new_metadata: Option<HashMap<String, serde_json::Value>>,
+    },
+    /// Delete a vector
+    Delete {
+        vector_id: String,
+        soft_delete: bool,
+    },
+    /// Search for similar vectors
+    Search(SearchContext),
+    /// Get a vector by ID
+    Get {
+        vector_id: String,
+        include_vector: bool,
+    },
+    /// Batch operation
+    Batch {
+        operations: Vec<VectorOperation>,
+        transactional: bool,
+    },
+}
+
+/// Search context for vector operations
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SearchContext {
+    pub collection_id: String,
+    pub query_vector: Vec<f32>,
+    pub k: usize,
+    pub filters: Option<Vec<MetadataFilter>>,
+    pub strategy: SearchStrategy,
+    pub algorithm_hints: HashMap<String, String>,
+    pub threshold: Option<f32>,
+    pub timeout_ms: Option<u64>,
+    pub include_debug_info: bool,
+    pub include_vectors: bool,
+}
+
+/// Search strategy configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SearchStrategy {
+    /// Exact search (brute force)
+    Exact,
+    /// Approximate search with configurable accuracy
+    Approximate { accuracy: f32 },
+    /// Adaptive search based on query characteristics
+    Adaptive {
+        query_complexity_score: f32,
+        time_budget_ms: u64,
+        accuracy_preference: f32,
+    },
+}
+
+/// Operation result enum
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum OperationResult {
+    /// Vector was inserted
+    Inserted { vector_id: String },
+    /// Vector was updated
+    Updated { vector_id: String, changes: i64 },
+    /// Vector was deleted
+    Deleted { vector_id: String },
+    /// Search results
+    SearchResults(Vec<SearchResult>),
+    /// Vector data retrieved
+    VectorData {
+        vector_id: String,
+        vector: Option<Vec<f32>>,
+        metadata: serde_json::Value,
+    },
+    /// Batch operation results
+    BatchResults(Vec<OperationResult>),
+    /// Operation error
+    Error {
+        operation: String,
+        error: String,
+        recoverable: bool,
+    },
+}
+
+// Vector insert response, operation metrics, and search response are already defined above
+
+// Collection request and config are already defined above
+
+// Search metadata, index stats, and debug info are already defined above
+
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
 pub type UnifiedSearchResult = SearchResult; 

@@ -1,5 +1,5 @@
 use crate::core::{CollectionId, StorageError, VectorId, VectorRecord};
-use crate::storage::{lsm::LsmEntry, Result};
+use crate::storage::{engines::lsm::LsmEntry, Result};
 use memmap2::MmapOptions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

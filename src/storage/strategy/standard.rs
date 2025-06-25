@@ -18,7 +18,7 @@ use super::{
     OptimizationResult, SearchFilter, SearchResult, StrategyStats, StrategyType,
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::storage::lsm::LsmTree;
+use crate::storage::engines::lsm::LsmTree;
 use crate::storage::{CollectionMetadata, WalEntry};
 
 /// Standard strategy implementation

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::core::{CollectionId, VectorId, VectorRecord};
+// Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

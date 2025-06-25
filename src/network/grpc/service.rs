@@ -18,7 +18,8 @@ use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::services::collection_service::CollectionService;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
-use crate::schema_types::{
+// Note: schema_types module has been removed, types moved to crate::core
+use crate::core::{
     VectorRecord as SchemaVectorRecord,
     VectorInsertResponse as SchemaVectorInsertResponse,
     VectorOperationMetrics as SchemaVectorOperationMetrics,

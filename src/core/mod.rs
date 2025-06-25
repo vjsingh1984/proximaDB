@@ -5,12 +5,9 @@ pub mod routing;
 pub mod serverless;
 pub mod storage_layout;
 pub mod avro_unified;
+pub mod index;
 
-// DEPRECATED: Legacy modules marked as obsolete - will be removed after full migration
-#[deprecated(note = "Use avro_unified types instead")]
-mod types;
-#[deprecated(note = "Use avro_unified types instead")]  
-mod unified_types;
+// Legacy modules removed - using avro_unified as single source of truth
 
 pub use config::*;
 pub use error::*;

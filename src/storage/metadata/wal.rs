@@ -29,7 +29,7 @@ use uuid::Uuid;
 use crate::core::CollectionId;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::CompressionAlgorithm;
-use crate::storage::wal::{
+use crate::storage::persistence::wal::{
     config::{MemTableType, WalStrategyType},
     WalConfig, WalEntry, WalOperation, WalStrategy,
 };
@@ -183,7 +183,7 @@ impl MetadataWalManager {
         tracing::debug!("🚀 Creating MetadataWalManager with B+Tree memtable for sorted access");
 
         // Create WAL strategy using factory
-        let wal_strategy = crate::storage::wal::WalFactory::create_strategy(
+        let wal_strategy = crate::storage::persistence::wal::WalFactory::create_strategy(
             config.base_config.strategy_type.clone(),
             &config.base_config,
             filesystem,

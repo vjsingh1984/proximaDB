@@ -13,7 +13,7 @@
 //! - MMAP-optimized local storage
 
 use proximadb::storage::persistence::filesystem::{AuthConfig, AwsAuthMethod, AzureAuthMethod, GcsAuthMethod};
-use proximadb::storage::wal::{CompressionLevel, WalFormat, WalSystemBuilder};
+use proximadb::storage::persistence::wal::{CompressionLevel, WalFormat, WalSystemBuilder};
 use proximadb::storage::{
     builder::StorageLayoutStrategy, FilesystemConfig, FilesystemPerformanceConfig,
     StorageSystemBuilder,

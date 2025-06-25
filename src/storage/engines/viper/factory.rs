@@ -23,8 +23,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+// Note: storage::vector::types module has been removed
+// Types now come from crate::core (avro_unified) and specific modules
 use crate::core::{CollectionId, VectorRecord};
-use crate::storage::vector::types::*;
+use crate::core::index::types::{IndexType, VectorIndexType, MetadataIndexType};
 
 /// VIPER Factory - Main entry point for creating VIPER components
 pub struct ViperFactory {
