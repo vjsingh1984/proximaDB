@@ -2,12 +2,13 @@
 
 use super::common::*;
 use anyhow::Result;
-use proximadb::schema_types::{VectorInsertRequest, VectorRecord};
+use proximadb::core::VectorInsertRequest;
 use std::collections::HashMap;
 
 #[cfg(test)]
 mod vector_tests {
     use super::*;
+    use crate::measure_performance;
 
     #[tokio::test]
     async fn test_single_vector_insert() -> Result<()> {
@@ -23,9 +24,9 @@ mod vector_tests {
         let request = VectorInsertRequest::single_insert(collection_id, vector_record.clone());
         
         assert_eq!(request.vectors.len(), 1);
-        assert_eq!(request.vectors[0].id, Some("test_vector_001".to_string()));
+        assert_eq!(request.vectors[0].id, "test_vector_001".to_string());
         assert_eq!(request.vectors[0].vector.len(), 384);
-        assert!(request.vectors[0].metadata.is_some());
+        assert!(!request.vectors[0].metadata.is_empty());
         
         println!("✅ Single vector insert request structure valid");
         Ok(())
@@ -39,19 +40,7 @@ mod vector_tests {
         let batch_size = 10;
         let vector_batch = create_test_vector_batch(collection_id.clone(), batch_size, 384);
         
-        let schema_vectors: Vec<proximadb::schema_types::VectorRecord> = vector_batch
-            .into_iter()
-            .map(|v| proximadb::schema_types::VectorRecord {
-                id: Some(v.id),
-                vector: v.vector,
-                metadata: Some(v.metadata),
-                timestamp: Some(v.timestamp.timestamp()),
-                version: 1,
-                expires_at: v.expires_at.map(|t| t.timestamp()),
-            })
-            .collect();
-        
-        let request = VectorInsertRequest::batch_insert(collection_id, schema_vectors);
+        let request = VectorInsertRequest::batch_insert(collection_id, vector_batch);
         
         assert_eq!(request.vectors.len(), batch_size);
         assert!(!request.upsert_mode);
@@ -71,16 +60,7 @@ mod vector_tests {
             384
         );
         
-        let schema_vector = proximadb::schema_types::VectorRecord {
-            id: Some(vector_record.id),
-            vector: vector_record.vector,
-            metadata: Some(vector_record.metadata),
-            timestamp: Some(vector_record.timestamp.timestamp()),
-            version: 1,
-            expires_at: vector_record.expires_at.map(|t| t.timestamp()),
-        };
-        
-        let request = VectorInsertRequest::upsert(collection_id, vec![schema_vector]);
+        let request = VectorInsertRequest::upsert(collection_id, vec![vector_record]);
         
         assert!(request.upsert_mode);
         assert_eq!(request.vectors.len(), 1);

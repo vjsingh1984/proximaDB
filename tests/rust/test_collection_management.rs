@@ -2,9 +2,7 @@
 
 use super::common::*;
 use anyhow::Result;
-use proximadb::services::collection_service::CollectionService;
-use proximadb::schema_types::{CollectionRequest, CollectionOperation};
-use std::sync::Arc;
+use proximadb::core::{CollectionRequest, CollectionOperation};
 
 #[cfg(test)]
 mod collection_tests {
@@ -80,7 +78,7 @@ mod collection_tests {
         
         // Test JSON serialization
         let json_str = serde_json::to_string(&config)?;
-        let deserialized: proximadb::schema_types::CollectionConfig = 
+        let deserialized: proximadb::core::CollectionConfig = 
             serde_json::from_str(&json_str)?;
         
         assert_eq!(config.dimension, deserialized.dimension);

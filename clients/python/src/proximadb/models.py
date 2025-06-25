@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 from enum import Enum
 
 import numpy as np
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class DistanceMetric(str, Enum):
@@ -55,8 +55,7 @@ class IndexConfig(BaseModel):
     algorithm: IndexAlgorithm = IndexAlgorithm.HNSW
     parameters: Dict[str, Any] = Field(default_factory=dict)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class StorageConfig(BaseModel):
@@ -66,8 +65,7 @@ class StorageConfig(BaseModel):
     enable_tiering: bool = True
     hot_tier_size_gb: Optional[int] = None
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class FlushConfig(BaseModel):
@@ -78,8 +76,7 @@ class FlushConfig(BaseModel):
         description="Maximum WAL size in MB before forced flush (None = use global default: 128MB)"
     )
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class CollectionConfig(BaseModel):
@@ -108,23 +105,22 @@ class CollectionConfig(BaseModel):
         description="WAL flush configuration (None = use global defaults). SIZE-BASED FLUSH ONLY for stability."
     )
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
     
-    @validator('dimension')
+    @field_validator('dimension')
     def validate_dimension(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("Dimension must be positive")
         return v
     
-    @validator('storage_layout')
+    @field_validator('storage_layout')
     def validate_storage_layout(cls, v: str) -> str:
         valid_layouts = {'viper', 'lsm', 'rocksdb', 'memory'}
         if v not in valid_layouts:
             raise ValueError(f"Storage layout '{v}' is not supported. Valid options: {', '.join(valid_layouts)}")
         return v
     
-    @validator('filterable_metadata_fields')
+    @field_validator('filterable_metadata_fields')
     def validate_filterable_fields(cls, v: Optional[List[str]]) -> Optional[List[str]]:
         if v is not None:
             # Validate field names
@@ -163,10 +159,9 @@ class Collection(BaseModel):
     metric: Optional[str] = None
     index_type: Optional[str] = None
     
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
 
 
 class Vector(BaseModel):
@@ -175,7 +170,7 @@ class Vector(BaseModel):
     vector: List[float]
     metadata: Optional[Dict[str, Any]] = None
     
-    @validator('vector')
+    @field_validator('vector')
     def validate_vector(cls, v: List[float]) -> List[float]:
         if not v:
             raise ValueError("Vector cannot be empty")
@@ -241,7 +236,7 @@ class SearchRequest(BaseModel):
     filter: Optional[Dict[str, Any]] = None
     params: Optional[SearchParams] = None
     
-    @validator('query')
+    @field_validator('query')
     def validate_query(cls, v: List[float]) -> List[float]:
         if not v:
             raise ValueError("Query vector cannot be empty")
@@ -307,10 +302,9 @@ class CollectionStats(BaseModel):
     # Simple server fields
     dimension: Optional[int] = None
     
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
 
 
 class ClusterInfo(BaseModel):
