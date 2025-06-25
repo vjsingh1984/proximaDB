@@ -30,7 +30,7 @@ use crate::storage::StorageEngine;
 // These types are now distributed across different modules
 // VIPER engine imports removed - not used in this service
 // TODO: Add imports for VectorStorageCoordinator and related types from their new locations
-use crate::core::{VectorRecord, VectorInsertResponse, VectorOperationMetrics, VectorSearchResponse, SearchMetadata, SearchDebugInfo, IndexStats, MetadataFilter, VectorOperation, SearchContext, SearchStrategy, SearchResult, DistanceMetric, StorageEngine as CoreStorageEngine, VectorSearchResult};
+use crate::core::{VectorRecord, VectorInsertResponse, VectorOperationMetrics, VectorSearchResponse, SearchMetadata, SearchDebugInfo, IndexStats, MetadataFilter, VectorOperation, SearchContext, SearchStrategy, SearchResult, DistanceMetric, StorageEngine as CoreStorageEngine, VectorSearchResult, CollectionRequest};
 use crate::services::collection_service::CollectionService;
 
 /// Unified service that operates exclusively on binary Avro records
@@ -668,6 +668,7 @@ impl UnifiedAvroService {
             DistanceMetric::Euclidean => "EUCLIDEAN", 
             DistanceMetric::DotProduct => "DOT_PRODUCT",
             DistanceMetric::Hamming => "HAMMING",
+            DistanceMetric::Manhattan => "MANHATTAN",
         }.to_string();
         let storage_layout = match config.storage_engine {
             CoreStorageEngine::Viper => "VIPER",
@@ -699,6 +700,7 @@ impl UnifiedAvroService {
                 DistanceMetric::Euclidean => 2,
                 DistanceMetric::DotProduct => 3,
                 DistanceMetric::Hamming => 4,
+                DistanceMetric::Manhattan => 5,
             },
             storage_engine: match config.storage_engine {
                 CoreStorageEngine::Viper => 1,
@@ -1447,17 +1449,21 @@ impl UnifiedAvroService {
         let processing_time = start_time.elapsed().as_micros() as i64;
         
         // Convert filtered records to search response format
-        let search_results: Vec<VectorSearchResult> = filtered_records
+        let search_results: Vec<SearchResult> = filtered_records
             .into_iter()
             .enumerate()
-            .map(|(idx, record)| VectorSearchResult {
-                id: Some(record.id.clone()),
+            .map(|(idx, record)| SearchResult {
+                id: record.id.clone(),
                 vector_id: Some(record.id),
                 score: 1.0 - (idx as f32 * 0.01), // Simulate relevance score
                 vector: Some(record.vector),
-                metadata: Some(record.metadata),
+                metadata: record.metadata,
                 distance: Some(idx as f32 * 0.01), // Simulate distance
                 rank: Some((idx + 1) as i32),
+                collection_id: Some(record.collection_id),
+                created_at: Some(record.created_at),
+                algorithm_used: Some("METADATA_FILTER".to_string()),
+                processing_time_us: Some(0),
             })
             .collect();
 
@@ -1469,9 +1475,13 @@ impl UnifiedAvroService {
 
         let total_found = search_results.len() as i64;
         Ok(VectorSearchResponse {
+            success: true,
             results: search_results,
+            total_count: total_found,
             total_found,
             processing_time_us: processing_time,
+            algorithm_used: "VIPER_PARQUET_COLUMN_PUSHDOWN".to_string(),
+            error_message: None,
             search_metadata: SearchMetadata {
                 algorithm_used: "VIPER_PARQUET_COLUMN_PUSHDOWN".to_string(),
                 query_id: Some(format!("metadata_search_{}", chrono::Utc::now().timestamp_millis())),
