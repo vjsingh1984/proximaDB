@@ -16,6 +16,8 @@ use crate::proto::proximadb::{
 };
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::services::collection_service::CollectionService;
+use chrono::Utc;
+use uuid::Uuid;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
 // Note: schema_types module has been removed, types moved to crate::core
@@ -160,15 +162,20 @@ impl ProximaDbGrpcService {
     /// Convert protobuf VectorRecord to schema types for zero-copy processing
     fn convert_vector_record(&self, proto_record: &crate::proto::proximadb::VectorRecord) -> SchemaVectorRecord {
         SchemaVectorRecord {
-            id: proto_record.id.clone(),
+            id: proto_record.id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+            collection_id: "unknown".to_string(), // Set by caller
             vector: proto_record.vector.clone(),
             metadata: proto_record.metadata.iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect::<std::collections::HashMap<String, serde_json::Value>>()
-                .into(),
-            timestamp: proto_record.timestamp,
-            version: proto_record.version,
+                .collect(),
+            timestamp: proto_record.timestamp.unwrap_or_else(|| Utc::now().timestamp_millis()),
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
             expires_at: proto_record.expires_at,
+            version: proto_record.version,
+            rank: None,
+            score: None,
+            distance: None,
         }
     }
 

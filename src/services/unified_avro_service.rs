@@ -507,9 +507,7 @@ impl UnifiedAvroService {
             // Add query index to results
             for mut result in search_results {
                 // Inject query index into metadata
-                if let serde_json::Value::Object(ref mut obj) = result.metadata {
-                    obj.insert("query_index".to_string(), json!(query_idx));
-                }
+                result.metadata.insert("query_index".to_string(), json!(query_idx));
                 all_results.push(result);
             }
         }
@@ -525,7 +523,7 @@ impl UnifiedAvroService {
                     "vector_id": result.vector_id,
                     "score": result.score,
                     "vector": if include_vectors { result.vector.unwrap_or_default() } else { Vec::<f32>::new() },
-                    "metadata": if include_metadata { result.metadata } else { json!({}) }
+                    "metadata": if include_metadata { json!(result.metadata) } else { json!({}) }
                 })
             })
             .collect();
@@ -1402,7 +1400,7 @@ impl UnifiedAvroService {
                 }
                 
                 if include_metadata {
-                    json_result["metadata"] = result.metadata;
+                    json_result["metadata"] = json!(result.metadata);
                 }
                 
                 json_result
@@ -1518,12 +1516,12 @@ impl UnifiedAvroService {
                     ("result_assembly".to_string(), processing_time as f64 * 0.2 / 1000.0),
                 ].iter().cloned().collect(),
                 memory_usage_mb: None, // Not tracked in this implementation
-                estimated_total_cost: processing_time as f64 / 1000.0,
-                actual_cost: processing_time as f64 / 1000.0,
-                cost_breakdown: [
+                estimated_total_cost: Some(processing_time as f64 / 1000.0),
+                actual_cost: Some(processing_time as f64 / 1000.0),
+                cost_breakdown: Some([
                     ("cpu_cycles".to_string(), processing_time as f64 * 0.9 / 1000.0),
                     ("memory_access".to_string(), processing_time as f64 * 0.1 / 1000.0),
-                ].iter().cloned().collect(),
+                ].iter().cloned().collect()),
             }),
         })
     }
