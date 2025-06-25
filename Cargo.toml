@@ -41,6 +41,7 @@ libc = "0.2"
 # art-tree = "0.2.0"  # Disabled - x86_64 specific, incompatible with ARM64
 # Alternative: Use HashMap for ART implementation (already done in art.rs)
 once_cell = "1.19"
+lazy_static = "1.5"
 # dashmap = "6.1.0"     # High-performance concurrent hashmap for ART alternative (already defined below)
 
 # Networking & gRPC

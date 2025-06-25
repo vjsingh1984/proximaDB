@@ -44,12 +44,12 @@ pub struct ViperConfig {
     pub ttl_config: TTLConfig,
 
     /// Compaction trigger configuration
-    pub compaction_config: crate::core::unified_types::CompactionConfig,
+    pub compaction_config: crate::core::CompactionConfig,
 }
 
-// NOTE: CompactionConfig moved to unified_types.rs - use crate::core::unified_types::CompactionConfig
+// NOTE: CompactionConfig moved to avro_unified.rs - use crate::core::CompactionConfig
 // This avoids the duplicate definition issue while maintaining compatibility
-pub type CompactionConfig = crate::core::unified_types::CompactionConfig;
+pub type CompactionConfig = crate::core::CompactionConfig;
 
 /// TTL (Time-To-Live) configuration for automatic vector expiration
 #[derive(Debug, Clone)]
@@ -100,7 +100,7 @@ impl Default for ViperConfig {
             enable_column_stats: true,
             enable_bloom_filters: true,
             ttl_config: TTLConfig::default(),
-            compaction_config: crate::core::unified_types::CompactionConfig::default(),
+            compaction_config: crate::core::CompactionConfig::default(),
         }
     }
 }

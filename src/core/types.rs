@@ -31,7 +31,7 @@ pub struct SearchQuery {
 }
 
 // NOTE: SearchResult moved to unified_types.rs to avoid duplication
-pub use crate::core::unified_types::SearchResult;
+pub use crate::core::SearchResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSearchRequest {

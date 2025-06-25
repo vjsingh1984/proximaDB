@@ -34,7 +34,7 @@ use super::types::*;
 use super::ViperConfig;
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::filesystem::FilesystemFactory;
-use crate::storage::wal::config::CompressionAlgorithm;
+use crate::core::CompressionAlgorithm;
 
 /// Calculate sparsity ratio for a vector (standalone function)
 fn calculate_sparsity_ratio(vector: &[f32]) -> f32 {

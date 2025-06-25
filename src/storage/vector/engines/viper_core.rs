@@ -124,7 +124,7 @@ pub struct ProcessedVectorRecord {
 }
 
 // NOTE: SearchResult moved to unified_types.rs to avoid duplication
-pub use crate::core::unified_types::SearchResult;
+pub use crate::core::SearchResult;
 
 /// VIPER Core Storage Engine with ML-driven clustering and Parquet optimization
 pub struct ViperCoreEngine {

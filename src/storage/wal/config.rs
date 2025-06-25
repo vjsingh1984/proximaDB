@@ -10,13 +10,13 @@ use std::path::PathBuf;
 
 // NOTE: CompressionAlgorithm moved to unified_types.rs
 // WAL-specific configuration uses the unified type
-pub use crate::core::unified_types::CompressionAlgorithm;
+pub use crate::core::CompressionAlgorithm;
 
 /// Compression configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionConfig {
     /// Algorithm to use
-    pub algorithm: crate::core::unified_types::CompressionAlgorithm,
+    pub algorithm: crate::core::CompressionAlgorithm,
 
     /// Enable compression for memory structures
     pub compress_memory: bool,

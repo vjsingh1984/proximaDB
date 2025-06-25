@@ -24,7 +24,7 @@ use tokio::time::{Duration, Instant};
 use super::types::*;
 use super::ViperConfig;
 use crate::core::CollectionId;
-use crate::storage::wal::config::CompressionAlgorithm;
+use crate::core::CompressionAlgorithm;
 
 /// VIPER Compaction Engine with ML-guided optimization
 pub struct ViperCompactionEngine {
@@ -525,19 +525,22 @@ impl ViperCompactionEngine {
         let avg_file_size_kb = total_size_kb / file_count;
 
         // Apply MVP trigger logic:
-        // Compaction triggers when: file_count > min_files_to_compact AND avg_size < target_file_size
-        let needs_compaction = compaction_config.enabled
-            && file_count > compaction_config.min_files_to_compact
-            && avg_file_size_kb < (compaction_config.target_file_size / 1024) as usize;
+        // Compaction triggers when: background compaction enabled AND avg_size < max_sstable_size
+        let min_files_to_compact = 3; // Default minimum
+        let target_file_size_kb = compaction_config.max_sstable_size_mb * 1024; // Convert MB to KB
+        
+        let needs_compaction = compaction_config.enable_background_compaction
+            && file_count > min_files_to_compact
+            && avg_file_size_kb < target_file_size_kb;
 
         if needs_compaction {
             tracing::info!(
                 "🔄 Compaction triggered for collection {}: {} files (>{}) with avg size {}KB (<{}KB)",
                 collection_id,
                 file_count,
-                compaction_config.min_files_to_compact,
+                min_files_to_compact,
                 avg_file_size_kb,
-                compaction_config.target_file_size / 1024
+                target_file_size_kb
             );
         }
 
@@ -550,8 +553,8 @@ impl ViperCompactionEngine {
             ),
             collection_id: collection_id.clone(),
             compaction_type: CompactionType::FileMerging {
-                target_file_size_mb: (compaction_config.target_file_size / (1024 * 1024)) as usize,
-                max_files_per_merge: compaction_config.max_files_to_compact,
+                target_file_size_mb: compaction_config.max_sstable_size_mb as usize,
+                max_files_per_merge: 10, // Default max files to compact
             },
             priority: if needs_compaction {
                 CompactionPriority::High
@@ -559,9 +562,7 @@ impl ViperCompactionEngine {
                 CompactionPriority::Low
             },
             input_partitions: Vec::new(), // TODO: Populate with actual file list
-            expected_outputs: (file_count as f32
-                / compaction_config.max_files_to_compact as f32)
-                .ceil() as usize,
+            expected_outputs: (file_count as f32 / 10.0).ceil() as usize, // Use default max files
             optimization_hints: Some(CompactionOptimizationHints {
                 partition_suggestions: Vec::new(),
                 compression_recommendations: vec![CompressionRecommendation {

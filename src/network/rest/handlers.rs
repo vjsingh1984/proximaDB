@@ -253,13 +253,20 @@ pub async fn insert_vector(
     tracing::info!("Vector dimension: {}", request.vector.len());
     
     // Create VectorRecord with all required fields
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let vector_record = VectorRecord {
         id: vector_id.clone(),
         collection_id: collection_id.clone(),
         vector: request.vector,
         metadata: request.metadata.unwrap_or_default(),
-        timestamp: chrono::Utc::now(),
+        timestamp: now_ms,
+        created_at: now_ms,
+        updated_at: now_ms,
         expires_at: None,
+        version: 1,
+        rank: None,
+        score: None,
+        distance: None,
     };
     
     // Create simple Avro payload using JSON serialization as fallback
@@ -420,13 +427,20 @@ pub async fn batch_insert_vectors(
         let vector_id = request.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         vector_ids.push(vector_id.clone());
         
+        let now_ms = chrono::Utc::now().timestamp_millis();
         vector_records.push(VectorRecord {
             id: vector_id,
             collection_id: collection_id.clone(),
             vector: request.vector,
             metadata: request.metadata.unwrap_or_default(),
-            timestamp: chrono::Utc::now(),
+            timestamp: now_ms,
+            created_at: now_ms,
+            updated_at: now_ms,
             expires_at: None,
+            version: 1,
+            rank: None,
+            score: None,
+            distance: None,
         });
     }
     

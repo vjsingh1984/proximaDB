@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{CollectionId, VectorRecord, CompressionAlgorithm};
 use crate::storage::filesystem::FilesystemFactory;
 
 /// VIPER Utilities coordinator - Central management for all utility services
@@ -463,16 +463,6 @@ pub struct CompressionConfig {
     pub optimization_interval_secs: u64,
 }
 
-/// Compression algorithm options
-#[derive(Debug, Clone)]
-pub enum CompressionAlgorithm {
-    Snappy,
-    Zstd { level: u8 },
-    Lz4,
-    Brotli { level: u8 },
-    Gzip { level: u8 },
-    Deflate { level: u8 },
-}
 
 /// Compression model for optimal algorithm selection
 #[derive(Debug)]
@@ -825,7 +815,7 @@ impl CompressionOptimizer {
         _collection_id: &CollectionId,
     ) -> Result<CompressionRecommendation> {
         Ok(CompressionRecommendation {
-            recommended_algorithm: CompressionAlgorithm::Zstd { level: 3 },
+            recommended_algorithm: CompressionAlgorithm::Zstd,
             recommended_level: 3,
             expected_ratio: 0.7,
             expected_performance: CompressionPerformance {

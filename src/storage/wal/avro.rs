@@ -114,15 +114,17 @@ impl AvroWalStrategy {
         let schema = Schema::parse_str(AVRO_SCHEMA_V1).context("Failed to parse Avro schema")?;
 
         let compression_codec = match config.compression.algorithm {
-            crate::core::unified_types::CompressionAlgorithm::None => apache_avro::Codec::Null,
-            crate::core::unified_types::CompressionAlgorithm::Snappy => {
+            crate::core::CompressionAlgorithm::None => apache_avro::Codec::Null,
+            crate::core::CompressionAlgorithm::Snappy => {
                 apache_avro::Codec::Deflate
             }
-            crate::core::unified_types::CompressionAlgorithm::Lz4 => apache_avro::Codec::Deflate,
-            crate::core::unified_types::CompressionAlgorithm::Lz4Hc => apache_avro::Codec::Deflate,
-            crate::core::unified_types::CompressionAlgorithm::Gzip => apache_avro::Codec::Deflate,
-            crate::core::unified_types::CompressionAlgorithm::Deflate => apache_avro::Codec::Deflate,
-            crate::core::unified_types::CompressionAlgorithm::Zstd { .. } => {
+            crate::core::CompressionAlgorithm::Lz4 => apache_avro::Codec::Deflate,
+            // Note: Lz4Hc not available in new enum
+            // crate::core::CompressionAlgorithm::Lz4Hc => apache_avro::Codec::Deflate,
+            crate::core::CompressionAlgorithm::Gzip => apache_avro::Codec::Deflate,
+            // Note: Deflate not available in new enum
+            // crate::core::CompressionAlgorithm::Deflate => apache_avro::Codec::Deflate,
+            crate::core::CompressionAlgorithm::Zstd => {
                 apache_avro::Codec::Deflate
             }
         };

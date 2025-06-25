@@ -339,16 +339,23 @@ impl UnifiedAvroService {
                 .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
             
+            let timestamp_ms = vector_data.get("timestamp")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+            
             let record = VectorRecord {
                 id: vector_id.clone(),
                 collection_id: collection_id.clone(),
                 vector,
                 metadata,
-                timestamp: vector_data.get("timestamp")
-                    .and_then(|v| v.as_i64())
-                    .map(|ts| chrono::DateTime::from_timestamp(ts, 0).unwrap_or_else(|| chrono::Utc::now()))
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                timestamp: timestamp_ms,
+                created_at: timestamp_ms,
+                updated_at: timestamp_ms,
                 expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
             };
             
             // Create vector operation for coordinator
@@ -1039,18 +1046,22 @@ impl UnifiedAvroService {
         
         // expires_at is optional and defaults to null (active record)
         let expires_at = vector_record.get("expires_at")
-            .and_then(|v| v.as_i64())
-            .map(|ts| chrono::DateTime::from_timestamp(ts / 1_000_000, ((ts % 1_000_000) * 1000) as u32))
-            .flatten();
+            .and_then(|v| v.as_i64());
 
+        let timestamp_ms = timestamp / 1000; // Convert from microseconds to milliseconds
         let vector_record = crate::core::VectorRecord {
             id: vector_id.clone(),
             collection_id: collection_id.to_string(),
             vector: vector_data,
             metadata: metadata.unwrap_or_default(),
-            timestamp: chrono::DateTime::from_timestamp(timestamp / 1_000_000, ((timestamp % 1_000_000) * 1000) as u32)
-                .unwrap_or_else(|| chrono::Utc::now()),
+            timestamp: timestamp_ms,
+            created_at: timestamp_ms,
+            updated_at: timestamp_ms,
             expires_at, // null by default for active records
+            version: 1,
+            rank: None,
+            score: None,
+            distance: None,
         };
         
         storage
@@ -1217,16 +1228,23 @@ impl UnifiedAvroService {
                 .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
             
-            let record = crate::core::types::VectorRecord {
+            let timestamp_ms = vector_data.get("timestamp")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+            
+            let record = crate::core::VectorRecord {
                 id: vector_id.clone(),
                 collection_id: collection_id.to_string(),
                 vector,
                 metadata,
-                timestamp: vector_data.get("timestamp")
-                    .and_then(|v| v.as_i64())
-                    .map(|ts| chrono::DateTime::from_timestamp(ts, 0).unwrap_or_else(|| chrono::Utc::now()))
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                timestamp: timestamp_ms,
+                created_at: timestamp_ms,
+                updated_at: timestamp_ms,
                 expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
             };
             
             wal_entries.push((vector_id, record));
@@ -1522,6 +1540,7 @@ impl UnifiedAvroService {
         let max_results = limit.unwrap_or(50).min(100); // Cap at 100 for demo
         
         for i in 0..max_results {
+            let now_ms = chrono::Utc::now().timestamp_millis();
             let record = crate::core::VectorRecord {
                 id: format!("server_filtered_{}_{}", collection_id, i),
                 collection_id: collection_id.to_string(),
@@ -1538,8 +1557,14 @@ impl UnifiedAvroService {
                     ("viper_filtered".to_string(), serde_json::Value::Bool(true)),
                     ("parquet_optimized".to_string(), serde_json::Value::Bool(true)),
                 ].iter().cloned().collect(),
-                timestamp: chrono::Utc::now(),
+                timestamp: now_ms,
+                created_at: now_ms,
+                updated_at: now_ms,
                 expires_at: None, // No expiration by default
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
             };
             
             // Simple filter matching for demo
