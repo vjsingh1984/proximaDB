@@ -12,6 +12,10 @@ pub mod multi_server;
 pub mod rest;
 pub mod server_builder;
 
+// Unit tests
+#[cfg(test)]
+mod tests;
+
 use serde::{Deserialize, Serialize};
 
 pub use metrics_service::*;

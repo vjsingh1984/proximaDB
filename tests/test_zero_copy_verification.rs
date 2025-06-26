@@ -2,14 +2,13 @@
 
 use proximadb::core::avro_unified::{VectorRecord};
 use std::collections::HashMap;
-use chrono::Utc;
 
 #[test]
 fn test_zero_copy_serialization() {
     // Create a test vector record
     let mut metadata = HashMap::new();
-    metadata.insert("category".to_string(), serde_json::json!("test"));
-    metadata.insert("score".to_string(), serde_json::json!(0.95));
+    metadata.insert("category".to_string(), serde_json::Value::String("test".to_string()));
+    metadata.insert("score".to_string(), serde_json::Value::String("0.95".to_string()));
     
     let record = VectorRecord::new(
         "test_id".to_string(),
@@ -51,7 +50,7 @@ fn test_batch_serialization_performance() {
     // Create 1000 test records
     for i in 0..1000 {
         let mut metadata = HashMap::new();
-        metadata.insert("index".to_string(), serde_json::json!(i));
+        metadata.insert("index".to_string(), serde_json::Value::String(i.to_string()));
         
         let record = VectorRecord::new(
             format!("test_id_{}", i),
