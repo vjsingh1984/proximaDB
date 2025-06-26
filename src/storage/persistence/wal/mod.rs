@@ -32,6 +32,10 @@ pub mod factory;
 pub mod memtable;
 // Note: age_monitor removed - using size-based flush on write operations only
 
+// Unit tests
+#[cfg(test)]
+mod tests;
+
 // Re-exports
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
