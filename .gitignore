@@ -227,3 +227,16 @@ terraform.rc
 .turbo/
 .vercel/
 .netlify/
+
+# Generated files
+archive/
+log/
+snapshots/
+*.profraw
+cobertura.xml
+*.log
+*.log.*
+
+# Build artifacts
+target/
+build_rs_cov.profraw
