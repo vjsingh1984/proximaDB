@@ -17,3 +17,4 @@
 //! Compute module unit tests
 
 pub mod distance_tests;
+pub mod algorithms_tests;
