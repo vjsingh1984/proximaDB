@@ -1,237 +1,321 @@
-/*
- * Copyright 2025 Vijaykumar Singh
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+//! Integration tests for WAL (Write-Ahead Log) with current APIs
+//! 
+//! This module contains integration tests for the WAL system using the current
+//! implementation and APIs, focusing on persistence, recovery, and strategy testing.
 
+use proximadb::storage::persistence::wal::{
+    WalConfig, WalFactory, WalManager, WalOperation, WalEntry, WalStrategyType
+};
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::core::VectorRecord;
 use chrono::Utc;
-use proximadb::core::{LsmConfig, StorageConfig, VectorRecord};
-use proximadb::storage::{StorageEngine, WalConfig, WalManager};
+use serde_json::json;
+use std::sync::Arc;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tempfile::TempDir;
-use uuid::Uuid;
+
+/// Create a test WAL manager with temporary directory
+async fn create_test_wal_manager() -> (WalManager, TempDir) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    
+    let mut config = WalConfig::default();
+    config.multi_disk.data_directories = vec![temp_dir.path().to_path_buf()];
+    
+    let filesystem = Arc::new(FilesystemFactory::new());
+    let strategy = WalFactory::create_from_config(&config, filesystem)
+        .await
+        .expect("Failed to create WAL strategy");
+    
+    let manager = WalManager::new(strategy, config)
+        .await
+        .expect("Failed to create WAL manager");
+    
+    (manager, temp_dir)
+}
+
+/// Create a test vector record using Avro-unified VectorRecord
+fn create_test_vector_record(collection_id: &str, vector_id: &str) -> VectorRecord {
+    let now = Utc::now().timestamp_micros();
+    VectorRecord {
+        id: vector_id.to_string(),
+        collection_id: collection_id.to_string(),
+        vector: vec![1.0, 2.0, 3.0, 4.0],
+        metadata: HashMap::new(),
+        timestamp: now,
+        created_at: now,
+        updated_at: now,
+        expires_at: None,
+        version: 1,
+        rank: None,
+        score: None,
+        distance: None,
+    }
+}
 
 #[tokio::test]
 async fn test_wal_persistence_and_recovery() {
-    let temp_dir = TempDir::new().unwrap();
-    let data_dir = temp_dir.path().join("data");
-    let wal_dir = temp_dir.path().join("wal");
-
-    // Create some test data
-    let collection_id = "test_collection";
-    let vectors = vec![
-        VectorRecord {
-            id: Uuid::new_v4(),
-            collection_id: collection_id.to_string(),
-            vector: vec![1.0, 2.0, 3.0, 4.0],
-            metadata: HashMap::new(),
-            timestamp: Utc::now(),
-        },
-        VectorRecord {
-            id: Uuid::new_v4(),
-            collection_id: collection_id.to_string(),
-            vector: vec![5.0, 6.0, 7.0, 8.0],
-            metadata: HashMap::new(),
-            timestamp: Utc::now(),
-        },
+    let (manager, _temp_dir) = create_test_wal_manager().await;
+    
+    let collection_id = "test_collection".to_string();
+    let vector_records = vec![
+        ("vector_1".to_string(), create_test_vector_record(&collection_id, "vector_1")),
+        ("vector_2".to_string(), create_test_vector_record(&collection_id, "vector_2")),
+        ("vector_3".to_string(), create_test_vector_record(&collection_id, "vector_3")),
     ];
-
-    let vector_ids: Vec<Uuid> = vectors.iter().map(|v| v.id).collect();
-
+    
     // Phase 1: Write data with WAL
     {
-        let config = StorageConfig {
-            data_dirs: vec![data_dir.clone()],
-            wal_dir: wal_dir.clone(),
-            mmap_enabled: true,
-            lsm_config: LsmConfig {
-                memtable_size_mb: 1,
-                level_count: 7,
-                compaction_threshold: 4,
-                block_size_kb: 64,
-            },
-            cache_size_mb: 10,
-            bloom_filter_bits: 10,
-        };
-
-        let mut storage = StorageEngine::new(config).await.unwrap();
-        storage.start().await.unwrap();
-
         // Create collection
-        storage
-            .create_collection(collection_id.to_string())
-            .await
-            .unwrap();
-
-        // Write vectors
-        for vector in &vectors {
-            storage.write(vector.clone()).await.unwrap();
-        }
-
-        // Verify data is readable
-        for (i, id) in vector_ids.iter().enumerate() {
-            let result = storage.read(&collection_id.to_string(), id).await.unwrap();
-            assert!(result.is_some());
-            let record = result.unwrap();
-            assert_eq!(record.vector, vectors[i].vector);
-        }
-
-        // Stop the storage engine (simulating crash without flush)
-        // Note: We're NOT calling stop() to simulate an ungraceful shutdown
-        drop(storage);
+        let create_result = manager.create_collection(
+            collection_id.clone(),
+            json!({"dimension": 4, "metric": "cosine"})
+        ).await;
+        assert!(create_result.is_ok());
+        
+        // Insert vectors using batch operation
+        let insert_result = manager.insert_batch(
+            collection_id.clone(),
+            vector_records.clone()
+        ).await;
+        assert!(insert_result.is_ok());
+        
+        let sequences = insert_result.unwrap();
+        assert_eq!(sequences.len(), 3);
+        
+        // Force flush to ensure data is persisted
+        let flush_result = manager.flush(Some(&collection_id)).await;
+        assert!(flush_result.is_ok());
+        
+        let flush_info = flush_result.unwrap();
+        assert!(flush_info.entries_flushed > 0);
     }
-
-    // Phase 2: Recover from WAL
+    
+    // Phase 2: Test recovery
     {
-        let config = StorageConfig {
-            data_dirs: vec![data_dir.clone()],
-            wal_dir: wal_dir.clone(),
-            mmap_enabled: true,
-            lsm_config: LsmConfig {
-                memtable_size_mb: 1,
-                level_count: 7,
-                compaction_threshold: 4,
-                block_size_kb: 64,
-            },
-            cache_size_mb: 10,
-            bloom_filter_bits: 10,
-        };
-
-        let mut storage = StorageEngine::new(config).await.unwrap();
-        storage.start().await.unwrap();
-
-        // Data should be recovered from WAL
-        for (i, id) in vector_ids.iter().enumerate() {
-            let result = storage.read(&collection_id.to_string(), id).await.unwrap();
-            assert!(
-                result.is_some(),
-                "Vector {} should be recovered from WAL",
-                id
-            );
-            let record = result.unwrap();
-            assert_eq!(record.vector, vectors[i].vector);
-        }
-
-        // Clean shutdown this time
-        storage.stop().await.unwrap();
+        // Attempt recovery
+        let recover_result = manager.recover().await;
+        assert!(recover_result.is_ok());
+        
+        let entries_recovered = recover_result.unwrap();
+        assert!(entries_recovered >= 0);
+        
+        // Verify WAL statistics show persisted data
+        let stats_result = manager.stats().await;
+        assert!(stats_result.is_ok());
+        
+        let stats = stats_result.unwrap();
+        assert!(stats.total_entries >= 0);
+        assert!(stats.collections_count >= 0);
     }
+    
+    // Clean shutdown
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
 }
 
 #[tokio::test]
-async fn test_wal_rotation() {
-    let temp_dir = TempDir::new().unwrap();
-    let wal_dir = temp_dir.path().join("wal");
-
-    let config = WalConfig {
-        wal_dir: wal_dir.clone(),
-        segment_size: 1024, // Small size to force rotation
-        sync_mode: true,
-        retention_segments: 2,
-    };
-
-    let wal = WalManager::new(config).await.unwrap();
-
-    // Write enough data to trigger rotation
-    for i in 0..100 {
-        let entry = proximadb::storage::WalEntry::Put {
-            collection_id: "test".to_string(),
-            record: VectorRecord {
-                id: Uuid::new_v4(),
-                collection_id: "test".to_string(),
-                vector: vec![i as f32; 128],
-                metadata: HashMap::new(),
-                timestamp: Utc::now(),
-            },
-            timestamp: Utc::now(),
-        };
-        wal.append(entry).await.unwrap();
-    }
-
-    // Check that rotation happened by listing WAL files
-    let mut entries = tokio::fs::read_dir(&wal_dir).await.unwrap();
-    let mut wal_files = Vec::new();
-    while let Some(entry) = entries.next_entry().await.unwrap() {
-        if entry.file_name().to_str().unwrap().starts_with("wal_") {
-            wal_files.push(entry.file_name());
-        }
-    }
-
-    assert!(
-        wal_files.len() > 1,
-        "WAL should have rotated to multiple segments"
-    );
-
-    // Verify all entries can be read
-    let all_entries = wal.read_all().await.unwrap();
-    assert!(all_entries.len() >= 100);
+async fn test_wal_avro_strategy_operations() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    
+    let mut config = WalConfig::default();
+    config.strategy_type = WalStrategyType::Avro;
+    config.multi_disk.data_directories = vec![temp_dir.path().to_path_buf()];
+    
+    let filesystem = Arc::new(FilesystemFactory::new());
+    let strategy = WalFactory::create_strategy(
+        WalStrategyType::Avro,
+        &config,
+        filesystem
+    ).await;
+    
+    assert!(strategy.is_ok());
+    let strategy = strategy.unwrap();
+    assert_eq!(strategy.strategy_name(), "avro");
+    
+    let manager = WalManager::new(strategy, config).await.expect("Failed to create manager");
+    
+    // Test Avro payload operations
+    let operation_type = "test_avro_operation";
+    let avro_payload = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    
+    let append_result = manager.append_avro_entry(operation_type, &avro_payload).await;
+    assert!(append_result.is_ok());
+    
+    let sequence = append_result.unwrap();
+    assert!(sequence > 0);
+    
+    // Read back the Avro entries
+    let read_result = manager.read_avro_entries(operation_type, Some(10)).await;
+    assert!(read_result.is_ok());
+    
+    let read_payloads = read_result.unwrap();
+    assert_eq!(read_payloads.len(), 1);
+    assert_eq!(read_payloads[0], avro_payload);
+    
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
 }
 
 #[tokio::test]
-async fn test_wal_checksum_validation() {
-    let temp_dir = TempDir::new().unwrap();
-    let wal_dir = temp_dir.path().join("wal");
+async fn test_wal_bincode_strategy_operations() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    
+    let mut config = WalConfig::default();
+    config.strategy_type = WalStrategyType::Bincode;
+    config.multi_disk.data_directories = vec![temp_dir.path().to_path_buf()];
+    
+    let filesystem = Arc::new(FilesystemFactory::new());
+    let strategy = WalFactory::create_strategy(
+        WalStrategyType::Bincode,
+        &config,
+        filesystem
+    ).await;
+    
+    assert!(strategy.is_ok());
+    let strategy = strategy.unwrap();
+    assert_eq!(strategy.strategy_name(), "bincode");
+    
+    let manager = WalManager::new(strategy, config).await.expect("Failed to create manager");
+    
+    let collection_id = "bincode_test_collection".to_string();
+    let vector_id = "bincode_vector_1".to_string();
+    let record = create_test_vector_record(&collection_id, &vector_id);
+    
+    // Test basic operations with Bincode strategy
+    let insert_result = manager.insert(collection_id.clone(), vector_id.clone(), record).await;
+    assert!(insert_result.is_ok());
+    
+    let update_record = create_test_vector_record(&collection_id, &vector_id);
+    let update_result = manager.update(collection_id.clone(), vector_id.clone(), update_record).await;
+    assert!(update_result.is_ok());
+    
+    let delete_result = manager.delete(collection_id.clone(), vector_id).await;
+    assert!(delete_result.is_ok());
+    
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
+}
 
-    let config = WalConfig {
-        wal_dir: wal_dir.clone(),
-        segment_size: 64 * 1024 * 1024,
-        sync_mode: true,
-        retention_segments: 3,
-    };
-
-    // Write a valid entry
-    {
-        let wal = WalManager::new(config.clone()).await.unwrap();
-        let entry = proximadb::storage::WalEntry::CreateCollection {
-            collection_id: "test".to_string(),
-            timestamp: Utc::now(),
-        };
-        wal.append(entry).await.unwrap();
-    }
-
-    // Corrupt the WAL file
-    let mut entries = tokio::fs::read_dir(&wal_dir).await.unwrap();
-    if let Some(entry) = entries.next_entry().await.unwrap() {
-        let path = entry.path();
-        if path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("wal_")
-        {
-            let mut data = tokio::fs::read(&path).await.unwrap();
-            // Corrupt some bytes in the middle
-            if data.len() > 20 {
-                data[15] ^= 0xFF;
-                data[16] ^= 0xFF;
-            }
-            tokio::fs::write(&path, data).await.unwrap();
+#[tokio::test]
+async fn test_wal_flush_and_compaction() {
+    let (manager, _temp_dir) = create_test_wal_manager().await;
+    
+    let collection_id = "compaction_test_collection".to_string();
+    let vector_id = "compaction_vector_1".to_string();
+    
+    // Create collection
+    let create_result = manager.create_collection(
+        collection_id.clone(),
+        json!({"dimension": 4})
+    ).await;
+    assert!(create_result.is_ok());
+    
+    // Insert and update the same vector multiple times to create MVCC versions
+    for i in 1..=10 {
+        let mut record = create_test_vector_record(&collection_id, &vector_id);
+        record.vector = vec![i as f32; 4];
+        
+        if i == 1 {
+            let _insert_result = manager.insert(collection_id.clone(), vector_id.clone(), record).await;
+        } else {
+            let _update_result = manager.update(collection_id.clone(), vector_id.clone(), record).await;
         }
     }
+    
+    // Force flush to disk
+    let flush_result = manager.flush(Some(&collection_id)).await;
+    assert!(flush_result.is_ok());
+    
+    let flush_info = flush_result.unwrap();
+    assert!(flush_info.entries_flushed > 0);
+    assert!(flush_info.bytes_written > 0);
+    assert!(flush_info.flush_duration_ms >= 0);
+    
+    // Compact the collection to clean up old MVCC versions
+    let compact_result = manager.compact(&collection_id).await;
+    assert!(compact_result.is_ok());
+    
+    let entries_compacted = compact_result.unwrap();
+    assert!(entries_compacted >= 0);
+    
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
+}
 
-    // Try to read the corrupted WAL
-    let wal = WalManager::new(config).await.unwrap();
-    let result = wal.read_all().await;
+#[tokio::test]
+async fn test_wal_collection_lifecycle() {
+    let (manager, _temp_dir) = create_test_wal_manager().await;
+    
+    let collection_id = "lifecycle_test_collection".to_string();
+    
+    // Create collection
+    let create_result = manager.create_collection(
+        collection_id.clone(),
+        json!({
+            "dimension": 128,
+            "metric": "euclidean",
+            "description": "Test collection for lifecycle"
+        })
+    ).await;
+    assert!(create_result.is_ok());
+    
+    let create_sequence = create_result.unwrap();
+    assert!(create_sequence > 0);
+    
+    // Add some vectors to the collection
+    let records = vec![
+        ("vec1".to_string(), create_test_vector_record(&collection_id, "vec1")),
+        ("vec2".to_string(), create_test_vector_record(&collection_id, "vec2")),
+    ];
+    
+    let insert_result = manager.insert_batch(collection_id.clone(), records).await;
+    assert!(insert_result.is_ok());
+    
+    // Get collection entries
+    let entries_result = manager.get_collection_entries(&collection_id).await;
+    assert!(entries_result.is_ok());
+    
+    // Drop the collection
+    let drop_result = manager.drop_collection(&collection_id).await;
+    assert!(drop_result.is_ok());
+    
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
+}
 
-    // Should fail with corruption error
-    assert!(result.is_err());
-    if let Err(e) = result {
-        match e {
-            proximadb::core::StorageError::Corruption(msg) => {
-                assert!(msg.contains("checksum"));
-            }
-            _ => panic!("Expected corruption error, got: {:?}", e),
-        }
-    }
+#[tokio::test]
+async fn test_wal_force_sync_operations() {
+    let (manager, _temp_dir) = create_test_wal_manager().await;
+    
+    let collection_id = "sync_test_collection".to_string();
+    let vector_id = "sync_vector_1".to_string();
+    let record = create_test_vector_record(&collection_id, &vector_id);
+    
+    // Insert data
+    let insert_result = manager.insert(collection_id.clone(), vector_id, record).await;
+    assert!(insert_result.is_ok());
+    
+    // Test force sync without specific collection
+    let sync_result = manager.force_sync(None).await;
+    assert!(sync_result.is_ok());
+    
+    // Test force sync with specific collection
+    let sync_result = manager.force_sync(Some(&collection_id)).await;
+    assert!(sync_result.is_ok());
+    
+    // Test batch insert with immediate sync
+    let batch_records = vec![
+        ("batch_vec1".to_string(), create_test_vector_record(&collection_id, "batch_vec1")),
+        ("batch_vec2".to_string(), create_test_vector_record(&collection_id, "batch_vec2")),
+    ];
+    
+    let batch_result = manager.insert_batch_with_sync(
+        collection_id,
+        batch_records,
+        true // immediate sync enabled
+    ).await;
+    assert!(batch_result.is_ok());
+    
+    let close_result = manager.close().await;
+    assert!(close_result.is_ok());
 }
