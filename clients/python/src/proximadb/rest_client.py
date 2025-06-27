@@ -585,6 +585,283 @@ class ProximaDBRestClient:
             errors=errors if errors else None
         )
     
+    def update_collection(
+        self,
+        collection_id: str,
+        updates: Dict[str, Any]
+    ) -> Collection:
+        """Update collection metadata and configuration
+        
+        Args:
+            collection_id: Collection identifier
+            updates: Dictionary of fields to update
+            
+        Returns:
+            Collection: Updated collection metadata
+        """
+        url = f"{self.config.url}/collections/{collection_id}"
+        
+        try:
+            response = self._http_client.patch(url, json=updates, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return Collection(**data)
+        except httpx.RequestError as e:
+            logger.error(f"Network error updating collection {collection_id}: {e}")
+            raise NetworkError(f"Failed to update collection: {e}")
+    
+    def delete_vectors_by_filter(
+        self,
+        collection_id: str,
+        filter: FilterDict
+    ) -> DeleteResult:
+        """Delete vectors matching filter criteria
+        
+        Args:
+            collection_id: Collection identifier
+            filter: Filter criteria for vector deletion
+            
+        Returns:
+            DeleteResult: Deletion operation result
+        """
+        url = f"{self.config.url}/collections/{collection_id}/vectors"
+        
+        try:
+            response = self._http_client.delete(
+                url,
+                json={"filter": filter},
+                timeout=self.config.timeout
+            )
+            self._handle_error_response(response)
+            data = response.json()
+            return DeleteResult(**data)
+        except httpx.RequestError as e:
+            logger.error(f"Network error deleting vectors by filter: {e}")
+            raise NetworkError(f"Failed to delete vectors: {e}")
+    
+    def get_vector_history(
+        self,
+        collection_id: str,
+        vector_id: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get vector version history
+        
+        Args:
+            collection_id: Collection identifier
+            vector_id: Vector identifier
+            limit: Maximum number of history entries
+            
+        Returns:
+            List[Dict[str, Any]]: Vector version history
+        """
+        url = f"{self.config.url}/collections/{collection_id}/vectors/{vector_id}/history"
+        params = {"limit": limit}
+        
+        try:
+            response = self._http_client.get(url, params=params, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return data.get("history", [])
+        except httpx.RequestError as e:
+            logger.error(f"Network error getting vector history: {e}")
+            raise NetworkError(f"Failed to get vector history: {e}")
+    
+    def multi_search(
+        self,
+        collection_id: str,
+        queries: List[Union[List[float], np.ndarray]],
+        k: int = 10,
+        filter: Optional[FilterDict] = None,
+        include_vectors: bool = False,
+        include_metadata: bool = True
+    ) -> List[SearchResult]:
+        """Search with multiple query vectors
+        
+        Args:
+            collection_id: Collection identifier
+            queries: List of query vectors
+            k: Number of results per query
+            filter: Optional metadata filter
+            include_vectors: Include vector data in results
+            include_metadata: Include metadata in results
+            
+        Returns:
+            List[SearchResult]: Combined search results from all queries
+        """
+        url = f"{self.config.url}/collections/{collection_id}/multi_search"
+        
+        # Normalize query vectors
+        normalized_queries = [self._normalize_vector(q) for q in queries]
+        
+        payload = {
+            "queries": normalized_queries,
+            "k": k,
+            "include_vectors": include_vectors,
+            "include_metadata": include_metadata
+        }
+        
+        if filter:
+            payload["filter"] = filter
+        
+        try:
+            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            
+            results = []
+            for result_data in data.get("results", []):
+                results.append(SearchResult(**result_data))
+            
+            return results
+        except httpx.RequestError as e:
+            logger.error(f"Network error in multi-search: {e}")
+            raise NetworkError(f"Multi-search failed: {e}")
+    
+    def search_with_aggregations(
+        self,
+        collection_id: str,
+        query: Union[List[float], np.ndarray],
+        k: int = 10,
+        aggregations: List[str],
+        group_by: Optional[str] = None,
+        filter: Optional[FilterDict] = None
+    ) -> Dict[str, Any]:
+        """Search with result aggregations
+        
+        Args:
+            collection_id: Collection identifier
+            query: Query vector
+            k: Number of results
+            aggregations: List of fields to aggregate
+            group_by: Field to group results by
+            filter: Optional metadata filter
+            
+        Returns:
+            Dict[str, Any]: Search results with aggregations
+        """
+        url = f"{self.config.url}/collections/{collection_id}/search_aggregated"
+        
+        # Normalize query vector
+        normalized_query = self._normalize_vector(query)
+        
+        payload = {
+            "query": normalized_query,
+            "k": k,
+            "aggregations": aggregations
+        }
+        
+        if group_by:
+            payload["group_by"] = group_by
+        if filter:
+            payload["filter"] = filter
+        
+        try:
+            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            return response.json()
+        except httpx.RequestError as e:
+            logger.error(f"Network error in aggregated search: {e}")
+            raise NetworkError(f"Aggregated search failed: {e}")
+    
+    def atomic_insert_vectors(
+        self,
+        collection_id: str,
+        vectors: VectorArray,
+        ids: List[str],
+        metadata: Optional[List[MetadataDict]] = None
+    ) -> BatchResult:
+        """Insert vectors atomically (all-or-nothing)
+        
+        Args:
+            collection_id: Collection identifier
+            vectors: Vector data to insert
+            ids: Vector identifiers
+            metadata: Optional metadata for each vector
+            
+        Returns:
+            BatchResult: Atomic insertion result
+        """
+        url = f"{self.config.url}/collections/{collection_id}/vectors/atomic"
+        
+        # Normalize vectors
+        normalized_vectors = self._normalize_vectors(vectors)
+        
+        payload = {
+            "vectors": normalized_vectors,
+            "ids": ids,
+            "atomic": True
+        }
+        
+        if metadata:
+            payload["metadata"] = metadata
+        
+        try:
+            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return BatchResult(**data)
+        except httpx.RequestError as e:
+            logger.error(f"Network error in atomic insert: {e}")
+            raise NetworkError(f"Atomic insert failed: {e}")
+    
+    def begin_transaction(self) -> str:
+        """Begin a new transaction and return transaction ID
+        
+        Returns:
+            str: Transaction identifier
+        """
+        url = f"{self.config.url}/transactions"
+        
+        try:
+            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return data["transaction_id"]
+        except httpx.RequestError as e:
+            logger.error(f"Network error beginning transaction: {e}")
+            raise NetworkError(f"Failed to begin transaction: {e}")
+    
+    def commit_transaction(self, transaction_id: str) -> bool:
+        """Commit a transaction
+        
+        Args:
+            transaction_id: Transaction identifier
+            
+        Returns:
+            bool: True if committed successfully
+        """
+        url = f"{self.config.url}/transactions/{transaction_id}/commit"
+        
+        try:
+            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return data.get("success", False)
+        except httpx.RequestError as e:
+            logger.error(f"Network error committing transaction: {e}")
+            raise NetworkError(f"Failed to commit transaction: {e}")
+    
+    def rollback_transaction(self, transaction_id: str) -> bool:
+        """Rollback a transaction
+        
+        Args:
+            transaction_id: Transaction identifier
+            
+        Returns:
+            bool: True if rolled back successfully
+        """
+        url = f"{self.config.url}/transactions/{transaction_id}/rollback"
+        
+        try:
+            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
+            self._handle_error_response(response)
+            data = response.json()
+            return data.get("success", False)
+        except httpx.RequestError as e:
+            logger.error(f"Network error rolling back transaction: {e}")
+            raise NetworkError(f"Failed to rollback transaction: {e}")
+    
     def close(self) -> None:
         """Close the client and cleanup resources"""
         if hasattr(self, '_http_client'):

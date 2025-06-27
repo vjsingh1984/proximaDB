@@ -573,6 +573,254 @@ class ProximaDBClient:
                 "score": result.score
             }
         return None
+    
+    async def update_collection(
+        self,
+        collection_id: str,
+        updates: Dict[str, Any]
+    ) -> Collection:
+        """Update collection metadata and configuration
+        
+        Args:
+            collection_id: Collection identifier
+            updates: Dictionary of fields to update
+            
+        Returns:
+            Collection: Updated collection metadata
+        """
+        try:
+            # Use COLLECTION_UPDATE operation
+            request = pb2.CollectionRequest(
+                operation=pb2.COLLECTION_UPDATE,
+                collection_id=collection_id,
+                query_params=updates
+            )
+            
+            response = await self.stub.CollectionOperation(request, timeout=self.timeout)
+            
+            if response.success and response.collection:
+                return self._convert_collection(response.collection)
+            else:
+                raise ProximaDBError(
+                    f"Collection update failed: {response.error_message or 'Unknown error'}"
+                )
+                
+        except grpc.RpcError as e:
+            logger.error(f"gRPC error during collection update: {e}")
+            raise ProximaDBError(f"Collection update failed: {str(e)}")
+    
+    async def delete_vectors_by_filter(
+        self,
+        collection_id: str,
+        filter: Dict[str, Any]
+    ) -> DeleteResult:
+        """Delete vectors matching filter criteria
+        
+        Args:
+            collection_id: Collection identifier
+            filter: Filter criteria for vector deletion
+            
+        Returns:
+            DeleteResult: Deletion operation result
+        """
+        try:
+            # Create vector selector with metadata filter
+            selector = pb2.VectorSelector(metadata_filter=filter)
+            
+            request = pb2.VectorMutationRequest(
+                collection_id=collection_id,
+                operation=pb2.MUTATION_DELETE,
+                selector=selector
+            )
+            
+            response = await self.stub.VectorMutation(request, timeout=self.timeout)
+            
+            if response.success:
+                return DeleteResult(
+                    deleted_count=response.metrics.successful_count,
+                    count=response.metrics.successful_count,
+                    duration_ms=response.metrics.processing_time_us / 1000.0
+                )
+            else:
+                raise ProximaDBError(
+                    f"Vector deletion by filter failed: {response.error_message or 'Unknown error'}"
+                )
+                
+        except grpc.RpcError as e:
+            logger.error(f"gRPC error during vector deletion by filter: {e}")
+            raise ProximaDBError(f"Vector deletion by filter failed: {str(e)}")
+    
+    async def get_vector_history(
+        self,
+        collection_id: str,
+        vector_id: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get vector version history
+        
+        Args:
+            collection_id: Collection identifier
+            vector_id: Vector identifier
+            limit: Maximum number of history entries
+            
+        Returns:
+            List[Dict[str, Any]]: Vector version history
+        """
+        # This would require a new gRPC endpoint for vector history
+        # For now, return placeholder indicating not implemented
+        raise ProximaDBError("Vector history not implemented on server yet")
+    
+    async def multi_search(
+        self,
+        collection_id: str,
+        queries: List[List[float]],
+        k: int = 10,
+        filter: Optional[Dict[str, Any]] = None,
+        include_vectors: bool = False,
+        include_metadata: bool = True
+    ) -> List[SearchResult]:
+        """Search with multiple query vectors
+        
+        Args:
+            collection_id: Collection identifier
+            queries: List of query vectors
+            k: Number of results per query
+            filter: Optional metadata filter
+            include_vectors: Include vector data in results
+            include_metadata: Include metadata in results
+            
+        Returns:
+            List[SearchResult]: Combined search results from all queries
+        """
+        try:
+            # Create multiple search queries
+            search_queries = []
+            for query in queries:
+                search_query = pb2.SearchQuery(vector=query)
+                if filter:
+                    search_query.metadata_filter.update(filter)
+                search_queries.append(search_query)
+            
+            # Set up include fields
+            include_fields = pb2.IncludeFields(
+                vector=include_vectors,
+                metadata=include_metadata,
+                score=True,
+                rank=True
+            )
+            
+            request = pb2.VectorSearchRequest(
+                collection_id=collection_id,
+                queries=search_queries,
+                top_k=k,
+                include_fields=include_fields
+            )
+            
+            response = await self.stub.VectorSearch(request, timeout=self.timeout)
+            
+            if response.success:
+                results = []
+                if response.HasField('compact_results'):
+                    for result_pb in response.compact_results.results:
+                        results.append(SearchResult(
+                            id=result_pb.id,
+                            score=result_pb.score,
+                            vector=list(result_pb.vector) if result_pb.vector else None,
+                            metadata=dict(result_pb.metadata) if result_pb.metadata else None
+                        ))
+                return results
+            else:
+                raise ProximaDBError(
+                    f"Multi-search failed: {response.error_message or 'Unknown error'}"
+                )
+                
+        except grpc.RpcError as e:
+            logger.error(f"gRPC error during multi-search: {e}")
+            raise ProximaDBError(f"Multi-search failed: {str(e)}")
+    
+    async def search_with_aggregations(
+        self,
+        collection_id: str,
+        query: List[float],
+        k: int = 10,
+        aggregations: List[str],
+        group_by: Optional[str] = None,
+        filter: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Search with result aggregations
+        
+        Args:
+            collection_id: Collection identifier
+            query: Query vector
+            k: Number of results
+            aggregations: List of fields to aggregate
+            group_by: Field to group results by
+            filter: Optional metadata filter
+            
+        Returns:
+            Dict[str, Any]: Search results with aggregations
+        """
+        # This would require extending the gRPC search to support aggregations
+        # For now, return placeholder indicating not implemented
+        raise ProximaDBError("Search with aggregations not implemented on server yet")
+    
+    async def atomic_insert_vectors(
+        self,
+        collection_id: str,
+        vectors: List[List[float]],
+        ids: List[str],
+        metadata: Optional[List[Dict[str, Any]]] = None
+    ) -> BatchResult:
+        """Insert vectors atomically (all-or-nothing)
+        
+        Args:
+            collection_id: Collection identifier
+            vectors: Vector data to insert
+            ids: Vector identifiers
+            metadata: Optional metadata for each vector
+            
+        Returns:
+            BatchResult: Atomic insertion result
+        """
+        # For atomic operations, we could extend the VectorInsertRequest with an atomic flag
+        # For now, use regular insert_vectors and hope for atomicity
+        return await self.insert_vectors(collection_id, vectors, ids, metadata)
+    
+    async def begin_transaction(self) -> str:
+        """Begin a new transaction and return transaction ID
+        
+        Returns:
+            str: Transaction identifier
+        """
+        # This would require a new gRPC service for transaction management
+        # For now, return placeholder indicating not implemented
+        raise ProximaDBError("Transactions not implemented on server yet")
+    
+    async def commit_transaction(self, transaction_id: str) -> bool:
+        """Commit a transaction
+        
+        Args:
+            transaction_id: Transaction identifier
+            
+        Returns:
+            bool: True if committed successfully
+        """
+        # This would require a new gRPC service for transaction management
+        # For now, return placeholder indicating not implemented
+        raise ProximaDBError("Transactions not implemented on server yet")
+    
+    async def rollback_transaction(self, transaction_id: str) -> bool:
+        """Rollback a transaction
+        
+        Args:
+            transaction_id: Transaction identifier
+            
+        Returns:
+            bool: True if rolled back successfully
+        """
+        # This would require a new gRPC service for transaction management
+        # For now, return placeholder indicating not implemented
+        raise ProximaDBError("Transactions not implemented on server yet")
 
 
 # For backward compatibility

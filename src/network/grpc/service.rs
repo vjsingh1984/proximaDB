@@ -408,67 +408,77 @@ impl ProximaDb for ProximaDbGrpcService {
             CollectionOperation::CollectionUpdate => {
                 let collection_id = req.collection_id.as_ref()
                     .ok_or_else(|| Status::invalid_argument("Missing collection_id for UPDATE"))?;
-                let config = req.collection_config.as_ref()
-                    .ok_or_else(|| Status::invalid_argument("Missing collection config for UPDATE"))?;
                 
-                // Get existing collection first
-                let mut existing = self.collection_service
-                    .get_collection_by_name(collection_id)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to get collection for update: {}", e)))?
-                    .ok_or_else(|| Status::not_found(format!("Collection '{}' not found", collection_id)))?;
+                // The updates should be in query_params field as JSON key-value pairs
+                if req.query_params.is_empty() {
+                    return Err(Status::invalid_argument("No updates provided in query_params"));
+                }
                 
-                // Update fields from config
-                existing.dimension = config.dimension;
-                existing.distance_metric = match config.distance_metric {
-                    1 => "COSINE".to_string(),
-                    2 => "EUCLIDEAN".to_string(),
-                    3 => "DOT_PRODUCT".to_string(),
-                    4 => "HAMMING".to_string(),
-                    _ => existing.distance_metric,
-                };
-                existing.indexing_algorithm = match config.indexing_algorithm {
-                    1 => "HNSW".to_string(),
-                    2 => "IVF".to_string(),
-                    3 => "PQ".to_string(),
-                    4 => "FLAT".to_string(),
-                    5 => "ANNOY".to_string(),
-                    _ => existing.indexing_algorithm,
-                };
-                existing.storage_engine = match config.storage_engine {
-                    1 => "VIPER".to_string(),
-                    2 => "LSM".to_string(),
-                    3 => "MMAP".to_string(),
-                    4 => "HYBRID".to_string(),
-                    _ => existing.storage_engine,
-                };
-                existing.config = serde_json::to_string(&config.indexing_config).unwrap_or_default();
-                existing.updated_at = chrono::Utc::now().timestamp_millis();
-                existing.version += 1;
+                // Convert query_params (HashMap<String, String>) to HashMap<String, serde_json::Value>
+                let mut updates = std::collections::HashMap::new();
+                for (key, value) in req.query_params.iter() {
+                    // Try to parse the value as JSON, if it fails treat it as a string
+                    let json_value = match serde_json::from_str::<serde_json::Value>(value) {
+                        Ok(v) => v,
+                        Err(_) => serde_json::Value::String(value.clone()),
+                    };
+                    updates.insert(key.clone(), json_value);
+                }
                 
-                // Create the config to update  
-                let update_config = existing.to_grpc_config();
-                
-                // Use the collection service's update method
                 let result = self.collection_service
-                    .create_collection_from_grpc(&update_config) // This does an upsert
+                    .update_collection_metadata(collection_id, &updates)
                     .await
-                    .map_err(|e| Status::internal(format!("Failed to update collection: {}", e)))?;
+                    .map_err(|e| Status::internal(format!("Failed to update collection metadata: {}", e)))?;
                 
-                let processing_time = start_time.elapsed().as_micros() as i64;
-                
-                Ok(Response::new(CollectionResponse {
-                    success: true,
-                    operation: req.operation,
-                    collection: None,
-                    collections: vec![],
-                    affected_count: 1,
-                    total_count: None,
-                    metadata: std::collections::HashMap::new(),
-                    error_message: None,
-                    error_code: None,
-                    processing_time_us: processing_time,
-                }))
+                if result.success {
+                    // Get the updated collection to return
+                    let updated_collection = self.collection_service
+                        .get_collection_by_name(collection_id)
+                        .await
+                        .map_err(|e| Status::internal(format!("Failed to retrieve updated collection: {}", e)))?
+                        .map(|record| {
+                            let collection_config = record.to_grpc_config();
+                            crate::proto::proximadb::Collection {
+                                id: record.uuid,
+                                config: Some(collection_config),
+                                stats: Some(crate::proto::proximadb::CollectionStats {
+                                    vector_count: record.vector_count,
+                                    index_size_bytes: 0, // TODO: Calculate from storage
+                                    data_size_bytes: record.total_size_bytes,
+                                }),
+                                created_at: record.created_at,
+                                updated_at: record.updated_at,
+                            }
+                        });
+                    
+                    Ok(Response::new(CollectionResponse {
+                        success: true,
+                        operation: req.operation,
+                        collection: updated_collection,
+                        collections: vec![],
+                        affected_count: 1,
+                        total_count: None,
+                        metadata: std::collections::HashMap::new(),
+                        error_message: None,
+                        error_code: None,
+                        processing_time_us: result.processing_time_us,
+                    }))
+                } else {
+                    // Convert error codes to appropriate gRPC Status
+                    let status = match result.error_code.as_deref() {
+                        Some("COLLECTION_NOT_FOUND") => Status::not_found(
+                            result.error_message.unwrap_or_else(|| "Collection not found".to_string())
+                        ),
+                        Some("INVALID_DESCRIPTION" | "INVALID_TAGS" | "INVALID_OWNER" | "INVALID_CONFIG" | 
+                             "IMMUTABLE_FIELD" | "UNKNOWN_FIELD") => Status::invalid_argument(
+                            result.error_message.unwrap_or_else(|| "Invalid update request".to_string())
+                        ),
+                        _ => Status::internal(
+                            result.error_message.unwrap_or_else(|| "Internal server error".to_string())
+                        ),
+                    };
+                    Err(status)
+                }
             }
             
             _ => {
