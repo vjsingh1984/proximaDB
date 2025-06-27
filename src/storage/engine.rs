@@ -463,7 +463,7 @@ impl StorageEngine {
             Ok(collections) => {
                 tracing::info!("📋 WAL RECOVERY: Found {} existing collections from collection service", collections.len());
                 tracing::debug!("📋 WAL RECOVERY: Existing collections: {:?}", 
-                    collections.iter().map(|c| &c.id).collect::<Vec<_>>());
+                    collections.iter().map(|c| &c.uuid).collect::<Vec<_>>());
                 collections
             }
             Err(e) => {

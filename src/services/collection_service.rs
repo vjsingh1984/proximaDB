@@ -19,6 +19,7 @@
 //! - Atomic operations with proper error handling
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -187,6 +188,150 @@ impl CollectionService {
         }
 
         Ok(())
+    }
+
+    /// Update collection metadata (description, tags, owner, config, etc.)
+    pub async fn update_collection_metadata(
+        &self,
+        collection_name: &str,
+        updates: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<CollectionServiceResponse> {
+        info!("📝 Updating collection metadata: {}", collection_name);
+        let start_time = std::time::Instant::now();
+
+        // Get current record
+        let mut record = match self
+            .metadata_backend
+            .get_collection_record_by_name(collection_name)
+            .await?
+        {
+            Some(record) => record,
+            None => {
+                return Ok(CollectionServiceResponse {
+                    success: false,
+                    collection_uuid: None,
+                    storage_path: None,
+                    error_message: Some(format!("Collection '{}' not found", collection_name)),
+                    error_code: Some("COLLECTION_NOT_FOUND".to_string()),
+                    processing_time_us: start_time.elapsed().as_micros() as i64,
+                });
+            }
+        };
+
+        // Validate and apply updates
+        for (field, value) in updates {
+            match field.as_str() {
+                "description" => {
+                    if let Some(desc_str) = value.as_str() {
+                        record.description = Some(desc_str.to_string());
+                    } else if value.is_null() {
+                        record.description = None;
+                    } else {
+                        return Ok(CollectionServiceResponse::error(
+                            "Description must be a string or null".to_string(),
+                            "INVALID_DESCRIPTION".to_string(),
+                            start_time.elapsed().as_micros() as i64,
+                        ));
+                    }
+                }
+                "tags" => {
+                    if let Some(tags_array) = value.as_array() {
+                        let mut tags = Vec::new();
+                        for tag in tags_array {
+                            if let Some(tag_str) = tag.as_str() {
+                                tags.push(tag_str.to_string());
+                            } else {
+                                return Ok(CollectionServiceResponse::error(
+                                    "All tags must be strings".to_string(),
+                                    "INVALID_TAGS".to_string(),
+                                    start_time.elapsed().as_micros() as i64,
+                                ));
+                            }
+                        }
+                        record.tags = tags;
+                    } else {
+                        return Ok(CollectionServiceResponse::error(
+                            "Tags must be an array of strings".to_string(),
+                            "INVALID_TAGS".to_string(),
+                            start_time.elapsed().as_micros() as i64,
+                        ));
+                    }
+                }
+                "owner" => {
+                    if let Some(owner_str) = value.as_str() {
+                        record.owner = Some(owner_str.to_string());
+                    } else if value.is_null() {
+                        record.owner = None;
+                    } else {
+                        return Ok(CollectionServiceResponse::error(
+                            "Owner must be a string or null".to_string(),
+                            "INVALID_OWNER".to_string(),
+                            start_time.elapsed().as_micros() as i64,
+                        ));
+                    }
+                }
+                "config" => {
+                    // Config should be a JSON object that we serialize to string
+                    if value.is_object() {
+                        record.config = serde_json::to_string(value)
+                            .context("Failed to serialize config JSON")?;
+                    } else {
+                        return Ok(CollectionServiceResponse::error(
+                            "Config must be a JSON object".to_string(),
+                            "INVALID_CONFIG".to_string(),
+                            start_time.elapsed().as_micros() as i64,
+                        ));
+                    }
+                }
+                // Immutable fields that cannot be updated (affect embeddings/search)
+                "name" | "dimension" | "distance_metric" | "indexing_algorithm" | 
+                "storage_engine" | "created_at" | "uuid" | "version" | 
+                "vector_count" | "total_size_bytes" | "filterable_metadata_fields" | 
+                "filterable_columns" => {
+                    return Ok(CollectionServiceResponse::error(
+                        format!("Field '{}' cannot be updated (immutable)", field),
+                        "IMMUTABLE_FIELD".to_string(),
+                        start_time.elapsed().as_micros() as i64,
+                    ));
+                }
+                _ => {
+                    return Ok(CollectionServiceResponse::error(
+                        format!("Unknown field '{}'", field),
+                        "UNKNOWN_FIELD".to_string(),
+                        start_time.elapsed().as_micros() as i64,
+                    ));
+                }
+            }
+        }
+
+        // Update timestamps and version
+        record.updated_at = Utc::now().timestamp_millis();
+        record.version += 1;
+
+        // Save updated record
+        self.metadata_backend
+            .upsert_collection_record(record.clone())
+            .await
+            .context("Failed to update collection metadata")?;
+
+        info!(
+            "✅ Collection metadata updated: {} (UUID: {}) in {}μs",
+            collection_name,
+            record.uuid,
+            start_time.elapsed().as_micros()
+        );
+
+        let collection_uuid = record.uuid.clone();
+        let storage_path = record.storage_path("${base_path}");
+
+        Ok(CollectionServiceResponse {
+            success: true,
+            collection_uuid: Some(collection_uuid),
+            storage_path: Some(storage_path),
+            error_message: None,
+            error_code: None,
+            processing_time_us: start_time.elapsed().as_micros() as i64,
+        })
     }
 
     /// Convert collection record to gRPC response format

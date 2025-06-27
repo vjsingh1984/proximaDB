@@ -244,6 +244,81 @@ class ProximaDBClient:
         """Delete multiple vectors"""
         return self._client.delete_vectors(collection_id, vector_ids)
     
+    def update_collection(
+        self,
+        collection_id: str,
+        updates: Dict[str, Any]
+    ) -> Collection:
+        """Update collection metadata and configuration"""
+        return self._client.update_collection(collection_id, updates)
+    
+    def delete_vectors_by_filter(
+        self,
+        collection_id: str,
+        filter: FilterDict
+    ) -> DeleteResult:
+        """Delete vectors matching filter criteria"""
+        return self._client.delete_vectors_by_filter(collection_id, filter)
+    
+    def get_vector_history(
+        self,
+        collection_id: str,
+        vector_id: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get vector version history"""
+        return self._client.get_vector_history(collection_id, vector_id, limit)
+    
+    def multi_search(
+        self,
+        collection_id: str,
+        queries: List[Union[List[float], np.ndarray]],
+        k: int = 10,
+        filter: Optional[FilterDict] = None,
+        include_vectors: bool = False,
+        include_metadata: bool = True
+    ) -> List[SearchResult]:
+        """Search with multiple query vectors"""
+        return self._client.multi_search(
+            collection_id, queries, k, filter, include_vectors, include_metadata
+        )
+    
+    def search_with_aggregations(
+        self,
+        collection_id: str,
+        query: Union[List[float], np.ndarray],
+        k: int = 10,
+        aggregations: List[str],
+        group_by: Optional[str] = None,
+        filter: Optional[FilterDict] = None
+    ) -> Dict[str, Any]:
+        """Search with result aggregations"""
+        return self._client.search_with_aggregations(
+            collection_id, query, k, aggregations, group_by, filter
+        )
+    
+    def atomic_insert_vectors(
+        self,
+        collection_id: str,
+        vectors: VectorArray,
+        ids: List[str],
+        metadata: Optional[List[MetadataDict]] = None
+    ) -> BatchResult:
+        """Insert vectors atomically (all-or-nothing)"""
+        return self._client.atomic_insert_vectors(collection_id, vectors, ids, metadata)
+    
+    def begin_transaction(self) -> str:
+        """Begin a new transaction and return transaction ID"""
+        return self._client.begin_transaction()
+    
+    def commit_transaction(self, transaction_id: str) -> bool:
+        """Commit a transaction"""
+        return self._client.commit_transaction(transaction_id)
+    
+    def rollback_transaction(self, transaction_id: str) -> bool:
+        """Rollback a transaction"""
+        return self._client.rollback_transaction(transaction_id)
+    
     def close(self):
         """Close the client and cleanup resources"""
         if self._client and hasattr(self._client, 'close'):

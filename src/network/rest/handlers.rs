@@ -20,7 +20,7 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
     response::Json as JsonResponse,
-    routing::{get, post, put, delete},
+    routing::{get, post, put, patch, delete},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,15 @@ pub struct CreateCollectionRequest {
     pub dimension: Option<usize>,
     pub distance_metric: Option<String>,
     pub indexing_algorithm: Option<String>,
+}
+
+/// Collection update request
+#[derive(Debug, Deserialize)]
+pub struct UpdateCollectionRequest {
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub owner: Option<String>,
+    pub config: Option<serde_json::Value>,
 }
 
 /// Vector insertion request
@@ -114,6 +123,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/collections", post(create_collection))
         .route("/collections", get(list_collections))
         .route("/collections/:collection_id", get(get_collection))
+        .route("/collections/:collection_id", patch(update_collection))
         .route("/collections/:collection_id", delete(delete_collection))
         
         // Vector operations
@@ -236,6 +246,71 @@ pub async fn delete_collection(
         ))),
         Err(e) => {
             tracing::error!("Failed to delete collection: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Update collection endpoint
+pub async fn update_collection(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+    Json(request): Json<UpdateCollectionRequest>,
+) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
+    // Convert UpdateCollectionRequest to HashMap<String, serde_json::Value>
+    let mut updates = HashMap::new();
+    
+    if let Some(description) = request.description {
+        updates.insert("description".to_string(), serde_json::Value::String(description));
+    }
+    
+    if let Some(tags) = request.tags {
+        let tags_json = serde_json::to_value(tags)
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        updates.insert("tags".to_string(), tags_json);
+    }
+    
+    if let Some(owner) = request.owner {
+        updates.insert("owner".to_string(), serde_json::Value::String(owner));
+    }
+    
+    if let Some(config) = request.config {
+        updates.insert("config".to_string(), config);
+    }
+    
+    if updates.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    match state.collection_service.update_collection_metadata(&collection_id, &updates).await {
+        Ok(response) => {
+            if response.success {
+                // Get the updated collection to return
+                match state.collection_service.get_collection_by_name(&collection_id).await {
+                    Ok(Some(collection)) => {
+                        let collection_json = serde_json::to_value(collection)
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                        Ok(JsonResponse(ApiResponse::success(collection_json)))
+                    }
+                    Ok(None) => Err(StatusCode::NOT_FOUND),
+                    Err(e) => {
+                        tracing::error!("Failed to get updated collection: {:?}", e);
+                        Err(StatusCode::INTERNAL_SERVER_ERROR)
+                    }
+                }
+            } else {
+                match response.error_code.as_deref() {
+                    Some("COLLECTION_NOT_FOUND") => Err(StatusCode::NOT_FOUND),
+                    Some("INVALID_DESCRIPTION" | "INVALID_TAGS" | "INVALID_OWNER" | "INVALID_CONFIG") => {
+                        Err(StatusCode::BAD_REQUEST)
+                    }
+                    Some("IMMUTABLE_FIELD" | "UNKNOWN_FIELD") => Err(StatusCode::BAD_REQUEST),
+                    _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to update collection: {:?}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
