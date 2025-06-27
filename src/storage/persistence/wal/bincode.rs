@@ -53,7 +53,6 @@ mod op_types {
 }
 
 /// Bincode WAL strategy implementation - optimized for maximum native Rust performance
-#[derive(Debug)]
 pub struct BincodeWalStrategy {
     config: Option<WalConfig>,
     filesystem: Option<Arc<FilesystemFactory>>,

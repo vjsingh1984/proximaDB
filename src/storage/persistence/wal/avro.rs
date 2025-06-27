@@ -88,7 +88,6 @@ enum AvroOpType {
 }
 
 /// Avro WAL strategy implementation
-#[derive(Debug)]
 pub struct AvroWalStrategy {
     config: Option<WalConfig>,
     filesystem: Option<Arc<FilesystemFactory>>,

@@ -328,7 +328,7 @@ impl UnifiedStorageEngine for LsmTree {
                 }
             }
             
-            if sst_files.len() >= self.config.compaction_threshold {
+            if sst_files.len() >= self.config.compaction_threshold as usize {
                 tracing::debug!("🗂️ LSM COMPACTION: Found {} SSTable files, threshold is {}", 
                                sst_files.len(), self.config.compaction_threshold);
                 
@@ -382,7 +382,7 @@ impl UnifiedStorageEngine for LsmTree {
         metrics.insert("has_compaction_manager".to_string(), serde_json::Value::Bool(self.compaction_manager.is_some()));
         
         // Calculate utilization percentage
-        let max_entries = (self.config.memtable_size_mb * 1024 * 1024) / std::mem::size_of::<LsmEntry>();
+        let max_entries = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<LsmEntry>();
         let utilization = if max_entries > 0 {
             (memtable_entries as f64 / max_entries as f64) * 100.0
         } else {
@@ -394,10 +394,13 @@ impl UnifiedStorageEngine for LsmTree {
         Ok(metrics)
     }
     
-    // =============================================================================
-    // LSM PIPELINE IMPLEMENTATION METHODS (Memtable from WAL → SSTable)
-    // =============================================================================
-    
+}
+
+// =============================================================================
+// LSM IMPLEMENTATION HELPER METHODS (Private)
+// =============================================================================
+
+impl LsmTree {
     /// Extract vector records from WAL entries passed via hints
     async fn extract_vector_records_from_wal_entries(
         &self,
@@ -437,8 +440,9 @@ impl UnifiedStorageEngine for LsmTree {
         let partitioning_start = std::time::Instant::now();
         let level_partitions = self.partition_entries_by_level(&sorted_entries).await?;
         let partitioning_time = partitioning_start.elapsed().as_millis() as u64;
+        let num_levels = level_partitions.len();
         tracing::debug!("🏗️ LSM STAGE 2: Partitioned into {} levels in {}ms", 
-                       level_partitions.len(), partitioning_time);
+                       num_levels, partitioning_time);
         
         // Stage 3: Create SSTable files for each level
         let sstable_start = std::time::Instant::now();
@@ -499,7 +503,7 @@ impl UnifiedStorageEngine for LsmTree {
         engine_metrics.insert("metadata_update_time_ms".to_string(), serde_json::Value::Number(metadata_time.into()));
         engine_metrics.insert("compaction_check_time_ms".to_string(), serde_json::Value::Number(compaction_check_time.into()));
         engine_metrics.insert("total_flush_time_ms".to_string(), serde_json::Value::Number(total_flush_time.into()));
-        engine_metrics.insert("levels_created".to_string(), serde_json::Value::Number(level_partitions.len().into()));
+        engine_metrics.insert("levels_created".to_string(), serde_json::Value::Number(num_levels.into()));
         engine_metrics.insert("sstables_created".to_string(), serde_json::Value::Number(files_created.into()));
         engine_metrics.insert("compaction_triggered".to_string(), serde_json::Value::Bool(compaction_triggered));
         engine_metrics.insert("storage_format".to_string(), serde_json::Value::String("SSTable".to_string()));
@@ -528,7 +532,7 @@ impl UnifiedStorageEngine for LsmTree {
         // LSM Level 0: Recent entries (direct from memtable)
         // Level 1+: Compacted entries (would come from compaction process)
         
-        let entries_per_level = self.config.memtable_size_mb * 1024 * 1024 / std::mem::size_of::<LsmEntry>();
+        let entries_per_level = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<LsmEntry>();
         
         for (i, entry) in sorted_entries.iter().enumerate() {
             let level = if i < entries_per_level {
@@ -567,7 +571,8 @@ impl UnifiedStorageEngine for LsmTree {
         // Serialize header
         let header_data = bincode::serialize(&header)
             .map_err(|e| anyhow::anyhow!("Failed to serialize SSTable header: {}", e))?;
-        sstable_data.extend((header_data.len() as u32).to_le_bytes()); // Header length
+        let header_len = header_data.len();
+        sstable_data.extend((header_len as u32).to_le_bytes()); // Header length
         sstable_data.extend(header_data);
         
         // Create index for fast key lookups
@@ -587,22 +592,25 @@ impl UnifiedStorageEngine for LsmTree {
                 size: entry_data.len() as u32,
             });
             
+            let entry_len = entry_data.len();
             data_blocks.extend(entry_data);
-            data_offset += entry_data.len() as u64;
+            data_offset += entry_len as u64;
         }
         
         // Serialize index
         let index_data = bincode::serialize(&index_entries)
             .map_err(|e| anyhow::anyhow!("Failed to serialize SSTable index: {}", e))?;
-        sstable_data.extend((index_data.len() as u32).to_le_bytes()); // Index length
+        let index_len = index_data.len();
+        sstable_data.extend((index_len as u32).to_le_bytes()); // Index length
         sstable_data.extend(index_data);
         
         // Append data blocks
+        let data_len = data_blocks.len();
         sstable_data.extend(data_blocks);
         
         tracing::debug!("📦 LSM SSTABLE: Level {} serialized - {} entries, {} bytes (header: {}, index: {}, data: {})",
                        level, entries.len(), sstable_data.len(), 
-                       header_data.len(), index_data.len(), data_blocks.len());
+                       header_len, index_len, data_len);
         
         Ok(sstable_data)
     }
@@ -630,7 +638,7 @@ impl UnifiedStorageEngine for LsmTree {
     async fn check_compaction_threshold(&self) -> Result<bool> {
         // Check Level 0 file count (trigger compaction if too many files)
         let level0_files = self.count_sstables_at_level(0).await?;
-        let compaction_needed = level0_files >= self.config.compaction_threshold;
+        let compaction_needed = level0_files >= self.config.compaction_threshold as usize;
         
         if compaction_needed {
             tracing::debug!("🗜️ LSM COMPACTION: Threshold exceeded - {} Level 0 files (threshold: {})",
