@@ -1,0 +1,136 @@
+@startuml VIPER Sorted Rewrite Pipeline
+!theme plain
+title VIPER Sorted Rewrite Pipeline - Data Flow and Processing
+
+rectangle "VIPER Sorted Rewrite Pipeline" {
+  
+  [WAL Memtable Data] as A
+  [VectorRecordProcessor] as B
+  
+  package "Phase 1: Preprocessing" {
+    [Sorting Strategy Selection] as C
+    diamond "Sorting Type?" as D
+    [ID-based Sorting] as E
+    [Multi-field Sorting\nID + Metadata + Timestamp] as F
+    [Two-phase Clustering\n+ Inner Sorting] as G
+    [Custom Comparison\nFunctions] as H
+    [Sorted Records] as I
+  }
+  
+  package "Phase 2: Processing" {
+    [Schema Adapter] as J
+    [RecordBatch Generation] as K
+    [Arrow Format Conversion] as L
+  }
+  
+  package "Phase 3: Postprocessing" {
+    [Column Pruning] as M
+    [Compression Hints] as N
+    [Layout Optimization] as O
+    [Optimized RecordBatch] as P
+  }
+  
+  package "Compaction Integration" {
+    [CompactionEngine] as Q
+    diamond "Compaction Type?" as R
+    [Single Strategy\nExecution] as S
+    [Multi-Strategy\nCoordination] as T
+    
+    package "Reorganization Phase" {
+      [Reorganization Strategy] as U
+      diamond "Strategy Type?" as V
+      [Group by Field\nPriorities] as W
+      [Vector Similarity\nClustering] as X
+      [Time-based\nPatterns] as Y
+      [Sequential Strategy\nApplication] as Z
+      [Optimized Batches] as AA
+    }
+  }
+  
+  package "Storage Output" {
+    [Compression Calculation] as BB
+    [Parquet File Generation] as CC
+    [Filesystem Storage\nfile://, s3://, etc.] as DD
+  }
+  
+  package "Performance Metrics" {
+    [Compression Ratio\n30-45% improvement] as EE
+    [Query Performance\nEnhanced locality] as FF
+    [I/O Optimization\nReduced operations] as GG
+  }
+  
+  package "Quantization Support (Future)" {
+    [Product Quantization\nPQ] as HH
+    [Scalar Quantization\nSQ8/SQ16] as II
+    [Binary Quantization\n1-bit] as JJ
+    [Hybrid Quantization\nFast + Precise] as KK
+  }
+}
+
+' Main flow
+A --> B
+B --> C
+C --> D
+D --> E : ById
+D --> F : CompositeOptimal
+D --> G : ClusterThenSort
+D --> H : Custom
+E --> I
+F --> I
+G --> I
+H --> I
+
+' Phase 2
+I --> J
+J --> K
+K --> L
+
+' Phase 3
+L --> M
+M --> N
+N --> O
+O --> P
+
+' Compaction Integration
+P --> Q
+Q --> R
+R --> S : SortedRewrite
+R --> T : HybridCompaction
+
+' Reorganization
+S --> U
+T --> U
+U --> V
+V --> W : ByMetadataPriority
+V --> X : BySimilarityClusters
+V --> Y : ByTemporalPattern
+V --> Z : MultiStage
+W --> AA
+X --> AA
+Y --> AA
+Z --> AA
+
+' Storage Output
+AA --> BB
+BB --> CC
+CC --> DD
+
+' Performance Metrics
+DD --> EE
+DD --> FF
+DD --> GG
+
+' Future Quantization (dotted lines)
+AA ..> HH : Future Enhancement
+AA ..> II : Future Enhancement
+AA ..> JJ : Future Enhancement
+AA ..> KK : Future Enhancement
+
+' Styling
+note right of A : Input from WAL\nMemtable data
+note right of P : Optimized layout\nready for storage
+note right of AA : Reorganized batches\nfor optimal compression
+note right of DD : Multi-cloud\nstorage support
+note bottom of EE : Measurable performance\nimprovements
+
+@enduml

@@ -69,6 +69,23 @@ package "Storage Components" {
     +search_vectors()
     +delete_vectors()
   }
+  
+  class "ViperPipeline" {
+    -processor: VectorRecordProcessor
+    -flusher: ParquetFlusher
+    -compaction_engine: CompactionEngine
+    +process_records()
+    +sorted_rewrite_optimization()
+    +compress_optimize()
+  }
+  
+  class "CompactionEngine" {
+    -sorting_strategies: SortingStrategy
+    -reorganization_strategies: ReorganizationStrategy
+    +execute_sorted_rewrite()
+    +apply_reorganization()
+    +calculate_compression()
+  }
 }
 
 package "Data Organization" {
@@ -98,6 +115,8 @@ GcsFilesystem --|> Filesystem
 FilestoreMetadataBackend --> Filesystem : uses
 WalManager --> Filesystem : uses
 VectorStorageCoordinator --> Filesystem : uses
+VectorStorageCoordinator --> ViperPipeline : delegates to
+ViperPipeline --> CompactionEngine : uses
 
 note right of Filesystem : All storage operations\ngo through this abstraction\nfor multi-cloud support
 
