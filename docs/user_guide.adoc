@@ -24,7 +24,7 @@ This User Guide provides comprehensive instructions for using ProximaDB, a cloud
 ProximaDB is a cloud-native vector database built specifically for AI and machine learning applications. It provides:
 
 - **Vector Storage & Management**: Collection-based organization with metadata support
-- **Flexible Storage**: VIPER engine with Parquet-based columnar storage
+- **Optimized Storage**: VIPER engine with Parquet-based columnar storage and sorted rewrite optimization
 - **BERT Integration**: Native support for BERT embeddings (384, 768, 1024 dimensions)
 - **Multi-Server APIs**: Separate REST (port 5678) and gRPC (port 5679) servers
 - **Cloud-Native Design**: Multi-cloud filesystem abstraction with configurable storage URLs

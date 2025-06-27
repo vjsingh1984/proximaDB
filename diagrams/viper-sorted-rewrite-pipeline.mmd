@@ -1,0 +1,83 @@
+graph TB
+    subgraph "VIPER Sorted Rewrite Pipeline"
+        A[WAL Memtable Data] --> B[VectorRecordProcessor]
+        
+        subgraph "Phase 1: Preprocessing"
+            B --> C[Sorting Strategy Selection]
+            C --> D{Sorting Type}
+            D -->|ById| E[ID-based Sorting]
+            D -->|CompositeOptimal| F[Multi-field Sorting<br/>ID + Metadata + Timestamp]
+            D -->|ClusterThenSort| G[Two-phase Clustering<br/>+ Inner Sorting]
+            D -->|Custom| H[Custom Comparison<br/>Functions]
+            E --> I[Sorted Records]
+            F --> I
+            G --> I
+            H --> I
+        end
+        
+        subgraph "Phase 2: Processing"
+            I --> J[Schema Adapter]
+            J --> K[RecordBatch Generation]
+            K --> L[Arrow Format Conversion]
+        end
+        
+        subgraph "Phase 3: Postprocessing"
+            L --> M[Column Pruning]
+            M --> N[Compression Hints]
+            N --> O[Layout Optimization]
+            O --> P[Optimized RecordBatch]
+        end
+        
+        subgraph "Compaction Integration"
+            P --> Q[CompactionEngine]
+            Q --> R{Compaction Type}
+            R -->|SortedRewrite| S[Single Strategy<br/>Execution]
+            R -->|HybridCompaction| T[Multi-Strategy<br/>Coordination]
+            
+            subgraph "Reorganization Phase"
+                S --> U[Reorganization Strategy]
+                T --> U
+                U --> V{Strategy Type}
+                V -->|ByMetadataPriority| W[Group by Field<br/>Priorities]
+                V -->|BySimilarityClusters| X[Vector Similarity<br/>Clustering]
+                V -->|ByTemporalPattern| Y[Time-based<br/>Patterns]
+                V -->|MultiStage| Z[Sequential Strategy<br/>Application]
+                W --> AA[Optimized Batches]
+                X --> AA
+                Y --> AA
+                Z --> AA
+            end
+        end
+        
+        subgraph "Storage Output"
+            AA --> BB[Compression Calculation]
+            BB --> CC[Parquet File Generation]
+            CC --> DD[Filesystem Storage<br/>file://, s3://, etc.]
+        end
+        
+        subgraph "Performance Metrics"
+            DD --> EE[Compression Ratio<br/>30-45% improvement]
+            DD --> FF[Query Performance<br/>Enhanced locality]
+            DD --> GG[I/O Optimization<br/>Reduced operations]
+        end
+    end
+    
+    subgraph "Quantization Support (Future)"
+        HH[Product Quantization<br/>PQ]
+        II[Scalar Quantization<br/>SQ8/SQ16]
+        JJ[Binary Quantization<br/>1-bit]
+        KK[Hybrid Quantization<br/>Fast + Precise]
+        
+        AA -.->|Future Enhancement| HH
+        AA -.->|Future Enhancement| II
+        AA -.->|Future Enhancement| JJ
+        AA -.->|Future Enhancement| KK
+    end
+    
+    style A fill:#e1f5fe
+    style P fill:#c8e6c9
+    style AA fill:#fff3e0
+    style DD fill:#f3e5f5
+    style EE fill:#e8f5e8
+    style FF fill:#e8f5e8
+    style GG fill:#e8f5e8

@@ -1,0 +1,164 @@
+@startuml VIPER Sorted Rewrite Architecture
+!theme plain
+title VIPER Sorted Rewrite Architecture - Comprehensive Implementation
+
+package "VIPER Storage Engine" {
+  class "ViperCoreEngine" {
+    +collections: HashMap<CollectionId, ViperCollectionMetadata>
+    +pipeline: Arc<ViperPipeline>
+    +quantization_config: QuantizationConfig
+    +do_flush(params)
+    +do_compact(params)
+  }
+  
+  class "ViperPipeline" {
+    +processor: VectorRecordProcessor
+    +flusher: ParquetFlusher
+    +compaction_engine: CompactionEngine
+    +process_records()
+    +start_background_processing()
+  }
+}
+
+package "Sorted Rewrite Pipeline" {
+  class "VectorRecordProcessor" {
+    +config: ProcessingConfig
+    +schema_adapter: SchemaAdapter
+    +preprocess_records()
+    +convert_to_batch()
+    +postprocess_batch()
+  }
+  
+  enum "SortingStrategy" {
+    ById
+    ByTimestamp
+    ByMetadata(fields)
+    CompositeOptimal{metadata_fields, include_id, include_timestamp}
+    ClusterThenSort{cluster_count, inner_strategy}
+    Custom{strategy_name, comparison_type}
+  }
+  
+  enum "CustomComparisonType" {
+    VectorMagnitude
+    MetadataRichness
+    CollectionGrouped
+    CompressionOptimal
+  }
+}
+
+package "Compaction Engine" {
+  class "CompactionEngine" {
+    +config: CompactionConfig
+    +task_queue: VecDeque<CompactionTask>
+    +optimization_model: CompactionOptimizationModel
+    +execute_compaction_by_type()
+    +apply_reorganization_strategy()
+    +calculate_achieved_compression()
+  }
+  
+  enum "CompactionType" {
+    SortedRewrite{sorting_strategy, reorganization_strategy, target_compression_ratio}
+    HybridCompaction{primary_strategy, secondary_strategy, coordination_mode}
+    FileMerging{target_file_size_mb, max_files_per_merge}
+    CompressionOptimization{target_algorithm, quality_threshold}
+  }
+  
+  enum "ReorganizationStrategy" {
+    ByMetadataPriority{field_priorities}
+    BySimilarityClusters{cluster_count}
+    ByTemporalPattern{time_window_hours}
+    ByCompressionRatio
+    MultiStage{stages}
+  }
+  
+  enum "CompactionCoordinationMode" {
+    Sequential
+    Parallel
+    Conditional{trigger_threshold}
+  }
+}
+
+package "Performance Optimization" {
+  class "CompressionCalculator" {
+    +analyze_sparsity()
+    +calculate_metadata_repetition()
+    +estimate_compression_ratio()
+    +apply_target_constraints()
+  }
+  
+  class "CompactionExecutionResult" {
+    +entries_processed: u64
+    +bytes_read: u64
+    +bytes_written: u64
+    +compression_improvement: f32
+    +execution_time_ms: u64
+  }
+}
+
+package "Quantization Support" {
+  enum "VectorStorageFormat" {
+    Dense
+    Sparse
+    Adaptive
+    ProductQuantized{segments, bits_per_segment}
+    ScalarQuantized{bits}
+    BinaryQuantized
+    HybridQuantized{fast_format, precise_format}
+  }
+  
+  class "QuantizationConfig" {
+    +default_strategy: VectorStorageFormat
+    +enable_adaptive_quantization: bool
+    +quality_threshold: f32
+    +enable_precision_reranking: bool
+  }
+}
+
+package "Storage Output" {
+  class "ParquetFlusher" {
+    +config: FlushingConfig
+    +writer_pool: WriterPool
+    +flush_batch()
+    +create_optimized_layout()
+  }
+  
+  interface "FilesystemFactory" {
+    +create_filesystem(url)
+  }
+  
+  note as N1
+    <b>Optimized Layout Benefits:</b>
+    • 30-45% compression improvement
+    • Better cache locality for queries
+    • Reduced I/O operations
+    • Optimal Parquet row groups
+    • Enhanced metadata filtering
+  end note
+}
+
+' Relationships
+ViperCoreEngine --> ViperPipeline
+ViperPipeline --> VectorRecordProcessor
+ViperPipeline --> CompactionEngine
+ViperPipeline --> ParquetFlusher
+
+VectorRecordProcessor --> SortingStrategy
+SortingStrategy --> CustomComparisonType
+
+CompactionEngine --> CompactionType
+CompactionEngine --> ReorganizationStrategy
+CompactionEngine --> CompactionCoordinationMode
+CompactionEngine --> CompressionCalculator
+CompactionEngine --> CompactionExecutionResult
+
+ViperCoreEngine --> QuantizationConfig
+QuantizationConfig --> VectorStorageFormat
+
+ParquetFlusher --> FilesystemFactory
+
+' Flow annotations
+VectorRecordProcessor : 1. Preprocessing\n(Sorting)
+CompactionEngine : 2. Processing\n(Reorganization)
+ParquetFlusher : 3. Postprocessing\n(Output)
+
+@enduml

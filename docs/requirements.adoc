@@ -45,7 +45,7 @@ Deliver a cloud-native vector database that provides:
 |===
 |Component |Status |Notes
 
-|**Storage Engine** |✅ Complete |VIPER with Parquet, multi-cloud filesystem
+|**Storage Engine** |✅ Complete |VIPER with Parquet, multi-cloud, **sorted rewrite optimization**
 |**Collection Management** |✅ Complete |Full CRUD, persistence across restarts
 |**Multi-Server Architecture** |✅ Complete |REST:5678, gRPC:5679, separate servers
 |**WAL System** |✅ Complete |Avro/Bincode strategies, MVCC support
@@ -298,21 +298,46 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-024
-|Sequential flush-compaction execution on same thread to eliminate race conditions
-|Critical
+|VIPER sorted rewrite optimization with intelligent compression
+|High
 |✅ IMPLEMENTED
 
 |ST-025
-|Configurable compaction triggers: file count (>2) and average file size (<16MB) for testing
+|Multi-field composite sorting for optimal layout (ID + metadata + timestamp)
 |High
 |✅ IMPLEMENTED
 
 |ST-026
+|Reorganization strategies for compaction (metadata priority, similarity clusters, temporal patterns)
+|High
+|✅ IMPLEMENTED
+
+|ST-027
+|Pipeline-based processing with preprocessing, processing, and postprocessing stages
+|Medium
+|✅ IMPLEMENTED
+
+|ST-028
+|Quantization support infrastructure (PQ, SQ, Binary, Hybrid)
+|Medium
+|✅ IMPLEMENTED
+
+|ST-029
+|Sequential flush-compaction execution on same thread to eliminate race conditions
+|Critical
+|✅ IMPLEMENTED
+
+|ST-030
+|Configurable compaction triggers: file count (>2) and average file size (<16MB) for testing
+|High
+|✅ IMPLEMENTED
+
+|ST-031
 |Atomic operations with staging directories (__flush, __compaction) for ACID guarantees
 |Critical
 |✅ IMPLEMENTED
 
-|ST-027
+|ST-032
 |Collection-level read/write locking for coordinated flush/compaction operations
 |Critical
 |✅ IMPLEMENTED
