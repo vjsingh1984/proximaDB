@@ -34,6 +34,14 @@ pub struct AdaptiveIndexEngine {
     config: AxisConfig,
 }
 
+impl std::fmt::Debug for AdaptiveIndexEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdaptiveIndexEngine")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 /// Collection characteristics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionCharacteristics {
@@ -490,6 +498,24 @@ impl IndexStrategySelector {
                 applicability_conditions: ApplicabilityConditions {
                     min_vector_count: Some(10_000),
                     max_sparsity: Some(0.1),
+                    ..Default::default()
+                },
+            },
+        );
+
+        // Add Mixed strategy template for general use cases
+        templates.insert(
+            StrategyType::Mixed,
+            IndexStrategyTemplate {
+                strategy_type: StrategyType::Mixed,
+                base_strategy: IndexStrategy {
+                    primary_index_type: IndexType::HNSW,
+                    secondary_indexes: vec![IndexType::Metadata, IndexType::DenseVector],
+                    optimization_config: OptimizationConfig::balanced(),
+                    migration_priority: MigrationPriority::Medium,
+                    resource_requirements: ResourceRequirements::medium(),
+                },
+                applicability_conditions: ApplicabilityConditions {
                     ..Default::default()
                 },
             },

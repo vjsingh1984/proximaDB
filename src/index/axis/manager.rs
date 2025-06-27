@@ -15,10 +15,11 @@ use super::{
     AdaptiveIndexEngine, AxisConfig, IndexMigrationEngine, IndexStrategy, IndexType,
     MigrationDecision, PerformanceMonitor,
 };
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{CollectionId, VectorId, avro_unified::VectorRecord};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 
 /// Central manager for AXIS with adaptive capabilities
+#[derive(Debug)]
 pub struct AxisIndexManager {
     /// Core index components
     global_id_index: Arc<GlobalIdIndex>,
@@ -150,6 +151,9 @@ impl AxisIndexManager {
         // For MVCC, we don't actually delete - we set expires_at to now
         // This is handled by the storage layer creating a tombstone
 
+        // Ensure we have a strategy for this collection
+        self.ensure_collection_strategy(collection_id).await?;
+
         // Remove from indexes
         let strategy = self.get_collection_strategy(collection_id).await?;
 
@@ -177,6 +181,10 @@ impl AxisIndexManager {
     pub async fn query(&self, query: HybridQuery) -> Result<QueryResult> {
         // Execute query using current strategy
         let collection_id = &query.collection_id;
+        
+        // Ensure we have a strategy for this collection
+        self.ensure_collection_strategy(collection_id).await?;
+        
         let strategy = self.get_collection_strategy(collection_id).await?;
 
         // Use join engine to combine results from multiple indexes
@@ -333,7 +341,7 @@ impl AxisIndexManager {
     }
 
     /// Ensure collection has an indexing strategy
-    async fn ensure_collection_strategy(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn ensure_collection_strategy(&self, collection_id: &CollectionId) -> Result<()> {
         let strategies = self.collection_strategies.read().await;
         if strategies.contains_key(collection_id) {
             return Ok(());
@@ -389,6 +397,54 @@ impl AxisIndexManager {
     pub async fn get_metrics(&self) -> AxisMetrics {
         self.metrics.read().await.clone()
     }
+
+    /// Drop all indexes for a collection (used during collection deletion)
+    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+        tracing::info!("🗑️ Dropping all AXIS indexes for collection: {}", collection_id);
+
+        // Remove from collection strategies
+        let mut strategies = self.collection_strategies.write().await;
+        strategies.remove(collection_id);
+        drop(strategies);
+
+        // Clean up from all indexes
+        self.global_id_index.remove_collection(collection_id).await?;
+        self.metadata_index.remove_collection(collection_id).await?;
+        self.dense_vector_index.remove_collection(collection_id).await?;
+        self.sparse_vector_index.remove_collection(collection_id).await?;
+
+        // Update metrics
+        let mut metrics = self.metrics.write().await;
+        if metrics.total_collections_managed > 0 {
+            metrics.total_collections_managed -= 1;
+        }
+
+        tracing::info!("✅ Successfully dropped all indexes for collection: {}", collection_id);
+        Ok(())
+    }
+
+    /// Get collection statistics
+    pub async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<CollectionStats> {
+        let strategy = self.get_collection_strategy(collection_id).await?;
+        
+        Ok(CollectionStats {
+            collection_id: collection_id.clone(),
+            strategy_type: strategy.primary_index_type,
+            total_vectors: 0, // TODO: Implement actual counting
+            index_size_bytes: 0, // TODO: Implement actual size calculation
+            last_updated: Utc::now(),
+        })
+    }
+}
+
+/// Collection statistics
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CollectionStats {
+    pub collection_id: CollectionId,
+    pub strategy_type: super::IndexType,
+    pub total_vectors: u64,
+    pub index_size_bytes: u64,
+    pub last_updated: DateTime<Utc>,
 }
 
 /// Hybrid query combining multiple search criteria
