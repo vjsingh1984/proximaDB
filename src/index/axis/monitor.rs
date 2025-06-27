@@ -37,7 +37,16 @@ pub struct PerformanceMonitor {
     event_broadcaster: broadcast::Sender<MonitoringEvent>,
 }
 
+impl std::fmt::Debug for PerformanceMonitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PerformanceMonitor")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 /// Metrics collector for system performance
+#[derive(Debug)]
 struct MetricsCollector {
     /// Current metrics per collection
     collection_metrics: Arc<RwLock<HashMap<CollectionId, CollectionMetrics>>>,

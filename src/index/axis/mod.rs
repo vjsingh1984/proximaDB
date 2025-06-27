@@ -16,6 +16,14 @@ pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
 
+// Unit tests
+#[cfg(test)]
+pub mod manager_tests;
+#[cfg(test)]
+pub mod adaptive_engine_tests;
+#[cfg(test)]
+pub mod analyzer_tests;
+
 pub use adaptive_engine::{
     AccessFrequencyMetrics, AdaptiveIndexEngine, CollectionCharacteristics, MetadataComplexity,
     PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,

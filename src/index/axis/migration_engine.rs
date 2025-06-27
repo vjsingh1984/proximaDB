@@ -32,6 +32,13 @@ pub struct IndexMigrationEngine {
     history: Arc<RwLock<Vec<MigrationHistory>>>,
 }
 
+impl std::fmt::Debug for IndexMigrationEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexMigrationEngine")
+            .finish()
+    }
+}
+
 /// Migration plan for transitioning between index strategies
 #[derive(Debug, Clone)]
 pub struct MigrationPlan {
@@ -243,6 +250,7 @@ pub trait RollbackStrategy {
 }
 
 /// Migration progress tracker
+#[derive(Debug)]
 pub struct MigrationProgressTracker {
     /// Active migrations
     active_migrations: Vec<MigrationProgress>,

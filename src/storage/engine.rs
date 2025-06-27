@@ -1,6 +1,6 @@
 use crate::compute::algorithms::SearchResult;
 use crate::core::{BatchSearchRequest, CollectionId, StorageConfig, VectorId, VectorRecord};
-use crate::storage::search_index::{SearchIndexManager, SearchRequest};
+use crate::index::{AxisIndexManager, AxisConfig};
 use crate::storage::{
     persistence::disk_manager::DiskManager,
     engines::lsm::{CompactionManager, LsmTree},
@@ -73,7 +73,7 @@ pub struct StorageEngine {
     mmap_readers: Arc<RwLock<HashMap<CollectionId, MmapReader>>>,
     disk_manager: Arc<DiskManager>,
     wal_manager: Arc<WalManager>,
-    search_index_manager: Arc<SearchIndexManager>,
+    axis_index_manager: Arc<AxisIndexManager>,
     compaction_manager: Arc<CompactionManager>,
     
     /// Collection service for metadata operations (separation of concerns)
@@ -126,12 +126,14 @@ impl StorageEngine {
         tracing::info!("📂 StorageEngine: Metadata operations delegated to SharedServices");
 
         // Initialize search index manager
-        let data_dir = config
+        let _data_dir = config
             .data_dirs
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("./data"));
-        let search_index_manager = Arc::new(SearchIndexManager::new(data_dir.join("indexes")));
+        // Initialize AXIS index manager with default configuration
+        let axis_config = AxisConfig::default();
+        let axis_index_manager = Arc::new(AxisIndexManager::new(axis_config).await?);
 
         // Initialize compaction manager
         let compaction_manager = Arc::new(CompactionManager::new(config.lsm_config.clone()));
@@ -142,7 +144,7 @@ impl StorageEngine {
             mmap_readers: Arc::new(RwLock::new(HashMap::new())),
             disk_manager,
             wal_manager,
-            search_index_manager,
+            axis_index_manager,
             compaction_manager,
             collection_service,
         })
@@ -243,15 +245,15 @@ impl StorageEngine {
 
         // Add to search index
         tracing::debug!(
-            "🔍 Adding vector {} to search index for collection {}",
+            "🔍 Adding vector {} to AXIS indexes for collection {}",
             record.id,
             collection_id
         );
-        self.search_index_manager
-            .add_vector(&collection_id, &record)
+        self.axis_index_manager
+            .insert(record.clone())
             .await?;
         tracing::debug!(
-            "✅ Completed search index addition for vector {} in collection {}",
+            "✅ Completed AXIS index insertion for vector {} in collection {}",
             record.id,
             collection_id
         );
@@ -315,8 +317,8 @@ impl StorageEngine {
 
         // Remove from search index
         if exists {
-            self.search_index_manager
-                .remove_vector(collection_id, id)
+            self.axis_index_manager
+                .delete(collection_id, id.clone())
                 .await?;
 
             // TODO: Update metadata statistics through SharedServices
@@ -577,9 +579,9 @@ impl StorageEngine {
             // TODO: Remove metadata through SharedServices
             // self.metadata_store.delete_collection(collection_id).await?;
 
-            // Remove search index
-            self.search_index_manager
-                .remove_index(collection_id)
+            // Remove AXIS indexes for collection
+            self.axis_index_manager
+                .drop_collection(collection_id)
                 .await?;
 
             // TODO: Clean up SST files
@@ -682,21 +684,35 @@ impl StorageEngine {
             }
         }
 
-        // Part 2: Search persistent indexes (if available)
-        let search_request = SearchRequest {
-            query: query.clone(),
-            k: k * 2, // Get more to account for merging
+        // Part 2: Search persistent indexes using AXIS
+        let hybrid_query = crate::index::axis::manager::HybridQuery {
             collection_id: collection_id.clone(),
-            filter: None,
+            vector_query: Some(crate::index::axis::manager::VectorQuery::Dense {
+                vector: query.clone(),
+                similarity_threshold: 0.0, // No threshold filtering
+            }),
+            metadata_filters: Vec::new(),
+            id_filters: Vec::new(),
+            k: k * 2, // Get more to account for merging
+            include_expired: false,
         };
 
-        match self.search_index_manager.search(search_request).await {
-            Ok(index_results) => {
+        match self.axis_index_manager.query(hybrid_query).await {
+            Ok(query_result) => {
                 tracing::debug!(
-                    "🔍 Found {} results from indexes",
-                    index_results.len()
+                    "🔍 Found {} results from AXIS indexes using {:?} strategy",
+                    query_result.results.len(),
+                    query_result.strategy_used.primary_index_type
                 );
-                all_results.extend(index_results);
+                // Convert AXIS ScoredResult to SearchResult
+                let search_results: Vec<SearchResult> = query_result.results.into_iter().map(|scored| {
+                    SearchResult {
+                        vector_id: scored.vector_id,
+                        score: scored.score,
+                        metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                    }
+                }).collect();
+                all_results.extend(search_results);
             }
             Err(e) => {
                 tracing::debug!("🔍 No indexes available: {}", e);
@@ -803,17 +819,34 @@ impl StorageEngine {
             query.len(),
             k
         );
-        let search_request = SearchRequest {
-            query,
-            k,
+        // Convert filter to AXIS metadata filters (TODO: Implement proper filter conversion)
+        let hybrid_query = crate::index::axis::manager::HybridQuery {
             collection_id: collection_id.clone(),
-            filter: Some(Box::new(filter)),
+            vector_query: Some(crate::index::axis::manager::VectorQuery::Dense {
+                vector: query,
+                similarity_threshold: 0.0, // No threshold filtering
+            }),
+            metadata_filters: Vec::new(), // TODO: Convert filter function to metadata filters
+            id_filters: Vec::new(),
+            k,
+            include_expired: false,
         };
 
-        let result = self.search_index_manager.search(search_request).await;
+        let result = self.axis_index_manager.query(hybrid_query).await
+            .map(|query_result| {
+                query_result.results.into_iter().map(|scored| {
+                    SearchResult {
+                        vector_id: scored.vector_id,
+                        score: scored.score,
+                        metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                    }
+                }).collect()
+            })
+            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()));
+        
         tracing::debug!(
             "🔍 search_vectors_with_filter result: {:?}",
-            result.as_ref().map(|r| r.len())
+            result.as_ref().map(|r: &Vec<SearchResult>| r.len())
         );
         result
     }
@@ -823,16 +856,33 @@ impl StorageEngine {
         &self,
         collection_id: &CollectionId,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
-        self.search_index_manager
-            .get_index_stats(collection_id)
-            .await
+        // Get AXIS index statistics
+        match self.axis_index_manager
+            .get_collection_stats(collection_id)
+            .await {
+            Ok(stats) => {
+                let json_value = serde_json::to_value(stats).unwrap_or(serde_json::json!({}));
+                if let Some(obj) = json_value.as_object() {
+                    let mut result = HashMap::new();
+                    for (k, v) in obj {
+                        result.insert(k.clone(), v.clone());
+                    }
+                    Ok(Some(result))
+                } else {
+                    Ok(None)
+                }
+            },
+            Err(_) => Ok(None)
+        }
     }
 
     /// Optimize search index
     pub async fn optimize_index(&self, collection_id: &CollectionId) -> crate::storage::Result<()> {
-        self.search_index_manager
-            .optimize_index(collection_id)
+        // Trigger AXIS analysis and optimization
+        self.axis_index_manager
+            .analyze_and_optimize(collection_id)
             .await
+            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))
     }
 
     /// Batch insert multiple vectors into a collection
