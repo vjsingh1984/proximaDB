@@ -1,0 +1,166 @@
+@startuml Vector_Operations_Sequence
+!theme plain
+skinparam backgroundColor white
+skinparam participantBackgroundColor lightblue
+skinparam actorBackgroundColor lightgreen
+
+title ProximaDB Vector Operations - Sequence Diagrams
+
+actor "Client App" as Client
+participant "ProximaDBClient\n(Unified)" as UC
+participant "RestClient\n(HTTP)" as RC
+participant "gRPC Client\n(Binary)" as GC
+participant "REST Server\n:5678" as RS
+participant "gRPC Server\n:5679" as GS
+participant "UnifiedAvroService" as UAS
+participant "WAL Manager" as WAL
+participant "VIPER Engine" as VIPER
+participant "Filesystem" as FS
+
+== Vector Insert Operation (✅ Implemented) ==
+
+Client -> UC : insert_vectors(collection_id, vectors, ids)
+UC -> UC : _setup_client() auto-select protocol
+
+alt gRPC Protocol (High Performance)
+    UC -> GC : insert_vectors(collection_id, vectors, ids)
+    GC -> GC : serialize_to_avro(vectors)
+    GC -> GS : VectorInsert(collection_id, avro_payload)
+    GS -> UAS : vector_insert_zero_copy(avro_payload)
+    
+    UAS -> UAS : deserialize_avro(payload)
+    UAS -> WAL : write_vector_insert(vectors)
+    WAL -> FS : append_to_wal({collection}.wal)
+    FS --> WAL : wal_offset
+    WAL --> UAS : insert_record
+    
+    opt Storage Coordination Available
+        UAS -> VIPER : write_parquet_batch(vectors)
+        VIPER -> FS : write({collection}/vectors/batch_001.parquet)
+        FS --> VIPER : success
+        VIPER --> UAS : storage_record
+    end
+    
+    UAS --> GS : VectorOperationResponse(success, metrics)
+    GS --> GC : BatchResult(count, duration)
+    GC --> UC : BatchResult
+    
+else REST Protocol (Universal Compatibility)
+    UC -> RC : insert_vectors(collection_id, vectors, ids)
+    RC -> RC : _normalize_vectors(vectors)
+    RC -> RS : POST /collections/{id}/vectors/batch\n{vectors, ids, metadata}
+    RS -> UAS : handle_vector_insert_v2(json_payload)
+    
+    UAS -> UAS : convert_json_to_avro(payload)
+    UAS -> WAL : write_vector_insert(vectors)
+    WAL -> FS : append_to_wal({collection}.wal)
+    FS --> WAL : wal_offset
+    WAL --> UAS : insert_record
+    
+    UAS --> RS : BatchResult(count, duration)
+    RS --> RC : HTTP 200 + BatchResult JSON
+    RC --> UC : BatchResult
+end
+
+UC --> Client : BatchResult(successful_count, duration_ms)
+
+== Vector Search Operation (🚧 Partially Implemented) ==
+
+Client -> UC : search(collection_id, query, k=10)
+UC -> UC : auto_select_protocol()
+
+alt REST Protocol
+    UC -> RC : search(collection_id, query, k)
+    RC -> RS : POST /collections/{id}/search\n{query, k, filter}
+    RS -> UAS : search_vectors_simple(query, k)
+    
+    UAS -> UAS : search_by_metadata_server_side()
+    note right UAS : Currently returns placeholder results\nNeeds VectorStorageCoordinator integration
+    
+    opt When VectorStorageCoordinator Available
+        UAS -> VIPER : search_compressed_vectors(query, k)
+        VIPER -> FS : read_parquet_files({collection}/vectors/*.parquet)
+        FS --> VIPER : vector_data
+        VIPER -> VIPER : compute_similarity(query, vectors)
+        VIPER --> UAS : search_results
+    else Current Implementation
+        UAS -> UAS : generate_placeholder_results()
+    end
+    
+    UAS --> RS : SearchResponse(results, stats)
+    RS --> RC : HTTP 200 + SearchResult[] JSON
+    RC --> UC : List<SearchResult>
+
+else gRPC Protocol  
+    UC -> GC : search(collection_id, query, k)
+    GC -> GS : VectorSearch(collection_id, query, k)
+    GS -> UAS : search_vectors_simple(query, k)
+    
+    ' Same logic as REST
+    UAS -> UAS : search_by_metadata_server_side()
+    UAS --> GS : VectorOperationResponse(compact_results)
+    GS --> GC : List<SearchResult>
+    GC --> UC : List<SearchResult>
+end
+
+UC --> Client : List<SearchResult>
+
+== Missing Advanced Operations (❌ Need Implementation) ==
+
+group Multi-Search Operation [MISSING]
+    Client -> UC : multi_search(collection_id, queries, k)
+    UC -> RC : multi_search(collection_id, queries, k)
+    RC -> RS : POST /collections/{id}/multi_search
+    note right RS : ❌ Endpoint not implemented
+    
+    note over UAS : ❌ Service method needed:\nmulti_search_vectors(queries)\n- Process multiple queries in parallel\n- Combine and rank results\n- Return structured response
+end
+
+group Delete Vectors by Filter [MISSING]  
+    Client -> UC : delete_vectors_by_filter(collection_id, filter)
+    UC -> RC : delete_vectors_by_filter(collection_id, filter)
+    RC -> RS : DELETE /collections/{id}/vectors + filter
+    note right RS : ❌ Endpoint not implemented
+    
+    note over UAS : ❌ Service method needed:\ndelete_by_filter(filter)\n- Parse filter criteria\n- Query matching vectors\n- Batch delete via WAL\n- Update storage
+end
+
+group Transaction Operations [MISSING]
+    Client -> UC : begin_transaction()
+    UC -> RC : begin_transaction()
+    RC -> RS : POST /transactions
+    note right RS : ❌ Transaction endpoints not implemented
+    
+    note over UAS : ❌ TransactionManager needed:\n- Transaction ID generation\n- Lock management\n- ACID guarantees\n- Rollback capabilities
+end
+
+== Error Handling Flows ==
+
+group Storage Error Scenario
+    Client -> UC : insert_vectors(collection_id, vectors, ids)
+    UC -> RC : insert_vectors(collection_id, vectors, ids)
+    RC -> RS : POST /collections/{id}/vectors/batch
+    RS -> UAS : handle_vector_insert_v2(payload)
+    UAS -> WAL : write_vector_insert(vectors)
+    WAL -> FS : append_to_wal({collection}.wal)
+    FS --> WAL : ❌ FilesystemError("Disk full")
+    WAL --> UAS : ❌ StorageError
+    UAS --> RS : ❌ InternalError(500)
+    RS --> RC : ❌ HTTP 500 + Error JSON
+    RC --> UC : ❌ NetworkError("Storage failed")
+    UC --> Client : ❌ ProximaDBError("Insert failed: Storage error")
+end
+
+group Validation Error Scenario
+    Client -> UC : create_collection("", config)  
+    UC -> RC : create_collection("", config)
+    RC -> RS : POST /collections + {name: "", config}
+    RS -> UAS : create_collection_from_rest("")
+    UAS -> UAS : ❌ validate_collection_config() fails
+    UAS --> RS : ❌ ValidationError("Name cannot be empty")
+    RS --> RC : ❌ HTTP 400 + Error JSON
+    RC --> UC : ❌ ValidationError("Name cannot be empty")
+    UC --> Client : ❌ ValidationError("Name cannot be empty")
+end
+
+@enduml

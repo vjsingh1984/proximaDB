@@ -1,0 +1,250 @@
+@startuml ProximaDB_Deployment_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam nodeBackgroundColor lightblue
+skinparam componentBackgroundColor lightgreen
+skinparam databaseBackgroundColor lightyellow
+skinparam cloudBackgroundColor lightcyan
+
+title ProximaDB Deployment Architecture
+
+!define IMPLEMENTED lightgreen
+!define PARTIAL yellow
+!define MISSING lightcoral
+
+cloud "Client Applications" {
+    node "Python Application" as PyApp {
+        component "ProximaDB SDK" as SDK <<IMPLEMENTED>>
+        component "Application Logic" as AppLogic
+        component "ML Pipeline" as MLPipeline
+    }
+    
+    node "Web Application" as WebApp {
+        component "REST API Client" as RestClient <<IMPLEMENTED>>
+        component "Frontend" as Frontend
+    }
+    
+    node "Data Science Notebook" as DSNotebook {
+        component "Jupyter Notebook" as Jupyter
+        component "ProximaDB Client" as NotebookClient <<IMPLEMENTED>>
+    }
+}
+
+cloud "Network Layer" {
+    node "Load Balancer" as LB {
+        component "HTTP/gRPC Router" as Router
+        component "Health Checks" as HealthCheck
+        component "SSL Termination" as SSL
+    }
+}
+
+node "ProximaDB Server Instance" as ServerNode {
+    artifact "proximadb-server binary" as ServerBinary <<IMPLEMENTED>>
+    
+    component "Multi-Server Manager" as MultiServer <<IMPLEMENTED>> {
+        port "REST API" as RESTPort
+        port "gRPC API" as GRPCPort
+    }
+    
+    package "Service Layer" {
+        component "Collection Service" as CollSvc <<IMPLEMENTED>>
+        component "Unified Avro Service" as AvroSvc <<PARTIAL>>
+        component "Transaction Manager" as TxMgr <<MISSING>>
+    }
+    
+    package "Storage Components" {
+        component "WAL Manager" as WALMgr <<IMPLEMENTED>>
+        component "VIPER Engine" as ViperEng <<IMPLEMENTED>>
+        component "Metadata Backend" as MetaBackend <<IMPLEMENTED>>
+        component "Vector Coordinator" as VecCoord <<PARTIAL>>
+    }
+    
+    folder "Configuration" as Config {
+        file "config.toml" as ConfigFile
+        file "logging.toml" as LogConfig
+    }
+    
+    folder "Local Storage" as LocalStorage {
+        folder "WAL Files" as WALDir {
+            file "collection1.wal" as WAL1
+            file "collection2.wal" as WAL2
+        }
+        
+        folder "Collections" as CollDir {
+            folder "collection1/" as Coll1Dir {
+                file "metadata.json" as Meta1
+                folder "vectors/" as Vec1Dir {
+                    file "batch_001.parquet" as Parquet1
+                    file "batch_002.parquet" as Parquet2
+                }
+                folder "indexes/" as Idx1Dir {
+                    file "hnsw.index" as Index1
+                }
+            }
+        }
+    }
+}
+
+cloud "External Storage Providers" {
+    node "AWS Cloud" as AWS {
+        database "S3 Bucket" as S3 {
+            folder "proximadb-data/" as S3Data {
+                folder "collections/" as S3Collections
+                folder "wal/" as S3WAL
+                folder "indexes/" as S3Indexes
+            }
+        }
+    }
+    
+    node "Google Cloud" as GCP {
+        database "Cloud Storage" as GCS {
+            folder "proximadb-bucket/" as GCSData {
+                folder "collections/" as GCSCollections
+                folder "wal/" as GCSWAL
+            }
+        }
+    }
+    
+    node "Azure Cloud" as Azure {
+        database "Blob Storage" as AzureBlob {
+            folder "proximadb-container/" as AzureData {
+                folder "collections/" as AzureCollections
+                folder "wal/" as AzureWAL
+            }
+        }
+    }
+}
+
+node "Monitoring & Observability" as Monitoring {
+    component "Prometheus" as Prometheus
+    component "Grafana" as Grafana
+    component "Jaeger Tracing" as Jaeger
+    component "Log Aggregation" as LogAgg
+}
+
+node "Development Environment" as DevEnv {
+    component "Docker Container" as Docker {
+        component "ProximaDB Server" as DockerServer <<IMPLEMENTED>>
+        component "Test Data" as TestData
+    }
+    
+    component "Local Development" as LocalDev {
+        component "Cargo Build" as CargoBuild
+        component "Python Tests" as PyTests
+        component "Integration Tests" as IntegrationTests
+    }
+}
+
+' Client Connections
+PyApp --> LB : HTTPS/gRPC
+WebApp --> LB : HTTPS
+DSNotebook --> LB : HTTPS/gRPC
+
+' Load Balancer Routing
+LB --> ServerNode : Route to Server
+RESTPort --> Router : Port 5678
+GRPCPort --> Router : Port 5679
+
+' Server Internal Connections
+MultiServer --> CollSvc
+MultiServer --> AvroSvc
+AvroSvc --> WALMgr
+AvroSvc --> VecCoord
+AvroSvc --> MetaBackend
+CollSvc --> MetaBackend
+
+' Storage Connections
+WALMgr --> LocalStorage : Local WAL
+WALMgr --> S3 : S3 WAL (s3://bucket/wal/)
+WALMgr --> GCS : GCS WAL (gcs://bucket/wal/)
+WALMgr --> AzureBlob : Azure WAL (adls://container/wal/)
+
+ViperEng --> LocalStorage : Local Parquet
+ViperEng --> S3 : S3 Storage (s3://bucket/collections/)
+ViperEng --> GCS : GCS Storage (gcs://bucket/collections/)
+ViperEng --> AzureBlob : Azure Storage (adls://container/collections/)
+
+MetaBackend --> LocalStorage : Local Metadata
+MetaBackend --> S3 : S3 Metadata
+MetaBackend --> GCS : GCS Metadata
+MetaBackend --> AzureBlob : Azure Metadata
+
+' Configuration
+ConfigFile --> MultiServer : Configuration
+LogConfig --> MultiServer : Logging Config
+
+' Monitoring Connections
+ServerNode --> Prometheus : Metrics Export
+Prometheus --> Grafana : Metrics Display
+ServerNode --> Jaeger : Tracing Data
+ServerNode --> LogAgg : Log Streaming
+
+' Development Connections
+CargoBuild --> DockerServer : Build & Deploy
+PyTests --> DockerServer : Test SDK
+IntegrationTests --> DockerServer : End-to-End Tests
+
+' Deployment Annotations
+note top of SDK : Client SDK provides\nprotocol abstraction\nand auto-selection
+
+note right of MultiServer : Dual-protocol server\n• REST: Port 5678\n• gRPC: Port 5679
+
+note bottom of WALMgr : WAL supports\nmultiple storage backends\nwith URL-based routing
+
+note left of S3 : Multi-cloud storage\nsupports URL patterns:\n• file:///path\n• s3://bucket/path\n• gcs://bucket/path\n• adls://container/path
+
+note right of VecCoord : Vector Coordinator\nexists but not integrated\nwith UnifiedAvroService
+
+note bottom of TxMgr : Transaction Manager\nneeds implementation\nfor ACID operations
+
+' Network Protocols
+note on link between LB and ServerNode : HTTP/1.1, HTTP/2\ngRPC over HTTP/2\nTLS encryption
+
+' Storage Protocols
+note on link between WALMgr and S3 : AWS S3 API\nMultipart upload\nEventual consistency
+
+note on link between ViperEng and GCS : Google Cloud API\nStreaming upload\nStrong consistency
+
+note on link between MetaBackend and AzureBlob : Azure Blob API\nBlock-based upload\nStrong consistency
+
+' Deployment Configurations
+package "Deployment Options" as DeployOpts {
+    component "Single Node" as SingleNode {
+        note : • Local development\n• Small deployments\n• File-based storage
+    }
+    
+    component "Cloud Deployment" as CloudDeploy {
+        note : • Production scale\n• Multi-cloud storage\n• Auto-scaling ready
+    }
+    
+    component "Container Deployment" as ContainerDeploy {
+        note : • Docker/Kubernetes\n• Microservices\n• CI/CD integration
+    }
+    
+    component "Distributed Deployment" as DistributedDeploy <<MISSING>> {
+        note : • Multiple server instances\n• Consensus protocol\n• Horizontal scaling\n• NOT YET IMPLEMENTED
+    }
+}
+
+' Implementation Status
+note bottom
+**Deployment Status:**
+✅ **IMPLEMENTED** - Production ready
+🚧 **PARTIAL** - Core functionality works
+❌ **MISSING** - Needs implementation
+
+**Current Deployment Capabilities:**
+• Single-node server with dual protocols
+• Multi-cloud storage support
+• Docker containerization
+• Basic monitoring integration
+• Local and cloud development
+
+**Missing Deployment Features:**
+• Distributed/clustered deployment
+• Horizontal auto-scaling
+• Advanced monitoring dashboards
+• Production-grade security
+end note
+
+@enduml
