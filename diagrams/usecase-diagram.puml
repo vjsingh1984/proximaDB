@@ -1,0 +1,162 @@
+@startuml ProximaDB_Use_Case_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam actorBackgroundColor lightblue
+skinparam usecaseBackgroundColor lightgreen
+
+title ProximaDB Use Case Diagram - Client SDK and Server Operations
+
+left to right direction
+
+' Actors
+actor "Application Developer" as Developer
+actor "Data Scientist" as DataScientist  
+actor "ML Engineer" as MLEngineer
+actor "System Administrator" as SysAdmin
+actor "External System" as ExtSys
+
+' System Boundary
+rectangle "ProximaDB System" {
+    
+    ' Collection Management Use Cases
+    package "Collection Management" {
+        usecase "Create Collection" as UC1
+        usecase "Configure Collection\n(dimension, metric, index)" as UC2
+        usecase "List Collections" as UC3
+        usecase "Get Collection Info" as UC4
+        usecase "Update Collection\nMetadata" as UC5
+        usecase "Delete Collection" as UC6
+    }
+    
+    ' Vector Operations Use Cases  
+    package "Vector Operations" {
+        usecase "Insert Single Vector" as UC7
+        usecase "Batch Insert Vectors" as UC8
+        usecase "Search Similar Vectors" as UC9
+        usecase "Get Vector by ID" as UC10
+        usecase "Update Vector Data" as UC11
+        usecase "Delete Vector" as UC12
+        usecase "Delete Multiple Vectors" as UC13
+    }
+    
+    ' Advanced Vector Operations
+    package "Advanced Operations" {
+        usecase "Multi-Query Search" as UC14
+        usecase "Search with Aggregations" as UC15
+        usecase "Delete Vectors by Filter" as UC16
+        usecase "Get Vector History" as UC17
+        usecase "Atomic Batch Operations" as UC18
+    }
+    
+    ' Transaction Management
+    package "Transaction Management" {
+        usecase "Begin Transaction" as UC19
+        usecase "Commit Transaction" as UC20
+        usecase "Rollback Transaction" as UC21
+        usecase "Monitor Transaction Status" as UC22
+    }
+    
+    ' System Operations
+    package "System Management" {
+        usecase "Health Check" as UC23
+        usecase "Get System Metrics" as UC24
+        usecase "Monitor Performance" as UC25
+        usecase "Configure Logging" as UC26
+    }
+    
+    ' Protocol Selection
+    package "Protocol Management" {
+        usecase "Use REST API\n(HTTP/JSON)" as UC27
+        usecase "Use gRPC API\n(Binary/Protobuf)" as UC28
+        usecase "Auto-Select Protocol" as UC29
+    }
+}
+
+' Relationships - Developer Use Cases
+Developer --> UC1 : creates collections
+Developer --> UC2 : configures storage
+Developer --> UC7 : inserts vectors
+Developer --> UC8 : batch operations
+Developer --> UC9 : searches vectors
+Developer --> UC10 : retrieves vectors
+Developer --> UC3 : lists collections
+Developer --> UC4 : gets collection info
+
+' Relationships - Data Scientist Use Cases  
+DataScientist --> UC9 : similarity search
+DataScientist --> UC14 : multi-query search
+DataScientist --> UC15 : aggregated analytics
+DataScientist --> UC8 : imports datasets
+DataScientist --> UC17 : tracks vector changes
+
+' Relationships - ML Engineer Use Cases
+MLEngineer --> UC8 : deploys embeddings
+MLEngineer --> UC18 : atomic operations
+MLEngineer --> UC19 : begins transactions
+MLEngineer --> UC20 : commits changes
+MLEngineer --> UC21 : rollback on errors
+MLEngineer --> UC25 : monitors performance
+
+' Relationships - System Administrator Use Cases
+SysAdmin --> UC23 : checks health
+SysAdmin --> UC24 : monitors metrics
+SysAdmin --> UC25 : tracks performance  
+SysAdmin --> UC26 : configures logging
+SysAdmin --> UC5 : updates collection settings
+SysAdmin --> UC6 : removes collections
+
+' Relationships - External System Use Cases
+ExtSys --> UC27 : HTTP integration
+ExtSys --> UC28 : gRPC integration
+ExtSys --> UC29 : auto-negotiation
+ExtSys --> UC9 : real-time search
+ExtSys --> UC8 : data ingestion
+
+' Advanced Relationships
+UC2 ..> UC1 : <<extends>>
+UC5 ..> UC4 : <<extends>>
+UC13 ..> UC12 : <<extends>>
+UC16 ..> UC13 : <<extends>>
+UC18 ..> UC8 : <<extends>>
+UC22 ..> UC19 : <<extends>>
+
+' Protocol Dependencies
+UC27 ..> UC1 : <<includes>>
+UC27 ..> UC7 : <<includes>>
+UC27 ..> UC9 : <<includes>>
+UC28 ..> UC1 : <<includes>>
+UC28 ..> UC7 : <<includes>>
+UC28 ..> UC9 : <<includes>>
+
+' Implementation Status
+note right of UC1 : ✅ IMPLEMENTED
+note right of UC2 : ✅ IMPLEMENTED
+note right of UC3 : ✅ IMPLEMENTED
+note right of UC4 : ✅ IMPLEMENTED
+note right of UC5 : 🚧 PARTIAL
+note right of UC6 : ✅ IMPLEMENTED
+note right of UC7 : ✅ IMPLEMENTED
+note right of UC8 : ✅ IMPLEMENTED
+note right of UC9 : ✅ IMPLEMENTED
+note right of UC10 : 🚧 PARTIAL
+note right of UC11 : 🚧 PARTIAL
+note right of UC12 : 🚧 PARTIAL
+note right of UC13 : 🚧 PARTIAL
+note right of UC14 : ❌ MISSING
+note right of UC15 : ❌ MISSING
+note right of UC16 : ❌ MISSING
+note right of UC17 : ❌ MISSING
+note right of UC18 : ❌ MISSING
+note right of UC19 : ❌ MISSING
+note right of UC20 : ❌ MISSING
+note right of UC21 : ❌ MISSING
+note right of UC22 : ❌ MISSING
+note right of UC23 : ✅ IMPLEMENTED
+note right of UC24 : 🚧 PARTIAL
+note right of UC25 : 🚧 PARTIAL
+note right of UC26 : ✅ IMPLEMENTED
+note right of UC27 : ✅ IMPLEMENTED
+note right of UC28 : ✅ IMPLEMENTED
+note right of UC29 : ✅ IMPLEMENTED
+
+@enduml

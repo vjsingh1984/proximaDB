@@ -1,0 +1,257 @@
+@startuml ProximaDB_Component_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam componentBackgroundColor lightblue
+skinparam interfaceBackgroundColor lightgreen
+skinparam databaseBackgroundColor lightyellow
+
+title ProximaDB System Components - Architecture Overview
+
+!define IMPLEMENTED lightgreen
+!define PARTIAL yellow
+!define MISSING lightcoral
+
+package "Client SDK Layer" {
+    [ProximaDB Python Client] as PyClient <<IMPLEMENTED>>
+    [Configuration Manager] as Config <<IMPLEMENTED>>
+    [Error Handling] as Errors <<IMPLEMENTED>>
+    
+    package "Protocol Clients" {
+        [REST Client] as RestClient <<IMPLEMENTED>>
+        [gRPC Client] as GrpcClient <<IMPLEMENTED>>
+        [Protocol Auto-Selection] as AutoSelect <<IMPLEMENTED>>
+    }
+    
+    interface "VectorDatabaseAPI" as API <<IMPLEMENTED>>
+    interface "ProtocolInterface" as ProtocolIntf <<IMPLEMENTED>>
+}
+
+package "Network Layer" {
+    [Multi-Server Manager] as MultiServer <<IMPLEMENTED>>
+    
+    package "REST Server (Port 5678)" {
+        [REST Router] as RestRouter <<IMPLEMENTED>>
+        [HTTP Handlers] as HttpHandlers <<PARTIAL>>
+        [JSON Serialization] as JsonSer <<IMPLEMENTED>>
+        
+        component "REST Endpoints" {
+            [Collections API] as CollAPI <<IMPLEMENTED>>
+            [Vectors API] as VecAPI <<PARTIAL>>
+            [Search API] as SearchAPI <<IMPLEMENTED>>
+            [Health API] as HealthAPI <<IMPLEMENTED>>
+            [Advanced APIs] as AdvAPI <<MISSING>>
+            [Transaction APIs] as TxAPI <<MISSING>>
+        }
+    }
+    
+    package "gRPC Server (Port 5679)" {
+        [gRPC Service] as GrpcService <<IMPLEMENTED>>
+        [Protobuf Handlers] as ProtoHandlers <<IMPLEMENTED>>
+        [Avro Serialization] as AvroSer <<IMPLEMENTED>>
+        
+        component "gRPC Methods" {
+            [CollectionOperation] as CollOp <<IMPLEMENTED>>
+            [VectorInsert] as VecInsert <<IMPLEMENTED>>
+            [VectorMutation] as VecMut <<PARTIAL>>
+            [VectorSearch] as VecSearch <<IMPLEMENTED>>
+            [Health & Metrics] as HealthMetrics <<IMPLEMENTED>>
+        }
+    }
+    
+    interface "RESTful API" as RestAPI <<IMPLEMENTED>>
+    interface "gRPC Protocol" as GrpcAPI <<IMPLEMENTED>>
+}
+
+package "Service Layer" {
+    [Shared Services] as SharedSvc <<IMPLEMENTED>>
+    
+    package "Business Logic Services" {
+        [Collection Service] as CollSvc <<IMPLEMENTED>>
+        [Unified Avro Service] as AvroSvc <<PARTIAL>>
+        [Transaction Manager] as TxMgr <<MISSING>>
+        [Authentication Service] as AuthSvc <<MISSING>>
+        [Authorization Service] as AuthzSvc <<MISSING>>
+    }
+    
+    interface "ServiceInterface" as SvcIntf <<IMPLEMENTED>>
+    interface "TransactionInterface" as TxIntf <<MISSING>>
+}
+
+package "Storage Layer" {
+    package "Write-Ahead Log" {
+        [WAL Manager] as WALMgr <<IMPLEMENTED>>
+        [WAL Writer] as WALWriter <<IMPLEMENTED>>
+        [WAL Recovery] as WALRecovery <<IMPLEMENTED>>
+        
+        component "Serialization Formats" {
+            [Avro Serializer] as AvroSer2 <<IMPLEMENTED>>
+            [Bincode Serializer] as BincodeSer <<IMPLEMENTED>>
+            [JSON Serializer] as JsonSer2 <<IMPLEMENTED>>
+        }
+    }
+    
+    package "Vector Storage" {
+        [Vector Storage Coordinator] as VecCoord <<PARTIAL>>
+        [VIPER Engine] as ViperEng <<IMPLEMENTED>>
+        [Index Manager] as IndexMgr <<PARTIAL>>
+        [Compression Engine] as CompEng <<IMPLEMENTED>>
+        
+        component "Storage Formats" {
+            [Parquet Files] as ParquetFiles <<IMPLEMENTED>>
+            [Vector Indexes] as VecIndexes <<PARTIAL>>
+            [Metadata Columns] as MetaCols <<IMPLEMENTED>>
+        }
+    }
+    
+    package "Metadata Storage" {
+        [Metadata Backend] as MetaBackend <<IMPLEMENTED>>
+        [Collection Registry] as CollRegistry <<IMPLEMENTED>>
+        [Schema Manager] as SchemaMgr <<IMPLEMENTED>>
+        
+        component "Metadata Files" {
+            [Collection Metadata] as CollMeta <<IMPLEMENTED>>
+            [Index Metadata] as IndexMeta <<PARTIAL>>
+            [System Metadata] as SysMeta <<IMPLEMENTED>>
+        }
+    }
+    
+    interface "StorageInterface" as StorageIntf <<IMPLEMENTED>>
+    interface "MetadataInterface" as MetaIntf <<IMPLEMENTED>>
+}
+
+package "Filesystem Layer" {
+    [Filesystem Abstraction] as FSAbstraction <<IMPLEMENTED>>
+    
+    package "Storage Backends" {
+        [Local Filesystem] as LocalFS <<IMPLEMENTED>>
+        [AWS S3] as S3Backend <<IMPLEMENTED>>
+        [Google Cloud Storage] as GCSBackend <<IMPLEMENTED>>
+        [Azure Blob Storage] as AzureBackend <<IMPLEMENTED>>
+    }
+    
+    interface "FilesystemInterface" as FSIntf <<IMPLEMENTED>>
+}
+
+database "External Storage" {
+    database "Local Storage" as LocalStore <<IMPLEMENTED>>
+    database "AWS S3 Buckets" as S3Store <<IMPLEMENTED>>
+    database "GCS Buckets" as GCSStore <<IMPLEMENTED>>
+    database "Azure Containers" as AzureStore <<IMPLEMENTED>>
+}
+
+' Client Relationships
+PyClient .up.> API : implements
+PyClient *-- Config
+PyClient *-- Errors
+PyClient *-- RestClient
+PyClient *-- GrpcClient
+PyClient *-- AutoSelect
+
+RestClient .up.> ProtocolIntf : implements
+GrpcClient .up.> ProtocolIntf : implements
+
+' Network Layer Relationships
+RestClient .down.> RestAPI : HTTP requests
+GrpcClient .down.> GrpcAPI : gRPC calls
+
+MultiServer *-- RestRouter
+MultiServer *-- GrpcService
+
+RestRouter *-- HttpHandlers
+RestRouter *-- CollAPI
+RestRouter *-- VecAPI
+RestRouter *-- SearchAPI
+RestRouter *-- HealthAPI
+
+GrpcService *-- ProtoHandlers
+GrpcService *-- CollOp
+GrpcService *-- VecInsert
+GrpcService *-- VecMut
+GrpcService *-- VecSearch
+
+RestAPI .down.> SvcIntf : delegates
+GrpcAPI .down.> SvcIntf : delegates
+
+' Service Layer Relationships
+SharedSvc *-- CollSvc
+SharedSvc *-- AvroSvc
+SharedSvc *-- TxMgr
+SharedSvc *-- AuthSvc
+SharedSvc *-- AuthzSvc
+
+CollSvc .down.> MetaIntf : uses
+AvroSvc .down.> StorageIntf : uses
+AvroSvc .down.> MetaIntf : uses
+
+' Storage Layer Relationships
+WALMgr *-- WALWriter
+WALMgr *-- WALRecovery
+WALMgr *-- AvroSer2
+WALMgr *-- BincodeSer
+WALMgr *-- JsonSer2
+
+VecCoord *-- ViperEng
+VecCoord *-- IndexMgr
+VecCoord *-- CompEng
+
+ViperEng *-- ParquetFiles
+ViperEng *-- VecIndexes
+ViperEng *-- MetaCols
+
+MetaBackend *-- CollRegistry
+MetaBackend *-- SchemaMgr
+MetaBackend *-- CollMeta
+MetaBackend *-- IndexMeta
+MetaBackend *-- SysMeta
+
+ViperEng .down.> FSIntf : uses
+WALMgr .down.> FSIntf : uses
+MetaBackend .down.> FSIntf : uses
+
+' Filesystem Relationships
+FSAbstraction *-- LocalFS
+FSAbstraction *-- S3Backend
+FSAbstraction *-- GCSBackend
+FSAbstraction *-- AzureBackend
+
+LocalFS .down.> LocalStore : writes/reads
+S3Backend .down.> S3Store : writes/reads
+GCSBackend .down.> GCSStore : writes/reads
+AzureBackend .down.> AzureStore : writes/reads
+
+' Missing Components Relationships (dotted lines)
+TxMgr ..> StorageIntf : needs implementation
+AdvAPI ..> TxIntf : needs implementation
+TxAPI ..> TxIntf : needs implementation
+VecMut ..> TxIntf : could use
+AuthSvc ..> MetaIntf : needs implementation
+AuthzSvc ..> MetaIntf : needs implementation
+
+' Implementation Status Notes
+note top of PyClient : ✅ Complete client interface\nwith protocol abstraction
+
+note top of MultiServer : ✅ Dual-protocol server\n(REST + gRPC)
+
+note right of AvroSvc : 🚧 Core functionality complete\nAdvanced operations missing
+
+note right of VecCoord : 🚧 Exists but not integrated\nwith UnifiedAvroService
+
+note right of TxMgr : ❌ Transaction system\nneeds full implementation
+
+note bottom of FSAbstraction : ✅ Multi-cloud support\nwith URL-based routing
+
+' Component Dependencies Legend
+note bottom
+**Component Status:**
+✅ **IMPLEMENTED** - Production ready
+🚧 **PARTIAL** - Core functionality exists, needs enhancement
+❌ **MISSING** - Needs full implementation
+
+**Key Dependencies:**
+• Client SDK depends on server protocols
+• Services depend on storage interfaces
+• Storage depends on filesystem abstraction
+• All layers use common error handling
+end note
+
+@enduml

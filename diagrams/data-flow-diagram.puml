@@ -1,0 +1,311 @@
+@startuml ProximaDB_Data_Flow_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam activityBackgroundColor lightblue
+skinparam databaseBackgroundColor lightyellow
+skinparam noteBackgroundColor lightgreen
+
+title ProximaDB Data Flow - End-to-End Processing
+
+!define IMPLEMENTED lightgreen
+!define PARTIAL yellow
+!define MISSING lightcoral
+
+skinparam activity {
+    BackgroundColor<<IMPLEMENTED>> lightgreen
+    BackgroundColor<<PARTIAL>> yellow
+    BackgroundColor<<MISSING>> lightcoral
+}
+
+start
+
+partition "Client Data Input" {
+    :Client Application;
+    :Vector Data + Metadata;
+    note right: Input formats:\n• Python lists/numpy arrays\n• JSON objects\n• Metadata dictionaries
+    
+    if (Data validation?) then (valid)
+        :Normalize vector dimensions;
+        :Validate metadata schema;
+    else (invalid)
+        :Return validation error;
+        stop
+    endif
+}
+
+partition "Protocol Selection & Serialization" <<IMPLEMENTED>> {
+    if (Protocol choice?) then (gRPC - High Performance)
+        :Serialize to Avro binary;
+        :Zero-copy optimization;
+        :Binary protobuf envelope;
+        note right: 40% smaller payload\n90% less overhead
+    else (REST - Universal)
+        :Serialize to JSON;
+        :HTTP/1.1 or HTTP/2;
+        :Standard web protocols;
+    endif
+}
+
+partition "Network Layer Processing" <<IMPLEMENTED>> {
+    :Multi-Server receives request;
+    
+    fork
+        :gRPC Server (Port 5679);
+        :Protobuf deserialization;
+    fork again
+        :REST Server (Port 5678);
+        :JSON deserialization;
+    end fork
+    
+    :Route to Shared Services;
+}
+
+partition "Service Layer Processing" {
+    if (Request type?) then (Collection Operation)
+        :Collection Service;
+        :Validate collection config;
+        :Generate collection ID;
+        :Store metadata atomically;
+        note right: ✅ Fully implemented
+        
+    else (Vector Operation)
+        :Unified Avro Service;
+        
+        if (Operation type?) then (Insert)
+            :Convert to internal Avro format;
+            :Validate vector dimensions;
+            :Prepare for WAL write;
+            note right: ✅ Fully implemented
+            
+        else (Search)
+            :Parse search query;
+            :Validate query vector;
+            :Prepare search parameters;
+            note right: 🚧 Basic implementation
+            
+        else (Update/Delete)
+            :Parse vector identifiers;
+            :Validate permissions;
+            :Prepare mutation operations;
+            note right: 🚧 Partial implementation
+            
+        else (Advanced Operations)
+            if (Multi-search?) then (yes)
+                :❌ NOT IMPLEMENTED;
+                :Return error;
+                stop
+            else (Aggregated search?)
+                :❌ NOT IMPLEMENTED;
+                :Return error;
+                stop
+            else (Filter delete?)
+                :❌ NOT IMPLEMENTED;
+                :Return error;
+                stop
+            else (Vector history?)
+                :❌ NOT IMPLEMENTED;
+                :Return error;
+                stop
+            endif
+        endif
+    endif
+}
+
+partition "Write-Ahead Log Processing" <<IMPLEMENTED>> {
+    if (Write operation?) then (yes)
+        :WAL Manager receives data;
+        
+        fork
+            :Serialize to Avro;
+            note right: Zero-copy binary format
+        fork again
+            :Serialize to Bincode;
+            note right: Rust-native format
+        fork again
+            :Serialize to JSON;
+            note right: Human-readable format
+        end fork
+        
+        :Write to WAL file;
+        :Flush to filesystem;
+        :Return WAL offset;
+        
+        note right: WAL provides:\n• Durability guarantees\n• Crash recovery\n• Replay capability
+    else (no)
+        :Skip WAL write;
+    endif
+}
+
+partition "Storage Layer Processing" {
+    if (Vector Coordinator available?) then (yes) <<PARTIAL>>
+        :Vector Storage Coordinator;
+        :Route to VIPER Engine;
+        
+        fork
+            :VIPER Engine processing;
+            :Compress vectors to Parquet;
+            :Apply column optimizations;
+            :Write batch files;
+            note right: ✅ VIPER engine implemented\n🚧 Coordinator not integrated
+        fork again
+            :Index Manager;
+            :Update vector indexes;
+            :Maintain search structures;
+            note right: 🚧 Basic index support
+        end fork
+        
+    else (no - Current State)
+        :Skip storage write;
+        :WAL-only persistence;
+        note right: Current limitation:\nVectorStorageCoordinator\nnot integrated with\nUnifiedAvroService
+    endif
+}
+
+partition "Filesystem Abstraction" <<IMPLEMENTED>> {
+    :Filesystem Backend;
+    
+    if (Storage URL type?) then (Local - file://)
+        :Local Filesystem;
+        :Direct file I/O;
+        :POSIX operations;
+        
+    else (S3 - s3://)
+        :AWS S3 Backend;
+        :Multipart uploads;
+        :Eventual consistency;
+        
+    else (GCS - gcs://)
+        :Google Cloud Storage;
+        :Streaming uploads;
+        :Strong consistency;
+        
+    else (Azure - adls://)
+        :Azure Blob Storage;
+        :Block-based uploads;
+        :Strong consistency;
+    endif
+    
+    :Write to persistent storage;
+    :Return success/failure;
+}
+
+partition "Search Data Flow" {
+    if (Search request?) then (yes)
+        if (Storage Coordinator available?) then (yes) <<PARTIAL>>
+            :Read from VIPER storage;
+            :Load compressed Parquet files;
+            :Apply metadata filters;
+            :Compute similarity scores;
+            :Rank results by score;
+            :Return search results;
+            note right: 🚧 Infrastructure ready\nbut not integrated
+            
+        else (no - Current State)
+            :Generate placeholder results;
+            :Return mock search data;
+            note right: Current limitation:\nBasic search only
+        endif
+        
+        :Format search response;
+        :Include vectors if requested;
+        :Include metadata if requested;
+    else (no)
+        :Skip search processing;
+    endif
+}
+
+partition "Response Processing & Serialization" <<IMPLEMENTED>> {
+    :Format response data;
+    
+    if (Protocol?) then (gRPC)
+        if (Large result set?) then (yes)
+            :Serialize to Avro binary;
+            :Use avro_results field;
+            :Zero-copy transfer;
+        else (no)
+            :Use compact_results;
+            :Regular protobuf;
+        endif
+        
+    else (REST)
+        :Serialize to JSON;
+        :HTTP response headers;
+        :Standard REST format;
+    endif
+    
+    :Send response to client;
+}
+
+partition "Client Response Processing" <<IMPLEMENTED>> {
+    :Client receives response;
+    :Deserialize response data;
+    :Convert to SDK models;
+    :Return to application;
+}
+
+stop
+
+' Data Persistence Flows
+note right of "WAL Manager receives data"
+**WAL File Structure:**
+```
+{collection_id}.wal
+├── Record 1: Vector Insert
+├── Record 2: Vector Update  
+├── Record 3: Vector Delete
+└── Record N: Collection Op
+```
+end note
+
+note right of "VIPER Engine processing"
+**VIPER Storage Structure:**
+```
+{collection_id}/
+├── metadata.json
+├── vectors/
+│   ├── batch_001.parquet
+│   ├── batch_002.parquet
+│   └── batch_N.parquet
+└── indexes/
+    ├── hnsw.index
+    └── metadata.index
+```
+end note
+
+' Error Handling Flows
+partition "Error Handling Data Flow" {
+    note right: **Error Propagation:**\n1. Storage errors → Service layer\n2. Service errors → Network layer\n3. Network errors → Client SDK\n4. Client errors → Application\n\n**Error Recovery:**\n• WAL replay for crash recovery\n• Retry logic for transient errors\n• Graceful degradation for missing features
+}
+
+' Transaction Data Flow (Future)
+partition "Future Transaction Data Flow" <<MISSING>> {
+    note right: **When Implemented:**\n1. Begin transaction → Lock resources\n2. Execute operations → Log to transaction WAL\n3. Prepare phase → Validate all operations\n4. Commit phase → Apply all changes atomically\n5. Cleanup → Release locks and cleanup logs\n\n**ACID Properties:**\n• Atomicity: All-or-nothing operations\n• Consistency: Maintain data integrity\n• Isolation: Concurrent transaction safety\n• Durability: Persistent after commit
+}
+
+' Performance Optimizations
+note bottom
+**Data Flow Optimizations:**
+
+**Current Optimizations (✅):**
+• Zero-copy Avro serialization for gRPC
+• Parquet compression for vector storage
+• Multi-cloud filesystem abstraction
+• WAL-based durability guarantees
+• Protocol auto-selection
+
+**Missing Optimizations (❌):**
+• Vector index integration for fast search
+• Batch processing for multiple operations
+• Streaming for large result sets
+• Connection pooling for high throughput
+• Caching for frequently accessed data
+
+**Performance Characteristics:**
+• Insert throughput: High (WAL-optimized)
+• Search latency: High (placeholder results)
+• Storage efficiency: High (Parquet compression)
+• Network efficiency: High (binary protocols)
+• Durability: High (WAL + multi-cloud)
+end note
+
+@enduml

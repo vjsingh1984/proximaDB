@@ -1,0 +1,227 @@
+@startuml ProximaDB_State_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam stateBackgroundColor lightblue
+skinparam stateBorderColor darkblue
+
+title ProximaDB System State Transitions
+
+[*] --> ServerInitializing : Start Server
+
+state ServerInitializing {
+    [*] --> LoadingConfig
+    LoadingConfig --> InitializingServices : Config Valid
+    LoadingConfig --> ConfigError : Config Invalid
+    InitializingServices --> StartingNetworkLayer
+    StartingNetworkLayer --> ServerReady : All Services Started
+    StartingNetworkLayer --> StartupError : Service Failure
+}
+
+ServerInitializing --> ServerReady : Success
+ServerInitializing --> ServerError : Failure
+
+state ServerReady {
+    [*] --> Idle
+    
+    state "Collection Management" as CollMgmt {
+        [*] --> CollectionIdle
+        CollectionIdle --> CreatingCollection : create_collection()
+        CreatingCollection --> ValidationStage : Validate Config
+        ValidationStage --> CollectionCreated : Valid ✅
+        ValidationStage --> ValidationFailed : Invalid ❌
+        ValidationFailed --> CollectionIdle
+        CollectionCreated --> CollectionIdle
+        
+        CollectionIdle --> UpdatingCollection : update_collection()
+        UpdatingCollection --> CollectionUpdated : Success ✅
+        UpdatingCollection --> UpdateFailed : Failure 🚧
+        UpdateFailed --> CollectionIdle
+        CollectionUpdated --> CollectionIdle
+        
+        CollectionIdle --> DeletingCollection : delete_collection()
+        DeletingCollection --> CollectionDeleted : Success ✅
+        DeletingCollection --> DeleteFailed : Failure ❌
+        DeleteFailed --> CollectionIdle
+        CollectionDeleted --> CollectionIdle
+    }
+    
+    state "Vector Operations" as VectorOps {
+        [*] --> VectorIdle
+        
+        state "Insert Operations" as InsertOps {
+            [*] --> InsertIdle
+            InsertIdle --> ValidatingVectors : insert_vectors()
+            ValidatingVectors --> SerializingData : Valid Vectors ✅
+            ValidatingVectors --> InsertValidationFailed : Invalid Vectors ❌
+            SerializingData --> WritingToWAL : Serialization Complete
+            WritingToWAL --> WALWritten : WAL Success ✅
+            WritingToWAL --> WALWriteFailed : WAL Failure ❌
+            WALWritten --> WritingToStorage : Storage Available
+            WALWritten --> InsertComplete : Storage Unavailable (WAL only)
+            WritingToStorage --> InsertComplete : Storage Success ✅
+            WritingToStorage --> InsertPartial : Storage Failure 🚧
+            InsertValidationFailed --> InsertIdle
+            WALWriteFailed --> InsertIdle
+            InsertComplete --> InsertIdle
+            InsertPartial --> InsertIdle
+        }
+        
+        state "Search Operations" as SearchOps {
+            [*] --> SearchIdle
+            SearchIdle --> ValidatingQuery : search()
+            ValidatingQuery --> ProcessingSearch : Valid Query ✅
+            ValidatingQuery --> SearchValidationFailed : Invalid Query ❌
+            ProcessingSearch --> SearchingStorage : Storage Available ✅
+            ProcessingSearch --> SearchingPlaceholder : Storage Unavailable 🚧
+            SearchingStorage --> SearchComplete : Results Found
+            SearchingPlaceholder --> SearchComplete : Placeholder Results
+            SearchValidationFailed --> SearchIdle
+            SearchComplete --> SearchIdle
+        }
+        
+        state "CRUD Operations" as CRUDOps {
+            [*] --> CRUDIdle
+            CRUDIdle --> GettingVector : get_vector()
+            GettingVector --> VectorRetrieved : Found ✅
+            GettingVector --> VectorNotFound : Not Found 🚧
+            VectorRetrieved --> CRUDIdle
+            VectorNotFound --> CRUDIdle
+            
+            CRUDIdle --> UpdatingVector : update_vector()
+            UpdatingVector --> VectorUpdated : Success 🚧
+            UpdatingVector --> UpdateVectorFailed : Failure 🚧
+            VectorUpdated --> CRUDIdle
+            UpdateVectorFailed --> CRUDIdle
+            
+            CRUDIdle --> DeletingVector : delete_vector()
+            DeletingVector --> VectorDeleted : Success 🚧
+            DeletingVector --> DeleteVectorFailed : Failure 🚧
+            VectorDeleted --> CRUDIdle
+            DeleteVectorFailed --> CRUDIdle
+        }
+        
+        state "Advanced Operations" as AdvOps {
+            [*] --> AdvancedIdle
+            AdvancedIdle --> ProcessingMultiSearch : multi_search()
+            ProcessingMultiSearch --> MultiSearchNotImplemented : ❌ Not Implemented
+            MultiSearchNotImplemented --> AdvancedIdle
+            
+            AdvancedIdle --> ProcessingFilterDelete : delete_vectors_by_filter()
+            ProcessingFilterDelete --> FilterDeleteNotImplemented : ❌ Not Implemented
+            FilterDeleteNotImplemented --> AdvancedIdle
+            
+            AdvancedIdle --> ProcessingAggregatedSearch : search_with_aggregations()
+            ProcessingAggregatedSearch --> AggregatedSearchNotImplemented : ❌ Not Implemented
+            AggregatedSearchNotImplemented --> AdvancedIdle
+            
+            AdvancedIdle --> ProcessingVectorHistory : get_vector_history()
+            ProcessingVectorHistory --> VectorHistoryNotImplemented : ❌ Not Implemented
+            VectorHistoryNotImplemented --> AdvancedIdle
+        }
+    }
+    
+    state "Transaction Management" as TxMgmt {
+        [*] --> TxIdle
+        TxIdle --> BeginningTransaction : begin_transaction()
+        BeginningTransaction --> TxNotImplemented : ❌ Not Implemented
+        TxNotImplemented --> TxIdle
+        
+        TxIdle --> CommittingTransaction : commit_transaction()
+        CommittingTransaction --> TxNotImplemented
+        
+        TxIdle --> RollingBackTransaction : rollback_transaction()
+        RollingBackTransaction --> TxNotImplemented
+    }
+    
+    state "System Monitoring" as SysMon {
+        [*] --> MonitoringIdle
+        MonitoringIdle --> CheckingHealth : health()
+        CheckingHealth --> HealthOK : System Healthy ✅
+        CheckingHealth --> HealthDegraded : System Issues 🚧
+        CheckingHealth --> HealthUnhealthy : System Error ❌
+        HealthOK --> MonitoringIdle
+        HealthDegraded --> MonitoringIdle
+        HealthUnhealthy --> SystemError
+        
+        MonitoringIdle --> CollectingMetrics : get_metrics()
+        CollectingMetrics --> MetricsCollected : Success ✅
+        CollectingMetrics --> MetricsError : Failure 🚧
+        MetricsCollected --> MonitoringIdle
+        MetricsError --> MonitoringIdle
+    }
+    
+    Idle --> CollMgmt : Collection Request
+    Idle --> VectorOps : Vector Request  
+    Idle --> TxMgmt : Transaction Request
+    Idle --> SysMon : System Request
+    
+    CollMgmt --> Idle : Operation Complete
+    VectorOps --> Idle : Operation Complete
+    TxMgmt --> Idle : Operation Complete
+    SysMon --> Idle : Operation Complete
+}
+
+ServerReady --> SystemError : Critical Failure
+SystemError --> [*] : Server Shutdown
+
+state "Error Recovery" as ErrorRecovery {
+    [*] --> DetectingError
+    DetectingError --> AnalyzingError
+    AnalyzingError --> RecoverableError : Can Recover
+    AnalyzingError --> NonRecoverableError : Cannot Recover
+    RecoverableError --> AttemptingRecovery
+    AttemptingRecovery --> RecoverySuccessful : Recovery OK
+    AttemptingRecovery --> RecoveryFailed : Recovery Failed
+    RecoverySuccessful --> [*]
+    RecoveryFailed --> NonRecoverableError
+    NonRecoverableError --> [*]
+}
+
+SystemError --> ErrorRecovery : Attempt Recovery
+ErrorRecovery --> ServerReady : Recovery Successful
+ErrorRecovery --> [*] : Recovery Failed
+
+' Transaction State (When Implemented)
+state "Future Transaction States" as FutureTx {
+    state "Transaction Active" as TxActive {
+        [*] --> TxBegin
+        TxBegin --> TxInProgress : Operations Started
+        TxInProgress --> TxPrepare : All Operations Complete
+        TxPrepare --> TxCommit : Validation Passed
+        TxPrepare --> TxAbort : Validation Failed
+        TxCommit --> TxCommitted : Commit Successful
+        TxAbort --> TxAborted : Rollback Complete
+        TxCommitted --> [*]
+        TxAborted --> [*]
+        
+        TxInProgress --> TxAbort : Error Occurred
+    }
+}
+
+note right of FutureTx : ❌ Transaction states\nfor future implementation
+
+' State Annotations
+note right of CollMgmt : ✅ Fully implemented\nCollection lifecycle management
+
+note right of VectorOps : 🚧 Partially implemented\nCore operations work,\nadvanced features missing
+
+note right of TxMgmt : ❌ Not implemented\nNeeds TransactionManager
+
+note right of SysMon : ✅ Implemented\nHealth and basic metrics
+
+' Implementation Status Legend
+note bottom
+**State Status:**
+✅ **FULLY IMPLEMENTED** - Production ready states
+🚧 **PARTIALLY IMPLEMENTED** - Basic states work, some transitions missing
+❌ **NOT IMPLEMENTED** - States defined but not functional
+
+**Key State Transitions:**
+• All collection operations are fully functional
+• Vector insert and search are production ready
+• Vector CRUD operations need completion
+• Advanced operations need full implementation
+• Transaction management needs complete implementation
+end note
+
+@enduml

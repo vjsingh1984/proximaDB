@@ -1,0 +1,337 @@
+@startuml ProximaDB_Server_Internal_Architecture
+!theme plain
+skinparam backgroundColor white
+skinparam classBackgroundColor lightgreen
+skinparam classBorderColor darkgreen
+skinparam packageBackgroundColor lightyellow
+
+title ProximaDB Server Internal Architecture - Implementation Analysis
+
+package "Server Entry Point" {
+    class MainServer {
+        + main()
+        + load_config()
+        + setup_logging()
+        + start_servers()
+        
+        ' Configuration
+        - config: ServerConfig
+        - grpc_port: 5679
+        - rest_port: 5678
+    }
+}
+
+package "Network Layer - Protocol Handlers" {
+    class MultiServer {
+        - shared_services: Arc<SharedServices>
+        - grpc_server: ProximaDbService
+        - rest_server: RestServer
+        
+        + new(shared_services)
+        + start_both_servers()
+        + graceful_shutdown()
+    }
+    
+    package "gRPC Implementation" {
+        class ProximaDbService {
+            - shared_services: Arc<SharedServices>
+            
+            ' ✅ IMPLEMENTED
+            + collection_operation() → CollectionResponse
+            + vector_insert() → VectorOperationResponse  
+            + vector_mutation() → VectorOperationResponse
+            + vector_search() → VectorOperationResponse
+            + health() → HealthResponse
+            + get_metrics() → MetricsResponse
+            
+            ' Implementation details
+            - handle_collection_create()
+            - handle_collection_get()
+            - handle_collection_list()
+            - handle_collection_delete()
+            - handle_collection_update() [🚧 PARTIAL]
+            
+            - handle_vector_insert_avro()
+            - handle_vector_search()
+            - handle_vector_mutation_update() [🚧 PARTIAL]
+            - handle_vector_mutation_delete() [🚧 PARTIAL]
+        }
+        
+        note right of ProximaDbService : Uses unified endpoints:\n- CollectionOperation for all collection ops\n- VectorInsert for zero-copy inserts\n- VectorMutation for updates/deletes\n- VectorSearch for similarity search
+    }
+    
+    package "REST Implementation" {
+        class RestServer {
+            - shared_services: Arc<SharedServices>
+            - router: axum::Router
+            
+            ' ✅ IMPLEMENTED endpoints
+            + POST /collections → create_collection_handler()
+            + GET /collections → list_collections_handler()
+            + GET /collections/{id} → get_collection_handler()
+            + DELETE /collections/{id} → delete_collection_handler()
+            + POST /collections/{id}/vectors → insert_vector_handler()
+            + POST /collections/{id}/vectors/batch → insert_vectors_batch_handler()
+            + POST /collections/{id}/search → search_vectors_handler()
+            + GET /health → health_handler()
+            
+            ' 🚧 PARTIALLY IMPLEMENTED endpoints
+            + GET /collections/{id}/vectors/{vid} → get_vector_handler() [STUB]
+            + PUT /collections/{id}/vectors/{vid} → update_vector_handler() [STUB]
+            + DELETE /collections/{id}/vectors/{vid} → delete_vector_handler() [STUB]
+            
+            ' ❌ MISSING endpoints (need implementation)
+            - PATCH /collections/{id}
+            - DELETE /collections/{id}/vectors + filter
+            - GET /collections/{id}/vectors/{vid}/history
+            - POST /collections/{id}/multi_search
+            - POST /collections/{id}/search_aggregated
+            - POST /collections/{id}/vectors/atomic
+            - POST /transactions
+            - POST /transactions/{id}/commit
+            - POST /transactions/{id}/rollback
+        }
+        
+        note bottom of RestServer : REST endpoints map directly to\nshared service methods
+    }
+}
+
+package "Service Layer - Business Logic" {
+    class SharedServices {
+        + collection_service: Arc<CollectionService>
+        + unified_avro_service: Arc<UnifiedAvroService>
+        + transaction_manager: Option<TransactionManager>
+        + wal_manager: Arc<WalManager>
+        + vector_coordinator: Option<VectorStorageCoordinator>
+        
+        + new(config) → SharedServices
+        + get_collection_service()
+        + get_unified_avro_service()
+        + get_transaction_manager()
+    }
+    
+    package "Collection Management" {
+        class CollectionService {
+            - metadata_backend: Arc<FilestoreMetadataBackend>
+            
+            ' ✅ FULLY IMPLEMENTED
+            + create_collection_from_grpc() → CollectionServiceResponse
+            + create_collection_from_rest() → CollectionServiceResponse  
+            + get_collection() → CollectionServiceResponse
+            + list_collections() → CollectionServiceResponse
+            + delete_collection() → CollectionServiceResponse
+            
+            ' 🚧 PARTIALLY IMPLEMENTED
+            + update_collection() → CollectionServiceResponse [BASIC]
+            
+            ' Internal methods
+            - validate_collection_config()
+            - generate_collection_id()
+            - store_collection_metadata()
+            - collection_exists()
+        }
+        
+        note right of CollectionService : Handles all collection CRUD\nwith atomic metadata operations
+    }
+    
+    package "Vector Operations" {
+        class UnifiedAvroService {
+            - wal_manager: Arc<WalManager>
+            - vector_coordinator: Option<VectorStorageCoordinator>
+            - metadata_backend: Arc<FilestoreMetadataBackend>
+            
+            ' ✅ FULLY IMPLEMENTED
+            + vector_insert_zero_copy() → Result<VectorInsertResponse>
+            + handle_vector_insert_v2() → Result<VectorInsertResponse>
+            + search_vectors_simple() → Result<SearchResponse>
+            + search_by_metadata_server_side() → Result<SearchResponse>
+            
+            ' 🚧 PARTIALLY IMPLEMENTED  
+            + get_vector_by_id() → Result<VectorResponse> [STUB]
+            + delete_vector_by_id() → Result<DeleteResponse> [BASIC]
+            + handle_vector_update() → Result<UpdateResponse> [BASIC]
+            
+            ' ❌ MISSING IMPLEMENTATIONS
+            - delete_vectors_by_filter() → Result<DeleteResponse>
+            - get_vector_history() → Result<HistoryResponse>
+            - multi_search() → Result<MultiSearchResponse>
+            - search_with_aggregations() → Result<AggregatedSearchResponse>
+            - atomic_insert_vectors() → Result<AtomicInsertResponse>
+            
+            ' Internal methods
+            - serialize_to_avro()
+            - deserialize_from_avro()
+            - write_to_wal()
+            - coordinate_storage_write()
+        }
+        
+        note bottom of UnifiedAvroService : Central hub for all vector operations\nwith Avro serialization and WAL integration
+    }
+    
+    package "Transaction Management" {
+        class TransactionManager {
+            ' ❌ NOT IMPLEMENTED - full class missing
+            - active_transactions: HashMap<TransactionId, Transaction>
+            - transaction_log: TransactionLog
+            - lock_manager: LockManager
+            
+            ' Missing methods that need implementation
+            + begin_transaction() → TransactionId
+            + commit_transaction(id: TransactionId) → Result<()>
+            + rollback_transaction(id: TransactionId) → Result<()>
+            + get_transaction_status(id: TransactionId) → TransactionStatus
+            + acquire_locks(id: TransactionId, resources: Vec<Resource>)
+            + release_locks(id: TransactionId)
+        }
+        
+        class Transaction {
+            ' ❌ NOT IMPLEMENTED
+            + id: TransactionId
+            + status: TransactionStatus
+            + operations: Vec<TransactionOperation>
+            + locks: Vec<Lock>
+            + created_at: Timestamp
+        }
+        
+        note right of TransactionManager : Complete transaction system\nneeds implementation for ACID operations
+    }
+}
+
+package "Storage Layer - Data Persistence" {
+    package "Write-Ahead Log" {
+        class WalManager {
+            - wal_writers: HashMap<String, WalWriter>
+            - config: WalConfig
+            
+            ' ✅ FULLY IMPLEMENTED
+            + write_vector_insert() → Result<WalOffset>
+            + write_vector_update() → Result<WalOffset>
+            + write_vector_delete() → Result<WalOffset>
+            + write_collection_operation() → Result<WalOffset>
+            + flush_to_storage() → Result<()>
+            + recover_from_wal() → Result<()>
+            
+            ' WAL serialization formats
+            - serialize_avro() → Vec<u8>
+            - serialize_bincode() → Vec<u8>
+            - serialize_json() → Vec<u8>
+        }
+        
+        note right of WalManager : High-performance WAL with\nmultiple serialization formats
+    }
+    
+    package "Vector Storage" {
+        class VectorStorageCoordinator {
+            ' 🚧 EXISTS BUT NOT INTEGRATED
+            - viper_engine: Arc<ViperEngine>
+            - index_manager: Arc<IndexManager>
+            
+            + search_vectors() → Result<SearchResults>
+            + insert_vectors() → Result<()>
+            + update_vectors() → Result<()>
+            + delete_vectors() → Result<()>
+            + create_collection_storage() → Result<()>
+        }
+        
+        class ViperEngine {
+            ' ✅ IMPLEMENTED - Parquet-based storage
+            + write_parquet_batch() → Result<()>
+            + read_parquet_batch() → Result<VectorBatch>
+            + search_compressed_vectors() → Result<SearchResults>
+            + apply_metadata_filters() → Result<FilteredResults>
+            + optimize_storage() → Result<()>
+            
+            ' VIPER-specific optimizations
+            - compress_vectors()
+            - create_parquet_schema()
+            - write_metadata_columns()
+        }
+        
+        note bottom of ViperEngine : High-performance vector storage\nwith Parquet compression
+    }
+    
+    package "Metadata Storage" {
+        class FilestoreMetadataBackend {
+            - filesystem: Arc<dyn FilesystemBackend>
+            
+            ' ✅ FULLY IMPLEMENTED
+            + store_collection_metadata() → Result<()>
+            + retrieve_collection_metadata() → Result<CollectionRecord>
+            + list_collections() → Result<Vec<CollectionRecord>>
+            + delete_collection_metadata() → Result<()>
+            + collection_exists() → Result<bool>
+            
+            ' Atomic operations
+            - write_atomic() → Result<()>
+            - read_with_retry() → Result<Vec<u8>>
+        }
+        
+        package "Filesystem Abstraction" {
+            interface FilesystemBackend {
+                + read() → Result<Vec<u8>>
+                + write() → Result<()>
+                + delete() → Result<()>
+                + list() → Result<Vec<String>>
+                + exists() → Result<bool>
+            }
+            
+            class LocalFilesystem {
+                + read() → Result<Vec<u8>>
+                + write() → Result<()>
+                ' Local file operations
+            }
+            
+            class S3Filesystem {
+                + read() → Result<Vec<u8>>
+                + write() → Result<()>
+                ' AWS S3 operations
+            }
+            
+            class GcsFilesystem {
+                + read() → Result<Vec<u8>>
+                + write() → Result<()>
+                ' Google Cloud Storage operations
+            }
+            
+            class AzureFilesystem {
+                + read() → Result<Vec<u8>>
+                + write() → Result<()>
+                ' Azure Blob Storage operations
+            }
+        }
+        
+        note bottom of FilesystemBackend : Multi-cloud storage abstraction\nsupports file://, s3://, gcs://, adls://
+    }
+}
+
+' Relationships
+MainServer --> MultiServer : creates
+MultiServer --> ProximaDbService : contains
+MultiServer --> RestServer : contains
+MultiServer --> SharedServices : shares
+
+ProximaDbService --> SharedServices : uses
+RestServer --> SharedServices : uses
+
+SharedServices --> CollectionService : contains
+SharedServices --> UnifiedAvroService : contains
+SharedServices --> TransactionManager : contains
+SharedServices --> WalManager : contains
+
+CollectionService --> FilestoreMetadataBackend : uses
+UnifiedAvroService --> WalManager : uses
+UnifiedAvroService --> VectorStorageCoordinator : uses
+UnifiedAvroService --> FilestoreMetadataBackend : uses
+
+VectorStorageCoordinator --> ViperEngine : uses
+FilestoreMetadataBackend --> FilesystemBackend : uses
+
+FilesystemBackend <|-- LocalFilesystem
+FilesystemBackend <|-- S3Filesystem
+FilesystemBackend <|-- GcsFilesystem
+FilesystemBackend <|-- AzureFilesystem
+
+' Implementation Status
+note top : IMPLEMENTATION STATUS:\n✅ FULLY IMPLEMENTED\n🚧 PARTIALLY IMPLEMENTED\n❌ NOT IMPLEMENTED
+
+@enduml

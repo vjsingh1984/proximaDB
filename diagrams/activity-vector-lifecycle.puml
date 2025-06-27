@@ -1,0 +1,221 @@
+@startuml Vector_Lifecycle_Activity_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam activityBackgroundColor lightblue
+skinparam activityBorderColor darkblue
+
+title ProximaDB Vector Lifecycle - Activity Diagram
+
+start
+
+:Client creates collection;
+
+if (Collection configuration valid?) then (yes)
+    :Generate collection ID;
+    :Store metadata to filesystem;
+    :Collection created successfully;
+else (no)
+    :Return validation error;
+    stop
+endif
+
+:Client inserts vectors;
+
+partition "Vector Insert Process" {
+    :Normalize vector data;
+    :Validate dimensions;
+    
+    if (Protocol selection?) then (gRPC - High Performance)
+        :Serialize vectors to Avro binary;
+        :Send via gRPC VectorInsert;
+        :Zero-copy deserialization;
+    else (REST - Universal)
+        :Convert vectors to JSON;
+        :Send via HTTP POST;
+        :Parse JSON payload;
+    endif
+    
+    :Write to WAL (Write-Ahead Log);
+    
+    fork
+        :Immediate WAL persistence;
+    fork again
+        if (Storage coordinator available?) then (yes)
+            :Write to VIPER storage;
+            :Compress to Parquet format;
+        else (no)
+            :Skip storage write;
+            note right: Will be handled by background process
+        endif
+    end fork
+    
+    :Return insert result;
+}
+
+:Vectors available for search;
+
+partition "Vector Search Process" {
+    :Client submits search query;
+    :Validate query vector;
+    
+    if (Search implementation?) then (Full - with coordinator)
+        :Query VIPER compressed storage;
+        :Apply metadata filters;
+        :Compute similarity scores;
+        :Rank results by score;
+    else (Basic - placeholder)
+        :Return mock results;
+        note right: Current implementation limitation
+    endif
+    
+    :Return search results;
+}
+
+partition "Vector Management Operations" {
+    while (Vector operations needed?) is (yes)
+        :Receive operation request;
+        
+        switch (Operation type?)
+        case (Get vector)
+            if (Implementation status?) then (full)
+                :Retrieve from storage;
+            else (stub)
+                :Return placeholder/error;
+                note right: Needs completion
+            endif
+            
+        case (Update vector)
+            if (Implementation status?) then (full)
+                :Write update to WAL;
+                :Update storage;
+            else (partial)
+                :Basic WAL write only;
+                note right: Needs enhancement
+            endif
+            
+        case (Delete vector)
+            if (Implementation status?) then (full)
+                :Mark for deletion in WAL;
+                :Remove from storage;
+            else (partial)
+                :Basic deletion only;
+                note right: Needs completion
+            endif
+            
+        case (Delete by filter)
+            :❌ NOT IMPLEMENTED;
+            :Return not implemented error;
+            note right: Needs full implementation
+            
+        case (Get history)
+            :❌ NOT IMPLEMENTED;
+            :Return not implemented error;
+            note right: Needs version tracking
+            
+        case (Multi-search)
+            :❌ NOT IMPLEMENTED;
+            :Return not implemented error;
+            note right: Needs parallel query processing
+            
+        case (Search with aggregations)
+            :❌ NOT IMPLEMENTED;
+            :Return not implemented error;
+            note right: Needs aggregation engine
+            
+        endswitch
+        
+    endwhile (no)
+}
+
+partition "Transaction Management" {
+    if (Transaction operations needed?) then (yes)
+        switch (Transaction type?)
+        case (Begin)
+            :❌ NOT IMPLEMENTED;
+            :Return error;
+            note right: Needs TransactionManager
+            
+        case (Commit)
+            :❌ NOT IMPLEMENTED;
+            :Return error;
+            note right: Needs ACID guarantees
+            
+        case (Rollback)
+            :❌ NOT IMPLEMENTED;
+            :Return error;
+            note right: Needs rollback mechanism
+            
+        endswitch
+    else (no)
+        :Continue without transactions;
+    endif
+}
+
+partition "Collection Lifecycle Management" {
+    :Monitor collection usage;
+    
+    fork
+        :Background WAL flush;
+        :Periodic storage optimization;
+    fork again
+        :Collection statistics updates;
+        :Performance monitoring;
+    fork again
+        if (Collection updates needed?) then (yes)
+            if (Update implementation?) then (full)
+                :Update collection metadata;
+            else (partial)
+                :Basic update only;
+                note right: Needs enhancement
+            endif
+        else (no)
+            :No updates needed;
+        endif
+    end fork
+    
+    if (Collection deletion requested?) then (yes)
+        :Validate deletion permissions;
+        :Remove all vector data;
+        :Clean up WAL files;
+        :Delete metadata;
+        :Collection deleted;
+    else (no)
+        :Collection continues;
+    endif
+}
+
+:Monitor system health;
+
+if (System healthy?) then (yes)
+    :Continue operations;
+    
+    backward :Process more requests;
+else (no)
+    :Handle system errors;
+    :Attempt recovery;
+    
+    if (Recovery successful?) then (yes)
+        backward :Resume operations;
+    else (no)
+        :System maintenance required;
+        stop
+    endif
+endif
+
+stop
+
+note bottom
+**Implementation Status Legend:**
+✅ **FULLY IMPLEMENTED** - Production ready
+🚧 **PARTIALLY IMPLEMENTED** - Basic functionality exists
+❌ **NOT IMPLEMENTED** - Needs development
+
+**Key Implementation Gaps:**
+1. Advanced vector operations (filter, history, multi-search, aggregations)
+2. Transaction management system
+3. Complete vector CRUD operations
+4. VectorStorageCoordinator integration
+5. Enhanced collection update capabilities
+end note
+
+@enduml

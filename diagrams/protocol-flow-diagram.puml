@@ -1,0 +1,165 @@
+@startuml Protocol_Flow_Diagram
+!theme plain
+skinparam backgroundColor white
+skinparam actorBackgroundColor lightblue
+skinparam participantBackgroundColor lightgreen
+skinparam databaseBackgroundColor lightyellow
+
+title ProximaDB Protocol Flow - Client to Storage
+
+actor "Python Client" as Client
+participant "Unified Client" as UC
+participant "Protocol Client\n(REST/gRPC)" as PC
+participant "Network Layer\n(Server)" as NL
+participant "Service Layer" as SL
+participant "Storage Layer" as Storage
+database "Filesystem\n(Multi-cloud)" as FS
+
+== Collection Operations (✅ Fully Implemented) ==
+
+Client -> UC : create_collection("my_collection", config)
+UC -> PC : create_collection(name, config)
+
+alt REST Protocol (Port 5678)
+    PC -> NL : POST /collections\n{name, config}
+    NL -> SL : collection_service.create_collection_from_rest()
+else gRPC Protocol (Port 5679)
+    PC -> NL : CollectionOperation(CREATE, config)
+    NL -> SL : collection_service.create_collection_from_grpc()
+end
+
+SL -> SL : validate_config()\ngenerate_id()\ncheck_exists()
+SL -> Storage : metadata_backend.store_collection()
+Storage -> FS : write({collection_id}/metadata.json)
+FS --> Storage : success
+Storage --> SL : collection_record
+SL --> NL : CollectionServiceResponse
+NL --> PC : Collection
+PC --> UC : Collection
+UC --> Client : Collection
+
+== Vector Insert Operations (✅ Fully Implemented) ==
+
+Client -> UC : insert_vectors(collection_id, vectors, ids)
+UC -> PC : insert_vectors(collection_id, vectors, ids)
+
+alt REST Protocol - JSON
+    PC -> NL : POST /collections/{id}/vectors/batch\n{vectors, ids, metadata}
+    NL -> SL : unified_avro_service.handle_vector_insert_v2()
+else gRPC Protocol - Zero-copy Avro
+    PC -> PC : serialize_to_avro(vectors)
+    PC -> NL : VectorInsert(collection_id, avro_payload)
+    NL -> SL : unified_avro_service.vector_insert_zero_copy()
+end
+
+SL -> Storage : wal_manager.write_vector_insert()
+Storage -> FS : append_to_wal({collection_id}.wal)
+FS --> Storage : wal_offset
+
+SL -> Storage : coordinate_storage_write()
+note right : Optional: Write to VIPER storage\nCurrently uses WAL only
+
+Storage --> SL : insert_result
+SL --> NL : VectorOperationResponse
+NL --> PC : InsertResult/BatchResult
+PC --> UC : BatchResult
+UC --> Client : BatchResult
+
+== Vector Search Operations (🚧 Partially Implemented) ==
+
+Client -> UC : search(collection_id, query, k)
+UC -> PC : search(collection_id, query, k)
+
+alt REST Protocol
+    PC -> NL : POST /collections/{id}/search\n{query, k, filter}
+    NL -> SL : unified_avro_service.search_vectors_simple()
+else gRPC Protocol
+    PC -> NL : VectorSearch(collection_id, query, k)
+    NL -> SL : unified_avro_service.search_vectors_simple()
+end
+
+SL -> SL : search_by_metadata_server_side()
+note right : Currently returns placeholder results\nNeeds VectorStorageCoordinator integration
+
+alt If VectorStorageCoordinator Available
+    SL -> Storage : vector_coordinator.search_vectors()
+    Storage -> Storage : viper_engine.search_compressed_vectors()
+    Storage --> SL : search_results
+else Current Implementation
+    SL -> SL : generate_placeholder_results()
+end
+
+SL --> NL : SearchResponse
+NL --> PC : List<SearchResult>
+PC --> UC : List<SearchResult>
+UC --> Client : List<SearchResult>
+
+== Missing Advanced Operations (❌ Need Implementation) ==
+
+group delete_vectors_by_filter [MISSING SERVER IMPLEMENTATION]
+    Client -> UC : delete_vectors_by_filter(collection_id, filter)
+    UC -> PC : delete_vectors_by_filter(collection_id, filter)
+    
+    alt REST Protocol [NEEDS ENDPOINT]
+        PC -> NL : DELETE /collections/{id}/vectors + filter
+        note right : ❌ Endpoint not implemented
+    else gRPC Protocol [NEEDS SERVICE METHOD]
+        PC -> NL : VectorMutation(DELETE, filter_selector)
+        note right : 🚧 Basic structure exists
+    end
+    
+    note over SL : ❌ Service method needs implementation:\n- Parse filter criteria\n- Query matching vectors\n- Batch delete operations\n- Update WAL with deletions
+end
+
+group search_with_aggregations [MISSING SERVER IMPLEMENTATION]
+    Client -> UC : search_with_aggregations(collection_id, query, aggregations)
+    UC -> PC : search_with_aggregations(collection_id, query, aggregations)
+    
+    alt REST Protocol [NEEDS ENDPOINT]
+        PC -> NL : POST /collections/{id}/search_aggregated
+        note right : ❌ Endpoint not implemented
+    else gRPC Protocol [NEEDS SERVICE METHOD]
+        PC -> NL : VectorSearchAggregated(query, aggregations)
+        note right : ❌ Service method not implemented
+    end
+    
+    note over SL : ❌ Service method needs implementation:\n- Execute vector search\n- Group results by specified fields\n- Calculate aggregations (count, avg, etc.)\n- Return structured response
+end
+
+group transaction_operations [MISSING FULL IMPLEMENTATION]
+    Client -> UC : begin_transaction()
+    UC -> PC : begin_transaction()
+    
+    alt REST Protocol [NEEDS ENDPOINTS]
+        PC -> NL : POST /transactions
+        note right : ❌ Transaction endpoints not implemented
+    else gRPC Protocol [NEEDS SERVICE]
+        PC -> NL : TransactionOperation(BEGIN)
+        note right : ❌ Transaction service not implemented
+    end
+    
+    note over SL : ❌ TransactionManager needs implementation:\n- Transaction ID generation\n- Lock management\n- Operation logging\n- ACID guarantees\n- Rollback capabilities
+end
+
+== Error Handling Flow ==
+
+alt Error in Storage Layer
+    Storage -> Storage : filesystem_error
+    Storage --> SL : StorageError
+    SL --> NL : InternalError(500)
+    NL --> PC : ProximaDBError
+    PC --> UC : ProximaDBError  
+    UC --> Client : ProximaDBError
+end
+
+alt Error in Service Layer
+    SL -> SL : validation_error
+    SL --> NL : ValidationError(400)
+    NL --> PC : ValidationError
+    PC --> UC : ValidationError
+    UC --> Client : ValidationError
+end
+
+note bottom : **Implementation Status:**\n✅ **FULLY IMPLEMENTED** - Production ready\n🚧 **PARTIALLY IMPLEMENTED** - Basic functionality exists\n❌ **NOT IMPLEMENTED** - Needs development
+
+@enduml

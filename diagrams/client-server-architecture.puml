@@ -1,0 +1,282 @@
+@startuml ProximaDB_Client_Server_Architecture
+!theme plain
+skinparam backgroundColor white
+skinparam classBackgroundColor lightblue
+skinparam classBorderColor darkblue
+skinparam packageBackgroundColor lightyellow
+
+title ProximaDB Complete Client-Server Architecture
+
+package "Client SDK (Python)" {
+    package "Unified Client Layer" {
+        class ProximaDBClient {
+            - _client: Union[RestClient, GrpcClient]
+            - config: ClientConfig
+            - protocol: Protocol
+            
+            + create_collection()
+            + get_collection()
+            + list_collections()
+            + delete_collection()
+            + update_collection()
+            
+            + insert_vector()
+            + insert_vectors()
+            + search()
+            + get_vector()
+            + delete_vector()
+            + delete_vectors()
+            
+            ' Missing methods (thin wrappers when server implements)
+            + delete_vectors_by_filter()
+            + get_vector_history()
+            + multi_search()
+            + search_with_aggregations()
+            + atomic_insert_vectors()
+            + begin_transaction()
+            + commit_transaction()
+            + rollback_transaction()
+        }
+    }
+    
+    package "Protocol Clients" {
+        class ProximaDBRestClient {
+            - _http_client: httpx.Client
+            - config: ClientConfig
+            
+            + _make_request()
+            + _handle_error_response()
+            
+            ' REST endpoint mappings
+            + create_collection() → POST /collections
+            + get_collection() → GET /collections/{id}
+            + list_collections() → GET /collections
+            + delete_collection() → DELETE /collections/{id}
+            + update_collection() → PATCH /collections/{id}
+            
+            + insert_vector() → POST /collections/{id}/vectors
+            + insert_vectors() → POST /collections/{id}/vectors/batch
+            + search() → POST /collections/{id}/search
+            + get_vector() → GET /collections/{id}/vectors/{vid}
+            + delete_vector() → DELETE /collections/{id}/vectors/{vid}
+            
+            ' Missing REST endpoints (need server implementation)
+            + delete_vectors_by_filter() → DELETE /collections/{id}/vectors + filter
+            + get_vector_history() → GET /collections/{id}/vectors/{vid}/history
+            + multi_search() → POST /collections/{id}/multi_search
+            + search_with_aggregations() → POST /collections/{id}/search_aggregated
+            + atomic_insert_vectors() → POST /collections/{id}/vectors/atomic
+            + begin_transaction() → POST /transactions
+            + commit_transaction() → POST /transactions/{id}/commit
+            + rollback_transaction() → POST /transactions/{id}/rollback
+        }
+        
+        class ProximaDBGrpcClient {
+            - stub: pb2_grpc.ProximaDBStub
+            - channel: grpc.Channel
+            
+            + _call_with_timeout()
+            + _convert_collection()
+            
+            ' gRPC method mappings
+            + create_collection() → CollectionOperation(CREATE)
+            + get_collection() → CollectionOperation(GET)
+            + list_collections() → CollectionOperation(LIST)
+            + delete_collection() → CollectionOperation(DELETE)
+            + update_collection() → CollectionOperation(UPDATE)
+            
+            + insert_vector() → VectorInsert()
+            + insert_vectors() → VectorInsert()
+            + search() → VectorSearch()
+            + get_vector() → VectorSearch(by_id)
+            + delete_vector() → VectorMutation(DELETE)
+            
+            ' Missing gRPC methods (need server implementation)
+            + delete_vectors_by_filter() → VectorMutation(DELETE + filter)
+            + get_vector_history() → VectorHistory() [NEW SERVICE]
+            + multi_search() → VectorSearch(multiple queries)
+            + search_with_aggregations() → VectorSearchAggregated() [NEW METHOD]
+            + atomic_insert_vectors() → VectorInsert(atomic=true)
+            + begin_transaction() → TransactionOperation(BEGIN) [NEW SERVICE]
+            + commit_transaction() → TransactionOperation(COMMIT) [NEW SERVICE]
+            + rollback_transaction() → TransactionOperation(ROLLBACK) [NEW SERVICE]
+        }
+    }
+}
+
+package "Server Implementation (Rust)" {
+    package "Network Layer (Protocols)" {
+        class MultiServer {
+            - grpc_server: ProximaDbService
+            - rest_server: RestServer
+            - shared_services: Arc<SharedServices>
+            
+            + start_grpc_server(port: 5679)
+            + start_rest_server(port: 5678)
+        }
+        
+        class RestServer {
+            - router: axum::Router
+            - shared_services: Arc<SharedServices>
+            
+            ' Implemented REST handlers
+            + create_collection_handler()
+            + get_collection_handler()
+            + list_collections_handler()
+            + delete_collection_handler()
+            + insert_vector_handler()
+            + insert_vectors_batch_handler()
+            + search_vectors_handler()
+            + health_handler()
+            
+            ' Partially implemented
+            + get_vector_handler() [STUB]
+            + update_vector_handler() [STUB]
+            + delete_vector_handler() [STUB]
+            
+            ' Missing handlers (need implementation)
+            - update_collection_handler()
+            - delete_vectors_by_filter_handler()
+            - get_vector_history_handler()
+            - multi_search_handler()
+            - search_aggregated_handler()
+            - atomic_insert_handler()
+            - transaction_handlers()
+        }
+        
+        class ProximaDbService {
+            - shared_services: Arc<SharedServices>
+            
+            ' Implemented gRPC methods
+            + collection_operation() → CollectionService
+            + vector_insert() → UnifiedAvroService
+            + vector_mutation() → UnifiedAvroService
+            + vector_search() → UnifiedAvroService
+            + health() → system status
+            + get_metrics() → monitoring
+            
+            ' Missing gRPC methods (need implementation)
+            - enhanced vector_mutation for filtering
+            - vector_history service
+            - enhanced vector_search for aggregations
+            - transaction_operation service
+        }
+    }
+    
+    package "Service Layer (Business Logic)" {
+        class SharedServices {
+            + collection_service: Arc<CollectionService>
+            + unified_avro_service: Arc<UnifiedAvroService>
+            + transaction_manager: Option<TransactionManager>
+        }
+        
+        class CollectionService {
+            - metadata_backend: FilestoreMetadataBackend
+            
+            ' Fully implemented
+            + create_collection_from_grpc()
+            + create_collection_from_rest()
+            + get_collection()
+            + list_collections()
+            + delete_collection()
+            + update_collection() [PARTIAL]
+            
+            + validate_collection_config()
+            + generate_collection_id()
+        }
+        
+        class UnifiedAvroService {
+            - wal_manager: WalManager
+            - vector_coordinator: Option<VectorStorageCoordinator>
+            - metadata_backend: FilestoreMetadataBackend
+            
+            ' Fully implemented
+            + vector_insert_zero_copy()
+            + handle_vector_insert_v2()
+            + search_vectors_simple()
+            + search_by_metadata_server_side()
+            
+            ' Partially implemented
+            + get_vector_by_id() [STUB]
+            + delete_vector_by_id() [BASIC]
+            
+            ' Missing implementations
+            - delete_vectors_by_filter()
+            - get_vector_history()
+            - multi_search()
+            - search_with_aggregations()
+            - atomic_insert_vectors()
+        }
+        
+        class TransactionManager {
+            ' NOT IMPLEMENTED - needs full implementation
+            + begin_transaction() : TransactionId
+            + commit_transaction(id)
+            + rollback_transaction(id)
+            + get_transaction_status(id)
+        }
+    }
+    
+    package "Storage Layer" {
+        class WalManager {
+            + write_vector_insert()
+            + write_vector_update()
+            + write_vector_delete()
+            + write_collection_operation()
+            + flush_to_storage()
+        }
+        
+        class VectorStorageCoordinator {
+            ' NOT INTEGRATED - exists but not used
+            + search_vectors()
+            + insert_vectors()
+            + update_vectors()
+            + delete_vectors()
+        }
+        
+        class ViperEngine {
+            + write_parquet_batch()
+            + search_compressed_vectors()
+            + apply_metadata_filters()
+        }
+        
+        class FilestoreMetadataBackend {
+            + store_collection_metadata()
+            + retrieve_collection_metadata()
+            + list_collections()
+            + delete_collection_metadata()
+        }
+    }
+}
+
+' Client-Server Relationships
+ProximaDBClient --> ProximaDBRestClient : delegates
+ProximaDBClient --> ProximaDBGrpcClient : delegates
+
+ProximaDBRestClient --> RestServer : HTTP requests
+ProximaDBGrpcClient --> ProximaDbService : gRPC calls
+
+' Server Internal Relationships
+MultiServer --> RestServer : contains
+MultiServer --> ProximaDbService : contains
+MultiServer --> SharedServices : shares
+
+RestServer --> SharedServices : uses
+ProximaDbService --> SharedServices : uses
+
+SharedServices --> CollectionService : contains
+SharedServices --> UnifiedAvroService : contains
+SharedServices --> TransactionManager : contains
+
+CollectionService --> FilestoreMetadataBackend : uses
+UnifiedAvroService --> WalManager : uses
+UnifiedAvroService --> VectorStorageCoordinator : uses
+UnifiedAvroService --> FilestoreMetadataBackend : uses
+
+UnifiedAvroService --> ViperEngine : delegates to
+VectorStorageCoordinator --> ViperEngine : uses
+
+' Implementation Status Legend
+note bottom : ✅ FULLY IMPLEMENTED\n🚧 PARTIALLY IMPLEMENTED\n❌ NOT IMPLEMENTED
+
+@enduml
