@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 sys.path.append('/home/vsingh/code/proximadb/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBGrpcClient
+from proximadb.grpc_client import ProximaDBClient
 from proximadb import proximadb_pb2
 
 # Configure logging
@@ -100,7 +100,7 @@ class ProximaDBRecoveryTester:
     async def connect_client(self):
         """Connect the gRPC client"""
         logger.info("🔌 Connecting gRPC client...")
-        self.client = ProximaDBGrpcClient(f"localhost:{self.server_port}")
+        self.client = ProximaDBClient(f"localhost:{self.server_port}")
         
         # Test connection with health check
         for attempt in range(10):

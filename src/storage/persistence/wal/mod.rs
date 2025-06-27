@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};
 
 // Sub-modules
 pub mod avro;
@@ -136,12 +137,15 @@ pub trait WalStrategy: Send + Sync {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
 
-    /// Initialize the strategy with configuration
+    /// Initialize the strategy with configuration and optional storage engine
     async fn initialize(
         &mut self,
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<()>;
+    
+    /// Set storage engine for delegated flush/compaction operations
+    fn set_storage_engine(&mut self, storage_engine: Arc<dyn UnifiedStorageEngine>);
 
     /// Serialize entries to bytes (strategy-specific format)
     async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>>;
@@ -199,8 +203,20 @@ pub trait WalStrategy: Send + Sync {
     /// Get all entries for a collection from memtable (for similarity search)
     async fn get_collection_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>>;
 
-    /// Flush memory entries to disk
+    /// Flush memory entries to disk - delegates to storage engine if available
     async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<FlushResult>;
+    
+    /// Delegate flush to storage engine (common implementation for all strategies)
+    async fn delegate_to_storage_engine_flush(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::FlushResult> {
+        // Default implementation - override in implementing strategies
+        Err(anyhow::anyhow!("Storage engine not available for flush delegation"))
+    }
+    
+    /// Delegate compaction to storage engine (common implementation for all strategies)  
+    async fn delegate_to_storage_engine_compact(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::CompactionResult> {
+        // Default implementation - override in implementing strategies
+        Err(anyhow::anyhow!("Storage engine not available for compaction delegation"))
+    }
 
     /// Compact entries for a collection (MVCC cleanup)
     async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64>;
@@ -272,6 +288,12 @@ impl WalManager {
     ) {
         self.atomicity_manager = Some(atomicity_manager);
         tracing::info!("🔒 Atomicity manager attached to WAL manager");
+    }
+    
+    /// Set storage engine for delegated flush/compaction operations
+    pub fn set_storage_engine(&mut self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
+        self.strategy.set_storage_engine(storage_engine);
+        tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
     }
 
     /// Execute atomic operation with transaction support

@@ -32,7 +32,7 @@ from typing import List, Dict, Any, Optional
 import sys
 sys.path.append('./clients/python/src')
 
-from proximadb.grpc_client import ProximaDBGRPCClient
+from proximadb.grpc_client import ProximaDBGrpcClient
 from proximadb.schemas import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
 
 # Configure logging
@@ -89,7 +89,7 @@ class ProximaDBServerManager:
             for attempt in range(max_retries):
                 try:
                     # Test connection
-                    client = ProximaDBGRPCClient(self.server_url)
+                    client = ProximaDBGrpcClient(self.server_url)
                     await client.connect()
                     
                     # Test health check
@@ -161,7 +161,7 @@ class WALPersistenceTest:
         self.server_manager = server_manager
         self.test_collections: Dict[str, Dict[str, Any]] = {}
         
-    async def create_test_collections(self, client: ProximaDBGRPCClient) -> Dict[str, CollectionConfig]:
+    async def create_test_collections(self, client: ProximaDBGrpcClient) -> Dict[str, CollectionConfig]:
         """Create multiple test collections with different configurations"""
         logger.info("📝 Creating test collections...")
         
@@ -222,7 +222,7 @@ class WALPersistenceTest:
                 
         return created_collections
         
-    async def add_test_vectors(self, client: ProximaDBGRPCClient, collections: Dict[str, CollectionConfig]):
+    async def add_test_vectors(self, client: ProximaDBGrpcClient, collections: Dict[str, CollectionConfig]):
         """Add test vectors to collections"""
         logger.info("🔢 Adding test vectors...")
         
@@ -260,7 +260,7 @@ class WALPersistenceTest:
             except Exception as e:
                 logger.error(f"  ❌ Failed to add vectors to {name}: {e}")
                 
-    async def verify_collections_exist(self, client: ProximaDBGRPCClient, expected_collections: Dict[str, CollectionConfig]) -> bool:
+    async def verify_collections_exist(self, client: ProximaDBGrpcClient, expected_collections: Dict[str, CollectionConfig]) -> bool:
         """Verify all expected collections exist with correct configurations"""
         logger.info("🔍 Verifying collections exist...")
         
@@ -307,7 +307,7 @@ class WALPersistenceTest:
             logger.error(f"❌ Failed to verify collections: {e}")
             return False
             
-    async def verify_vectors_exist(self, client: ProximaDBGRPCClient, collections: Dict[str, CollectionConfig]) -> bool:
+    async def verify_vectors_exist(self, client: ProximaDBGrpcClient, collections: Dict[str, CollectionConfig]) -> bool:
         """Verify vectors can be searched in all collections"""
         logger.info("🔍 Verifying vectors exist through search...")
         
@@ -362,7 +362,7 @@ class WALPersistenceTest:
                 return False
                 
             # Connect and create collections
-            client = ProximaDBGRPCClient(self.server_manager.server_url)
+            client = ProximaDBGrpcClient(self.server_manager.server_url)
             await client.connect()
             
             initial_collections = await self.create_test_collections(client)
@@ -402,7 +402,7 @@ class WALPersistenceTest:
                 return False
                 
             # Reconnect and verify persistence
-            client = ProximaDBGRPCClient(self.server_manager.server_url)
+            client = ProximaDBGrpcClient(self.server_manager.server_url)
             await client.connect()
             
             # Verify all collections still exist

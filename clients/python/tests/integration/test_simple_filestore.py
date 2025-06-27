@@ -15,7 +15,7 @@ from pathlib import Path
 # Add Python client to path
 sys.path.insert(0, 'clients/python/src')
 
-from proximadb.grpc_client import ProximaDBGrpcClient
+from proximadb.grpc_client import ProximaDBClient
 
 def count_files_recursive(directory):
     """Count files recursively in a directory"""
@@ -46,7 +46,7 @@ async def main():
     
     # Check if server is running
     try:
-        client = ProximaDBGrpcClient("localhost:5679")
+        client = ProximaDBClient("localhost:5679")
         await client.health_check()
         print("✅ Server is running and healthy")
     except Exception as e:

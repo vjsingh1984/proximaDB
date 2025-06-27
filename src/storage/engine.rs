@@ -457,6 +457,21 @@ impl StorageEngine {
     async fn recover_from_wal(&self) -> crate::storage::Result<()> {
         tracing::info!("🔄 Starting WAL recovery");
 
+        // First, get all existing collections from the collection service
+        tracing::info!("📋 WAL RECOVERY: Getting collection list from collection service");
+        let existing_collections = match self.collection_service.list_collections().await {
+            Ok(collections) => {
+                tracing::info!("📋 WAL RECOVERY: Found {} existing collections from collection service", collections.len());
+                tracing::debug!("📋 WAL RECOVERY: Existing collections: {:?}", 
+                    collections.iter().map(|c| &c.id).collect::<Vec<_>>());
+                collections
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ WAL RECOVERY: Failed to get collections from collection service: {}", e);
+                Vec::new()
+            }
+        };
+
         // Use the new WAL interface to recover
         match self.wal_manager.recover().await {
             Ok(recovered_entries) => {
@@ -464,6 +479,15 @@ impl StorageEngine {
                     "✅ WAL recovery completed successfully, recovered {} entries",
                     recovered_entries
                 );
+                
+                // Add debug info about which collections had WAL entries vs those that didn't
+                if existing_collections.len() > 0 && recovered_entries == 0 {
+                    tracing::warn!("🔍 WAL RECOVERY: Found {} existing collections but recovered 0 WAL entries. This might indicate:", existing_collections.len());
+                    tracing::warn!("   - Collections were created but no vectors were inserted yet");
+                    tracing::warn!("   - WAL files were cleaned up or lost");
+                    tracing::warn!("   - WAL recovery is not finding the correct WAL files");
+                }
+                
                 Ok(())
             }
             Err(e) => {

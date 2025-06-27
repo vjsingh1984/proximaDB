@@ -20,7 +20,7 @@ sys.path.append('/home/vsingh/code/proximadb/clients/python/src')
 
 try:
     from proximadb import proximadb_pb2_grpc, proximadb_pb2
-    from proximadb.grpc_client import GrpcClient
+    from proximadb.grpc_client import ProximaDBClient
     print("✅ Successfully imported ProximaDB modules")
 except ImportError as e:
     print(f"❌ Failed to import ProximaDB modules: {e}")
@@ -35,7 +35,7 @@ class VectorCoordinatorIntegrationTest:
         """Setup test environment"""
         print("🔧 Setting up test environment...")
         try:
-            self.client = GrpcClient()
+            self.client = ProximaDBClient()
             await self.client.connect()
             print("✅ Connected to ProximaDB server")
         except Exception as e:
