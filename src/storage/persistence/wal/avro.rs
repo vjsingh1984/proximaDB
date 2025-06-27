@@ -18,6 +18,7 @@ use super::{
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::UnifiedStorageEngine;
 
 /// Avro schema for WAL entries with evolution support
 const AVRO_SCHEMA_V1: &str = r#"
@@ -93,6 +94,7 @@ pub struct AvroWalStrategy {
     filesystem: Option<Arc<FilesystemFactory>>,
     memory_table: Option<WalMemTable>,
     disk_manager: Option<WalDiskManager>,
+    storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
 }
 
 impl AvroWalStrategy {
@@ -103,6 +105,7 @@ impl AvroWalStrategy {
             filesystem: None,
             memory_table: None,
             disk_manager: None,
+            storage_engine: None,
         }
     }
 
@@ -199,6 +202,11 @@ impl WalStrategy for AvroWalStrategy {
         tracing::info!("✅ Avro WAL strategy initialized");
         tracing::debug!("✅ AvroWalStrategy::initialize - Initialization complete");
         Ok(())
+    }
+    
+    fn set_storage_engine(&mut self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
+        tracing::info!("🏗️ AvroWalStrategy: Setting storage engine: {}", storage_engine.engine_name());
+        self.storage_engine = Some(storage_engine);
     }
 
     async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>> {
@@ -448,27 +456,51 @@ impl WalStrategy for AvroWalStrategy {
                     total_result.entries_flushed += entries.len() as u64;
                     total_result.collections_affected.push(collection_id.clone());
                 } else {
-                    tracing::debug!("💾 Flushing {} entries for collection {} to disk", entries.len(), collection_id);
+                    let flush_start = std::time::Instant::now();
+                    tracing::info!("💾 FLUSH START: Flushing {} entries for collection {} to disk", entries.len(), collection_id);
+                    
+                    // Show operation breakdown
+                    let operation_counts: std::collections::HashMap<_, usize> = entries.iter()
+                        .map(|e| &e.operation)
+                        .fold(std::collections::HashMap::new(), |mut acc, op| {
+                            *acc.entry(op).or_insert(0) += 1;
+                            acc
+                        });
+                    tracing::debug!("📊 FLUSH: Collection {} operation breakdown: {:?}", collection_id, operation_counts);
                     
                     // Serialize entries to Avro format
+                    let serialize_start = std::time::Instant::now();
                     let serialized_data = self.serialize_entries_impl(&entries).await?;
+                    let serialize_time = serialize_start.elapsed();
+                    tracing::debug!("📦 FLUSH: Serialized {} entries to {} bytes in {:?}", 
+                                   entries.len(), serialized_data.len(), serialize_time);
                     
                     // Write to disk using disk manager
+                    let disk_write_start = std::time::Instant::now();
                     let flush_result = disk_manager.write_raw(collection_id, serialized_data).await?;
+                    let disk_write_time = disk_write_start.elapsed();
+                    tracing::debug!("💽 FLUSH: Wrote {} bytes to disk in {:?}", 
+                                   flush_result.bytes_written, disk_write_time);
                     
                     // Clear flushed entries from memory
+                    let clear_start = std::time::Instant::now();
                     let last_sequence = entries.iter().map(|e| e.sequence).max().unwrap_or(0);
                     memory_table
                         .clear_flushed(collection_id, last_sequence)
                         .await?;
+                    let clear_time = clear_start.elapsed();
+                    tracing::debug!("🧹 FLUSH: Cleared {} entries from memory (up to sequence {}) in {:?}", 
+                                   entries.len(), last_sequence, clear_time);
 
                     total_result.entries_flushed += entries.len() as u64;
                     total_result.bytes_written += flush_result.bytes_written;
                     total_result.segments_created += flush_result.segments_created;
                     total_result.collections_affected.push(collection_id.clone());
                     
-                    tracing::info!("✅ Flushed {} entries ({} bytes) for collection {} to disk", 
-                                  entries.len(), flush_result.bytes_written, collection_id);
+                    let total_flush_time = flush_start.elapsed();
+                    tracing::info!("✅ FLUSH COMPLETE: Collection {} - {} entries, {} bytes, {} segments in {:?}", 
+                                  collection_id, entries.len(), flush_result.bytes_written, 
+                                  flush_result.segments_created, total_flush_time);
                 }
             }
         } else {
@@ -488,27 +520,51 @@ impl WalStrategy for AvroWalStrategy {
                         total_result.entries_flushed += entries.len() as u64;
                         total_result.collections_affected.push(collection_id.clone());
                     } else {
-                        tracing::debug!("💾 Flushing {} entries for collection {} to disk", entries.len(), collection_id);
+                        let flush_start = std::time::Instant::now();
+                        tracing::info!("💾 FLUSH START: Flushing {} entries for collection {} to disk", entries.len(), collection_id);
+                        
+                        // Show operation breakdown
+                        let operation_counts: std::collections::HashMap<_, usize> = entries.iter()
+                            .map(|e| &e.operation)
+                            .fold(std::collections::HashMap::new(), |mut acc, op| {
+                                *acc.entry(op).or_insert(0) += 1;
+                                acc
+                            });
+                        tracing::debug!("📊 FLUSH: Collection {} operation breakdown: {:?}", collection_id, operation_counts);
                         
                         // Serialize entries to Avro format
+                        let serialize_start = std::time::Instant::now();
                         let serialized_data = self.serialize_entries_impl(&entries).await?;
+                        let serialize_time = serialize_start.elapsed();
+                        tracing::debug!("📦 FLUSH: Serialized {} entries to {} bytes in {:?}", 
+                                       entries.len(), serialized_data.len(), serialize_time);
                         
                         // Write to disk using disk manager
+                        let disk_write_start = std::time::Instant::now();
                         let flush_result = disk_manager.write_raw(&collection_id, serialized_data).await?;
+                        let disk_write_time = disk_write_start.elapsed();
+                        tracing::debug!("💽 FLUSH: Wrote {} bytes to disk in {:?}", 
+                                       flush_result.bytes_written, disk_write_time);
                         
                         // Clear flushed entries from memory
+                        let clear_start = std::time::Instant::now();
                         let last_sequence = entries.iter().map(|e| e.sequence).max().unwrap_or(0);
                         memory_table
                             .clear_flushed(&collection_id, last_sequence)
                             .await?;
+                        let clear_time = clear_start.elapsed();
+                        tracing::debug!("🧹 FLUSH: Cleared {} entries from memory (up to sequence {}) in {:?}", 
+                                       entries.len(), last_sequence, clear_time);
 
                         total_result.entries_flushed += entries.len() as u64;
                         total_result.bytes_written += flush_result.bytes_written;
                         total_result.segments_created += flush_result.segments_created;
                         total_result.collections_affected.push(collection_id.clone());
                         
-                        tracing::info!("✅ Flushed {} entries ({} bytes) for collection {} to disk", 
-                                      entries.len(), flush_result.bytes_written, collection_id);
+                        let total_flush_time = flush_start.elapsed();
+                        tracing::info!("✅ FLUSH COMPLETE: Collection {} - {} entries, {} bytes, {} segments in {:?}", 
+                                      collection_id, entries.len(), flush_result.bytes_written, 
+                                      flush_result.segments_created, total_flush_time);
                     }
                 }
             }
@@ -518,16 +574,82 @@ impl WalStrategy for AvroWalStrategy {
 
         Ok(total_result)
     }
+    
+    /// Delegate flush to storage engine (WAL strategy pattern)
+    async fn delegate_to_storage_engine_flush(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::FlushResult> {
+        if let Some(storage_engine) = &self.storage_engine {
+            tracing::info!("🔄 WAL DELEGATION: Delegating flush to {} storage engine for collection {}", 
+                          storage_engine.engine_name(), collection_id);
+            
+            let flush_params = crate::storage::traits::FlushParameters {
+                collection_id: Some(collection_id.clone()),
+                force: false,
+                synchronous: false,
+                max_entries: None,
+                timeout_ms: None,
+            };
+            
+            storage_engine.do_flush(&flush_params).await
+        } else {
+            Err(anyhow::anyhow!("No storage engine available for flush delegation"))
+        }
+    }
+    
+    /// Delegate compaction to storage engine (WAL strategy pattern)
+    async fn delegate_to_storage_engine_compact(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::CompactionResult> {
+        if let Some(storage_engine) = &self.storage_engine {
+            tracing::info!("🔄 WAL DELEGATION: Delegating compaction to {} storage engine for collection {}", 
+                          storage_engine.engine_name(), collection_id);
+            
+            let compact_params = crate::storage::traits::CompactionParameters {
+                collection_id: Some(collection_id.clone()),
+                force: false,
+                priority: crate::storage::traits::OperationPriority::Medium,
+                synchronous: false,
+                hints: std::collections::HashMap::new(),
+                timeout_ms: None,
+            };
+            
+            storage_engine.do_compact(&compact_params).await
+        } else {
+            Err(anyhow::anyhow!("No storage engine available for compaction delegation"))
+        }
+    }
 
-    async fn compact_collection(&self, _collection_id: &CollectionId) -> Result<u64> {
+    async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64> {
+        let compaction_start = std::time::Instant::now();
+        tracing::info!("🗜️ COMPACTION START: Starting compaction for collection {}", collection_id);
+        
         let memory_table = self
             .memory_table
             .as_ref()
             .context("Avro WAL strategy not initialized")?;
 
+        // Get pre-compaction stats
+        let pre_stats = memory_table.get_collection_stats(collection_id).await.unwrap_or_default();
+        tracing::debug!("📊 COMPACTION: Pre-compaction stats for {} - entries: {}, memory: {} bytes", 
+                       collection_id, pre_stats.entry_count, pre_stats.memory_usage_bytes);
+
         // For now, just do memory cleanup
+        let maintenance_start = std::time::Instant::now();
         let stats = memory_table.maintenance().await?;
-        Ok(stats.mvcc_versions_cleaned + stats.ttl_entries_expired)
+        let maintenance_time = maintenance_start.elapsed();
+        
+        tracing::debug!("🧹 COMPACTION: Memory maintenance completed in {:?}", maintenance_time);
+        tracing::debug!("📈 COMPACTION: Cleanup stats - MVCC versions cleaned: {}, TTL entries expired: {}", 
+                       stats.mvcc_versions_cleaned, stats.ttl_entries_expired);
+
+        // Get post-compaction stats
+        let post_stats = memory_table.get_collection_stats(collection_id).await.unwrap_or_default();
+        let memory_saved = pre_stats.memory_usage_bytes.saturating_sub(post_stats.memory_usage_bytes);
+        
+        let total_compaction_time = compaction_start.elapsed();
+        let total_cleaned = stats.mvcc_versions_cleaned + stats.ttl_entries_expired;
+        
+        tracing::info!("✅ COMPACTION COMPLETE: Collection {} - {} items cleaned, {} bytes freed in {:?}", 
+                      collection_id, total_cleaned, memory_saved, total_compaction_time);
+        
+        Ok(total_cleaned)
     }
 
     async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
@@ -589,9 +711,10 @@ impl WalStrategy for AvroWalStrategy {
         if let Some(disk_manager) = &self.disk_manager {
             let collections = disk_manager.list_collections().await?;
             tracing::info!(
-                "📂 WAL RECOVERY: Found {} collections to recover",
+                "📂 WAL RECOVERY: Found {} collections to recover from WAL disk manager",
                 collections.len()
             );
+            tracing::debug!("📂 WAL RECOVERY: Collection IDs from disk manager: {:?}", collections);
 
             let mut total_entries = 0u64;
             for collection_id in collections {
@@ -607,15 +730,42 @@ impl WalStrategy for AvroWalStrategy {
                         entry_count,
                         collection_id
                     );
+                    
+                    // Debug: Show some entry details
+                    if !entries.is_empty() {
+                        let first_entry = &entries[0];
+                        let last_entry = &entries[entries.len() - 1];
+                        tracing::debug!(
+                            "📊 WAL RECOVERY: Collection {} - First sequence: {}, Last sequence: {}, Operation types: {:?}",
+                            collection_id,
+                            first_entry.sequence,
+                            last_entry.sequence,
+                            entries.iter().map(|e| &e.operation).collect::<std::collections::HashSet<_>>()
+                        );
+                    }
 
                     // Load entries into memory table
                     if let Some(memory_table) = &self.memory_table {
+                        let mut loaded_count = 0;
                         for entry in entries {
                             memory_table.insert_entry(entry).await?;
+                            loaded_count += 1;
                         }
+                        tracing::debug!(
+                            "✅ WAL RECOVERY: Loaded {} entries into memory table for collection {}",
+                            loaded_count,
+                            collection_id
+                        );
+                    } else {
+                        tracing::warn!("⚠️ WAL RECOVERY: No memory table available for collection {}", collection_id);
                     }
 
                     total_entries += entry_count as u64;
+                } else {
+                    tracing::debug!(
+                        "📭 WAL RECOVERY: No entries found for collection {} (collection created but no data inserted yet)",
+                        collection_id
+                    );
                 }
             }
 

@@ -18,6 +18,7 @@ use super::{
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::UnifiedStorageEngine;
 
 /// Bincode representation of WAL entry (optimized for native Rust performance)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +59,7 @@ pub struct BincodeWalStrategy {
     filesystem: Option<Arc<FilesystemFactory>>,
     memory_table: Option<WalMemTable>,
     disk_manager: Option<WalDiskManager>,
+    storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
 }
 
 impl BincodeWalStrategy {
@@ -68,6 +70,7 @@ impl BincodeWalStrategy {
             filesystem: None,
             memory_table: None,
             disk_manager: None,
+            storage_engine: None,
         }
     }
 
@@ -189,6 +192,11 @@ impl WalStrategy for BincodeWalStrategy {
             "✅ Bincode WAL strategy initialized with native Rust performance optimizations"
         );
         Ok(())
+    }
+    
+    fn set_storage_engine(&mut self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
+        tracing::info!("🏗️ BincodeWalStrategy: Setting storage engine: {}", storage_engine.engine_name());
+        self.storage_engine = Some(storage_engine);
     }
 
     async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>> {
@@ -367,6 +375,47 @@ impl WalStrategy for BincodeWalStrategy {
         total_result.flush_duration_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(total_result)
+    }
+    
+    /// Delegate flush to storage engine (WAL strategy pattern)
+    async fn delegate_to_storage_engine_flush(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::FlushResult> {
+        if let Some(storage_engine) = &self.storage_engine {
+            tracing::info!("🔄 WAL DELEGATION: Delegating flush to {} storage engine for collection {}", 
+                          storage_engine.engine_name(), collection_id);
+            
+            let flush_params = crate::storage::traits::FlushParameters {
+                collection_id: Some(collection_id.clone()),
+                force: false,
+                synchronous: false,
+                max_entries: None,
+                timeout_ms: None,
+            };
+            
+            storage_engine.do_flush(&flush_params).await
+        } else {
+            Err(anyhow::anyhow!("No storage engine available for flush delegation"))
+        }
+    }
+    
+    /// Delegate compaction to storage engine (WAL strategy pattern)
+    async fn delegate_to_storage_engine_compact(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::CompactionResult> {
+        if let Some(storage_engine) = &self.storage_engine {
+            tracing::info!("🔄 WAL DELEGATION: Delegating compaction to {} storage engine for collection {}", 
+                          storage_engine.engine_name(), collection_id);
+            
+            let compact_params = crate::storage::traits::CompactionParameters {
+                collection_id: Some(collection_id.clone()),
+                force: false,
+                priority: crate::storage::traits::OperationPriority::Medium,
+                synchronous: false,
+                hints: std::collections::HashMap::new(),
+                timeout_ms: None,
+            };
+            
+            storage_engine.do_compact(&compact_params).await
+        } else {
+            Err(anyhow::anyhow!("No storage engine available for compaction delegation"))
+        }
     }
 
     async fn compact_collection(&self, _collection_id: &CollectionId) -> Result<u64> {
