@@ -8,6 +8,10 @@ pub mod pipeline;
 pub mod factory;
 pub mod utilities;
 
+// Test modules
+#[cfg(test)]
+mod sorted_rewrite_tests;
+
 // Re-export main VIPER types
 pub use core::ViperCoreEngine;
 pub use pipeline::ViperPipeline;
