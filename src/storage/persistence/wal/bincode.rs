@@ -386,8 +386,9 @@ impl WalStrategy for BincodeWalStrategy {
                 collection_id: Some(collection_id.clone()),
                 force: false,
                 synchronous: false,
-                max_entries: None,
+                hints: std::collections::HashMap::new(),
                 timeout_ms: None,
+                trigger_compaction: false,
             };
             
             storage_engine.do_flush(&flush_params).await

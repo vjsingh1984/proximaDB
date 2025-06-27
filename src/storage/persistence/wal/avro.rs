@@ -458,14 +458,23 @@ impl WalStrategy for AvroWalStrategy {
                     let flush_start = std::time::Instant::now();
                     tracing::info!("💾 FLUSH START: Flushing {} entries for collection {} to disk", entries.len(), collection_id);
                     
-                    // Show operation breakdown
-                    let operation_counts: std::collections::HashMap<_, usize> = entries.iter()
-                        .map(|e| &e.operation)
-                        .fold(std::collections::HashMap::new(), |mut acc, op| {
-                            *acc.entry(op).or_insert(0) += 1;
-                            acc
-                        });
-                    tracing::debug!("📊 FLUSH: Collection {} operation breakdown: {:?}", collection_id, operation_counts);
+                    // Show operation breakdown by type
+                    let mut insert_count = 0;
+                    let mut update_count = 0;
+                    let mut delete_count = 0;
+                    let mut other_count = 0;
+                    
+                    for entry in &entries {
+                        match &entry.operation {
+                            crate::storage::persistence::wal::WalOperation::Insert { .. } => insert_count += 1,
+                            crate::storage::persistence::wal::WalOperation::Update { .. } => update_count += 1,
+                            crate::storage::persistence::wal::WalOperation::Delete { .. } => delete_count += 1,
+                            _ => other_count += 1,
+                        }
+                    }
+                    
+                    tracing::debug!("📊 FLUSH: Collection {} operations - insert: {}, update: {}, delete: {}, other: {}", 
+                                   collection_id, insert_count, update_count, delete_count, other_count);
                     
                     // Serialize entries to Avro format
                     let serialize_start = std::time::Instant::now();
@@ -522,14 +531,23 @@ impl WalStrategy for AvroWalStrategy {
                         let flush_start = std::time::Instant::now();
                         tracing::info!("💾 FLUSH START: Flushing {} entries for collection {} to disk", entries.len(), collection_id);
                         
-                        // Show operation breakdown
-                        let operation_counts: std::collections::HashMap<_, usize> = entries.iter()
-                            .map(|e| &e.operation)
-                            .fold(std::collections::HashMap::new(), |mut acc, op| {
-                                *acc.entry(op).or_insert(0) += 1;
-                                acc
-                            });
-                        tracing::debug!("📊 FLUSH: Collection {} operation breakdown: {:?}", collection_id, operation_counts);
+                        // Show operation breakdown by type
+                        let mut insert_count = 0;
+                        let mut update_count = 0;
+                        let mut delete_count = 0;
+                        let mut other_count = 0;
+                        
+                        for entry in &entries {
+                            match &entry.operation {
+                                crate::storage::persistence::wal::WalOperation::Insert { .. } => insert_count += 1,
+                                crate::storage::persistence::wal::WalOperation::Update { .. } => update_count += 1,
+                                crate::storage::persistence::wal::WalOperation::Delete { .. } => delete_count += 1,
+                                _ => other_count += 1,
+                            }
+                        }
+                        
+                        tracing::debug!("📊 FLUSH: Collection {} operations - insert: {}, update: {}, delete: {}, other: {}", 
+                                       collection_id, insert_count, update_count, delete_count, other_count);
                         
                         // Serialize entries to Avro format
                         let serialize_start = std::time::Instant::now();
@@ -584,8 +602,9 @@ impl WalStrategy for AvroWalStrategy {
                 collection_id: Some(collection_id.clone()),
                 force: false,
                 synchronous: false,
-                max_entries: None,
+                hints: std::collections::HashMap::new(),
                 timeout_ms: None,
+                trigger_compaction: false,
             };
             
             storage_engine.do_flush(&flush_params).await
@@ -734,12 +753,25 @@ impl WalStrategy for AvroWalStrategy {
                     if !entries.is_empty() {
                         let first_entry = &entries[0];
                         let last_entry = &entries[entries.len() - 1];
+                        // Count operation types
+                        let mut op_types = std::collections::HashSet::new();
+                        for entry in &entries {
+                            match &entry.operation {
+                                crate::storage::persistence::wal::WalOperation::Insert { .. } => { op_types.insert("Insert"); },
+                                crate::storage::persistence::wal::WalOperation::Update { .. } => { op_types.insert("Update"); },
+                                crate::storage::persistence::wal::WalOperation::Delete { .. } => { op_types.insert("Delete"); },
+                                crate::storage::persistence::wal::WalOperation::CreateCollection { .. } => { op_types.insert("CreateCollection"); },
+                                crate::storage::persistence::wal::WalOperation::DropCollection { .. } => { op_types.insert("DropCollection"); },
+                                crate::storage::persistence::wal::WalOperation::AvroPayload { .. } => { op_types.insert("AvroPayload"); },
+                            }
+                        }
+                        
                         tracing::debug!(
                             "📊 WAL RECOVERY: Collection {} - First sequence: {}, Last sequence: {}, Operation types: {:?}",
                             collection_id,
                             first_entry.sequence,
                             last_entry.sequence,
-                            entries.iter().map(|e| &e.operation).collect::<std::collections::HashSet<_>>()
+                            op_types
                         );
                     }
 

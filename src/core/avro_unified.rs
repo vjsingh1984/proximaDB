@@ -122,6 +122,10 @@ pub struct VectorRecord {
     pub distance: Option<f32>,
 }
 
+// Note: VectorRecord intentionally does NOT implement Eq or Hash
+// to maintain Avro compatibility and zero-copy semantics.
+// For collections that need hashing, use the vector ID as the key.
+
 impl VectorRecord {
     /// Create a new vector record with current timestamp
     pub fn new(

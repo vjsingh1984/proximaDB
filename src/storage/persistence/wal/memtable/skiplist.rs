@@ -492,6 +492,18 @@ impl MemTableStrategy for SkipListMemTable {
         Ok(stats)
     }
 
+    async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<super::CollectionStats> {
+        let collections = self.collections.read().await;
+        
+        Ok(collections
+            .get(collection_id)
+            .map(|skiplist| super::CollectionStats {
+                entry_count: skiplist.total_entries,
+                memory_usage_bytes: skiplist.memory_size,
+            })
+            .unwrap_or_default())
+    }
+
     async fn maintenance(&self) -> Result<MemTableMaintenanceStats> {
         let mut collections = self.collections.write().await;
         let now = Utc::now();

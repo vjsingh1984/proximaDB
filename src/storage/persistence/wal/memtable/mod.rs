@@ -54,6 +54,13 @@ pub struct MemTableStats {
     pub range_scan_performance_ms: f64,
 }
 
+/// Collection-specific statistics
+#[derive(Debug, Clone, Default)]
+pub struct CollectionStats {
+    pub entry_count: u64,
+    pub memory_usage_bytes: usize,
+}
+
 /// Maintenance statistics for background operations
 #[derive(Debug, Clone, Default)]
 pub struct MemTableMaintenanceStats {
@@ -123,6 +130,9 @@ pub trait MemTableStrategy: Send + Sync + std::fmt::Debug {
 
     /// Get performance and memory statistics
     async fn get_stats(&self) -> Result<HashMap<CollectionId, MemTableStats>>;
+
+    /// Get collection-specific statistics
+    async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<CollectionStats>;
 
     /// Perform maintenance (MVCC cleanup, TTL expiration)
     async fn maintenance(&self) -> Result<MemTableMaintenanceStats>;
@@ -395,6 +405,11 @@ impl WalMemTable {
     /// Get statistics
     pub async fn get_stats(&self) -> Result<HashMap<CollectionId, MemTableStats>> {
         self.strategy.get_stats().await
+    }
+
+    /// Get collection-specific statistics
+    pub async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<CollectionStats> {
+        self.strategy.get_collection_stats(collection_id).await
     }
 
     /// Perform maintenance
