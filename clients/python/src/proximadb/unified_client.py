@@ -107,7 +107,7 @@ class ProximaDBClient:
     def _create_grpc_client(self):
         """Create gRPC client"""
         try:
-            from .grpc_client import ProximaDBGrpcClient
+            from .grpc_client import ProximaDBClient as ProximaDBGrpcClient
             
             # Extract host and port from URL
             url = self.config.url
@@ -116,7 +116,6 @@ class ProximaDBClient:
             
             return ProximaDBGrpcClient(
                 endpoint=url,
-                api_key=self.config.api_key,
                 timeout=self.config.timeout,
                 enable_debug_logging=self.config.enable_debug_logging
             )

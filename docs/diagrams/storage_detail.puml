@@ -1,0 +1,101 @@
+@startuml ProximaDB_Storage_Detail
+!theme aws-orange
+title ProximaDB - Storage Layer Detail
+
+package "Assignment Service" {
+    component [Round-Robin Selector] as rr
+    component [Collection Mapper] as mapper
+    component [Disk Discovery] as discovery
+}
+
+package "WAL System" {
+    component [Strategy Manager] as strategy_mgr
+    component [Avro Strategy] as avro_strategy
+    component [Bincode Strategy] as bincode_strategy
+    component [Memtable (ART)] as memtable
+    component [Flush Controller] as flush_ctrl
+}
+
+package "VIPER Engine" {
+    component [Parquet Writer] as parquet_writer
+    component [Compression Engine] as compression
+    component [SIMD Accelerator] as simd
+    component [Memory Mapper] as memory_map
+    component [Batch Processor] as batch_proc
+}
+
+package "Storage Layout" {
+    folder "Collection Directory" {
+        file "metadata.json" as metadata_file
+        folder "vectors/" as vectors_folder
+        folder "indexes/" as indexes_folder
+        folder "__flush/" as flush_folder
+    }
+}
+
+package "Multi-Cloud Backends" {
+    cloud "Local FS" as local
+    cloud "AWS S3" as s3
+    cloud "Azure Blob" as azure
+    cloud "Google Cloud" as gcs
+}
+
+' Assignment Flow
+rr --> mapper : select_next_disk()
+mapper --> discovery : verify_disk_available()
+
+' WAL Processing
+strategy_mgr --> avro_strategy
+strategy_mgr --> bincode_strategy
+avro_strategy --> memtable
+bincode_strategy --> memtable
+memtable --> flush_ctrl
+
+' Direct Flush (2025 Optimization)
+flush_ctrl ..> parquet_writer : direct_flush()
+parquet_writer --> compression
+compression --> simd
+simd --> memory_map
+memory_map --> batch_proc
+
+' Storage Operations
+batch_proc --> flush_folder : atomic_write()
+flush_folder --> vectors_folder : atomic_move()
+parquet_writer --> metadata_file : update_metadata()
+
+' Multi-Cloud Abstraction
+vectors_folder --> local
+vectors_folder --> s3
+vectors_folder --> azure
+vectors_folder --> gcs
+
+indexes_folder --> local
+indexes_folder --> s3
+indexes_folder --> azure
+indexes_folder --> gcs
+
+note right of flush_ctrl
+  **Threshold Triggers**
+  • Memory: 10MB default
+  • Time: 5 minutes default
+  • Record count: 10K default
+end note
+
+note right of flush_folder
+  **Atomic Pattern**
+  1. Write to __flush/temp.parquet
+  2. Validate and compress
+  3. Atomic rename to vectors/
+  4. Update metadata
+end note
+
+note bottom
+  **Configuration Example**
+  wal_urls = [
+    "file:///data/disk1/wal",
+    "file:///data/disk2/wal",
+    "s3://bucket/wal/"
+  ]
+end note
+
+@enduml

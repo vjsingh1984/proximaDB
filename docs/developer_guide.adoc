@@ -1,1045 +1,1331 @@
 = ProximaDB Developer Guide
-:toc:
-:toc-placement: preamble
+:doctype: book
+:toc: left
+:toclevels: 4
+:sectnums:
+:sectnumlevels: 4
+:author: Vijaykumar Singh
+:email: singhvjd@gmail.com
+:revdate: 2025-06-20
+:version: 0.1.0
+:copyright: Copyright 2025 Vijaykumar Singh
+:organization: ProximaDB
+:source-highlighter: rouge
 :icons: font
-:source-highlighter: highlight.js
+:experimental:
 :imagesdir: diagrams/images
 
-== Introduction
+[abstract]
+== Abstract
 
-This developer guide provides comprehensive information for developers working on ProximaDB, including architecture details, development setup, coding conventions, and contribution guidelines for the multi-disk assignment service architecture.
+This Developer Guide provides comprehensive information for developers working with ProximaDB after major cleanup (December 2024). Includes development setup, API documentation, SDK usage, and contribution guidelines.
 
-== 1. Development Environment Setup
+**Implementation Status**: 80% complete with honest, working implementations
+**Cleanup Summary**: Removed 4,457 lines of obsolete code (GPU, consensus, CLI placeholders)
+**Architecture**: Multi-server design with REST:5678, gRPC:5679
 
-=== 1.1 Prerequisites
+== Getting Started
 
-==== System Requirements
-* **Rust**: 1.70.0 or later with cargo
-* **Git**: For version control
-* **Docker**: For containerized development (optional)
-* **Java**: For PlantUML diagram generation (optional)
+=== Development Environment Setup
 
-==== Development Tools
+==== Prerequisites
+
+**System Requirements:**
+- **OS**: Linux (Ubuntu 20.04+), macOS (Big Sur+), Windows 11 with WSL2, ARM64 supported
+- **Rust**: 1.75+ with stable toolchain (ARM64 and x86_64 support)
+- **Node.js**: 18+ for client SDK development
+- **Python**: 3.8+ for Python client development
+- **Docker**: 20.10+ for containerized development
+- **Git**: 2.30+ for version control
+
+**Hardware Requirements:**
+- **CPU**: 4+ cores recommended for parallel compilation
+- **Memory**: 8GB+ RAM (16GB+ recommended for development)
+- **Storage**: 20GB+ free space for builds and data
+- **Architecture**: x86_64 or ARM64 (Apple Silicon supported)
+
+==== Installation Steps
+
 [source,bash]
 ----
-# Install Rust via rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Install required components
-rustup component add clippy rustfmt
-
-# Install development dependencies
-cargo install cargo-watch cargo-audit cargo-outdated
-----
-
-=== 1.2 Repository Setup
-
-[source,bash]
-----
-# Clone the repository
-git clone https://github.com/proximadb/proximadb.git
+# 1. Clone the repository
+git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb
 
-# Install dependencies
+# 2. Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup update stable
+
+# 3. Install development dependencies
+sudo apt update && sudo apt install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    cmake
+
+# 4. Install Python dependencies for clients
+pip install -r clients/python/requirements.txt
+
+# 5. Build the project
+cargo build --release
+----
+
+==== Development Tools Configuration
+
+**VS Code Extensions (Recommended):**
+```json
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb", 
+    "serayuzgur.crates",
+    "tamasfe.even-better-toml",
+    "ms-python.python",
+    "ms-vscode.vscode-json"
+  ]
+}
+```
+
+**Rust-Analyzer Settings:**
+```json
+{
+  "rust-analyzer.cargo.features": ["all"],
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.procMacro.enable": true
+}
+```
+
+=== Project Structure
+
+```
+proximadb/
+├── Cargo.toml              # Root project configuration
+├── Cargo.lock              # Dependency lock file
+├── CLAUDE.md               # AI assistant instructions
+├── build.rs                # Build script for protobuf
+├── proto/                  # Protocol buffer definitions
+│   └── proximadb.proto     # gRPC service definitions
+├── src/                    # Rust source code
+│   ├── lib.rs              # Library root
+│   ├── bin/                # Binary executables
+│   │   ├── server.rs       # ProximaDB server
+│   │   └── cli.rs          # Command-line interface
+│   ├── api/                # API layer implementations
+│   │   ├── rest/           # REST API endpoints
+│   │   └── v1/             # API version management
+│   ├── core/               # Core business logic
+│   │   ├── config.rs       # Configuration management
+│   │   ├── error.rs        # Error types and handling
+│   │   └── types.rs        # Common type definitions
+│   ├── network/            # Network layer
+│   │   ├── grpc/           # gRPC service implementation
+│   │   ├── multi_server.rs # Unified dual-protocol server
+│   │   └── middleware/     # Authentication, rate limiting
+│   ├── storage/            # Storage layer
+│   │   ├── engine.rs       # Storage engine abstraction
+│   │   ├── viper/          # VIPER storage implementation
+│   │   ├── wal/            # Write-ahead log
+│   │   ├── metadata/       # Metadata management
+│   │   └── filesystem/     # Multi-cloud filesystem abstraction
+│   ├── services/           # Business logic services
+│   │   ├── collection_service.rs  # Collection management
+│   │   └── storage_path_service.rs # Storage path resolution
+│   └── utils/              # Utility functions
+├── clients/                # Client SDKs
+│   ├── python/             # Python client library
+│   │   ├── src/proximadb/  # Python package source
+│   │   ├── examples/       # Python usage examples
+│   │   └── tests/          # Python client tests
+│   └── java/               # Java client library (planned)
+├── docs/                   # Documentation
+│   ├── requirements.adoc   # Requirements specification
+│   ├── hld.adoc           # High-level design
+│   ├── lld.adoc           # Low-level design
+│   └── api/               # API documentation
+├── tests/                  # Integration tests
+├── benches/               # Performance benchmarks
+├── examples/              # Code examples
+└── config/                # Configuration files
+    └── local.toml         # Local development config
+```
+
+== Recent Codebase Cleanup
+
+=== Overview
+
+In June 2025, a major cleanup was performed removing 4,457 lines of obsolete or placeholder code:
+
+**Removed Modules:**
+- **Consensus module** (8 files, 500+ lines) - Was completely commented out
+- **GPU module** (4 files, 1000+ lines) - Placeholder code with no real implementation
+- **Empty API modules** (v1, internal) - Were just TODO stubs
+- **CLI binary** - Was all placeholder println! statements
+
+**Cleaned Dependencies:**
+- Removed GPU-related crates (cudarc, candle-core, candle-nn)
+- Commented out unused ML crates (linfa, smartcore)
+- Removed unused FAISS integration
+- Cleaned up features section
+
+**Benefits:**
+- Build now completes successfully with only warnings
+- Cleaner dependency graph
+- Faster compilation times
+- More honest representation of actual capabilities
+
+== Build System
+
+=== Cargo Configuration
+
+The project uses a multi-binary Cargo workspace with feature flags for optional functionality:
+
+[source,toml]
+----
+[package]
+name = "proximadb"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["server"]
+server = ["tonic", "tokio", "serde"]
+simd = ["simdeez"]
+# GPU features removed in cleanup
+# intel-mkl and cuda features no longer supported
+
+[[bin]]
+name = "proximadb-server"
+path = "src/bin/server.rs"
+required-features = ["server"]
+
+# CLI binary removed in cleanup (was placeholder code)
+----
+
+=== Build Commands
+
+[source,bash]
+----
+# Development builds (faster compilation, includes debug symbols)
 cargo build
 
-# Run tests
+# Production builds (optimized, smaller binaries)
+cargo build --release
+
+# Build with specific features
+cargo build --features simd
+cargo build --features intel-mkl
+cargo build --features cuda
+
+# Build only the server
+cargo build --bin proximadb-server --release
+
+# Build only the CLI
+cargo build --bin proximadb-cli --release
+
+# Cross-compilation (requires target installation)
+cargo build --target x86_64-unknown-linux-gnu --release
+----
+
+=== Code Generation
+
+ProximaDB uses `build.rs` for automatic code generation:
+
+[source,rust]
+----
+// build.rs
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Generate Rust code from protobuf definitions
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(true)
+        .compile(&["proto/proximadb.proto"], &["proto"])?;
+    
+    // Generate schema constants
+    generate_schema_constants()?;
+    
+    Ok(())
+}
+----
+
+== API Documentation
+
+=== gRPC API
+
+ProximaDB provides a comprehensive gRPC API defined in `proto/proximadb.proto`.
+
+==== Service Definition
+
+[source,protobuf]
+----
+service ProximaDB {
+  // Collection Management
+  rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+  
+  // Vector Operations
+  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
+  rpc GetVector(GetVectorRequest) returns (GetVectorResponse);
+  rpc UpdateVector(UpdateVectorRequest) returns (UpdateVectorResponse);
+  rpc DeleteVector(DeleteVectorRequest) returns (DeleteVectorResponse);
+  
+  // Search Operations
+  rpc SearchVectors(SearchVectorsRequest) returns (SearchVectorsResponse);
+  rpc SearchWithMetadata(SearchWithMetadataRequest) returns (SearchWithMetadataResponse);
+  
+  // Batch Operations
+  rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  
+  // Health and Admin
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+}
+----
+
+==== Collection Management API
+
+**Create Collection**
+[source,rust]
+----
+use proximadb::proximadb_pb::*;
+
+// Create a new collection for BERT embeddings
+let request = CreateCollectionRequest {
+    name: "bert_embeddings".to_string(),
+    dimension: 768,
+    distance_metric: DistanceMetric::Cosine as i32,
+    description: Some("BERT base model embeddings".to_string()),
+    metadata_schema: Some(json!({
+        "type": "object",
+        "properties": {
+            "document_id": {"type": "string"},
+            "category": {"type": "string"},
+            "timestamp": {"type": "string", "format": "date-time"}
+        }
+    }).to_string()),
+};
+
+let response = client.create_collection(request).await?;
+println!("Collection created: {}", response.into_inner().collection_id);
+----
+
+**List Collections**
+[source,rust]
+----
+let request = ListCollectionsRequest {};
+let response = client.list_collections(request).await?;
+
+for collection in response.into_inner().collections {
+    println!("Collection: {} ({}D, {})", 
+        collection.name, 
+        collection.dimension,
+        collection.distance_metric
+    );
+}
+----
+
+==== Vector Operations API
+
+**Insert Vector**
+[source,rust]
+----
+// Insert a BERT embedding with metadata
+let request = InsertVectorRequest {
+    collection_id: collection_id.clone(),
+    vector_id: "doc_123".to_string(),
+    vector: bert_embedding_768d, // Vec<f32> with 768 dimensions
+    metadata: Some(json!({
+        "document_id": "doc_123",
+        "category": "research_paper",
+        "title": "Attention Is All You Need",
+        "authors": ["Vaswani", "Shazeer", "Parmar"],
+        "timestamp": "2025-06-20T10:30:00Z"
+    }).to_string()),
+};
+
+let response = client.insert_vector(request).await?;
+println!("Vector inserted with sequence: {}", response.into_inner().sequence_number);
+----
+
+**Search Vectors**
+[source,rust]
+----
+// Perform similarity search with metadata filtering
+let request = SearchVectorsRequest {
+    collection_id: collection_id.clone(),
+    query_vector: query_embedding,
+    k: 10,
+    distance_threshold: Some(0.8),
+    metadata_filter: Some(json!({
+        "category": "research_paper",
+        "authors": {"$in": ["Vaswani", "Attention"]}
+    }).to_string()),
+    return_vectors: true,
+    return_metadata: true,
+};
+
+let response = client.search_vectors(request).await?;
+for result in response.into_inner().results {
+    println!("ID: {}, Score: {:.4}, Metadata: {}", 
+        result.vector_id, 
+        result.similarity_score,
+        result.metadata.unwrap_or_default()
+    );
+}
+----
+
+=== REST API
+
+ProximaDB provides REST API endpoints that mirror the gRPC functionality with JSON payloads.
+
+==== Base URL and Authentication
+
+```
+Base URL: http://localhost:5678
+Content-Type: application/json
+```
+
+==== Collection Endpoints
+
+**POST /collections - Create Collection**
+[source,http]
+----
+POST /collections HTTP/1.1
+Content-Type: application/json
+
+{
+  "name": "bert_embeddings",
+  "dimension": 768,
+  "distance_metric": "COSINE",
+  "description": "BERT base model embeddings",
+  "metadata_schema": {
+    "type": "object",
+    "properties": {
+      "document_id": {"type": "string"},
+      "category": {"type": "string"}
+    }
+  }
+}
+----
+
+**GET /collections - List Collections**
+[source,http]
+----
+GET /collections HTTP/1.1
+
+Response:
+{
+  "collections": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "bert_embeddings", 
+      "dimension": 768,
+      "distance_metric": "COSINE",
+      "vector_count": 0,
+      "created_at": "2025-06-20T10:30:00Z"
+    }
+  ]
+}
+----
+
+**GET /collections/{id} - Get Collection**
+[source,http]
+----
+GET /collections/550e8400-e29b-41d4-a716-446655440000 HTTP/1.1
+
+Response:
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "bert_embeddings",
+  "dimension": 768,
+  "distance_metric": "COSINE",
+  "description": "BERT base model embeddings",
+  "vector_count": 1337,
+  "created_at": "2025-06-20T10:30:00Z",
+  "updated_at": "2025-06-20T15:45:30Z"
+}
+----
+
+==== Vector Endpoints
+
+**POST /collections/{id}/vectors - Insert Vector**
+[source,http]
+----
+POST /collections/550e8400-e29b-41d4-a716-446655440000/vectors HTTP/1.1
+Content-Type: application/json
+
+{
+  "vector_id": "doc_123",
+  "vector": [0.1, 0.2, 0.3, ...], // 768 dimensions
+  "metadata": {
+    "document_id": "doc_123",
+    "category": "research_paper",
+    "title": "Attention Is All You Need"
+  }
+}
+----
+
+**POST /collections/{id}/search - Search Vectors**
+[source,http]
+----
+POST /collections/550e8400-e29b-41d4-a716-446655440000/search HTTP/1.1
+Content-Type: application/json
+
+{
+  "query_vector": [0.1, 0.2, 0.3, ...],
+  "k": 10,
+  "distance_threshold": 0.8,
+  "metadata_filter": {
+    "category": "research_paper"
+  },
+  "return_vectors": true,
+  "return_metadata": true
+}
+----
+
+== Client SDK Usage
+
+=== Python SDK
+
+The Python SDK provides both gRPC and REST clients with a unified interface.
+
+==== Installation
+
+[source,bash]
+----
+cd clients/python
+pip install -e .
+
+# Or install from PyPI (when available)
+pip install proximadb-python
+----
+
+==== Basic Usage
+
+[source,python]
+----
+import asyncio
+from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+
+async def main():
+    # Create client (auto-detects best protocol)
+    client = ProximaDBClient("localhost:5678")
+    
+    # Create collection for BERT embeddings
+    collection_config = CollectionConfig(
+        name="bert_embeddings",
+        dimension=768,
+        distance_metric=DistanceMetric.COSINE,
+        description="BERT base model embeddings"
+    )
+    
+    collection_id = await client.create_collection(collection_config)
+    print(f"Created collection: {collection_id}")
+    
+    # Insert vectors with metadata
+    vectors = [
+        {
+            "vector_id": "doc_1",
+            "vector": bert_embedding_1,  # 768-dimensional list
+            "metadata": {"category": "news", "topic": "technology"}
+        },
+        {
+            "vector_id": "doc_2", 
+            "vector": bert_embedding_2,
+            "metadata": {"category": "research", "topic": "ai"}
+        }
+    ]
+    
+    await client.batch_insert(collection_id, vectors)
+    
+    # Perform similarity search
+    results = await client.search_vectors(
+        collection_id=collection_id,
+        query_vector=query_embedding,
+        k=5,
+        metadata_filter={"category": "research"},
+        return_metadata=True
+    )
+    
+    for result in results:
+        print(f"ID: {result.vector_id}, Score: {result.similarity_score:.4f}")
+        print(f"Metadata: {result.metadata}")
+
+# Run the async function
+asyncio.run(main())
+----
+
+==== Advanced Python SDK Features
+
+**Connection Pooling and Retry Logic**
+[source,python]
+----
+from proximadb import ProximaDBClient, ClientConfig, RetryConfig
+
+# Configure client with connection pooling
+config = ClientConfig(
+    endpoint="localhost:5678",
+    max_connections=10,
+    timeout=30.0,
+    retry_config=RetryConfig(
+        max_retries=3,
+        backoff_factor=1.5,
+        max_backoff=10.0
+    )
+)
+
+client = ProximaDBClient(config=config)
+----
+
+**Async Context Manager**
+[source,python]
+----
+async with ProximaDBClient("localhost:5678") as client:
+    # Client automatically handles connection lifecycle
+    collections = await client.list_collections()
+    for collection in collections:
+        print(f"Collection: {collection.name}")
+# Connection automatically closed
+----
+
+**Error Handling**
+[source,python]
+----
+from proximadb.exceptions import (
+    ProximaDBException,
+    CollectionNotFoundError,
+    DimensionMismatchError,
+    ConnectionError
+)
+
+try:
+    await client.get_collection("nonexistent_id")
+except CollectionNotFoundError as e:
+    print(f"Collection not found: {e}")
+except ConnectionError as e:
+    print(f"Connection failed: {e}")
+except ProximaDBException as e:
+    print(f"General ProximaDB error: {e}")
+----
+
+=== BERT Embeddings Integration
+
+ProximaDB has been extensively tested with BERT embeddings of various dimensions.
+
+==== Supported BERT Models
+
+[cols="2,1,2,2"]
+|===
+|Model Type |Dimensions |Distance Metric |Use Case
+
+|BERT Base |768 |COSINE |General text embeddings
+|BERT Large |1024 |COSINE |High-quality text representations  
+|Sentence-BERT |384 |EUCLIDEAN |Sentence similarity tasks
+|DistilBERT |768 |COSINE |Fast inference, smaller model
+|RoBERTa |768/1024 |COSINE |Robust text understanding
+|===
+
+==== BERT Integration Example
+
+[source,python]
+----
+from transformers import AutoTokenizer, AutoModel
+import torch
+import numpy as np
+
+class BERTEmbeddingGenerator:
+    def __init__(self, model_name="bert-base-uncased"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.model.eval()
+    
+    def generate_embedding(self, text: str) -> list[float]:
+        # Tokenize and encode
+        inputs = self.tokenizer(text, return_tensors="pt", 
+                              truncation=True, max_length=512)
+        
+        # Generate embeddings
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # Use [CLS] token embedding
+            embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+            
+        return embedding.numpy().tolist()
+
+# Usage with ProximaDB
+bert = BERTEmbeddingGenerator()
+
+texts = [
+    "The quick brown fox jumps over the lazy dog",
+    "Machine learning is revolutionizing artificial intelligence",
+    "ProximaDB provides fast vector similarity search"
+]
+
+# Create collection for BERT embeddings
+collection_id = await client.create_collection(CollectionConfig(
+    name="bert_documents",
+    dimension=768,
+    distance_metric=DistanceMetric.COSINE
+))
+
+# Insert BERT embeddings
+for i, text in enumerate(texts):
+    embedding = bert.generate_embedding(text)
+    await client.insert_vector(
+        collection_id=collection_id,
+        vector_id=f"doc_{i}",
+        vector=embedding,
+        metadata={"text": text, "length": len(text)}
+    )
+
+# Search with BERT query
+query_text = "fast vector search database"
+query_embedding = bert.generate_embedding(query_text)
+
+results = await client.search_vectors(
+    collection_id=collection_id,
+    query_vector=query_embedding,
+    k=3,
+    return_metadata=True
+)
+
+for result in results:
+    print(f"Score: {result.similarity_score:.4f}")
+    print(f"Text: {result.metadata['text']}")
+----
+
+== Testing Guide
+
+=== Unit Testing
+
+ProximaDB uses Rust's built-in testing framework with additional testing utilities.
+
+==== Running Tests
+
+[source,bash]
+----
+# Run all unit tests
 cargo test
 
-# Start development server with multi-disk config
-cargo run --bin proximadb-server -- --config config.toml
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test module
+cargo test storage::
+
+# Run tests with specific features
+cargo test --features simd
+
+# Run tests in release mode (for performance testing)
+cargo test --release
 ----
 
-=== 1.3 IDE Configuration
+==== Test Organization
 
-==== VS Code Setup
-Recommended extensions:
-* `rust-analyzer`: Rust language support
-* `CodeLLDB`: Debugging support
-* `Better TOML`: Configuration file support
-
-==== IntelliJ IDEA Setup
-* Install Rust plugin
-* Configure Cargo project structure
-* Set up debugging configurations
-
-== 2. Multi-Disk Architecture Deep Dive
-
-=== 2.1 Assignment Service Architecture
-
-image::Assignment Service Flow.png[Assignment Service Flow, align="center"]
-
-The assignment service is the core of ProximaDB's multi-disk architecture:
-
-==== Key Components
-
-[source,rust]
-----
-// Core trait for assignment operations
-#[async_trait]
-pub trait AssignmentService: Send + Sync {
-    async fn assign_storage_url(
-        &self,
-        collection_id: &CollectionId,
-        config: &StorageAssignmentConfig,
-    ) -> Result<StorageAssignmentResult>;
-    
-    async fn get_assignment(
-        &self,
-        collection_id: &CollectionId,
-        component_type: StorageComponentType,
-    ) -> Option<StorageAssignmentResult>;
-    
-    async fn record_assignment(
-        &self,
-        collection_id: &CollectionId,
-        component_type: StorageComponentType,
-        assignment: StorageAssignmentResult,
-    ) -> Result<()>;
-    
-    async fn get_all_assignments(
-        &self,
-        component_type: StorageComponentType,
-    ) -> HashMap<CollectionId, StorageAssignmentResult>;
-    
-    async fn get_assignment_stats(&self) -> Result<serde_json::Value>;
-}
-
-// Round-robin implementation
-pub struct RoundRobinAssignmentService {
-    assignments: Arc<RwLock<HashMap<StorageComponentType, HashMap<CollectionId, StorageAssignmentResult>>>>,
-    round_robin_counters: Arc<RwLock<HashMap<StorageComponentType, usize>>>,
-}
-----
-
-==== Implementation Details
-
-===== Assignment Algorithm
-[source,rust]
-----
-impl RoundRobinAssignmentService {
-    async fn get_next_round_robin_index(
-        &self,
-        component_type: StorageComponentType,
-        storage_urls: &[String],
-    ) -> Result<usize> {
-        let mut counters = self.round_robin_counters.write().await;
-        let counter = counters.entry(component_type).or_insert(0);
-        let index = *counter % storage_urls.len();
-        *counter = (*counter + 1) % storage_urls.len();
-        Ok(index)
-    }
-    
-    async fn assign_with_affinity(
-        &self,
-        collection_id: &CollectionId,
-        storage_urls: &[String],
-    ) -> Result<usize> {
-        let hash = self.hash_collection_id(collection_id);
-        Ok(hash % storage_urls.len())
-    }
-    
-    fn hash_collection_id(&self, collection_id: &CollectionId) -> usize {
-        let mut hasher = DefaultHasher::new();
-        collection_id.hash(&mut hasher);
-        hasher.finish() as usize
-    }
-}
-----
-
-=== 2.2 WAL Strategy Pattern
-
-image::WAL Strategy Pattern.png[WAL Strategy Pattern, align="center"]
-
-The WAL uses a strategy pattern for pluggable serialization with integrated assignment service:
-
-==== Base Strategy Trait
-[source,rust]
-----
-#[async_trait]
-pub trait WalStrategy: Send + Sync {
-    fn strategy_name(&self) -> &'static str;
-    fn get_assignment_service(&self) -> &Arc<dyn AssignmentService>;
-    
-    // Common assignment logic implemented in base trait
-    async fn select_wal_url_for_collection(
-        &self,
-        collection_id: &str,
-        config: &WalConfig,
-    ) -> Result<String> {
-        // Check existing assignment first
-        if let Some(assignment) = self.get_assignment_service()
-            .get_assignment(
-                &CollectionId::from(collection_id.to_string()),
-                StorageComponentType::Wal,
-            )
-            .await
-        {
-            return Ok(assignment.storage_url);
-        }
-        
-        // Create new assignment if none exists
-        let assignment_config = StorageAssignmentConfig {
-            storage_urls: config.wal_urls.clone(),
-            component_type: StorageComponentType::Wal,
-            collection_affinity: config.collection_affinity,
-        };
-        
-        let assignment = self.get_assignment_service()
-            .assign_storage_url(
-                &CollectionId::from(collection_id.to_string()),
-                &assignment_config,
-            )
-            .await?;
-            
-        Ok(assignment.storage_url)
-    }
-    
-    async fn discover_existing_assignments(&self, config: &WalConfig) -> Result<()> {
-        // Discovery implementation for startup recovery
-    }
-}
-----
-
-==== Strategy Implementations
-[source,rust]
-----
-// Avro strategy for cross-language compatibility
-pub struct AvroWalStrategy {
-    config: Option<WalConfig>,
-    filesystem: Option<Arc<FilesystemFactory>>,
-    memory_table: Option<WalMemTable>,
-    disk_manager: Option<WalDiskManager>,
-    storage_engine: Option<Arc<UnifiedStorageEngine>>,
-    assignment_service: Arc<dyn AssignmentService>,
-}
-
-#[async_trait]
-impl WalStrategy for AvroWalStrategy {
-    fn strategy_name(&self) -> &'static str { "Avro" }
-    
-    fn get_assignment_service(&self) -> &Arc<dyn AssignmentService> {
-        &self.assignment_service
-    }
-    
-    async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>> {
-        let schema = avro_rs::Schema::parse_str(WAL_AVRO_SCHEMA)?;
-        let mut writer = avro_rs::Writer::new(&schema, Vec::new());
-        
-        for entry in entries {
-            writer.append_ser(entry)?;
-        }
-        
-        Ok(writer.into_inner()?)
-    }
-}
-
-// Bincode strategy for Rust performance
-pub struct BincodeWalStrategy {
-    config: Option<WalConfig>,
-    filesystem: Option<Arc<FilesystemFactory>>,
-    memory_table: Option<WalMemTable>,
-    disk_manager: Option<WalDiskManager>,
-    storage_engine: Option<Arc<UnifiedStorageEngine>>,
-    assignment_service: Arc<dyn AssignmentService>,
-}
-
-#[async_trait]  
-impl WalStrategy for BincodeWalStrategy {
-    fn strategy_name(&self) -> &'static str { "Bincode" }
-    
-    fn get_assignment_service(&self) -> &Arc<dyn AssignmentService> {
-        &self.assignment_service
-    }
-    
-    async fn serialize_entries(&self, entries: &[WalEntry]) -> Result<Vec<u8>> {
-        bincode::serialize(entries).map_err(|e| ProximaDBError::Internal(e.to_string()))
-    }
-}
-----
-
-=== 2.3 Data Flow Architecture
-
-image::Data Flow and Persistence.png[Data Flow and Persistence, align="center"]
-
-Understanding the complete data flow from API to multi-disk persistence:
-
-==== Write Path Implementation
-[source,rust]
-----
-pub async fn handle_vector_insert_pipeline(
-    &self,
-    collection_id: &str,
-    vectors: Vec<VectorInsertRequest>,
-) -> Result<InsertResult> {
-    // 1. Validate collection exists
-    let collection = self.collection_service
-        .get_collection_by_name_or_uuid(collection_id)
-        .await?
-        .ok_or(ProximaDBError::NotFound(format!("Collection {}", collection_id)))?;
-    
-    // 2. Get or create assignment for this collection
-    let assignment = match self.assignment_service
-        .get_assignment(
-            &CollectionId::from(collection_id.to_string()), 
-            StorageComponentType::Wal
-        )
-        .await 
-    {
-        Some(assignment) => assignment,
-        None => {
-            // Create new assignment using round-robin
-            let assignment_config = StorageAssignmentConfig {
-                storage_urls: self.config.storage.wal_config.wal_urls.clone(),
-                component_type: StorageComponentType::Wal,
-                collection_affinity: self.config.storage.wal_config.collection_affinity,
-            };
-            
-            self.assignment_service
-                .assign_storage_url(
-                    &CollectionId::from(collection_id.to_string()),
-                    &assignment_config,
-                )
-                .await?
-        }
-    };
-    
-    // 3. Convert to WAL entries
-    let wal_entries: Vec<WalEntry> = vectors.into_iter()
-        .map(|v| WalEntry {
-            vector_id: v.id,
-            vector: v.vector,
-            metadata: v.metadata,
-            operation: WalOperation::Insert,
-            timestamp: Utc::now(),
-            sequence_number: 0, // Set by WAL
-        })
-        .collect();
-    
-    // 4. Write to assigned WAL directory
-    let mut sequence_numbers = Vec::new();
-    for entry in wal_entries {
-        let sequence = self.wal_manager
-            .write_entry_to_assigned_disk(collection_id, entry, &assignment)
-            .await?;
-        sequence_numbers.push(sequence);
-    }
-    
-    // 5. Check flush thresholds and trigger background flush if needed
-    self.check_and_trigger_flush(collection_id, &assignment).await?;
-    
-    Ok(InsertResult {
-        inserted_count: sequence_numbers.len(),
-        sequence_numbers,
-        assignment_info: Some(assignment),
-    })
-}
-----
-
-=== 2.4 Recovery Architecture
-
-==== Assignment Discovery Process
-[source,rust]
-----
-pub struct RecoveryManager {
-    assignment_service: Arc<dyn AssignmentService>,
-    wal_strategies: Vec<Arc<dyn WalStrategy>>,
-    filesystem: Arc<FilesystemFactory>,
-}
-
-impl RecoveryManager {
-    pub async fn recover_from_crash(&self, config: &Config) -> Result<RecoveryResult> {
-        let mut recovery_result = RecoveryResult::new();
-        
-        // Step 1: Discover assignments from filesystem
-        let discovered_assignments = self.discover_assignments(config).await?;
-        recovery_result.assignments_recovered = discovered_assignments.len();
-        
-        // Step 2: Recover WAL entries from all strategies
-        for strategy in &self.wal_strategies {
-            let wal_recovery = self.recover_wal_strategy(strategy.as_ref(), config).await?;
-            recovery_result.merge_wal_recovery(wal_recovery);
-        }
-        
-        // Step 3: Rebuild in-memory structures
-        self.rebuild_memtables(&recovery_result.wal_entries).await?;
-        
-        // Step 4: Verify data integrity
-        self.verify_recovery_integrity(&recovery_result).await?;
-        
-        Ok(recovery_result)
-    }
-    
-    async fn discover_assignments(&self, config: &Config) -> Result<Vec<StorageAssignmentResult>> {
-        let mut discovered = Vec::new();
-        
-        // Scan all configured WAL directories
-        for (index, wal_url) in config.storage.wal_config.wal_urls.iter().enumerate() {
-            let filesystem = self.filesystem.get_backend(wal_url)?;
-            
-            // Convert URL to path for local filesystem
-            let path = if wal_url.starts_with("file://") {
-                wal_url.strip_prefix("file://").unwrap_or(wal_url)
-            } else {
-                wal_url
-            };
-            
-            // List collections in this directory
-            let collections = filesystem.list(path).await?;
-            
-            for collection_id in collections {
-                // Record assignment for discovered collection
-                let assignment = StorageAssignmentResult {
-                    storage_url: wal_url.clone(),
-                    directory_index: index,
-                    assigned_at: Utc::now(),
-                };
-                
-                self.assignment_service.record_assignment(
-                    &CollectionId::from(collection_id),
-                    StorageComponentType::Wal,
-                    assignment.clone(),
-                ).await?;
-                
-                discovered.push(assignment);
-            }
-        }
-        
-        Ok(discovered)
-    }
-}
-----
-
-== 3. Development Guidelines
-
-=== 3.1 Code Organization
-
-==== Module Structure
 ```
-src/
-├── services/           # Business logic layer
-│   ├── collection_service.rs
-│   ├── unified_avro_service.rs
-│   └── mod.rs
-├── storage/           # Storage abstraction layer
-│   ├── assignment_service.rs  # NEW: Assignment service
-│   ├── persistence/
-│   │   └── wal/
-│   │       ├── avro.rs        # Avro WAL strategy
-│   │       ├── bincode.rs     # Bincode WAL strategy
-│   │       └── mod.rs         # Base WAL strategy trait
-│   └── mod.rs
-├── network/           # API layer
-│   ├── grpc/
-│   ├── rest/
-│   └── mod.rs
-└── core/             # Shared types and utilities
-    ├── error.rs
-    ├── config.rs
-    └── mod.rs
+tests/
+├── unit/                   # Unit tests (co-located with source)
+├── integration/            # Integration tests
+│   ├── test_grpc_integration.rs
+│   ├── test_rest_integration.rs
+│   └── test_storage_integration.rs
+├── e2e/                    # End-to-end tests
+│   ├── test_bert_collections.rs
+│   └── test_persistence.rs
+└── fixtures/               # Test data and utilities
+    ├── bert_embeddings.json
+    └── test_collections.json
 ```
 
-==== Naming Conventions
-* **Modules**: `snake_case`
-* **Structs/Enums**: `PascalCase`
-* **Functions/Variables**: `snake_case`
-* **Constants**: `SCREAMING_SNAKE_CASE`
-* **Traits**: `PascalCase` (descriptive names like `AssignmentService`)
+==== Writing Unit Tests
 
-=== 3.2 Error Handling
-
-==== Unified Error Type
-[source,rust]
-----
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProximaDBError {
-    NotFound(String),
-    AlreadyExists(String),
-    InvalidInput(String),
-    Internal(String),
-    StorageError(String),
-    ConfigurationError(String),
-    NetworkError(String),
-    SerializationError(String),
-    IndexError(String),
-    ConcurrencyError(String),
-}
-
-impl ProximaDBError {
-    pub fn error_code(&self) -> u32 {
-        match self {
-            ProximaDBError::NotFound(_) => 404,
-            ProximaDBError::AlreadyExists(_) => 409,
-            ProximaDBError::InvalidInput(_) => 400,
-            ProximaDBError::Internal(_) => 500,
-            ProximaDBError::StorageError(_) => 503,
-            ProximaDBError::ConfigurationError(_) => 500,
-            ProximaDBError::NetworkError(_) => 502,
-            ProximaDBError::SerializationError(_) => 422,
-            ProximaDBError::IndexError(_) => 500,
-            ProximaDBError::ConcurrencyError(_) => 409,
-        }
-    }
-}
-----
-
-=== 3.3 Testing Guidelines
-
-==== Unit Tests for Assignment Service
 [source,rust]
 ----
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::test as async_test;
-
-    #[async_test]
-    async fn test_round_robin_assignment() {
-        let service = RoundRobinAssignmentService::new();
-        let config = StorageAssignmentConfig {
-            storage_urls: vec![
-                "file:///disk1".to_string(),
-                "file:///disk2".to_string(),
-                "file:///disk3".to_string(),
-            ],
-            component_type: StorageComponentType::Wal,
-            collection_affinity: false,
+    use tokio_test;
+    
+    #[tokio::test]
+    async fn test_collection_creation() {
+        let storage = create_test_storage().await;
+        
+        let collection = Collection {
+            name: "test_collection".to_string(),
+            dimension: 128,
+            distance_metric: DistanceMetric::Cosine,
+            ..Default::default()
         };
         
-        // Test round-robin behavior
-        let assignment1 = service.assign_storage_url(
-            &CollectionId::from("collection1".to_string()),
-            &config
-        ).await.unwrap();
+        let result = storage.create_collection(collection).await;
+        assert!(result.is_ok());
         
-        let assignment2 = service.assign_storage_url(
-            &CollectionId::from("collection2".to_string()),
-            &config
-        ).await.unwrap();
-        
-        let assignment3 = service.assign_storage_url(
-            &CollectionId::from("collection3".to_string()),
-            &config
-        ).await.unwrap();
-        
-        // Verify round-robin distribution
-        assert_eq!(assignment1.directory_index, 0);
-        assert_eq!(assignment2.directory_index, 1);
-        assert_eq!(assignment3.directory_index, 2);
-        
-        // Test assignment persistence
-        let retrieved = service.get_assignment(
-            &CollectionId::from("collection1".to_string()),
-            StorageComponentType::Wal
-        ).await;
-        
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().storage_url, "file:///disk1");
+        let collection_id = result.unwrap();
+        assert!(!collection_id.is_empty());
     }
     
-    #[async_test]
-    async fn test_collection_affinity() {
-        let service = RoundRobinAssignmentService::new();
-        let config = StorageAssignmentConfig {
-            storage_urls: vec![
-                "file:///disk1".to_string(),
-                "file:///disk2".to_string(),
-                "file:///disk3".to_string(),
-            ],
-            component_type: StorageComponentType::Wal,
-            collection_affinity: true,
-        };
+    #[tokio::test]
+    async fn test_vector_insertion() {
+        let (storage, collection_id) = setup_test_collection().await;
         
-        // Same collection should get same assignment
-        let assignment1 = service.assign_storage_url(
-            &CollectionId::from("same_collection".to_string()),
-            &config
-        ).await.unwrap();
+        let vector = vec![0.1, 0.2, 0.3, 0.4];
+        let metadata = json!({"type": "test"});
         
-        let assignment2 = service.assign_storage_url(
-            &CollectionId::from("same_collection".to_string()),
-            &config
-        ).await.unwrap();
-        
-        assert_eq!(assignment1.storage_url, assignment2.storage_url);
-        assert_eq!(assignment1.directory_index, assignment2.directory_index);
-    }
-}
-----
-
-==== Integration Tests
-[source,rust]
-----
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[async_test]
-    async fn test_multi_disk_end_to_end() {
-        // Setup test environment with multiple disks
-        let temp_dirs: Vec<TempDir> = (0..3).map(|_| TempDir::new().unwrap()).collect();
-        let wal_urls: Vec<String> = temp_dirs
-            .iter()
-            .map(|dir| format!("file://{}/wal", dir.path().display()))
-            .collect();
-        
-        let config = create_test_config_with_multiple_disks(wal_urls);
-        
-        // Initialize services
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
-        let wal_strategy = Arc::new(AvroWalStrategy::new(assignment_service.clone()));
-        let unified_service = UnifiedAvroService::new(wal_strategy);
-        
-        // Test vector insert with automatic assignment
-        let vectors = vec![
-            VectorInsertRequest {
-                id: "test1".to_string(),
-                vector: vec![0.1, 0.2, 0.3, 0.4],
-                metadata: HashMap::new(),
-            },
-            VectorInsertRequest {
-                id: "test2".to_string(),
-                vector: vec![0.5, 0.6, 0.7, 0.8],
-                metadata: HashMap::new(),
-            }
-        ];
-        
-        let result = unified_service.handle_vector_insert_v2(
-            "test_collection",
-            vectors
+        let result = storage.insert_vector(
+            &collection_id,
+            "test_vector_1",
+            vector,
+            Some(metadata)
         ).await;
         
         assert!(result.is_ok());
-        
-        // Verify assignment was created
-        let assignment = assignment_service.get_assignment(
-            &CollectionId::from("test_collection".to_string()),
-            StorageComponentType::Wal
-        ).await;
-        
-        assert!(assignment.is_some());
-        
-        // Verify data was written to assigned disk
-        let assignment = assignment.unwrap();
-        let disk_path = assignment.storage_url.strip_prefix("file://").unwrap();
-        let collection_path = format!("{}/test_collection", disk_path);
-        
-        assert!(std::path::Path::new(&collection_path).exists());
     }
 }
 ----
 
-== 4. Building and Testing
+=== Integration Testing
 
-=== 4.1 Build Commands
+Integration tests verify that multiple components work together correctly.
+
+==== gRPC Integration Tests
+
+[source,rust]
+----
+// tests/test_grpc_integration.rs
+use proximadb::network::grpc::ProximaDbGrpcService;
+use proximadb::proximadb_pb::*;
+use tonic::test::mock_stream;
+
+#[tokio::test]
+async fn test_grpc_collection_lifecycle() {
+    let service = create_test_grpc_service().await;
+    
+    // Create collection
+    let create_request = CreateCollectionRequest {
+        name: "integration_test".to_string(),
+        dimension: 384,
+        distance_metric: DistanceMetric::Euclidean as i32,
+        ..Default::default()
+    };
+    
+    let create_response = service
+        .create_collection(tonic::Request::new(create_request))
+        .await
+        .unwrap();
+    
+    let collection_id = create_response.into_inner().collection_id;
+    
+    // Get collection
+    let get_request = GetCollectionRequest {
+        collection_id: collection_id.clone(),
+    };
+    
+    let get_response = service
+        .get_collection(tonic::Request::new(get_request))
+        .await
+        .unwrap();
+    
+    let collection = get_response.into_inner().collection.unwrap();
+    assert_eq!(collection.name, "integration_test");
+    assert_eq!(collection.dimension, 384);
+}
+----
+
+=== End-to-End Testing
+
+E2E tests verify complete workflows from client to storage.
+
+==== BERT Collection E2E Test
+
+[source,python]
+----
+# tests/test_bert_e2e.py
+import pytest
+import asyncio
+from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+
+@pytest.mark.asyncio
+async def test_bert_collection_persistence():
+    """Test BERT collection creation and persistence across server restarts."""
+    
+    client = ProximaDBClient("localhost:5678")
+    
+    # Create BERT collections with different dimensions
+    bert_configs = [
+        CollectionConfig(
+            name="bert_384", 
+            dimension=384, 
+            distance_metric=DistanceMetric.EUCLIDEAN
+        ),
+        CollectionConfig(
+            name="bert_768", 
+            dimension=768, 
+            distance_metric=DistanceMetric.COSINE
+        ),
+        CollectionConfig(
+            name="bert_1024", 
+            dimension=1024, 
+            distance_metric=DistanceMetric.COSINE
+        ),
+    ]
+    
+    created_collections = []
+    for config in bert_configs:
+        collection_id = await client.create_collection(config)
+        created_collections.append(collection_id)
+        
+        # Verify creation
+        collection = await client.get_collection(collection_id)
+        assert collection.name == config.name
+        assert collection.dimension == config.dimension
+    
+    # List all collections
+    collections = await client.list_collections()
+    assert len(collections) >= len(bert_configs)
+    
+    # Simulate server restart by creating new client
+    await client.close()
+    
+    # Verify persistence after restart
+    client = ProximaDBClient("localhost:5678")
+    
+    for collection_id in created_collections:
+        collection = await client.get_collection(collection_id)
+        assert collection is not None
+        print(f"Collection {collection.name} persisted successfully")
+    
+    await client.close()
+----
+
+=== Performance Testing
+
+==== Benchmark Tests
+
+[source,rust]
+----
+// benches/collection_benchmarks.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use proximadb::storage::engine::StorageEngine;
+
+fn benchmark_collection_operations(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let storage = rt.block_on(create_benchmark_storage());
+    
+    c.bench_function("collection_create", |b| {
+        b.to_async(&rt).iter(|| async {
+            let collection = create_test_collection();
+            black_box(storage.create_collection(collection).await.unwrap())
+        })
+    });
+    
+    c.bench_function("collection_get", |b| {
+        let collection_id = rt.block_on(setup_benchmark_collection(&storage));
+        
+        b.to_async(&rt).iter(|| async {
+            black_box(storage.get_collection(&collection_id).await.unwrap())
+        })
+    });
+}
+
+criterion_group!(benches, benchmark_collection_operations);
+criterion_main!(benches);
+----
+
+==== Running Benchmarks
 
 [source,bash]
 ----
-# Development build
-cargo build
+# Run all benchmarks
+cargo bench
 
-# Release build with optimizations
+# Run specific benchmark
+cargo bench collection_operations
+
+# Run benchmarks with profiling
+cargo bench --features profiling
+
+# Generate benchmark report
+cargo bench -- --output-format html
+----
+
+== Configuration
+
+=== Configuration File Structure
+
+ProximaDB uses TOML configuration files with hierarchical overrides:
+
+[source,toml]
+----
+# config/local.toml
+[server]
+host = "127.0.0.1"
+port = 5678
+node_id = 1
+data_dir = "/data/proximadb"
+
+[storage]
+engine = "viper"
+storage_url = "file:///data/proximadb/1"
+
+[storage.viper]
+parquet_row_group_size = 10000
+compression = "zstd"
+enable_vectorization = true
+
+[wal]
+strategy = "avro"
+max_memory_mb = 1024
+max_entries = 75000
+flush_interval_secs = 300
+
+[wal.avro]
+compression = "lz4"
+schema_evolution = true
+
+[consensus]
+enabled = false
+# cluster_peers = ["node2:7001", "node3:7002"]
+
+[api]
+enable_grpc = true
+enable_rest = true
+cors_enabled = true
+max_request_size_mb = 64
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+log_level = "info"
+
+[auth]
+enabled = false
+# provider = "jwt"
+# jwt_secret = "your-secret-key"
+----
+
+=== Environment Variables
+
+ProximaDB supports environment variable overrides:
+
+[source,bash]
+----
+# Server configuration
+export PROXIMADB_HOST="0.0.0.0"
+export PROXIMADB_PORT=5678
+export PROXIMADB_DATA_DIR="/data/proximadb"
+
+# Storage configuration  
+export PROXIMADB_STORAGE_URL="s3://my-bucket/proximadb"
+export PROXIMADB_STORAGE_ENGINE="viper"
+
+# WAL configuration
+export PROXIMADB_WAL_STRATEGY="avro"
+export PROXIMADB_WAL_MAX_MEMORY_MB=2048
+
+# Authentication
+export PROXIMADB_AUTH_ENABLED=true
+export PROXIMADB_JWT_SECRET="production-secret"
+
+# Monitoring
+export PROXIMADB_LOG_LEVEL="debug"
+export PROXIMADB_METRICS_ENABLED=true
+----
+
+=== Configuration Priority
+
+Configuration values are resolved in the following order (highest to lowest priority):
+
+1. **Command-line arguments**: `--host`, `--port`, `--config`
+2. **Environment variables**: `PROXIMADB_*`
+3. **Configuration file**: `config/local.toml` or specified file
+4. **Default values**: Built-in defaults
+
+== Deployment
+
+=== Local Development
+
+[source,bash]
+----
+# Start server with default configuration
+cargo run --bin proximadb-server
+
+# Start with custom configuration
+cargo run --bin proximadb-server -- --config config/development.toml
+
+# Start with specific data directory
+cargo run --bin proximadb-server -- --data-dir ./dev-data
+
+# Start with debug logging
+PROXIMADB_LOG_LEVEL=debug cargo run --bin proximadb-server
+----
+
+=== Docker Deployment
+
+==== Build Docker Image
+
+[source,bash]
+----
+# Build production image
+docker build -t proximadb:latest .
+
+# Build with specific target
+docker build --target production -t proximadb:production .
+
+# Build development image
+docker build --target development -t proximadb:dev .
+----
+
+==== Run Container
+
+[source,bash]
+----
+# Run with default configuration
+docker run -p 5678:5678 -v $(pwd)/data:/data proximadb:latest
+
+# Run with custom configuration
+docker run -p 5678:5678 \
+  -v $(pwd)/config:/config \
+  -v $(pwd)/data:/data \
+  proximadb:latest --config /config/production.toml
+
+# Run with environment variables
+docker run -p 5678:5678 \
+  -e PROXIMADB_LOG_LEVEL=debug \
+  -e PROXIMADB_STORAGE_URL=s3://my-bucket \
+  proximadb:latest
+----
+
+=== Kubernetes Deployment
+
+==== Deployment Manifest
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proximadb
+  labels:
+    app: proximadb
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb:latest
+        ports:
+        - containerPort: 5678
+          name: api
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: PROXIMADB_HOST
+          value: "0.0.0.0"
+        - name: PROXIMADB_STORAGE_URL
+          value: "s3://proximadb-production"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /config
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: proximadb-data
+      - name: config
+        configMap:
+          name: proximadb-config
+----
+
+== Debugging
+
+=== Logging Configuration
+
+[source,rust]
+----
+use tracing::{info, warn, error, debug};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+// Initialize logging
+tracing_subscriber::registry()
+    .with(tracing_subscriber::EnvFilter::new(
+        std::env::var("PROXIMADB_LOG_LEVEL").unwrap_or_else(|_| "info".into())
+    ))
+    .with(tracing_subscriber::fmt::layer())
+    .init();
+
+// Usage in code
+info!("Collection created: {}", collection_id);
+debug!("Processing vector with {} dimensions", vector.len());
+warn!("High memory usage: {}MB", memory_usage);
+error!("Failed to connect to storage: {}", error);
+----
+
+=== Debug Build
+
+[source,bash]
+----
+# Build with debug symbols
+cargo build --profile dev
+
+# Build with debug assertions
+cargo build --features debug-assertions
+
+# Run with debug logging
+PROXIMADB_LOG_LEVEL=debug cargo run --bin proximadb-server
+
+# Run with tracing
+PROXIMADB_LOG_LEVEL=trace cargo run --bin proximadb-server
+----
+
+=== Performance Profiling
+
+[source,bash]
+----
+# Install profiling tools
+cargo install flamegraph
+cargo install cargo-profiling
+
+# Generate flame graph
+cargo flamegraph --bin proximadb-server
+
+# Profile with perf
 cargo build --release
-
-# Server-optimized build
-cargo build --profile release-server
-
-# Build with SIMD optimizations
-cargo build --features simd --release
-
-# Using Makefile shortcuts
-make build          # Development build
-make build-release  # Release build
-make build-server   # Optimized server build
+perf record --call-graph=dwarf ./target/release/proximadb-server
+perf report
 ----
 
-=== 4.2 Testing Commands
+== Contributing
 
+=== Development Workflow
+
+1. **Fork and Clone**
 [source,bash]
 ----
-# Run all tests
+git clone https://github.com/your-username/proximadb.git
+cd proximadb
+git remote add upstream https://github.com/vjsingh1984/proximadb.git
+----
+
+2. **Create Feature Branch**
+[source,bash]
+----
+git checkout -b feature/your-feature-name
+----
+
+3. **Make Changes**
+[source,bash]
+----
+# Format code
+cargo fmt
+
+# Check code quality
+cargo clippy -- -D warnings
+
+# Run tests
 cargo test
 
-# Run with output capture
-cargo test -- --nocapture
-
-# Run assignment service tests specifically
-cargo test assignment
-
-# Run multi-disk integration tests
-cargo test multi_disk
-
-# Run WAL strategy tests
-cargo test wal_strategy
-
-# Python SDK tests with multi-disk
-cd clients/python && pytest tests/integration/test_multi_disk.py
-
-# Combined test suite
-make test
+# Run integration tests
+cargo test --test integration
 ----
 
-=== 4.3 Multi-Disk Specific Testing
-
+4. **Commit Changes**
 [source,bash]
 ----
-# Test assignment service functionality
-cargo test storage::assignment_service
+git add .
+git commit -m "feat: add vector similarity search optimization
 
-# Test WAL strategy pattern
-cargo test storage::persistence::wal
-
-# Test recovery mechanisms
-cargo test recovery
-
-# Test configuration validation
-cargo test config::multi_disk
-
-# Integration test with real multi-disk setup
-RUST_LOG=debug cargo test test_multi_disk_end_to_end -- --nocapture
+- Implement SIMD-accelerated distance calculations
+- Add configurable similarity thresholds
+- Include comprehensive test coverage"
 ----
 
-== 5. Configuration Management
-
-=== 5.1 Multi-Disk Configuration Structure
-
-[source,rust]
+5. **Push and Create PR**
+[source,bash]
 ----
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalConfig {
-    pub wal_urls: Vec<String>,
-    pub distribution_strategy: DistributionStrategy,
-    pub collection_affinity: bool,
-    pub memory_flush_size_bytes: usize,
-    pub global_flush_threshold: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DistributionStrategy {
-    LoadBalanced,    // Round-robin (default)
-    HashBased,       // Consistent hashing
-    PerformanceBased, // Based on disk performance
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageAssignmentConfig {
-    pub storage_urls: Vec<String>,
-    pub component_type: StorageComponentType,
-    pub collection_affinity: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageAssignmentResult {
-    pub storage_url: String,
-    pub directory_index: usize,
-    pub assigned_at: DateTime<Utc>,
-}
+git push origin feature/your-feature-name
+# Create pull request on GitHub
 ----
 
-=== 5.2 Configuration Validation
+=== Code Style Guidelines
 
-[source,rust]
+**Rust Code Style:**
+- Use `cargo fmt` for consistent formatting
+- Follow Rust naming conventions (snake_case, PascalCase)
+- Add documentation comments for public APIs
+- Use `clippy` for code quality checks
+
+**Commit Message Format:**
+```
+type(scope): brief description
+
+Detailed description of the change, including:
+- What was changed and why
+- Any breaking changes
+- Issue references (#123)
+
+Examples:
+feat(api): add vector similarity search endpoint
+fix(storage): resolve race condition in WAL flushing  
+docs(readme): update installation instructions
+test(integration): add BERT collection persistence tests
+```
+
+**Code Review Checklist:**
+- [ ] Code follows style guidelines
+- [ ] Tests are included and pass
+- [ ] Documentation is updated
+- [ ] Breaking changes are documented
+- [ ] Performance impact is considered
+
+=== Release Process
+
+1. **Version Bump**
+[source,bash]
 ----
-impl WalConfig {
-    pub fn validate(&self) -> Result<()> {
-        // Validate WAL URLs
-        if self.wal_urls.is_empty() {
-            return Err(ProximaDBError::ConfigurationError(
-                "At least one WAL URL must be configured".into()
-            ));
-        }
-        
-        for url in &self.wal_urls {
-            self.validate_storage_url(url)?;
-        }
-        
-        // Validate memory settings
-        if self.memory_flush_size_bytes == 0 {
-            return Err(ProximaDBError::ConfigurationError(
-                "Memory flush size must be greater than 0".into()
-            ));
-        }
-        
-        if self.global_flush_threshold < self.memory_flush_size_bytes {
-            return Err(ProximaDBError::ConfigurationError(
-                "Global flush threshold must be >= memory flush size".into()
-            ));
-        }
-        
-        Ok(())
-    }
-    
-    fn validate_storage_url(&self, url: &str) -> Result<()> {
-        if !url.starts_with("file://") && 
-           !url.starts_with("s3://") && 
-           !url.starts_with("adls://") && 
-           !url.starts_with("gcs://") {
-            return Err(ProximaDBError::ConfigurationError(
-                format!("Invalid storage URL: {}. Must start with file://, s3://, adls://, or gcs://", url)
-            ));
-        }
-        
-        // Validate file:// URLs have correct format
-        if url.starts_with("file://") && !url.starts_with("file:///") {
-            return Err(ProximaDBError::ConfigurationError(
-                format!("Invalid file URL: {}. Must use file:///absolute/path format", url)
-            ));
-        }
-        
-        Ok(())
-    }
-}
+# Update version in Cargo.toml
+sed -i 's/version = "0.1.0"/version = "0.2.0"/' Cargo.toml
+
+# Update CHANGELOG.md
+echo "## [0.2.0] - 2025-06-20" >> CHANGELOG.md
 ----
 
-== 6. Performance Optimization
-
-=== 6.1 Assignment Service Optimization
-
-[source,rust]
+2. **Create Release**
+[source,bash]
 ----
-// Optimized assignment lookup with caching
-impl RoundRobinAssignmentService {
-    async fn get_assignment_cached(
-        &self,
-        collection_id: &CollectionId,
-        component_type: StorageComponentType,
-    ) -> Option<StorageAssignmentResult> {
-        // Fast read-only access for existing assignments
-        let assignments = self.assignments.read().await;
-        
-        assignments
-            .get(&component_type)
-            .and_then(|type_assignments| type_assignments.get(collection_id))
-            .cloned()
-    }
-    
-    async fn batch_assign_collections(
-        &self,
-        collection_ids: &[CollectionId],
-        config: &StorageAssignmentConfig,
-    ) -> Result<Vec<StorageAssignmentResult>> {
-        let mut results = Vec::with_capacity(collection_ids.len());
-        
-        // Batch process assignments to minimize lock contention
-        for collection_id in collection_ids {
-            let assignment = self.assign_storage_url(collection_id, config).await?;
-            results.push(assignment);
-        }
-        
-        Ok(results)
-    }
-}
+git tag -a v0.2.0 -m "Release version 0.2.0"
+git push upstream v0.2.0
 ----
 
-=== 6.2 WAL Performance Optimization
-
-[source,rust]
+3. **Build and Publish**
+[source,bash]
 ----
-// Concurrent WAL writes to multiple disks
-pub async fn parallel_wal_writes(
-    &self,
-    entries_by_assignment: HashMap<StorageAssignmentResult, Vec<WalEntry>>,
-) -> Result<Vec<u64>> {
-    let write_tasks: Vec<_> = entries_by_assignment
-        .into_iter()
-        .map(|(assignment, entries)| {
-            let wal_strategy = self.wal_strategy.clone();
-            
-            tokio::spawn(async move {
-                wal_strategy.write_entries_to_disk(&assignment, entries).await
-            })
-        })
-        .collect();
-    
-    let results = join_all(write_tasks).await;
-    let mut all_sequences = Vec::new();
-    
-    for result in results {
-        match result {
-            Ok(Ok(sequences)) => all_sequences.extend(sequences),
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(ProximaDBError::Internal(e.to_string())),
-        }
-    }
-    
-    Ok(all_sequences)
-}
+# Build release binaries
+cargo build --release --all-targets
+
+# Publish to crates.io (maintainers only)
+cargo publish
 ----
 
-== 7. Monitoring and Debugging
+---
 
-=== 7.1 Assignment Service Monitoring
-
-[source,rust]
-----
-impl RoundRobinAssignmentService {
-    pub async fn get_assignment_stats(&self) -> Result<serde_json::Value> {
-        let assignments = self.assignments.read().await;
-        let counters = self.round_robin_counters.read().await;
-        
-        let mut stats = serde_json::Map::new();
-        
-        for (component_type, type_assignments) in assignments.iter() {
-            let mut component_stats = serde_json::Map::new();
-            
-            // Total assignments
-            component_stats.insert(
-                "total_assignments".to_string(),
-                serde_json::Value::Number(type_assignments.len().into())
-            );
-            
-            // Directory distribution
-            let mut distribution = HashMap::new();
-            for assignment in type_assignments.values() {
-                *distribution.entry(assignment.directory_index).or_insert(0) += 1;
-            }
-            
-            component_stats.insert(
-                "directory_distribution".to_string(),
-                serde_json::to_value(distribution)?
-            );
-            
-            // Current counter
-            if let Some(counter) = counters.get(component_type) {
-                component_stats.insert(
-                    "current_counter".to_string(),
-                    serde_json::Value::Number((*counter).into())
-                );
-            }
-            
-            stats.insert(
-                format!("{:?}", component_type).to_lowercase(),
-                serde_json::Value::Object(component_stats)
-            );
-        }
-        
-        Ok(serde_json::Value::Object(stats))
-    }
-}
-----
-
-=== 7.2 Debug Logging
-
-[source,rust]
-----
-use tracing::{info, warn, error, debug, span, Level};
-
-impl RoundRobinAssignmentService {
-    async fn assign_storage_url_with_logging(
-        &self,
-        collection_id: &CollectionId,
-        config: &StorageAssignmentConfig,
-    ) -> Result<StorageAssignmentResult> {
-        let span = span!(
-            Level::INFO, 
-            "assignment", 
-            collection_id = %collection_id,
-            component_type = ?config.component_type
-        );
-        let _enter = span.enter();
-        
-        debug!("Starting assignment process");
-        
-        // Check for existing assignment
-        if let Some(existing) = self.get_assignment(collection_id, config.component_type).await {
-            info!(
-                storage_url = %existing.storage_url,
-                directory_index = existing.directory_index,
-                "Using existing assignment"
-            );
-            return Ok(existing);
-        }
-        
-        // Create new assignment
-        let index = if config.collection_affinity {
-            let hash_index = self.hash_collection_id(collection_id) % config.storage_urls.len();
-            info!(hash_index = hash_index, "Using affinity-based assignment");
-            hash_index
-        } else {
-            let rr_index = self.get_next_round_robin_index(config.component_type, &config.storage_urls).await?;
-            info!(round_robin_index = rr_index, "Using round-robin assignment");
-            rr_index
-        };
-        
-        let assignment = StorageAssignmentResult {
-            storage_url: config.storage_urls[index].clone(),
-            directory_index: index,
-            assigned_at: Utc::now(),
-        };
-        
-        // Record assignment
-        self.record_assignment(collection_id, config.component_type, assignment.clone()).await?;
-        
-        info!(
-            storage_url = %assignment.storage_url,
-            directory_index = assignment.directory_index,
-            "Created new assignment"
-        );
-        
-        Ok(assignment)
-    }
-}
-----
-
-== 8. Contributing Guidelines
-
-=== 8.1 Development Workflow
-
-1. **Fork and Clone**: Fork the repository and clone your fork
-2. **Create Feature Branch**: Create a branch from `main` for your changes
-3. **Implement Changes**: Follow coding guidelines and write comprehensive tests
-4. **Test Multi-Disk Functionality**: Ensure all multi-disk tests pass
-5. **Update Documentation**: Update relevant documentation and diagrams
-6. **Commit Changes**: Use conventional commit messages
-7. **Submit PR**: Create pull request with clear description
-
-=== 8.2 Multi-Disk Specific Guidelines
-
-==== Assignment Service Changes
-* Always maintain backward compatibility in assignment logic
-* Add comprehensive tests for new assignment strategies
-* Document performance implications of changes
-* Consider impact on existing assignments during recovery
-
-==== WAL Strategy Changes
-* Ensure all strategies implement the base trait correctly
-* Test serialization/deserialization thoroughly
-* Verify assignment service integration
-* Document strategy-specific behaviors
-
-==== Configuration Changes
-* Add validation for new configuration options
-* Provide migration path for existing configurations
-* Document configuration impact on performance
-* Test with both single and multi-disk setups
-
-=== 8.3 Commit Message Format
-
-[source]
-----
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-----
-
-Examples specific to multi-disk work:
-* `feat(assignment): implement hash-based distribution strategy`
-* `fix(wal): resolve URL path conversion for Windows`
-* `docs(config): update multi-disk configuration examples`
-* `test(assignment): add comprehensive round-robin tests`
-* `perf(wal): optimize parallel writes to multiple disks`
-
-== Conclusion
-
-This developer guide provides comprehensive coverage of ProximaDB's multi-disk architecture, focusing on the assignment service and WAL strategy pattern that enable enterprise-grade performance and reliability. The layered approach ensures maintainability while the pluggable design allows for future enhancements.
-
-Key architectural principles:
-* **Assignment Service**: Intelligent collection-to-disk mapping with multiple strategies
-* **WAL Strategy Pattern**: Pluggable serialization with consistent assignment integration
-* **Recovery Mechanisms**: Robust discovery and recovery for high availability
-* **Performance Optimization**: Parallel operations and efficient resource utilization
-
-For questions about the multi-disk architecture or to contribute improvements, engage with the development team through GitHub issues or discussions.
+**Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>  
+**Repository**: https://github.com/vjsingh1984/proximadb  
+**License**: Apache 2.0
