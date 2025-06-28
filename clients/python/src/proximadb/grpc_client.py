@@ -106,6 +106,74 @@ class ProximaDBClient:
     
     # Collection Operations
     
+    def _resolve_collection_id(self, collection_id: str) -> str:
+        """
+        Resolve collection identifier for gRPC API.
+        
+        The gRPC API accepts both collection names and UUIDs in the collection_id field.
+        The server will handle resolution transparently.
+        
+        Args:
+            collection_id: Collection name or UUID
+            
+        Returns:
+            Collection identifier (name or UUID) - passed through as-is
+        """
+        return collection_id
+    
+    async def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
+        """
+        Get collection UUID by name using the dedicated gRPC operation.
+        
+        Args:
+            collection_name: Name of the collection
+            
+        Returns:
+            Collection UUID if found, None if not found
+            
+        Raises:
+            ProximaDBError: If there's an error retrieving the collection
+        """
+        try:
+            # Use the dedicated COLLECTION_GET_ID_BY_NAME operation
+            request = pb2.CollectionRequest(
+                operation=pb2.CollectionOperation.COLLECTION_GET_ID_BY_NAME,
+                collection_id=collection_name
+            )
+            
+            response = await self._make_call(
+                self.stub.CollectionOperation,
+                request
+            )
+            
+            if response.success and 'collection_id' in response.metadata:
+                return response.metadata['collection_id']
+            
+            return None
+            
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return None
+            logger.error(f"gRPC error getting collection ID by name: {e}")
+            # Fallback to the original method
+            try:
+                collection = await self.get_collection(collection_name)
+                if collection and hasattr(collection, 'id'):
+                    return collection.id
+                return None
+            except CollectionNotFoundError:
+                return None
+        except Exception as e:
+            logger.error(f"Error getting collection ID by name: {e}")
+            # Fallback to the original method
+            try:
+                collection = await self.get_collection(collection_name)
+                if collection and hasattr(collection, 'id'):
+                    return collection.id
+                return None
+            except CollectionNotFoundError:
+                return None
+    
     async def create_collection(
         self,
         name: str,
@@ -742,8 +810,8 @@ class ProximaDBClient:
         self,
         collection_id: str,
         query: List[float],
-        k: int = 10,
         aggregations: List[str],
+        k: int = 10,
         group_by: Optional[str] = None,
         filter: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:

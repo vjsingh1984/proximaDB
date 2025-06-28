@@ -791,6 +791,27 @@ impl FilestoreMetadataBackend {
         Ok(self.single_index.get_by_name(name).map(|arc_record| (*arc_record).clone()))
     }
     
+    /// Get collection record by name or UUID - tries UUID first (O(1)), then name (O(n))
+    /// This handles both collection names and UUIDs transparently
+    pub async fn get_collection_record_by_name_or_uuid(&self, identifier: &str) -> Result<Option<CollectionRecord>> {
+        let _guard = self.recovery_lock.read().await;
+        
+        // First try as UUID (O(1) lookup)
+        if let Some(record) = self.single_index.get_by_uuid(identifier) {
+            tracing::debug!("🔍 Found collection by UUID: {}", identifier);
+            return Ok(Some((*record).clone()));
+        }
+        
+        // Then try as name (O(n) lookup)
+        if let Some(record) = self.single_index.get_by_name(identifier) {
+            tracing::debug!("🔍 Found collection by name: {}", identifier);
+            return Ok(Some((*record).clone()));
+        }
+        
+        tracing::debug!("🔍 Collection not found: {}", identifier);
+        Ok(None)
+    }
+    
     /// Get collection UUID by name - O(1) lookup optimized for storage operations
     pub async fn get_collection_uuid_string(&self, name: &str) -> Result<Option<String>> {
         let _guard = self.recovery_lock.read().await;
@@ -806,6 +827,37 @@ impl FilestoreMetadataBackend {
         let uuid = match self.single_index.get_uuid_by_name(name) {
             Some(uuid) => uuid,
             None => return Ok(false),
+        };
+        
+        // Get next sequence number
+        let sequence = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
+        
+        // Create delete operation
+        let operation = IncrementalOperation::delete(sequence, uuid.clone());
+        
+        // Write to incremental log
+        self.write_incremental_operation(operation).await?;
+        
+        // Update single index (single atomic operation - no sync issues)
+        self.single_index.remove_collection(&uuid);
+        
+        Ok(true)
+    }
+    
+    /// Delete collection by name or UUID - handles both transparently
+    pub async fn delete_collection_by_name_or_uuid(&self, identifier: &str) -> Result<bool> {
+        let _guard = self.recovery_lock.read().await;
+        
+        // Try to find UUID - first as UUID (O(1)), then as name (O(n))
+        let uuid = if let Some(record) = self.single_index.get_by_uuid(identifier) {
+            // Found by UUID
+            record.uuid.clone()
+        } else if let Some(uuid) = self.single_index.get_uuid_by_name(identifier) {
+            // Found by name
+            uuid
+        } else {
+            // Not found
+            return Ok(false);
         };
         
         // Get next sequence number

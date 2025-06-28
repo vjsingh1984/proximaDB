@@ -252,6 +252,34 @@ class ProximaDBClient:
         """Update collection metadata and configuration"""
         return self._client.update_collection(collection_id, updates)
     
+    def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
+        """
+        Get collection UUID by name.
+        
+        This method allows you to resolve a collection name to its UUID,
+        which can be useful for operations that specifically need the UUID.
+        
+        Args:
+            collection_name: Name of the collection
+            
+        Returns:
+            Collection UUID if found, None if not found
+            
+        Raises:
+            ProximaDBError: If there's an error retrieving the collection
+        """
+        if hasattr(self._client, 'get_collection_id_by_name'):
+            return self._client.get_collection_id_by_name(collection_name)
+        else:
+            # Fallback for clients that don't have this method
+            try:
+                collection = self.get_collection(collection_name)
+                if collection and hasattr(collection, 'id'):
+                    return collection.id
+                return None
+            except Exception:
+                return None
+    
     def delete_vectors_by_filter(
         self,
         collection_id: str,
@@ -287,8 +315,8 @@ class ProximaDBClient:
         self,
         collection_id: str,
         query: Union[List[float], np.ndarray],
-        k: int = 10,
         aggregations: List[str],
+        k: int = 10,
         group_by: Optional[str] = None,
         filter: Optional[FilterDict] = None
     ) -> Dict[str, Any]:

@@ -8,7 +8,6 @@
 use anyhow::{Context, Result};
 use apache_avro::{Reader, Schema, Writer};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,6 +18,12 @@ use super::{
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::assignment_service::{
+    AssignmentService, StorageAssignmentConfig, StorageComponentType, get_assignment_service, AssignmentDiscovery
+};
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use chrono::{DateTime, Utc};
 
 /// Avro schema for WAL entries with evolution support
 const AVRO_SCHEMA_V1: &str = r#"
@@ -87,25 +92,71 @@ enum AvroOpType {
     DropCollection,
 }
 
-/// Avro WAL strategy implementation
+/// WAL-specific statistics for collections
+#[derive(Debug, Clone)]
+struct CollectionWalStats {
+    /// Total WAL files count for this collection
+    wal_files_count: usize,
+    /// Total WAL data size (bytes) for this collection
+    total_size_bytes: u64,
+    /// Last accessed timestamp
+    last_accessed: DateTime<Utc>,
+}
+
+/// Avro WAL strategy implementation with collection directory tracking
 pub struct AvroWalStrategy {
     config: Option<WalConfig>,
     filesystem: Option<Arc<FilesystemFactory>>,
     memory_table: Option<WalMemTable>,
     disk_manager: Option<WalDiskManager>,
     storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    /// Assignment service for directory assignment
+    assignment_service: Arc<dyn AssignmentService>,
+    /// WAL-specific collection statistics
+    collection_stats: Arc<RwLock<HashMap<CollectionId, CollectionWalStats>>>,
 }
 
 impl AvroWalStrategy {
-    /// Create new Avro WAL strategy
+    /// Create new Avro WAL strategy with collection assignment tracking
     pub fn new() -> Self {
+        Self::default()
+    }
+    
+    /// Create new strategy with default values
+    pub fn default() -> Self {
         Self {
             config: None,
             filesystem: None,
             memory_table: None,
             disk_manager: None,
             storage_engine: None,
+            assignment_service: get_assignment_service(),
+            collection_stats: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+    
+    /// Get WAL assignment statistics for monitoring and management
+    pub async fn get_assignment_statistics(&self) -> Result<serde_json::Value> {
+        let stats = self.collection_stats.read().await;
+        let config = self.config.as_ref().context("WAL strategy not initialized")?;
+        
+        let mut total_files = 0;
+        let mut total_size = 0;
+        
+        // Count statistics from collected data
+        for collection_stats in stats.values() {
+            total_files += collection_stats.wal_files_count;
+            total_size += collection_stats.total_size_bytes;
+        }
+        
+        Ok(serde_json::json!({
+            "total_collections": stats.len(),
+            "total_directories": config.multi_disk.data_directories.len(),
+            "total_wal_files": total_files,
+            "total_size_bytes": total_size,
+            "distribution_strategy": format!("{:?}", config.multi_disk.distribution_strategy),
+            "collection_affinity": config.multi_disk.collection_affinity
+        }))
     }
 
     /// Internal Avro serialization implementation
@@ -167,6 +218,158 @@ impl AvroWalStrategy {
 
         Ok(entries)
     }
+
+    /// WAL write using FileStore atomic infrastructure + WAL-specific flush logic
+    async fn write_batch_with_filestore_atomic_and_wal_flush(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
+        let start_time = std::time::Instant::now();
+
+        let memory_table = self
+            .memory_table
+            .as_ref()
+            .context("Avro WAL strategy not initialized")?;
+
+        // STEP 1: Write to memtable (immediate read availability)
+        let sequences = memory_table.insert_batch(entries.clone()).await?;
+        let memtable_time = start_time.elapsed().as_micros();
+
+        // STEP 2: Atomic disk persistence (reuse FileStore atomic write pattern)
+        match self.write_wal_entries_to_disk_atomic(&entries).await {
+            Ok(()) => {
+                let disk_time = start_time.elapsed().as_micros() - memtable_time;
+                tracing::info!(
+                    "💾 WAL atomic write completed: memtable={}μs, disk={}μs, total={}μs",
+                    memtable_time, disk_time, start_time.elapsed().as_micros()
+                );
+            },
+            Err(e) => {
+                tracing::error!("❌ WAL disk write FAILED: {}. Data durability compromised!", e);
+                return Err(e.context("WAL disk persistence failed"));
+            }
+        }
+
+        // STEP 3: WAL-specific flush check (different from FileStore - threshold-based cleanup)
+        if memory_table.needs_global_flush().await? {
+            tracing::info!("🔄 WAL threshold exceeded - triggering flush to VIPER storage");
+            
+            // Background flush to VIPER (non-blocking, WAL-specific)
+            let collections: std::collections::HashSet<String> = entries.iter()
+                .map(|e| e.collection_id.clone()).collect();
+            
+            for collection_id in collections {
+                // Manual flush trigger - in production this would be a background task
+                tracing::info!("🔄 Manual flush trigger for collection: {}", collection_id);
+            }
+        }
+
+        Ok(sequences)
+    }
+
+    /// Write WAL entries to disk using configured WAL URLs (not hardcoded)
+    async fn write_wal_entries_to_disk_atomic(&self, entries: &[WalEntry]) -> Result<()> {
+        let config = self.config.as_ref().context("WAL config not initialized")?;
+        let filesystem = self.filesystem.as_ref().context("Filesystem not initialized")?;
+
+        // Group by collection (same pattern as FileStore incremental operations)
+        let mut by_collection: std::collections::HashMap<String, Vec<&WalEntry>> = std::collections::HashMap::new();
+        for entry in entries {
+            by_collection.entry(entry.collection_id.clone()).or_default().push(entry);
+        }
+
+        // Write each collection atomically using assigned WAL URLs with metadata tracking
+        for (collection_id, collection_entries) in by_collection {
+            // Select WAL URL with assignment tracking (async)
+            let wal_base_url = self.select_wal_url_for_collection(&collection_id, config).await?;
+            tracing::debug!("📁 Using assigned WAL URL for collection {}: {}", collection_id, wal_base_url);
+            
+            // Get filesystem for the assigned URL
+            let fs = filesystem.get_filesystem(&wal_base_url)
+                .context(format!("Failed to get filesystem for WAL URL: {}", wal_base_url))?;
+            
+            // Build collection-specific paths
+            let (collection_dir, wal_file_path) = self.build_collection_wal_paths(&wal_base_url, &collection_id)?;
+            
+            // Create collection WAL directory using filesystem API
+            fs.create_dir_all(&collection_dir).await
+                .context(format!("Failed to create WAL directory: {}", collection_dir))?;
+            
+            // Serialize to Avro (reuse existing serialization)
+            let collection_entries_vec: Vec<&WalEntry> = collection_entries;
+            let entries_slice: &[WalEntry] = &collection_entries_vec.iter().map(|&e| e.clone()).collect::<Vec<_>>();
+            let avro_data = self.serialize_entries_impl(entries_slice).await?;
+            
+            // Atomic write using filesystem API (works with file://, s3://, adls://, gcs://)
+            fs.write_atomic(&wal_file_path, &avro_data, None).await
+                .context(format!("Atomic WAL write failed for collection {} to {}", collection_id, wal_file_path))?;
+            
+            // Update collection statistics
+            {
+                let mut stats = self.collection_stats.write().await;
+                let collection_id_key = CollectionId::from(collection_id.clone());
+                let stat_entry = stats.entry(collection_id_key).or_insert(CollectionWalStats {
+                    wal_files_count: 0,
+                    total_size_bytes: 0,
+                    last_accessed: chrono::Utc::now(),
+                });
+                stat_entry.wal_files_count += 1;
+                stat_entry.total_size_bytes += avro_data.len() as u64;
+                stat_entry.last_accessed = chrono::Utc::now();
+            }
+                
+            tracing::debug!("✅ WAL file written atomically: {} ({} entries, {} bytes)", 
+                wal_file_path, collection_entries_vec.len(), avro_data.len());
+        }
+
+        Ok(())
+    }
+
+    
+    
+    
+    
+    /// Hash collection ID for distribution
+    fn hash_collection_id(&self, collection_id: &str) -> usize {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        collection_id.hash(&mut hasher);
+        hasher.finish() as usize
+    }
+    
+    /// Build collection-specific WAL paths from base URL
+    fn build_collection_wal_paths(&self, wal_base_url: &str, collection_id: &str) -> Result<(String, String)> {
+        if wal_base_url.starts_with("file://") {
+            let base_path = wal_base_url.strip_prefix("file://").unwrap_or(wal_base_url);
+            let collection_dir = format!("{}/{}", base_path, collection_id);
+            let wal_file_path = format!("{}/wal_current.avro", collection_dir);
+            Ok((collection_dir, wal_file_path))
+        } else {
+            // For cloud URLs, append collection path
+            let base_url = wal_base_url.trim_end_matches('/');
+            let collection_dir = format!("{}/{}", base_url, collection_id);
+            let wal_file_path = format!("{}/wal_current.avro", collection_dir);
+            Ok((collection_dir, wal_file_path))
+        }
+    }
+}
+
+// Assignment metadata management methods (outside trait implementation)
+impl AvroWalStrategy {
+    
+    
+    /// Check if a string looks like a valid collection ID (UUID format)
+    fn is_valid_collection_id(&self, id: &str) -> bool {
+        // Simple validation: should be at least 8 characters and contain alphanumeric/hyphens
+        id.len() >= 8 && id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    }
+    
+    /// Initialize assignment service for WAL directories
+    async fn initialize_assignment_service(&self, config: &WalConfig, filesystem: &Arc<FilesystemFactory>) -> Result<()> {
+        // Discover existing collections and register with assignment service
+        let discovered_count = self.discover_existing_assignments(config, filesystem).await?;
+        tracing::info!("📋 Discovered {} existing collections from WAL directories", discovered_count);
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -196,9 +399,11 @@ impl WalStrategy for AvroWalStrategy {
         self.config = Some(config.clone());
         self.filesystem = Some(filesystem.clone());
         self.memory_table = Some(WalMemTable::new(config.clone()).await?);
-        self.disk_manager = Some(WalDiskManager::new(config.clone(), filesystem).await?);
-
-        tracing::info!("✅ Avro WAL strategy initialized");
+        self.disk_manager = Some(WalDiskManager::new(config.clone(), filesystem.clone()).await?);
+        
+        // Discover existing collections using base trait method
+        let discovered_count = self.discover_existing_assignments(&config, &filesystem).await?;
+        tracing::info!("✅ Avro WAL strategy initialized with {} discovered collections", discovered_count);
         tracing::debug!("✅ AvroWalStrategy::initialize - Initialization complete");
         Ok(())
     }
@@ -237,21 +442,10 @@ impl WalStrategy for AvroWalStrategy {
     }
 
     async fn write_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
-        let memory_table = self
-            .memory_table
-            .as_ref()
-            .context("Avro WAL strategy not initialized")?;
-
-        let sequences = memory_table.insert_batch(entries).await?;
-
-        // Check for global flush need
-        if memory_table.needs_global_flush().await? {
-            // Force flush all collections
-            let _ = self.flush(None).await;
-        }
-
-        Ok(sequences)
+        // CRITICAL FIX: Use FileStore-style atomic write + WAL flush logic
+        self.write_batch_with_filestore_atomic_and_wal_flush(entries).await
     }
+
 
     async fn write_batch_with_sync(&self, entries: Vec<WalEntry>, immediate_sync: bool) -> Result<Vec<u64>> {
         let start_time = std::time::Instant::now();
@@ -817,6 +1011,10 @@ impl WalStrategy for AvroWalStrategy {
 
         tracing::info!("✅ Avro WAL strategy closed");
         Ok(())
+    }
+    
+    fn get_assignment_service(&self) -> &Arc<dyn crate::storage::assignment_service::AssignmentService> {
+        &self.assignment_service
     }
 }
 

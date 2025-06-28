@@ -23,7 +23,6 @@ pub mod collection_service;
 pub mod migration;
 pub mod storage_path_service;
 pub mod unified_avro_service;
-// pub mod vector_storage_coordinator; // REMOVED: Coordinator eliminated in optimization
 
 /// Service result type
 pub type ServiceResult<T> = Result<T, ServiceError>;

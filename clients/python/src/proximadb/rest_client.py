@@ -150,6 +150,67 @@ class ProximaDBRestClient:
         
         raise map_http_error(response.status_code, error_data)
     
+    def _resolve_collection_id(self, collection_id: str) -> str:
+        """
+        Resolve collection identifier. 
+        
+        For REST API, collection names and UUIDs are handled transparently by the server,
+        so we can pass the collection_id as-is. The server will:
+        1. First try to find by UUID
+        2. Fall back to finding by name
+        3. Return 404 if neither exists
+        
+        Args:
+            collection_id: Collection name or UUID
+            
+        Returns:
+            Collection identifier (name or UUID) - passed through as-is
+        """
+        return collection_id
+    
+    def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
+        """
+        Get collection UUID by name using the dedicated lookup endpoint.
+        
+        Args:
+            collection_name: Name of the collection
+            
+        Returns:
+            Collection UUID if found, None if not found
+            
+        Raises:
+            ProximaDBError: If there's an error retrieving the collection
+        """
+        try:
+            # Use the dedicated lookup endpoint
+            response = self._make_request(
+                "GET", 
+                f"/collections/by-name/{collection_name}/id"
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success') and 'data' in data:
+                    return data['data']
+            elif response.status_code == 404:
+                return None
+            else:
+                # Handle other error cases
+                self._handle_error_response(response)
+                
+        except ProximaDBError:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting collection ID by name: {e}")
+            # Fallback to the original method
+            try:
+                collection = self.get_collection(collection_name)
+                if collection and hasattr(collection, 'id'):
+                    return collection.id
+                return None
+            except ProximaDBError:
+                return None
+    
     def _normalize_vector(self, vector: Union[List[float], np.ndarray]) -> List[float]:
         """Normalize single vector to list format"""
         if isinstance(vector, np.ndarray):
@@ -722,8 +783,8 @@ class ProximaDBRestClient:
         self,
         collection_id: str,
         query: Union[List[float], np.ndarray],
-        k: int = 10,
         aggregations: List[str],
+        k: int = 10,
         group_by: Optional[str] = None,
         filter: Optional[FilterDict] = None
     ) -> Dict[str, Any]:

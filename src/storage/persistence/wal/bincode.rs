@@ -59,6 +59,8 @@ pub struct BincodeWalStrategy {
     memory_table: Option<WalMemTable>,
     disk_manager: Option<WalDiskManager>,
     storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    /// Assignment service for directory assignment
+    assignment_service: Arc<dyn crate::storage::assignment_service::AssignmentService>,
 }
 
 impl BincodeWalStrategy {
@@ -70,6 +72,7 @@ impl BincodeWalStrategy {
             memory_table: None,
             disk_manager: None,
             storage_engine: None,
+            assignment_service: crate::storage::assignment_service::get_assignment_service(),
         }
     }
 
@@ -503,6 +506,10 @@ impl WalStrategy for BincodeWalStrategy {
 
         tracing::info!("✅ Bincode WAL strategy closed");
         Ok(())
+    }
+    
+    fn get_assignment_service(&self) -> &Arc<dyn crate::storage::assignment_service::AssignmentService> {
+        &self.assignment_service
     }
 }
 

@@ -106,6 +106,18 @@ impl CollectionService {
             .get_collection_record_by_name(collection_name)
             .await
     }
+    
+    /// Get collection by name or UUID - handles both transparently
+    pub async fn get_collection_by_name_or_uuid(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<CollectionRecord>> {
+        debug!("🔍 Getting collection by name or UUID: {}", identifier);
+        
+        self.metadata_backend
+            .get_collection_record_by_name_or_uuid(identifier)
+            .await
+    }
 
     /// Get collection UUID by name (for storage operations)
     pub async fn get_collection_uuid(&self, collection_name: &str) -> Result<Option<String>> {
@@ -123,23 +135,23 @@ impl CollectionService {
         self.metadata_backend.list_collections(None).await
     }
 
-    /// Delete collection by name
+    /// Delete collection by name or UUID - handles both transparently
     pub async fn delete_collection(
         &self,
-        collection_name: &str,
+        collection_identifier: &str,
     ) -> Result<CollectionServiceResponse> {
-        info!("🗑️ Deleting collection: {}", collection_name);
+        info!("🗑️ Deleting collection: {}", collection_identifier);
         let start_time = std::time::Instant::now();
 
         let deleted = self
             .metadata_backend
-            .delete_collection_by_name(collection_name)
+            .delete_collection_by_name_or_uuid(collection_identifier)
             .await?;
 
         if deleted {
             info!(
                 "✅ Collection deleted: {} in {}μs",
-                collection_name,
+                collection_identifier,
                 start_time.elapsed().as_micros()
             );
 
@@ -156,7 +168,7 @@ impl CollectionService {
                 success: false,
                 collection_uuid: None,
                 storage_path: None,
-                error_message: Some(format!("Collection '{}' not found", collection_name)),
+                error_message: Some(format!("Collection '{}' not found", collection_identifier)),
                 error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                 processing_time_us: start_time.elapsed().as_micros() as i64,
             })
@@ -199,10 +211,10 @@ impl CollectionService {
         info!("📝 Updating collection metadata: {}", collection_name);
         let start_time = std::time::Instant::now();
 
-        // Get current record
+        // Get current record (supports both names and UUIDs)
         let mut record = match self
             .metadata_backend
-            .get_collection_record_by_name(collection_name)
+            .get_collection_record_by_name_or_uuid(collection_name)
             .await?
         {
             Some(record) => record,

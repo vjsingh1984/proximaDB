@@ -87,13 +87,15 @@ impl StorageEngine {
     ) -> crate::storage::Result<Self> {
         let disk_manager = Arc::new(DiskManager::new(config.data_dirs.clone())?);
 
-        // Initialize comprehensive WAL manager with optimized defaults (Avro + ART)
-        let wal_config = WalConfig {
-            multi_disk: crate::storage::persistence::wal::config::MultiDiskConfig {
-                data_directories: vec![config.wal_dir.clone()],
-                ..Default::default()
-            },
-            ..Default::default() // Uses Avro + ART defaults from conversation
+        // Initialize comprehensive WAL manager using new configuration structure
+        let wal_config = if !config.wal_config.wal_urls.is_empty() {
+            // Use new multi-directory WAL configuration
+            WalConfig::from(&config.wal_config)
+        } else {
+            // Fallback to legacy single directory for backward compatibility
+            let mut wal_config = WalConfig::default();
+            wal_config.multi_disk.data_directories = vec![format!("file://{}", config.wal_dir.display())];
+            wal_config
         };
 
         // Create filesystem factory for WAL

@@ -5,6 +5,7 @@
 pub mod builder;
 pub mod validation;
 pub mod traits;
+pub mod assignment_service;
 
 // Core storage engines (organized)
 pub mod engines;

@@ -227,6 +227,71 @@ pub trait WalStrategy: Send + Sync {
     /// Get WAL statistics
     async fn get_stats(&self) -> Result<WalStats>;
 
+    /// **INTERNAL USE ONLY** - Helper for testing memtable integration
+    /// 
+    /// This method provides access to memtable records for testing purposes.
+    /// It allows integration tests to verify the complete data flow from WAL
+    /// through memtable to storage engine flush operations.
+    /// 
+    /// ⚠️ **WARNING**: This method is intended for testing only and should not
+    /// be used in production code. It may bypass normal data consistency
+    /// guarantees and could expose internal implementation details.
+    async fn __internal_get_memtable_records_for_testing(&self, collection_id: &CollectionId) -> Result<Vec<crate::core::VectorRecord>> {
+        // Default implementation returns empty vector
+        // WAL strategies can override this for testing purposes
+        tracing::warn!("🧪 TESTING: __internal_get_memtable_records_for_testing called on WAL strategy {} (default implementation)", self.strategy_name());
+        Ok(Vec::new())
+    }
+
+    /// Assignment Service Integration (Base Implementation for All WAL Strategies)
+    
+    /// Get the assignment service used by this WAL strategy
+    fn get_assignment_service(&self) -> &Arc<dyn crate::storage::assignment_service::AssignmentService>;
+    
+    /// Select WAL directory URL for a collection using assignment service
+    /// This method provides consistent assignment logic across all WAL implementations
+    async fn select_wal_url_for_collection(&self, collection_id: &str, config: &WalConfig) -> Result<String> {
+        use crate::storage::assignment_service::{StorageAssignmentConfig, StorageComponentType};
+        
+        // Check if collection already has an assignment
+        if let Some(assignment) = self.get_assignment_service().get_assignment(
+            &CollectionId::from(collection_id.to_string()),
+            StorageComponentType::Wal
+        ).await {
+            return Ok(assignment.storage_url);
+        }
+        
+        // Create new assignment using service
+        let assignment_config = StorageAssignmentConfig {
+            storage_urls: config.multi_disk.data_directories.clone(),
+            component_type: StorageComponentType::Wal,
+            collection_affinity: config.multi_disk.collection_affinity,
+        };
+        
+        let assignment_result = self.get_assignment_service().assign_storage_url(
+            &CollectionId::from(collection_id.to_string()),
+            &assignment_config
+        ).await?;
+        
+        tracing::info!("📍 Assigned collection '{}' to WAL directory '{}'", 
+                      collection_id, assignment_result.storage_url);
+        
+        Ok(assignment_result.storage_url)
+    }
+    
+    /// Discover existing collections from all configured WAL directories
+    /// This method provides consistent discovery logic across all WAL implementations
+    async fn discover_existing_assignments(&self, config: &WalConfig, filesystem: &Arc<FilesystemFactory>) -> Result<usize> {
+        use crate::storage::assignment_service::{AssignmentDiscovery, StorageComponentType};
+        
+        AssignmentDiscovery::discover_and_record_assignments(
+            StorageComponentType::Wal,
+            &config.multi_disk.data_directories,
+            filesystem,
+            self.get_assignment_service(),
+        ).await
+    }
+
     /// Recover from disk on startup
     async fn recover(&self) -> Result<u64>;
 
@@ -695,6 +760,17 @@ impl WalManager {
     /// Graceful shutdown
     pub async fn close(&self) -> Result<()> {
         self.strategy.close().await
+    }
+
+    /// **INTERNAL USE ONLY** - Helper for testing memtable integration
+    /// 
+    /// This method provides access to memtable records for testing purposes.
+    /// It delegates to the underlying WAL strategy implementation.
+    /// 
+    /// ⚠️ **WARNING**: This method is intended for testing only and should not
+    /// be used in production code.
+    pub async fn __internal_get_memtable_records_for_testing(&self, collection_id: &CollectionId) -> Result<Vec<crate::core::VectorRecord>> {
+        self.strategy.__internal_get_memtable_records_for_testing(collection_id).await
     }
 }
 

@@ -204,7 +204,7 @@ impl MetadataStore {
 
         // Override data directories to use metadata-specific locations
         metadata_wal_config.base_config.multi_disk.data_directories =
-            vec![config.metadata_base_dir.clone()];
+            vec![format!("file://{}", config.metadata_base_dir.display())];
 
         // Create WAL manager
         let wal_manager = Arc::new(

@@ -113,8 +113,8 @@ pub struct WalDiskManager {
     /// Disk usage tracking
     disk_usage: Arc<RwLock<Vec<u64>>>, // bytes per disk
 
-    /// Disk directories
-    disk_directories: Vec<PathBuf>,
+    /// Disk directories as URLs
+    disk_directories: Vec<String>,
 }
 
 impl WalDiskManager {
@@ -122,11 +122,21 @@ impl WalDiskManager {
     pub async fn new(config: WalConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let disk_directories = config.multi_disk.data_directories.clone();
 
-        // Initialize directories
-        for dir in &disk_directories {
-            fs::create_dir_all(dir)
+        // Initialize directories using filesystem API
+        for url in &disk_directories {
+            let fs = filesystem.get_filesystem(url)
+                .with_context(|| format!("Failed to get filesystem for WAL URL: {}", url))?;
+            
+            // Extract path for creation
+            let path = if url.starts_with("file://") {
+                url.strip_prefix("file://").unwrap_or(url)
+            } else {
+                url
+            };
+            
+            fs.create_dir_all(path)
                 .await
-                .with_context(|| format!("Failed to create WAL directory: {:?}", dir))?;
+                .with_context(|| format!("Failed to create WAL directory: {}", path))?;
         }
 
         let disk_usage = vec![0u64; disk_directories.len()];
@@ -342,8 +352,15 @@ impl WalDiskManager {
         for (disk_index, disk_dir) in self.disk_directories.iter().enumerate() {
             let mut disk_total = 0u64;
 
+            // Convert URL to filesystem path
+            let path = if disk_dir.starts_with("file://") {
+                disk_dir.strip_prefix("file://").unwrap_or(disk_dir)
+            } else {
+                disk_dir
+            };
+
             // Scan for collection directories
-            let mut entries = fs::read_dir(disk_dir).await?;
+            let mut entries = fs::read_dir(path).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if path.is_dir() {
@@ -407,11 +424,30 @@ impl WalDiskManager {
         if !layouts.contains_key(collection_id) {
             // Assign disk based on strategy
             let disk_index = self.assign_disk_for_collection(collection_id).await?;
-            let base_dir = self.disk_directories[disk_index].join(collection_id.as_str());
-
-            fs::create_dir_all(&base_dir).await.with_context(|| {
-                format!("Failed to create collection directory: {:?}", base_dir)
+            let base_url = &self.disk_directories[disk_index];
+            
+            // Build collection directory URL
+            let collection_dir_url = if base_url.starts_with("file://") {
+                let base_path = base_url.strip_prefix("file://").unwrap_or(base_url);
+                format!("{}/{}", base_path, collection_id.as_str())
+            } else {
+                format!("{}/{}", base_url.trim_end_matches('/'), collection_id.as_str())
+            };
+            
+            // Create collection directory using filesystem API
+            let fs = self.filesystem.get_filesystem(base_url)
+                .with_context(|| format!("Failed to get filesystem for URL: {}", base_url))?;
+            
+            fs.create_dir_all(&collection_dir_url).await.with_context(|| {
+                format!("Failed to create collection directory: {}", collection_dir_url)
             })?;
+            
+            // Convert back to PathBuf for compatibility with existing code
+            let base_dir = if base_url.starts_with("file://") {
+                PathBuf::from(collection_dir_url)
+            } else {
+                PathBuf::from(&collection_dir_url)
+            };
 
             let layout = CollectionDiskLayout::new(collection_id.clone(), disk_index, base_dir);
 
@@ -572,7 +608,11 @@ impl WalDiskManager {
             .iter()
             .enumerate()
             .map(|(i, dir)| DiskUsage {
-                directory: dir.clone(),
+                directory: if dir.starts_with("file://") {
+                    PathBuf::from(dir.strip_prefix("file://").unwrap_or(dir))
+                } else {
+                    PathBuf::from(dir.clone())
+                },
                 usage_bytes: disk_usage.get(i).copied().unwrap_or(0),
                 collections: layouts
                     .values()
@@ -707,10 +747,13 @@ impl WalDiskManager {
     /// Get WAL file path for collection
     async fn get_wal_file_path(&self, collection_id: &CollectionId) -> Result<String> {
         // Create directory if it doesn't exist - absolute path format
-        let dir_path = format!("{}/{}", 
-            self.disk_directories[0].display(), // Use first disk for WAL
-            collection_id
-        );
+        let base_url = &self.disk_directories[0];
+        let dir_path = if base_url.starts_with("file://") {
+            let base_path = base_url.strip_prefix("file://").unwrap_or(base_url);
+            format!("{}/{}", base_path, collection_id)
+        } else {
+            format!("{}/{}", base_url.trim_end_matches('/'), collection_id)
+        };
         
         if let Err(e) = fs::create_dir_all(&dir_path).await {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
