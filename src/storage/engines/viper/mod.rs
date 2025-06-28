@@ -12,6 +12,9 @@ pub mod utilities;
 #[cfg(test)]
 mod sorted_rewrite_tests;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export main VIPER types
 pub use core::ViperCoreEngine;
 pub use pipeline::ViperPipeline;

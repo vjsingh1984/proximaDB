@@ -207,6 +207,23 @@ impl LsmTree {
         let memtable = self.memtable.read().await;
         memtable.len()
     }
+
+    /// Iterate over all vector records in the memtable
+    /// Returns only active records (filters out tombstones)
+    pub async fn iter_all(&self) -> Result<Vec<VectorRecord>> {
+        let memtable = self.memtable.read().await;
+        let mut records = Vec::new();
+        
+        for (_, entry) in memtable.iter() {
+            if let LsmEntry::Record(record) = entry {
+                records.push(record.clone());
+            }
+            // Skip tombstones - they represent deleted records
+        }
+        
+        tracing::debug!("LsmTree::iter_all found {} active records in memtable", records.len());
+        Ok(records)
+    }
 }
 
 // =============================================================================
