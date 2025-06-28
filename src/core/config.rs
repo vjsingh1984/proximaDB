@@ -33,6 +33,10 @@ pub struct StorageConfig {
     pub data_dirs: Vec<PathBuf>,
     pub wal_dir: PathBuf,
     
+    /// Modern WAL configuration with multi-disk support
+    #[serde(default)]
+    pub wal_config: WalStorageConfig,
+    
     /// ProximaDB hierarchical storage layout configuration
     pub storage_layout: crate::core::storage_layout::StorageLayoutConfig,
     
@@ -173,6 +177,7 @@ impl Default for StorageConfig {
         Self {
             data_dirs: vec![PathBuf::from("/data/proximadb/1"), PathBuf::from("/data/proximadb/2")],
             wal_dir: PathBuf::from("/data/proximadb/1/wal"),
+            wal_config: WalStorageConfig::default(),
             storage_layout: crate::core::storage_layout::StorageLayoutConfig::default_2_disk(),
             mmap_enabled: true,
             lsm_config: LsmConfig::default(),
@@ -220,6 +225,63 @@ pub struct ApiConfig {
     pub timeout_seconds: u64,
     pub enable_tls: Option<bool>,
 }
+
+/// WAL storage configuration supporting multiple directories and cloud storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalStorageConfig {
+    /// WAL storage URLs - supports file://, s3://, adls://, gcs://
+    /// Multiple URLs enable multi-disk performance scaling
+    pub wal_urls: Vec<String>,
+    
+    /// Distribution strategy for collections across WAL directories
+    #[serde(default)]
+    pub distribution_strategy: WalDistributionStrategy,
+    
+    /// Whether to keep each collection on a single WAL directory
+    #[serde(default = "default_collection_affinity")]
+    pub collection_affinity: bool,
+    
+    /// Memory flush threshold per collection (bytes)
+    #[serde(default = "default_memory_flush_size")]
+    pub memory_flush_size_bytes: usize,
+    
+    /// Global WAL size threshold for forced flush (bytes)
+    #[serde(default = "default_global_flush_threshold")]
+    pub global_flush_threshold: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WalDistributionStrategy {
+    /// Round-robin across WAL directories
+    RoundRobin,
+    /// Hash-based distribution (consistent)
+    Hash,
+    /// Load-balanced distribution (dynamic)
+    LoadBalanced,
+}
+
+impl Default for WalDistributionStrategy {
+    fn default() -> Self {
+        Self::LoadBalanced
+    }
+}
+
+impl Default for WalStorageConfig {
+    fn default() -> Self {
+        Self {
+            wal_urls: vec!["file:///workspace/data/wal".to_string()],
+            distribution_strategy: WalDistributionStrategy::LoadBalanced,
+            collection_affinity: true,
+            memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB
+            global_flush_threshold: 512 * 1024 * 1024, // 512MB
+        }
+    }
+}
+
+// Helper functions for serde defaults
+fn default_collection_affinity() -> bool { true }
+fn default_memory_flush_size() -> usize { 1 * 1024 * 1024 }
+fn default_global_flush_threshold() -> usize { 512 * 1024 * 1024 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {

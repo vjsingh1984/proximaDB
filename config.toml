@@ -11,11 +11,22 @@ data_dir = "/workspace/data"
 # Legacy fields (deprecated, use storage_layout instead)
 data_dirs = ["/workspace/data"]
 wal_dir = "/workspace/data/wal"
-
 # Storage engine configuration
 mmap_enabled = true
 cache_size_mb = 2048
 bloom_filter_bits = 12
+
+# Modern WAL configuration with multi-disk support
+[storage.wal_config]
+wal_urls = [
+    "file:///workspace/data/disk1/wal",
+    "file:///workspace/data/disk2/wal", 
+    "file:///workspace/data/disk3/wal"
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+memory_flush_size_bytes = 1048576  # 1MB
+global_flush_threshold = 536870912  # 512MB
 
 # LSM tree configuration
 [storage.lsm_config]
@@ -29,18 +40,27 @@ block_size_kb = 64
 node_instance = 1
 assignment_strategy = "HashBased"
 
-# Single local disk configuration for development
+# Multi-disk configuration for development
 [[storage.storage_layout.base_paths]]
-base_dir = "/workspace/data"
+base_dir = "/workspace/data/disk1/storage"
 instance_id = 1
-mount_point = "/workspace"
+mount_point = "/workspace/disk1"
 disk_type = { NvmeSsd = { max_iops = 100000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
 
-[storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 2048        # 2GB per collection WAL 
-# max_storage_size_mb = unlimited    # Unlimited storage per collection
-metadata_reserved_mb = 512    # 512MB reserved for metadata
-warning_threshold_percent = 85.0
+[[storage.storage_layout.base_paths]]
+base_dir = "/workspace/data/disk2/storage"
+instance_id = 2
+mount_point = "/workspace/disk2"
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/workspace/data/disk3/storage"
+instance_id = 3
+mount_point = "/workspace/disk3"
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
 
 # Temp directory configuration
 [storage.storage_layout.temp_config]
@@ -67,7 +87,7 @@ cleanup_temp_on_startup = true
 # Option 1: Local filesystem (default)
 [storage.metadata_backend]
 backend_type = "filestore"
-storage_url = "file:///workspace/data/metadata"
+storage_url = "file:///workspace/data/disk1/metadata"
 cache_size_mb = 128
 flush_interval_secs = 30
 

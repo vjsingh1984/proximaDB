@@ -387,6 +387,11 @@ pub enum OperationPriority {
 }
 
 /// Unified flush result that accommodates different engine types
+/// 
+/// Note: Default values use u64::MAX to indicate uninitialized state.
+/// This allows distinguishing between:
+/// - Uninitialized: u64::MAX (default)
+/// - Successful operation with zero results: 0
 #[derive(Debug, Clone)]
 pub struct FlushResult {
     /// Operation completed successfully
@@ -418,6 +423,11 @@ pub struct FlushResult {
 }
 
 /// Unified compaction result that accommodates different engine types
+/// 
+/// Note: Default values use u64::MAX to indicate uninitialized state.
+/// This allows distinguishing between:
+/// - Uninitialized: u64::MAX (default)
+/// - Successful operation with zero results: 0
 #[derive(Debug, Clone)]
 pub struct CompactionResult {
     /// Operation completed successfully
@@ -588,10 +598,10 @@ impl Default for FlushResult {
         Self {
             success: false,
             collections_affected: Vec::new(),
-            entries_flushed: 0,
-            bytes_written: 0,
-            files_created: 0,
-            duration_ms: 0,
+            entries_flushed: u64::MAX, // -1 equivalent for u64 (indicates uninitialized)
+            bytes_written: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
+            files_created: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
+            duration_ms: u64::MAX,     // -1 equivalent for u64 (indicates uninitialized)
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
@@ -604,13 +614,13 @@ impl Default for CompactionResult {
         Self {
             success: false,
             collections_affected: Vec::new(),
-            entries_processed: 0,
-            entries_removed: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            input_files: 0,
-            output_files: 0,
-            duration_ms: 0,
+            entries_processed: u64::MAX, // -1 equivalent for u64 (indicates uninitialized)
+            entries_removed: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
+            bytes_read: u64::MAX,        // -1 equivalent for u64 (indicates uninitialized)
+            bytes_written: u64::MAX,     // -1 equivalent for u64 (indicates uninitialized)
+            input_files: u64::MAX,       // -1 equivalent for u64 (indicates uninitialized)
+            output_files: u64::MAX,      // -1 equivalent for u64 (indicates uninitialized)
+            duration_ms: u64::MAX,       // -1 equivalent for u64 (indicates uninitialized)
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         }

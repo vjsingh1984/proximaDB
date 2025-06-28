@@ -126,6 +126,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/collections/:collection_id", patch(update_collection))
         .route("/collections/:collection_id", delete(delete_collection))
         
+        // Collection lookup utilities
+        .route("/collections/by-name/:collection_name/id", get(get_collection_id_by_name))
+        
         // Vector operations
         .route("/collections/:collection_id/vectors", post(insert_vector))
         .route("/collections/:collection_id/vectors/:vector_id", get(get_vector))
@@ -215,12 +218,12 @@ pub async fn list_collections(
     }
 }
 
-/// Get collection endpoint
+/// Get collection endpoint - supports both collection names and UUIDs
 pub async fn get_collection(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
-    match state.collection_service.get_collection_by_name(&collection_id).await {
+    match state.collection_service.get_collection_by_name_or_uuid(&collection_id).await {
         Ok(Some(collection)) => {
             let collection_json = serde_json::to_value(collection)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -246,6 +249,22 @@ pub async fn delete_collection(
         ))),
         Err(e) => {
             tracing::error!("Failed to delete collection: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Get collection ID by name endpoint
+/// GET /collections/by-name/{collection_name}/id
+pub async fn get_collection_id_by_name(
+    State(state): State<AppState>,
+    Path(collection_name): Path<String>,
+) -> Result<JsonResponse<ApiResponse<String>>, StatusCode> {
+    match state.collection_service.get_collection_uuid(&collection_name).await {
+        Ok(Some(uuid)) => Ok(JsonResponse(ApiResponse::success(uuid))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(e) => {
+            tracing::error!("Failed to get collection UUID: {:?}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -286,7 +305,7 @@ pub async fn update_collection(
         Ok(response) => {
             if response.success {
                 // Get the updated collection to return
-                match state.collection_service.get_collection_by_name(&collection_id).await {
+                match state.collection_service.get_collection_by_name_or_uuid(&collection_id).await {
                     Ok(Some(collection)) => {
                         let collection_json = serde_json::to_value(collection)
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

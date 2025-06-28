@@ -29,7 +29,6 @@ use crate::storage::StorageEngine;
 // Note: storage::vector module has been restructured
 // These types are now distributed across different modules
 // VIPER engine imports removed - not used in this service
-// TODO: Add imports for VectorStorageCoordinator and related types from their new locations
 use crate::core::{VectorRecord, VectorInsertResponse, VectorOperationMetrics, VectorSearchResponse, SearchMetadata, SearchDebugInfo, IndexStats, MetadataFilter, VectorOperation, SearchContext, SearchStrategy, SearchResult, DistanceMetric, StorageEngine as CoreStorageEngine, CollectionRequest};
 use crate::services::collection_service::CollectionService;
 use crate::storage::engines::viper::core::ViperCoreEngine;

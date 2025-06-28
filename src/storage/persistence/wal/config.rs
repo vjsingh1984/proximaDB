@@ -119,8 +119,13 @@ impl Default for WalStrategyType {
 /// Multi-disk configuration for WAL distribution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiDiskConfig {
-    /// Data directories on different disks
-    pub data_directories: Vec<PathBuf>,
+    /// WAL directory URLs supporting multiple filesystem types
+    /// Examples:
+    /// - file:///path/to/wal1, file:///path/to/wal2 (local multi-disk)
+    /// - s3://bucket1/wal, s3://bucket2/wal (S3 multi-bucket)
+    /// - adls://account.dfs.core.windows.net/container1/wal (Azure)
+    /// - gcs://bucket/wal (Google Cloud)
+    pub data_directories: Vec<String>,
 
     /// Distribution strategy
     pub distribution_strategy: DiskDistributionStrategy,
@@ -143,7 +148,7 @@ pub enum DiskDistributionStrategy {
 impl Default for MultiDiskConfig {
     fn default() -> Self {
         Self {
-            data_directories: vec![PathBuf::from("./data/wal")],
+            data_directories: vec!["file:///workspace/data/wal".to_string()],
             distribution_strategy: DiskDistributionStrategy::LoadBalanced, // Optimal for bulk inserts
             collection_affinity: true, // Keep collection on one disk for sequential I/O
         }
@@ -258,6 +263,28 @@ pub struct CollectionWalConfig {
 
     /// Override TTL settings
     pub default_ttl_days: Option<u32>,
+}
+
+// Conversion from core config to WAL config
+impl From<&crate::core::config::WalStorageConfig> for WalConfig {
+    fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
+        let mut wal_config = WalConfig::default();
+        
+        // Convert URLs to MultiDiskConfig
+        wal_config.multi_disk.data_directories = core_config.wal_urls.clone();
+        wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
+            crate::core::config::WalDistributionStrategy::RoundRobin => DiskDistributionStrategy::RoundRobin,
+            crate::core::config::WalDistributionStrategy::Hash => DiskDistributionStrategy::Hash,
+            crate::core::config::WalDistributionStrategy::LoadBalanced => DiskDistributionStrategy::LoadBalanced,
+        };
+        wal_config.multi_disk.collection_affinity = core_config.collection_affinity;
+        
+        // Set performance thresholds
+        wal_config.performance.memory_flush_size_bytes = core_config.memory_flush_size_bytes;
+        wal_config.performance.global_flush_threshold = core_config.global_flush_threshold;
+        
+        wal_config
+    }
 }
 
 impl WalConfig {

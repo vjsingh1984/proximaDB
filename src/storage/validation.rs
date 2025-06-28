@@ -95,11 +95,21 @@ impl ConfigValidator {
             bail!("WAL system must have at least one data directory");
         }
 
-        // Validate each data directory
-        for data_dir in &config.multi_disk.data_directories {
-            if !data_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(data_dir) {
-                    bail!("Cannot create WAL data directory {:?}: {}", data_dir, e);
+        // Validate each data directory URL
+        for data_dir_url in &config.multi_disk.data_directories {
+            // Convert URL to path for local file systems
+            let data_dir_path = if data_dir_url.starts_with("file://") {
+                std::path::PathBuf::from(data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url))
+            } else if data_dir_url.contains("://") {
+                // For cloud URLs, skip local filesystem validation
+                continue;
+            } else {
+                std::path::PathBuf::from(data_dir_url)
+            };
+            
+            if !data_dir_path.exists() {
+                if let Err(e) = std::fs::create_dir_all(&data_dir_path) {
+                    bail!("Cannot create WAL data directory {:?}: {}", data_dir_path, e);
                 }
             }
         }

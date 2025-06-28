@@ -277,7 +277,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     .ok_or_else(|| Status::invalid_argument("Missing collection_id for GET"))?;
                 
                 let collection = self.collection_service
-                    .get_collection_by_name(collection_id)
+                    .get_collection_by_name_or_uuid(collection_id)
                     .await
                     .map_err(|e| Status::internal(format!("Failed to get collection: {}", e)))?;
                 
@@ -433,7 +433,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 if result.success {
                     // Get the updated collection to return
                     let updated_collection = self.collection_service
-                        .get_collection_by_name(collection_id)
+                        .get_collection_by_name_or_uuid(collection_id)
                         .await
                         .map_err(|e| Status::internal(format!("Failed to retrieve updated collection: {}", e)))?
                         .map(|record| {
@@ -478,6 +478,40 @@ impl ProximaDb for ProximaDbGrpcService {
                         ),
                     };
                     Err(status)
+                }
+            }
+            
+            CollectionOperation::CollectionGetIdByName => {
+                let collection_name = req.collection_id.as_ref()
+                    .ok_or_else(|| Status::invalid_argument("Missing collection_id (name) for GET_ID_BY_NAME"))?;
+                
+                let uuid_result = self.collection_service
+                    .get_collection_uuid(collection_name)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to get collection UUID: {}", e)))?;
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                
+                match uuid_result {
+                    Some(uuid) => {
+                        // Return the UUID in the metadata field
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert("collection_id".to_string(), uuid);
+                        
+                        Ok(Response::new(CollectionResponse {
+                            success: true,
+                            operation: CollectionOperation::CollectionGetIdByName as i32,
+                            collection: None,
+                            collections: vec![],
+                            affected_count: 1,
+                            total_count: Some(1),
+                            metadata,
+                            error_message: None,
+                            error_code: None,
+                            processing_time_us: processing_time,
+                        }))
+                    }
+                    None => Err(Status::not_found(format!("Collection '{}' not found", collection_name)))
                 }
             }
             

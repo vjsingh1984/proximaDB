@@ -532,6 +532,8 @@ pub enum CollectionOperation {
     CollectionList = 4,
     CollectionDelete = 5,
     CollectionMigrate = 6,
+    /// Get collection UUID by name
+    CollectionGetIdByName = 7,
 }
 impl CollectionOperation {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -547,6 +549,7 @@ impl CollectionOperation {
             CollectionOperation::CollectionList => "COLLECTION_LIST",
             CollectionOperation::CollectionDelete => "COLLECTION_DELETE",
             CollectionOperation::CollectionMigrate => "COLLECTION_MIGRATE",
+            CollectionOperation::CollectionGetIdByName => "COLLECTION_GET_ID_BY_NAME",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -559,6 +562,7 @@ impl CollectionOperation {
             "COLLECTION_LIST" => Some(Self::CollectionList),
             "COLLECTION_DELETE" => Some(Self::CollectionDelete),
             "COLLECTION_MIGRATE" => Some(Self::CollectionMigrate),
+            "COLLECTION_GET_ID_BY_NAME" => Some(Self::CollectionGetIdByName),
             _ => None,
         }
     }

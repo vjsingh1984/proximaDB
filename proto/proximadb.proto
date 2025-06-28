@@ -60,6 +60,7 @@ enum CollectionOperation {
   COLLECTION_LIST = 4;
   COLLECTION_DELETE = 5;
   COLLECTION_MIGRATE = 6;
+  COLLECTION_GET_ID_BY_NAME = 7;  // Get collection UUID by name
 }
 
 enum VectorOperation {
