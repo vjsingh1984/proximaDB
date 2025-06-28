@@ -1,0 +1,172 @@
+@startuml WAL Strategy Pattern
+!theme aws-orange
+
+title WAL Strategy Pattern with Assignment Service Integration
+scale 1.2
+
+interface "WalStrategy" as WalStrategy {
+    + strategy_name(): &'static str
+    + initialize(config, filesystem): Result<()>
+    + set_storage_engine(engine): void
+    + write_entry(entry): Result<u64>
+    + read_entries(collection_id, from_seq, limit): Result<Vec<WalEntry>>
+    + flush(collection_id): Result<FlushResult>
+    + get_assignment_service(): &Arc<AssignmentService>
+    + select_wal_url_for_collection(collection_id, config): Result<String>
+    + discover_existing_assignments(config): Result<()>
+}
+
+class "AvroWalStrategy" as AvroWAL {
+    - config: Option<WalConfig>
+    - filesystem: Option<Arc<FilesystemFactory>>
+    - memory_table: Option<WalMemTable>
+    - disk_manager: Option<WalDiskManager>
+    - storage_engine: Option<Arc<UnifiedStorageEngine>>
+    - assignment_service: Arc<AssignmentService>
+    + strategy_name(): "Avro"
+    + serialize_entries(entries): Result<Vec<u8>>
+    + deserialize_entries(data): Result<Vec<WalEntry>>
+    + get_assignment_service(): &Arc<AssignmentService>
+}
+
+class "BincodeWalStrategy" as BincodeWAL {
+    - config: Option<WalConfig>
+    - filesystem: Option<Arc<FilesystemFactory>>
+    - memory_table: Option<WalMemTable>
+    - disk_manager: Option<WalDiskManager>
+    - storage_engine: Option<Arc<UnifiedStorageEngine>>
+    - assignment_service: Arc<AssignmentService>
+    + strategy_name(): "Bincode"
+    + serialize_entries(entries): Result<Vec<u8>>
+    + deserialize_entries(data): Result<Vec<u8>>
+    + get_assignment_service(): &Arc<AssignmentService>
+}
+
+interface "AssignmentService" as AssignmentService {
+    + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
+    + get_assignment(collection_id, component_type): Option<StorageAssignmentResult>
+    + record_assignment(collection_id, component_type, assignment): Result<()>
+    + remove_assignment(collection_id, component_type): Result<()>
+    + get_all_assignments(component_type): HashMap<CollectionId, StorageAssignmentResult>
+    + get_assignment_stats(): Result<serde_json::Value>
+}
+
+class "RoundRobinAssignmentService" as RoundRobinService {
+    - assignments: Arc<RwLock<HashMap<StorageComponentType, HashMap<CollectionId, StorageAssignmentResult>>>>
+    - round_robin_counters: Arc<RwLock<HashMap<StorageComponentType, usize>>>
+    + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
+    + get_assignment(collection_id, component_type): Option<StorageAssignmentResult>
+    + record_assignment(collection_id, component_type, assignment): Result<()>
+    + get_next_round_robin_index(component_type, storage_urls): Result<usize>
+    + hash_collection_id(collection_id): usize
+}
+
+class "StorageAssignmentResult" as Assignment {
+    + storage_url: String
+    + directory_index: usize
+    + assigned_at: DateTime<Utc>
+}
+
+enum "StorageComponentType" as ComponentType {
+    Wal
+    Viper
+    Lsm
+    Index
+    Metadata
+}
+
+class "WalConfig" as WalConfig {
+    + wal_urls: Vec<String>
+    + distribution_strategy: DistributionStrategy
+    + collection_affinity: bool
+    + memory_flush_size_bytes: usize
+    + global_flush_threshold: usize
+}
+
+' Inheritance relationships
+WalStrategy <|-- AvroWAL
+WalStrategy <|-- BincodeWAL
+AssignmentService <|-- RoundRobinService
+
+' Composition relationships
+AvroWAL *-- AssignmentService : uses
+BincodeWAL *-- AssignmentService : uses
+RoundRobinService --> Assignment : creates
+RoundRobinService --> ComponentType : manages
+WalStrategy --> WalConfig : configured by
+
+' Method call flows
+note bottom of WalStrategy
+    **Base Trait Implementation:**
+    
+    ```rust
+    async fn select_wal_url_for_collection(
+        &self, 
+        collection_id: &str, 
+        config: &WalConfig
+    ) -> Result<String> {
+        // Check existing assignment
+        if let Some(assignment) = self.get_assignment_service()
+            .get_assignment(&CollectionId::from(collection_id), StorageComponentType::Wal).await {
+            return Ok(assignment.storage_url);
+        }
+        
+        // Create new assignment
+        let assignment_config = StorageAssignmentConfig {
+            storage_urls: config.wal_urls.clone(),
+            component_type: StorageComponentType::Wal,
+            collection_affinity: config.collection_affinity,
+        };
+        
+        let assignment = self.get_assignment_service()
+            .assign_storage_url(&CollectionId::from(collection_id), &assignment_config).await?;
+            
+        Ok(assignment.storage_url)
+    }
+    ```
+end note
+
+note right of RoundRobinService
+    **Round-Robin Algorithm:**
+    
+    ```rust
+    async fn get_next_round_robin_index(
+        &self,
+        component_type: StorageComponentType,
+        storage_urls: &[String],
+    ) -> Result<usize> {
+        let mut counters = self.round_robin_counters.write().await;
+        let counter = counters.entry(component_type).or_insert(0);
+        let index = *counter % storage_urls.len();
+        *counter = (*counter + 1) % storage_urls.len();
+        Ok(index)
+    }
+    ```
+    
+    **Affinity Algorithm:**
+    ```rust
+    fn hash_collection_id(&self, collection_id: &CollectionId) -> usize {
+        let mut hasher = DefaultHasher::new();
+        collection_id.hash(&mut hasher);
+        hasher.finish() as usize
+    }
+    ```
+end note
+
+note top of AvroWAL
+    **Avro WAL Strategy:**
+    • Schema-based serialization
+    • Compact binary format
+    • Cross-language compatibility
+    • Built-in compression
+end note
+
+note top of BincodeWAL
+    **Bincode WAL Strategy:**
+    • Native Rust performance
+    • Zero-copy deserialization
+    • Minimal overhead
+    • Type safety
+end note
+
+@enduml

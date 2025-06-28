@@ -1,0 +1,232 @@
+@startuml Data Flow and Persistence
+!theme aws-orange
+
+title ProximaDB Data Flow and Persistence Lifecycle
+scale 1.2
+
+skinparam sequenceMessageAlign center
+
+actor "Client" as Client
+box "API Layer" #LightBlue
+    participant "REST/gRPC" as API
+end box
+
+box "Service Layer" #LightGreen
+    participant "Collection Service" as CollSvc
+    participant "Unified Avro Service" as AvroSvc
+end box
+
+box "Assignment Layer" #Orange
+    participant "Assignment Service" as AssignSvc
+end box
+
+box "WAL Layer" #LightYellow
+    participant "WAL Manager" as WAL
+    participant "WAL Strategy" as Strategy
+    participant "Memtable (ART)" as Memtable
+end box
+
+box "Storage Layer" #Pink
+    participant "VIPER Engine" as VIPER
+    participant "Filesystem" as FS
+end box
+
+box "Multi-Disk Storage" #LightGray
+    database "Disk 1" as D1
+    database "Disk 2" as D2  
+    database "Disk 3" as D3
+end box
+
+== Collection Creation & Assignment ==
+
+Client -> API: POST /collections {name, dimension, config}
+activate API
+
+API -> CollSvc: create_collection(name, config)
+activate CollSvc
+
+CollSvc -> AssignSvc: assign_storage_url(collection_id, WAL)
+activate AssignSvc
+
+AssignSvc -> AssignSvc: round_robin_assignment()
+note right: Selects Disk 2 for this collection
+
+AssignSvc -> FS: ensure_directory(/data/disk2/wal/collection_id)
+FS -> D2: create directory structure
+D2 --> FS: success
+
+AssignSvc --> CollSvc: assignment{url: "file:///data/disk2/wal", index: 1}
+deactivate AssignSvc
+
+CollSvc -> WAL: initialize_collection_wal(collection_id, assignment)
+activate WAL
+
+WAL -> Strategy: set_assignment(collection_id, assignment)
+activate Strategy
+Strategy --> WAL: configured
+deactivate Strategy
+
+WAL --> CollSvc: initialized
+deactivate WAL
+
+CollSvc --> API: collection_created{id, name, uuid}
+deactivate CollSvc
+
+API --> Client: 201 Created
+deactivate API
+
+== Vector Insert & WAL Writing ==
+
+Client -> API: POST /collections/{id}/vectors {vector_id, vector, metadata}
+activate API
+
+API -> AvroSvc: insert_vector(collection_id, vector_id, vector, metadata)
+activate AvroSvc
+
+AvroSvc -> WAL: write_entry(collection_id, WalEntry)
+activate WAL
+
+WAL -> Strategy: get_assignment_service().get_assignment(collection_id, WAL)
+activate Strategy
+
+Strategy -> AssignSvc: get_assignment(collection_id, WAL)
+activate AssignSvc
+AssignSvc --> Strategy: cached_assignment{disk2}
+deactivate AssignSvc
+
+Strategy -> Memtable: insert_entry(collection_id, entry)
+activate Memtable
+
+Memtable -> Memtable: art_tree.insert(vector_id, entry)
+note right: In-memory ART structure\nfor fast lookups
+
+Memtable --> Strategy: sequence_number
+deactivate Memtable
+
+Strategy -> Strategy: check_flush_threshold()
+alt Memory threshold exceeded (1MB)
+    Strategy -> Strategy: trigger_background_flush()
+    
+    Strategy -> FS: write_wal_segment(assignment.storage_url, serialized_data)
+    activate FS
+    FS -> D2: write /data/disk2/wal/collection_id/segment_001.avro
+    D2 --> FS: written
+    deactivate FS
+    
+    Strategy -> Memtable: clear_flushed_entries(collection_id, sequence)
+    activate Memtable
+    Memtable --> Strategy: cleared
+    deactivate Memtable
+end
+
+Strategy --> WAL: sequence_number
+deactivate Strategy
+
+WAL --> AvroSvc: sequence_number
+deactivate WAL
+
+AvroSvc --> API: insert_result{sequence_number}
+deactivate AvroSvc
+
+API --> Client: 200 OK
+deactivate API
+
+== WAL Flush to VIPER Storage ==
+
+note over Strategy, VIPER: Periodic or threshold-triggered flush
+
+Strategy -> Strategy: collections_needing_flush()
+activate Strategy
+
+Strategy -> Memtable: get_all_entries(collection_id)
+activate Memtable
+Memtable --> Strategy: vector_entries[]
+deactivate Memtable
+
+Strategy -> Strategy: serialize_entries(entries, Avro)
+Strategy -> FS: write_wal_segment(disk2, serialized_data)
+activate FS
+FS -> D2: atomic_write(segment.avro)
+D2 --> FS: committed
+deactivate FS
+
+Strategy -> VIPER: delegate_to_storage_engine_flush(collection_id)
+activate VIPER
+
+VIPER -> AssignSvc: assign_storage_url(collection_id, VIPER)
+activate AssignSvc
+AssignSvc --> VIPER: assignment{disk1_storage}
+deactivate AssignSvc
+
+VIPER -> FS: write_parquet_files(disk1_storage, vector_data)
+activate FS
+FS -> D1: write /data/disk1/storage/collection_id/vectors.parquet
+D1 --> FS: written
+deactivate FS
+
+VIPER --> Strategy: flush_result{entries_flushed, bytes_written}
+deactivate VIPER
+
+Strategy -> Memtable: clear_flushed(collection_id, last_sequence)
+activate Memtable
+Memtable --> Strategy: cleared
+deactivate Memtable
+
+Strategy --> Strategy: flush_complete
+deactivate Strategy
+
+== Server Restart & Recovery ==
+
+note over AssignSvc, D3: Server shutdown and restart
+
+AssignSvc -> AssignSvc: discover_and_record_assignments()
+activate AssignSvc
+
+loop for each disk [D1, D2, D3]
+    AssignSvc -> FS: list_directories(disk/wal)
+    activate FS
+    FS -> D1: scan /data/disk1/wal/
+    D1 --> FS: [collection_a, collection_b]
+    FS -> D2: scan /data/disk2/wal/
+    D2 --> FS: [collection_c, collection_d]
+    FS -> D3: scan /data/disk3/wal/
+    D3 --> FS: [collection_e]
+    FS --> AssignSvc: discovered_collections
+    deactivate FS
+    
+    AssignSvc -> AssignSvc: record_assignment(collection_id, WAL, disk_assignment)
+end
+
+AssignSvc --> AssignSvc: discovery_complete{5_collections_recovered}
+deactivate AssignSvc
+
+WAL -> Strategy: recover()
+activate Strategy
+
+Strategy -> FS: read_wal_segments(assigned_directories)
+activate FS
+FS -> D1: read segments
+FS -> D2: read segments  
+FS -> D3: read segments
+FS --> Strategy: all_wal_entries[]
+deactivate FS
+
+Strategy -> Strategy: deserialize_entries(wal_data)
+Strategy -> Memtable: restore_entries(entries)
+activate Memtable
+Memtable --> Strategy: restored
+deactivate Memtable
+
+Strategy --> WAL: recovery_complete{entries_recovered}
+deactivate Strategy
+
+note over Client, D3
+    **Multi-Disk Benefits:**
+    • Load distribution across multiple disks
+    • Parallel I/O operations
+    • Fault tolerance (disk failure isolation)
+    • Scalable performance
+    • Fair assignment via round-robin
+end note
+
+@enduml

@@ -1,0 +1,131 @@
+@startuml Multi-Disk Architecture
+!theme aws-orange
+
+title ProximaDB Multi-Disk Persistence Architecture
+scale 1.2
+
+package "ProximaDB Server" {
+    component "API Layer" as API {
+        [REST Server :5678] as REST
+        [gRPC Server :5679] as gRPC
+    }
+    
+    component "Service Layer" as Services {
+        [Collection Service] as CollSvc
+        [Unified Avro Service] as AvroSvc
+        [Vector Storage Coordinator] as VectorCoord
+    }
+    
+    component "Assignment Service" as Assignment {
+        [Round-Robin Assignment Service] as RRAService
+        [Storage Component Mapper] as SCMapper
+        [Discovery Service] as Discovery
+    }
+    
+    component "WAL Layer" as WAL {
+        [WAL Manager] as WALMgr
+        [Avro WAL Strategy] as AvroWAL
+        [Bincode WAL Strategy] as BincodeWAL
+        [Base WAL Strategy Trait] as BaseWAL
+    }
+    
+    component "Storage Layer" as Storage {
+        [VIPER Engine] as VIPER
+        [LSM Engine] as LSM
+        [Filesystem Factory] as FSFactory
+    }
+}
+
+package "Multi-Disk Storage" {
+    cloud "Disk 1" as Disk1 {
+        folder "WAL" as WAL1
+        folder "Storage" as Storage1  
+        folder "Metadata" as Meta1
+    }
+    
+    cloud "Disk 2" as Disk2 {
+        folder "WAL" as WAL2
+        folder "Storage" as Storage2
+        folder "Metadata" as Meta2
+    }
+    
+    cloud "Disk 3" as Disk3 {
+        folder "WAL" as WAL3
+        folder "Storage" as Storage3
+        folder "Metadata" as Meta3
+    }
+}
+
+package "Cloud Storage" as Cloud {
+    cloud "S3 Compatible" as S3
+    cloud "Azure Blob" as Azure
+    cloud "Google Cloud" as GCS
+}
+
+' Connections
+REST --> CollSvc
+gRPC --> CollSvc
+CollSvc --> AvroSvc
+AvroSvc --> VectorCoord
+VectorCoord --> Assignment
+Assignment --> WALMgr
+WALMgr --> AvroWAL
+WALMgr --> BincodeWAL
+AvroWAL --|> BaseWAL
+BincodeWAL --|> BaseWAL
+BaseWAL --> Assignment : uses
+Assignment --> RRAService
+RRAService --> SCMapper
+Discovery --> SCMapper
+WALMgr --> VIPER
+WALMgr --> LSM
+VIPER --> FSFactory
+LSM --> FSFactory
+
+' Multi-disk assignments
+Assignment --> WAL1 : assigns collections
+Assignment --> WAL2 : round-robin
+Assignment --> WAL3 : distribution
+
+Assignment --> Storage1 : performance-based
+Assignment --> Storage2 : assignment
+Assignment --> Storage3 : strategy
+
+FSFactory --> WAL1
+FSFactory --> WAL2  
+FSFactory --> WAL3
+FSFactory --> Storage1
+FSFactory --> Storage2
+FSFactory --> Storage3
+FSFactory --> Meta1
+
+' Cloud connectivity
+FSFactory --> S3 : file:// → s3://
+FSFactory --> Azure : file:// → adls://
+FSFactory --> GCS : file:// → gcs://
+
+note right of Assignment
+  **Round-Robin Assignment Logic:**
+  • Collection → Disk mapping
+  • Fair distribution across disks
+  • Affinity-based placement
+  • Discovery on startup
+end note
+
+note bottom of BaseWAL
+  **Base Trait Pattern:**
+  • Consistent assignment logic
+  • Polymorphic behavior
+  • No code duplication
+  • Extensible interface
+end note
+
+note bottom of Cloud
+  **URL-Based Configuration:**
+  file:///data/disk1/wal
+  s3://bucket/proximadb/wal
+  adls://account/container/wal
+  gcs://bucket/proximadb/wal
+end note
+
+@enduml

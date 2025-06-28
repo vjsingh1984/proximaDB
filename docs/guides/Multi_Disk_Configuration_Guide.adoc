@@ -1,0 +1,465 @@
+= ProximaDB Multi-Disk Configuration Guide
+:toc:
+:toc-placement: preamble
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ../diagrams/images
+
+== Overview
+
+This guide covers the configuration and deployment of ProximaDB's multi-disk persistence system, which provides enhanced performance, scalability, and fault tolerance through intelligent data distribution across multiple storage devices.
+
+== Multi-Disk Architecture Benefits
+
+=== Performance Benefits
+* **Parallel I/O Operations**: Concurrent read/write operations across multiple disks
+* **Load Distribution**: Even distribution of collections via round-robin assignment
+* **Reduced Bottlenecks**: Eliminate single-disk performance limitations
+* **Scalable Throughput**: Linear performance scaling with additional disks
+
+=== Reliability Benefits  
+* **Fault Tolerance**: Disk failure isolation with automatic recovery
+* **Assignment Recovery**: Automatic discovery and restoration of collection mappings
+* **Data Redundancy**: Optional replication across multiple storage locations
+* **Graceful Degradation**: Continue operations with reduced disk availability
+
+=== Scalability Benefits
+* **Horizontal Scaling**: Add storage capacity by adding disks
+* **Cloud Integration**: Seamless transition from local to cloud storage
+* **Multi-Region Support**: Distribute data across geographic regions
+* **Elastic Growth**: Dynamic addition of storage resources
+
+== Configuration Structure
+
+=== Basic Multi-Disk Setup
+
+[source,toml]
+----
+# Multi-disk WAL configuration
+[storage.wal_config]
+wal_urls = [
+    "file:///data/disk1/wal",
+    "file:///data/disk2/wal", 
+    "file:///data/disk3/wal"
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+memory_flush_size_bytes = 1048576  # 1MB
+global_flush_threshold = 536870912  # 512MB
+
+# Multi-disk storage layout
+[[storage.storage_layout.base_paths]]
+base_dir = "/data/disk1/storage"
+instance_id = 1
+mount_point = "/mnt/disk1"
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/data/disk2/storage"
+instance_id = 2  
+mount_point = "/mnt/disk2"
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/data/disk3/storage"
+instance_id = 3
+mount_point = "/mnt/disk3"
+disk_type = { SataSsd = { max_iops = 50000 } }
+capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
+
+# Metadata backend (typically on fastest disk)
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "file:///data/disk1/metadata"
+cache_size_mb = 128
+flush_interval_secs = 30
+----
+
+=== Advanced Configuration Options
+
+==== Distribution Strategies
+[source,toml]
+----
+[storage.wal_config]
+# Round-robin distribution (default)
+distribution_strategy = "LoadBalanced"
+
+# Hash-based consistent assignment
+distribution_strategy = "HashBased"
+
+# Performance-based assignment (fastest disk first)
+distribution_strategy = "PerformanceBased"
+----
+
+==== Collection Affinity
+[source,toml]
+----
+[storage.wal_config]
+# Enable collection affinity (same collection always goes to same disk)
+collection_affinity = true
+
+# Disable affinity for maximum distribution
+collection_affinity = false
+----
+
+==== Disk Type Configuration
+[source,toml]
+----
+# NVMe SSD (highest performance)
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+
+# SATA SSD (high performance) 
+disk_type = { SataSsd = { max_iops = 50000 } }
+
+# Traditional HDD (high capacity)
+disk_type = { Hdd = { max_iops = 1000 } }
+
+# Network storage
+disk_type = { NetworkStorage = { latency_ms = 5.0 } }
+----
+
+== Cloud Storage Configuration
+
+=== AWS S3 Configuration
+
+[source,toml]
+----
+[storage.wal_config]
+wal_urls = [
+    "s3://proximadb-wal-us-east-1/cluster1",
+    "s3://proximadb-wal-us-west-2/cluster1",
+    "s3://proximadb-wal-eu-west-1/cluster1"
+]
+
+[[storage.storage_layout.base_paths]]
+base_dir = "s3://proximadb-storage-us-east-1/cluster1"
+instance_id = 1
+mount_point = "us-east-1"
+disk_type = { NetworkStorage = { latency_ms = 10.0 } }
+
+[storage.metadata_backend]
+backend_type = "filestore"  
+storage_url = "s3://proximadb-metadata/cluster1"
+
+[storage.metadata_backend.cloud_config.s3_config]
+region = "us-east-1"
+bucket = "proximadb-metadata"
+use_iam_role = true
+----
+
+=== Azure Blob Storage Configuration
+
+[source,toml]
+----
+[storage.wal_config]
+wal_urls = [
+    "adls://proximadb1.dfs.core.windows.net/wal/cluster1",
+    "adls://proximadb2.dfs.core.windows.net/wal/cluster1",
+    "adls://proximadb3.dfs.core.windows.net/wal/cluster1"
+]
+
+[[storage.storage_layout.base_paths]]
+base_dir = "adls://proximadbstorage.dfs.core.windows.net/data/cluster1"
+instance_id = 1
+mount_point = "azure-east"
+disk_type = { NetworkStorage = { latency_ms = 15.0 } }
+
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "adls://proximadbmeta.dfs.core.windows.net/metadata"
+
+[storage.metadata_backend.cloud_config.azure_config]
+account_name = "proximadbmeta"
+container = "metadata"
+use_managed_identity = true
+----
+
+=== Google Cloud Storage Configuration
+
+[source,toml]
+----
+[storage.wal_config]
+wal_urls = [
+    "gcs://proximadb-wal-us-central1/cluster1",
+    "gcs://proximadb-wal-us-east1/cluster1", 
+    "gcs://proximadb-wal-europe-west1/cluster1"
+]
+
+[[storage.storage_layout.base_paths]]
+base_dir = "gcs://proximadb-storage-us-central1/cluster1"
+instance_id = 1
+mount_point = "gcp-central"
+disk_type = { NetworkStorage = { latency_ms = 12.0 } }
+
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "gcs://proximadb-metadata/cluster1"
+
+[storage.metadata_backend.cloud_config.gcs_config]
+project_id = "proximadb-project"
+bucket = "proximadb-metadata"
+use_workload_identity = true
+----
+
+== Deployment Scenarios
+
+=== Development Environment
+
+[source,toml]
+----
+# Single-machine development with simulated multi-disk
+[storage.wal_config]
+wal_urls = [
+    "file:///tmp/proximadb/disk1/wal",
+    "file:///tmp/proximadb/disk2/wal"
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = false
+memory_flush_size_bytes = 262144  # 256KB for faster testing
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/tmp/proximadb/disk1/storage"
+instance_id = 1
+disk_type = { NvmeSsd = { max_iops = 10000 } }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/tmp/proximadb/disk2/storage"
+instance_id = 2
+disk_type = { NvmeSsd = { max_iops = 10000 } }
+----
+
+=== Production On-Premises
+
+[source,toml]
+----
+# High-performance on-premises deployment
+[storage.wal_config]
+wal_urls = [
+    "file:///mnt/nvme1/proximadb/wal",
+    "file:///mnt/nvme2/proximadb/wal",
+    "file:///mnt/nvme3/proximadb/wal",
+    "file:///mnt/nvme4/proximadb/wal"
+]
+distribution_strategy = "PerformanceBased"
+collection_affinity = true
+memory_flush_size_bytes = 16777216  # 16MB
+global_flush_threshold = 1073741824  # 1GB
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/mnt/nvme1/proximadb/storage"
+instance_id = 1
+mount_point = "/mnt/nvme1"
+disk_type = { NvmeSsd = { max_iops = 500000 } }
+capacity_config = { max_wal_size_mb = 10240, metadata_reserved_mb = 1024, warning_threshold_percent = 90.0 }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/mnt/nvme2/proximadb/storage"
+instance_id = 2
+mount_point = "/mnt/nvme2" 
+disk_type = { NvmeSsd = { max_iops = 500000 } }
+capacity_config = { max_wal_size_mb = 10240, metadata_reserved_mb = 1024, warning_threshold_percent = 90.0 }
+
+# Additional disks...
+----
+
+=== Hybrid Cloud Deployment
+
+[source,toml]
+----
+# Local high-performance WAL with cloud storage
+[storage.wal_config]
+wal_urls = [
+    "file:///mnt/nvme1/wal",     # Local NVMe for performance
+    "file:///mnt/nvme2/wal",     # Local NVMe for performance
+    "s3://backup-wal/cluster1"   # Cloud backup WAL
+]
+distribution_strategy = "PerformanceBased"
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/mnt/nvme1/storage"         # Local storage for hot data
+instance_id = 1
+disk_type = { NvmeSsd = { max_iops = 200000 } }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "s3://cold-storage/cluster1"  # Cloud storage for cold data
+instance_id = 2
+disk_type = { NetworkStorage = { latency_ms = 50.0 } }
+
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "s3://metadata-backup/cluster1"  # Cloud metadata for durability
+----
+
+== Performance Tuning
+
+=== WAL Configuration Tuning
+
+[source,toml]
+----
+[storage.wal_config]
+# Adjust flush thresholds based on workload
+memory_flush_size_bytes = 1048576      # 1MB - frequent small flushes
+memory_flush_size_bytes = 16777216     # 16MB - larger batches, less overhead  
+memory_flush_size_bytes = 67108864     # 64MB - maximum batch size
+
+# Global flush threshold for memory management
+global_flush_threshold = 536870912     # 512MB - conservative
+global_flush_threshold = 2147483648    # 2GB - aggressive memory usage
+----
+
+=== Disk-Specific Optimizations
+
+[source,toml]
+----
+# NVMe optimization
+[[storage.storage_layout.base_paths]]
+disk_type = { NvmeSsd = { max_iops = 1000000 } }
+capacity_config = { 
+    max_wal_size_mb = 20480,           # 20GB WAL per collection
+    metadata_reserved_mb = 2048,       # 2GB metadata space
+    warning_threshold_percent = 95.0   # Use more space on fast disks
+}
+
+# Network storage optimization  
+[[storage.storage_layout.base_paths]]
+disk_type = { NetworkStorage = { latency_ms = 5.0 } }
+capacity_config = {
+    max_wal_size_mb = 1024,            # 1GB WAL per collection
+    metadata_reserved_mb = 256,        # 256MB metadata space  
+    warning_threshold_percent = 80.0   # Conservative on network storage
+}
+----
+
+== Monitoring and Maintenance
+
+=== Health Check Endpoints
+
+[source,bash]
+----
+# Check assignment service status
+curl http://localhost:5678/health/assignment
+
+# Get assignment statistics
+curl http://localhost:5678/admin/assignment/stats
+
+# Check disk usage
+curl http://localhost:5678/admin/storage/usage
+----
+
+=== Log Monitoring
+
+[source,bash]
+----
+# Monitor assignment service logs
+tail -f /var/log/proximadb/server.log | grep "assignment"
+
+# Monitor multi-disk operations
+tail -f /var/log/proximadb/server.log | grep "multi-disk\|round-robin"
+
+# Monitor WAL flush operations
+tail -f /var/log/proximadb/server.log | grep "flush\|WAL"
+----
+
+=== Disk Space Monitoring
+
+[source,bash]
+----
+# Check all configured disk usage
+for disk in /data/disk1 /data/disk2 /data/disk3; do
+    echo "=== $disk ==="
+    df -h $disk
+    du -sh $disk/wal $disk/storage $disk/metadata 2>/dev/null
+done
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Assignment Service Not Working
+[source,bash]
+----
+# Check assignment service initialization
+grep "RoundRobinAssignmentService" /var/log/proximadb/server.log
+
+# Verify directory permissions
+ls -la /data/disk*/wal /data/disk*/storage
+
+# Test directory creation
+sudo -u proximadb mkdir -p /data/disk1/wal/test_collection
+----
+
+==== WAL URL Conversion Errors
+[source,bash]
+----
+# Check for URL parsing errors
+grep "No such file or directory" /var/log/proximadb/server.log
+
+# Verify URL format
+# Correct: file:///data/disk1/wal  
+# Incorrect: file://data/disk1/wal (missing slash)
+----
+
+==== Poor Distribution Performance
+[source,bash]
+----
+# Check assignment distribution
+curl http://localhost:5678/admin/assignment/stats | jq '.wal.directory_distribution'
+
+# Example good distribution across 3 disks:
+# {"0": 5, "1": 4, "2": 4}  # Even distribution
+# {"0": 13, "1": 0, "2": 0} # Poor distribution - investigate
+----
+
+=== Recovery Procedures
+
+==== Disk Failure Recovery
+1. **Identify Failed Disk**: Monitor alerts and check disk health
+2. **Isolate Collections**: Determine which collections were on failed disk
+3. **Replace Disk**: Install new disk and mount at same location
+4. **Restore Data**: Restore from backups or replicas if available
+5. **Update Assignment**: Assignment service will auto-discover new layout
+
+==== Assignment Service Recovery
+1. **Clear Assignment Cache**: Restart server to trigger discovery
+2. **Manual Assignment**: Use admin API to manually assign collections
+3. **Verify Distribution**: Check assignment statistics for fairness
+
+=== Performance Optimization
+
+==== Disk Performance Issues
+* **Check Disk I/O**: Use `iostat`, `iotop` to identify bottlenecks
+* **Adjust IOPS Limits**: Update `max_iops` values in configuration
+* **Consider Disk Replacement**: Upgrade to faster storage technology
+
+==== Memory Usage Optimization
+* **Tune Flush Thresholds**: Adjust `memory_flush_size_bytes` based on available RAM
+* **Monitor Memory Usage**: Watch for memory pressure in logs
+* **Balance Batch Sizes**: Larger batches = less overhead, more memory usage
+
+==== Network Storage Optimization
+* **Adjust Timeout Values**: Increase timeouts for high-latency connections
+* **Use Regional Storage**: Place storage close to compute resources
+* **Enable Compression**: Use storage-level compression for network efficiency
+
+== Best Practices
+
+=== Configuration Best Practices
+1. **Use Consistent Paths**: Follow consistent naming conventions for disk paths
+2. **Document Layout**: Maintain documentation of disk assignments and purposes
+3. **Version Control**: Keep configuration files in version control
+4. **Environment Separation**: Use different configurations for dev/staging/prod
+
+=== Operational Best Practices
+1. **Monitor Disk Health**: Regular SMART monitoring and disk health checks
+2. **Plan Capacity**: Monitor disk usage and plan for growth
+3. **Test Recovery**: Regularly test backup and recovery procedures
+4. **Performance Baseline**: Establish performance baselines for monitoring
+
+=== Security Best Practices
+1. **Encrypt at Rest**: Use disk encryption or cloud provider encryption
+2. **Secure Network**: Use VPCs/VNETs for cloud deployments
+3. **Access Control**: Implement proper file system permissions
+4. **Audit Logs**: Enable audit logging for compliance requirements
