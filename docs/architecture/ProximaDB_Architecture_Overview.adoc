@@ -1,0 +1,277 @@
+= ProximaDB Architecture Overview
+:toc:
+:toc-placement: preamble
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ../diagrams/images
+
+== Overview
+
+ProximaDB is a cloud-native vector database designed for high-performance similarity search and vector operations. The architecture implements a multi-layered design with dual-protocol support, advanced storage engines, and enterprise-grade persistence capabilities.
+
+== Key Features
+
+* **Multi-Protocol Support**: Simultaneous gRPC (port 5679) and REST (port 5678) APIs
+* **Multi-Disk Storage**: Distributed WAL and storage across multiple disks for performance
+* **Assignment Service**: Intelligent collection-to-disk mapping with round-robin distribution
+* **Cloud-Native**: Support for file://, s3://, adls://, gcs:// storage backends
+* **Advanced Indexing**: AXIS adaptive indexing system with HNSW and IVF support
+* **Dual Storage Engines**: VIPER (vector-optimized Parquet) and LSM tree engines
+
+== System Architecture
+
+image::Multi-Disk Architecture.png[Multi-Disk Architecture, align="center"]
+
+=== API Layer
+
+The API layer provides dual-server implementation with both gRPC and REST endpoints running simultaneously:
+
+* **gRPC Server** (port 5679): High-performance binary protocol for client libraries
+* **REST Server** (port 5678): HTTP/JSON API for web applications and tooling
+* **Protocol Definitions**: Unified schema defined in `proto/proximadb.proto`
+
+=== Service Layer
+
+==== Collection Service
+Manages collection lifecycle with full persistence support:
+* Collection CRUD operations with UUID and name-based lookup
+* Metadata persistence via FilestoreMetadataBackend
+* Integration with assignment service for multi-disk placement
+
+==== Unified Avro Service
+Central database operations layer transitioning from JSON to Avro:
+* Binary Avro operations for performance
+* Vector insert/update/delete operations
+* Integration with WAL and storage engines
+
+==== Vector Storage Coordinator
+Orchestrates vector operations across storage engines:
+* Coordinates between WAL and VIPER/LSM engines
+* Handles flush and compaction operations
+* Manages data lifecycle from WAL to persistent storage
+
+=== Assignment Service Architecture
+
+image::Assignment Service Flow.png[Assignment Service Flow, align="center"]
+
+The Assignment Service provides intelligent collection-to-disk mapping:
+
+==== Round-Robin Assignment
+* Fair distribution across configured storage directories
+* Configurable collection affinity for consistent placement
+* Support for multiple assignment strategies (Round-Robin, Hash-Based, Performance-Based)
+
+==== Discovery and Recovery
+* Automatic discovery of existing collections during startup
+* Recovery of assignment mappings from filesystem layout
+* Multi-directory scanning for distributed setups
+
+==== Configuration Support
+* External TOML configuration for storage URLs
+* Support for cloud storage backends (S3, Azure, GCS)
+* Flexible assignment strategies
+
+=== WAL (Write-Ahead Log) Layer
+
+image::WAL Strategy Pattern.png[WAL Strategy Pattern, align="center"]
+
+==== WAL Strategy Pattern
+The WAL layer implements a strategy pattern for different serialization formats:
+
+* **Base WalStrategy Trait**: Common assignment logic for all implementations
+* **AvroWalStrategy**: Schema-based serialization with cross-language compatibility
+* **BincodeWalStrategy**: Native Rust performance with zero-copy optimization
+
+==== Multi-Disk WAL Distribution
+* Assignment service integration for consistent collection placement
+* Round-robin distribution across configured WAL directories
+* Discovery-based recovery for startup resilience
+
+==== Memory Management
+* ART (Adaptive Radix Tree) memtables for efficient in-memory storage
+* Configurable flush thresholds (default: 1MB per collection)
+* Background flushing to disk storage
+
+=== Storage Layer
+
+==== VIPER Engine
+Vector-optimized Parquet storage with compression:
+* Columnar storage format optimized for vector operations
+* Built-in compression (Snappy, LZ4, Zstd)
+* Efficient similarity search capabilities
+
+==== LSM Tree Engine  
+Log-Structured Merge tree for high-write workloads:
+* Multi-level compaction strategy
+* Configurable memtable sizes and compaction thresholds
+* Optimized for time-series and append-heavy workloads
+
+==== Filesystem Abstraction
+Multi-cloud filesystem abstraction supporting:
+* **Local**: `file://` URLs for development and on-premises
+* **AWS S3**: `s3://` URLs with IAM role support
+* **Azure Blob**: `adls://` URLs with managed identity
+* **Google Cloud**: `gcs://` URLs with workload identity
+
+== Data Flow and Persistence
+
+image::Data Flow and Persistence.png[Data Flow and Persistence, align="center"]
+
+=== Write Path
+1. **API Request**: Client sends vector insert via REST/gRPC
+2. **Service Processing**: Collection service validates and processes request
+3. **Assignment**: Assignment service determines target disk for collection
+4. **WAL Write**: WAL strategy writes entry to assigned disk memtable
+5. **Memory Management**: Entry stored in ART memtable for fast access
+6. **Threshold Check**: Monitor memory usage for flush triggers
+7. **Background Flush**: Serialize and write WAL segments to disk
+8. **Storage Engine**: Delegate to VIPER/LSM for persistent storage
+
+=== Read Path
+1. **API Request**: Client requests vector or search operation
+2. **Collection Lookup**: Service locates collection via UUID or name
+3. **Assignment Resolution**: Determine storage locations for collection
+4. **Memory First**: Check WAL memtables for recent data
+5. **Disk Fallback**: Read from persistent storage if not in memory
+6. **Index Acceleration**: Use AXIS indexing for similarity search
+7. **Result Aggregation**: Merge results from multiple sources
+8. **Response**: Return formatted results to client
+
+=== Recovery Process
+1. **Assignment Discovery**: Scan all configured directories for collections
+2. **WAL Recovery**: Read WAL segments from assigned disks
+3. **Memtable Restoration**: Rebuild in-memory structures from WAL
+4. **Storage Engine Recovery**: Initialize VIPER/LSM engines
+5. **Index Rebuilding**: Restore search indexes from persisted data
+
+== Configuration
+
+=== Multi-Disk Configuration
+[source,toml]
+----
+[storage.wal_config]
+wal_urls = [
+    "file:///data/disk1/wal",
+    "file:///data/disk2/wal", 
+    "file:///data/disk3/wal"
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+memory_flush_size_bytes = 1048576  # 1MB
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/data/disk1/storage"
+instance_id = 1
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+
+[[storage.storage_layout.base_paths]]
+base_dir = "/data/disk2/storage" 
+instance_id = 2
+disk_type = { NvmeSsd = { max_iops = 100000 } }
+----
+
+=== Cloud Storage Configuration
+[source,toml]
+----
+# AWS S3 Configuration
+[storage.wal_config]
+wal_urls = [
+    "s3://wal-bucket-1/proximadb",
+    "s3://wal-bucket-2/proximadb"
+]
+
+# Azure Blob Configuration  
+[storage.wal_config]
+wal_urls = [
+    "adls://account1.dfs.core.windows.net/container/wal",
+    "adls://account2.dfs.core.windows.net/container/wal"
+]
+----
+
+== Performance Characteristics
+
+=== Multi-Disk Benefits
+* **Parallel I/O**: Concurrent operations across multiple disks
+* **Load Distribution**: Even distribution of collections via round-robin
+* **Fault Tolerance**: Disk failure isolation with assignment recovery
+* **Scalability**: Linear performance scaling with additional disks
+
+=== Memory Optimization
+* **ART Memtables**: Efficient in-memory vector storage and lookup
+* **Configurable Thresholds**: Tunable flush triggers for memory management
+* **Zero-Copy Operations**: Bincode strategy for minimal serialization overhead
+
+=== Storage Optimization
+* **Columnar Format**: VIPER engine optimized for vector operations
+* **Compression**: Multiple algorithms (Snappy, LZ4, Zstd) for space efficiency
+* **Indexing**: AXIS adaptive indexing for fast similarity search
+
+== Deployment Patterns
+
+=== Development
+* Single-node deployment with local file:// storage
+* In-memory configuration for rapid iteration
+* REST API for easy testing and debugging
+
+=== Production
+* Multi-disk configuration for performance
+* Cloud storage backends for scalability
+* gRPC clients for high-performance applications
+* Distributed assignment service for resilience
+
+=== Enterprise
+* Multi-region cloud deployments
+* Cross-availability zone replication
+* Enterprise identity integration (IAM, Managed Identity)
+* Advanced monitoring and observability
+
+== Future Enhancements
+
+=== Planned Features
+* **Distributed Consensus**: Raft implementation for multi-node clusters
+* **SQL Interface**: SQL query support for vector operations
+* **GPU Acceleration**: CUDA/ROCm support for similarity search
+* **Horizontal Scaling**: Sharding and replication capabilities
+
+=== Extensibility Points
+* **Assignment Strategies**: Pluggable algorithms for collection placement
+* **Storage Engines**: Additional storage backend implementations
+* **Index Types**: New indexing algorithms and optimizations
+* **Protocols**: Additional API protocols (WebSocket, GraphQL)
+
+== Security Considerations
+
+=== Authentication and Authorization
+* Cloud provider identity integration
+* API key and token-based authentication
+* Role-based access control (future)
+
+=== Data Protection
+* Encryption at rest via cloud provider services
+* TLS encryption for data in transit
+* Audit logging for compliance
+
+=== Network Security
+* VPC/VNET integration for cloud deployments
+* Private endpoint support
+* Firewall and security group configuration
+
+== Monitoring and Observability
+
+=== Metrics
+* Assignment service statistics and distribution
+* WAL performance and flush metrics
+* Storage engine performance indicators
+* API latency and throughput metrics
+
+=== Logging
+* Structured logging with contextual information
+* Assignment and recovery operation logs
+* Error tracking and alerting
+* Performance profiling data
+
+=== Health Checks
+* Component health monitoring
+* Disk space and performance monitoring
+* Assignment service availability
+* Storage engine status tracking

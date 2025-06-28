@@ -1,0 +1,137 @@
+@startuml Assignment Service Flow
+!theme aws-orange
+
+title Collection Assignment Service Flow
+scale 1.2
+
+actor "Client" as Client
+participant "Collection Service" as CollSvc
+participant "Assignment Service" as AssignSvc
+participant "WAL Manager" as WAL
+participant "Round-Robin Service" as RR
+participant "Discovery Service" as Discovery
+participant "Filesystem Factory" as FS
+
+group Collection Creation Flow
+    Client -> CollSvc: create_collection(name, config)
+    activate CollSvc
+    
+    CollSvc -> AssignSvc: assign_storage_url(collection_id, WAL)
+    activate AssignSvc
+    
+    AssignSvc -> AssignSvc: check existing assignment
+    alt No existing assignment
+        AssignSvc -> RR: get_next_round_robin_index(WAL, urls)
+        activate RR
+        RR -> RR: calculate fair distribution
+        RR --> AssignSvc: directory_index=1
+        deactivate RR
+        
+        AssignSvc -> AssignSvc: create StorageAssignmentResult
+        note right
+            StorageAssignmentResult {
+                storage_url: "file:///data/disk2/wal"
+                directory_index: 1
+                assigned_at: timestamp
+            }
+        end note
+        
+        AssignSvc -> AssignSvc: record_assignment(collection_id, WAL, assignment)
+    else Existing assignment found
+        AssignSvc -> AssignSvc: return cached assignment
+    end
+    
+    AssignSvc --> CollSvc: assignment_result
+    deactivate AssignSvc
+    
+    CollSvc -> WAL: initialize_collection_wal(collection_id, assignment)
+    activate WAL
+    WAL -> FS: create_directory(assignment.storage_url + collection_id)
+    WAL --> CollSvc: success
+    deactivate WAL
+    
+    CollSvc --> Client: collection_created
+    deactivate CollSvc
+end
+
+group Server Startup Recovery Flow
+    Discovery -> AssignSvc: discover_and_record_assignments()
+    activate Discovery
+    activate AssignSvc
+    
+    loop for each configured directory
+        Discovery -> FS: list_directories(wal_url)
+        activate FS
+        FS --> Discovery: [collection1, collection2, ...]
+        deactivate FS
+        
+        loop for each collection directory
+            Discovery -> FS: check_data_files(collection_path)
+            activate FS
+            FS --> Discovery: has_wal_files=true
+            deactivate FS
+            
+            alt Collection has data
+                Discovery -> AssignSvc: record_assignment(collection_id, WAL, discovered_assignment)
+                note right
+                    Discovered assignment records
+                    existing collection-to-disk
+                    mappings for recovery
+                end note
+            end
+        end
+    end
+    
+    Discovery --> AssignSvc: discovered_count
+    deactivate Discovery
+    deactivate AssignSvc
+end
+
+group Vector Insert Flow with Assignment
+    Client -> CollSvc: insert_vector(collection_id, vector)
+    activate CollSvc
+    
+    CollSvc -> WAL: write_entry(collection_id, vector_data)
+    activate WAL
+    
+    WAL -> AssignSvc: get_assignment(collection_id, WAL)
+    activate AssignSvc
+    AssignSvc --> WAL: cached_assignment
+    deactivate AssignSvc
+    
+    WAL -> FS: write_to_assigned_directory(assignment.storage_url)
+    activate FS
+    FS --> WAL: write_success
+    deactivate FS
+    
+    WAL --> CollSvc: sequence_number
+    deactivate WAL
+    
+    CollSvc --> Client: insert_result
+    deactivate CollSvc
+end
+
+note over AssignSvc
+    **Assignment Strategies:**
+    • Round-Robin: Fair distribution
+    • Hash-Based: Consistent placement  
+    • Performance-Based: Fastest disk first
+    • Manual: Explicit configuration
+end note
+
+note over Discovery
+    **Discovery Process:**
+    • Scans all configured directories
+    • Identifies existing collections
+    • Records assignments for recovery
+    • Supports multiple URL schemes
+end note
+
+note over RR
+    **Round-Robin Logic:**
+    counter = (counter + 1) % directories.length
+    Ensures fair distribution across
+    all configured storage directories
+end note
+
+@enduml
