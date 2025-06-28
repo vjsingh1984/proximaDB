@@ -1,0 +1,38 @@
+@startuml ProximaDB_Storage_Simple
+title ProximaDB Storage Architecture
+
+package "Storage Engines" {
+    component "VIPER Engine" as viper
+    component "Standard Engine" as standard
+}
+
+package "Write-Ahead Logging" {
+    component "WAL Manager" as wal
+    database "WAL Files" as wal_files
+}
+
+package "Multi-Cloud Storage" {
+    component "Local FS" as local
+    component "AWS S3" as s3
+    component "Azure Blob" as azure
+    component "Google Cloud" as gcs
+}
+
+package "Collection Layout" {
+    folder "Collection/" as collection {
+        file "metadata.json" as metadata
+        folder "vectors/" as vectors
+        folder "indexes/" as indexes
+        folder "__flush/" as flush
+    }
+}
+
+viper --> wal
+viper --> collection
+wal --> wal_files
+collection --> local
+collection --> s3
+collection --> azure
+collection --> gcs
+
+@enduml

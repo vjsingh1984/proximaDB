@@ -1,0 +1,143 @@
+@startuml ProximaDB_API_Architecture
+!theme aws-orange
+title ProximaDB API Layer Architecture
+
+skinparam interface {
+    BackgroundColor LightBlue
+    BorderColor Navy
+}
+
+skinparam component {
+    BackgroundColor LightYellow
+    BorderColor Orange
+}
+
+package "Client SDKs" {
+    component "Python SDK" as python {
+        component "Unified Client" as unified
+        component "REST Client" as rest_client
+        component "gRPC Client" as grpc_client
+        component "Protocol Detection" as detection
+    }
+    
+    component "Future SDKs" as future {
+        component "JavaScript SDK" as js
+        component "Rust SDK" as rust
+        component "Java SDK" as java
+    }
+}
+
+package "ProximaDB Server" {
+    interface "REST API (5678)" as rest_api {
+        component "Axum Framework" as axum
+        component "JSON Serialization" as json
+        component "OpenAPI Spec" as openapi
+    }
+    
+    interface "gRPC API (5679)" as grpc_api {
+        component "Tonic Framework" as tonic
+        component "Protocol Buffers" as protobuf
+        component "Binary Serialization" as binary
+    }
+    
+    component "Request Router" as router {
+        component "Protocol Detection" as proto_detect
+        component "Load Balancing" as lb
+        component "Circuit Breaker" as cb
+    }
+}
+
+package "API Endpoints" {
+    interface "Collection Operations" as coll_ops {
+        usecase "POST /collections" as create_coll
+        usecase "GET /collections" as list_coll
+        usecase "GET /collections/{id}" as get_coll
+        usecase "PUT /collections/{id}" as update_coll
+        usecase "DELETE /collections/{id}" as delete_coll
+    }
+    
+    interface "Vector Operations" as vec_ops {
+        usecase "POST /collections/{id}/vectors" as insert_vec
+        usecase "GET /collections/{id}/vectors/{vid}" as get_vec
+        usecase "POST /collections/{id}/search" as search_vec
+        usecase "DELETE /collections/{id}/vectors/{vid}" as delete_vec
+        usecase "POST /collections/{id}/vectors/batch" as batch_vec
+    }
+    
+    interface "System Operations" as sys_ops {
+        usecase "GET /health" as health
+        usecase "GET /metrics" as metrics
+        usecase "GET /version" as version
+    }
+}
+
+package "Authentication & Authorization" {
+    component "Auth Middleware" as auth {
+        component "API Key Validation" as api_key
+        component "JWT Token Validation" as jwt
+        component "Rate Limiting" as rate_limit
+    }
+}
+
+' Client connections
+unified --> detection
+detection --> rest_client
+detection --> grpc_client
+
+python --> rest_api : "HTTP/JSON"
+python --> grpc_api : "HTTP/2/Protobuf"
+
+' Server components
+rest_api --> router
+grpc_api --> router
+router --> auth
+
+axum --> json
+tonic --> protobuf
+json --> openapi
+protobuf --> binary
+
+' Authentication flow
+auth --> api_key
+auth --> jwt
+auth --> rate_limit
+
+' API routing
+router --> coll_ops
+router --> vec_ops
+router --> sys_ops
+
+' gRPC service definitions
+grpc_api ..> protobuf : "proximadb.proto"
+
+note right of unified
+  Auto-selects best protocol:
+  1. Try gRPC (performance)
+  2. Fallback to REST (compatibility)
+end note
+
+note right of router
+  Intelligent routing:
+  - Content-Type detection
+  - Load balancing
+  - Health checking
+  - Circuit breaker patterns
+end note
+
+note bottom of auth
+  Security features:
+  - API key authentication
+  - JWT token validation
+  - Per-tenant rate limiting
+  - Request/response logging
+end note
+
+note right of protobuf
+  Protocol Buffers advantages:
+  - 40% smaller payloads
+  - 90% less overhead
+  - Type safety
+  - Schema evolution
+end note
+
+@enduml

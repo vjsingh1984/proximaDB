@@ -1,0 +1,66 @@
+@startuml ProximaDB_Architecture_Simple
+title ProximaDB High-Level Architecture
+
+skinparam rectangle {
+    BackgroundColor LightBlue
+    BorderColor Navy
+}
+
+skinparam database {
+    BackgroundColor LightGreen
+    BorderColor DarkGreen
+}
+
+skinparam cloud {
+    BackgroundColor LightYellow
+    BorderColor Orange
+}
+
+rectangle "Client Applications" as clients {
+    rectangle "Python SDK" as python_sdk
+    rectangle "REST Clients" as rest_clients
+    rectangle "gRPC Clients" as grpc_clients
+}
+
+rectangle "ProximaDB Server" as server {
+    rectangle "REST API\nPort 5678" as rest_api
+    rectangle "gRPC API\nPort 5679" as grpc_api
+}
+
+rectangle "Core Services" as services {
+    rectangle "UnifiedAvroService" as unified_service
+    rectangle "CollectionService" as collection_service
+    rectangle "Assignment Service" as assignment_service
+}
+
+rectangle "Storage Layer" as storage {
+    database "VIPER Engine\nVector-optimized Parquet" as viper
+    database "WAL System\nWrite-Ahead Logging" as wal
+    database "Metadata Store" as metadata
+}
+
+cloud "Multi-Cloud Storage" as cloud_storage {
+    rectangle "Local FS" as local_fs
+    rectangle "AWS S3" as s3
+    rectangle "Azure Blob" as azure
+    rectangle "Google Cloud" as gcs
+}
+
+rectangle "AXIS Indexing" as indexing {
+    rectangle "HNSW Index" as hnsw
+    rectangle "IVF Index" as ivf
+    rectangle "Flat Index" as flat
+}
+
+clients --> server
+python_sdk --> rest_api
+python_sdk --> grpc_api
+rest_clients --> rest_api
+grpc_clients --> grpc_api
+
+server --> services
+services --> storage
+storage --> cloud_storage
+storage --> indexing
+
+@enduml

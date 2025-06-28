@@ -1,0 +1,128 @@
+@startuml ProximaDB_Storage_Architecture
+!theme aws-orange
+title ProximaDB Storage Layer Architecture
+
+skinparam component {
+    BackgroundColor LightBlue
+    BorderColor Navy
+}
+
+skinparam database {
+    BackgroundColor LightGreen
+    BorderColor DarkGreen
+}
+
+skinparam cloud {
+    BackgroundColor LightYellow
+    BorderColor Orange
+}
+
+package "Storage Engines" {
+    component "VIPER Engine" as viper {
+        component "Vector Compression" as compression
+        component "Parquet Writer" as parquet
+        component "SIMD Optimization" as simd
+        component "Memory Mapping" as mmap
+    }
+    
+    component "Standard Engine" as standard {
+        component "B+Tree Index" as btree
+        component "Metadata Storage" as meta_store
+    }
+}
+
+package "Write-Ahead Logging" {
+    component "WAL Manager" as wal_mgr {
+        component "Avro Serializer" as avro
+        component "Bincode Serializer" as bincode
+        component "Flush Controller" as flush
+    }
+    
+    database "WAL Files" as wal_files
+}
+
+package "Filesystem Abstraction" {
+    interface "FileSystem API" as fs_api
+    
+    cloud "Storage Backends" as backends {
+        component "Local FS\n(file://)" as local
+        component "AWS S3\n(s3://)" as s3  
+        component "Azure Blob\n(adls://)" as azure
+        component "Google Cloud\n(gcs://)" as gcs
+        component "HDFS\n(hdfs://)" as hdfs
+    }
+}
+
+package "Collection Storage Layout" {
+    folder "Collection Directory" as coll_dir {
+        file "metadata.json" as metadata
+        folder "vectors/" as vectors_dir {
+            file "batch_001.parquet" as batch1
+            file "batch_002.parquet" as batch2
+            file "..." as more_batches
+        }
+        folder "indexes/" as indexes_dir {
+            file "hnsw.index" as hnsw_file
+            file "ivf.index" as ivf_file
+        }
+        folder "__flush/" as flush_dir {
+            file "staging_batch.parquet" as staging
+        }
+    }
+}
+
+' Connections
+viper --> fs_api : "store vectors"
+standard --> fs_api : "store metadata"
+wal_mgr --> fs_api : "write logs"
+
+fs_api --> backends
+
+compression --> parquet
+simd --> compression
+mmap --> parquet
+parquet --> vectors_dir
+
+btree --> meta_store
+meta_store --> metadata
+
+avro --> wal_files
+bincode --> wal_files
+flush --> staging
+flush --> vectors_dir
+
+local -.-> backends
+s3 -.-> backends
+azure -.-> backends
+gcs -.-> backends
+hdfs -.-> backends
+
+note right of viper
+  VIPER = Vector-optimized engine
+  - Parquet columnar format
+  - LZ4/Snappy compression
+  - SIMD acceleration
+  - Memory-mapped access
+end note
+
+note right of wal_mgr
+  WAL ensures ACID properties
+  - Configurable serialization
+  - Atomic flush operations
+  - Crash recovery support
+end note
+
+note bottom of backends
+  URL-based configuration:
+  collections_url = "s3://bucket/collections/"
+  wal_url = "file:///data/proximadb/wal"
+end note
+
+note right of flush_dir
+  Atomic operations via staging:
+  1. Write to __flush/ directory
+  2. Atomic rename to final location
+  3. Filesystem-level consistency
+end note
+
+@enduml

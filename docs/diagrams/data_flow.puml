@@ -1,0 +1,114 @@
+@startuml ProximaDB_Data_Flow
+!theme aws-orange
+title ProximaDB Data Flow Architecture
+
+skinparam sequence {
+    ArrowColor Navy
+    ActorBorderColor Navy
+    LifeLineBorderColor Navy
+    LifeLineBackgroundColor LightBlue
+    ParticipantBorderColor Navy
+    ParticipantBackgroundColor LightYellow
+    ParticipantFontColor Navy
+}
+
+actor "Client" as client
+participant "REST/gRPC API" as api
+participant "UnifiedAvroService" as service
+participant "VectorStorageCoordinator" as coordinator
+participant "VIPER Engine" as viper
+participant "WAL System" as wal
+participant "AXIS Indexing" as axis
+database "Multi-Cloud Storage" as storage
+
+== Vector Insert Flow ==
+client -> api : insert_vector(collection, vector, metadata)
+activate api
+
+api -> service : process_insert_request()
+activate service
+
+service -> coordinator : insert_vector()
+activate coordinator
+
+coordinator -> wal : log_operation()
+activate wal
+wal -> storage : write_log_entry()
+wal --> coordinator : operation_logged
+deactivate wal
+
+coordinator -> viper : store_vector()
+activate viper
+viper -> storage : write_parquet_batch()
+viper --> coordinator : vector_stored
+deactivate viper
+
+coordinator -> axis : update_index()
+activate axis
+axis --> coordinator : index_updated
+deactivate axis
+
+coordinator --> service : insert_complete
+deactivate coordinator
+
+service --> api : success_response
+deactivate service
+
+api --> client : 200 OK / Success
+deactivate api
+
+== Vector Search Flow ==
+client -> api : search(collection, query_vector, k, filters)
+activate api
+
+api -> service : process_search_request()
+activate service
+
+service -> coordinator : search_vectors()
+activate coordinator
+
+coordinator -> axis : find_candidates()
+activate axis
+axis --> coordinator : candidate_vectors
+deactivate axis
+
+coordinator -> viper : retrieve_vectors()
+activate viper
+viper -> storage : read_parquet_files()
+viper --> coordinator : vector_data
+deactivate viper
+
+coordinator -> coordinator : apply_filters_and_rank()
+coordinator --> service : search_results
+deactivate coordinator
+
+service --> api : formatted_results
+deactivate service
+
+api --> client : search_response
+deactivate api
+
+== Collection Management Flow ==
+client -> api : create_collection(name, config)
+activate api
+
+api -> service : create_collection()
+activate service
+
+service -> service : validate_configuration()
+service -> storage : create_collection_directory()
+service -> storage : write_metadata_file()
+service --> api : collection_created
+deactivate service
+
+api --> client : collection_response
+deactivate api
+
+note over client, storage
+  All operations are atomic and persistent
+  WAL ensures durability and crash recovery
+  VIPER provides optimized vector storage
+  AXIS enables fast similarity search
+end note
+
+@enduml
