@@ -227,10 +227,10 @@ pub struct VectorRecordProcessor {
     pub config: ProcessingConfig,
     
     /// Schema adapter for record conversion
-    schema_adapter: Arc<SchemaAdapter>,
+    pub schema_adapter: Arc<SchemaAdapter>,
     
     /// Processing statistics
-    stats: Arc<RwLock<ProcessingStats>>,
+    pub stats: Arc<RwLock<ProcessingStats>>,
 }
 
 /// Processing statistics

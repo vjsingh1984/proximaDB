@@ -1,13 +1,13 @@
-//! ⚠️  OBSOLETE - DO NOT USE! ⚠️
+//! Vector service types - Clean API layer over Avro unified types
 //! 
-//! This file contains DEPRECATED VectorRecord definitions that cause import confusion.
-//! 
-//! USE INSTEAD: crate::core::avro_unified::VectorRecord
-//! 
-//! The avro_unified module is the single source of truth for all VectorRecord types.
+//! This module provides stable type aliases for the underlying Avro types,
+//! ensuring a clean API while maintaining zero-cost abstractions.
 
-/// This type alias redirects to the correct implementation to help with migration
+/// Primary vector record type - zero-cost alias to Avro unified type
+/// 
+/// This provides a stable API over the underlying Avro implementation
+/// and ensures all vector operations use the same serializable type.
 pub type VectorRecord = crate::core::avro_unified::VectorRecord;
 
-// No additional types or implementations should be added here.
-// All VectorRecord functionality should be in avro_unified.rs
+// Additional vector-related type aliases can be added here
+// All underlying implementations should remain in avro_unified.rs

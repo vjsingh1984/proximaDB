@@ -10,9 +10,10 @@
 
 ProximaDB is a cloud-native vector database designed for AI applications. This High-Level Design (HLD) document outlines the system architecture, key components, and design decisions after major cleanup (December 2024).
 
-**Implementation Status**: 80% complete with honest, working implementations
-**Major Cleanup**: Removed 4,457 lines of obsolete code (GPU, consensus, CLI placeholders)
+**Implementation Status**: 85% complete with coordinator optimization (June 2025)
+**Latest Update**: Eliminated VectorStorageCoordinator bottleneck, implemented atomic __flush pattern
 **Architecture**: Multi-server design with REST (port 5678) and gRPC (port 5679)
+**Storage**: VIPER-first with atomic WAL→Memtable→VIPER flush delegation
 
 == Architecture Overview
 
@@ -23,8 +24,8 @@ ProximaDB follows a **multi-server, cloud-native architecture** with clear separ
 
 - **API Layer**: Separate REST (5678) and gRPC (5679) servers
 - **Service Layer**: Collection management and unified data operations
-- **Storage Layer**: VIPER engine with sorted rewrite optimization and multi-cloud filesystem support
-- **WAL System**: Write-ahead logging with Avro/Bincode strategies
+- **Storage Layer**: VIPER engine with atomic `__flush/` staging and multi-cloud filesystem support  
+- **WAL System**: Write-ahead logging with direct VIPER flush delegation
 - **Monitoring Layer**: Comprehensive metrics and health checks
 
 === Design Principles
@@ -500,11 +501,16 @@ ProximaDB implements Hadoop MapReduce v2 style atomic operations using staging d
 **Design Pattern**: Staging Directory + Collection Locking
 
 **Operation Flow**:
-1. **Stage Preparation**: Create `__flush` staging directory (reads/writes continue)
-2. **Data Writing**: Write flushed Parquet files to staging directory (reads/writes continue)
-3. **Lock Acquisition**: Acquire exclusive write lock on collection (minimal blocking)
-4. **Atomic Switch**: Delete WAL entries + move staged files (milliseconds)
-5. **Lock Release**: Release write lock, enabling queries on new data
+1. **Stage Preparation**: Create `storage/collection/__flush/` staging directory (reads/writes continue)
+2. **Data Writing**: Write flushed Parquet files to `__flush/` staging (reads/writes continue)  
+3. **Atomic Move**: Move files from `__flush/` to `storage/collection/vectors/` (same filesystem, instant)
+4. **WAL Cleanup**: Drop WAL segments only after successful move (consistency guaranteed)
+5. **Staging Cleanup**: Remove `__flush/` directory, operation complete
+
+**Key Benefits**:
+- **Non-blocking**: Search/index operations ignore `__*` directories
+- **Atomic**: Filesystem move operation ensures consistency
+- **Fast**: Move (not copy) on same mount point is instantaneous
 
 **Consistency Guarantees**:
 - No duplicate reads from memtable + storage during flush

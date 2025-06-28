@@ -12,6 +12,9 @@ pub mod engines;
 // Data persistence layer (organized)
 pub mod persistence;
 
+// Unified atomic operations
+pub mod atomic;
+
 // Legacy modules removed - use organized structure instead
 
 // Other legacy modules
@@ -47,6 +50,12 @@ pub use engines::{lsm::LsmTree, viper::ViperCoreEngine};
 
 // Persistence exports  
 pub use persistence::{FilesystemConfig, FilesystemFactory, DiskManager};
+
+// Atomic operations exports
+pub use atomic::{
+    UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
+    StagingConfig, StagingOperationType, AtomicOperationMetadata, AtomicOperationStatus
+};
 
 // Legacy exports (deprecated)
 // Use engines directly instead of legacy StorageEngine

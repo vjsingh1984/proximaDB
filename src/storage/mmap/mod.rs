@@ -152,4 +152,45 @@ impl MmapReader {
     pub async fn refresh(&self) -> Result<()> {
         self.load_sst_files().await
     }
+
+    /// Iterate over all vector records in the SST files
+    /// Returns only active records (filters out tombstones)
+    pub async fn iter_all(&self) -> Result<Vec<VectorRecord>> {
+        let sst_files = self.sst_files.read().await;
+        let mut records = Vec::new();
+        
+        // Iterate through all SST files
+        for sst_file in sst_files.iter() {
+            // Iterate through all index entries in this SST file
+            for (vector_id, index_entry) in &sst_file.index {
+                let start = index_entry.offset as usize;
+                let end = start + index_entry.length as usize;
+                
+                if end <= sst_file.mmap.len() {
+                    let data = &sst_file.mmap[start..end];
+                    
+                    // Deserialize the entry
+                    match bincode::deserialize::<(VectorId, LsmEntry)>(data) {
+                        Ok((_, lsm_entry)) => {
+                            match lsm_entry {
+                                LsmEntry::Record(record) => {
+                                    records.push(record);
+                                }
+                                LsmEntry::Tombstone { .. } => {
+                                    // Skip deleted records (tombstones)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to deserialize entry for vector {}: {}", vector_id, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        tracing::debug!("MmapReader::iter_all found {} active records across {} SST files", 
+                       records.len(), sst_files.len());
+        Ok(records)
+    }
 }

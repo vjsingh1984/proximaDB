@@ -1041,4 +1041,45 @@ impl StorageEngine {
         tracing::debug!("✅ Completed storage cleanup for tests");
         Ok(())
     }
+
+    /// Get all vectors from a collection for linear search
+    /// Retrieves vectors from both LSM tree (recent writes) and MMAP readers (historical data)
+    pub async fn get_all_vectors(&self, collection_id: &str) -> crate::storage::Result<Vec<VectorRecord>> {
+        let mut vectors = Vec::new();
+        
+        // Get vectors from LSM tree (recent writes)
+        let trees = self.lsm_trees.read().await;
+        if let Some(tree) = trees.get(collection_id) {
+            match tree.iter_all().await {
+                Ok(mut lsm_vectors) => {
+                    tracing::debug!("Found {} vectors in LSM tree for collection {}", 
+                                   lsm_vectors.len(), collection_id);
+                    vectors.append(&mut lsm_vectors);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to iterate LSM tree for collection {}: {}", collection_id, e);
+                }
+            }
+        }
+
+        // Get vectors from MMAP readers (historical data)  
+        let readers = self.mmap_readers.read().await;
+        if let Some(reader) = readers.get(collection_id) {
+            match reader.iter_all().await {
+                Ok(mut mmap_vectors) => {
+                    tracing::debug!("Found {} vectors in MMAP reader for collection {}", 
+                                   mmap_vectors.len(), collection_id);
+                    vectors.append(&mut mmap_vectors);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to iterate MMAP reader for collection {}: {}", collection_id, e);
+                }
+            }
+        }
+        
+        tracing::info!("get_all_vectors retrieved {} total vectors for collection {}", 
+                      vectors.len(), collection_id);
+        
+        Ok(vectors)
+    }
 }
