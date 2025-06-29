@@ -6,6 +6,8 @@ pub mod serverless;
 pub mod storage_layout;
 pub mod avro_unified;
 pub mod index;
+pub mod indexing;
+pub mod search;
 
 // Legacy modules removed - using avro_unified as single source of truth
 

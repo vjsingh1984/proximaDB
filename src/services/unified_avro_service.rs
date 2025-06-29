@@ -106,7 +106,7 @@ impl UnifiedAvroService {
             // Get mutable access to WAL and set VIPER as storage engine
             // This enables atomic WAL→Memtable→VIPER flush delegation
             match Arc::try_unwrap(wal.clone()) {
-                Ok(wal_manager) => {
+                Ok(_wal_manager) => {
                     // TODO: WAL manager needs to be made mutable for set_storage_engine
                     info!("⚠️ WAL manager is not mutable - need to refactor for VIPER delegation");
                 }
@@ -688,6 +688,7 @@ impl UnifiedAvroService {
         let storage_layout = match config.storage_engine {
             CoreStorageEngine::Viper => "VIPER",
             CoreStorageEngine::Standard => "STANDARD",
+            CoreStorageEngine::Lsm => "LSM",
         }.to_string();
         
         let now = chrono::Utc::now().timestamp_millis();
@@ -720,6 +721,7 @@ impl UnifiedAvroService {
             storage_engine: match config.storage_engine {
                 CoreStorageEngine::Viper => 1,
                 CoreStorageEngine::Standard => 2,
+                CoreStorageEngine::Lsm => 2, // Same as LSM
             },
             indexing_algorithm: 1, // Default to HNSW
             filterable_metadata_fields: vec![],
@@ -1329,12 +1331,15 @@ impl UnifiedAvroService {
         self.search_vectors(avro_bytes).await
     }
 
-    /// Simplified search method for REST API - accepts JSON payloads directly
-    pub async fn search_vectors_simple(&self, json_payload: &[u8]) -> Result<Vec<u8>> {
-        let _span = span!(Level::DEBUG, "search_vectors_simple");
+    /// Storage-aware polymorphic search method - routes to optimal search engine
+    pub async fn search_vectors_polymorphic(&self, json_payload: &[u8]) -> Result<Vec<u8>> {
+        let _span = span!(Level::DEBUG, "search_vectors_polymorphic");
         let start_time = std::time::Instant::now();
 
-        // Parse JSON search request directly
+        tracing::info!("🔍 UNIFIED POLYMORPHIC: Starting storage-aware search");
+        tracing::debug!("🔍 UNIFIED POLYMORPHIC: Payload size: {} bytes", json_payload.len());
+
+        // Parse JSON search request
         let search_request: JsonValue = serde_json::from_slice(json_payload)
             .context("Failed to parse search request JSON")?;
 
@@ -1342,7 +1347,21 @@ impl UnifiedAvroService {
             .get("collection_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing collection_id"))?;
-            
+
+        // Step 1: Get collection metadata to determine storage type
+        tracing::info!("🔍 UNIFIED POLYMORPHIC: Getting collection metadata for {}", collection_id);
+        let collection_record = self.collection_service
+            .get_collection_by_name_or_uuid(collection_id)
+            .await
+            .context("Failed to get collection metadata")?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection_id))?;
+
+        tracing::info!(
+            "🔍 UNIFIED POLYMORPHIC: Collection {} uses storage engine: {:?}",
+            collection_id, collection_record.storage_engine
+        );
+
+        // Step 2: Extract search parameters
         let query_vector = search_request
             .get("vector")
             .and_then(|v| v.as_array())
@@ -1350,11 +1369,166 @@ impl UnifiedAvroService {
             .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect::<Vec<f32>>();
+
+        let k = search_request
+            .get("k")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(10) as usize;
+
+        let include_vectors = search_request
+            .get("include_vectors")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let include_metadata = search_request
+            .get("include_metadata")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        tracing::info!(
+            "🔍 UNIFIED POLYMORPHIC: Search params - vector_dim={}, k={}, include_vectors={}, include_metadata={}",
+            query_vector.len(), k, include_vectors, include_metadata
+        );
+
+        // Step 3: Create storage-specific search engine
+        use crate::core::search::SearchEngineFactory;
+        use crate::proto::proximadb::StorageEngine;
+
+        let search_engine = match collection_record.get_storage_engine_enum() {
+            StorageEngine::Viper => {
+                tracing::info!("🔍 UNIFIED POLYMORPHIC: Creating VIPER search engine");
+                SearchEngineFactory::create_for_collection(
+                    &collection_record,
+                    Some(self.viper_engine.clone()),
+                    None
+                ).await?
+            }
+            StorageEngine::Lsm => {
+                tracing::info!("🔍 UNIFIED POLYMORPHIC: Creating LSM search engine");
+                // Note: Would need LSM engine access here
+                return Err(anyhow!("LSM search engine not yet fully integrated"));
+            }
+            _ => {
+                return Err(anyhow!("Unsupported storage engine: {:?}", collection_record.storage_engine));
+            }
+        };
+
+        // Step 4: Create optimized search hints
+        let search_hints = SearchEngineFactory::create_optimized_hints(
+            match collection_record.get_storage_engine_enum() {
+                StorageEngine::Viper => crate::core::StorageEngine::Viper,
+                StorageEngine::Lsm => crate::core::StorageEngine::Lsm,
+                _ => crate::core::StorageEngine::Viper, // Default fallback
+            },
+            &query_vector,
+            k,
+            false // No metadata filters for now
+        );
+
+        tracing::info!(
+            "🔍 UNIFIED POLYMORPHIC: Search hints - predicate_pushdown={}, bloom_filters={}, quantization={:?}",
+            search_hints.predicate_pushdown,
+            search_hints.use_bloom_filters,
+            search_hints.quantization_level
+        );
+
+        // Step 5: Execute storage-optimized search
+        let search_results = search_engine.search_vectors(
+            collection_id,
+            &query_vector,
+            k,
+            None, // No metadata filters for now
+            &search_hints
+        ).await.context("Storage-aware search failed")?;
+
+        // Step 6: Format results
+        let json_results: Vec<JsonValue> = search_results
+            .into_iter()
+            .map(|result| {
+                let mut json_result = json!({
+                    "id": result.vector_id,
+                    "score": result.score,
+                });
+
+                if include_vectors {
+                    json_result["vector"] = json!(result.vector.unwrap_or_default());
+                }
+
+                if include_metadata {
+                    json_result["metadata"] = json!(result.metadata);
+                }
+
+                json_result
+            })
+            .collect();
+
+        let processing_time = start_time.elapsed().as_micros() as i64;
+        self.update_metrics(true, processing_time).await;
+
+        let response = json!({
+            "results": json_results,
+            "total_count": json_results.len(),
+            "processing_time_us": processing_time,
+            "collection_id": collection_id,
+            "search_engine": search_engine.engine_type(),
+            "storage_optimized": true
+        });
+
+        tracing::info!(
+            "✅ UNIFIED POLYMORPHIC: Search complete - {} results in {}μs using {:?} engine",
+            json_results.len(),
+            processing_time,
+            search_engine.engine_type()
+        );
+
+        Ok(serde_json::to_vec(&response)?)
+    }
+
+    /// Simplified search method for REST API - accepts JSON payloads directly
+    /// NOTE: This is the legacy method, consider using search_vectors_polymorphic for better performance
+    pub async fn search_vectors_simple(&self, json_payload: &[u8]) -> Result<Vec<u8>> {
+        let _span = span!(Level::DEBUG, "search_vectors_simple");
+        let start_time = std::time::Instant::now();
+
+        tracing::info!("🔍 UNIFIED: Starting search_vectors_simple");
+        tracing::debug!("🔍 UNIFIED: Payload size: {} bytes", json_payload.len());
+        tracing::debug!("🔍 UNIFIED: Payload preview: {:?}", 
+            String::from_utf8_lossy(&json_payload[..std::cmp::min(200, json_payload.len())])
+        );
+
+        // Parse JSON search request directly
+        tracing::debug!("🔍 UNIFIED: Parsing JSON search request");
+        let search_request: JsonValue = serde_json::from_slice(json_payload)
+            .context("Failed to parse search request JSON")?;
+        
+        tracing::debug!("🔍 UNIFIED: Parsed search request: {:?}", search_request);
+
+        tracing::debug!("🔍 UNIFIED: Extracting collection_id");
+        let collection_id = search_request
+            .get("collection_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing collection_id"))?;
+        
+        tracing::info!("🔍 UNIFIED: Collection ID: {}", collection_id);
+        
+        tracing::debug!("🔍 UNIFIED: Extracting query vector");
+        let query_vector = search_request
+            .get("vector")
+            .and_then(|v| v.as_array())
+            .context("Missing or invalid vector field")?
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect::<Vec<f32>>();
+        
+        tracing::info!("🔍 UNIFIED: Query vector dimension: {}", query_vector.len());
+        tracing::debug!("🔍 UNIFIED: Query vector preview: {:?}", &query_vector[..std::cmp::min(5, query_vector.len())]);
             
         if query_vector.is_empty() {
+            tracing::error!("❌ UNIFIED: Empty query vector");
             return Err(anyhow!("Empty query vector"));
         }
 
+        tracing::debug!("🔍 UNIFIED: Extracting search parameters");
         let top_k = search_request
             .get("k")
             .and_then(|v| v.as_i64())
@@ -1370,12 +1544,16 @@ impl UnifiedAvroService {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
+        tracing::info!("🔍 UNIFIED: Search parameters - k={}, include_vectors={}, include_metadata={}", 
+            top_k, include_vectors, include_metadata);
+
         debug!(
             "Simple search: collection={}, query_dim={}, top_k={}, include_vectors={}, include_metadata={}",
             collection_id, query_vector.len(), top_k, include_vectors, include_metadata
         );
 
         // Create search context for the coordinator
+        tracing::debug!("🔍 UNIFIED: Creating search context");
         let search_context = SearchContext {
             collection_id: collection_id.to_string(),
             query_vector,
@@ -1393,11 +1571,35 @@ impl UnifiedAvroService {
             include_vectors,
         };
 
-        // Execute search directly through VIPER engine
-        let search_results = self.viper_engine
+        tracing::info!("🔍 UNIFIED: About to call VIPER engine search_vectors");
+        tracing::debug!("🔍 UNIFIED: Search context - collection: {}, vector_dim: {}, k: {}", 
+            search_context.collection_id, search_context.query_vector.len(), search_context.k);
+
+        // Execute search directly through VIPER engine with graceful handling
+        let viper_results = match self.viper_engine
             .search_vectors(&search_context.collection_id, &search_context.query_vector, search_context.k)
-            .await
-            .context("Failed to perform vector search through VIPER engine")?;
+            .await {
+            Ok(search_results) => {
+                tracing::info!("✅ UNIFIED: VIPER engine returned {} results", search_results.len());
+                search_results
+            }
+            Err(e) => {
+                // Check if this is a "collection not found" case (expected for new collections)
+                let error_msg = e.to_string();
+                if error_msg.contains("Collection not found") || error_msg.contains("not found in VIPER metadata") {
+                    tracing::info!("🔍 UNIFIED: Collection {} not found in VIPER - will search WAL only", collection_id);
+                    Vec::new() // Empty VIPER results, continue with WAL search
+                } else {
+                    tracing::error!("❌ UNIFIED: VIPER engine search failed: {:?}", e);
+                    return Err(e).context("Failed to perform vector search through VIPER engine");
+                }
+            }
+        };
+
+        // TODO: Also search WAL for unflushed vectors
+        // For now, we'll use only VIPER results but this is where WAL search would be added
+        tracing::info!("🔍 UNIFIED: WAL search not yet implemented - using VIPER results only");
+        let search_results = viper_results;
 
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(true, processing_time).await;

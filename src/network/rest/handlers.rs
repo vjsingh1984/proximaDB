@@ -135,8 +135,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/collections/:collection_id/vectors/:vector_id", put(update_vector))
         .route("/collections/:collection_id/vectors/:vector_id", delete(delete_vector))
         
-        // Search operations
-        .route("/collections/:collection_id/search", post(search_vectors))
+        // Search operations - using optimized storage-aware search only
+        .route("/collections/:collection_id/search", post(search_vectors_optimized))
         
         // Batch operations
         .route("/collections/:collection_id/vectors/batch", post(batch_insert_vectors))
@@ -389,13 +389,41 @@ pub async fn insert_vector(
 
 /// Get vector endpoint
 pub async fn get_vector(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((collection_id, vector_id)): Path<(String, String)>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
-    // TODO: Implement through UnifiedAvroService
     tracing::info!("REST: Get vector {} from collection {}", vector_id, collection_id);
     
-    Err(StatusCode::NOT_IMPLEMENTED)
+    // Get vector through UnifiedAvroService
+    match state.unified_service.get_vector(&collection_id, &vector_id, true, true).await {
+        Ok(result_bytes) => {
+            // Parse the result bytes as JSON
+            match serde_json::from_slice::<serde_json::Value>(&result_bytes) {
+                Ok(vector_response) => {
+                    if let Some(vector_data) = vector_response.get("vector") {
+                        tracing::info!("✅ REST: Found vector {}", vector_id);
+                        Ok(JsonResponse(ApiResponse::success(vector_data.clone())))
+                    } else {
+                        tracing::warn!("❌ REST: Vector {} not found in collection {}", vector_id, collection_id);
+                        Err(StatusCode::NOT_FOUND)
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("❌ REST: Failed to parse get vector result: {:?}", e);
+                    Err(StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("❌ REST: Failed to get vector: {:?}", e);
+            // Check if it's a not found error
+            if e.to_string().contains("not found") || e.to_string().contains("NOT_FOUND") {
+                Err(StatusCode::NOT_FOUND)
+            } else {
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
+    }
 }
 
 /// Update vector endpoint
@@ -428,36 +456,60 @@ pub async fn delete_vector(
     )))
 }
 
-/// Search vectors endpoint
-pub async fn search_vectors(
+/// Storage-aware optimized search vectors endpoint
+pub async fn search_vectors_optimized(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
     Json(request): Json<SearchVectorRequest>,
 ) -> Result<JsonResponse<ApiResponse<Vec<serde_json::Value>>>, StatusCode> {
     let k = request.k.unwrap_or(10);
     
-    tracing::info!("REST: Search {} vectors in collection {}", k, collection_id);
-    tracing::info!("Query vector dimension: {}", request.vector.len());
+    tracing::info!("🚀 REST: Starting OPTIMIZED storage-aware search operation");
+    tracing::info!("🚀 REST: Collection: {}", collection_id);
+    tracing::info!("🚀 REST: K value: {}", k);
+    tracing::info!("🚀 REST: Query vector dimension: {}", request.vector.len());
+    tracing::debug!("🚀 REST: Query vector sample: {:?}", &request.vector[..std::cmp::min(5, request.vector.len())]);
+    tracing::debug!("🚀 REST: Filters: {:?}", request.filters);
     
-    // Create search query payload
+    // Create search query payload with enhanced search hints for optimization
+    let filters = request.filters.unwrap_or_default();
     let search_query = serde_json::json!({
         "collection_id": collection_id,
         "vector": request.vector,
         "k": k,
-        "filters": request.filters.unwrap_or_default(),
-        "threshold": 0.0
+        "filters": filters,
+        "threshold": 0.0,
+        "search_hints": {
+            "predicate_pushdown": true,
+            "use_bloom_filters": true,
+            "use_clustering": true,
+            "quantization_level": "FP32",
+            "parallel_search": true,
+            "engine_specific": {
+                "optimization_level": "high",
+                "enable_simd": true,
+                "prefer_indices": true
+            }
+        }
     });
+    
+    tracing::debug!("🚀 REST: Enhanced search query with optimization hints created");
     
     let json_payload = serde_json::to_vec(&search_query)
         .map_err(|e| {
-            tracing::error!("Failed to serialize search query: {:?}", e);
+            tracing::error!("❌ REST: Failed to serialize optimized search query: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    // Search through UnifiedAvroService using simplified method
-    match state.unified_service.search_vectors_simple(&json_payload).await {
+    tracing::info!("🚀 REST: Calling storage-aware polymorphic search");
+    tracing::debug!("🚀 REST: Optimized payload size: {} bytes", json_payload.len());
+    
+    // Use the storage-aware polymorphic search method
+    match state.unified_service.search_vectors_polymorphic(&json_payload).await {
         Ok(result_bytes) => {
-            // Parse the result bytes as JSON
+            tracing::info!("✅ REST: Optimized search returned {} bytes", result_bytes.len());
+            
+            // Parse and format results
             match serde_json::from_slice::<serde_json::Value>(&result_bytes) {
                 Ok(search_response) => {
                     let results = if let Some(results_array) = search_response.get("results").and_then(|r| r.as_array()) {
@@ -465,6 +517,8 @@ pub async fn search_vectors(
                             let mut json_result = serde_json::json!({
                                 "id": result.get("id").unwrap_or(&serde_json::Value::String("unknown".to_string())),
                                 "score": result.get("score").unwrap_or(&serde_json::Value::Number(serde_json::Number::from_f64(0.0).unwrap())),
+                                "search_engine": result.get("search_engine").unwrap_or(&serde_json::Value::String("unknown".to_string())),
+                                "optimization_applied": result.get("optimization_applied").unwrap_or(&serde_json::Value::Bool(true)),
                             });
                             
                             if request.include_vectors.unwrap_or(false) {
@@ -486,20 +540,21 @@ pub async fn search_vectors(
                     };
                     
                     let result_count = results.len();
-                    tracing::info!("✅ REST: Found {} search results", result_count);
+                    tracing::info!("✅ REST: Optimized search found {} results", result_count);
+                    
                     Ok(JsonResponse(ApiResponse::success_with_message(
                         results,
-                        format!("Search completed - found {} results", result_count),
+                        format!("Storage-aware optimized search completed - found {} results", result_count),
                     )))
                 }
                 Err(e) => {
-                    tracing::error!("❌ REST: Failed to parse search results: {:?}", e);
+                    tracing::error!("❌ REST: Failed to parse optimized search results: {:?}", e);
                     Err(StatusCode::INTERNAL_SERVER_ERROR)
                 }
             }
         }
         Err(e) => {
-            tracing::error!("❌ REST: Search failed: {:?}", e);
+            tracing::error!("❌ REST: Optimized search failed: {:?}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

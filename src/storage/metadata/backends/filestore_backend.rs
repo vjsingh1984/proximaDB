@@ -111,6 +111,26 @@ pub struct CollectionRecord {
 }
 
 impl CollectionRecord {
+    /// Get storage engine as enum
+    pub fn get_storage_engine_enum(&self) -> crate::proto::proximadb::StorageEngine {
+        match self.storage_engine.as_str() {
+            "VIPER" => crate::proto::proximadb::StorageEngine::Viper,
+            "LSM" => crate::proto::proximadb::StorageEngine::Lsm,
+            "MMAP" => crate::proto::proximadb::StorageEngine::Mmap,
+            "HYBRID" => crate::proto::proximadb::StorageEngine::Hybrid,
+            _ => crate::proto::proximadb::StorageEngine::Viper, // Default
+        }
+    }
+    
+    /// Get dimension as Option<usize> for compatibility
+    pub fn get_dimension(&self) -> Option<usize> {
+        if self.dimension > 0 {
+            Some(self.dimension as usize)
+        } else {
+            None
+        }
+    }
+
     /// Create from gRPC CollectionConfig
     pub fn from_grpc_config(name: String, config: &CollectionConfig) -> Result<Self> {
         let uuid = Uuid::new_v4().to_string();

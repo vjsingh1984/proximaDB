@@ -1,0 +1,71 @@
+@startuml
+title Storage-Aware Polymorphic Search Architecture
+
+package "API Layer" {
+  [REST Handler] as REST
+  [gRPC Handler] as GRPC
+}
+
+package "Service Layer" {
+  [UnifiedAvroService] as UAS
+  [CollectionService] as CS
+  
+  UAS --> CS : collection metadata
+}
+
+package "Search Engine Layer" {
+  interface "StorageSearchEngine" as SSE {
+    +search_vectors()
+    +search_capabilities()
+    +engine_type()
+  }
+  
+  [ViperSearchEngine] as VSE
+  [LSMSearchEngine] as LSE
+  
+  VSE ..|> SSE
+  LSE ..|> SSE
+}
+
+package "Storage Layer" {
+  package "VIPER Storage" {
+    [ViperCoreEngine] as VCE
+    [ParquetReader] as PR
+    [MLClusterSelector] as MCS
+    [QuantizationEngine] as QE
+    
+    VCE --> PR
+    VCE --> MCS
+    VCE --> QE
+  }
+  
+  package "LSM Storage" {
+    [LsmTree] as LT
+    [MemTable] as MT
+    [SSTable] as ST
+    [BloomFilter] as BF
+    
+    LT --> MT
+    LT --> ST
+    LT --> BF
+  }
+}
+
+' Connections
+REST --> UAS
+GRPC --> UAS
+
+UAS --> SSE : polymorphic dispatch
+
+VSE --> VCE : VIPER optimizations
+LSE --> LT : LSM optimizations
+
+note right of UAS
+  Search Router:
+  1. Detect collection type
+  2. Create search hints
+  3. Dispatch to engine
+  4. Merge results
+end note
+
+@enduml

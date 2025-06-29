@@ -200,6 +200,36 @@ Deliver a cloud-native vector database that provides:
 |Transaction management with ACID guarantees
 |Low
 |✅ CLIENT READY, ❌ SERVER MISSING
+
+|VR-028
+|Storage-aware polymorphic search with engine-specific optimizations
+|Critical
+|🚧 IN PROGRESS (Phase 1 design complete)
+
+|VR-029
+|VIPER search optimizations: predicate pushdown, ML clustering, quantization
+|Critical
+|📋 PLANNED (Phase 2)
+
+|VR-030
+|LSM search optimizations: memtable priority, bloom filters, level-aware search
+|Critical
+|📋 PLANNED (Phase 2)
+
+|VR-031
+|Multi-precision quantization support (FP32, PQ4, PQ8, Binary, INT8)
+|High
+|📋 PLANNED (Phase 2)
+
+|VR-032
+|Search engine factory with automatic storage type detection
+|High
+|🚧 IN PROGRESS (Phase 1)
+
+|VR-033
+|Storage-specific indexing integration (Roaring bitmaps, Bloom filters)
+|High
+|📋 PLANNED (Phase 2)
 |===
 
 ==== Storage and Data Management
