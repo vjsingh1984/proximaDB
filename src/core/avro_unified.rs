@@ -343,6 +343,8 @@ impl Default for DistanceMetric {
 pub enum StorageEngine {
     #[serde(rename = "VIPER")]
     Viper,
+    #[serde(rename = "LSM")]
+    Lsm,
     #[serde(rename = "STANDARD")]
     Standard,
 }

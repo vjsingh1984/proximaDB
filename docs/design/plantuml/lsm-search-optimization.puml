@@ -1,0 +1,111 @@
+@startuml lsm-search-optimization
+!theme bluegray
+title LSM Storage-Aware Search Optimizations
+
+package "LSM Search Engine" {
+  [SearchRequest] as SR
+  [TieredSearchCoordinator] as TSC
+  [BloomFilterManager] as BFM
+  [ResultMerger] as RM
+}
+
+package "LSM Storage Layers" {
+  package "MemTable (Level -1)" {
+    [ActiveMemTable] as AMT
+    [ImmutableMemTable] as IMT
+  }
+  
+  package "Level 0 SSTables" {
+    [SSTable0_1] as ST01
+    [SSTable0_2] as ST02
+    [SSTable0_N] as ST0N
+  }
+  
+  package "Level 1+ SSTables" {
+    [SSTable1] as ST1
+    [SSTable2] as ST2
+    [SSTableLevelN] as STN
+  }
+}
+
+package "Optimization Structures" {
+  [BloomFilter] as BF
+  [KeyRangeIndex] as KRI
+  [TombstoneTracker] as TT
+  [LevelMetadata] as LM
+}
+
+package "Search Algorithms" {
+  [MemTableScanner] as MTS
+  [SSTableScanner] as STS
+  [VectorComparator] as VC
+  [DistanceCalculator] as DC
+}
+
+' Search flow
+SR --> TSC : coordinate search
+TSC --> BFM : check bloom filters
+
+' Tiered search priority
+TSC --> AMT : search active memtable
+TSC --> IMT : search immutable memtable
+TSC --> ST01 : search level 0 (recent)
+TSC --> ST02 : search level 0 (recent)
+TSC --> ST1 : search level 1 (if needed)
+TSC --> ST2 : search level 2 (if needed)
+
+' Bloom filter optimization
+BFM --> BF : might_contain(vector_key)
+BF --> BFM : skip/include SSTable
+
+' Search execution
+AMT --> MTS : in-memory scan
+ST01 --> STS : disk-based scan
+ST1 --> STS : range-aware scan
+
+MTS --> VC : vector comparison
+STS --> VC : vector comparison
+VC --> DC : distance calculation
+
+' Result processing
+TSC --> RM : merge results
+RM --> TT : handle tombstones
+TT --> RM : deduplicated results
+
+' Metadata optimization
+TSC --> LM : level statistics
+TSC --> KRI : key range filtering
+
+note right of TSC
+  Tiered Search Strategy:
+  1. Search MemTable (fastest)
+  2. Search Level 0 (recent data)
+  3. Search higher levels by key range
+  4. Early termination when k results found
+end note
+
+note right of BFM
+  Bloom Filter Benefits:
+  • 90-95% false positive reduction
+  • Skip irrelevant SSTables
+  • Configurable FP rate
+  • Memory-efficient filtering
+end note
+
+note right of RM
+  Result Merging:
+  • Handle tombstones (deletions)
+  • Merge across levels
+  • Maintain vector scores
+  • Deduplicate by vector ID
+end note
+
+note bottom of LM
+  Level-Aware Optimization:
+  • Recent data prioritization
+  • Key range metadata
+  • Level size statistics
+  • Compaction state awareness
+end note
+
+@enduml

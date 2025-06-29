@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::core::CollectionId;
 use crate::storage::persistence::filesystem::{
-    FilesystemFactory, FileOptions, 
+    FilesystemFactory, 
     atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory, AtomicWriteConfig},
     write_strategy::{WriteStrategyFactory, MetadataWriteStrategy}
 };

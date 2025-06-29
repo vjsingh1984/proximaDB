@@ -772,12 +772,97 @@ impl ProximaDb for ProximaDbGrpcService {
         // Create versioned payload for zero-copy search
         let avro_payload = Self::create_versioned_payload("vector_search", &json_data);
         
-        // Execute search via unified service
-        let avro_result = self.avro_service
-            .handle_vector_search(&avro_payload)
-            .instrument(span!(Level::DEBUG, "grpc_vector_search"))
-            .await
-            .map_err(|e| Status::internal(format!("Vector search failed: {}", e)))?;
+        // Execute search via storage-aware polymorphic method
+        let avro_result = if req.queries.len() == 1 {
+            // Single query - use optimized storage-aware search
+            let optimized_search_request = json!({
+                "collection_id": req.collection_id,
+                "vector": req.queries[0].vector.clone(),
+                "k": req.top_k,
+                "filters": metadata_filters,
+                "threshold": 0.0,
+                "search_hints": {
+                    "predicate_pushdown": true,
+                    "use_bloom_filters": true,
+                    "use_clustering": true,
+                    "quantization_level": "FP32",
+                    "parallel_search": true,
+                    "engine_specific": {
+                        "optimization_level": "high",
+                        "enable_simd": true,
+                        "prefer_indices": true,
+                        "distance_metric": req.distance_metric_override.unwrap_or(1)
+                    }
+                },
+                "include_vectors": include_vectors,
+                "include_metadata": include_metadata
+            });
+            
+            let optimized_query_data = serde_json::to_vec(&optimized_search_request)
+                .map_err(|e| Status::internal(format!("Failed to serialize optimized search request: {}", e)))?;
+                
+            info!("🚀 gRPC: Using storage-aware polymorphic search with optimization hints");
+            self.avro_service
+                .search_vectors_polymorphic(&optimized_query_data)
+                .instrument(span!(Level::DEBUG, "grpc_optimized_search"))
+                .await
+                .map_err(|e| Status::internal(format!("Optimized search failed: {}", e)))?
+        } else {
+            // Multi-query - process each query with optimized search and combine
+            info!("🚀 gRPC: Using storage-aware search for multi-query request");
+            let mut all_results = Vec::new();
+            
+            for (index, query) in req.queries.iter().enumerate() {
+                let optimized_search_request = json!({
+                    "collection_id": req.collection_id,
+                    "vector": query.vector.clone(),
+                    "k": req.top_k,
+                    "filters": metadata_filters,
+                    "threshold": 0.0,
+                    "search_hints": {
+                        "predicate_pushdown": true,
+                        "use_bloom_filters": true,
+                        "use_clustering": true,
+                        "quantization_level": "FP32",
+                        "parallel_search": true,
+                        "engine_specific": {
+                            "optimization_level": "high",
+                            "enable_simd": true,
+                            "prefer_indices": true,
+                            "distance_metric": req.distance_metric_override.unwrap_or(1),
+                            "query_index": index
+                        }
+                    },
+                    "include_vectors": include_vectors,
+                    "include_metadata": include_metadata
+                });
+                
+                let optimized_query_data = serde_json::to_vec(&optimized_search_request)
+                    .map_err(|e| Status::internal(format!("Failed to serialize multi-query {}: {}", index, e)))?;
+                
+                let query_result = self.avro_service
+                    .search_vectors_polymorphic(&optimized_query_data)
+                    .instrument(span!(Level::DEBUG, "grpc_multi_query_search", query_index = index))
+                    .await
+                    .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
+                
+                all_results.push(query_result);
+            }
+            
+            // Combine all query results into a single response
+            let combined_response = json!({
+                "multi_query_results": all_results.iter().enumerate().map(|(idx, result)| {
+                    json!({
+                        "query_index": idx,
+                        "results": serde_json::from_slice::<serde_json::Value>(result).unwrap_or(json!({}))
+                    })
+                }).collect::<Vec<_>>(),
+                "total_queries": req.queries.len()
+            });
+            
+            serde_json::to_vec(&combined_response)
+                .map_err(|e| Status::internal(format!("Failed to serialize combined results: {}", e)))?
+        };
         
         let processing_time = start_time.elapsed().as_micros() as i64;
         let result_size = avro_result.len();

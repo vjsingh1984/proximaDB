@@ -1,8 +1,11 @@
-//! Search Types for ProximaDB Unified Schema
+//! Search module for ProximaDB storage-aware search implementations
 
-pub mod results;
-pub mod queries;
+pub mod storage_aware;
+pub mod viper_search;
+pub mod lsm_search;
 
-// Re-export all search types
-pub use results::*;
-pub use queries::*;
+// Re-export main types
+pub use storage_aware::{
+    StorageSearchEngine, SearchHints, SearchCapabilities, ClusteringHints,
+    QuantizationLevel, SearchMetrics, SearchValidator, SearchEngineFactory
+};

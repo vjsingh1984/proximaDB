@@ -659,23 +659,43 @@ impl StorageEngine {
         query: Vec<f32>,
         k: usize,
     ) -> crate::storage::Result<Vec<SearchResult>> {
-        tracing::debug!(
-            "🔍 search_vectors: collection={}, query_dim={}, k={}",
+        tracing::info!(
+            "🔍 VIPER ENGINE: Starting search_vectors for collection={}, query_dim={}, k={}",
             collection_id, query.len(), k
         );
+        tracing::debug!("🔍 VIPER ENGINE: Query vector preview: {:?}", &query[..std::cmp::min(5, query.len())]);
 
         // STEP 1: Query collection metadata from collection service (proper separation of concerns)
-        let collection_record = self.collection_service
+        tracing::debug!("🔍 VIPER ENGINE: Fetching collection metadata");
+        let collection_record = match self.collection_service
             .get_collection_by_name(collection_id)
-            .await
-            .map_err(|e| crate::core::StorageError::MetadataError(anyhow::anyhow!(e)))?;
+            .await {
+            Ok(record) => {
+                tracing::debug!("✅ VIPER ENGINE: Successfully fetched collection metadata");
+                record
+            }
+            Err(e) => {
+                tracing::error!("❌ VIPER ENGINE: Failed to fetch collection metadata: {:?}", e);
+                return Err(crate::core::StorageError::MetadataError(anyhow::anyhow!(e)));
+            }
+        };
             
-        let collection_record = collection_record.ok_or_else(|| {
-            crate::core::StorageError::CollectionNotFound(collection_id.clone())
-        })?;
+        let collection_record = match collection_record {
+            Some(record) => {
+                tracing::info!("✅ VIPER ENGINE: Found collection: {} (dimension: {})", collection_id, record.dimension);
+                record
+            }
+            None => {
+                tracing::error!("❌ VIPER ENGINE: Collection not found: {}", collection_id);
+                return Err(crate::core::StorageError::CollectionNotFound(collection_id.clone()));
+            }
+        };
 
         // STEP 2: Validate query vector dimensions against collection metadata
+        tracing::debug!("🔍 VIPER ENGINE: Validating vector dimensions");
         if query.len() != collection_record.dimension as usize {
+            tracing::error!("❌ VIPER ENGINE: Dimension mismatch - expected: {}, actual: {}", 
+                collection_record.dimension, query.len());
             return Err(crate::core::StorageError::InvalidDimension { 
                 expected: collection_record.dimension as usize, 
                 actual: query.len() 
@@ -683,7 +703,7 @@ impl StorageEngine {
         }
 
         tracing::debug!(
-            "🔍 Collection metadata: dim={}, distance_metric={}, index_algo={}",
+            "🔍 VIPER ENGINE: Collection metadata: dim={}, distance_metric={}, index_algo={}",
             collection_record.dimension,
             collection_record.distance_metric,
             collection_record.indexing_algorithm
@@ -697,16 +717,17 @@ impl StorageEngine {
         let mut all_results = Vec::new();
 
         // Part 1: Search memtable for recent unflushed data (with collection-specific distance metric)
+        tracing::info!("🔍 VIPER ENGINE: Starting memtable search");
         match self.search_memtable_with_metadata(collection_id, &query, k * 2, &collection_record).await {
             Ok(memtable_results) => {
-                tracing::debug!(
-                    "🔍 Found {} results from memtable",
+                tracing::info!(
+                    "✅ VIPER ENGINE: Found {} results from memtable",
                     memtable_results.len()
                 );
                 all_results.extend(memtable_results);
             }
             Err(e) => {
-                tracing::warn!("⚠️ Memtable search failed: {}", e);
+                tracing::warn!("⚠️ VIPER ENGINE: Memtable search failed: {}", e);
             }
         }
 

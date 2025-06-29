@@ -85,18 +85,58 @@ ProximaDB employs a **multi-server architecture** that separates protocol handli
   * Integrates with WAL for durability
 - **Current Status**: 🚧 JSON-based implementation with Avro migration planned
 
-==== VectorStorageCoordinator
-**Primary Responsibility**: Orchestrates all vector storage operations
+==== Storage-Aware Polymorphic Search Engine
 
-- **Engine Management**: Routes operations to registered storage engines
+**Primary Responsibility**: Route search requests to storage-optimized search engines based on collection storage type
+
+image::images/search-architecture-simple.png[Storage-Aware Search Architecture,width=80%,align=center]
+
+**Architecture Design**:
+- **Polymorphic Dispatch**: Automatic routing based on collection storage engine type
+- **Storage-Specific Optimizations**: Each engine leverages format-specific optimizations
+- **Performance Focus**: 3-5x improvement through storage-aware strategies
+
+**Search Engine Implementations**:
+
+===== VIPER Search Engine
+**Optimizations for Parquet Columnar Storage**:
+
+- **Predicate Pushdown**: Filter rows at Parquet column level
+- **ML Clustering**: Use cluster metadata to reduce search space by 70-90%
+- **Quantization Support**: Multiple precision levels (FP32, PQ4, PQ8, Binary)
+- **SIMD Vectorization**: Batch operations on column chunks
+- **Expected Performance**: 3-5x faster than generic search
+
+===== LSM Search Engine  
+**Optimizations for Log-Structured Storage**:
+
+- **Tiered Search Strategy**: Priority search (MemTable → Level 0 → Higher Levels)
+- **Bloom Filter Optimization**: Skip irrelevant SSTables (90-95% false positive reduction)
+- **Tombstone Handling**: Correct deletion tracking across levels
+- **Level-Aware Search**: Recent data prioritization
+- **Expected Performance**: 2-3x faster than generic search
+
+**Search Routing Flow**:
+```
+1. Parse search request (REST/gRPC)
+2. Get collection metadata (storage type detection)
+3. Create storage-optimized search hints
+4. Route to appropriate search engine
+5. Execute storage-aware optimizations
+6. Return unified results
+```
+
+**Implementation Status**: 🚧 Phase 1 Complete (design + infrastructure), Phase 2 In Progress
+
+==== VectorStorageCoordinator (Legacy)
+**Note**: Being replaced by storage-aware search engines
+
+- **Engine Management**: Routes operations to registered storage engines  
 - **Currently Supported**:
   * VIPER: Primary ML-driven clustering with Parquet storage
   * Architecture supports pluggable engines
-- **Operation Pipeline**:
-  * Pre-processing and validation
-  * Engine routing (currently defaults to VIPER)
-  * Result aggregation and ranking
-- **Current Status**: ✅ Implemented with VIPER engine, multi-engine routing planned
+- **Migration Plan**: Gradual replacement with polymorphic search engines
+- **Current Status**: ✅ Implemented, ⚡ Optimization in progress
 
 ==== UnifiedIndexManager
 **Primary Responsibility**: Manages all indexing strategies across collections

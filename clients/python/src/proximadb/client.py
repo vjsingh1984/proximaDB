@@ -153,6 +153,11 @@ class ProximaDBClient:
         
         raise map_http_error(response.status_code, error_data)
     
+    def _http_post(self, endpoint: str, data: Any) -> Dict[str, Any]:
+        """Helper method for POST requests"""
+        response = self._make_request("POST", endpoint, json=data)
+        return response.json()
+    
     def _normalize_vectors(self, vectors: VectorArray) -> List[List[float]]:
         """Normalize vectors to list of lists format"""
         if isinstance(vectors, np.ndarray):
@@ -409,11 +414,13 @@ class ProximaDBClient:
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        ef: Optional[int] = None,
-        exact: bool = False,
+        optimization_level: str = "high",
+        use_storage_aware: bool = True,
+        quantization_level: str = "FP32",
+        enable_simd: bool = True,
         timeout: Optional[float] = None,
     ) -> List[SearchResult]:
-        """Search for similar vectors
+        """Search for similar vectors with storage-aware optimizations
         
         Args:
             collection_id: Target collection ID
@@ -422,8 +429,10 @@ class ProximaDBClient:
             filter: Metadata filter conditions
             include_vectors: Include vector data in results
             include_metadata: Include metadata in results
-            ef: HNSW search parameter (higher = more accurate, slower)
-            exact: Use exact search instead of approximate
+            optimization_level: Search optimization level ('high', 'medium', 'low')
+            use_storage_aware: Enable storage-aware polymorphic search
+            quantization_level: Vector quantization level ('FP32', 'PQ8', 'PQ4', 'Binary')
+            enable_simd: Enable SIMD vectorization optimizations
             timeout: Request timeout override
             
         Returns:
@@ -435,15 +444,26 @@ class ProximaDBClient:
                 query = query.astype(np.float32)
             query = query.tolist()
         
+        # Enhanced request data with storage-aware optimizations
         request_data = {
-            "query": query,
+            "vector": query,
             "k": k,
-            "filter": filter,
-            "params": {
-                "include_vectors": include_vectors,
-                "include_metadata": include_metadata,
-                "exact_search": exact,
-                "timeout_ms": int((timeout or self.config.timeout) * 1000),
+            "filters": filter or {},
+            "threshold": 0.0,
+            "include_vectors": include_vectors,
+            "include_metadata": include_metadata,
+            "search_hints": {
+                "predicate_pushdown": True,
+                "use_bloom_filters": True,
+                "use_clustering": True,
+                "quantization_level": quantization_level,
+                "parallel_search": True,
+                "engine_specific": {
+                    "optimization_level": optimization_level,
+                    "enable_simd": enable_simd,
+                    "prefer_indices": True,
+                    "storage_aware": use_storage_aware
+                }
             }
         }
         
