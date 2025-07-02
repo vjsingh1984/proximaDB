@@ -483,8 +483,9 @@ class ProximaDBClient:
             if response.success:
                 results = []
                 
-                # Check if results are in compact format or Avro
-                if response.HasField('compact_results'):
+                # Check which oneof field is set for result_payload
+                result_type = response.WhichOneof('result_payload')
+                if result_type == 'compact_results':
                     # Parse compact results
                     for result in response.compact_results.results:
                         results.append(SearchResult(
@@ -494,7 +495,7 @@ class ProximaDBClient:
                             metadata=dict(result.metadata) if include_metadata else None,
                             rank=result.rank
                         ))
-                elif response.HasField('avro_results'):
+                elif result_type == 'avro_results':
                     # Parse Avro results
                     avro_data = json.loads(response.avro_results)
                     for result in avro_data.get('results', []):
@@ -788,7 +789,8 @@ class ProximaDBClient:
             
             if response.success:
                 results = []
-                if response.HasField('compact_results'):
+                result_type = response.WhichOneof('result_payload')
+                if result_type == 'compact_results':
                     for result_pb in response.compact_results.results:
                         results.append(SearchResult(
                             id=result_pb.id,

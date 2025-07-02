@@ -1,0 +1,130 @@
+@startuml WAL_Flush_Sequence
+skinparam backgroundColor #FEFEFE
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+title Atomic WAL Flush Sequence - No Gaps/Duplicates Guarantee
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+actor "Flush Trigger" as Trigger
+participant "WalStrategy" as WAL
+participant "MemTable" as Mem
+participant "DiskManager" as Disk
+participant "FlushCoordinator" as Coord
+participant "StorageEngine\n(VIPER/LSM)" as Storage
+database "Parquet/SSTable" as Files
+
+== Flush Trigger (Memory/Disk/Time Threshold) ==
+
+Trigger -> WAL: flush(collection_id)
+activate WAL
+
+WAL -> WAL: generate flush_id\n(UUID for atomicity)
+
+== Phase 1: Atomic Retrieval ==
+
+WAL -> WAL: atomic_retrieve_for_flush(collection_id, flush_id)
+activate WAL #Gold
+
+WAL -> Mem: atomic_mark_for_flush(collection_id, flush_id)
+activate Mem
+Mem -> Mem: Mark entries as\n"flush-pending"
+Mem -> Mem: Prevent modifications\nto marked entries
+Mem --> WAL: Vec<WalEntry>
+deactivate Mem
+
+WAL -> WAL: Extract VectorRecords\nfrom WalEntries
+WAL -> WAL: Track sequence ranges\n(min_seq, max_seq)
+
+alt Has Disk Segments
+    WAL -> Disk: mark_segments_for_flush(collection_id, flush_id)
+    activate Disk
+    Disk -> Disk: Mark segments as\n"flush-pending"
+    Disk --> WAL: Vec<SegmentId>
+    deactivate Disk
+end
+
+WAL -> WAL: Create FlushCycle
+deactivate WAL
+
+== Phase 2: Storage Engine Flush ==
+
+WAL -> Storage: do_flush(FlushCycle)
+activate Storage
+
+Storage -> Storage: Validate flush cycle
+
+alt VIPER Storage
+    Storage -> Storage: serialize_records_to_parquet()
+    Storage -> Storage: Apply ML clustering
+    Storage -> Storage: Compress columns
+    Storage -> Files: Write Parquet file
+else LSM Storage
+    Storage -> Storage: serialize_records_to_sstable()
+    Storage -> Storage: Sort by key
+    Storage -> Storage: Build bloom filter
+    Storage -> Files: Write SSTable file
+end
+
+Files --> Storage: Write success
+
+alt Flush Success
+    Storage --> WAL: FlushResult success
+    
+    == Phase 3: Commit (Permanent Removal) ==
+    
+    WAL -> WAL: complete_flush_cycle(FlushCycle)
+    activate WAL #LightGreen
+    
+    WAL -> Mem: complete_flush_removal(collection_id, flush_id)
+    activate Mem
+    Mem -> Mem: Remove marked entries\n(permanent delete)
+    Mem -> Mem: Update memory size
+    Mem --> WAL: entries_removed count
+    deactivate Mem
+    
+    alt Has Disk Segments
+        WAL -> Disk: complete_segment_cleanup(marked_segments)
+        activate Disk
+        Disk -> Disk: Delete flushed segments
+        Disk --> WAL: segments_cleaned count
+        deactivate Disk
+    end
+    
+    WAL -> WAL: Update FlushCycle\nstate = Completed
+    deactivate WAL
+    
+else Flush Failed
+    Storage --> WAL: FlushResult failed
+    
+    == Phase 3: Rollback (Restore Entries) ==
+    
+    WAL -> WAL: abort_flush_cycle(FlushCycle, reason)
+    activate WAL #LightCoral
+    
+    WAL -> Mem: abort_flush_restore(collection_id, flush_id)
+    activate Mem
+    Mem -> Mem: Clear "flush-pending" marks
+    Mem -> Mem: Restore entries to active
+    Mem --> WAL: Restore complete
+    deactivate Mem
+    
+    alt Has Disk Segments
+        WAL -> Disk: abort_segment_marks(marked_segments)
+        activate Disk
+        Disk -> Disk: Clear segment marks
+        Disk --> WAL: Marks cleared
+        deactivate Disk
+    end
+    
+    WAL -> WAL: Update FlushCycle\nstate = Aborted
+    deactivate WAL
+end
+
+deactivate Storage
+
+WAL --> Trigger: Flush complete/aborted
+deactivate WAL
+
+@enduml

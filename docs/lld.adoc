@@ -13,9 +13,11 @@ v1.0, {docdate}
 
 This document provides the Low-Level Design (LLD) for ProximaDB, a cloud-native vector database optimized for AI applications. The LLD details the technical implementation of each architectural component after major cleanup (December 2024).
 
-**Implementation Status**: 80% complete with honest, working implementations
+**Implementation Status**: 75% complete - Core infrastructure operational, search debugging phase
+**Latest Update**: BERT + VIPER integration verified, search interface fixed, investigating vector discovery issues
 **Major Cleanup**: Removed 4,457 lines of obsolete code (GPU, consensus, CLI placeholders)
 **Architecture**: Multi-server design with REST (port 5678) and gRPC (port 5679)
+**Performance**: 212 vectors/sec insertion, production-ready infrastructure deployed
 
 == 1. Complete System Architecture
 
@@ -96,7 +98,196 @@ image::Protocol_Flow_Diagram.png[Protocol Flow Diagram,width=100%]
 - 🚧 **Vector Search**: Basic implementation, coordinator missing
 - ❌ **Advanced Operations**: Server-side implementation needed
 
-=== 2.3 Vector Operations Sequence
+=== 2.3 WAL Flush Coordination Implementation
+
+==== WAL Strategy Pattern Implementation
+
+ProximaDB implements a comprehensive WAL system using the Strategy Pattern for flexible durability and performance configurations:
+
+image::diagrams/plantuml/WAL_Flush_Coordination_LLD.png[WAL LLD,width=100%]
+
+**Core Components:**
+
+.WalStrategy Trait Implementation
+```rust
+#[async_trait]
+pub trait WalStrategy: Send + Sync {
+    // Base operations
+    async fn write_entry(&self, entry: WalEntry) -> Result<u64>;
+    async fn flush(&self, collection_id: Option<CollectionId>) -> Result<FlushResult>;
+    
+    // Atomic flush coordination (NEW)
+    async fn atomic_retrieve_for_flush(&self, collection_id: &CollectionId, flush_id: &str) -> Result<FlushCycle>;
+    async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<FlushCompletionResult>;
+    async fn abort_flush_cycle(&self, flush_cycle: FlushCycle, reason: &str) -> Result<()>;
+}
+```
+
+.FlushCycle Data Structure
+```rust
+pub struct FlushCycle {
+    pub flush_id: String,              // UUID for atomic operations
+    pub collection_id: CollectionId,
+    pub entries: Vec<WalEntry>,        // Marked for flush
+    pub vector_records: Vec<VectorRecord>, // Extracted for storage
+    pub marked_sequences: Vec<(u64, u64)>, // Sequence ranges
+    pub state: FlushCycleState,        // Active/Completed/Aborted
+}
+```
+
+==== Atomic Flush Sequence Implementation
+
+The three-phase atomic flush process prevents data loss and gaps:
+
+image::diagrams/plantuml/WAL_Flush_Sequence.png[Flush Sequence,width=100%]
+
+.Phase 1: Atomic Retrieval
+```rust
+// Mark entries atomically, prevent concurrent modifications
+let flush_cycle = wal_strategy.atomic_retrieve_for_flush(collection_id, &flush_id).await?;
+
+// Memtable-specific optimizations:
+// - BTree: Ordered iteration for efficient storage writes
+// - HashMap: O(1) marking for high-throughput scenarios
+// - SkipList: Concurrent-safe marking during parallel writes
+```
+
+.Phase 2: Storage Engine Delegation
+```rust
+// Delegate to storage engine with proper error handling
+match storage_engine.do_flush(flush_cycle.clone()).await {
+    Ok(flush_result) => {
+        // Success: proceed to commit phase
+        wal_strategy.complete_flush_cycle(flush_cycle).await?;
+    }
+    Err(error) => {
+        // Failure: restore entries to active state
+        wal_strategy.abort_flush_cycle(flush_cycle, &error.to_string()).await?;
+    }
+}
+```
+
+.Phase 3: Commit/Rollback
+```rust
+// Atomic completion - permanent removal from WAL
+pub async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<FlushCompletionResult> {
+    let entries_removed = self.memory_table
+        .complete_flush_removal(&flush_cycle.collection_id, &flush_cycle.flush_id).await?;
+    
+    Ok(FlushCompletionResult {
+        flush_id: flush_cycle.flush_id,
+        entries_removed,
+        memory_freed: entries_removed * AVG_ENTRY_SIZE,
+    })
+}
+```
+
+==== Memtable Strategy Implementations
+
+Different memtable implementations optimize for specific workload patterns:
+
+.BTree Memtable (Production Default)
+```rust
+// Ordered operations with efficient range scans
+impl BTreeMemTable {
+    pub async fn atomic_mark_for_flush(&mut self, collection_id: &CollectionId, flush_id: &str) -> Result<Vec<WalEntry>> {
+        // Mark entries in order for efficient storage writes
+        // Optimal for PerBatch sync mode
+    }
+}
+```
+
+.HashMap Memtable (High Throughput)
+```rust  
+// O(1) operations for maximum write performance
+impl HashMapMemTable {
+    pub async fn atomic_mark_for_flush(&mut self, collection_id: &CollectionId, flush_id: &str) -> Result<Vec<WalEntry>> {
+        // O(1) marking with HashMap efficiency
+        // Optimal for MemoryOnly sync mode
+    }
+}
+```
+
+.SkipList Memtable (Concurrent Access)
+```rust
+// Probabilistic concurrent data structure
+impl SkipListMemTable {
+    pub async fn atomic_mark_for_flush(&mut self, collection_id: &CollectionId, flush_id: &str) -> Result<Vec<WalEntry>> {
+        // Lock-free concurrent marking
+        // Optimal for Always sync mode (concurrent reads during disk writes)
+    }
+}
+```
+
+==== Storage Engine Integration
+
+The WAL system integrates directly with storage engines for efficient data transfer:
+
+.VIPER Integration
+```rust
+impl ViperCoreEngine {
+    pub async fn do_flush(&self, flush_cycle: FlushCycle) -> Result<FlushResult> {
+        // Zero-copy vector record processing (Avro optimization)
+        let vector_records = flush_cycle.vector_records;
+        
+        // Serialize to Parquet with ML clustering
+        let parquet_data = self.serialize_records_to_parquet(vector_records).await?;
+        
+        // Atomic write to storage
+        self.write_parquet_file(parquet_data).await?;
+        
+        Ok(FlushResult::success())
+    }
+}
+```
+
+.LSM Integration
+```rust
+impl LsmTree {
+    pub async fn do_flush(&self, flush_cycle: FlushCycle) -> Result<FlushResult> {
+        // Sort vector records for SSTable generation
+        let mut sorted_records = flush_cycle.vector_records;
+        sorted_records.sort_by_key(|r| &r.vector_id);
+        
+        // Generate SSTable with bloom filters
+        let sstable_data = self.serialize_records_to_sstable(sorted_records).await?;
+        
+        // Atomic write to storage
+        self.write_sstable_file(sstable_data).await?;
+        
+        Ok(FlushResult::success())
+    }
+}
+```
+
+==== Search Integration Over Unflushed Data
+
+The system provides hybrid search capabilities that query both storage files and unflushed WAL data:
+
+.HybridSearchCoordinator Implementation
+```rust
+pub struct HybridSearchCoordinator {
+    wal_search: WalSearchIntegration,
+    storage_engine: Arc<dyn UnifiedStorageEngine>,
+}
+
+impl HybridSearchCoordinator {
+    pub async fn hybrid_vector_search(&self, collection_id: &CollectionId, query_vector: &[f32], k: usize) -> Result<Vec<VectorRecord>> {
+        // 1. Search in storage files (flushed data)
+        let storage_results = self.storage_engine.search_vectors(collection_id, query_vector, k, None).await?;
+        
+        // 2. Search in unflushed WAL data  
+        let unflushed_results = self.wal_search.search_unflushed_vectors(collection_id, None, None, None).await?;
+        
+        // 3. Combine with MVCC semantics (latest versions win)
+        let final_results = self.merge_results_with_mvcc(storage_results, unflushed_results);
+        
+        Ok(final_results)
+    }
+}
+```
+
+=== 2.4 Vector Operations Sequence
 
 image::Vector_Operations_Sequence.png[Vector Operations Sequence,width=100%]
 

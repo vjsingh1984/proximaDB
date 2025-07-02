@@ -4,7 +4,7 @@
 title WAL Strategy Pattern with Assignment Service Integration
 scale 1.2
 
-interface "WalStrategy" as WalStrategy {
+interface "WalStrategy" as WalStrategy 
     + strategy_name(): &'static str
     + initialize(config, filesystem): Result<()>
     + set_storage_engine(engine): void
@@ -16,7 +16,7 @@ interface "WalStrategy" as WalStrategy {
     + discover_existing_assignments(config): Result<()>
 }
 
-class "AvroWalStrategy" as AvroWAL {
+class "AvroWalStrategy" as AvroWAL 
     - config: Option<WalConfig>
     - filesystem: Option<Arc<FilesystemFactory>>
     - memory_table: Option<WalMemTable>
@@ -29,7 +29,7 @@ class "AvroWalStrategy" as AvroWAL {
     + get_assignment_service(): &Arc<AssignmentService>
 }
 
-class "BincodeWalStrategy" as BincodeWAL {
+class "BincodeWalStrategy" as BincodeWAL 
     - config: Option<WalConfig>
     - filesystem: Option<Arc<FilesystemFactory>>
     - memory_table: Option<WalMemTable>
@@ -42,7 +42,7 @@ class "BincodeWalStrategy" as BincodeWAL {
     + get_assignment_service(): &Arc<AssignmentService>
 }
 
-interface "AssignmentService" as AssignmentService {
+interface "AssignmentService" as AssignmentService 
     + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
     + get_assignment(collection_id, component_type): Option<StorageAssignmentResult>
     + record_assignment(collection_id, component_type, assignment): Result<()>
@@ -51,7 +51,7 @@ interface "AssignmentService" as AssignmentService {
     + get_assignment_stats(): Result<serde_json::Value>
 }
 
-class "RoundRobinAssignmentService" as RoundRobinService {
+class "RoundRobinAssignmentService" as RoundRobinService 
     - assignments: Arc<RwLock<HashMap<StorageComponentType, HashMap<CollectionId, StorageAssignmentResult>>>>
     - round_robin_counters: Arc<RwLock<HashMap<StorageComponentType, usize>>>
     + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
@@ -61,13 +61,13 @@ class "RoundRobinAssignmentService" as RoundRobinService {
     + hash_collection_id(collection_id): usize
 }
 
-class "StorageAssignmentResult" as Assignment {
+class "StorageAssignmentResult" as Assignment 
     + storage_url: String
     + directory_index: usize
     + assigned_at: DateTime<Utc>
 }
 
-enum "StorageComponentType" as ComponentType {
+enum "StorageComponentType" as ComponentType 
     Wal
     Viper
     Lsm
@@ -75,7 +75,7 @@ enum "StorageComponentType" as ComponentType {
     Metadata
 }
 
-class "WalConfig" as WalConfig {
+class "WalConfig" as WalConfig 
     + wal_urls: Vec<String>
     + distribution_strategy: DistributionStrategy
     + collection_affinity: bool
@@ -104,15 +104,15 @@ note bottom of WalStrategy
         &self, 
         collection_id: &str, 
         config: &WalConfig
-    ) -> Result<String> {
+    ) -> Result<String> 
         // Check existing assignment
         if let Some(assignment) = self.get_assignment_service()
-            .get_assignment(&CollectionId::from(collection_id), StorageComponentType::Wal).await {
+            .get_assignment(&CollectionId::from(collection_id), StorageComponentType::Wal).await 
             return Ok(assignment.storage_url);
         }
         
         // Create new assignment
-        let assignment_config = StorageAssignmentConfig {
+        let assignment_config = StorageAssignmentConfig 
             storage_urls: config.wal_urls.clone(),
             component_type: StorageComponentType::Wal,
             collection_affinity: config.collection_affinity,
@@ -134,7 +134,7 @@ note right of RoundRobinService
         &self,
         component_type: StorageComponentType,
         storage_urls: &[String],
-    ) -> Result<usize> {
+    ) -> Result<usize> 
         let mut counters = self.round_robin_counters.write().await;
         let counter = counters.entry(component_type).or_insert(0);
         let index = *counter % storage_urls.len();
@@ -145,7 +145,7 @@ note right of RoundRobinService
     
     **Affinity Algorithm:**
     ```rust
-    fn hash_collection_id(&self, collection_id: &CollectionId) -> usize {
+    fn hash_collection_id(&self, collection_id: &CollectionId) -> usize 
         let mut hasher = DefaultHasher::new();
         collection_id.hash(&mut hasher);
         hasher.finish() as usize

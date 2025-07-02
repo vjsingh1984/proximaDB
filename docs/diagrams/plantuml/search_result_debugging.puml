@@ -1,0 +1,68 @@
+@startuml Search_Result_Debugging
+title Search Result Debugging Flow\nDiagnosing Vector Discovery Issues
+
+participant "Python Client" as CLIENT
+participant "gRPC Service" as GRPC
+participant "UnifiedAvroService" as AVRO
+participant "SearchEngineFactory" as FACTORY
+participant "VIPER Engine" as VIPER
+participant "WAL Manager" as WAL
+participant "Collection Service" as COLL
+
+CLIENT -> GRPC : search_vectors(query)
+note right : Fixed gRPC interface\nresult_payload.compact_results
+
+GRPC -> AVRO : search_vectors_polymorphic()
+note right : Storage-aware search\nwith optimization hints
+
+AVRO -> FACTORY : create_search_engine()
+note right : Selects VIPER or LSM\nbased on collection storage
+
+FACTORY -> VIPER : search_vectors()
+VIPER -> VIPER : search_parquet_files()
+note right : Searches flushed\nParquet storage
+
+AVRO -> WAL : search_vectors_similarity()
+note right : Fixed: record.vector\n(was record.dense_vector)
+
+WAL -> WAL : scan_memtable()
+note right : Searches unflushed\nvectors in memory
+
+' Debugging Points
+note over COLL
+  **Collection Status:**
+  • bert_viper_10k exists
+  • vector_count = 0
+  • Created successfully
+end note
+
+note over VIPER
+  **VIPER Storage:**
+  • No flushed Parquet files?
+  • Vectors pending in WAL?
+  • Storage delegation issue?
+end note
+
+note over WAL
+  **WAL Status:**
+  • 100% WAL search success
+  • Fixed field name bug
+  • But: zero vectors found
+end note
+
+' Return path
+WAL --> AVRO : SearchResults (0 vectors)
+VIPER --> AVRO : SearchResults (0 vectors)
+AVRO --> GRPC : VectorOperationResponse
+GRPC --> CLIENT : compact_results (empty)
+
+' Problem Analysis
+note over CLIENT
+  **Current Issue:**
+  • Interface fixed ✅
+  • No parsing errors ✅  
+  • Zero results found ❌
+  • Vectors not discoverable ❌
+end note
+
+@enduml

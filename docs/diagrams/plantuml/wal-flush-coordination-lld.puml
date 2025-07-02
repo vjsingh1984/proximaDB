@@ -1,0 +1,173 @@
+@startuml WAL_Flush_Coordination_LLD
+skinparam backgroundColor #FEFEFE
+skinparam classAttributeIconSize 0
+skinparam class {
+    BackgroundColor<<interface>> LightBlue
+    BackgroundColor<<abstract>> LightGray
+    BackgroundColor<<concrete>> LightGreen
+    BackgroundColor<<coordinator>> Gold
+}
+
+title WAL Flush Coordination - Low Level Design
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+interface WalStrategy <<interface>> 
+    + strategy_name(): &str
+    + initialize(config: WalConfig): Result<()>
+    + write_entry(entry: WalEntry): Result<u64>
+    + flush(collection_id: Option<CollectionId>): Result<FlushResult>
+    --
+    + atomic_retrieve_for_flush(collection_id, flush_id): Result<FlushCycle>
+    + complete_flush_cycle(flush_cycle): Result<FlushCompletionResult>
+    + abort_flush_cycle(flush_cycle, reason): Result<()>
+    --
+    {field} **Default Implementation Benefits:**
+    {field} - Common flush logic
+    {field} - Atomic guarantees
+    {field} - Consistent error handling
+}
+
+abstract class BaseWalStrategy <<abstract>> 
+    # memory_table: Option<Box<dyn MemTableStrategy>>
+    # disk_manager: Option<WalDiskManager>
+    # storage_engine: Arc<RwLock<Option<UnifiedStorageEngine>>>
+    # config: Option<WalConfig>
+    --
+    {method} **Coordination Logic:**
+    {method} - Memory + Disk sync
+    {method} - Atomic state transitions
+    {method} - Recovery coordination
+}
+
+class AvroWalStrategy <<concrete>> 
+    - schema: Schema
+    - avro_writer: Writer
+    --
+    + atomic_retrieve_for_flush(): FlushCycle
+    {method} **Optimizations:**
+    {method} - Zero-copy VectorRecords
+    {method} - Schema evolution support
+    {method} - Best for: Long-term storage
+}
+
+class BincodeWalStrategy <<concrete>> 
+    - bincode_config: Config
+    --
+    + atomic_retrieve_for_flush(): FlushCycle
+    {method} **Optimizations:**
+    {method} - O(1) HashMap operations
+    {method} - Binary serialization speed
+    {method} - Best for: High throughput
+}
+
+interface MemTableStrategy <<interface>> 
+    + insert_entry(entry: WalEntry): u64
+    + get_entries(collection_id): Vec<WalEntry>
+    + clear_flushed(collection_id, sequence): Result<()>
+    --
+    + atomic_mark_for_flush(collection_id, flush_id): Vec<WalEntry>
+    + complete_flush_removal(collection_id, flush_id): usize
+    + abort_flush_restore(collection_id, flush_id): Result<()>
+}
+
+class BTreeMemTable <<concrete>> 
+    - entries: BTreeMap<u64, WalEntry>
+    - vector_index: BTreeMap<VectorId, Vec<u64>>
+    --
+    {method} **LSM Optimized:**
+    {method} - Ordered iteration
+    {method} - Efficient range scans
+    {method} - Natural sort for SSTables
+}
+
+class HashMapMemTable <<concrete>> 
+    - entries_by_sequence: HashMap<u64, WalEntry>
+    - vector_index: HashMap<VectorId, Vec<u64>>
+    --
+    {method} **VIPER Optimized:**
+    {method} - O(1) all operations
+    {method} - Best for large collections
+    {method} - Random access patterns
+}
+
+class FlushCycle <<coordinator>> 
+    + flush_id: String
+    + collection_id: CollectionId
+    + entries: Vec<WalEntry>
+    + vector_records: Vec<VectorRecord>
+    + marked_sequences: Vec<(u64, u64)>
+    + state: FlushCycleState
+    --
+    {field} **Atomic Guarantees:**
+    {field} - No gaps in sequences
+    {field} - No duplicate flushes
+    {field} - Consistent recovery
+}
+
+enum FlushCycleState 
+    Active
+    Completed
+    Aborted
+}
+
+class ViperCoreEngine <<concrete>> 
+    - wal_manager: Option<Arc<WalStrategy>>
+    --
+    + do_flush(params: FlushParameters): FlushResult
+    + atomic_retrieve_wal_for_flush(): FlushCycle
+    - serialize_records_to_parquet(): Vec<u8>
+    --
+    {method} **Parquet Generation:**
+    {method} - Columnar format
+    {method} - ML clustering
+    {method} - Compression
+}
+
+class LsmTree <<concrete>> 
+    - wal_manager: Option<Arc<WalStrategy>>
+    --
+    + do_flush(params: FlushParameters): FlushResult
+    + atomic_retrieve_wal_for_flush(): FlushCycle
+    - serialize_records_to_sstable(): Vec<u8>
+    --
+    {method} **SSTable Generation:**
+    {method} - Sorted format
+    {method} - Bloom filters
+    {method} - Compaction ready
+}
+
+' Inheritance relationships
+WalStrategy <|.. BaseWalStrategy
+BaseWalStrategy <|-- AvroWalStrategy
+BaseWalStrategy <|-- BincodeWalStrategy
+
+MemTableStrategy <|.. BTreeMemTable
+MemTableStrategy <|.. HashMapMemTable
+
+' Composition relationships
+BaseWalStrategy *-- MemTableStrategy : "1"
+BaseWalStrategy *-- FlushCycle : "creates"
+
+' Storage Engine relationships
+ViperCoreEngine --> BaseWalStrategy : "uses"
+LsmTree --> BaseWalStrategy : "uses"
+
+' Flush flow
+FlushCycle --> ViperCoreEngine : "consumed by"
+FlushCycle --> LsmTree : "consumed by"
+
+' Optimal pairings
+note bottom of BTreeMemTable
+    **Best paired with:**
+    - BincodeWAL (speed)
+    - LSM Storage (ordering)
+end note
+
+note bottom of HashMapMemTable
+    **Best paired with:**
+    - BincodeWAL (performance)
+    - VIPER Storage (random)
+end note
+
+@enduml

@@ -1,0 +1,128 @@
+@startuml coordinator-operation-flow
+!theme blueprint
+title Per-Collection Coordinator Operation Flow
+
+actor Client
+participant "UnifiedAvroService" as UAS
+participant "CoordinatorManager" as CM
+participant "Collection A\nCoordinator" as CAC
+participant "Collection B\nCoordinator" as CBC
+participant "AXIS Manager" as AXIS
+participant "VIPER Engine" as VIPER
+participant "LSM Engine" as LSM
+participant "WAL Manager" as WAL
+
+== Vector Insertion with Per-Collection Isolation ==
+
+Client -> UAS: POST /collections/collection_a/vectors
+activate UAS
+
+UAS -> UAS: Get collection metadata
+UAS -> CM: get_or_create_coordinator("collection_a", VIPER)
+activate CM
+
+CM -> CAC: Create if not exists
+activate CAC
+CAC -> AXIS: ensure_collection_strategy("collection_a")
+CAC --> CM: coordinator_instance
+CM --> UAS: Arc<CollectionStorageIndexCoordinator>
+
+UAS -> WAL: insert_batch_with_sync("collection_a", vectors)
+activate WAL
+WAL -> WAL: Route to MemTable A
+WAL --> UAS: Success
+deactivate WAL
+
+UAS -> CAC: handle_vector_insertion(vectors)
+CAC -> AXIS: insert(vector) for each vector
+activate AXIS
+AXIS -> AXIS: Index in collection_a strategy
+AXIS --> CAC: indexed_count
+deactivate AXIS
+CAC -> CAC: Update coordinator metrics
+CAC --> UAS: indexed_count
+
+UAS --> Client: VectorInsertResponse with metrics
+deactivate UAS
+deactivate CAC
+
+== Concurrent Operations on Different Collections ==
+
+par Collection A Operations
+    Client -> UAS: POST /collections/collection_a/vectors
+    UAS -> CAC: handle_vector_insertion()
+    CAC -> AXIS: collection_a operations
+    CAC -> VIPER: VIPER-specific operations
+and Collection B Operations  
+    Client -> UAS: POST /collections/collection_b/vectors
+    UAS -> CBC: handle_vector_insertion()
+    activate CBC
+    CBC -> AXIS: collection_b operations
+    CBC -> LSM: LSM-specific operations
+    deactivate CBC
+end
+
+== Flush Completion Flow ==
+
+VIPER -> VIPER: flush_collection_with_memtable_data("collection_a")
+activate VIPER
+VIPER -> VIPER: Apply quantization, create Parquet files
+VIPER -> UAS: Notify flush completion
+UAS -> CAC: handle_flush_completion(vectors, file_paths)
+CAC -> AXIS: update_vector_file_reference() for each vector
+activate AXIS
+AXIS -> AXIS: Update file references for collection_a
+AXIS --> CAC: Success
+deactivate AXIS
+CAC -> CAC: Update flush metrics
+CAC --> UAS: Success
+UAS --> VIPER: Acknowledgment
+deactivate VIPER
+
+== Compaction Flow ==
+
+VIPER -> VIPER: do_compact("collection_a")
+activate VIPER
+VIPER -> VIPER: ML-guided clustering optimization
+VIPER -> UAS: Notify compaction completion
+UAS -> CAC: handle_compaction_completion(old_files, new_files)
+CAC -> AXIS: rebuild_indexes_after_compaction("collection_a", old_files, new_files)
+activate AXIS
+AXIS -> AXIS: Rebuild collection_a indexes
+AXIS --> CAC: Success
+deactivate AXIS
+CAC -> CAC: Update compaction metrics
+CAC --> UAS: Success
+UAS --> VIPER: Acknowledgment
+deactivate VIPER
+
+== Metrics Aggregation ==
+
+Client -> UAS: GET /metrics/coordinators
+UAS -> CM: get_aggregate_metrics()
+activate CM
+CM -> CAC: get_metrics()
+CM -> CBC: get_metrics()
+CM -> CM: Aggregate across all collections
+CM --> UAS: AggregatedMetrics
+deactivate CM
+UAS --> Client: JSON response with all coordinator metrics
+
+note over CAC, CBC
+**Collection Isolation Benefits:**
+• Independent failure domains
+• Per-collection performance tuning
+• Horizontal scaling ready
+• Resource isolation
+• Collection-specific optimization
+end note
+
+note over AXIS
+**AXIS Collection Strategies:**
+• Maintains separate strategies per collection
+• Adaptive indexing per collection workload
+• Migration decisions per collection
+• Performance monitoring per collection
+end note
+
+@enduml

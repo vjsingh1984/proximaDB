@@ -4,59 +4,59 @@
 title ProximaDB Multi-Disk Persistence Architecture
 scale 1.2
 
-package "ProximaDB Server" {
-    component "API Layer" as API {
+package "ProximaDB Server" 
+    component "API Layer" as API 
         [REST Server :5678] as REST
         [gRPC Server :5679] as gRPC
     }
     
-    component "Service Layer" as Services {
+    component "Service Layer" as Services 
         [Collection Service] as CollSvc
         [Unified Avro Service] as AvroSvc
         [Vector Storage Coordinator] as VectorCoord
     }
     
-    component "Assignment Service" as Assignment {
+    component "Assignment Service" as Assignment 
         [Round-Robin Assignment Service] as RRAService
         [Storage Component Mapper] as SCMapper
         [Discovery Service] as Discovery
     }
     
-    component "WAL Layer" as WAL {
+    component "WAL Layer" as WAL 
         [WAL Manager] as WALMgr
         [Avro WAL Strategy] as AvroWAL
         [Bincode WAL Strategy] as BincodeWAL
         [Base WAL Strategy Trait] as BaseWAL
     }
     
-    component "Storage Layer" as Storage {
+    component "Storage Layer" as Storage 
         [VIPER Engine] as VIPER
         [LSM Engine] as LSM
         [Filesystem Factory] as FSFactory
     }
 }
 
-package "Multi-Disk Storage" {
-    cloud "Disk 1" as Disk1 {
+package "Multi-Disk Storage" 
+    cloud "Disk 1" as Disk1 
         folder "WAL" as WAL1
         folder "Storage" as Storage1  
         folder "Metadata" as Meta1
     }
     
-    cloud "Disk 2" as Disk2 {
+    cloud "Disk 2" as Disk2 
         folder "WAL" as WAL2
         folder "Storage" as Storage2
         folder "Metadata" as Meta2
     }
     
-    cloud "Disk 3" as Disk3 {
+    cloud "Disk 3" as Disk3 
         folder "WAL" as WAL3
         folder "Storage" as Storage3
         folder "Metadata" as Meta3
     }
 }
 
-package "Cloud Storage" as Cloud {
+package "Cloud Storage" as Cloud 
     cloud "S3 Compatible" as S3
     cloud "Azure Blob" as Azure
     cloud "Google Cloud" as GCS

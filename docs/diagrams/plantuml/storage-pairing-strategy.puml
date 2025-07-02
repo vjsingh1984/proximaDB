@@ -1,0 +1,113 @@
+@startuml Storage_Pairing_Strategy
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<lsm>> LightBlue
+    BackgroundColor<<viper>> LightGreen
+    BackgroundColor<<optimal>> Gold
+    BackgroundColor<<suboptimal>> LightGray
+}
+
+title Optimal WAL Component Pairing for Storage Engines
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+package "LSM Storage Collections" <<lsm>> 
+    component "BincodeWAL" as LSM_WAL <<optimal>>
+    
+    component "BTree MemTable" as LSM_Mem <<optimal>> 
+            **Ordered Operations**
+            - Natural sort order
+            - Efficient range scans
+            - Direct SSTable generation
+    }
+    
+    component "SSTable Writer" as SSTable 
+        note bottom
+            **Output Format**
+            - Sorted key-value pairs
+            - Bloom filters
+            - Block compression
+            - Efficient compaction
+        end note
+    }
+}
+
+package "VIPER Storage Collections" <<viper>> 
+    component "BincodeWAL" as VIPER_WAL <<optimal>> 
+            **Production Performance**
+            - O(1) operations
+            - Binary efficiency
+            - Minimal latency
+    }
+    
+    component "HashMap MemTable" as VIPER_Mem <<optimal>> 
+            **Random Access**
+            - O(1) all operations
+            - Large collection support
+            - ML-friendly access
+    }
+    
+    component "Parquet Writer" as Parquet 
+        note bottom
+            **Output Format**
+            - Columnar storage
+            - Vector compression
+            - ML clustering
+            - Analytics ready
+        end note
+    }
+}
+
+package "Alternative Configurations" 
+    component "AvroWAL" as Avro <<suboptimal>> 
+            **When to Use:**
+            - Schema evolution needed
+            - Long-term archival
+            - Cross-system compatibility
+    }
+    
+    component "SkipList MemTable" as Skip <<suboptimal>> 
+            **When to Use:**
+            - High concurrency
+            - Probabilistic ordering OK
+            - Write-heavy workloads
+    }
+    
+    component "ART MemTable" as ART <<suboptimal>> 
+            **When to Use:**
+            - Sparse collections
+            - String-heavy metadata
+            - Memory constrained
+    }
+}
+
+' LSM Optimal Path
+LSM_WAL --> LSM_Mem : "writes to"
+LSM_Mem --> SSTable : "flushes to"
+
+' VIPER Optimal Path
+VIPER_WAL --> VIPER_Mem : "writes to"
+VIPER_Mem --> Parquet : "flushes to"
+
+' Alternative paths (dashed)
+Avro ..> LSM_Mem : "compatible"
+Avro ..> VIPER_Mem : "compatible"
+Skip ..> SSTable : "can flush to"
+ART ..> Parquet : "can flush to"
+
+' Performance indicators
+note top of LSM_WAL
+    **LSM Performance Targets**
+    ✓ 100K+ writes/sec
+    ✓ <1ms latency
+    ✓ Ordered flush
+end note
+
+note top of VIPER_WAL
+    **VIPER Performance Targets**
+    ✓ 200K+ writes/sec
+    ✓ <0.5ms latency
+    ✓ Random access
+end note
+
+@enduml

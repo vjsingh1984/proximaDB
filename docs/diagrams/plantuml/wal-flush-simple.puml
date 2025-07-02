@@ -1,0 +1,42 @@
+@startuml WAL_Flush_Coordination_Simple
+skinparam backgroundColor #FEFEFE
+
+title WAL Flush Coordination Architecture
+header ProximaDB Vector Database
+
+package "WAL Subsystem" {
+    [WAL Strategy] as WS
+    [MemTable] as MT
+    [Disk Manager] as DM
+    [Flush Coordinator] as FC
+}
+
+package "Storage Engines" {
+    [LSM Storage] as LSM
+    [VIPER Storage] as VIPER
+}
+
+WS --> MT : owns
+WS --> DM : owns
+WS --> FC : uses
+FC --> LSM : flush to SSTable
+FC --> VIPER : flush to Parquet
+
+note right of MT
+  Options:
+  - BTree (ordered)
+  - HashMap (O(1))
+  - SkipList (concurrent)
+  - ART (space efficient)
+end note
+
+note right of FC
+  Sync Modes:
+  - Always (max durability)
+  - PerBatch (balanced)
+  - Periodic (throughput)
+  - Never (fastest)
+  - MemoryOnly (no disk)
+end note
+
+@enduml

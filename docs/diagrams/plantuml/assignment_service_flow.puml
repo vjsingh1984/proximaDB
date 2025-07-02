@@ -28,13 +28,11 @@ group Collection Creation Flow
         deactivate RR
         
         AssignSvc -> AssignSvc: create StorageAssignmentResult
-        note right
-            StorageAssignmentResult {
+            StorageAssignmentResult 
                 storage_url: "file:///data/disk2/wal"
                 directory_index: 1
                 assigned_at: timestamp
             }
-        end note
         
         AssignSvc -> AssignSvc: record_assignment(collection_id, WAL, assignment)
     else Existing assignment found
@@ -73,11 +71,9 @@ group Server Startup Recovery Flow
             
             alt Collection has data
                 Discovery -> AssignSvc: record_assignment(collection_id, WAL, discovered_assignment)
-                note right
                     Discovered assignment records
                     existing collection-to-disk
                     mappings for recovery
-                end note
             end
         end
     end

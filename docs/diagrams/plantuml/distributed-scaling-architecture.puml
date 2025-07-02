@@ -1,0 +1,171 @@
+@startuml distributed-scaling-architecture
+!theme blueprint
+title Distributed Scaling Architecture with Per-Collection Coordinators
+
+!define NODE_COLOR #E1F5FE
+!define COORDINATOR_COLOR #FFF2CC
+!define COLLECTION_COLOR #E8F4FD
+!define AXIS_COLOR #D5E8D4
+
+package "Node 1" NODE_COLOR {
+    component [UnifiedAvroService\nNode 1] as UAS1
+    component [CoordinatorManager\nNode 1] as CM1
+    
+    package "Collections on Node 1" {
+        component [Coordinator\nCollection A] as CA1 COORDINATOR_COLOR
+        component [Coordinator\nCollection C] as CC1 COORDINATOR_COLOR
+        component [Coordinator\nCollection E] as CE1 COORDINATOR_COLOR
+    }
+    
+    component [AXIS Manager\nNode 1] as AXIS1 AXIS_COLOR
+    component [Storage Engines\nNode 1] as SE1
+}
+
+package "Node 2" NODE_COLOR {
+    component [UnifiedAvroService\nNode 2] as UAS2
+    component [CoordinatorManager\nNode 2] as CM2
+    
+    package "Collections on Node 2" {
+        component [Coordinator\nCollection B] as CB2 COORDINATOR_COLOR
+        component [Coordinator\nCollection D] as CD2 COORDINATOR_COLOR
+        component [Coordinator\nCollection F] as CF2 COORDINATOR_COLOR
+    }
+    
+    component [AXIS Manager\nNode 2] as AXIS2 AXIS_COLOR
+    component [Storage Engines\nNode 2] as SE2
+}
+
+package "Node N" NODE_COLOR {
+    component [UnifiedAvroService\nNode N] as UASN
+    component [CoordinatorManager\nNode N] as CMN
+    
+    package "Collections on Node N" {
+        component [Coordinator\nCollection G] as CGN COORDINATOR_COLOR
+        component [Coordinator\nCollection H] as CHN COORDINATOR_COLOR
+        component [Coordinator\nCollection I] as CIN COORDINATOR_COLOR
+    }
+    
+    component [AXIS Manager\nNode N] as AXISN AXIS_COLOR
+    component [Storage Engines\nNode N] as SEN
+}
+
+cloud "Distributed Coordination Layer" {
+    component [Collection Registry] as CR {
+        + register_collection(collection_id, node_id)
+        + get_collection_location(collection_id)
+        + migrate_collection(collection_id, from_node, to_node)
+        --
+        Consistent hashing for collection distribution
+        Collection→Node mapping
+    }
+    
+    component [Global AXIS\nCoordination] as GAC {
+        + coordinate_cross_collection_queries()
+        + aggregate_global_metrics()
+        + manage_global_index_strategies()
+        --
+        Cross-node query coordination
+        Global optimization decisions
+    }
+}
+
+package "Client Load Balancer" {
+    component [ProximaDB Gateway] as Gateway {
+        + route_request_to_node(collection_id)
+        + handle_cross_collection_queries()
+        + aggregate_responses()
+        --
+        Collection-aware routing
+        Query federation
+    }
+}
+
+' Node internal relationships
+UAS1 --> CM1
+CM1 --> CA1
+CM1 --> CC1
+CM1 --> CE1
+CA1 --> AXIS1
+CC1 --> AXIS1
+CE1 --> AXIS1
+
+UAS2 --> CM2
+CM2 --> CB2
+CM2 --> CD2
+CM2 --> CF2
+CB2 --> AXIS2
+CD2 --> AXIS2
+CF2 --> AXIS2
+
+UASN --> CMN
+CMN --> CGN
+CMN --> CHN
+CMN --> CIN
+CGN --> AXISN
+CHN --> AXISN
+CIN --> AXISN
+
+' Distributed coordination
+Gateway --> CR : collection routing
+Gateway --> UAS1 : route collection A, C, E
+Gateway --> UAS2 : route collection B, D, F
+Gateway --> UASN : route collection G, H, I
+
+UAS1 --> GAC : global coordination
+UAS2 --> GAC : global coordination
+UASN --> GAC : global coordination
+
+CR --> GAC : collection metadata
+
+note top of Gateway
+**Collection-Aware Routing:**
+• Hash(collection_id) → Node assignment
+• Single collection = Single node (for now)
+• Cross-collection queries = Query federation
+• Collection migration support
+end note
+
+note right of CR
+**Distribution Strategy:**
+• Consistent hashing by collection_id
+• Each collection lives on exactly one node
+• Migration support for rebalancing
+• Fault tolerance via replication
+end note
+
+note bottom of CA1
+**Per-Collection Benefits in Distributed Mode:**
+• Collection isolation across nodes
+• Independent scaling per collection
+• Fault isolation (collection failure ≠ node failure)
+• Resource allocation per collection
+• Collection-specific optimization
+end note
+
+== Scaling Patterns ==
+
+note over UAS1, UASN
+**Horizontal Scaling Patterns:**
+
+1. **Collection Distribution:**
+   - New collections → Least loaded node
+   - Collection migration for rebalancing
+   - Per-collection resource management
+
+2. **Query Patterns:**
+   - Single collection queries → Direct routing
+   - Cross-collection queries → Query federation
+   - AXIS strategies per node + global coordination
+
+3. **Data Isolation:**
+   - Each collection's data on single node
+   - WAL memtables naturally partitioned
+   - Coordinators provide perfect isolation
+
+4. **Failure Handling:**
+   - Collection-level failure isolation
+   - Node failure → Collection migration
+   - AXIS index reconstruction per collection
+end note
+
+@enduml
