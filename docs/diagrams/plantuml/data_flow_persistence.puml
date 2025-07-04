@@ -1,5 +1,4 @@
-@startuml Data Flow and Persistence
-!theme aws-orange
+@startuml Data_Flow_and_Persistence
 
 title ProximaDB Data Flow and Persistence Lifecycle
 scale 1.2
@@ -23,7 +22,8 @@ end box
 box "WAL Layer" #LightYellow
     participant "WAL Manager" as WAL
     participant "WAL Strategy" as Strategy
-    participant "Memtable (ART)" as Memtable
+    participant "Unified Memtable\n(BTree/HashMap)" as Memtable
+    participant "WAL Behavior Wrapper" as WalWrapper
 end box
 
 box "Storage Layer" #Pink
@@ -94,14 +94,19 @@ activate AssignSvc
 AssignSvc --> Strategy: cached_assignment{disk2}
 deactivate AssignSvc
 
-Strategy -> Memtable: insert_entry(collection_id, entry)
+Strategy -> WalWrapper: wrap_insert(collection_id, entry)
+activate WalWrapper
+
+WalWrapper -> Memtable: insert(vector_id, entry)
 activate Memtable
-
-Memtable -> Memtable: art_tree.insert(vector_id, entry)
-note right: In-memory ART structure\nfor fast lookups
-
-Memtable --> Strategy: sequence_number
+Memtable -> Memtable: btree.insert(vector_id, entry)
+note right: Unified memtable\nBTree for WAL ordered ops\nHashMap for random access
+Memtable --> WalWrapper: success
 deactivate Memtable
+
+WalWrapper -> WalWrapper: increment_sequence()
+WalWrapper --> Strategy: sequence_number
+deactivate WalWrapper
 
 Strategy -> Strategy: check_flush_threshold()
 alt Memory threshold exceeded (1MB)

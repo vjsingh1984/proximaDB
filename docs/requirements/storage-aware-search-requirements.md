@@ -22,7 +22,7 @@
 - SHALL achieve 3-5x performance improvement over generic search
 
 ### FR-3: LSM Storage Optimizations  
-**Requirement**: The system SHALL implement LSM-specific search optimizations leveraging tiered storage structure.
+**Requirement**: The system SHALL implement LSM-specific search optimizations leveraging URL-based storage architecture.
 
 **Acceptance Criteria**:
 - SHALL implement memtable-priority search strategy

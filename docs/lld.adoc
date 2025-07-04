@@ -184,6 +184,32 @@ pub async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<Flus
 
 ==== Memtable Strategy Implementations
 
+ProximaDB implements a unified memtable architecture with storage-specific behavior wrappers. Different memtable implementations optimize for specific workload patterns:
+
+===== LSM Storage Memtable Architecture
+
+image::diagrams/plantuml/LSM_Memtable_Architecture.png[LSM Memtable Architecture,width=100%]
+
+LSM storage uses SkipList memtables with LsmBehaviorWrapper for concurrent writes and ordered operations:
+
+- **Active Memtable**: SkipList for lock-free concurrent access
+- **Immutable Memtables**: Read-only tables during flush
+- **Tombstone Tracking**: Delete operations handled via tombstone markers
+- **SSTable Generation**: Direct conversion from sorted memtable to SSTables
+
+===== VIPER Storage Integration Pattern
+
+image::diagrams/plantuml/VIPER_Memtable_Architecture.png[VIPER Storage Integration,width=100%]
+
+VIPER storage does NOT have its own memtable. Instead, it uses WAL delegation:
+
+- **WAL Accumulation**: WAL accumulates vectors in its own memtable (HashMap/BTree)
+- **Batch Delegation**: WAL delegates vector batches to VIPER when flush triggers
+- **Direct Processing**: VIPER processes batches directly to Parquet files
+- **No Intermediate Storage**: VIPER bypasses memtable layer entirely
+
+===== Memtable Implementation Details
+
 Different memtable implementations optimize for specific workload patterns:
 
 .BTree Memtable (Production Default)
@@ -3399,14 +3425,13 @@ vectorflow:
     storageClass: "fast-ssd"
     # Volume size per node
     volumeSize: "1Ti"
-    # Enable storage tiering
-    tiering:
-      enabled: true
-      hotTier:
-        storageClass: "ultra-fast-nvme"
-        size: "100Gi"
-      coldTier:
-        provider: "s3"
+    # URL-based storage configuration
+    storage:
+      urls:
+        primary: "file:///data/vectors"    # Local NVMe storage
+        backup: "s3://my-bucket/vectors"   # S3 backup
+        wal: "file:///data/wal"           # WAL on fast storage
+        metadata: "s3://my-bucket/metadata" # Metadata in S3
         bucket: "vectorflow-cold-storage"
         region: "us-west-2"
   

@@ -1,0 +1,108 @@
+@startuml Memtable_Overview
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<has_memtable>> LightGreen
+    BackgroundColor<<no_memtable>> LightGray
+    BackgroundColor<<unified>> LightBlue
+}
+
+title ProximaDB Memtable Architecture Overview
+header Unified Memtable Pattern with Storage-Specific Behaviors
+footer Generated with PlantUML
+
+package "Components WITH Memtables" <<has_memtable>> {
+    class "WAL (Write-Ahead Log)" as WAL {
+        Has Memtable: YES ✓
+        Type: WalBehaviorWrapper
+        --
+        Implementations:
+        - BTree (Bincode WAL)
+        - HashMap (Avro WAL)
+        Purpose: Buffer writes before flush
+    }
+    
+    class "LSM Storage Engine" as LSM {
+        Has Memtable: YES ✓
+        Type: LsmBehaviorWrapper
+        --
+        Implementation: SkipList
+        Purpose: Active write buffer
+        Also has: Immutable memtables
+    }
+}
+
+package "Components WITHOUT Memtables" <<no_memtable>> {
+    class "VIPER Storage Engine" as VIPER {
+        Has Memtable: NO ✗
+        --
+        Receives: Batches from WAL
+        Processing: Direct to Parquet
+        No buffering: Immediate write
+    }
+    
+    class "AXIS Indexing" as AXIS {
+        Has Memtable: NO ✗
+        --
+        Receives: Data from storage
+        Processing: Index building
+        Storage: Index files
+    }
+}
+
+package "Unified Memtable System" <<unified>> {
+    interface "MemtableCore<K,V>" as Core {
+        Base memtable interface
+        Polymorphic implementations
+    }
+    
+    class "Behavior Wrappers" as Wrappers {
+        WalBehaviorWrapper:
+        - Sequence management
+        - Flush coordination
+        
+        LsmBehaviorWrapper:
+        - Tombstone tracking
+        - Range optimization
+    }
+    
+    class "Implementations" as Impls {
+        BTree: Ordered ops
+        SkipList: Concurrent
+        HashMap: Random access
+        DashMap: Sharded
+    }
+}
+
+' Relationships
+WAL --> Core : uses
+LSM --> Core : uses
+Core <|-- Wrappers : wraps
+Core <|-- Impls : implements
+
+' Data flow
+WAL ..> VIPER : "delegates batches"
+LSM ..> LSM : "flushes to SSTables"
+
+note bottom of VIPER
+    **Important**: VIPER never has a memtable
+    It receives pre-batched data from WAL
+    and writes directly to Parquet files
+end note
+
+note bottom of WAL
+    **WAL Memtable Purpose**:
+    1. Accumulate writes
+    2. Assign sequences
+    3. Batch for delegation
+    4. Coordinate flushes
+end note
+
+note bottom of LSM
+    **LSM Memtable Purpose**:
+    1. Active write buffer
+    2. Ordered operations
+    3. Tombstone tracking
+    4. SSTable generation
+end note
+
+@enduml

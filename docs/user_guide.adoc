@@ -1393,7 +1393,7 @@ pytest tests/test_rest_api_completeness.py -v -s
 **Production Performance Notes:**
 - Storage-aware optimizations provide 1.5-1.9x speedup
 - VIPER engine supports predicate pushdown and quantization
-- LSM engine uses bloom filters and tiered search
+- LSM engine uses bloom filters and optimized search
 - Consistent sub-3ms latency across all configurations
 
 == Troubleshooting

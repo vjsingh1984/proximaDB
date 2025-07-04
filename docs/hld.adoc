@@ -105,6 +105,38 @@ sync_mode = "PerBatch"  # Options: Always, PerBatch, Periodic, Never, MemoryOnly
 memtable_type = "BTree"  # Options: BTree, HashMap, SkipList, Art
 ```
 
+==== Unified Memtable Architecture
+
+ProximaDB implements a **unified memtable system** with behavior wrappers that provide storage-specific functionality while maintaining a consistent interface:
+
+image::diagrams/plantuml/Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100%]
+
+**Key Components**:
+- **MemtableCore Interface**: Polymorphic base interface for all memtable implementations
+- **Behavior Wrappers**: WAL and LSM-specific functionality layered on top of base memtables
+- **Multiple Implementations**: BTree, SkipList, HashMap, and DashMap for different use cases
+
+===== Memtable Component Overview
+
+image::diagrams/plantuml/Memtable_Overview.png[Memtable Overview,width=100%]
+
+**Components WITH Memtables**:
+- **WAL System**: Uses WalBehaviorWrapper with BTree (Bincode) or HashMap (Avro)
+- **LSM Storage**: Uses LsmBehaviorWrapper with SkipList for concurrent writes
+
+**Components WITHOUT Memtables**:
+- **VIPER Storage**: Receives batches from WAL, writes directly to Parquet
+- **AXIS Indexing**: Builds indexes from storage data, no intermediate buffering
+
+===== Optimal Storage Pairings
+
+image::diagrams/plantuml/Storage_Pairing_Strategy.png[Storage Pairing Strategy,width=100%]
+
+**Recommended Memtable Configurations**:
+- **LSM Collections**: BTree memtable for ordered SSTable generation
+- **VIPER Collections**: HashMap memtable in WAL for fast random access
+- **High-Concurrency**: SkipList memtable for lock-free operations
+
 ==== Flush Coordination Flow
 
 image::diagrams/plantuml/WAL_Flush_Sequence.png[WAL Flush Sequence,width=100%]
@@ -663,7 +695,7 @@ impl QueryPlanner {
 - **Tenant Operations**: Provisioning, quotas, billing integration
 - **Health Monitoring**: Service health checks and diagnostics
 
-=== Intelligent Storage Tiers
+=== URL-Based Storage Policies
 
 image::images/storage-policy.png[Storage Policy Architecture, 800, align="center"]
 
@@ -706,8 +738,8 @@ pub struct StoragePolicy {
 **Azure Data Lake Storage** (`adls://`)
 - **Use Case**: Azure-native data lake storage
 - **Examples**:
-  * `adls://account/container/vectors` - Hot tier
-  * `adls://account/container/archive?tier=COOL` - Cool tier
+  * `adls://account/container/vectors` - Standard storage
+  * `adls://account/container/archive?tier=COOL` - Cool storage class
 
 **Google Cloud Storage** (`gcs://`)
 - **Use Case**: Google Cloud object storage
@@ -993,7 +1025,7 @@ async fn flush_with_compaction_check(collection_id: &str) -> Result<()> {
 
 **Multi-Region Resilience**:
 - **Cross-Region Replication**: Automatic failover across AWS/Azure/GCP regions
-- **Cost Optimization**: Intelligent tiering and retention policies
+- **Cost Optimization**: URL-based storage policies and retention management
 - **Schema Evolution**: Avro-based serialization with backward compatibility
 
 ==== Current WAL Implementation Status ✅
@@ -1747,7 +1779,7 @@ image::images/deployment-models.png[Deployment Models, 800, align="center"]
 **Infrastructure**:
 - Docker Compose for easy local deployment
 - Single-node configuration with all services
-- Local storage with basic tiering (SSD + HDD)
+- Local storage with URL-based configuration (SSD + HDD)
 - Integrated monitoring with Prometheus + Grafana
 
 **Migration Path**: 

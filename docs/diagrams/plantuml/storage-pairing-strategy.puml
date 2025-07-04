@@ -7,21 +7,23 @@ skinparam component {
     BackgroundColor<<suboptimal>> LightGray
 }
 
-title Optimal WAL Component Pairing for Storage Engines
+title Optimal Memtable Pairing for Storage Engines\n(Note: Only WAL and LSM have memtables)
 header ProximaDB Vector Database
 footer Generated with PlantUML
 
-package "LSM Storage Collections" <<lsm>> 
+package "LSM Storage Collections" <<lsm>> {
     component "BincodeWAL" as LSM_WAL <<optimal>>
     
-    component "BTree MemTable" as LSM_Mem <<optimal>> 
+    component "BTree MemTable" as LSM_Mem <<optimal>> {
+        note right
             **Ordered Operations**
             - Natural sort order
             - Efficient range scans
             - Direct SSTable generation
+        end note
     }
     
-    component "SSTable Writer" as SSTable 
+    component "SSTable Writer" as SSTable {
         note bottom
             **Output Format**
             - Sorted key-value pairs
@@ -32,22 +34,28 @@ package "LSM Storage Collections" <<lsm>>
     }
 }
 
-package "VIPER Storage Collections" <<viper>> 
-    component "BincodeWAL" as VIPER_WAL <<optimal>> 
-            **Production Performance**
-            - O(1) operations
-            - Binary efficiency
-            - Minimal latency
+package "VIPER Storage (No Memtable)" <<viper>> {
+    component "WAL with HashMap" as VIPER_WAL <<optimal>> {
+        note right
+            **WAL Memtable for VIPER**
+            - HashMap in WAL layer
+            - Batches vectors
+            - Delegates to VIPER
+            - No VIPER memtable
+        end note
     }
     
-    component "HashMap MemTable" as VIPER_Mem <<optimal>> 
-            **Random Access**
-            - O(1) all operations
-            - Large collection support
-            - ML-friendly access
+    component "VIPER Engine" as VIPER_Engine {
+        note right
+            **Direct Processing**
+            - Receives batches from WAL
+            - No intermediate storage
+            - Straight to Parquet
+            - No memtable needed
+        end note
     }
     
-    component "Parquet Writer" as Parquet 
+    component "Parquet Writer" as Parquet {
         note bottom
             **Output Format**
             - Columnar storage
@@ -58,26 +66,32 @@ package "VIPER Storage Collections" <<viper>>
     }
 }
 
-package "Alternative Configurations" 
-    component "AvroWAL" as Avro <<suboptimal>> 
+package "Alternative Configurations" {
+    component "AvroWAL" as Avro <<suboptimal>> {
+        note right
             **When to Use:**
             - Schema evolution needed
             - Long-term archival
             - Cross-system compatibility
+        end note
     }
     
-    component "SkipList MemTable" as Skip <<suboptimal>> 
+    component "SkipList MemTable" as Skip <<suboptimal>> {
+        note right
             **When to Use:**
             - High concurrency
             - Probabilistic ordering OK
             - Write-heavy workloads
+        end note
     }
     
-    component "ART MemTable" as ART <<suboptimal>> 
+    component "ART MemTable" as ART <<suboptimal>> {
+        note right
             **When to Use:**
             - Sparse collections
             - String-heavy metadata
             - Memory constrained
+        end note
     }
 }
 
@@ -85,13 +99,13 @@ package "Alternative Configurations"
 LSM_WAL --> LSM_Mem : "writes to"
 LSM_Mem --> SSTable : "flushes to"
 
-' VIPER Optimal Path
-VIPER_WAL --> VIPER_Mem : "writes to"
-VIPER_Mem --> Parquet : "flushes to"
+' VIPER Path (through WAL delegation)
+VIPER_WAL --> VIPER_Engine : "delegates batches"
+VIPER_Engine --> Parquet : "writes directly"
 
 ' Alternative paths (dashed)
 Avro ..> LSM_Mem : "compatible"
-Avro ..> VIPER_Mem : "compatible"
+Avro ..> VIPER_WAL : "compatible"
 Skip ..> SSTable : "can flush to"
 ART ..> Parquet : "can flush to"
 

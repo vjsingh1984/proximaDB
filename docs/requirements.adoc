@@ -39,7 +39,7 @@ Deliver a cloud-native vector database that provides:
 - Single-node architecture optimized for performance
 - Open source transparency with accurate documentation
 
-=== Current Implementation Status (80% Complete)
+=== Current Implementation Status (85% Complete)
 
 [cols="2,1,2"]
 |===
@@ -50,10 +50,10 @@ Deliver a cloud-native vector database that provides:
 |**Multi-Server Architecture** |✅ Complete |REST:5678, gRPC:5679, separate servers
 |**WAL System** |✅ Complete |Avro/Bincode strategies, MVCC support
 |**Python SDK** |✅ Complete |Protocol abstraction, async support
-|**Vector Operations** |🚧 Infrastructure Ready |Coordinator needs integration
+|**Vector Search** |✅ Infrastructure Complete |**Storage-aware VIPER + LSM search engines**
 |**AXIS Indexing** |🚧 60% Complete |Framework ready, HNSW basic implementation
+|**Advanced Search Features** |🚧 30% Complete |**ML clustering, quantization, GPU acceleration planned**
 |**SIMD Optimizations** |🚧 x86 Ready |ARM NEON planned
-|**GPU Acceleration** |❌ Removed |Was placeholder code (4,457 lines cleaned)
 |**Distributed Consensus** |❌ Removed |Single-node focus
 |===
 
@@ -69,7 +69,7 @@ Deliver a cloud-native vector database that provides:
 |VR-001
 |Vector similarity search with cosine, euclidean, and dot product distance metrics
 |Critical
-|🚧 INFRASTRUCTURE READY
+|✅ IMPLEMENTED (Storage-aware search engines: VIPER + LSM)
 
 |VR-002
 |CRUD operations on vector collections with metadata filtering and ID-based lookups including collection persistence across restarts
@@ -396,6 +396,82 @@ Deliver a cloud-native vector database that provides:
 |Collection-level read/write locking for coordinated flush/compaction operations
 |Critical
 |✅ IMPLEMENTED
+
+|ST-033
+|WAL durability configuration with sync mode options (Always, PerBatch, Periodic, Never, MemoryOnly)
+|Critical
+|✅ IMPLEMENTED
+
+|ST-034
+|Configurable memtable strategies based on workload patterns (BTree, HashMap, SkipList, ART)
+|High
+|✅ IMPLEMENTED
+
+|ST-035
+|Search integration over unflushed WAL data for complete result coverage
+|Critical
+|✅ IMPLEMENTED
+
+|ST-036
+|Atomic WAL flush coordination with no gaps or duplicates guarantee
+|Critical
+|✅ IMPLEMENTED
+|===
+
+=== WAL Flush Coordination Architecture
+
+image::diagrams/plantuml/WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
+
+==== WAL Durability Strategy Configuration
+
+ProximaDB provides comprehensive WAL configuration through `config.toml`:
+
+```toml
+[storage.wal_config]
+# WAL durability and performance configuration
+strategy_type = "Avro"  # Options: "Avro" (schema evolution), "Bincode" (performance)
+
+# Memtable strategy - choose based on your sync_mode and workload:
+# - "BTree": Best for PerBatch/Periodic sync (ordered flush, efficient storage)  
+# - "SkipList": Best for Always sync (concurrent reads during slow disk writes)
+# - "HashMap": Best for MemoryOnly sync (O(1) memory ops matter when no disk)
+# - "Art": Best for sparse collections with heavy metadata filtering
+memtable_type = "BTree"
+
+# Durability vs Performance Tradeoff:
+# - "Always": fsync() on every write (~1-10ms latency, maximum durability)
+# - "PerBatch": fsync() after batch completion (balanced, recommended for production)
+# - "Periodic": fsync() on timer (good for high throughput)
+# - "Never": no fsync() (fastest, data loss risk on crash)
+# - "MemoryOnly": no disk WAL, flush directly to storage files (fastest writes)
+sync_mode = "PerBatch"
+```
+
+==== Optimal Configuration Guidelines
+
+[cols="2,2,3"]
+|===
+|Sync Mode |Best Memtable |Use Case
+
+|`Always`
+|`SkipList`
+|Maximum durability, concurrent reads during slow disk writes
+
+|`PerBatch`
+|`BTree`
+|**Production default** - balanced performance with ordered flush
+
+|`Periodic`
+|`BTree`
+|High throughput with periodic durability
+
+|`MemoryOnly`
+|`HashMap`
+|Fastest writes, no disk WAL (flush to storage only)
+
+|`Never`
+|`HashMap`
+|Maximum speed, data loss acceptable
 |===
 
 ==== Adaptive eXtensible Indexing System (AXIS)
@@ -753,7 +829,7 @@ Deliver a cloud-native vector database that provides:
 |📋 PLANNED
 
 |AVS-012
-|Multi-level quantization: different compression ratios per storage tier
+|Multi-level quantization: different compression ratios per storage backend
 |Medium
 |📋 PLANNED
 |===
@@ -956,11 +1032,11 @@ Deliver a cloud-native vector database that provides:
 === Storage Engine
 - LSM tree implementation with configurable bloom filters
 - MMAP-based read path with intelligent prefetching
-- Multi-tier storage with automatic data movement policies
+- URL-based storage policies with flexible filesystem routing
 - Column-oriented storage with compression
 - Snapshot isolation for consistent reads
 - Replication delegated to object stores (S3/ADLS/GCS) for cold data
-- No redundant replication at ProximaDB layer for tiered storage
+- No redundant replication at ProximaDB layer for URL-based storage backends
 
 === Consensus and Distribution (Phase 3 - Planned)
 - Raft consensus implementation for metadata operations (re-enable from cleanup)
@@ -1163,7 +1239,7 @@ services:
 === Phase 2: Distribution and Scale (12 months)
 - 3-node Raft cluster implementation
 - Multi-node deployment with consensus
-- Intelligent storage tiering implementation
+- URL-based storage policy implementation
 - GPU acceleration for vector operations
 - Advanced monitoring and observability
 

@@ -1,5 +1,4 @@
 @startuml search-flow-sequence
-!theme bluegray
 title Storage-Aware Search Flow Sequence
 
 actor User
@@ -50,7 +49,7 @@ else Collection uses LSM storage
     LSE -> LSE : bloom_filter_scan()
     LSE -> LSE : level_aware_search()
     
-    LSE -> LT : tiered_search_with_filters()
+    LSE -> LT : optimized_search_with_filters()
     LT -> LSE : search_results
     LSE -> UAS : merged_results
 end
@@ -62,7 +61,7 @@ REST -> User : HTTP 200 + results
 note over User, LT
   Performance Benefits:
   • VIPER: 3-5x faster via predicate pushdown & clustering
-  • LSM: 2-3x faster via bloom filters & tiered search
+  • LSM: 2-3x faster via bloom filters & optimized search
   • Both: Storage-format aware optimizations
 end note
 

@@ -80,7 +80,7 @@ The architecture consists of four main layers:
 - Optimize memtable + SSTable scanning
 
 **Deliverables:**
-1. `LSMSearchEngine` with tiered search
+1. `LSMSearchEngine` with optimized search
 2. Bloom filter implementation and integration
 3. Tombstone-aware result merging
 4. Level-based search prioritization

@@ -1,0 +1,135 @@
+@startuml VIPER_Memtable_Architecture
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<viper>> LightGreen
+    BackgroundColor<<wal>> LightYellow
+    BackgroundColor<<parquet>> Pink
+}
+
+title VIPER Storage Architecture (No Memtable - WAL Delegation Only)
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+package "VIPER Storage Engine" <<viper>> {
+    class "ViperCoreEngine" as VIPER {
+        - parquet_writer: ParquetWriter
+        - ml_clustering: MLClusteringEngine
+        - quantization: QuantizationEngine
+        - predicate_pushdown: PredicatePushdown
+        --
+        + write_vectors(records)
+        + search_vectors(query, k)
+        + apply_clustering(vectors)
+    }
+}
+
+package "WAL Layer (Separate Component)" <<wal>> {
+    class "WAL Manager" as WAL {
+        - strategies: HashMap
+        - flush_coordinator: FlushCoordinator
+        --
+        Manages WAL memtables
+        Delegates flushes to VIPER
+    }
+    
+    class "WalBehaviorWrapper" as WalWrapper {
+        - inner: HashMapMemtable
+        - sequence_counter: AtomicU64
+        - storage_engine: UnifiedStorageEngine
+        --
+        + accumulate_vectors(entry)
+        + flush_to_storage_engine()
+        + delegate_to_viper(vectors)
+    }
+    
+    note right of WalWrapper
+        **VIPER Delegation:**
+        WAL accumulates vectors in its memtable
+        When flush triggered, extracts vectors
+        Delegates batch to VIPER engine
+        VIPER has NO memtable of its own
+    end note
+}
+
+package "Data Flow" {
+    class "Vector Insert" as Insert {
+        1. Client sends vector
+        2. WAL writes to ITS memtable
+        3. Sequence assigned
+        4. Batch accumulation in WAL
+    }
+    
+    class "WAL Flush Delegation" as Flush {
+        1. WAL memory threshold reached
+        2. WAL extracts vector batch
+        3. WAL calls VIPER.write_vectors()
+        4. WAL clears its memtable
+    }
+    
+    class "VIPER Direct Processing" as Process {
+        1. Receive batch from WAL
+        2. Apply ML clustering
+        3. Apply quantization
+        4. Write Parquet files directly
+        5. No intermediate storage
+    }
+}
+
+package "Parquet Storage" <<parquet>> {
+    class "Parquet Files" as Parquet {
+        vectors.parquet
+        metadata.parquet
+        clusters.parquet
+        quantized.parquet
+    }
+    
+    class "Storage Optimizations" as Optimize {
+        + columnar_compression()
+        + predicate_pushdown()
+        + vectorized_reads()
+        + zero_copy_access()
+    }
+}
+
+' Architecture relationships
+WAL o-- WalWrapper : "manages memtable"
+WalWrapper ..> VIPER : "delegates batch writes"
+
+' Data flow
+Insert --> WAL : "1. writes"
+WAL --> WalWrapper : "2. stores in memtable"
+WalWrapper --> Flush : "3. triggers flush"
+Flush --> VIPER : "4. delegates batch"
+VIPER --> Process : "5. processes directly"
+Process --> Parquet : "6. writes files"
+
+' Optimizations
+VIPER --> Optimize : applies
+Optimize --> Parquet : optimizes
+
+note bottom of WAL
+    **Key Architecture Point:**
+    • WAL has memtable (HashMap/BTree)
+    • VIPER has NO memtable
+    • VIPER receives batches from WAL
+    • VIPER writes directly to Parquet
+end note
+
+note bottom of VIPER
+    **VIPER Optimizations:**
+    • ML-based clustering
+    • Vector quantization
+    • Columnar storage
+    • Predicate pushdown
+    • SIMD operations
+end note
+
+note right of Flush
+    **Flush Strategy:**
+    • Batched operations
+    • Async delegation
+    • Memory-based triggers
+    • Zero-copy transfer
+end note
+
+@enduml

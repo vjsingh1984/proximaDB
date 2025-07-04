@@ -77,6 +77,51 @@ cache_size_mb = 128
 flush_interval_secs = 30
 ----
 
+=== Cloud and Multi-Filesystem Support
+
+ProximaDB supports multiple filesystem types through URL-based storage configuration:
+
+==== Multi-Cloud Configuration
+
+[source,toml]
+----
+[storage.wal_config]
+wal_urls = [
+    "file:///mnt/nvme1/wal",        # Local NVMe disk 1  
+    "file:///mnt/nvme2/wal",        # Local NVMe disk 2
+    "s3://proximadb-wal/wal",       # AWS S3 bucket
+    "s3://proximadb-backup/wal",    # S3 backup bucket  
+    "adls://storage.dfs.core.windows.net/wal",  # Azure Data Lake
+    "gcs://proximadb-gcs/wal"       # Google Cloud Storage
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+----
+
+==== Hybrid Local-Cloud Setup
+
+[source,toml]
+----
+[storage.wal_config]
+# Hot data on local NVMe
+wal_urls = ["file:///mnt/nvme/hot-wal"]
+
+[storage.data_storage]  
+# Cold data on cloud storage
+data_urls = [
+    "s3://proximadb-archive/data",
+    "adls://archive.dfs.core.windows.net/data"
+]
+----
+
+==== Supported URL Schemes
+
+* **Local Filesystem**: `file:///path/to/directory`
+* **AWS S3**: `s3://bucket-name/prefix`
+* **Azure Blob Storage**: `adls://account.dfs.core.windows.net/container/prefix`
+* **Google Cloud Storage**: `gcs://bucket-name/prefix`
+* **HDFS**: `hdfs://namenode:port/path` (future support)
+
 === Advanced Configuration Options
 
 ==== Distribution Strategies

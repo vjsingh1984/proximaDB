@@ -1,5 +1,5 @@
 @startuml Multi-Disk Architecture
-!theme aws-orange
+!theme bluegray
 
 title ProximaDB Multi-Disk Persistence Architecture
 scale 1.2

@@ -1,0 +1,174 @@
+@startuml Unified_Memtable_Architecture
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<core>> LightBlue
+    BackgroundColor<<wrapper>> LightGreen
+    BackgroundColor<<impl>> LightYellow
+    BackgroundColor<<behavior>> Pink
+}
+
+title Unified Memtable Architecture with Behavior Wrappers
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+package "Core Memtable Interface" <<core>> {
+    interface "MemtableCore<K, V>" as Core {
+        + insert(K, V) -> Result<()>
+        + get(&K) -> Option<&V>
+        + remove(&K) -> Option<V>
+        + scan() -> Iterator<(K, V)>
+        + clear() -> Result<()>
+        + is_empty() -> bool
+        + len() -> usize
+        + memory_usage() -> usize
+    }
+    
+    class "MemtableConfig" as Config {
+        + memtable_type: MemTableType
+        + initial_capacity: usize
+        + global_memory_limit: usize
+        + max_size_bytes: usize
+    }
+}
+
+package "Memtable Implementations" <<impl>> {
+    class "BTreeMemtable<K, V>" as BTree {
+        - tree: BTreeMap<K, V>
+        - memory_usage: AtomicU64
+        --
+        Ordered operations
+        Natural sort order
+        Efficient range scans
+    }
+    
+    class "SkipListMemtable<K, V>" as SkipList {
+        - skiplist: SkipMap<K, V>
+        - memory_usage: AtomicU64
+        --
+        Lock-free operations
+        High concurrency
+        Probabilistic ordering
+    }
+    
+    class "HashMapMemtable<K, V>" as HashMap {
+        - map: HashMap<K, V>
+        - memory_usage: AtomicU64
+        --
+        O(1) operations
+        Random access
+        Memory efficient
+    }
+    
+    class "DashMapMemtable<K, V>" as DashMap {
+        - map: DashMap<K, V>
+        - memory_usage: AtomicU64
+        --
+        Concurrent HashMap
+        Sharded locks
+        High throughput
+    }
+}
+
+package "Behavior Wrappers" <<wrapper>> {
+    class "WalBehaviorWrapper<K, V>" as WalWrapper {
+        - inner: Box<dyn MemtableCore<K, V>>
+        - sequence_counter: AtomicU64
+        - flush_coordinator: Arc<FlushCoordinator>
+        --
+        + wrap_insert() -> u64
+        + wrap_batch_insert() -> Vec<u64>
+        + get_operation_type() -> u8
+        + coordinate_flush() -> Result<()>
+    }
+    
+    class "LsmBehaviorWrapper<K, V>" as LsmWrapper {
+        - inner: Box<dyn MemtableCore<K, V>>
+        - tombstones: Arc<RwLock<HashSet<K>>>
+        - range_cache: Arc<RwLock<RangeCache>>
+        --
+        + handle_delete() -> Result<()>
+        + optimize_range_scan() -> Iterator
+        + prepare_for_sstable() -> Vec<(K, V)>
+        + apply_compaction_hints() -> Result<()>
+    }
+}
+
+package "Storage-Specific Behaviors" <<behavior>> {
+    class "WAL Behavior" as WalBehavior {
+        **Sequence Management**
+        - Auto-incrementing sequences
+        - Batch sequence allocation
+        - Flush coordination
+        
+        **Operation Types**
+        - Insert (1)
+        - Update (2)
+        - Delete (3)
+        - Flush (4)
+        - Checkpoint (5)
+        - AvroPayload (6)
+    }
+    
+    class "LSM Behavior" as LsmBehavior {
+        **LSM Operations**
+        - Tombstone tracking
+        - Range optimization
+        - SSTable preparation
+        - Compaction hints
+        
+        **Storage Format**
+        - Key ordering
+        - Bloom filter data
+        - Compression metadata
+    }
+}
+
+package "Factory Pattern" <<core>> {
+    class "MemtableFactory" as Factory {
+        + create_memtable(config) -> Box<dyn MemtableCore>
+        + create_wal_memtable(config) -> WalBehaviorWrapper
+        + create_lsm_memtable(config) -> LsmBehaviorWrapper
+    }
+}
+
+' Implementation relationships
+Core <|.. BTree : implements
+Core <|.. SkipList : implements
+Core <|.. HashMap : implements
+Core <|.. DashMap : implements
+
+' Wrapper relationships
+WalWrapper o-- Core : wraps
+LsmWrapper o-- Core : wraps
+
+' Behavior relationships
+WalWrapper ..> WalBehavior : applies
+LsmWrapper ..> LsmBehavior : applies
+
+' Factory relationships
+Factory --> BTree : creates
+Factory --> SkipList : creates
+Factory --> HashMap : creates
+Factory --> DashMap : creates
+Factory --> WalWrapper : creates
+Factory --> LsmWrapper : creates
+
+' Configuration
+Factory ..> Config : uses
+
+' Optimal pairings
+note bottom of WalWrapper
+    **WAL Optimal Pairings:**
+    • BTree for Bincode WAL (ordered flush)
+    • HashMap for Avro WAL (random access)
+    • DashMap for high-concurrency WAL
+end note
+
+note bottom of LsmWrapper
+    **LSM Optimal Pairings:**
+    • BTree for SSTable generation
+    • SkipList for concurrent writes
+    • Both maintain sorted order
+end note
+
+@enduml

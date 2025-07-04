@@ -1,73 +1,78 @@
-@startuml WAL Strategy Pattern
-!theme aws-orange
+@startuml WAL_Strategy_Pattern
 
 title WAL Strategy Pattern with Assignment Service Integration
 scale 1.2
 
-interface "WalStrategy" as WalStrategy 
-    + strategy_name(): &'static str
-    + initialize(config, filesystem): Result<()>
-    + set_storage_engine(engine): void
-    + write_entry(entry): Result<u64>
-    + read_entries(collection_id, from_seq, limit): Result<Vec<WalEntry>>
-    + flush(collection_id): Result<FlushResult>
-    + get_assignment_service(): &Arc<AssignmentService>
-    + select_wal_url_for_collection(collection_id, config): Result<String>
-    + discover_existing_assignments(config): Result<()>
+interface "WalStrategy" as WalStrategy {
+    + strategy_name()
+    + initialize(config, filesystem)
+    + set_storage_engine(engine)
+    + write_entry(entry)
+    + read_entries(collection_id, from_seq, limit)
+    + flush(collection_id)
+    + get_assignment_service()
+    + select_wal_url_for_collection(collection_id, config)
+    + discover_existing_assignments(config)
 }
 
-class "AvroWalStrategy" as AvroWAL 
-    - config: Option<WalConfig>
-    - filesystem: Option<Arc<FilesystemFactory>>
-    - memory_table: Option<WalMemTable>
-    - disk_manager: Option<WalDiskManager>
-    - storage_engine: Option<Arc<UnifiedStorageEngine>>
-    - assignment_service: Arc<AssignmentService>
-    + strategy_name(): "Avro"
-    + serialize_entries(entries): Result<Vec<u8>>
-    + deserialize_entries(data): Result<Vec<WalEntry>>
-    + get_assignment_service(): &Arc<AssignmentService>
+class "AvroWalStrategy" as AvroWAL {
+    - config: WalConfig
+    - filesystem: FilesystemFactory
+    - memory_table: WalBehaviorWrapper
+    - disk_manager: WalDiskManager
+    - storage_engine: UnifiedStorageEngine
+    - assignment_service: AssignmentService
+    --
+    + strategy_name()
+    + serialize_entries(entries)
+    + deserialize_entries(data)
+    + get_assignment_service()
+    --
+    Memtable: HashMap (random access)
 }
 
-class "BincodeWalStrategy" as BincodeWAL 
-    - config: Option<WalConfig>
-    - filesystem: Option<Arc<FilesystemFactory>>
-    - memory_table: Option<WalMemTable>
-    - disk_manager: Option<WalDiskManager>
-    - storage_engine: Option<Arc<UnifiedStorageEngine>>
-    - assignment_service: Arc<AssignmentService>
-    + strategy_name(): "Bincode"
-    + serialize_entries(entries): Result<Vec<u8>>
-    + deserialize_entries(data): Result<Vec<u8>>
-    + get_assignment_service(): &Arc<AssignmentService>
+class "BincodeWalStrategy" as BincodeWAL {
+    - config: WalConfig
+    - filesystem: FilesystemFactory
+    - memory_table: WalBehaviorWrapper
+    - disk_manager: WalDiskManager
+    - storage_engine: UnifiedStorageEngine
+    - assignment_service: AssignmentService
+    --
+    + strategy_name()
+    + serialize_entries(entries)
+    + deserialize_entries(data)
+    + get_assignment_service()
+    --
+    Memtable: BTree (ordered flush)
 }
 
-interface "AssignmentService" as AssignmentService 
-    + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
-    + get_assignment(collection_id, component_type): Option<StorageAssignmentResult>
-    + record_assignment(collection_id, component_type, assignment): Result<()>
-    + remove_assignment(collection_id, component_type): Result<()>
-    + get_all_assignments(component_type): HashMap<CollectionId, StorageAssignmentResult>
-    + get_assignment_stats(): Result<serde_json::Value>
+interface "AssignmentService" as AssignmentService {
+    + assign_storage_url(collection_id, config)
+    + get_assignment(collection_id, component_type)
+    + record_assignment(collection_id, component_type, assignment)
+    + remove_assignment(collection_id, component_type)
+    + get_all_assignments(component_type)
+    + get_assignment_stats()
 }
 
-class "RoundRobinAssignmentService" as RoundRobinService 
-    - assignments: Arc<RwLock<HashMap<StorageComponentType, HashMap<CollectionId, StorageAssignmentResult>>>>
-    - round_robin_counters: Arc<RwLock<HashMap<StorageComponentType, usize>>>
-    + assign_storage_url(collection_id, config): Result<StorageAssignmentResult>
-    + get_assignment(collection_id, component_type): Option<StorageAssignmentResult>
-    + record_assignment(collection_id, component_type, assignment): Result<()>
-    + get_next_round_robin_index(component_type, storage_urls): Result<usize>
-    + hash_collection_id(collection_id): usize
+class "RoundRobinAssignmentService" as RoundRobinService {
+    - assignments: HashMap
+    - round_robin_counters: HashMap
+    + assign_storage_url(collection_id, config)
+    + get_assignment(collection_id, component_type)
+    + record_assignment(collection_id, component_type, assignment)
+    + get_next_round_robin_index(component_type, storage_urls)
+    + hash_collection_id(collection_id)
 }
 
-class "StorageAssignmentResult" as Assignment 
+class "StorageAssignmentResult" as Assignment {
     + storage_url: String
     + directory_index: usize
-    + assigned_at: DateTime<Utc>
+    + assigned_at: DateTime
 }
 
-enum "StorageComponentType" as ComponentType 
+enum "StorageComponentType" as ComponentType {
     Wal
     Viper
     Lsm
@@ -75,7 +80,7 @@ enum "StorageComponentType" as ComponentType
     Metadata
 }
 
-class "WalConfig" as WalConfig 
+class "WalConfig" as WalConfig {
     + wal_urls: Vec<String>
     + distribution_strategy: DistributionStrategy
     + collection_affinity: bool

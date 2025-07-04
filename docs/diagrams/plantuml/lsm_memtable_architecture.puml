@@ -1,0 +1,140 @@
+@startuml LSM_Memtable_Architecture
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<lsm>> LightBlue
+    BackgroundColor<<memtable>> LightGreen
+    BackgroundColor<<sstable>> LightYellow
+}
+
+title LSM Storage with Unified Memtable Architecture
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+package "LSM Storage Engine" <<lsm>> {
+    class "LsmTree" as LSM {
+        - memtable: LsmBehaviorWrapper
+        - immutable_memtables: Vec<LsmMemtable>
+        - levels: Vec<Level>
+        - compaction_manager: CompactionManager
+    }
+}
+
+package "Memtable Layer" <<memtable>> {
+    class "LsmBehaviorWrapper" as LsmWrapper {
+        - inner: SkipListMemtable
+        - tombstones: HashSet<String>
+        - range_cache: RangeCache
+        --
+        + handle_delete(key)
+        + optimize_range_scan(from, to)
+        + prepare_for_sstable()
+    }
+    
+    class "SkipListMemtable" as SkipList {
+        - skiplist: SkipMap
+        - memory_usage: AtomicU64
+        --
+        Lock-free concurrent access
+        Probabilistic ordering
+        Efficient range operations
+    }
+    
+    class "LsmEntry" as Entry {
+        + key: String
+        + value: Vec<u8>
+        + timestamp: u64
+        + operation_type: OperationType
+        + metadata: Option<Value>
+    }
+}
+
+package "SSTable Layer" <<sstable>> {
+    class "SSTable" as SST {
+        - data_blocks: Vec<DataBlock>
+        - index_block: IndexBlock
+        - bloom_filter: BloomFilter
+        - metadata: SSTableMetadata
+    }
+    
+    class "Compaction" as Compact {
+        + merge_sstables(tables)
+        + apply_tombstones(entries)
+        + level_compaction(level)
+    }
+}
+
+package "LSM Operations" {
+    class "Insert Operation" as Insert {
+        1. Check memory threshold
+        2. Insert to active memtable
+        3. Track in bloom filter
+        4. Update metrics
+    }
+    
+    class "Delete Operation" as Delete {
+        1. Insert tombstone marker
+        2. Track in tombstone set
+        3. Schedule compaction
+        4. Update bloom filter
+    }
+    
+    class "Search Operation" as Search {
+        1. Search active memtable
+        2. Search immutable memtables
+        3. Check bloom filters
+        4. Search SSTables by level
+        5. Merge results
+    }
+    
+    class "Flush Operation" as Flush {
+        1. Make memtable immutable
+        2. Create new active memtable
+        3. Sort entries (already sorted)
+        4. Write SSTable to disk
+        5. Update level metadata
+    }
+}
+
+' Architecture relationships
+LSM o-- LsmWrapper : "active memtable"
+LsmWrapper o-- SkipList : "wraps"
+SkipList o-- Entry : "stores"
+
+' Flow relationships
+Insert --> LsmWrapper : writes to
+Delete --> LsmWrapper : tombstone
+Search --> LsmWrapper : queries
+Search --> SST : fallback to
+
+' Flush flow
+LsmWrapper --> SST : flush creates
+SST --> Compact : triggers
+
+' Compaction
+Compact --> SST : produces new
+
+note right of LsmWrapper
+    **LSM-Specific Behaviors:**
+    • Tombstone tracking for deletes
+    • Range scan optimization
+    • Sorted order maintenance
+    • Compaction preparation
+end note
+
+note bottom of SkipList
+    **Why SkipList for LSM:**
+    • Lock-free concurrent writes
+    • Natural ordering (no sort needed)
+    • Efficient range scans
+    • Good cache locality
+end note
+
+note right of Search
+    **Search Optimization:**
+    • Bloom filters reduce I/O
+    • Level-aware search
+    • Early termination
+    • Result merging
+end note
+
+@enduml

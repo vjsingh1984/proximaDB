@@ -1,39 +1,77 @@
-
 [server]
-node_id = "test-node-1"
-bind_address = "0.0.0.0"
+node_id = "staging-test-1"
+bind_address = "127.0.0.1"
 port = 5678
-data_dir = "/workspace/test_data"
+data_dir = "./test_data"
 
 [storage]
-data_dirs = ["/workspace/test_data"]
-wal_dir = "/workspace/test_data/wal1"
+data_dirs = ["./test_data"]
+wal_dir = "./test_data/wal"
+mmap_enabled = true
+cache_size_mb = 64
+bloom_filter_bits = 12
+
+[storage.lsm_config]
+memtable_size_mb = 64
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+
+[storage.filesystem_config]
+enable_write_strategy_cache = false
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
 
 [storage.wal_config]
-wal_urls = [
-    "file:///workspace/test_data/wal1",
-    "file:///workspace/test_data/wal2", 
-    "file:///workspace/test_data/wal3"
-]
-distribution_strategy = "RoundRobin"
-collection_affinity = false
+wal_urls = ["file://./test_data/wal"]
+strategy_type = "Bincode"
+memtable_type = "HashMap"
 memory_flush_size_bytes = 1048576
-global_flush_threshold = 2097152
+enable_write_strategy_cache = false
+
+[storage.storage_layout]
+node_instance = 1
+assignment_strategy = "HashBased"
+
+[[storage.storage_layout.base_paths]]
+base_dir = "./test_data/storage"
+instance_id = 1
+mount_point = "./test_data"
+disk_type = { NvmeSsd = { max_iops = 10000 } }
+capacity_config = { max_wal_size_mb = 50, metadata_reserved_mb = 25, warning_threshold_percent = 85.0 }
+
+[storage.storage_layout.temp_config]
+use_same_directory = true
+temp_suffix = "___temp"
+compaction_suffix = "___compaction"
+flush_suffix = "___flushed"
+cleanup_on_startup = true
+
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "file://./test_data/metadata"
 
 [api]
 grpc_port = 5679
 rest_port = 5678
 max_request_size_mb = 64
 timeout_seconds = 30
-enable_tls = false
-
-[monitoring]
-metrics_enabled = true
-log_level = "debug"
 
 [consensus]
+enabled = false
 node_id = 1
+cluster_size = 1
 cluster_peers = []
 election_timeout_ms = 5000
 heartbeat_interval_ms = 1000
 snapshot_threshold = 1000
+
+[monitoring]
+enabled = true
+metrics_port = 9090
+log_level = "info"
+metrics_enabled = true
