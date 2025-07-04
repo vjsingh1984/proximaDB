@@ -1,0 +1,35 @@
+@startuml ProximaDB_Data_Flow_Current
+title ProximaDB Current Data Flow Architecture
+
+participant Client
+participant "REST/gRPC API" as API
+participant "UnifiedAvroService" as Service
+participant "WAL System" as WAL
+participant "VIPER Engine" as VIPER
+participant "Storage" as Storage
+
+== Vector Insert Flow ==
+Client -> API: insert_vector()
+API -> Service: process_insert()
+Service -> WAL: log_operation()
+WAL -> Storage: write_wal_log()
+WAL -> WAL: check_flush_threshold()
+WAL -> VIPER: trigger_flush()
+VIPER -> Storage: write_parquet()
+VIPER --> Client: success
+
+== Vector Search Flow ==
+Client -> API: search()
+API -> Service: process_search()
+Service -> WAL: check_memtable()
+WAL -> VIPER: search_storage()
+VIPER -> Storage: read_parquet()
+VIPER --> Client: results
+
+note over WAL, VIPER
+  WAL directly triggers VIPER flush
+  when memory/time thresholds reached
+  No coordinator layer needed
+end note
+
+@enduml

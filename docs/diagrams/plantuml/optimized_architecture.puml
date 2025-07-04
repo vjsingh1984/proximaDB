@@ -1,0 +1,31 @@
+@startuml ProximaDB_Optimized_Architecture
+
+participant REST as "REST Server\n(5678)"
+participant GRPC as "gRPC Server\n(5679)" 
+participant UAS as "UnifiedAvroService"
+participant CS as "CollectionService"
+participant SE as "StorageEngine"
+participant WAL as "WAL Manager"
+participant LSM as "LSM Tree"
+participant VIPER as "VIPER Engine\n(Flush Target)"
+participant AXIS as "AXIS Indexes"
+
+== Vector Insert Flow ==
+REST -> UAS: insert_vector_request
+UAS -> WAL: wal.insert(collection_id, vector_id, record)
+WAL -> MT: update_memtable()
+
+note over MT: When memtable full
+MT -> VIPER: atomic_flush_to_staging()
+note over VIPER: 1. Write to __flush/\n2. Move to vectors/\n3. Cleanup staging
+VIPER -> AXIS: update_indexes()
+
+== Vector Search Flow ==
+REST -> UAS: search_request
+UAS -> VIPER: search_vectors(collection_id, query, k)
+note over VIPER: Search ignores __flush/\nOnly reads vectors/
+VIPER -> AXIS: search_indexes()
+VIPER -> UAS: search_results
+UAS -> REST: response
+
+@enduml

@@ -24,7 +24,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-image::Multi-Disk Architecture.png[ProximaDB Multi-Disk Architecture,800,align=center]
+image::ProximaDB_Main_Architecture.png[ProximaDB Architecture Overview,800,align=center]
 
 [.lead]
 **Proximity at Scale** +

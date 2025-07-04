@@ -1,0 +1,41 @@
+@startuml
+title Storage-Aware Search Architecture
+
+rectangle "API Layer" {
+  component [REST API] as REST
+  component [gRPC API] as GRPC
+}
+
+rectangle "Service Layer" {
+  component [UnifiedAvroService] as UAS
+  component [CollectionService] as CS
+}
+
+rectangle "Search Engines" {
+  interface StorageSearchEngine as SSE
+  component [ViperSearchEngine] as VSE
+  component [LSMSearchEngine] as LSE
+}
+
+rectangle "Storage Layer" {
+  component [VIPER Core] as VCE
+  component [LSM Tree] as LT
+  component [Bloom Filters] as BF
+  component [Parquet Reader] as PR
+}
+
+' Connections
+REST --> UAS
+GRPC --> UAS
+UAS --> CS
+UAS --> SSE
+
+VSE ..|> SSE
+LSE ..|> SSE
+
+VSE --> VCE
+VSE --> PR
+LSE --> LT
+LSE --> BF
+
+@enduml

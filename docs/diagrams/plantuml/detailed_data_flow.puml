@@ -1,0 +1,109 @@
+@startuml ProximaDB_Detailed_Data_Flow
+!theme aws-orange
+title ProximaDB - Detailed Data Flow Architecture
+
+participant "Client" as client
+participant "Load Balancer" as lb
+participant "REST/gRPC Server" as server
+participant "UnifiedAvroService" as service
+participant "CollectionService" as collection_svc
+participant "Assignment Service" as assignment
+participant "WAL System" as wal
+participant "VIPER Engine" as viper
+participant "AXIS Indexing" as axis
+participant "Multi-Cloud Storage" as storage
+
+== Collection Creation Flow ==
+client -> lb: create_collection(name, config)
+lb -> server: route_request()
+server -> service: validate_and_process()
+service -> collection_svc: create_collection()
+collection_svc -> assignment: assign_disk()
+assignment -> storage: create_directories()
+collection_svc -> storage: write_metadata()
+collection_svc --> client: collection_created(uuid)
+
+== Vector Insert Flow (Optimized 2025) ==
+client -> lb: insert_vector(collection, vector, metadata)
+lb -> server: route_request()
+server -> service: validate_vector()
+service -> assignment: resolve_collection_disk()
+service -> wal: log_operation()
+
+group WAL Processing
+    wal -> wal: write_to_memtable()
+    wal -> storage: persist_log_entry()
+    wal -> wal: check_flush_threshold()
+    
+    alt Threshold Reached
+        wal -> viper: trigger_direct_flush()
+        viper -> storage: atomic_parquet_write()
+        viper -> axis: update_index()
+    end
+end
+
+service --> client: insert_success(vector_id)
+
+== Vector Search Flow ==
+client -> lb: search(collection, query_vector, k, filters)
+lb -> server: route_request()
+server -> service: process_search()
+service -> assignment: resolve_collection_disk()
+
+group Search Processing
+    service -> wal: search_memtable()
+    service -> viper: search_storage()
+    
+    par Parallel Search
+        wal -> wal: memtable_similarity_search()
+        viper -> storage: read_parquet_files()
+        viper -> viper: simd_distance_calculation()
+        axis -> axis: index_accelerated_search()
+    end
+    
+    service -> service: merge_and_rank_results()
+    service -> service: apply_metadata_filters()
+end
+
+service --> client: search_results(vectors, scores, metadata)
+
+== Collection Management Flow ==
+client -> lb: list_collections()
+lb -> server: route_request()
+server -> service: get_collections()
+service -> collection_svc: fetch_all_collections()
+collection_svc -> storage: read_metadata_files()
+collection_svc --> client: collections_list()
+
+== Health Check Flow ==
+client -> lb: /health
+lb -> server: health_check()
+
+group Health Validation
+    server -> service: check_service_health()
+    service -> wal: check_wal_health()
+    service -> viper: check_storage_health()
+    service -> storage: verify_connectivity()
+end
+
+server --> client: health_status(ok/error)
+
+== Recovery and Startup Flow ==
+note over server: Server Startup
+server -> assignment: discover_existing_collections()
+assignment -> storage: scan_all_directories()
+assignment -> assignment: rebuild_assignment_map()
+server -> wal: replay_uncommitted_logs()
+wal -> viper: restore_memtables()
+server -> axis: rebuild_indexes()
+
+note over client, storage
+  **Key Optimizations (2025)**
+  • Direct WAL → VIPER flush (no coordinator)
+  • Parallel search across memtable + storage
+  • SIMD-accelerated distance calculations
+  • Atomic parquet writes with staging
+  • Assignment-based disk distribution
+end note
+
+@enduml

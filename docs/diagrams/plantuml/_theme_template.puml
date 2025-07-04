@@ -1,0 +1,100 @@
+@startuml DIAGRAM_NAME
+!theme aws-orange
+!define $PRIMARY_COLOR #2196F3
+!define $SECONDARY_COLOR #4CAF50
+!define $ACCENT_COLOR #FF9800
+!define $SUCCESS_COLOR #4CAF50
+!define $WARNING_COLOR #FF9800
+!define $ERROR_COLOR #F44336
+!define $BACKGROUND_COLOR #FAFAFA
+
+skinparam backgroundColor $BACKGROUND_COLOR
+skinparam roundCorner 10
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+' Component styling
+skinparam component {
+    BackgroundColor $PRIMARY_COLOR
+    BorderColor #1976D2
+    BorderThickness 2
+    FontColor white
+    FontStyle bold
+}
+
+' Package styling  
+skinparam package {
+    BackgroundColor white
+    BorderColor $PRIMARY_COLOR
+    BorderThickness 2
+    FontColor $PRIMARY_COLOR
+    FontStyle bold
+}
+
+' Interface styling
+skinparam interface {
+    BackgroundColor $SECONDARY_COLOR
+    BorderColor #388E3C
+    BorderThickness 2
+    FontColor white
+    FontStyle bold
+}
+
+' Database styling
+skinparam database {
+    BackgroundColor $ACCENT_COLOR
+    BorderColor #F57C00
+    BorderThickness 2
+    FontColor white
+    FontStyle bold
+}
+
+' Note styling
+skinparam note {
+    BackgroundColor #FFF3E0
+    BorderColor $ACCENT_COLOR
+    BorderThickness 1
+    FontColor #E65100
+}
+
+' Arrow styling
+skinparam arrow {
+    Color $PRIMARY_COLOR
+    Thickness 2
+}
+
+' Title styling
+skinparam title {
+    FontColor $PRIMARY_COLOR
+    FontSize 16
+    FontStyle bold
+}
+
+' Header and footer
+skinparam header {
+    FontColor #666666
+    FontSize 10
+}
+
+skinparam footer {
+    FontColor #666666
+    FontSize 10
+}
+
+' Stereotypes for color coding
+skinparam component {
+    BackgroundColor<<core>> $PRIMARY_COLOR
+    BackgroundColor<<service>> $SECONDARY_COLOR
+    BackgroundColor<<storage>> $ACCENT_COLOR
+    BackgroundColor<<network>> #9C27B0
+    BackgroundColor<<client>> #00BCD4
+    BackgroundColor<<impl>> #E0E0E0
+    BorderColor<<impl>> #9E9E9E
+    FontColor<<impl>> #424242
+}
+
+title DIAGRAM_TITLE
+header ProximaDB Vector Database
+footer Generated with PlantUML | ProximaDB Architecture
+
+@enduml

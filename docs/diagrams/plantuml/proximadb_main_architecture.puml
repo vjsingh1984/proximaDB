@@ -1,0 +1,110 @@
+@startuml ProximaDB_Main_Architecture
+
+skinparam backgroundColor #FAFAFA
+skinparam roundCorner 10
+skinparam shadowing false
+
+skinparam component {
+    BackgroundColor #2196F3
+    BorderColor #1976D2
+    BorderThickness 2
+    FontColor white
+    FontStyle bold
+}
+
+skinparam package {
+    BackgroundColor white
+    BorderColor #2196F3
+    BorderThickness 2
+    FontColor #2196F3
+    FontStyle bold
+}
+
+skinparam note {
+    BackgroundColor #FFF3E0
+    BorderColor #FF9800
+    BorderThickness 1
+    FontColor #E65100
+}
+
+title ProximaDB Architecture - Multi-Server Design
+header ProximaDB Vector Database
+footer Generated with PlantUML | ProximaDB Architecture
+
+package "Client Layer" {
+  [Python SDK] as PythonSDK
+  [REST Client] as RESTClient
+  [gRPC Client] as gRPCClient
+}
+
+package "API Layer" {
+  component "REST Server\n(Port 5678)" as RESTServer {
+    [HTTP/1.1 Handler]
+    [JSON Serialization]
+    [REST Endpoints]
+  }
+  
+  component "gRPC Server\n(Port 5679)" as gRPCServer {
+    [HTTP/2 Handler]
+    [Protobuf Serialization]
+    [gRPC Services]
+  }
+}
+
+package "Service Layer" {
+  [CollectionService] as CS
+  [UnifiedAvroService] as UAS
+  [MetricsCollector] as MC
+  [StoragePathService] as SPS
+}
+
+package "Storage Layer" {
+  component "WAL System" {
+    [AvroWalStrategy]
+    [BincodeWalStrategy]
+    [AtomicityManager]
+  }
+  
+  component "Vector Storage" {
+    [VectorStorageCoordinator] as VSC
+    [VIPER Engine]
+    [Memtable Manager]
+  }
+  
+  component "Metadata Storage" {
+    [FilestoreMetadataBackend]
+    [Collection Persistence]
+  }
+}
+
+package "Filesystem Abstraction" {
+  [LocalFilesystem] as Local
+  [S3Filesystem] as S3
+  [AzureFilesystem] as Azure
+  [GcsFilesystem] as GCS
+}
+
+' Connections
+PythonSDK --> RESTServer : HTTP/1.1\n(Port 5678)
+PythonSDK --> gRPCServer : HTTP/2\n(Port 5679)
+RESTClient --> RESTServer
+gRPCClient --> gRPCServer
+
+RESTServer --> CS : Shared Services
+RESTServer --> UAS
+gRPCServer --> CS : Shared Services
+gRPCServer --> UAS
+
+CS --> FilestoreMetadataBackend
+CS --> VSC
+UAS --> AvroWalStrategy
+UAS --> VSC
+
+FilestoreMetadataBackend --> Local
+FilestoreMetadataBackend --> S3
+FilestoreMetadataBackend --> Azure
+FilestoreMetadataBackend --> GCS
+
+note bottom : Current Status: 80% Complete\nREST & gRPC APIs fully functional\nCollection persistence working\nVector operations pending integration
+
+@enduml
