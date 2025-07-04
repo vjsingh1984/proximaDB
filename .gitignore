@@ -156,6 +156,7 @@ flamegraph.svg
 /core
 core.*
 *.core
+!*/core.rs
 !src/core/
 
 # Security files
