@@ -606,22 +606,20 @@ class ProximaDBClient:
                     # Parse compact results
                     for result in response.compact_results.results:
                         results.append(SearchResult(
-                            id=result.id,
+                            id=result.id if result.id else None,
                             score=result.score,
                             vector=list(result.vector) if include_vectors else None,
-                            metadata=dict(result.metadata) if include_metadata else None,
-                            rank=result.rank
+                            metadata=dict(result.metadata) if include_metadata else None
                         ))
                 elif result_type == 'avro_results':
                     # Parse Avro results
                     avro_data = json.loads(response.avro_results)
                     for result in avro_data.get('results', []):
                         results.append(SearchResult(
-                            id=result.get('vector_id'),
+                            id=result.get('vector_id') if result.get('vector_id') else None,
                             score=result.get('score', 0.0),
                             vector=result.get('vector') if include_vectors else None,
-                            metadata=result.get('metadata') if include_metadata else None,
-                            rank=None
+                            metadata=result.get('metadata') if include_metadata else None
                         ))
                 
                 return results
@@ -910,7 +908,7 @@ class ProximaDBClient:
                 if result_type == 'compact_results':
                     for result_pb in response.compact_results.results:
                         results.append(SearchResult(
-                            id=result_pb.id,
+                            id=result_pb.id if result_pb.id else None,
                             score=result_pb.score,
                             vector=list(result_pb.vector) if result_pb.vector else None,
                             metadata=dict(result_pb.metadata) if result_pb.metadata else None
