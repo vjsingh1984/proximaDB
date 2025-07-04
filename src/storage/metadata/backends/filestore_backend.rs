@@ -313,7 +313,7 @@ impl Default for FilestoreMetadataConfig {
             filestore_url: "file://./data".to_string(),
             enable_compression: true,
             enable_backup: true,
-            enable_snapshot_archival: true,
+            enable_snapshot_archival: false,
             max_archived_snapshots: 5,
             temp_directory: None, // Uses same-directory strategy by default
         }

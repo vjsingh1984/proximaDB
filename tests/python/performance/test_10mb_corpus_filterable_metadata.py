@@ -21,7 +21,9 @@ from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 
 # Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
+# IMPORTANT: This test requires the ProximaDB Python SDK to be in PYTHONPATH
+# Run with: PYTHONPATH=/workspace/clients/python/src python3 test_10mb_corpus_filterable_metadata.py
+# Do NOT add sys.path.insert() - paths should be externalized via environment variables
 
 from proximadb.grpc_client import ProximaDBClient
 from proximadb import proximadb_pb2 as pb2

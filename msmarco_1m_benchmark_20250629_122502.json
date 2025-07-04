@@ -1,0 +1,458 @@
+{
+  "benchmark_info": {
+    "timestamp": "20250629_122502",
+    "corpus": "MS MARCO-style",
+    "total_vectors": 1000,
+    "vector_dimension": 768,
+    "protocol": "gRPC",
+    "test_type": "comprehensive_benchmark"
+  },
+  "results": [
+    {
+      "collection_name": "msmarco_1m_viper",
+      "storage_engine": "viper",
+      "corpus_size": 1000,
+      "vector_dimension": 768,
+      "total_insertion_time": 0.4268636703491211,
+      "insertion_rate_per_sec": 0.0,
+      "batches_processed": 0,
+      "failed_batches": 1,
+      "id_search_results": {
+        "msmarco_0000001": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        },
+        "msmarco_0010000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        },
+        "msmarco_0100000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        },
+        "msmarco_0500000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        },
+        "msmarco_0750000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        },
+        "msmarco_0999999": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: Storage-aware search failed"
+        }
+      },
+      "metadata_filter_results": {
+        "Topic Filter": {
+          "success": true,
+          "search_time_ms": 3.483295440673828,
+          "results_count": 0,
+          "filter_valid": true,
+          "avg_score": 0,
+          "description": "Technology documents only"
+        },
+        "Query Type Filter": {
+          "success": true,
+          "search_time_ms": 3.9937496185302734,
+          "results_count": 0,
+          "filter_valid": true,
+          "avg_score": 0,
+          "description": "Factual queries only"
+        },
+        "Doc Type Filter": {
+          "success": true,
+          "search_time_ms": 3.582477569580078,
+          "results_count": 0,
+          "filter_valid": true,
+          "avg_score": 0,
+          "description": "Wikipedia documents only"
+        },
+        "Quality Filter": {
+          "success": true,
+          "search_time_ms": 3.2470226287841797,
+          "results_count": 0,
+          "filter_valid": true,
+          "avg_score": 0,
+          "description": "High quality documents"
+        },
+        "Relevance Score Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "High relevance documents"
+        },
+        "Official Documents": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "Official sources only"
+        },
+        "Country Filter": {
+          "success": true,
+          "search_time_ms": 3.1702518463134766,
+          "results_count": 0,
+          "filter_valid": true,
+          "avg_score": 0,
+          "description": "US documents only"
+        },
+        "Complex Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "High-quality tech/science docs with answers"
+        }
+      },
+      "similarity_search_results": {
+        "Baseline Search": {
+          "avg_search_time_ms": 2.6810169219970703,
+          "avg_results_count": 0.0,
+          "avg_top_score": 0.0,
+          "successful_queries": 5,
+          "total_queries": 5,
+          "individual_results": [
+            {
+              "query_name": "technology_factual",
+              "search_time_ms": 2.9320716857910156,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "health_definition",
+              "search_time_ms": 2.695322036743164,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "science_how-to",
+              "search_time_ms": 2.6040077209472656,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "business_comparison",
+              "search_time_ms": 2.69317626953125,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "education_list",
+              "search_time_ms": 2.4805068969726562,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            }
+          ]
+        },
+        "Storage-Aware Optimized": {
+          "avg_search_time_ms": 2.308177947998047,
+          "avg_results_count": 0.0,
+          "avg_top_score": 0.0,
+          "successful_queries": 5,
+          "total_queries": 5,
+          "individual_results": [
+            {
+              "query_name": "technology_factual",
+              "search_time_ms": 2.3431777954101562,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "health_definition",
+              "search_time_ms": 2.2003650665283203,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "science_how-to",
+              "search_time_ms": 2.344369888305664,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "business_comparison",
+              "search_time_ms": 2.3233890533447266,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "education_list",
+              "search_time_ms": 2.329587936401367,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            }
+          ]
+        },
+        "VIPER Predicate Pushdown": {
+          "avg_search_time_ms": 2.0763397216796875,
+          "avg_results_count": 0.0,
+          "avg_top_score": 0.0,
+          "successful_queries": 5,
+          "total_queries": 5,
+          "individual_results": [
+            {
+              "query_name": "technology_factual",
+              "search_time_ms": 2.1543502807617188,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "health_definition",
+              "search_time_ms": 2.1212100982666016,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "science_how-to",
+              "search_time_ms": 2.0618438720703125,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "business_comparison",
+              "search_time_ms": 2.046346664428711,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "education_list",
+              "search_time_ms": 1.9979476928710938,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            }
+          ]
+        },
+        "VIPER PQ8 Quantization": {
+          "avg_search_time_ms": 2.195453643798828,
+          "avg_results_count": 0.0,
+          "avg_top_score": 0.0,
+          "successful_queries": 5,
+          "total_queries": 5,
+          "individual_results": [
+            {
+              "query_name": "technology_factual",
+              "search_time_ms": 2.306699752807617,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "health_definition",
+              "search_time_ms": 2.115964889526367,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "science_how-to",
+              "search_time_ms": 2.0585060119628906,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "business_comparison",
+              "search_time_ms": 2.2225379943847656,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "education_list",
+              "search_time_ms": 2.2735595703125,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            }
+          ]
+        },
+        "VIPER PQ4 Quantization": {
+          "avg_search_time_ms": 2.038431167602539,
+          "avg_results_count": 0.0,
+          "avg_top_score": 0.0,
+          "successful_queries": 5,
+          "total_queries": 5,
+          "individual_results": [
+            {
+              "query_name": "technology_factual",
+              "search_time_ms": 2.2428035736083984,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "health_definition",
+              "search_time_ms": 2.0585060119628906,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "science_how-to",
+              "search_time_ms": 1.9638538360595703,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "business_comparison",
+              "search_time_ms": 1.9638538360595703,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            },
+            {
+              "query_name": "education_list",
+              "search_time_ms": 1.9631385803222656,
+              "results_count": 0,
+              "top_score": 0,
+              "avg_score": 0,
+              "min_score": 0
+            }
+          ]
+        }
+      },
+      "baseline_vs_optimized": {},
+      "quantization_performance": {}
+    },
+    {
+      "collection_name": "msmarco_1m_lsm",
+      "storage_engine": "lsm",
+      "corpus_size": 1000,
+      "vector_dimension": 768,
+      "total_insertion_time": 0.4044520854949951,
+      "insertion_rate_per_sec": 0.0,
+      "batches_processed": 0,
+      "failed_batches": 1,
+      "id_search_results": {
+        "msmarco_0000001": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        },
+        "msmarco_0010000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        },
+        "msmarco_0100000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        },
+        "msmarco_0500000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        },
+        "msmarco_0750000": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        },
+        "msmarco_0999999": {
+          "found": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated"
+        }
+      },
+      "metadata_filter_results": {
+        "Topic Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated",
+          "description": "Technology documents only"
+        },
+        "Query Type Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated",
+          "description": "Factual queries only"
+        },
+        "Doc Type Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated",
+          "description": "Wikipedia documents only"
+        },
+        "Quality Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated",
+          "description": "High quality documents"
+        },
+        "Relevance Score Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "High relevance documents"
+        },
+        "Official Documents": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "Official sources only"
+        },
+        "Country Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "gRPC error: StatusCode.INTERNAL: Optimized search failed: LSM search engine not yet fully integrated",
+          "description": "US documents only"
+        },
+        "Complex Filter": {
+          "success": false,
+          "search_time_ms": 0,
+          "error": "bad argument type for built-in operation",
+          "description": "High-quality tech/science docs with answers"
+        }
+      },
+      "similarity_search_results": {},
+      "baseline_vs_optimized": {},
+      "quantization_performance": {}
+    }
+  ]
+}

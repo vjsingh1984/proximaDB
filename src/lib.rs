@@ -90,9 +90,9 @@ impl ProximaDB {
                 .map_err(|e| format!("Failed to create filestore backend: {}", e))?
         );
         
-        let collection_service = Arc::new(CollectionService::new(filestore_backend));
+        let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
         
-        let storage_engine = storage::StorageEngine::new(config.storage.clone(), collection_service).await?;
+        let storage_engine = storage::StorageEngine::new(config.storage.clone(), collection_service.clone()).await?;
         tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
 

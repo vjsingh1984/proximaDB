@@ -22,8 +22,8 @@ pub mod atomic;
 pub mod encoding;
 pub mod engine;
 pub mod mmap;
-pub mod tiered;
 pub mod atomicity;
+// Unified memtable system
 pub mod memtable;
 pub mod metadata;
 #[deprecated(note = "Use indexing/ instead")]
@@ -68,7 +68,7 @@ pub use atomicity::{
     OperationResult, TransactionContext, TransactionId, VectorDeleteOperation,
     VectorInsertOperation, VectorUpdateOperation,
 };
-pub use memtable::{Memtable, MemtableCollectionStats, MemtableEntry, MemtableOperation};
+// pub use engines::lsm::memtable::{Memtable, MemtableCollectionStats, MemtableEntry, MemtableOperation}; // Moved to obsolete - using unified memtable system
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 // 🚨 DEPRECATED EXPORTS - Use unified vector storage system instead
 

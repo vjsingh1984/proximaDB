@@ -12,6 +12,7 @@ use super::registry::{Counter, Gauge, MetricsRegistry};
 
 /// Storage metrics collector
 pub struct StorageMetricsCollector {
+    #[allow(dead_code)]
     registry: Arc<MetricsRegistry>,
 
     // Metrics

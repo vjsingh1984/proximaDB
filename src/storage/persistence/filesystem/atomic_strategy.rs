@@ -200,6 +200,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
 #[derive(Clone)]
 pub struct SameMountTempExecutor {
     temp_suffix: String,
+    #[allow(dead_code)]
     config: AtomicWriteConfig,
 }
 

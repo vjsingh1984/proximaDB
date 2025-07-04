@@ -248,6 +248,30 @@ pub struct WalStorageConfig {
     /// Global WAL size threshold for forced flush (bytes)
     #[serde(default = "default_global_flush_threshold")]
     pub global_flush_threshold: usize,
+    
+    /// WAL strategy type (Avro vs Bincode)
+    #[serde(default = "default_strategy_type")]
+    pub strategy_type: Option<String>,
+    
+    /// Memtable type for memory structure
+    #[serde(default = "default_memtable_type")]
+    pub memtable_type: Option<String>,
+    
+    /// Sync mode for durability vs performance tradeoff
+    #[serde(default = "default_sync_mode")]
+    pub sync_mode: Option<String>,
+    
+    /// Batch threshold for operations
+    #[serde(default = "default_batch_threshold")]
+    pub batch_threshold: Option<usize>,
+    
+    /// Write buffer size in MB
+    #[serde(default = "default_write_buffer_size_mb")]
+    pub write_buffer_size_mb: Option<usize>,
+    
+    /// Maximum concurrent flush operations
+    #[serde(default = "default_concurrent_flushes")]
+    pub concurrent_flushes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +298,12 @@ impl Default for WalStorageConfig {
             collection_affinity: true,
             memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB
             global_flush_threshold: 512 * 1024 * 1024, // 512MB
+            strategy_type: None, // Use WAL defaults
+            memtable_type: None, // Use WAL defaults
+            sync_mode: None, // Use WAL defaults  
+            batch_threshold: None, // Use WAL defaults
+            write_buffer_size_mb: None, // Use WAL defaults
+            concurrent_flushes: None, // Use WAL defaults
         }
     }
 }
@@ -282,6 +312,12 @@ impl Default for WalStorageConfig {
 fn default_collection_affinity() -> bool { true }
 fn default_memory_flush_size() -> usize { 1 * 1024 * 1024 }
 fn default_global_flush_threshold() -> usize { 512 * 1024 * 1024 }
+fn default_strategy_type() -> Option<String> { None }
+fn default_memtable_type() -> Option<String> { None }
+fn default_sync_mode() -> Option<String> { None }
+fn default_batch_threshold() -> Option<usize> { None }
+fn default_write_buffer_size_mb() -> Option<usize> { None }
+fn default_concurrent_flushes() -> Option<usize> { None }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {

@@ -225,7 +225,7 @@ async fn test_axis_system_recovery() {
         let collection_id = format!("recovery_test_collection_{}", coll_id);
 
         // Test collection statistics
-        let stats_result = axis_manager.get_collection_stats(&collection_id).await;
+        let _stats_result = axis_manager.get_collection_stats(&collection_id).await;
         // This may fail for non-existent strategies, which is expected behavior
 
         // Test optimization

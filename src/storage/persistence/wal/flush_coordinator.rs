@@ -107,7 +107,7 @@ impl WalFlushCoordinator {
         }
     }
 
-    /// Execute coordinated flush: WAL → Storage Engine (polymorphic)
+    /// Execute coordinated flush: WAL → Storage Engine → WAL Cleanup (ATOMIC)
     pub async fn execute_coordinated_flush(
         &self,
         collection_id: &CollectionId,
@@ -115,18 +115,24 @@ impl WalFlushCoordinator {
         preferred_engine: Option<&str>,
         wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalStrategy>>,
     ) -> Result<FlushResult> {
-        info!("🚀 Coordinator: Starting coordinated flush for collection {}", collection_id);
+        info!("🚀 Coordinator: Starting ATOMIC coordinated flush for collection {}", collection_id);
         
-        // Step 1: Extract vector records from FlushDataSource
+        let flush_id = uuid::Uuid::new_v4().to_string();
+        let mut flush_cycle_data = None;
+        
+        // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {
             FlushDataSource::Memory => {
-                if let Some(wal) = wal_manager {
-                    info!("📋 Coordinator: Extracting vector records from WAL memtable for collection {}", collection_id);
-                    // Get vector records from WAL's memtable
-                    let flush_cycle = wal.atomic_retrieve_for_flush(collection_id, &uuid::Uuid::new_v4().to_string()).await
+                if let Some(wal) = &wal_manager {
+                    info!("📋 Coordinator: ATOMIC retrieval from WAL memtable for collection {}", collection_id);
+                    // Get vector records from WAL's memtable AND mark for cleanup
+                    let flush_cycle = wal.atomic_retrieve_for_flush(collection_id, &flush_id).await
                         .map_err(|e| anyhow::anyhow!("Failed to retrieve data from WAL: {}", e))?;
-                    info!("📋 Coordinator: Retrieved {} vector records from WAL", flush_cycle.vector_records.len());
-                    flush_cycle.vector_records
+                    info!("📋 Coordinator: Retrieved {} vector records (marked for cleanup)", flush_cycle.vector_records.len());
+                    
+                    let records = flush_cycle.vector_records.clone();
+                    flush_cycle_data = Some(flush_cycle); // Store for cleanup
+                    records
                 } else {
                     warn!("📋 Coordinator: No WAL manager provided, cannot extract memory data");
                     Vec::new()
@@ -134,8 +140,7 @@ impl WalFlushCoordinator {
             },
             FlushDataSource::DiskWalFiles(files) => {
                 info!("📋 Coordinator: Extracting vector records from {} disk WAL files", files.len());
-                // TODO: Implement disk WAL file reading
-                // For now, return empty to avoid blocking the fix
+                // TODO: Implement disk WAL file reading + mark files for deletion
                 warn!("📋 Coordinator: Disk WAL file extraction not yet implemented");
                 Vec::new()
             },
@@ -144,6 +149,21 @@ impl WalFlushCoordinator {
                 records.clone()
             }
         };
+        
+        if vector_records.is_empty() {
+            info!("📋 Coordinator: No vector records to flush, completing without storage operation");
+            return Ok(FlushResult {
+                success: true,
+                collections_affected: vec![collection_id.clone()],
+                entries_flushed: 0,
+                bytes_written: 0,
+                files_created: 0,
+                duration_ms: 0,
+                completed_at: chrono::Utc::now(),
+                engine_metrics: std::collections::HashMap::new(),
+                compaction_triggered: false,
+            });
+        }
         
         info!("📋 Coordinator: Prepared {} vector records for flush to storage", vector_records.len());
         
@@ -156,24 +176,48 @@ impl WalFlushCoordinator {
                 .clone()
         };
         
-        info!("🔄 Coordinator: Using {} engine for flush", engine_type);
+        info!("🔄 Coordinator: Using {} engine for ATOMIC flush", engine_type);
         
         // Step 3: Create flush parameters with actual vector data
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.clone()),
             force: true,
             synchronous: true,
-            vector_records, // ← This is the key fix!
+            vector_records,
             ..Default::default()
         };
         
         // Step 4: Execute polymorphic flush via storage engine (calls do_flush internally)
-        let result = engine.do_flush(&flush_params).await?;
+        let storage_result = engine.do_flush(&flush_params).await?;
         
-        info!("✅ Coordinator: Flush completed - {} entries, {} bytes, {} files", 
-              result.entries_flushed, result.bytes_written, result.files_created);
+        info!("✅ Coordinator: Storage flush completed - {} entries, {} bytes, {} files", 
+              storage_result.entries_flushed, storage_result.bytes_written, storage_result.files_created);
         
-        Ok(result)
+        // Step 5: ATOMIC WAL CLEANUP - Only if storage flush succeeded
+        if storage_result.success && storage_result.entries_flushed > 0 {
+            if let (Some(wal), Some(flush_cycle)) = (&wal_manager, flush_cycle_data) {
+                info!("🧹 Coordinator: Starting ATOMIC WAL cleanup for {} flushed entries", storage_result.entries_flushed);
+                
+                match wal.complete_flush_cycle(flush_cycle).await {
+                    Ok(cleanup_result) => {
+                        info!("✅ Coordinator: WAL cleanup SUCCESS - {} entries removed, {} bytes reclaimed", 
+                              cleanup_result.entries_removed, cleanup_result.bytes_reclaimed);
+                    },
+                    Err(cleanup_error) => {
+                        warn!("⚠️ Coordinator: WAL cleanup FAILED (storage flush succeeded): {}", cleanup_error);
+                        // Don't fail the overall operation since storage succeeded
+                        // This creates a minor inconsistency but preserves data safety
+                    }
+                }
+            } else {
+                warn!("⚠️ Coordinator: Cannot perform WAL cleanup - missing WAL manager or flush cycle data");
+            }
+        } else {
+            info!("📋 Coordinator: Skipping WAL cleanup (no entries flushed or storage failed)");
+        }
+        
+        info!("🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}", collection_id);
+        Ok(storage_result)
     }
 
     pub async fn initialize_flush_state(&self, collection_id: &CollectionId) -> Result<()> {

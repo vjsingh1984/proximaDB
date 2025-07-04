@@ -3,7 +3,6 @@
 //! This module provides a compressed bitmap index using the RoaringBitmap
 //! data structure for efficient categorical metadata filtering in VIPER storage.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

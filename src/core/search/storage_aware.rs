@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::{
-    CollectionId, VectorId, SearchResult, MetadataFilter, 
+    SearchResult, MetadataFilter, 
     StorageEngine as StorageEngineType
 };
 
@@ -255,7 +255,7 @@ impl SearchEngineFactory {
         viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::core::ViperCoreEngine>>,
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Box<dyn StorageSearchEngine>> {
-        use crate::proto::proximadb::StorageEngine;
+        
         
         match collection_record.get_storage_engine_enum() {
             crate::proto::proximadb::StorageEngine::Viper => {

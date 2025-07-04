@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
+# IMPORTANT: This test requires the ProximaDB Python SDK to be in PYTHONPATH
+# Run with: PYTHONPATH=/workspace/clients/python/src python3 test_metadata_lifecycle.py
+# Do NOT add sys.path.insert() - paths should be externalized via environment variables
 
 from proximadb.grpc_client import ProximaDBClient
 from bert_embedding_service import BERTEmbeddingService

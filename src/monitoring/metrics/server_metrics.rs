@@ -14,6 +14,7 @@ use super::registry::{Counter, Gauge, MetricsRegistry};
 
 /// Server metrics collector
 pub struct ServerMetricsCollector {
+    #[allow(dead_code)]
     registry: Arc<MetricsRegistry>,
     start_time: Instant,
 

@@ -5,7 +5,7 @@
 //! Common operations are implemented in the base trait with default implementations,
 //! while specialized engines override only what's unique to their approach.
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,157 @@ pub trait UnifiedStorageEngine: Send + Sync {
         true // All engines support background operations by default
     }
     
+    // =============================================================================
+    // STORAGE ASSIGNMENT - Common logic for all engines using singleton pattern
+    // =============================================================================
+    
+    /// Get storage URL for a collection using assignment service
+    /// All storage engines can use this common implementation
+    async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let component_type = match self.strategy() {
+            StorageEngineStrategy::Viper => crate::storage::assignment_service::StorageComponentType::Storage,
+            StorageEngineStrategy::Lsm => crate::storage::assignment_service::StorageComponentType::Storage, // LSM uses same storage assignment
+            StorageEngineStrategy::Hybrid => crate::storage::assignment_service::StorageComponentType::Storage, // Use VIPER for hybrid
+        };
+        
+        match assignment_service.get_assignment(
+            &crate::core::CollectionId::from(collection_id.to_string()), 
+            component_type
+        ).await {
+            Some(assignment) => {
+                // Return the assigned storage URL with collection subdirectory
+                Ok(format!("{}/{}", assignment.storage_url, collection_id))
+            },
+            None => {
+                Err(anyhow::anyhow!(
+                    "No storage assignment found for collection {} in {} component. Ensure collection was created properly.",
+                    collection_id, self.engine_name()
+                ))
+            }
+        }
+    }
+    
+    /// Get base storage URL for a collection (without collection subdirectory)
+    /// Useful for creating collection directories
+    async fn get_base_storage_url(&self, collection_id: &str) -> Result<String> {
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let component_type = match self.strategy() {
+            StorageEngineStrategy::Viper => crate::storage::assignment_service::StorageComponentType::Storage,
+            StorageEngineStrategy::Lsm => crate::storage::assignment_service::StorageComponentType::Storage, // LSM uses same storage assignment
+            StorageEngineStrategy::Hybrid => crate::storage::assignment_service::StorageComponentType::Storage,
+        };
+        
+        match assignment_service.get_assignment(
+            &crate::core::CollectionId::from(collection_id.to_string()), 
+            component_type
+        ).await {
+            Some(assignment) => Ok(assignment.storage_url),
+            None => {
+                Err(anyhow::anyhow!(
+                    "No storage assignment found for collection {} in {} component",
+                    collection_id, self.engine_name()
+                ))
+            }
+        }
+    }
+    
+    /// Check if collection has storage assignment
+    async fn has_storage_assignment(&self, collection_id: &str) -> bool {
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let component_type = match self.strategy() {
+            StorageEngineStrategy::Viper => crate::storage::assignment_service::StorageComponentType::Storage,
+            StorageEngineStrategy::Lsm => crate::storage::assignment_service::StorageComponentType::Storage, // LSM uses same storage assignment
+            StorageEngineStrategy::Hybrid => crate::storage::assignment_service::StorageComponentType::Storage,
+        };
+        
+        assignment_service.get_assignment(
+            &crate::core::CollectionId::from(collection_id.to_string()), 
+            component_type
+        ).await.is_some()
+    }
+
+    // =============================================================================
+    // STAGING OPERATIONS - Common staging pattern for flush and compaction
+    // =============================================================================
+    
+    /// Get filesystem factory for this engine - to be implemented by each engine
+    fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory;
+    
+    /// Ensure staging directory exists for the given operation type
+    /// operation_type: "__flush" for flush operations, "__compact" for compaction operations
+    async fn ensure_staging_directory(&self, collection_id: &str, operation_type: &str) -> Result<String> {
+        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        let staging_dir = format!("{}/{}", collection_storage_url, operation_type);
+        
+        // Get filesystem factory from engine
+        let filesystem_factory = self.get_filesystem_factory();
+        
+        match filesystem_factory.create_dir_all(&staging_dir).await {
+            Ok(_) => {
+                tracing::debug!("📁 Created staging directory: {}", staging_dir);
+                Ok(staging_dir)
+            },
+            Err(e) => {
+                // Directory might already exist, which is fine
+                tracing::debug!("📁 Staging directory {} already exists or creation not needed: {}", staging_dir, e);
+                Ok(staging_dir)
+            }
+        }
+    }
+    
+    /// Write data to staging area with proper naming for atomic operations
+    async fn write_to_staging(&self, staging_dir: &str, filename: &str, data: &[u8]) -> Result<String> {
+        let staging_file_path = format!("{}/{}", staging_dir, filename);
+        
+        // Get filesystem factory from engine
+        let filesystem_factory = self.get_filesystem_factory();
+        
+        filesystem_factory.write(&staging_file_path, data, None).await
+            .with_context(|| format!("Failed to write data to staging file: {}", staging_file_path))?;
+        
+        tracing::debug!("💾 Wrote {} bytes to staging: {}", data.len(), staging_file_path);
+        Ok(staging_file_path)
+    }
+    
+    /// Atomically move file from staging to final storage location
+    async fn atomic_move_from_staging(&self, staging_file_path: &str, final_storage_path: &str) -> Result<()> {
+        // Get filesystem factory from engine
+        let filesystem_factory = self.get_filesystem_factory();
+        
+        // Ensure the target directory exists
+        if let Some(parent_dir) = final_storage_path.rfind('/') {
+            let target_dir = &final_storage_path[..parent_dir];
+            filesystem_factory.create_dir_all(target_dir).await
+                .with_context(|| format!("Failed to create target directory: {}", target_dir))?;
+        }
+        
+        // Perform atomic move
+        filesystem_factory.move_atomic(staging_file_path, final_storage_path).await
+            .with_context(|| format!("Failed to move {} to {}", staging_file_path, final_storage_path))?;
+        
+        tracing::info!("⚡ Atomic move completed: {} → {}", staging_file_path, final_storage_path);
+        Ok(())
+    }
+    
+    /// Complete staging cleanup after successful operation
+    async fn cleanup_staging_directory(&self, staging_dir: &str) -> Result<()> {
+        let filesystem_factory = self.get_filesystem_factory();
+        
+        // Try to delete the staging directory (best effort)
+        match filesystem_factory.delete(staging_dir).await {
+            Ok(_) => {
+                tracing::debug!("🧹 Cleaned up staging directory: {}", staging_dir);
+                Ok(())
+            },
+            Err(e) => {
+                // Log but don't fail - staging cleanup is not critical
+                tracing::warn!("⚠️ Failed to cleanup staging directory {}: {}", staging_dir, e);
+                Ok(())
+            }
+        }
+    }
+
     // =============================================================================
     // COMMON OPERATIONS - Default implementations with delegation to engine-specific
     // =============================================================================
@@ -173,7 +324,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     // =============================================================================
     
     /// Check if flush is needed with engine-specific heuristics
-    async fn should_flush(&self, collection_id: Option<&str>) -> Result<bool> {
+    async fn should_flush(&self, _collection_id: Option<&str>) -> Result<bool> {
         match self.strategy() {
             StorageEngineStrategy::Viper => {
                 // VIPER default: flush when memory usage exceeds threshold
@@ -349,6 +500,9 @@ pub struct FlushParameters {
     
     /// Maximum time to wait for operation
     pub timeout_ms: Option<u64>,
+    
+    /// Vector records to flush (provided by FlushCoordinator from WAL)
+    pub vector_records: Vec<crate::core::VectorRecord>,
     
     /// Whether to trigger compaction after flush
     pub trigger_compaction: bool,

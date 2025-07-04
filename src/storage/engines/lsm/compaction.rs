@@ -19,7 +19,7 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use super::LsmEntry;
+use super::LsmStorageEntry;
 use crate::core::{CollectionId, LsmConfig, VectorId};
 use crate::storage::Result;
 use chrono::Utc;
@@ -320,7 +320,7 @@ impl CompactionManager {
         _config: &LsmConfig,
     ) -> Result<CompactionStats> {
         let start_time = std::time::Instant::now();
-        let mut merged_data = BTreeMap::<VectorId, LsmEntry>::new();
+        let mut merged_data = BTreeMap::<VectorId, LsmStorageEntry>::new();
         let mut bytes_read = 0u64;
 
         debug!(
@@ -359,7 +359,7 @@ impl CompactionManager {
 
                 let entry_data = &file_data[offset..offset + entry_len];
 
-                match bincode::deserialize::<(VectorId, LsmEntry)>(entry_data) {
+                match bincode::deserialize::<(VectorId, LsmStorageEntry)>(entry_data) {
                     Ok((id, entry)) => {
                         // Handle merge logic for LSM entries
                         match (&entry, merged_data.get(&id)) {
@@ -396,8 +396,8 @@ impl CompactionManager {
             // Skip old tombstones (they can be garbage collected during compaction)
             // Keep only records and recent tombstones (within a certain time window)
             let should_keep = match lsm_entry {
-                LsmEntry::Record(_) => true,
-                LsmEntry::Tombstone { timestamp, .. } => {
+                LsmStorageEntry::Record(_) => true,
+                LsmStorageEntry::Tombstone { timestamp, .. } => {
                     // Keep tombstones that are less than 1 hour old
                     let age = chrono::Utc::now().signed_duration_since(*timestamp);
                     age.num_hours() < 1
@@ -448,9 +448,49 @@ impl CompactionManager {
             }
         }
 
+        // DETAILED COMPACTION PERFORMANCE ANALYSIS
+        let total_time = start_time.elapsed();
+        let input_files_count = task.input_files.len();
+        let compression_ratio = if bytes_read > 0 { bytes_written as f64 / bytes_read as f64 } else { 1.0 };
+        let read_throughput_mb_sec = (bytes_read as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
+        let write_throughput_mb_sec = (bytes_written as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
+        
+        tracing::info!(
+            "🗜️ [LSM COMPACTION] Level {} complete: {} files → 1 file in {:?}",
+            task.level, input_files_count, total_time
+        );
+        
+        tracing::info!(
+            "⚡ [LSM COMPACTION PERFORMANCE] Read: {:.1}MB/s, Write: {:.1}MB/s, Compression: {:.1}x",
+            read_throughput_mb_sec, write_throughput_mb_sec, compression_ratio
+        );
+        
+        // COMPACTION PERFORMANCE WARNINGS (compaction can be slower than flush)
+        if total_time.as_millis() > 5000 { // >5s is very slow for compaction
+            tracing::warn!("⚠️ SLOW LSM COMPACTION: {}ms for {} files. Consider:", 
+                          total_time.as_millis(), input_files_count);
+            tracing::warn!("   • Moving compaction to dedicated background process");
+            tracing::warn!("   • Using faster storage for compaction temp files");
+            tracing::warn!("   • Reducing compaction scope/frequency");
+        }
+        
+        if read_throughput_mb_sec < 50.0 { // <50MB/s read is slow
+            tracing::warn!("⚠️ LSM COMPACTION READ WARNING: {:.1}MB/s below target 50MB/s", read_throughput_mb_sec);
+        }
+        
+        if write_throughput_mb_sec < 30.0 { // <30MB/s write is slow
+            tracing::warn!("⚠️ LSM COMPACTION WRITE WARNING: {:.1}MB/s below target 30MB/s", write_throughput_mb_sec);
+        }
+        
+        // DESIGN INSIGHT: Comparison with flush performance
+        if total_time.as_millis() > 1000 {
+            tracing::info!("💡 DESIGN INSIGHT: LSM compaction ({}ms) much slower than VIPER flush target (<200ms) - async compaction recommended", 
+                          total_time.as_millis());
+        }
+        
         debug!(
-            "Compaction completed in {}ms",
-            start_time.elapsed().as_millis()
+            "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged",
+            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len()
         );
 
         Ok(CompactionStats {
@@ -505,28 +545,28 @@ impl CompactionManager {
 }
 
 /// Determine if a new entry should replace an existing entry during compaction
-fn should_replace_entry(existing: &LsmEntry, new: &LsmEntry) -> bool {
+fn should_replace_entry(existing: &LsmStorageEntry, new: &LsmStorageEntry) -> bool {
     match (existing, new) {
         // Always prefer newer timestamps
-        (LsmEntry::Record(existing_record), LsmEntry::Record(new_record)) => {
+        (LsmStorageEntry::Record(existing_record), LsmStorageEntry::Record(new_record)) => {
             new_record.timestamp > existing_record.timestamp
         }
-        (LsmEntry::Record(record), LsmEntry::Tombstone { timestamp, .. }) => {
+        (LsmStorageEntry::Record(record), LsmStorageEntry::Tombstone { timestamp, .. }) => {
             timestamp.timestamp_millis() > record.timestamp
         }
         (
-            LsmEntry::Tombstone {
+            LsmStorageEntry::Tombstone {
                 timestamp: existing_ts,
                 ..
             },
-            LsmEntry::Record(record),
+            LsmStorageEntry::Record(record),
         ) => record.timestamp > existing_ts.timestamp_millis(),
         (
-            LsmEntry::Tombstone {
+            LsmStorageEntry::Tombstone {
                 timestamp: existing_ts,
                 ..
             },
-            LsmEntry::Tombstone {
+            LsmStorageEntry::Tombstone {
                 timestamp: new_ts, ..
             },
         ) => *new_ts > *existing_ts,

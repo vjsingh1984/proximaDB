@@ -23,19 +23,34 @@ use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use crate::core::CollectionId;
 use crate::proto::proximadb::{CollectionConfig, CollectionResponse};
 use crate::storage::metadata::backends::filestore_backend::{CollectionRecord, FilestoreMetadataBackend};
+use crate::storage::assignment_service::{AssignmentService, StorageComponentType, StorageAssignmentConfig, get_assignment_service};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
-/// Collection service for unified business logic
-#[derive(Debug)]
+/// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
     metadata_backend: Arc<FilestoreMetadataBackend>,
+    assignment_service: Arc<dyn AssignmentService>,
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl CollectionService {
-    /// Create new collection service
-    pub fn new(metadata_backend: Arc<FilestoreMetadataBackend>) -> Self {
-        Self { metadata_backend }
+    /// Create new collection service with multi-disk coordination
+    pub async fn new(metadata_backend: Arc<FilestoreMetadataBackend>) -> Result<Self> {
+        let assignment_service = get_assignment_service();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(Default::default()).await
+                .context("Failed to initialize filesystem factory")?
+        );
+        
+        Ok(Self { 
+            metadata_backend,
+            assignment_service,
+            filesystem_factory,
+        })
     }
 
     /// Create collection from gRPC request
@@ -72,6 +87,10 @@ impl CollectionService {
         let collection_uuid = record.uuid.clone();
         let storage_path = record.storage_path("${base_path}"); // Template - will be filled by storage engine
 
+        // Create storage directories using assignment service
+        let storage_assignments = self.create_storage_directories(&config.name, &collection_uuid).await
+            .context("Failed to create storage directories")?;
+
         // Store in metadata backend
         self.metadata_backend
             .upsert_collection_record(record)
@@ -79,9 +98,10 @@ impl CollectionService {
             .context("Failed to store collection metadata")?;
 
         info!(
-            "✅ Collection created: {} (UUID: {}) in {}μs",
+            "✅ Collection created: {} (UUID: {}) with storage assignments: {:?} in {}μs",
             config.name,
             collection_uuid,
+            storage_assignments.len(),
             start_time.elapsed().as_micros()
         );
 
@@ -135,7 +155,7 @@ impl CollectionService {
         self.metadata_backend.list_collections(None).await
     }
 
-    /// Delete collection by name or UUID - handles both transparently
+    /// Delete collection with comprehensive cleanup across all storage components
     pub async fn delete_collection(
         &self,
         collection_identifier: &str,
@@ -143,26 +163,70 @@ impl CollectionService {
         info!("🗑️ Deleting collection: {}", collection_identifier);
         let start_time = std::time::Instant::now();
 
-        let deleted = self
-            .metadata_backend
-            .delete_collection_by_name_or_uuid(collection_identifier)
-            .await?;
+        // Get collection record first to retrieve UUID and other details
+        let collection_record = self.metadata_backend.get_collection_record_by_name_or_uuid(collection_identifier).await?;
 
-        if deleted {
-            info!(
-                "✅ Collection deleted: {} in {}μs",
-                collection_identifier,
-                start_time.elapsed().as_micros()
-            );
+        if let Some(record) = collection_record {
+            let collection_uuid = record.uuid.clone();
+            let collection_name = record.name.clone();
+            
+            info!("🔍 Found collection to delete: {} (UUID: {})", collection_name, collection_uuid);
 
-            Ok(CollectionServiceResponse {
-                success: true,
-                collection_uuid: None,
-                storage_path: None,
-                error_message: None,
-                error_code: None,
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-            })
+            // Step 1: Clean up all storage directories and files
+            let cleanup_results = self.cleanup_storage_directories(&collection_name, &collection_uuid).await;
+            match cleanup_results {
+                Ok(cleaned_components) => {
+                    info!("🧹 Cleaned up {} storage components for collection {}", cleaned_components, collection_name);
+                },
+                Err(e) => {
+                    warn!("⚠️ Some storage cleanup failed for collection {}: {}", collection_name, e);
+                    // Continue with metadata deletion even if storage cleanup partially fails
+                }
+            }
+
+            // Step 2: Remove from assignment service
+            for component_type in &[
+                StorageComponentType::Wal,
+                StorageComponentType::Storage,
+                StorageComponentType::Index
+            ] {
+                if let Err(e) = self.assignment_service.remove_assignment(&collection_name, *component_type).await {
+                    warn!("⚠️ Failed to remove assignment for {}/{}: {}", collection_name, component_type, e);
+                }
+            }
+
+            // Step 3: Delete from metadata backend
+            let deleted = self
+                .metadata_backend
+                .delete_collection_by_name_or_uuid(&collection_uuid)
+                .await?;
+
+            if deleted {
+                info!(
+                    "✅ Collection deleted: {} (UUID: {}) in {}μs",
+                    collection_name,
+                    collection_uuid,
+                    start_time.elapsed().as_micros()
+                );
+
+                Ok(CollectionServiceResponse {
+                    success: true,
+                    collection_uuid: Some(collection_uuid),
+                    storage_path: None,
+                    error_message: None,
+                    error_code: None,
+                    processing_time_us: start_time.elapsed().as_micros() as i64,
+                })
+            } else {
+                Ok(CollectionServiceResponse {
+                    success: false,
+                    collection_uuid: Some(collection_uuid),
+                    storage_path: None,
+                    error_message: Some(format!("Failed to delete collection metadata for '{}'", collection_name)),
+                    error_code: Some("METADATA_DELETE_FAILED".to_string()),
+                    processing_time_us: start_time.elapsed().as_micros() as i64,
+                })
+            }
         } else {
             Ok(CollectionServiceResponse {
                 success: false,
@@ -387,6 +451,174 @@ impl CollectionService {
 
         Ok(())
     }
+
+    /// Create storage directories for a new collection using assignment service
+    async fn create_storage_directories(
+        &self,
+        collection_name: &str,
+        collection_uuid: &str,
+    ) -> Result<Vec<StorageComponentType>> {
+        info!("🏗️ Creating storage directories for collection {} (UUID: {})", collection_name, collection_uuid);
+        
+        let mut created_components = Vec::new();
+        
+        // Define storage components that need assignment service
+        // Only assign: WAL, Storage (unified for any engine), and Index
+        // Metadata has dedicated storage URL from config
+        let storage_components = vec![
+            (StorageComponentType::Wal, self.get_wal_assignment_config().await?),
+            (StorageComponentType::Storage, self.get_storage_assignment_config().await?), // Engine-agnostic storage
+            (StorageComponentType::Index, self.get_index_assignment_config().await?),
+        ];
+        
+        for (component_type, config) in storage_components {
+            match self.assignment_service.assign_storage_url(&CollectionId::from(collection_name), &config).await {
+                Ok(assignment) => {
+                    // Create the directory structure
+                    let collection_dir = format!("{}/{}", assignment.storage_url, collection_name);
+                    
+                    match self.filesystem_factory.get_filesystem(&assignment.storage_url) {
+                        Ok(filesystem) => {
+                            // Create collection directory
+                            if let Err(e) = filesystem.create_dir(&collection_dir).await {
+                                warn!("⚠️ Failed to create {} directory {}: {}", component_type, collection_dir, e);
+                                continue;
+                            }
+                            
+                            // Create component-specific subdirectories
+                            let subdirs = match component_type {
+                                StorageComponentType::Wal => vec!["logs", "checkpoints"],
+                                StorageComponentType::Storage => vec!["data", "indexes", "metadata"],
+                                StorageComponentType::Index => vec!["axis", "hnsw", "ivf"],
+                                #[allow(deprecated)]
+                                StorageComponentType::Metadata => vec!["schema", "stats"],
+                            };
+                            
+                            for subdir in subdirs {
+                                let full_subdir = format!("{}/{}", collection_dir, subdir);
+                                if let Err(e) = filesystem.create_dir(&full_subdir).await {
+                                    warn!("⚠️ Failed to create {} subdirectory {}: {}", component_type, full_subdir, e);
+                                }
+                            }
+                            
+                            info!("✅ Created {} storage directory: {}", component_type, collection_dir);
+                            created_components.push(component_type);
+                        },
+                        Err(e) => {
+                            warn!("⚠️ Failed to get filesystem for {}: {}", assignment.storage_url, e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("⚠️ Failed to assign storage for {} component: {}", component_type, e);
+                }
+            }
+        }
+        
+        info!("🏗️ Created {} storage components for collection {}", created_components.len(), collection_name);
+        Ok(created_components)
+    }
+
+    /// Clean up storage directories for a deleted collection
+    async fn cleanup_storage_directories(
+        &self,
+        collection_name: &str,
+        collection_uuid: &str,
+    ) -> Result<usize> {
+        info!("🧹 Cleaning up storage directories for collection {} (UUID: {})", collection_name, collection_uuid);
+        
+        let mut cleaned_components = 0;
+        
+        // Get assignments for all storage components
+        let component_types = vec![
+            StorageComponentType::Wal,
+            StorageComponentType::Storage,
+            StorageComponentType::Index,
+        ];
+        
+        for component_type in component_types {
+            if let Some(assignment) = self.assignment_service.get_assignment(&CollectionId::from(collection_name), component_type).await {
+                let collection_dir = format!("{}/{}", assignment.storage_url, collection_name);
+                
+                match self.filesystem_factory.get_filesystem(&assignment.storage_url) {
+                    Ok(filesystem) => {
+                        // Check if directory exists before attempting to delete
+                        match filesystem.exists(&collection_dir).await {
+                            Ok(true) => {
+                                // Recursively delete the entire collection directory
+                                match filesystem.delete(&collection_dir).await {
+                                    Ok(_) => {
+                                        info!("✅ Deleted {} storage directory: {}", component_type, collection_dir);
+                                        cleaned_components += 1;
+                                    },
+                                    Err(e) => {
+                                        warn!("⚠️ Failed to delete {} directory {}: {}", component_type, collection_dir, e);
+                                    }
+                                }
+                            },
+                            Ok(false) => {
+                                debug!("📂 {} directory {} does not exist (already cleaned up)", component_type, collection_dir);
+                                cleaned_components += 1; // Count as cleaned
+                            },
+                            Err(e) => {
+                                warn!("⚠️ Failed to check existence of {} directory {}: {}", component_type, collection_dir, e);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to get filesystem for {}: {}", assignment.storage_url, e);
+                    }
+                }
+            } else {
+                debug!("📂 No assignment found for {}/{} (may not have been created)", collection_name, component_type);
+            }
+        }
+        
+        info!("🧹 Cleaned up {} storage components for collection {}", cleaned_components, collection_name);
+        Ok(cleaned_components)
+    }
+
+    /// Get WAL assignment configuration from system config
+    async fn get_wal_assignment_config(&self) -> Result<StorageAssignmentConfig> {
+        // TODO: Load from actual system configuration
+        Ok(StorageAssignmentConfig {
+            storage_urls: vec![
+                "file:///workspace/data/disk1/wal".to_string(),
+                "file:///workspace/data/disk2/wal".to_string(),
+                "file:///workspace/data/disk3/wal".to_string(),
+            ],
+            component_type: StorageComponentType::Wal,
+            collection_affinity: true,
+        })
+    }
+
+    /// Get storage assignment configuration (engine-agnostic)
+    async fn get_storage_assignment_config(&self) -> Result<StorageAssignmentConfig> {
+        Ok(StorageAssignmentConfig {
+            storage_urls: vec![
+                "file:///workspace/data/disk1/storage".to_string(),
+                "file:///workspace/data/disk2/storage".to_string(),
+                "file:///workspace/data/disk3/storage".to_string(),
+            ],
+            component_type: StorageComponentType::Storage,
+            collection_affinity: true,
+        })
+    }
+
+
+    /// Get Index assignment configuration
+    async fn get_index_assignment_config(&self) -> Result<StorageAssignmentConfig> {
+        Ok(StorageAssignmentConfig {
+            storage_urls: vec![
+                "file:///workspace/data/disk1/storage/index".to_string(),
+                "file:///workspace/data/disk2/storage/index".to_string(),
+                "file:///workspace/data/disk3/storage/index".to_string(),
+            ],
+            component_type: StorageComponentType::Index,
+            collection_affinity: true,
+        })
+    }
+
 }
 
 /// Unified response format for collection operations
@@ -459,12 +691,12 @@ impl CollectionServiceBuilder {
         self
     }
 
-    pub fn build(self) -> Result<CollectionService> {
+    pub async fn build(self) -> Result<CollectionService> {
         let metadata_backend = self
             .metadata_backend
             .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
 
-        Ok(CollectionService::new(metadata_backend))
+        CollectionService::new(metadata_backend).await
     }
 }
 
@@ -506,7 +738,7 @@ mod tests {
             FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await.unwrap()
         );
         
-        let service = CollectionService::new(backend);
+        let service = CollectionService::new(backend).await.unwrap();
 
         // Valid config
         let valid_config = CollectionConfig {

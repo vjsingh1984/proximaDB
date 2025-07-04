@@ -1,5 +1,5 @@
 use crate::core::{CollectionId, StorageError, VectorId, VectorRecord};
-use crate::storage::{engines::lsm::LsmEntry, Result};
+use crate::storage::{engines::lsm::LsmStorageEntry, Result};
 use memmap2::MmapOptions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -52,13 +52,13 @@ impl MmapReader {
 
                 if end <= sst_file.mmap.len() {
                     let data = &sst_file.mmap[start..end];
-                    let (_, lsm_entry): (VectorId, LsmEntry) = bincode::deserialize(data)
+                    let (_, lsm_entry): (VectorId, LsmStorageEntry) = bincode::deserialize(data)
                         .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
                     // Handle different entry types
                     match lsm_entry {
-                        LsmEntry::Record(record) => return Ok(Some(record)),
-                        LsmEntry::Tombstone { .. } => return Ok(None), // Vector was deleted
+                        LsmStorageEntry::Record(record) => return Ok(Some(record)),
+                        LsmStorageEntry::Tombstone { .. } => return Ok(None), // Vector was deleted
                     }
                 }
             }
@@ -128,7 +128,7 @@ impl MmapReader {
 
             // Deserialize just to get the VectorId for building the index
             let entry_data = &mmap[offset + 4..offset + 4 + entry_len];
-            match bincode::deserialize::<(VectorId, LsmEntry)>(entry_data) {
+            match bincode::deserialize::<(VectorId, LsmStorageEntry)>(entry_data) {
                 Ok((id, _)) => {
                     index.insert(
                         id,
@@ -170,13 +170,13 @@ impl MmapReader {
                     let data = &sst_file.mmap[start..end];
                     
                     // Deserialize the entry
-                    match bincode::deserialize::<(VectorId, LsmEntry)>(data) {
+                    match bincode::deserialize::<(VectorId, LsmStorageEntry)>(data) {
                         Ok((_, lsm_entry)) => {
                             match lsm_entry {
-                                LsmEntry::Record(record) => {
+                                LsmStorageEntry::Record(record) => {
                                     records.push(record);
                                 }
-                                LsmEntry::Tombstone { .. } => {
+                                LsmStorageEntry::Tombstone { .. } => {
                                     // Skip deleted records (tombstones)
                                 }
                             }

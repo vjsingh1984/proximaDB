@@ -6,6 +6,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::pipeline::*;
+    use super::super::ml_clustering::{MLClusteringEngine, KMeansConfig};
+    use super::super::quantization::{VectorQuantizationEngine, QuantizationConfig};
     use crate::core::VectorRecord;
     use std::collections::HashMap;
     use tokio;
@@ -77,12 +79,15 @@ mod tests {
             batch_size: 100,
             enable_compression: true,
             sorting_strategy: SortingStrategy::ById,
+            quantization_level: None,
         };
 
         let schema_adapter = std::sync::Arc::new(SchemaAdapter::new().await.unwrap());
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
+            ml_clustering: std::sync::Arc::new(tokio::sync::Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            quantization: std::sync::Arc::new(tokio::sync::Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: std::sync::Arc::new(tokio::sync::RwLock::new(ProcessingStats::default())),
         };
 
@@ -114,12 +119,15 @@ mod tests {
             batch_size: 50,
             enable_compression: true,
             sorting_strategy,
+            quantization_level: None,
         };
 
         let schema_adapter = std::sync::Arc::new(SchemaAdapter::new().await.unwrap());
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
+            ml_clustering: std::sync::Arc::new(tokio::sync::Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            quantization: std::sync::Arc::new(tokio::sync::Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: std::sync::Arc::new(tokio::sync::RwLock::new(ProcessingStats::default())),
         };
 
@@ -163,12 +171,15 @@ mod tests {
             batch_size: 100,
             enable_compression: true,
             sorting_strategy,
+            quantization_level: None,
         };
 
         let schema_adapter = std::sync::Arc::new(SchemaAdapter::new().await.unwrap());
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
+            ml_clustering: std::sync::Arc::new(tokio::sync::Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            quantization: std::sync::Arc::new(tokio::sync::Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: std::sync::Arc::new(tokio::sync::RwLock::new(ProcessingStats::default())),
         };
 
@@ -203,6 +214,7 @@ mod tests {
                 batch_size: 50,
                 enable_compression: true,
                 sorting_strategy,
+                quantization_level: None,
             };
 
             let schema_adapter = std::sync::Arc::new(SchemaAdapter::new().await.unwrap());
@@ -210,6 +222,8 @@ mod tests {
                 config: processor_config,
                 schema_adapter,
                 stats: std::sync::Arc::new(tokio::sync::RwLock::new(ProcessingStats::default())),
+                ml_clustering: std::sync::Arc::new(tokio::sync::Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+                quantization: std::sync::Arc::new(tokio::sync::Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             };
 
             processor.preprocess_records(&mut records).unwrap();
@@ -234,12 +248,15 @@ mod tests {
             batch_size: 100,
             enable_compression: true,
             sorting_strategy: SortingStrategy::None,
+            quantization_level: None,
         };
 
         let schema_adapter = std::sync::Arc::new(SchemaAdapter::new().await.unwrap());
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
+            ml_clustering: std::sync::Arc::new(tokio::sync::Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            quantization: std::sync::Arc::new(tokio::sync::Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: std::sync::Arc::new(tokio::sync::RwLock::new(ProcessingStats::default())),
         };
 

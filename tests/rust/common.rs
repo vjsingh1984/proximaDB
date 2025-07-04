@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 static INIT: Once = Once::new();
-static SERVER_LOCK: Mutex<()> = Mutex::const_new(());
+static _SERVER_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Initialize test environment
 pub fn init_test_env() {

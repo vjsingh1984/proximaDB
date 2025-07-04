@@ -4,7 +4,6 @@
 //! to VIPER for performance comparison and standard SSTable storage.
 
 pub mod compaction;
-pub mod memtable;
 
 // Re-export main types
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
@@ -12,22 +11,28 @@ pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, Com
 // Main LSM Tree implementation (contents from original lsm/mod.rs)
 use crate::core::{CollectionId, LsmConfig, VectorId, VectorRecord};
 use crate::storage::WalManager;
-use anyhow::Result;
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::memtable::specialized::{LsmMemtable, lsm_behavior};
+use crate::storage::memtable::core::MemtableCore;
+use anyhow::{Result, Context};
+use tracing::info;
+use chrono::Utc;
 use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult,
-    CompactionParameters, CompactionResult, EngineStatistics, EngineHealth
+    CompactionParameters, CompactionResult
 };
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Entry in the LSM tree that can be either a vector record or a tombstone
+// Remove dummy filesystem factory - LSM will use fallback methods
+
+/// Storage entry in the LSM tree that can be either a vector record or a tombstone
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LsmEntry {
+pub enum LsmStorageEntry {
     /// An active vector record
     Record(VectorRecord),
     /// A tombstone marking a deleted vector
@@ -42,10 +47,11 @@ pub enum LsmEntry {
 pub struct LsmTree {
     config: LsmConfig,
     collection_id: CollectionId,
-    memtable: RwLock<BTreeMap<VectorId, LsmEntry>>,
+    memtable: LsmMemtable<String, lsm_behavior::LsmEntry>,
     wal_manager: Arc<WalManager>,
     data_dir: PathBuf,
     compaction_manager: Option<Arc<CompactionManager>>,
+    filesystem: Arc<FilesystemFactory>,
 }
 
 impl LsmTree {
@@ -55,15 +61,26 @@ impl LsmTree {
         wal_manager: Arc<WalManager>,
         data_dir: PathBuf,
         compaction_manager: Option<Arc<CompactionManager>>,
+        filesystem: Arc<FilesystemFactory>,
     ) -> Self {
+        // Create memtable with default configuration for LSM
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let memtable = crate::storage::memtable::MemtableFactory::create_for_lsm(memtable_config);
+        
         Self {
             config: config.clone(),
             collection_id,
-            memtable: RwLock::new(BTreeMap::new()),
+            memtable,
             wal_manager,
             data_dir,
             compaction_manager,
+            filesystem,
         }
+    }
+    
+    /// Get the data directory for this LSM tree
+    pub fn data_dir(&self) -> &PathBuf {
+        &self.data_dir
     }
 
     pub async fn put(&self, id: VectorId, record: VectorRecord) -> Result<()> {
@@ -75,14 +92,19 @@ impl LsmTree {
             .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
 
         // Then write to memtable as a record entry
-        let mut memtable = self.memtable.write().await;
-        memtable.insert(id, LsmEntry::Record(record));
+        // Convert VectorRecord to memtable's LsmEntry format
+        let entry = lsm_behavior::LsmEntry {
+            value: Some(bincode::serialize(&record).unwrap()),
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            entry_type: lsm_behavior::LsmEntryType::Insert,
+            sequence_number: 0, // Will be set by the wrapper
+        };
+        self.memtable.insert(id.clone(), entry).await?;
 
         // Check if memtable size exceeds threshold and flush to SST
-        if memtable.len() * std::mem::size_of::<LsmEntry>()
+        if self.memtable.size_bytes().await
             > (self.config.memtable_size_mb as usize * 1024 * 1024)
         {
-            drop(memtable);
             self.flush().await?;
         }
 
@@ -90,10 +112,20 @@ impl LsmTree {
     }
 
     pub async fn get(&self, id: &VectorId) -> Result<Option<VectorRecord>> {
-        let memtable = self.memtable.read().await;
-        match memtable.get(id) {
-            Some(LsmEntry::Record(record)) => Ok(Some(record.clone())),
-            Some(LsmEntry::Tombstone { .. }) => Ok(None), // Deleted record
+        match self.memtable.get(id).await? {
+            Some(entry) => {
+                // Check if it's a tombstone (deleted record)
+                if entry.entry_type == lsm_behavior::LsmEntryType::Tombstone {
+                    Ok(None)
+                } else if let Some(data) = &entry.value {
+                    // Deserialize the record
+                    let record: VectorRecord = bincode::deserialize(data)
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize record: {}", e))?;
+                    Ok(Some(record))
+                } else {
+                    Ok(None)
+                }
+            }
             None => Ok(None),                             // Record not found
         }
     }
@@ -108,25 +140,24 @@ impl LsmTree {
             .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
 
         // Check if the record currently exists
-        let exists = {
-            let memtable = self.memtable.read().await;
-            matches!(memtable.get(&id), Some(LsmEntry::Record(_)))
+        let exists = match self.memtable.get(&id).await? {
+            Some(entry) => entry.entry_type != lsm_behavior::LsmEntryType::Tombstone,
+            None => false,
         };
 
         // Insert tombstone in memtable
-        let mut memtable = self.memtable.write().await;
-        let tombstone = LsmEntry::Tombstone {
-            id: id.clone(),
-            collection_id: self.collection_id.clone(),
-            timestamp: Utc::now(),
+        let tombstone = lsm_behavior::LsmEntry {
+            value: None, // Tombstone has no value
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            entry_type: lsm_behavior::LsmEntryType::Tombstone,
+            sequence_number: 0,
         };
-        memtable.insert(id, tombstone);
+        self.memtable.insert(id, tombstone).await?;
 
         // Check if memtable size exceeds threshold and flush to SST
-        if memtable.len() * std::mem::size_of::<LsmEntry>()
+        if self.memtable.size_bytes().await
             > (self.config.memtable_size_mb as usize * 1024 * 1024)
         {
-            drop(memtable);
             self.flush().await?;
         }
 
@@ -135,15 +166,15 @@ impl LsmTree {
 
     /// Check if a vector exists (including checking for tombstones)
     pub async fn exists(&self, id: &VectorId) -> Result<bool> {
-        let memtable = self.memtable.read().await;
-        Ok(matches!(memtable.get(id), Some(LsmEntry::Record(_))))
+        Ok(match self.memtable.get(id).await? {
+            Some(entry) => entry.entry_type != lsm_behavior::LsmEntryType::Tombstone,
+            None => false,
+        })
     }
 
     /// Force flush memtable to SST files
     pub async fn flush(&self) -> Result<()> {
-        let mut memtable = self.memtable.write().await;
-
-        if memtable.is_empty() {
+        if self.memtable.size_bytes().await == 0 {
             return Ok(());
         }
 
@@ -158,8 +189,13 @@ impl LsmTree {
                 .map_err(|e| anyhow::anyhow!("Disk IO error: {}", e))?;
         }
 
+        // Get all entries for serialization - need to collect into a BTreeMap for compatibility
+        let entries: BTreeMap<String, lsm_behavior::LsmEntry> = self.memtable.get_all_ordered().await?
+            .into_iter()
+            .collect();
+
         // Serialize memtable to file
-        let data = bincode::serialize(&*memtable)
+        let data = bincode::serialize(&entries)
             .map_err(|e| anyhow::anyhow!("Failed to serialize memtable: {}", e))?;
 
         tokio::fs::write(&sst_path, data)
@@ -167,7 +203,7 @@ impl LsmTree {
             .map_err(|e| anyhow::anyhow!("Disk IO error: {}", e))?;
 
         // Clear memtable
-        memtable.clear();
+        self.memtable.clear().await?;
 
         // Force flush WAL to ensure durability
         let _flush_result = self
@@ -198,25 +234,27 @@ impl LsmTree {
 
     /// Get approximate size of the memtable in bytes
     pub async fn memtable_size(&self) -> usize {
-        let memtable = self.memtable.read().await;
-        memtable.len() * std::mem::size_of::<LsmEntry>()
+        self.memtable.size_bytes().await
     }
 
     /// Get number of entries in memtable
     pub async fn memtable_len(&self) -> usize {
-        let memtable = self.memtable.read().await;
-        memtable.len()
+        self.memtable.len().await
     }
 
     /// Iterate over all vector records in the memtable
     /// Returns only active records (filters out tombstones)
     pub async fn iter_all(&self) -> Result<Vec<VectorRecord>> {
-        let memtable = self.memtable.read().await;
+        let entries = self.memtable.get_all_ordered().await?;
         let mut records = Vec::new();
         
-        for (_, entry) in memtable.iter() {
-            if let LsmEntry::Record(record) = entry {
-                records.push(record.clone());
+        for (_, entry) in entries {
+            if entry.entry_type != lsm_behavior::LsmEntryType::Tombstone {
+                if let Some(data) = &entry.value {
+                    if let Ok(record) = bincode::deserialize::<VectorRecord>(data) {
+                        records.push(record);
+                    }
+                }
             }
             // Skip tombstones - they represent deleted records
         }
@@ -248,62 +286,90 @@ impl UnifiedStorageEngine for LsmTree {
         StorageEngineStrategy::Lsm
     }
     
-    /// LSM-specific flush implementation receiving memtable data from WAL
+    fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        &self.filesystem
+    }
+    
+    /// LSM-specific flush implementation - TEMPORARILY DISABLED FOR VIPER TESTING
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-        let flush_start = std::time::Instant::now();
-        let collection_id = &self.collection_id;
+        info!("🔄 LSM: Starting do_flush operation with staging pattern");
         
-        tracing::info!("💾 LSM FLUSH START: Collection {} (force: {}, sync: {})", 
-                      collection_id, params.force, params.synchronous);
+        let collection_id = params.collection_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for LSM flush"))?;
         
-        let mut result = FlushResult {
-            success: false,
-            collections_affected: Vec::new(),
-            entries_flushed: 0,
-            bytes_written: 0,
-            files_created: 0,
-            duration_ms: 0,
-            completed_at: Utc::now(),
-            compaction_triggered: false,
-            engine_metrics: HashMap::new(),
-        };
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let vector_records = &params.vector_records;
         
-        // LSM receives memtable data from WAL strategy via hints
-        let memtable_entries = if let Some(entries_hint) = params.hints.get("wal_entries") {
-            if let serde_json::Value::Array(entries_json) = entries_hint {
-                // Extract vector records from WAL entries
-                self.extract_vector_records_from_wal_entries(entries_json).await.unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        } else {
-            // If no hint provided, check internal memtable (for backwards compatibility)
-            let memtable = self.memtable.read().await;
-            self.extract_records_from_internal_memtable(&memtable).await
-        };
-        
-        if !memtable_entries.is_empty() || params.force {
-            match self.flush_memtable_data_to_sstable(memtable_entries, params.force).await {
-                Ok(flush_result) => {
-                    result = flush_result;
-                    result.success = true;
-                    
-                    tracing::info!("✅ LSM FLUSH: Collection {} - {} entries → {} SSTables ({} bytes)", 
-                                  collection_id, result.entries_flushed, result.files_created, result.bytes_written);
-                }
-                Err(e) => {
-                    tracing::error!("❌ LSM FLUSH: Failed to flush memtable data: {}", e);
-                    result.success = false;
-                    result.engine_metrics.insert("error".to_string(), serde_json::Value::String(e.to_string()));
-                }
-            }
-        } else {
-            tracing::debug!("📭 LSM FLUSH: No memtable data to flush");
-            result.success = true; // Empty flush is successful
+        if vector_records.is_empty() {
+            info!("📋 LSM: No vector records provided for collection {}", collection_id);
+            return Ok(crate::storage::traits::FlushResult {
+                success: true,
+                collections_affected: vec![collection_id.clone()],
+                entries_flushed: 0,
+                bytes_written: 0,
+                files_created: 0,
+                duration_ms: 0,
+                completed_at: chrono::Utc::now(),
+                engine_metrics: {
+                    let mut metrics = std::collections::HashMap::new();
+                    metrics.insert("operation_id".to_string(), serde_json::Value::String(operation_id.clone()));
+                    metrics.insert("empty_flush".to_string(), serde_json::Value::Bool(true));
+                    metrics
+                },
+                compaction_triggered: false,
+            });
         }
         
-        result.duration_ms = flush_start.elapsed().as_millis() as u64;
-        Ok(result)
+        info!("💾 LSM: Processing {} vector records for flush", vector_records.len());
+        
+        // Step 1: Ensure __flush staging directory exists
+        let staging_dir = self.ensure_staging_directory(collection_id, "__flush").await
+            .context("Failed to create __flush staging directory")?;
+        
+        // Step 2: Convert vector records to LSM SSTable format
+        let sstable_data = self.serialize_records_to_sstable(vector_records, collection_id).await
+            .context("Failed to serialize records to SSTable")?;
+        
+        info!("📦 LSM: Serialized {} vector records to {} bytes of SSTable data", 
+              vector_records.len(), sstable_data.len());
+        
+        // Step 3: Write SSTable data to __flush staging directory
+        let sstable_filename = format!("level0_{}.sst", operation_id);
+        let staging_file_path = self.write_to_staging(&staging_dir, &sstable_filename, &sstable_data).await
+            .context("Failed to write SSTable data to staging")?;
+        
+        // Step 4: Determine final storage location (level0 subdirectory)
+        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        let final_storage_path = format!("{}/level0/{}", collection_storage_url, sstable_filename);
+        
+        // Step 5: Atomically move from staging to final location
+        self.atomic_move_from_staging(&staging_file_path, &final_storage_path).await
+            .context("Failed to atomically move SSTable file from staging to storage")?;
+        
+        // Step 6: Cleanup staging directory
+        self.cleanup_staging_directory(&staging_dir).await.ok(); // Don't fail on cleanup errors
+        
+        // Step 7: Return successful flush result
+        Ok(crate::storage::traits::FlushResult {
+            success: true,
+            collections_affected: vec![collection_id.clone()],
+            entries_flushed: vector_records.len() as u64,
+            bytes_written: sstable_data.len() as u64,
+            files_created: 1,
+            duration_ms: 0,  // Will be set by high-level flush() method
+            completed_at: chrono::Utc::now(),
+            engine_metrics: {
+                let mut metrics = std::collections::HashMap::new();
+                metrics.insert("operation_id".to_string(), serde_json::Value::String(operation_id));
+                metrics.insert("vector_records_count".to_string(), serde_json::Value::Number(serde_json::Number::from(vector_records.len())));
+                metrics.insert("sstable_size_bytes".to_string(), serde_json::Value::Number(serde_json::Number::from(sstable_data.len())));
+                metrics.insert("staging_dir".to_string(), serde_json::Value::String(staging_dir));
+                metrics.insert("final_storage_path".to_string(), serde_json::Value::String(final_storage_path));
+                metrics.insert("level".to_string(), serde_json::Value::String("level0".to_string()));
+                metrics
+            },
+            compaction_triggered: false,
+        })
     }
     
     /// LSM-specific compaction using level-based merge strategy
@@ -399,7 +465,7 @@ impl UnifiedStorageEngine for LsmTree {
         metrics.insert("has_compaction_manager".to_string(), serde_json::Value::Bool(self.compaction_manager.is_some()));
         
         // Calculate utilization percentage
-        let max_entries = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<LsmEntry>();
+        let max_entries = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<lsm_behavior::LsmEntry>();
         let utilization = if max_entries > 0 {
             (memtable_entries as f64 / max_entries as f64) * 100.0
         } else {
@@ -422,7 +488,7 @@ impl LsmTree {
     async fn extract_vector_records_from_wal_entries(
         &self,
         _entries_json: &[serde_json::Value],
-    ) -> Result<Vec<(VectorId, LsmEntry)>> {
+    ) -> Result<Vec<(VectorId, LsmStorageEntry)>> {
         // In real implementation, this would deserialize WalEntry objects to LsmEntry
         // For now, simulate receiving memtable data from WAL
         Ok(vec![])
@@ -431,16 +497,33 @@ impl LsmTree {
     /// Extract records from internal memtable (backwards compatibility)
     async fn extract_records_from_internal_memtable(
         &self,
-        memtable: &std::collections::BTreeMap<VectorId, LsmEntry>,
-    ) -> Vec<(VectorId, LsmEntry)> {
+        memtable: &std::collections::BTreeMap<VectorId, LsmStorageEntry>,
+    ) -> Vec<(VectorId, LsmStorageEntry)> {
         memtable.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+    
+    /// Convert vector records to LSM entries for new staging pattern
+    async fn convert_vector_records_to_lsm_entries(
+        &self,
+        vector_records: &[VectorRecord],
+    ) -> Result<Vec<(VectorId, LsmStorageEntry)>> {
+        let mut lsm_entries = Vec::new();
+        
+        for record in vector_records {
+            let vector_id = VectorId::from(record.id.clone());
+            let lsm_entry = LsmStorageEntry::Record(record.clone());
+            lsm_entries.push((vector_id, lsm_entry));
+        }
+        
+        tracing::debug!("🔄 LSM: Converted {} vector records to LSM entries", lsm_entries.len());
+        Ok(lsm_entries)
     }
     
     /// Flush memtable data to SSTable files using LSM's unique architecture
     async fn flush_memtable_data_to_sstable(
         &self,
-        memtable_entries: Vec<(VectorId, LsmEntry)>,
-        force_flush: bool,
+        memtable_entries: Vec<(VectorId, LsmStorageEntry)>,
+        _force_flush: bool,
     ) -> Result<FlushResult> {
         let flush_start = std::time::Instant::now();
         
@@ -542,14 +625,14 @@ impl LsmTree {
     /// Partition entries into LSM tree levels based on key ranges and entry age
     async fn partition_entries_by_level(
         &self,
-        sorted_entries: &[(VectorId, LsmEntry)],
-    ) -> Result<HashMap<u8, Vec<(VectorId, LsmEntry)>>> {
-        let mut level_partitions: HashMap<u8, Vec<(VectorId, LsmEntry)>> = HashMap::new();
+        sorted_entries: &[(VectorId, LsmStorageEntry)],
+    ) -> Result<HashMap<u8, Vec<(VectorId, LsmStorageEntry)>>> {
+        let mut level_partitions: HashMap<u8, Vec<(VectorId, LsmStorageEntry)>> = HashMap::new();
         
         // LSM Level 0: Recent entries (direct from memtable)
         // Level 1+: Compacted entries (would come from compaction process)
         
-        let entries_per_level = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<LsmEntry>();
+        let entries_per_level = (self.config.memtable_size_mb as usize * 1024 * 1024) / std::mem::size_of::<LsmStorageEntry>();
         
         for (i, entry) in sorted_entries.iter().enumerate() {
             let level = if i < entries_per_level {
@@ -568,7 +651,7 @@ impl LsmTree {
     /// Serialize entries to SSTable format with bincode compression
     async fn serialize_entries_to_sstable(
         &self,
-        entries: &[(VectorId, LsmEntry)],
+        entries: &[(VectorId, LsmStorageEntry)],
         level: u8,
     ) -> Result<Vec<u8>> {
         // LSM SSTable format: Header + Index + Data blocks
@@ -636,7 +719,7 @@ impl LsmTree {
     async fn update_lsm_metadata_after_flush(
         &self,
         sstable_paths: &[std::path::PathBuf],
-        flushed_entries: &[(VectorId, LsmEntry)],
+        flushed_entries: &[(VectorId, LsmStorageEntry)],
     ) -> Result<()> {
         // Update internal tracking of SSTable files
         // In a full implementation, this would update:
@@ -685,6 +768,25 @@ impl LsmTree {
         }
         
         Ok(count)
+    }
+    
+    /// Convert vector records directly to SSTable format for staging pattern
+    async fn serialize_records_to_sstable(
+        &self,
+        vector_records: &[VectorRecord],
+        _collection_id: &str,
+    ) -> Result<Vec<u8>> {
+        tracing::info!("📦 LSM: Serializing {} vector records to SSTable format", vector_records.len());
+        
+        // Convert VectorRecords to LSM entries
+        let lsm_entries = self.convert_vector_records_to_lsm_entries(vector_records).await?;
+        
+        // Sort entries by key for SSTable format
+        let mut sorted_entries = lsm_entries;
+        sorted_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        
+        // Serialize to SSTable format (Level 0 by default for new data)
+        self.serialize_entries_to_sstable(&sorted_entries, 0).await
     }
 }
 

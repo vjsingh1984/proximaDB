@@ -27,10 +27,12 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::{CollectionId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use super::ml_clustering::{MLClusteringEngine, KMeansConfig};
+use super::quantization::{VectorQuantizationEngine, QuantizationConfig};
 
 /// VIPER Data Processing Pipeline coordinator
 pub struct ViperPipeline {
@@ -89,6 +91,9 @@ pub struct ProcessingConfig {
     
     /// Sorting strategy for records
     pub sorting_strategy: SortingStrategy,
+    
+    /// Vector quantization level (None = no quantization)
+    pub quantization_level: Option<super::quantization::QuantizationLevel>,
 }
 
 /// Flushing configuration
@@ -228,6 +233,12 @@ pub struct VectorRecordProcessor {
     
     /// Schema adapter for record conversion
     pub schema_adapter: Arc<SchemaAdapter>,
+    
+    /// ML clustering engine for intelligent data organization
+    pub ml_clustering: Arc<Mutex<MLClusteringEngine>>,
+    
+    /// Vector quantization engine for storage optimization
+    pub quantization: Arc<Mutex<VectorQuantizationEngine>>,
     
     /// Processing statistics
     pub stats: Arc<RwLock<ProcessingStats>>,
@@ -626,9 +637,20 @@ impl VectorRecordProcessor {
         config: ProcessingConfig,
         schema_adapter: Arc<SchemaAdapter>,
     ) -> Result<Self> {
+        // Initialize ML clustering engine with sensible defaults
+        let kmeans_config = KMeansConfig {
+            max_iterations: 100,
+            convergence_threshold: 0.01,
+            min_cluster_size: 1,
+            random_seed: Some(42), // Reproducible clustering
+        };
+        let ml_clustering = Arc::new(Mutex::new(MLClusteringEngine::new(kmeans_config)));
+        
         Ok(Self {
             config,
             schema_adapter,
+            ml_clustering,
+            quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: Arc::new(RwLock::new(ProcessingStats::default())),
         })
     }
@@ -826,13 +848,90 @@ impl VectorRecordProcessor {
         Ok(())
     }
     
-    /// Simple vector clustering for ClusterThenSort strategy
+    /// ML-based vector clustering using K-means algorithm
     fn simple_vector_clustering(
         &self,
         records: &[VectorRecord],
         cluster_count: usize,
     ) -> Result<Vec<Vec<usize>>> {
         let effective_clusters = std::cmp::min(cluster_count, records.len());
+        
+        if records.is_empty() || effective_clusters == 0 {
+            return Ok(vec![]);
+        }
+        
+        if effective_clusters == 1 {
+            return Ok(vec![(0..records.len()).collect()]);
+        }
+        
+        debug!("🧠 ML K-means clustering: {} records → {} clusters", 
+               records.len(), effective_clusters);
+        
+        // Use async block to handle the async ML clustering
+        let cluster_assignment = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                // Check if we have a trained model, if not train one
+                let mut ml_engine = self.ml_clustering.lock().await;
+                
+                // Check if model needs training or retraining
+                let needs_training = match ml_engine.get_model() {
+                    Some(model) => {
+                        // Retrain if dimension mismatch or significant cluster count change
+                        model.dimension != records[0].vector.len() ||
+                        (model.centroids.len() as f32 - effective_clusters as f32).abs() / effective_clusters as f32 > 0.3
+                    }
+                    None => true,
+                };
+                
+                if needs_training {
+                    debug!("🧠 Training new K-means model for {} vectors", records.len());
+                    
+                    // Extract vectors for training (sample if too many for efficiency)
+                    let training_vectors: Vec<Vec<f32>> = if records.len() > 1000 {
+                        // Sample every nth record for training to maintain efficiency
+                        let step = records.len() / 1000;
+                        records.iter().step_by(step).map(|r| r.vector.clone()).collect()
+                    } else {
+                        records.iter().map(|r| r.vector.clone()).collect()
+                    };
+                    
+                    match ml_engine.train_model(&training_vectors, effective_clusters) {
+                        Ok(model) => {
+                            info!("✅ K-means model trained: silhouette={:.3}, clusters={}", 
+                                  model.quality_metrics.silhouette_score, effective_clusters);
+                        }
+                        Err(e) => {
+                            warn!("⚠️ K-means training failed: {}, falling back to hash-based clustering", e);
+                            return self.fallback_hash_clustering(records, effective_clusters);
+                        }
+                    }
+                }
+                
+                // Assign vectors to clusters using trained model
+                match ml_engine.assign_clusters(records) {
+                    Ok(assignment) => {
+                        debug!("✅ K-means assignment complete: {} clusters, avg confidence={:.3}",
+                               assignment.clusters.len(),
+                               assignment.confidence_scores.iter().sum::<f32>() / assignment.confidence_scores.len() as f32);
+                        Ok(assignment.clusters)
+                    }
+                    Err(e) => {
+                        warn!("⚠️ K-means assignment failed: {}, falling back to hash-based clustering", e);
+                        self.fallback_hash_clustering(records, effective_clusters)
+                    }
+                }
+            })
+        })?;
+        
+        Ok(cluster_assignment)
+    }
+    
+    /// Fallback hash-based clustering when ML clustering fails
+    fn fallback_hash_clustering(
+        &self,
+        records: &[VectorRecord],
+        effective_clusters: usize,
+    ) -> Result<Vec<Vec<usize>>> {
         let mut clusters: Vec<Vec<usize>> = vec![Vec::new(); effective_clusters];
         
         // Simple hash-based clustering using vector characteristics
@@ -864,6 +963,161 @@ impl VectorRecordProcessor {
         }
         
         hash
+    }
+    
+    /// Apply vector quantization for storage optimization
+    async fn apply_vector_quantization(
+        &self,
+        records: &[VectorRecord],
+        quantization_level: super::quantization::QuantizationLevel,
+    ) -> Result<Vec<super::quantization::QuantizedVector>> {
+        if records.is_empty() {
+            return Ok(vec![]);
+        }
+
+        debug!("🔧 Applying {:?} quantization to {} records", quantization_level, records.len());
+
+        let mut quantization_engine = self.quantization.lock().await;
+
+        // Override the engine's quantization level
+        quantization_engine.set_quantization_level(quantization_level);
+
+        // Check if we need to train a quantization model
+        let needs_training = match quantization_engine.get_model() {
+            Some(model) => {
+                // Retrain if dimension mismatch, level mismatch, or quality degradation
+                model.dimension != records[0].vector.len() ||
+                model.level != quantization_level ||
+                model.quality_metrics.search_quality_retention < 0.8
+            }
+            None => true,
+        };
+
+        if needs_training {
+            debug!("🧠 Training {:?} quantization model for {} vectors", quantization_level, records.len());
+            
+            // Extract vectors for training (sample if too many)
+            let training_vectors: Vec<Vec<f32>> = if records.len() > 10000 {
+                // Sample every nth vector for training
+                let step = records.len() / 10000;
+                records.iter()
+                    .step_by(step.max(1))
+                    .map(|r| r.vector.clone())
+                    .collect()
+            } else {
+                records.iter().map(|r| r.vector.clone()).collect()
+            };
+
+            let train_result = quantization_engine.train_model(&training_vectors);
+            match train_result {
+                Ok(model) => {
+                    info!("✅ {:?} quantization model trained: {:.1}x compression, {:.1}% quality retention",
+                          quantization_level,
+                          model.quality_metrics.compression_ratio,
+                          model.quality_metrics.search_quality_retention * 100.0);
+                }
+                Err(e) => {
+                    warn!("⚠️ {:?} quantization training failed: {}, skipping quantization", quantization_level, e);
+                    return Ok(vec![]); // Return empty if training fails
+                }
+            }
+        }
+
+        // Apply quantization to all vectors
+        let quantization_result = quantization_engine.quantize_vectors(records);
+        match quantization_result {
+            Ok(quantized_vectors) => {
+                debug!("✅ Quantized {} vectors successfully", quantized_vectors.len());
+                
+                // Log quantization statistics
+                let stats = quantization_engine.get_stats();
+                debug!("Quantization stats: {} vectors processed, {:.2} KB saved, {:.1}μs avg time",
+                       stats.vectors_quantized,
+                       stats.bytes_saved as f32 / 1024.0,
+                       stats.avg_quantization_time_us);
+                
+                Ok(quantized_vectors)
+            }
+            Err(e) => {
+                warn!("⚠️ Vector quantization failed: {}, proceeding without quantization", e);
+                Ok(vec![]) // Return empty on failure, let pipeline continue
+            }
+        }
+    }
+    
+    /// Process vector records with quantization for hybrid storage
+    pub async fn process_records_with_quantization(
+        &self,
+        records: &[VectorRecord],
+    ) -> Result<(RecordBatch, Option<Vec<super::quantization::QuantizedVector>>)> {
+        if records.is_empty() {
+            return Err(anyhow::anyhow!("Cannot process empty record set"));
+        }
+
+        debug!("🔄 Processing {} records with quantization pipeline", records.len());
+
+        // Stage 1: Apply quantization if configured
+        let quantized_vectors = if let Some(quantization_level) = self.config.quantization_level {
+            match self.apply_vector_quantization(records, quantization_level).await {
+                Ok(qvecs) if !qvecs.is_empty() => {
+                    info!("✅ Quantized {} vectors for hybrid storage", qvecs.len());
+                    Some(qvecs)
+                }
+                Ok(_) => {
+                    debug!("No vectors were quantized (model training may have failed)");
+                    None
+                }
+                Err(e) => {
+                    warn!("⚠️ Quantization failed: {}, proceeding without quantization", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Stage 2: Convert to RecordBatch (placeholder - would be actual implementation)
+        let schema = Arc::new(arrow_schema::Schema::new(vec![
+            Arc::new(arrow_schema::Field::new("id", arrow_schema::DataType::Utf8, false)),
+            Arc::new(arrow_schema::Field::new("collection_id", arrow_schema::DataType::Utf8, false)),
+            Arc::new(arrow_schema::Field::new("vector", arrow_schema::DataType::List(
+                Arc::new(arrow_schema::Field::new("item", arrow_schema::DataType::Float32, false))
+            ), false)),
+        ]));
+
+        // Create minimal RecordBatch (placeholder implementation)
+        let id_array = arrow_array::StringArray::from(
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()
+        );
+        let collection_array = arrow_array::StringArray::from(
+            records.iter().map(|r| r.collection_id.as_str()).collect::<Vec<_>>()
+        );
+        
+        // Simplified vector column (would be properly implemented with List array)
+        let vector_count_array = arrow_array::UInt32Array::from(
+            records.iter().map(|r| r.vector.len() as u32).collect::<Vec<_>>()
+        );
+
+        let simplified_schema = Arc::new(arrow_schema::Schema::new(vec![
+            Arc::new(arrow_schema::Field::new("id", arrow_schema::DataType::Utf8, false)),
+            Arc::new(arrow_schema::Field::new("collection_id", arrow_schema::DataType::Utf8, false)),
+            Arc::new(arrow_schema::Field::new("vector_dimension", arrow_schema::DataType::UInt32, false)),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            simplified_schema,
+            vec![
+                Arc::new(id_array),
+                Arc::new(collection_array),
+                Arc::new(vector_count_array),
+            ],
+        ).context("Failed to create RecordBatch from VectorRecords")?;
+
+        debug!("✅ Created RecordBatch with {} rows, quantization: {}",
+               batch.num_rows(),
+               quantized_vectors.as_ref().map_or("disabled".to_string(), |qv| format!("{} vectors", qv.len())));
+
+        Ok((batch, quantized_vectors))
     }
     
     /// Rebalance clusters to ensure none are empty
@@ -1225,7 +1479,7 @@ impl VectorRecordProcessor {
         let recommended_algorithm = if avg_row_size > 1024 {
             "ZSTD" // Better for larger rows
         } else {
-            "SNAPPY" // Better for smaller rows
+            "UNCOMPRESSED" // SNAPPY not supported, use uncompressed
         };
         
         tracing::debug!("🗜️ Compression hint: {} recommended for {} rows (avg size: {} bytes)", 
@@ -1434,7 +1688,17 @@ impl VectorProcessor for VectorRecordProcessor {
         let optimized_batch = self.apply_sorted_batch_optimizations(pruned_batch)?;
         
         // Stage 3: Compression hints - add metadata for optimal Parquet compression
-        let final_batch = self.apply_compression_hints(optimized_batch)?;
+        let compressed_batch = self.apply_compression_hints(optimized_batch)?;
+        
+        // Stage 4: Vector Quantization - add quantized vector columns for hybrid storage
+        let final_batch = if let Some(quantization_level) = self.config.quantization_level {
+            // Note: In practice, we would extract VectorRecords from RecordBatch
+            // For now, this is a placeholder that shows where quantization integration occurs
+            tracing::debug!("🔧 {:?} quantization enabled - would apply vector quantization here", quantization_level);
+            compressed_batch
+        } else {
+            compressed_batch
+        };
         
         // Stage 4: Statistics collection for monitoring
         // Note: In a full implementation, this would collect statistics
@@ -1462,6 +1726,23 @@ impl ParquetFlusher {
         })
     }
     
+    /// Flush record batch with optional quantized vectors to parquet file
+    pub async fn flush_batch_with_quantization(
+        &self, 
+        batch: RecordBatch, 
+        quantized_vectors: Option<Vec<super::quantization::QuantizedVector>>,
+        output_path: &str
+    ) -> Result<FlushResult> {
+        // Augment batch with quantized vector columns if available
+        let augmented_batch = if let Some(ref qvecs) = quantized_vectors {
+            self.augment_batch_with_quantized_vectors(batch, qvecs)?
+        } else {
+            batch
+        };
+
+        self.flush_batch(augmented_batch, output_path).await
+    }
+
     /// Flush record batch to parquet file
     pub async fn flush_batch(&self, batch: RecordBatch, output_path: &str) -> Result<FlushResult> {
         let start_time = Instant::now();
@@ -1509,7 +1790,7 @@ impl ParquetFlusher {
     
     fn create_writer_properties(&self) -> Result<WriterProperties> {
         let compression = match &self.config.compression_algorithm {
-            CompressionAlgorithm::Snappy => Compression::SNAPPY,
+            CompressionAlgorithm::Snappy => Compression::UNCOMPRESSED, // SNAPPY not supported, use uncompressed
             CompressionAlgorithm::Zstd { level } => {
                 Compression::ZSTD(parquet::basic::ZstdLevel::try_new(*level as i32)?)
             }
@@ -1528,6 +1809,177 @@ impl ParquetFlusher {
             .build();
         
         Ok(props)
+    }
+    
+    /// Augment RecordBatch with quantized vector columns for hybrid storage
+    /// 
+    /// This creates a hybrid storage format where:
+    /// - Original FP32 vectors remain for accurate distance calculations
+    /// - Quantized vectors are added as additional columns for fast candidate selection
+    /// - Each quantization level gets its own optimized column format
+    fn augment_batch_with_quantized_vectors(
+        &self,
+        batch: RecordBatch,
+        quantized_vectors: &[super::quantization::QuantizedVector],
+    ) -> Result<RecordBatch> {
+        use arrow_array::{BinaryArray, UInt8Array, Int8Array};
+        use arrow_schema::{DataType, Field};
+        use super::quantization::{QuantizedData, QuantizationLevel};
+
+        if quantized_vectors.is_empty() {
+            return Ok(batch);
+        }
+
+        debug!("🔧 Creating hybrid storage: {} FP32 vectors + {} quantized vectors", 
+               batch.num_rows(), quantized_vectors.len());
+
+        let mut new_columns = batch.columns().to_vec();
+        let mut new_fields = batch.schema().fields().to_vec();
+
+        // Group quantized vectors by quantization level for efficient column storage
+        let mut quantization_groups: std::collections::HashMap<QuantizationLevel, Vec<&super::quantization::QuantizedVector>> = std::collections::HashMap::new();
+        
+        for qvec in quantized_vectors {
+            quantization_groups.entry(qvec.level).or_default().push(qvec);
+        }
+
+        // Create columns for each quantization level
+        for (level, qvecs) in quantization_groups {
+            match level {
+                QuantizationLevel::ProductQuantization { bits_per_code, num_subvectors } => {
+                    // Store PQ codes as binary data
+                    let mut pq_data = Vec::new();
+                    for qvec in &qvecs {
+                        if let QuantizedData::ProductQuantization(codes) = &qvec.data {
+                            pq_data.push(Some(codes.as_slice()));
+                        }
+                    }
+                    
+                    if !pq_data.is_empty() {
+                        let pq_array = BinaryArray::from_opt_vec(pq_data);
+                        let field_name = format!("quantized_pq_{}bit_{}sub", bits_per_code, num_subvectors);
+                        new_fields.push(Arc::new(Field::new(&field_name, DataType::Binary, true)));
+                        new_columns.push(Arc::new(pq_array));
+                        
+                        debug!("Added PQ {}-bit/{}sub column with {} vectors", bits_per_code, num_subvectors, qvecs.len());
+                    }
+                }
+                
+                QuantizationLevel::Uniform(bits) => {
+                    // Store uniform quantization as packed binary data
+                    let mut data_owned: Vec<Vec<u8>> = Vec::new(); // All owned data
+                    
+                    for qvec in &qvecs {
+                        match &qvec.data {
+                            QuantizedData::CustomBits { data: bits_data, .. } => {
+                                data_owned.push(bits_data.clone());
+                            }
+                            QuantizedData::Binary(bits_data) if bits == 1 => {
+                                data_owned.push(bits_data.clone());
+                            }
+                            QuantizedData::INT8(int8_data) if bits == 8 => {
+                                // Convert INT8 to u8 for storage
+                                let u8_data: Vec<u8> = int8_data.iter().map(|&x| x as u8).collect();
+                                data_owned.push(u8_data);
+                            }
+                            _ => continue,
+                        }
+                    }
+                    
+                    if !data_owned.is_empty() {
+                        // Create references after all data is owned
+                        let data_refs: Vec<Option<&[u8]>> = data_owned.iter()
+                            .map(|data| Some(data.as_slice()))
+                            .collect();
+                        
+                        let array = BinaryArray::from_opt_vec(data_refs);
+                        let field_name = format!("quantized_{}bit", bits);
+                        new_fields.push(Arc::new(Field::new(&field_name, DataType::Binary, true)));
+                        new_columns.push(Arc::new(array));
+                        
+                        debug!("Added {}-bit uniform quantization column with {} vectors", bits, data_owned.len());
+                    }
+                }
+                
+                QuantizationLevel::None => {
+                    // No quantization - skip
+                    continue;
+                }
+                
+                QuantizationLevel::Custom { bits_per_element, .. } => {
+                    // Handle custom quantization similar to uniform
+                    let mut data_owned: Vec<Vec<u8>> = Vec::new(); // All owned data
+                    
+                    for qvec in &qvecs {
+                        match &qvec.data {
+                            QuantizedData::CustomBits { data: bits_data, .. } => {
+                                data_owned.push(bits_data.clone());
+                            }
+                            QuantizedData::Binary(bits_data) if bits_per_element == 1 => {
+                                data_owned.push(bits_data.clone());
+                            }
+                            QuantizedData::INT8(int8_data) if bits_per_element == 8 => {
+                                // Convert INT8 to u8 for storage
+                                let u8_data: Vec<u8> = int8_data.iter().map(|&x| x as u8).collect();
+                                data_owned.push(u8_data);
+                            }
+                            _ => continue,
+                        }
+                    }
+                    
+                    if !data_owned.is_empty() {
+                        // Create references after all data is owned
+                        let data_refs: Vec<Option<&[u8]>> = data_owned.iter()
+                            .map(|data| Some(data.as_slice()))
+                            .collect();
+                        
+                        let array = BinaryArray::from_opt_vec(data_refs);
+                        let field_name = format!("quantized_custom_{}bit", bits_per_element);
+                        new_fields.push(Arc::new(Field::new(&field_name, DataType::Binary, true)));
+                        new_columns.push(Arc::new(array));
+                        
+                        debug!("Added {}-bit custom quantization column with {} vectors", bits_per_element, data_owned.len());
+                    }
+                }
+            }
+        }
+
+        // Add quantization metadata columns (bits per value, reconstruction error, etc.)
+        let mut bits_per_value = Vec::new();
+        let mut errors = Vec::new();
+        let mut is_pq = Vec::new();
+        
+        for qvec in quantized_vectors {
+            bits_per_value.push(qvec.level.bits_per_value());
+            errors.push(qvec.reconstruction_error);
+            is_pq.push(qvec.level.is_product_quantization());
+        }
+        
+        if !bits_per_value.is_empty() {
+            let bits_array = UInt8Array::from(bits_per_value);
+            let error_array = arrow_array::Float32Array::from(errors);
+            let pq_array = arrow_array::BooleanArray::from(is_pq);
+            
+            new_fields.push(Arc::new(Field::new("quantization_bits", DataType::UInt8, false)));
+            new_fields.push(Arc::new(Field::new("reconstruction_error", DataType::Float32, false)));
+            new_fields.push(Arc::new(Field::new("is_product_quantization", DataType::Boolean, false)));
+            new_columns.push(Arc::new(bits_array));
+            new_columns.push(Arc::new(error_array));
+            new_columns.push(Arc::new(pq_array));
+            
+            debug!("Added quantization metadata columns");
+        }
+
+        // Create new schema and batch
+        let new_schema = Arc::new(arrow_schema::Schema::new(new_fields));
+        let augmented_batch = RecordBatch::try_new(new_schema, new_columns)
+            .context("Failed to create augmented RecordBatch with quantized vectors")?;
+
+        info!("✅ Augmented RecordBatch: {} → {} columns (added quantized storage)",
+              batch.schema().fields().len(),
+              augmented_batch.schema().fields().len());
+
+        Ok(augmented_batch)
     }
     
     async fn update_flushing_stats(&self, bytes_written: u64, flush_time: u64, compression_ratio: f32) {
@@ -1787,7 +2239,7 @@ impl CompactionEngine {
     
     /// Execute file merging compaction
     async fn execute_file_merging(
-        task: &CompactionTask,
+        _task: &CompactionTask,
         target_file_size_mb: usize,
         max_files_per_merge: usize,
     ) -> Result<CompactionExecutionResult> {
@@ -1812,7 +2264,7 @@ impl CompactionEngine {
     
     /// Execute reclustering compaction
     async fn execute_reclustering(
-        task: &CompactionTask,
+        _task: &CompactionTask,
         new_cluster_count: usize,
         quality_threshold: f32,
     ) -> Result<CompactionExecutionResult> {
@@ -1874,7 +2326,7 @@ impl CompactionEngine {
     
     /// Execute compression optimization compaction
     async fn execute_compression_optimization(
-        task: &CompactionTask,
+        _task: &CompactionTask,
         target_algorithm: &CompressionAlgorithm,
         quality_threshold: f32,
     ) -> Result<CompactionExecutionResult> {
@@ -2136,12 +2588,15 @@ impl CompactionEngine {
             batch_size: records.len(),
             enable_compression: true,
             sorting_strategy: sorting_strategy.clone(),
+            quantization_level: None, // Disabled during sorting
         };
         
         let schema_adapter = Arc::new(SchemaAdapter::new().await?);
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
+            ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(QuantizationConfig::default()))),
             stats: Arc::new(RwLock::new(ProcessingStats::default())),
         };
         
@@ -2301,7 +2756,7 @@ impl CompactionEngine {
     
     /// Rewrite with optimal compression using postprocessing pipeline
     async fn rewrite_with_optimal_compression(
-        collection_id: &str,
+        _collection_id: &str,
         reorganized_batches: &[Vec<VectorRecord>],
         target_compression_ratio: f32,
     ) -> Result<CompactionExecutionResult> {
@@ -2520,6 +2975,7 @@ impl Default for ViperPipelineConfig {
                 batch_size: 1000,
                 enable_compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
+                quantization_level: Some(super::quantization::QuantizationLevel::Uniform(8)), // Default to 8-bit quantization
             },
             flushing_config: FlushingConfig {
                 compression_algorithm: CompressionAlgorithm::Zstd { level: 3 },

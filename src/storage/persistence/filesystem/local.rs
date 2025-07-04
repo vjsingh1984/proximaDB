@@ -60,13 +60,18 @@ pub struct LocalFileSystem {
 impl LocalFileSystem {
     /// Create new local filesystem instance
     pub async fn new(config: LocalConfig) -> FsResult<Self> {
-        // Validate root directory if specified
+        // Create and validate root directory if specified
         if let Some(ref root_dir) = config.root_dir {
             if !root_dir.exists() {
-                return Err(FilesystemError::NotFound(format!(
-                    "Root directory does not exist: {}",
-                    root_dir.display()
-                )));
+                // Create the root directory recursively if it doesn't exist
+                fs::create_dir_all(root_dir).await.map_err(|e| {
+                    FilesystemError::Config(format!(
+                        "Failed to create root directory {}: {}",
+                        root_dir.display(),
+                        e
+                    ))
+                })?;
+                tracing::info!("📁 Created root directory: {}", root_dir.display());
             }
             if !root_dir.is_dir() {
                 return Err(FilesystemError::Config(format!(

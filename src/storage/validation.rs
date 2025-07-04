@@ -80,10 +80,7 @@ impl ConfigValidator {
         // Validate layout-specific requirements
         Self::validate_storage_layout(&config.layout_strategy)?;
 
-        // Validate tiering configuration if present
-        if let Some(ref tiering) = config.tiering_config {
-            Self::validate_tiering_config(tiering)?;
-        }
+        // URL-based storage validation is handled by the filesystem layer
 
         Ok(())
     }
@@ -263,39 +260,6 @@ impl ConfigValidator {
         }
     }
 
-    /// Validate tiering configuration
-    fn validate_tiering_config(config: &super::builder::DataTieringConfig) -> Result<()> {
-        // Validate hot tier
-        if config.hot_tier.urls.is_empty() {
-            bail!("Hot tier must have at least one URL");
-        }
-
-        // Validate warm tier
-        if config.warm_tier.urls.is_empty() {
-            bail!("Warm tier must have at least one URL");
-        }
-
-        // Validate cold tier
-        if config.cold_tier.urls.is_empty() {
-            bail!("Cold tier must have at least one URL");
-        }
-
-        // Validate auto-tier policies
-        let policies = &config.auto_tier_policies;
-        if policies.hot_to_warm_hours == 0 {
-            bail!("Hot to warm transition time must be greater than 0");
-        }
-
-        if policies.warm_to_cold_hours <= policies.hot_to_warm_hours {
-            bail!("Warm to cold transition time must be greater than hot to warm time");
-        }
-
-        if policies.hot_tier_access_threshold == 0 {
-            bail!("Hot tier access threshold must be greater than 0");
-        }
-
-        Ok(())
-    }
 
     /// Validate performance settings compatibility
     fn validate_performance_settings(config: &StorageSystemConfig) -> Result<()> {
@@ -395,10 +359,10 @@ impl ConfigValidator {
             );
         }
 
-        // Tiering recommendations
-        if config.data_storage.tiering_config.is_none() && config.data_storage.data_urls.len() > 2 {
+        // URL-based storage recommendations
+        if config.data_storage.data_urls.len() > 2 {
             recommendations.push(
-                "Consider enabling tiered storage for better cost/performance optimization"
+                "Consider using different storage URLs for optimal cost/performance (e.g., file:// for hot data, s3:// for cold data)"
                     .to_string(),
             );
         }

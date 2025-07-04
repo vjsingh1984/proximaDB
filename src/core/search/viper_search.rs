@@ -10,17 +10,16 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::core::{
-    SearchResult, MetadataFilter, FieldCondition, StorageEngine as StorageEngineType,
-    CollectionId, VectorId
+    SearchResult, MetadataFilter, StorageEngine as StorageEngineType
 };
 use crate::core::search::storage_aware::{
     StorageSearchEngine, SearchHints, SearchCapabilities, QuantizationLevel,
     SearchMetrics, ClusteringHints, SearchValidator
 };
-use crate::core::indexing::{RoaringBitmapIndex, BitmapIndexStats};
+use crate::core::indexing::RoaringBitmapIndex;
 use crate::storage::engines::viper::core::ViperCoreEngine;
 use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
 
@@ -131,7 +130,7 @@ impl ViperSearchEngine {
         &self,
         filters: Option<&MetadataFilter>,
     ) -> Result<Vec<ParquetPredicate>> {
-        let mut predicates = Vec::new();
+        let predicates = Vec::new();
         
         if let Some(_filter) = filters {
             // TODO: Implement metadata filter conversion after fixing enum variants
@@ -637,9 +636,9 @@ impl ViperCoreEngine {
     /// Search vectors within a specific cluster (placeholder implementation)
     pub async fn search_vectors_in_cluster(
         &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
+        _collection_id: &str,
+        _query_vector: &[f32],
+        _k: usize,
         _cluster_id: usize,
     ) -> Result<Vec<SearchResult>> {
         // For now, delegate to the regular search method

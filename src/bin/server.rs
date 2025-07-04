@@ -67,9 +67,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_ansi(false) // No ANSI colors in file
         .with_writer(non_blocking);
 
-    // Initialize subscriber with both console and file output
+    // Initialize subscriber with both console and file output - TRACE level for detailed debugging
     tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::TRACE.into()))
         .with(console_layer)
         .with(file_layer)
         .init();

@@ -12,6 +12,7 @@ use super::registry::{Counter, Gauge, HistogramMetric, MetricsRegistry};
 
 /// Index metrics collector
 pub struct IndexMetricsCollector {
+    #[allow(dead_code)]
     registry: Arc<MetricsRegistry>,
 
     // Metrics

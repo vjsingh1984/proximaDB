@@ -1,0 +1,69 @@
+[server]
+node_id = "viper-quantization-test"
+bind_address = "127.0.0.1"
+port = 5678
+data_dir = "./test_data_viper_quant"
+
+[storage]
+data_dirs = ["./test_data_viper_quant"]
+wal_dir = "./test_data_viper_quant/wal"
+mmap_enabled = true
+cache_size_mb = 128
+bloom_filter_bits = 12
+
+[storage.lsm_config]
+memtable_size_mb = 64
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+
+[storage.filesystem_config]
+
+[storage.wal_config]
+wal_urls = ["file://./test_data_viper_quant/wal"]
+strategy_type = "Bincode"
+memtable_type = "HashMap"
+memory_flush_size_bytes = 100  # Smaller for testing
+enable_write_strategy_cache = false
+
+[storage.storage_layout]
+node_instance = 1
+assignment_strategy = "HashBased"
+
+[[storage.storage_layout.base_paths]]
+base_dir = "./test_data_viper_quant/storage"
+instance_id = 1
+mount_point = "./test_data_viper_quant"
+disk_type = { NvmeSsd = { max_iops = 10000 } }
+capacity_config = { max_wal_size_mb = 100, metadata_reserved_mb = 50, warning_threshold_percent = 85.0 }
+
+[storage.storage_layout.temp_config]
+use_same_directory = true
+temp_suffix = "___temp"
+compaction_suffix = "___compaction"
+flush_suffix = "___flushed"
+cleanup_on_startup = true
+
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "file://./test_data_viper_quant/metadata"
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+
+# VIPER and Quantization Configuration
+[storage.viper_config]
+enable_quantization = true
+default_quantization_level = "none"
+ml_clustering_enabled = true
+compression_enabled = true
+
+[storage.viper_config.quantization_levels]
+# Define available quantization levels
+uniform_1bit = { type = "Uniform", bits = 1 }
+uniform_4bit = { type = "Uniform", bits = 4 }
+uniform_5bit = { type = "Uniform", bits = 5 }
+uniform_8bit = { type = "Uniform", bits = 8 }
+pq4 = { type = "ProductQuantization", bits_per_code = 4, num_subvectors = 8 }
+pq8 = { type = "ProductQuantization", bits_per_code = 8, num_subvectors = 8 }

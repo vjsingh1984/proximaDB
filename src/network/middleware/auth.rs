@@ -63,6 +63,7 @@ pub struct AuthErrorResponse {
 
 /// Authentication layer for Axum
 pub struct AuthLayer {
+    #[allow(dead_code)]
     config: AuthConfig,
 }
 

@@ -5,6 +5,7 @@ pub mod routing;
 pub mod serverless;
 pub mod storage_layout;
 pub mod avro_unified;
+pub mod avro_serialization;
 pub mod index;
 pub mod indexing;
 pub mod search;

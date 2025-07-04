@@ -1,0 +1,60 @@
+{
+  "corpus_size": 10000,
+  "vector_dimension": 768,
+  "vector_stats": {
+    "mean": -1.0508966409568095e-05,
+    "std": 0.03608439029407257,
+    "min": -0.19545413996116293,
+    "max": 0.19855354813547677
+  },
+  "metadata_distributions": {
+    "categories": {
+      "science": 1047,
+      "environment": 1039,
+      "sports": 1034,
+      "health": 1031,
+      "education": 1030,
+      "culture": 1008,
+      "arts": 980,
+      "politics": 972,
+      "business": 945,
+      "technology": 914
+    },
+    "languages": {
+      "it": 1046,
+      "de": 1028,
+      "zh": 1024,
+      "ru": 1011,
+      "ja": 1008,
+      "en": 996,
+      "ko": 985,
+      "es": 971,
+      "pt": 970,
+      "fr": 961
+    },
+    "sources": {
+      "forum": 1053,
+      "news": 1033,
+      "wikipedia": 1007,
+      "book": 1006,
+      "review": 1001,
+      "paper": 1000,
+      "academic": 998,
+      "social": 998,
+      "blog": 954,
+      "documentation": 950
+    },
+    "years": {
+      "2015": 1000,
+      "2016": 1012,
+      "2017": 988,
+      "2018": 991,
+      "2019": 1012,
+      "2020": 983,
+      "2021": 1018,
+      "2022": 1021,
+      "2023": 949,
+      "2024": 1026
+    }
+  }
+}

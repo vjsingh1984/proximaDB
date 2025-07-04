@@ -36,6 +36,10 @@ impl GlobalIdIndex {
         Ok(())
     }
 
+    pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
+        Ok(())
+    }
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -57,6 +61,10 @@ impl MetadataIndex {
     }
 
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
         Ok(())
     }
 
@@ -84,6 +92,10 @@ impl DenseVectorIndex {
         Ok(())
     }
 
+    pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
+        Ok(())
+    }
+
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
@@ -105,6 +117,10 @@ impl SparseVectorIndex {
     }
 
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
         Ok(())
     }
 

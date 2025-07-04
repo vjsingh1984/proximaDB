@@ -8,51 +8,50 @@ import sys
 import os
 import json
 import time
-import asyncio
 import numpy as np
 import uuid
+import requests
 
-# Add Python SDK to path
+# Add Python SDK to path  
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBClient
-from bert_embedding_service import BERTEmbeddingService, create_sample_corpus
+from proximadb import ProximaDBClient
 
 class VectorSearchDemo:
     """Quick demonstration of vector search capabilities"""
     
     def __init__(self):
-        self.client = ProximaDBClient(endpoint="localhost:5679")
-        self.embedding_service = BERTEmbeddingService("all-MiniLM-L6-v2")
-        self.collection_name = f"demo_{uuid.uuid4().hex[:8]}"
+        # Use REST for reliability
+        self.base_url = "http://localhost:5678"
+        self.collection_name = f"search_demo_{uuid.uuid4().hex[:8]}"
+        self.dimension = 384
         
-    async def run_demo(self):
+    def run_demo(self):
         """Run the complete demo"""
         print("🚀 ProximaDB Vector Search Demo")
         print("=" * 50)
         
         try:
             # 1. Setup collection
-            if not await self.setup_collection():
+            if not self.setup_collection():
                 return False
             
             # 2. Create sample data
-            print("\n📚 Creating sample data with BERT embeddings...")
+            print("\n📚 Creating sample data...")
             sample_data = self.create_sample_data()
             
             # 3. Insert vectors
-            if not await self.insert_sample_vectors(sample_data):
+            if not self.insert_sample_vectors(sample_data):
                 return False
             
             # 4. Demonstrate search operations
-            await asyncio.sleep(1)  # Brief pause for indexing
+            time.sleep(1)  # Brief pause for indexing
             
             print("\n🔍 Demonstrating Search Operations")
             print("-" * 40)
             
-            await self.demo_search_by_id(sample_data)
-            await self.demo_metadata_filtering(sample_data)
-            await self.demo_similarity_search(sample_data)
+            self.demo_search_by_vector(sample_data)
+            self.demo_search_verification(sample_data)
             
             print("\n🎉 Demo completed successfully!")
             return True
@@ -61,7 +60,7 @@ class VectorSearchDemo:
             print(f"❌ Demo failed: {e}")
             return False
         finally:
-            await self.cleanup()
+            self.cleanup()
     
     async def setup_collection(self):
         """Create demo collection"""

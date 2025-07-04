@@ -31,6 +31,44 @@ use uuid::Uuid;
 use crate::services::unified_avro_service::UnifiedAvroService;
 use crate::services::collection_service::CollectionService;
 use crate::core::VectorRecord;
+use crate::storage::persistence::wal::schema::{AvroVectorBatch, AvroVector, VECTOR_BATCH_SCHEMA_V1};
+
+/// Convert VectorRecord structs to Avro binary format (REST-to-Avro bridge)
+fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> anyhow::Result<Vec<u8>> {
+    use apache_avro::Schema;
+    
+    // Parse the vector batch schema
+    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
+        .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
+    
+    // Convert VectorRecord to AvroVector format
+    let avro_vectors: Vec<AvroVector> = vector_records
+        .iter()
+        .map(|record| AvroVector {
+            id: record.id.clone(),
+            vector: record.vector.clone(),
+            metadata: if record.metadata.is_empty() {
+                None
+            } else {
+                Some(record.metadata.iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .collect())
+            },
+            timestamp: Some(record.timestamp),
+        })
+        .collect();
+    
+    let batch = AvroVectorBatch {
+        vectors: avro_vectors,
+    };
+    
+    // Convert to Avro Value first, then serialize to binary datum (schema-less)
+    let avro_value = apache_avro::to_value(batch)
+        .map_err(|e| anyhow::anyhow!("Failed to convert vector batch to Avro value: {}", e))?;
+    
+    apache_avro::to_avro_datum(&schema, avro_value)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize vector batch to Avro datum: {}", e))
+}
 
 /// Shared application state for REST handlers
 #[derive(Clone)]
@@ -46,6 +84,7 @@ pub struct CreateCollectionRequest {
     pub dimension: Option<usize>,
     pub distance_metric: Option<String>,
     pub indexing_algorithm: Option<String>,
+    pub storage_engine: Option<String>,
 }
 
 /// Collection update request
@@ -129,6 +168,10 @@ pub fn create_router(state: AppState) -> Router {
         // Collection lookup utilities
         .route("/collections/by-name/:collection_name/id", get(get_collection_id_by_name))
         
+        // Internal testing endpoints (WARNING: NOT FOR PRODUCTION USE)
+        .route("/internal/flush", post(internal_flush_all))
+        .route("/collections/:collection_id/internal/flush", post(internal_flush_collection))
+        
         // Vector operations
         .route("/collections/:collection_id/vectors", post(insert_vector))
         .route("/collections/:collection_id/vectors/:vector_id", get(get_vector))
@@ -177,11 +220,21 @@ pub async fn create_collection(
         _ => IndexingAlgorithm::Hnsw as i32,
     };
     
+    // Parse storage engine
+    let storage_engine = match request.storage_engine.as_deref().unwrap_or("viper") {
+        "viper" | "VIPER" => StorageEngine::Viper as i32,
+        "lsm" | "LSM" => StorageEngine::Lsm as i32,
+        _ => {
+            tracing::warn!("Unknown storage engine '{}', defaulting to VIPER", request.storage_engine.as_deref().unwrap_or(""));
+            StorageEngine::Viper as i32
+        }
+    };
+    
     let config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension.unwrap_or(384) as i32,
         distance_metric,
-        storage_engine: StorageEngine::Viper as i32, // Default to VIPER
+        storage_engine,
         indexing_algorithm,
         filterable_metadata_fields: Vec::new(), // Default to no filterable fields
         indexing_config: HashMap::new(), // Default empty config
@@ -363,16 +416,16 @@ pub async fn insert_vector(
         distance: None,
     };
     
-    // Create simple Avro payload using JSON serialization as fallback
+    // Convert to Avro binary format using the proper conversion function
     let vectors = vec![vector_record];
-    let json_payload = serde_json::to_vec(&vectors)
+    let avro_payload = create_avro_vector_batch(&vectors)
         .map_err(|e| {
-            tracing::error!("Failed to serialize vectors: {:?}", e);
+            tracing::error!("Failed to create Avro vector batch: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    // Use the UnifiedAvroService handle_vector_insert_v2 method
-    match state.unified_service.handle_vector_insert_v2(&collection_id, false, &json_payload).await {
+    // Use the UnifiedAvroService handle_vector_insert_v2 method with proper Avro binary payload
+    match state.unified_service.handle_vector_insert_v2(&collection_id, false, &avro_payload).await {
         Ok(_result) => {
             tracing::info!("✅ REST: Vector {} inserted successfully", vector_id);
             Ok(JsonResponse(ApiResponse::success_with_message(
@@ -593,15 +646,15 @@ pub async fn batch_insert_vectors(
         });
     }
     
-    // Create JSON payload
-    let json_payload = serde_json::to_vec(&vector_records)
+    // Convert JSON to Avro binary payload for UnifiedAvroService
+    let avro_payload = create_avro_vector_batch(&vector_records)
         .map_err(|e| {
-            tracing::error!("Failed to serialize batch vectors: {:?}", e);
+            tracing::error!("Failed to create Avro payload from vectors: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    // Insert through UnifiedAvroService
-    match state.unified_service.handle_vector_insert_v2(&collection_id, false, &json_payload).await {
+    // Insert through UnifiedAvroService (using Avro binary)
+    match state.unified_service.handle_vector_insert_v2(&collection_id, false, &avro_payload).await {
         Ok(_) => {
             let vector_count = vector_ids.len();
             tracing::info!("✅ REST: Batch inserted {} vectors successfully", vector_count);
@@ -612,6 +665,51 @@ pub async fn batch_insert_vectors(
         }
         Err(e) => {
             tracing::error!("❌ REST: Batch insert failed: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Internal flush endpoint for testing - triggers flush for all collections
+/// WARNING: This endpoint is for testing purposes only and should not be used in production
+pub async fn internal_flush_all(
+    State(state): State<AppState>,
+) -> Result<JsonResponse<ApiResponse<String>>, StatusCode> {
+    tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED - THIS IS FOR TESTING ONLY");
+    
+    match state.unified_service.force_flush_all_collections().await {
+        Ok(_) => {
+            tracing::info!("✅ Internal flush triggered for all collections");
+            Ok(JsonResponse(ApiResponse::success_with_message(
+                "flush_triggered".to_string(),
+                "Internal flush triggered for all collections (testing only)".to_string(),
+            )))
+        }
+        Err(e) => {
+            tracing::error!("❌ Internal flush failed: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Internal flush endpoint for testing - triggers flush for specific collection
+/// WARNING: This endpoint is for testing purposes only and should not be used in production
+pub async fn internal_flush_collection(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+) -> Result<JsonResponse<ApiResponse<String>>, StatusCode> {
+    tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED FOR COLLECTION {} - THIS IS FOR TESTING ONLY", collection_id);
+    
+    match state.unified_service.force_flush_collection(&collection_id).await {
+        Ok(_) => {
+            tracing::info!("✅ Internal flush triggered for collection {}", collection_id);
+            Ok(JsonResponse(ApiResponse::success_with_message(
+                "flush_triggered".to_string(),
+                format!("Internal flush triggered for collection {} (testing only)", collection_id),
+            )))
+        }
+        Err(e) => {
+            tracing::error!("❌ Internal flush failed for collection {}: {:?}", collection_id, e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

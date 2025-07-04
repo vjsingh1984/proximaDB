@@ -352,7 +352,7 @@ impl SharedServices {
             FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?
         );
         
-        let collection_service = Arc::new(CollectionService::new(filestore_backend));
+        let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
         
         // SharedServices coordinates vector operations with WAL
         let avro_config = crate::services::unified_avro_service::UnifiedServiceConfig::default();

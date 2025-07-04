@@ -1,4 +1,4 @@
-# EC2 deployment with multi-region coordination and OS optimization
+# EC2 deployment with multi-region coordination using URL-based storage
 [server]
 node_id = "vectordb-ec2-primary-1"
 bind_address = "0.0.0.0"
@@ -6,106 +6,82 @@ port = 8080
 data_dir = "/opt/vectordb/data"
 
 [storage]
+# Multi-disk data storage using URL-based approach
 data_dirs = ["/mnt/nvme0/hot", "/mnt/ssd0/warm", "/mnt/hdd0/cold"]
 wal_dir = "/mnt/nvme0/wal"
 mmap_enabled = true
 cache_size_mb = 8192
 bloom_filter_bits = 12
 
-# Tiered storage for EC2
-[storage.tiered]
-deployment_mode = "VirtualMachine"
+# URL-based WAL configuration with multi-disk distribution
+[storage.wal_config]
+wal_urls = [
+    "file:///mnt/nvme0/wal",      # Ultra-fast NVMe for primary WAL
+    "file:///mnt/ssd0/wal",       # SSD for backup WAL
+    "file:///mnt/hdd0/wal"        # HDD for archive WAL
+]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+memory_flush_size_bytes = 1048576
+global_flush_threshold = 2097152
 
-[storage.tiered.deployment_mode.VirtualMachine]
-cloud_storage_backend = "AWS"
+# URL-based storage layout
+[storage.storage_layout]
+[[storage.storage_layout.base_paths]]
+base_dir = "file:///mnt/nvme0/storage"
+instance_id = 1
+mount_point = "/mnt/nvme0"
+[storage.storage_layout.base_paths.disk_type]
+NvmeSsd = { max_iops = 400000 }
+[storage.storage_layout.base_paths.capacity_config]
+max_wal_size_mb = 2048
+metadata_reserved_mb = 512
+warning_threshold_percent = 85.0
 
-[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
-path = "/mnt/nvme0"
-storage_type = "NVMe"
-size_gb = 1000
-performance_tier = "UltraHigh"
+[[storage.storage_layout.base_paths]]
+base_dir = "file:///mnt/ssd0/storage"
+instance_id = 2
+mount_point = "/mnt/ssd0"
+[storage.storage_layout.base_paths.disk_type]
+SataSsd = { max_iops = 16000 }
+[storage.storage_layout.base_paths.capacity_config]
+max_wal_size_mb = 1024
+metadata_reserved_mb = 256
+warning_threshold_percent = 85.0
 
-[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.NVMe]
-iops = 400000
-throughput_mbps = 7000
+[[storage.storage_layout.base_paths]]
+base_dir = "file:///mnt/hdd0/storage"
+instance_id = 3
+mount_point = "/mnt/hdd0"
+[storage.storage_layout.base_paths.disk_type]
+Hdd = { rpm = 7200 }
+[storage.storage_layout.base_paths.capacity_config]
+max_wal_size_mb = 512
+metadata_reserved_mb = 128
+warning_threshold_percent = 90.0
 
-[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
-path = "/mnt/ssd0"
-storage_type = "SATASSD"
-size_gb = 4000
-performance_tier = "High"
+# Multi-cloud backup using URL-based routing
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
 
-[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.SATASSD]
-iops = 16000
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
 
-[[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths]]
-path = "/mnt/hdd0"
-storage_type = "HDD"
-size_gb = 20000
-performance_tier = "Medium"
+# URL-based metadata backend with S3 backup
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "file:///mnt/nvme0/metadata"
+cache_size_mb = 128
+flush_interval_secs = 30
 
-[storage.tiered.deployment_mode.VirtualMachine.local_storage_paths.storage_type.HDD]
-rpm = 7200
-
-# OS optimization for EC2
-[storage.tiered.deployment_mode.VirtualMachine.os_optimization]
-mmap_enabled = true
-numa_awareness = true
-huge_pages_enabled = true
-direct_io_threshold_mb = 1024
-io_scheduler = "MQ"
-
-[storage.tiered.deployment_mode.VirtualMachine.os_optimization.page_cache_optimization]
-enabled = true
-drop_caches_on_memory_pressure = true
-readahead_kb = 1024
-dirty_ratio = 10
-dirty_background_ratio = 5
-
-# Multi-tier storage configuration
-[[storage.tiered.storage_tiers]]
-tier_name = "ultra-hot-nvme"
-tier_level = "UltraHot"
-access_pattern = "Random"
-
-[storage.tiered.storage_tiers.storage_backend.MMAP]
-file_path = "/mnt/nvme0/mmap"
-advise_random = true
-populate_pages = true
-
-[[storage.tiered.storage_tiers]]
-tier_name = "hot-ssd"
-tier_level = "Hot"
-access_pattern = "Sequential"
-
-[storage.tiered.storage_tiers.storage_backend.LocalFS]
-base_path = "/mnt/ssd0"
-use_direct_io = false
-sync_strategy = "WriteBack"
-
-[[storage.tiered.storage_tiers]]
-tier_name = "warm-hdd"
-tier_level = "Warm"
-access_pattern = "WriteOnce"
-
-[storage.tiered.storage_tiers.storage_backend.LocalFS]
-base_path = "/mnt/hdd0"
-use_direct_io = true
-sync_strategy = "Async"
-
-[[storage.tiered.storage_tiers]]
-tier_name = "cold-s3"
-tier_level = "Cold"
-access_pattern = "ReadMostly"
-
-[storage.tiered.storage_tiers.storage_backend.CloudObjectStore]
-multipart_threshold_mb = 100
-local_cache_path = "/mnt/ssd0/s3-cache"
-
-[storage.tiered.storage_tiers.storage_backend.CloudObjectStore.backend.AWS]
-s3_bucket = "vectordb-global-storage"
-intelligent_tiering = true
-cross_region_replication = "us-west-2"
+# Optional S3 backup for metadata
+[storage.metadata_backend.cloud_config.s3_config]
+region = "us-east-1"
+bucket = "vectordb-global-metadata"
+use_iam_role = true
 
 # Global coordination for multi-region
 [global_coordination]

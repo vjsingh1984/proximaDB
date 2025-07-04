@@ -79,6 +79,7 @@ impl Default for QuantizationConfig {
 
 /// Main quantization engine
 pub struct QuantizationEngine {
+    #[allow(dead_code)]
     config: QuantizationConfig,
     quantizer: Box<dyn VectorQuantizer + Send + Sync>,
 }
@@ -613,6 +614,7 @@ impl VectorQuantizer for ScalarQuantizer {
 }
 
 pub struct BinaryQuantizer {
+    #[allow(dead_code)]
     config: QuantizationConfig,
     trained: bool,
 }
@@ -736,6 +738,7 @@ impl VectorQuantizer for ResidualVectorQuantizer {
 }
 
 pub struct OptimizedProductQuantizer {
+    #[allow(dead_code)]
     config: QuantizationConfig,
     base_quantizer: ProductQuantizer,
     trained: bool,

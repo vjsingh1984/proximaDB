@@ -12,8 +12,11 @@ import time
 from typing import Optional, Dict, List, Any
 import json
 from datetime import datetime, timezone
+import io
 
 import grpc
+import avro.schema
+import avro.io
 
 from .proximadb_pb2 import *
 from . import proximadb_pb2 as pb2
@@ -378,55 +381,169 @@ class ProximaDBClient:
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: List[Dict[str, Any]],
+        vectors,  # Can be List[Dict] or single Dict or raw vectors
+        ids: Optional[List[str]] = None,
+        metadata: Optional[List[Dict[str, Any]]] = None,
         upsert: bool = False
     ) -> InsertResult:
         """
-        Insert vectors into collection using zero-copy Avro
+        Unified vector insertion interface - handles single vectors or batches
         
         Args:
             collection_id: Collection name/ID
-            vectors: List of vector records with format:
-                    [{"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {...}}, ...]
+            vectors: Can be:
+                    - List[Dict] with format [{"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {...}}, ...]
+                    - List[List[float]] raw vectors (requires ids parameter)
+                    - Single Dict {"id": "vec1", "vector": [...], "metadata": {...}}
+                    - Single List[float] raw vector (requires ids parameter)
+            ids: Vector IDs (required if vectors is raw vector data)
+            metadata: Vector metadata (optional, used with raw vector data)
             upsert: If True, update existing vectors
         
         Returns:
             InsertResult with inserted vector IDs
         """
         try:
-            # Serialize vectors to JSON for Avro payload
-            vectors_json = json.dumps(vectors).encode('utf-8')
+            # Normalize input to standard format
+            normalized_vectors = self._normalize_vector_input(vectors, ids, metadata)
             
-            # Create VectorInsertRequest
-            request = pb2.VectorInsertRequest(
-                collection_id=collection_id,
-                upsert_mode=upsert,
-                vectors_avro_payload=vectors_json
-            )
+            # Debug logging
+            logger.debug(f"Inserting {len(normalized_vectors)} vectors via gRPC")
+            logger.debug(f"First vector format: {list(normalized_vectors[0].keys()) if normalized_vectors else 'empty'}")
             
-            # Call gRPC service
-            response = self._call_with_timeout(self.stub.VectorInsert, request)
+            # Process in chunks to handle large batches efficiently
+            chunk_size = 1000  # Reasonable chunk size for gRPC
+            total_inserted = 0
+            total_failed = 0
+            total_duration = 0.0
             
-            if response.success:
-                # Get metrics if available
-                metrics = response.metrics if response.metrics else None
-                count = len(response.vector_ids) if response.vector_ids else 0
-                duration_ms = (metrics.processing_time_us / 1000.0) if metrics else 0.0
+            for i in range(0, len(normalized_vectors), chunk_size):
+                chunk = normalized_vectors[i:i + chunk_size]
                 
-                return InsertResult(
-                    count=count,
-                    failed_count=0,
-                    duration_ms=duration_ms,
-                    request_id=None
+                # Serialize chunk to proper Avro binary format
+                vectors_avro_binary = self._create_avro_vector_batch(chunk)
+                
+                # Create VectorInsertRequest
+                request = pb2.VectorInsertRequest(
+                    collection_id=collection_id,
+                    upsert_mode=upsert,
+                    vectors_avro_payload=vectors_avro_binary
                 )
-            else:
-                raise ProximaDBError(
-                    f"Vector insert failed: {response.error_message or 'Unknown error'}"
-                )
+                
+                # Call gRPC service
+                response = self._call_with_timeout(self.stub.VectorInsert, request)
+                
+                if response.success:
+                    # Get metrics if available
+                    metrics = response.metrics if response.metrics else None
+                    chunk_count = len(response.vector_ids) if response.vector_ids else len(chunk)
+                    chunk_duration = (metrics.processing_time_us / 1000.0) if metrics else 0.0
+                    
+                    total_inserted += chunk_count
+                    total_duration += chunk_duration
+                    
+                    logger.debug(f"Chunk {i//chunk_size + 1}: {chunk_count}/{len(chunk)} vectors inserted")
+                else:
+                    error_msg = response.error_message or 'Unknown error'
+                    logger.error(f"Chunk {i//chunk_size + 1} failed: {error_msg}")
+                    total_failed += len(chunk)
+            
+            return InsertResult(
+                count=total_inserted,
+                failed_count=total_failed,
+                duration_ms=total_duration,
+                request_id=None
+            )
                 
         except grpc.RpcError as e:
             logger.error(f"gRPC error during vector insert: {e}")
             raise ProximaDBError(f"Vector insert failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error during vector insert: {e}")
+            raise ProximaDBError(f"Vector insert failed: {str(e)}")
+    
+    def _normalize_vector_input(
+        self, 
+        vectors, 
+        ids: Optional[List[str]] = None, 
+        metadata: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Normalize various vector input formats to standard format
+        
+        Returns:
+            List[Dict] with format [{"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {...}}, ...]
+        """
+        import uuid
+        
+        # Case 1: Already in correct format (List[Dict])
+        if isinstance(vectors, list) and vectors and isinstance(vectors[0], dict):
+            if "id" in vectors[0] and "vector" in vectors[0]:
+                return vectors
+        
+        # Case 2: Single dict vector
+        if isinstance(vectors, dict) and "id" in vectors and "vector" in vectors:
+            return [vectors]
+        
+        # Case 3: Raw vector data - List[List[float]] or List[float]
+        normalized = []
+        
+        # Handle single vector (List[float])
+        if isinstance(vectors, list) and vectors and isinstance(vectors[0], (int, float)):
+            vectors = [vectors]  # Convert to List[List[float]]
+            if ids:
+                ids = [ids[0]] if isinstance(ids, list) else [ids]
+            if metadata:
+                metadata = [metadata[0]] if isinstance(metadata, list) else [metadata]
+        
+        # Process as List[List[float]]
+        if isinstance(vectors, list) and vectors and isinstance(vectors[0], list):
+            for i, vector in enumerate(vectors):
+                # Generate ID if not provided
+                vector_id = ids[i] if ids and i < len(ids) else f"vec_{uuid.uuid4().hex[:8]}"
+                
+                # Get metadata if provided
+                vector_metadata = metadata[i] if metadata and i < len(metadata) else {}
+                
+                normalized.append({
+                    "id": vector_id,
+                    "vector": vector,
+                    "metadata": vector_metadata
+                })
+            
+            return normalized
+        
+        # If we get here, unsupported format
+        raise ProximaDBError(f"Unsupported vector format: {type(vectors)}")
+    
+    def insert_single_vector(
+        self,
+        collection_id: str,
+        vector_id: str,
+        vector: List[float],
+        metadata: Optional[Dict[str, Any]] = None,
+        upsert: bool = False
+    ) -> InsertResult:
+        """
+        Insert a single vector (convenience method)
+        
+        Args:
+            collection_id: Collection name/ID
+            vector_id: Vector identifier
+            vector: Vector data
+            metadata: Optional metadata
+            upsert: If True, update existing vector
+        
+        Returns:
+            InsertResult
+        """
+        vector_dict = {
+            "id": vector_id,
+            "vector": vector,
+            "metadata": metadata or {}
+        }
+        
+        return self.insert_vectors(collection_id, [vector_dict], upsert=upsert)
     
     def search_vectors(
         self,
@@ -891,6 +1008,136 @@ class ProximaDBClient:
         # This would require a new gRPC service for transaction management
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Transactions not implemented on server yet")
+
+    def _create_avro_vector_batch(self, vectors: List[Dict[str, Any]]) -> bytes:
+        """
+        Create Avro binary data from vector list using the VECTOR_BATCH_SCHEMA_V1
+        
+        Args:
+            vectors: List of vector dictionaries
+            
+        Returns:
+            bytes: Avro binary data
+        """
+        if not vectors:
+            raise ProximaDBError("Cannot create Avro batch from empty vector list")
+        
+        logger.debug(f"Creating Avro batch for {len(vectors)} vectors")
+        
+        # Vector batch schema from the server's schema.rs file
+        vector_batch_schema_str = '''
+        {
+          "type": "record",
+          "name": "VectorBatch",
+          "namespace": "ai.proximadb.vectors",
+          "fields": [
+            {"name": "vectors", "type": {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "Vector",
+                "fields": [
+                  {"name": "id", "type": "string"},
+                  {"name": "vector", "type": {"type": "array", "items": "float"}},
+                  {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null},
+                  {"name": "timestamp", "type": ["null", "long"], "default": null}
+                ]
+              }
+            }}
+          ]
+        }
+        '''
+        
+        try:
+            # Parse schema
+            schema = avro.schema.parse(vector_batch_schema_str)
+            
+            # Convert input vectors to Avro format
+            avro_vectors = []
+            for i, vec in enumerate(vectors):
+                try:
+                    # Validate vector structure
+                    if not isinstance(vec, dict):
+                        raise ValueError(f"Vector {i} is not a dictionary: {type(vec)}")
+                    if 'id' not in vec:
+                        raise ValueError(f"Vector {i} missing 'id' field")
+                    if 'vector' not in vec:
+                        raise ValueError(f"Vector {i} missing 'vector' field")
+                    if not isinstance(vec['vector'], (list, tuple)):
+                        raise ValueError(f"Vector {i} 'vector' field is not a list: {type(vec['vector'])}")
+                    
+                    # Convert metadata to map of strings (Avro requirement)
+                    metadata = None
+                    if vec.get('metadata'):
+                        if isinstance(vec['metadata'], dict):
+                            metadata = {k: str(v) for k, v in vec['metadata'].items()}
+                        else:
+                            logger.warning(f"Vector {i} metadata is not a dict: {type(vec['metadata'])}")
+                            metadata = {"original": str(vec['metadata'])}
+                    
+                    # Get timestamp (default to current time if not provided)
+                    timestamp = vec.get('timestamp')
+                    if timestamp is None:
+                        timestamp = int(time.time() * 1000)  # Current time in milliseconds
+                    elif not isinstance(timestamp, (int, float)):
+                        timestamp = int(time.time() * 1000)
+                    else:
+                        timestamp = int(timestamp * 1000) if timestamp < 1e10 else int(timestamp)
+                    
+                    # Create Avro vector record
+                    avro_vector = {
+                        "id": str(vec['id']),
+                        "vector": [float(x) for x in vec['vector']],
+                        "metadata": metadata,
+                        "timestamp": timestamp
+                    }
+                    avro_vectors.append(avro_vector)
+                    
+                    # Debug first vector
+                    if i == 0:
+                        logger.debug(f"First vector Avro format: id={avro_vector['id']}, vector_len={len(avro_vector['vector'])}, metadata_keys={list(metadata.keys()) if metadata else None}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process vector {i}: {e}")
+                    raise ProximaDBError(f"Failed to process vector {i}: {e}")
+            
+            logger.debug(f"Successfully converted {len(avro_vectors)} vectors to Avro format")
+            
+            # Create batch structure
+            batch = {
+                "vectors": avro_vectors
+            }
+            
+            # Serialize to Avro binary using datum writer
+            bytes_writer = io.BytesIO()
+            encoder = avro.io.BinaryEncoder(bytes_writer)
+            datum_writer = avro.io.DatumWriter(schema)
+            datum_writer.write(batch, encoder)
+            
+            avro_bytes = bytes_writer.getvalue()
+            logger.debug(f"Avro batch serialized to {len(avro_bytes)} bytes")
+            
+            # Validate serialization by attempting to read it back
+            try:
+                bytes_reader = io.BytesIO(avro_bytes)
+                decoder = avro.io.BinaryDecoder(bytes_reader)
+                datum_reader = avro.io.DatumReader(schema)
+                deserialized = datum_reader.read(decoder)
+                
+                deserialized_count = len(deserialized.get('vectors', []))
+                if deserialized_count != len(vectors):
+                    logger.warning(f"Serialization validation failed: expected {len(vectors)} vectors, got {deserialized_count}")
+                else:
+                    logger.debug(f"Serialization validation passed: {deserialized_count} vectors")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to validate Avro serialization: {e}")
+            
+            return avro_bytes
+            
+        except Exception as e:
+            logger.error(f"Failed to create Avro batch: {e}")
+            raise ProximaDBError(f"Failed to create Avro batch: {e}")
 
 
 # For backward compatibility

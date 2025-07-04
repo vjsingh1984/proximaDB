@@ -1,0 +1,88 @@
+# ProximaDB 10k Vector Flush Test - LSM Engine with Avro WAL
+
+[server]
+node_id = "proximadb-10k-lsm-avro-flush"
+bind_address = "127.0.0.1"
+port = 5681
+data_dir = "./test_10k_lsm_flush"
+
+[storage]
+# Legacy fields
+data_dirs = ["./test_10k_lsm_flush"]
+wal_dir = "./test_10k_lsm_flush/wal"
+
+# Storage engine configuration
+mmap_enabled = true
+cache_size_mb = 256
+bloom_filter_bits = 10
+
+[storage.lsm_config]
+memtable_size_mb = 32
+level_count = 5
+compaction_threshold = 4
+block_size_kb = 16
+
+# Avro WAL configuration for LSM - optimized for fast flush testing
+[storage.wal_config]
+wal_urls = ["file://./test_10k_lsm_flush/wal"]
+strategy_type = "Avro"
+memtable_type = "HashMap"
+memory_flush_size_bytes = 262144  # 256KB - trigger flush very frequently for testing
+global_flush_threshold_bytes = 1048576  # 1MB - force flush early
+collection_affinity = true
+
+# Storage layout for LSM
+[storage.storage_layout]
+node_instance = 1
+assignment_strategy = "HashBased"
+
+[[storage.storage_layout.base_paths]]
+base_dir = "./test_10k_lsm_flush/storage"
+instance_id = 1
+mount_point = "./test_10k_lsm_flush"
+disk_type = { SataSsd = { max_iops = 50000 } }
+
+[storage.storage_layout.base_paths.capacity_config]
+max_wal_size_mb = 100
+metadata_reserved_mb = 50
+warning_threshold_percent = 85.0
+
+[storage.storage_layout.temp_config]
+use_same_directory = true
+temp_suffix = "___temp"
+compaction_suffix = "___compaction"
+flush_suffix = "___flushed"
+cleanup_on_startup = true
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = false
+cleanup_temp_on_startup = true
+
+# Metadata backend
+[storage.metadata_backend]
+backend_type = "filestore"
+storage_url = "file://./test_10k_lsm_flush/metadata"
+cache_size_mb = 32
+flush_interval_secs = 5
+
+[api]
+grpc_port = 5679
+rest_port = 5681
+max_request_size_mb = 32
+timeout_seconds = 60
+
+[monitoring]
+metrics_enabled = true
+log_level = "info"
+
+[consensus]
+node_id = 1
+cluster_peers = []
+election_timeout_ms = 5000
+heartbeat_interval_ms = 1000
+snapshot_threshold = 500

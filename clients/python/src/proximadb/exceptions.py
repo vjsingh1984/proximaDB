@@ -207,6 +207,17 @@ class BatchError(ProximaDBError):
         self.errors = errors or []
 
 
+class WALError(ProximaDBError):
+    """Write-Ahead Log operation error"""
+    
+    def __init__(
+        self,
+        message: str = "WAL operation failed",
+        **kwargs
+    ) -> None:
+        super().__init__(message, error_code="WAL_ERROR", **kwargs)
+
+
 class StreamingError(ProximaDBError):
     """Streaming operation error"""
     

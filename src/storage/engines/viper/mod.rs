@@ -7,6 +7,8 @@ pub mod core;
 pub mod pipeline;
 pub mod factory;
 pub mod utilities;
+pub mod ml_clustering;
+pub mod quantization;
 
 // Test modules
 #[cfg(test)]
@@ -20,3 +22,5 @@ pub use core::ViperCoreEngine;
 pub use pipeline::ViperPipeline;
 pub use factory::ViperFactory;
 pub use utilities::ViperUtilities;
+pub use ml_clustering::{MLClusteringEngine, MLClusteringModel, ClusterAssignment, KMeansConfig};
+pub use quantization::{VectorQuantizationEngine, QuantizationConfig, QuantizationLevel, QuantizationModel, QuantizedVector};

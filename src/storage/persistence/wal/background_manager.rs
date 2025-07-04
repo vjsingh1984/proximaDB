@@ -133,16 +133,32 @@ impl BackgroundMaintenanceManager {
             let start_time = std::time::Instant::now();
 
             info!(
-                "🚿 Starting background flush for collection {} ({}MB)",
+                "🚿 [FLUSH] Starting background flush for collection {} (memory: {}MB, trigger_size: {}MB)",
                 collection_id_clone,
-                current_memory_size / (1024 * 1024)
+                current_memory_size / (1024 * 1024),
+                effective_config.memory_flush_size_bytes / (1024 * 1024)
+            );
+
+            debug!(
+                "🚿 [FLUSH] Collection: {}, Start time: {:?}, Memory size: {} bytes",
+                collection_id_clone,
+                start_time,
+                current_memory_size
             );
 
             // TODO: Implement actual flush logic here
             // This would call the WAL manager's flush method
 
-            // Simulate flush operation
+            // Simulate flush operation with detailed logging
+            let flush_start = std::time::Instant::now();
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let flush_duration = flush_start.elapsed();
+
+            debug!(
+                "🚿 [FLUSH] Collection: {}, Flush operation completed in: {:?}",
+                collection_id_clone,
+                flush_duration
+            );
 
             let duration = start_time.elapsed();
 
@@ -152,7 +168,7 @@ impl BackgroundMaintenanceManager {
 
             if needs_compaction {
                 info!(
-                    "🔄 Triggering compaction after flush for collection {}",
+                    "🔄 [COMPACTION] Triggering compaction after flush for collection {}",
                     collection_id_clone
                 );
 
@@ -165,10 +181,22 @@ impl BackgroundMaintenanceManager {
                     );
                 }
 
+                let compaction_start = std::time::Instant::now();
+                debug!(
+                    "🔄 [COMPACTION] Collection: {}, Compaction start time: {:?}",
+                    collection_id_clone,
+                    compaction_start
+                );
+
                 // TODO: Implement actual compaction logic here
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-                let compaction_duration = start_time.elapsed() - duration;
+                let compaction_duration = compaction_start.elapsed();
+                debug!(
+                    "🔄 [COMPACTION] Collection: {}, Compaction operation completed in: {:?}",
+                    collection_id_clone,
+                    compaction_duration
+                );
 
                 // Update stats
                 {
@@ -183,7 +211,7 @@ impl BackgroundMaintenanceManager {
                 }
 
                 info!(
-                    "✅ Background compaction completed for collection {} in {}ms",
+                    "✅ [COMPACTION] Background compaction completed for collection {} in {}ms (files_before: TODO, files_after: TODO, size_reduction: TODO)",
                     collection_id_clone,
                     compaction_duration.as_millis()
                 );
@@ -208,9 +236,25 @@ impl BackgroundMaintenanceManager {
             }
 
             info!(
-                "✅ Background flush completed for collection {} in {}ms",
+                "✅ [FLUSH] Background flush completed for collection {} in {}ms (total_ops: {}, avg_duration: {:.2}ms)",
                 collection_id_clone,
-                duration.as_millis()
+                duration.as_millis(),
+                {
+                    let stats = stats_clone.lock().await;
+                    stats.total_flush_operations
+                },
+                {
+                    let stats = stats_clone.lock().await;
+                    stats.average_flush_duration_ms
+                }
+            );
+
+            debug!(
+                "🚿 [FLUSH] Collection: {}, End time: {:?}, Total duration: {:?}, Memory freed: {}MB",
+                collection_id_clone,
+                std::time::Instant::now(),
+                duration,
+                current_memory_size / (1024 * 1024)
             );
         });
 

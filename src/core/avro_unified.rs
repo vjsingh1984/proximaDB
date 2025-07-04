@@ -998,6 +998,166 @@ pub enum OperationResult {
 
 // Search metadata, index stats, and debug info are already defined above
 
+/// Health response structure for binary Avro serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthResponse {
+    /// Service health status: "HEALTHY", "DEGRADED", "UNHEALTHY"
+    pub status: String,
+    /// Service version
+    pub version: String,
+    /// Server uptime in seconds
+    pub uptime_seconds: i64,
+    /// Total operations processed
+    pub total_operations: i64,
+    /// Successful operations count
+    pub successful_operations: i64,
+    /// Failed operations count
+    pub failed_operations: i64,
+    /// Average processing time in microseconds
+    pub avg_processing_time_us: f64,
+    /// Storage subsystem health
+    pub storage_healthy: bool,
+    /// WAL subsystem health
+    pub wal_healthy: bool,
+    /// Timestamp when health check was performed (microseconds)
+    pub timestamp: i64,
+}
+
+/// Metrics response structure for binary Avro serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsResponse {
+    /// Service-level metrics
+    pub service_metrics: ServiceMetrics,
+    /// WAL-specific metrics
+    pub wal_metrics: WalMetrics,
+    /// Timestamp when metrics were collected (microseconds)
+    pub timestamp: i64,
+}
+
+/// Service-level performance metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceMetrics {
+    /// Total operations performed
+    pub total_operations: i64,
+    /// Number of successful operations
+    pub successful_operations: i64,
+    /// Number of failed operations
+    pub failed_operations: i64,
+    /// Average processing time in microseconds
+    pub avg_processing_time_us: f64,
+    /// Last operation timestamp (microseconds)
+    pub last_operation_time: Option<i64>,
+}
+
+/// WAL-specific metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalMetrics {
+    /// Total entries in WAL
+    pub total_entries: i64,
+    /// Entries currently in memory
+    pub memory_entries: i64,
+    /// Number of disk segments
+    pub disk_segments: i64,
+    /// Total disk size in bytes
+    pub total_disk_size_bytes: i64,
+    /// Compression ratio achieved
+    pub compression_ratio: f64,
+}
+
+/// Generic operation result for any database operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationResponse {
+    /// Operation success status
+    pub success: bool,
+    /// Error message if operation failed
+    pub error_message: Option<String>,
+    /// Error code if operation failed
+    pub error_code: Option<String>,
+    /// Number of items affected by the operation
+    pub affected_count: i64,
+    /// Processing time in microseconds
+    pub processing_time_us: i64,
+    /// Additional metadata
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+}
+
+impl HealthResponse {
+    /// Create a healthy status response
+    pub fn healthy(
+        version: String,
+        uptime_seconds: i64,
+        total_operations: i64,
+        successful_operations: i64,
+        failed_operations: i64,
+        avg_processing_time_us: f64,
+    ) -> Self {
+        Self {
+            status: "HEALTHY".to_string(),
+            version,
+            uptime_seconds,
+            total_operations,
+            successful_operations,
+            failed_operations,
+            avg_processing_time_us,
+            storage_healthy: true,
+            wal_healthy: true,
+            timestamp: chrono::Utc::now().timestamp_micros(),
+        }
+    }
+
+    /// Create a degraded status response
+    pub fn degraded(
+        version: String,
+        uptime_seconds: i64,
+        total_operations: i64,
+        successful_operations: i64,
+        failed_operations: i64,
+        avg_processing_time_us: f64,
+        storage_healthy: bool,
+        wal_healthy: bool,
+    ) -> Self {
+        Self {
+            status: "DEGRADED".to_string(),
+            version,
+            uptime_seconds,
+            total_operations,
+            successful_operations,
+            failed_operations,
+            avg_processing_time_us,
+            storage_healthy,
+            wal_healthy,
+            timestamp: chrono::Utc::now().timestamp_micros(),
+        }
+    }
+}
+
+impl OperationResponse {
+    /// Create a successful operation response
+    pub fn success(affected_count: i64, processing_time_us: i64) -> Self {
+        Self {
+            success: true,
+            error_message: None,
+            error_code: None,
+            affected_count,
+            processing_time_us,
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Create a failed operation response
+    pub fn error(error_message: String, error_code: Option<String>, processing_time_us: i64) -> Self {
+        Self {
+            success: false,
+            error_message: Some(error_message),
+            error_code,
+            affected_count: 0,
+            processing_time_us,
+            metadata: HashMap::new(),
+        }
+    }
+}
+
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
 pub type UnifiedSearchResult = SearchResult; 

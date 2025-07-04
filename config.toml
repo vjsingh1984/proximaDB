@@ -25,14 +25,36 @@ wal_urls = [
 ]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 1048576  # 1MB
-global_flush_threshold = 536870912  # 512MB
+memory_flush_size_bytes = 1048576  # 1MB flush trigger - background flush after ~2 batches (500*384*4≈768KB)
+global_flush_threshold = 2097152  # 2MB global trigger for background flush coordination
 
-# LSM tree configuration
+# WAL durability and performance configuration
+strategy_type = "Avro"  # Options: "Avro" (schema evolution), "Bincode" (performance)
+# Memtable strategy - choose based on your sync_mode and workload:
+# - "BTree": Best for PerBatch/Periodic sync (ordered flush, efficient storage)  
+# - "SkipList": Best for Always sync (concurrent reads during slow disk writes)
+# - "HashMap": Best for MemoryOnly sync (O(1) memory ops matter when no disk)
+# - "Art": Best for sparse collections with heavy metadata filtering
+memtable_type = "BTree"
+
+# Durability vs Performance Tradeoff:
+# - "Always": fsync() on every write (~1-10ms latency, maximum durability)
+# - "PerBatch": fsync() after batch completion (balanced, recommended for production)
+# - "Periodic": fsync() on timer (good for high throughput)
+# - "Never": no fsync() (fastest, data loss risk on crash)
+# - "MemoryOnly": no disk WAL, flush directly to storage files (fastest writes)
+sync_mode = "PerBatch"
+
+# Performance tuning
+batch_threshold = 500  # Number of operations per batch
+write_buffer_size_mb = 8  # Write buffer size for throughput
+concurrent_flushes = 4  # Max concurrent flush operations
+
+# LSM tree configuration  
 [storage.lsm_config]
-memtable_size_mb = 64
+memtable_size_mb = 64  # 64MB memtable capacity to avoid OOM on BTreeMap/HashMap/DashMap
 level_count = 7
-compaction_threshold = 4
+compaction_threshold = 2  # Reduced from 4 to trigger compaction sooner
 block_size_kb = 64
 
 # ProximaDB hierarchical storage layout - Local Development Configuration

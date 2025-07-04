@@ -1,0 +1,31 @@
+{
+  "benchmark_info": {
+    "corpus_size": 10000,
+    "vector_dimension": 768,
+    "batch_size": 200,
+    "storage_engine": "VIPER",
+    "indexing": "AXIS",
+    "timestamp": 1751419055.3754218
+  },
+  "insertion_performance": {
+    "total_vectors": 10000,
+    "total_time_seconds": 63.296478033065796,
+    "overall_rate_vectors_per_sec": 157.98667336239538,
+    "successful_batches": 50,
+    "failed_batches": 0,
+    "batch_time_stats": {
+      "mean": 1.1622876882553101,
+      "min": 0.9039103984832764,
+      "max": 2.2162280082702637,
+      "stdev": 0.312858365150687
+    },
+    "batch_rate_stats": {
+      "mean": 180.786076044973,
+      "min": 90.24342227138322,
+      "max": 221.26086870511898,
+      "stdev": 34.001504074196106
+    }
+  },
+  "search_performance": {},
+  "overall_metrics": {}
+}

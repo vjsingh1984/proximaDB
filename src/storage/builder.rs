@@ -64,8 +64,6 @@ pub struct DataStorageConfig {
     /// Compaction settings
     pub compaction_config: crate::core::CompactionConfig,
 
-    /// Tiering configuration
-    pub tiering_config: Option<DataTieringConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,60 +115,6 @@ pub enum CompressionLevel {
 // NOTE: CompactionConfig and CompactionStrategy moved to unified_types.rs
 pub use crate::core::{CompactionConfig, CompactionStrategy};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataTieringConfig {
-    /// Hot tier configuration
-    pub hot_tier: TierConfig,
-
-    /// Warm tier configuration  
-    pub warm_tier: TierConfig,
-
-    /// Cold tier configuration
-    pub cold_tier: TierConfig,
-
-    /// Auto-tiering policies
-    pub auto_tier_policies: AutoTierPolicies,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TierConfig {
-    /// Storage URLs for this tier
-    pub urls: Vec<String>,
-
-    /// Compression settings
-    pub compression: DataCompressionConfig,
-
-    /// Cache size for this tier
-    pub cache_size_mb: usize,
-
-    /// Access pattern optimization
-    pub access_pattern: AccessPattern,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AccessPattern {
-    /// Optimized for random access
-    Random,
-    /// Optimized for sequential access
-    Sequential,
-    /// Mixed access pattern
-    Mixed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoTierPolicies {
-    /// Move to warm tier after this many hours of no access
-    pub hot_to_warm_hours: u64,
-
-    /// Move to cold tier after this many hours of no access
-    pub warm_to_cold_hours: u64,
-
-    /// Access frequency threshold for keeping in hot tier
-    pub hot_tier_access_threshold: u32,
-
-    /// Enable predictive tiering based on access patterns
-    pub enable_predictive_tiering: bool,
-}
 
 /// Storage-focused system configuration (storage, WAL, filesystem only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,7 +204,6 @@ impl Default for StorageSystemConfig {
                     enable_background_compaction: true,
                     compaction_interval_seconds: 300,
                 },
-                tiering_config: None,
             },
             wal_system: WalConfig::default(),
             filesystem: FilesystemConfig::default(),
@@ -453,11 +396,6 @@ impl StorageSystemBuilder {
     // NOTE: Indexing configuration methods have been moved to src/indexing/builder.rs
     // Use IndexingBuilder for configuring search algorithms, distance metrics, etc.
 
-    /// Enable tiered storage
-    pub fn with_tiered_data_storage(mut self, config: DataTieringConfig) -> Self {
-        self.config.data_storage.tiering_config = Some(config);
-        self
-    }
 
     /// Configure storage performance settings
     pub fn with_storage_performance_config(mut self, config: StoragePerformanceConfig) -> Self {
@@ -764,10 +702,6 @@ impl std::fmt::Debug for StorageSystem {
                 &self.config.data_storage.compression.compress_vectors,
             )
             .field(
-                "tiering_enabled",
-                &self.config.data_storage.tiering_config.is_some(),
-            )
-            .field(
                 "zero_copy_enabled",
                 &self.config.storage_performance.enable_zero_copy,
             )
@@ -866,7 +800,6 @@ impl Default for DataStorageConfig {
             enable_mmap: true,
             cache_size_mb: 512,
             compaction_config: crate::core::CompactionConfig::default(),
-            tiering_config: None,
         }
     }
 }

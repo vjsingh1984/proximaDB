@@ -322,6 +322,7 @@ pub struct ViperSchemaStrategy {
 /// Legacy schema strategy for backward compatibility
 pub struct LegacySchemaStrategy {
     collection_id: CollectionId,
+    #[allow(dead_code)]
     config: ViperSchemaConfig,
 }
 

@@ -66,7 +66,6 @@ fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
-#[derive(Debug)]
 pub struct StorageEngine {
     config: StorageConfig,
     lsm_trees: Arc<RwLock<HashMap<CollectionId, LsmTree>>>,
@@ -75,6 +74,7 @@ pub struct StorageEngine {
     wal_manager: Arc<WalManager>,
     axis_index_manager: Arc<AxisIndexManager>,
     compaction_manager: Arc<CompactionManager>,
+    filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     
     /// Collection service for metadata operations (separation of concerns)
     collection_service: Arc<CollectionService>,
@@ -114,7 +114,7 @@ impl StorageEngine {
 
         // Create WAL strategy and manager using factory pattern
         let wal_strategy =
-            crate::storage::persistence::wal::WalFactory::create_from_config(&wal_config, filesystem)
+            crate::storage::persistence::wal::WalFactory::create_from_config(&wal_config, filesystem.clone())
                 .await
                 .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
         let wal_manager = Arc::new(
@@ -148,6 +148,7 @@ impl StorageEngine {
             wal_manager,
             axis_index_manager,
             compaction_manager,
+            filesystem,
             collection_service,
         })
     }
@@ -223,6 +224,7 @@ impl StorageEngine {
                 self.wal_manager.clone(),
                 data_dir.clone(),
                 Some(self.compaction_manager.clone()),
+                self.filesystem.clone(),
             )
         });
 
@@ -380,6 +382,7 @@ impl StorageEngine {
                 self.wal_manager.clone(),
                 data_dir.clone(),
                 Some(self.compaction_manager.clone()),
+                self.filesystem.clone(),
             ),
         );
 
@@ -434,6 +437,7 @@ impl StorageEngine {
                                     self.wal_manager.clone(),
                                     data_dir.clone(),
                                     Some(self.compaction_manager.clone()),
+                                    self.filesystem.clone(),
                                 ),
                             );
                         }
@@ -594,7 +598,8 @@ impl StorageEngine {
                 "🧹 Performing collection-aware WAL cleanup for: {}",
                 collection_id
             );
-            if let Err(e) = self.wal_manager.drop_collection(collection_id).await {
+            // Note: WAL no longer handles collection operations - handled by CollectionService
+            if let Err(e) = self.wal_manager.flush(Some(collection_id)).await {
                 tracing::warn!(
                     "Failed to cleanup WAL entries for collection {}: {}",
                     collection_id,
@@ -1023,7 +1028,8 @@ impl StorageEngine {
                 collection_ids
             );
             for collection_id in &collection_ids {
-                if let Err(e) = self.wal_manager.drop_collection(collection_id).await {
+                // Note: WAL no longer handles collection operations - handled by CollectionService
+            if let Err(e) = self.wal_manager.flush(Some(collection_id)).await {
                     tracing::warn!(
                         "Failed to cleanup WAL entries for collection {}: {}",
                         collection_id,

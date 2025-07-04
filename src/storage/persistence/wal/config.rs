@@ -6,7 +6,6 @@
 //! WAL Configuration with Smart Defaults for Performance
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 // NOTE: CompressionAlgorithm moved to unified_types.rs
 // WAL-specific configuration uses the unified type
@@ -98,6 +97,8 @@ pub enum SyncMode {
     Periodic,
     /// Sync after each batch (good for batch workloads)
     PerBatch,
+    /// Memory-only durability (no disk WAL, flush from memory to storage)
+    MemoryOnly,
 }
 
 /// WAL strategy type selection
@@ -282,6 +283,48 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
         // Set performance thresholds
         wal_config.performance.memory_flush_size_bytes = core_config.memory_flush_size_bytes;
         wal_config.performance.global_flush_threshold = core_config.global_flush_threshold;
+        
+        // Apply optional configuration overrides from config.toml
+        if let Some(strategy_type) = &core_config.strategy_type {
+            wal_config.strategy_type = match strategy_type.as_str() {
+                "Avro" => WalStrategyType::Avro,
+                "Bincode" => WalStrategyType::Bincode,
+                _ => WalStrategyType::default(),
+            };
+        }
+        
+        if let Some(memtable_type) = &core_config.memtable_type {
+            wal_config.memtable.memtable_type = match memtable_type.as_str() {
+                "BTree" => MemTableType::BTree,
+                "HashMap" => MemTableType::HashMap,
+                "SkipList" => MemTableType::SkipList,
+                "Art" => MemTableType::Art,
+                _ => MemTableType::default(),
+            };
+        }
+        
+        if let Some(sync_mode) = &core_config.sync_mode {
+            wal_config.performance.sync_mode = match sync_mode.as_str() {
+                "Always" => SyncMode::Always,
+                "PerBatch" => SyncMode::PerBatch,
+                "Periodic" => SyncMode::Periodic,
+                "Never" => SyncMode::Never,
+                "MemoryOnly" => SyncMode::MemoryOnly,
+                _ => SyncMode::PerBatch, // Default to balanced mode
+            };
+        }
+        
+        if let Some(batch_threshold) = core_config.batch_threshold {
+            wal_config.performance.batch_threshold = batch_threshold;
+        }
+        
+        if let Some(write_buffer_mb) = core_config.write_buffer_size_mb {
+            wal_config.performance.write_buffer_size = write_buffer_mb * 1024 * 1024; // Convert MB to bytes
+        }
+        
+        if let Some(concurrent_flushes) = core_config.concurrent_flushes {
+            wal_config.performance.concurrent_flushes = concurrent_flushes;
+        }
         
         wal_config
     }

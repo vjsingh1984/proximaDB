@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::storage::engines::lsm::LsmTree;
-use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};
+use proximadb::storage::traits::{UnifiedStorageEngine, CompactionParameters};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory, WalStrategyType};
 use proximadb::core::{LsmConfig, VectorRecord};
@@ -23,7 +23,7 @@ async fn create_lsm_tree_with_wal(temp_dir: &TempDir) -> Result<LsmTree> {
     // Create WAL manager
     let mut wal_config = WalConfig::default();
     wal_config.strategy_type = WalStrategyType::Avro;
-    wal_config.multi_disk.data_directories = vec![temp_dir.path().to_path_buf()];
+    wal_config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
     
     let strategy = WalFactory::create_from_config(&wal_config, filesystem).await?;
     let wal_manager = Arc::new(WalManager::new(strategy, wal_config).await?);
@@ -38,12 +38,14 @@ async fn create_lsm_tree_with_wal(temp_dir: &TempDir) -> Result<LsmTree> {
     
     // Create LSM tree
     let collection_id = "test_collection".to_string();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let lsm_tree = LsmTree::new(
         &lsm_config,
         collection_id,
         wal_manager,
         temp_dir.path().to_path_buf(),
         None, // No compaction manager for tests
+        filesystem_factory,
     );
     
     Ok(lsm_tree)

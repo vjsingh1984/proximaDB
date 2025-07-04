@@ -326,7 +326,7 @@ mod metadata_lifecycle_tests {
         );
         
         // Phase 3: Search (optimized filtering)
-        let (search_results, search_measurement) = measure_performance!(
+        let (_search_results, search_measurement) = measure_performance!(
             "Search phase (optimized)",
             1,
             {

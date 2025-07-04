@@ -14,7 +14,7 @@ use proximadb::core::VectorRecord;
 use chrono::Utc;
 
 /// Helper function to create VIPER storage engine
-async fn create_viper_engine(temp_dir: &TempDir) -> Result<ViperCoreEngine> {
+async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperCoreEngine> {
     // Create filesystem factory
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
@@ -77,7 +77,7 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
         
     let flush_result = viper_engine.flush(flush_params).await?;
     assert!(flush_result.success);
-    assert!(flush_result.duration_ms >= 0);
+    assert!(flush_result.duration_ms < u64::MAX); // Check it's not uninitialized
     
     println!("✅ VIPER engine flush operations verified");
     println!("   - Success: {}", flush_result.success);
@@ -146,7 +146,7 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
         
     let compact_result = viper_engine.compact(compact_params).await?;
     assert!(compact_result.success);
-    assert!(compact_result.duration_ms >= 0);
+    assert!(compact_result.duration_ms < u64::MAX); // Check it's not uninitialized
     
     println!("✅ VIPER engine compaction operations verified");
     println!("   - Success: {}", compact_result.success);

@@ -1,0 +1,65 @@
+{
+  "benchmark_timestamp": 1751255953.133273,
+  "success_rate": 100.0,
+  "avg_startup_ms": 2008.4073638759687,
+  "configurations_tested": 7,
+  "implementation_features": [
+    "Atomic flush coordination",
+    "Strategy Pattern + Factory Pattern",
+    "Multi-memtable support (HashMap, SkipList, BTree, Art)",
+    "External configuration (sync modes)",
+    "Zero data loss guarantees",
+    "Performance optimizations per memtable type"
+  ],
+  "results": [
+    {
+      "config": "PerBatch+BTree+Avro",
+      "rating": "\u2705 GOOD",
+      "startup_ms": 2003.888834035024,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "Always+SkipList+Bincode",
+      "rating": "\u2705 GOOD",
+      "startup_ms": 2009.475458995439,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "Never+HashMap+Bincode",
+      "rating": "\ud83d\ude80 EXCELLENT",
+      "startup_ms": 2009.6512919990346,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "MemoryOnly+HashMap+Avro",
+      "rating": "\ud83d\ude80 EXCELLENT",
+      "startup_ms": 2010.2895010495558,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "PerBatch+SkipList+Bincode",
+      "rating": "\u26a1 VERY GOOD",
+      "startup_ms": 2009.7254590364173,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "Periodic+BTree+Avro",
+      "rating": "\u26a1 VERY GOOD",
+      "startup_ms": 2010.7661259826273,
+      "success": true,
+      "notes": "Server started successfully"
+    },
+    {
+      "config": "PerBatch+Art+Bincode",
+      "rating": "\u26a1 VERY GOOD",
+      "startup_ms": 2005.0548760336824,
+      "success": true,
+      "notes": "Server started successfully"
+    }
+  ]
+}

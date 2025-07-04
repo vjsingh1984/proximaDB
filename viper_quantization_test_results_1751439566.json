@@ -1,0 +1,31 @@
+{
+  "test_config": {
+    "corpus_size": 10000,
+    "dimension": 768,
+    "num_queries": 5,
+    "top_k": 10,
+    "batch_size": 200,
+    "flush_threshold_mb": 1
+  },
+  "collections": {
+    "baseline": "viper_baseline_10k",
+    "quantized": "viper_comparison_10k"
+  },
+  "insertion_results": {
+    "baseline_inserted": 50,
+    "quantized_inserted": 50
+  },
+  "performance_summary": {
+    "baseline_avg_search_ms": 848.7353801727295,
+    "quantized_avg_search_ms": 796.8560218811035,
+    "speedup_factor": 1.065105058965554,
+    "baseline_total_results": 50,
+    "quantized_total_results": 50
+  },
+  "quality_metrics": {
+    "exact_matches": 5,
+    "high_overlap": 0,
+    "avg_score_difference": 0.01966796934604645,
+    "avg_rank_correlation": 1.0
+  }
+}
