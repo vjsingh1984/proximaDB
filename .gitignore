@@ -157,6 +157,7 @@ flamegraph.svg
 core.*
 *.core
 !*/core.rs
+!src/storage/engines/viper/core.rs 
 !src/core/
 
 # Security files
