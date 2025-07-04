@@ -52,6 +52,8 @@ image::Assignment Service Flow.png[Assignment Service Flow,600,align=center]
 
 === ⚡ Core Innovation: Unified Memtable System
 
+image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,800,align=center]
+
 ==== Revolutionary Design Pattern
 ProximaDB pioneered the **unified memtable architecture** - a paradigm shift from traditional storage-specific implementations:
 
@@ -79,6 +81,8 @@ ProximaDB pioneered the **unified memtable architecture** - a paradigm shift fro
 - **Memtable Integration**: BTree/HashMap backends with pluggable serialization
 - **Flush Coordination**: Atomic operations across multiple collections
 - **Assignment Awareness**: Multi-disk distribution with collection affinity
+
+image::WAL_Strategy_Pattern.png[WAL Strategy Pattern,800,align=center]
 
 === 🔄 Advanced Search Features Roadmap
 
@@ -383,6 +387,8 @@ results = client.search(
 
 ProximaDB's URL-based storage abstraction provides seamless multi-cloud deployment:
 
+image::Storage_Pairing_Strategy.png[Storage Pairing Strategy,700,align=center]
+
 [source,toml]
 ----
 [storage.wal_config]
@@ -407,6 +413,8 @@ disk_type = { NetworkStorage = { latency_ms = 10.0 } }
 ----
 
 == 🌟 Engineering Challenges & Solutions
+
+image::Engineering_Challenges_Simple.png[Engineering Challenges Overview,800,align=center]
 
 === Challenge 1: Unified Memtable Architecture
 

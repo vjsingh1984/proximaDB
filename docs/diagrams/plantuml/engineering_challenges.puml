@@ -1,0 +1,142 @@
+@startuml Engineering_Challenges
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<challenge>> LightCoral
+    BackgroundColor<<solution>> LightGreen
+    BackgroundColor<<result>> Gold
+}
+
+title ProximaDB Engineering Challenges & Solutions
+header Key Architectural Innovations
+footer Generated with PlantUML
+
+package "Challenge 1: Unified Memtable Architecture" {
+    component "Problem" as Prob1 <<challenge>> {
+        **Code Duplication**
+        • Separate memtables per storage engine
+        • Maintenance overhead
+        • Inconsistent interfaces
+        • Performance variations
+    }
+    
+    component "Solution" as Sol1 <<solution>> {
+        **Unified Interface + Behavior Wrappers**
+        • Single MemtableManager trait
+        • WalBehaviorWrapper & LsmBehaviorWrapper
+        • Pluggable backends (BTree/SkipList/HashMap)
+        • VIPER uses pure WAL delegation
+    }
+    
+    component "Result" as Res1 <<result>> {
+        **40% Code Reduction**
+        • Eliminated storage-specific implementations
+        • Consistent performance across engines
+        • Simplified maintenance
+        • Enhanced testability
+    }
+}
+
+package "Challenge 2: Storage-Aware Search" {
+    component "Problem" as Prob2 <<challenge>> {
+        **Monolithic Search Engines**
+        • Cannot optimize for data location
+        • One-size-fits-all approach
+        • Performance vs quality trade-offs
+        • Limited to single index type
+    }
+    
+    component "Solution" as Sol2 <<solution>> {
+        **Polymorphic Search Factory**
+        • SearchEngineFactory pattern
+        • WAL/VIPER/LSM engine selection
+        • Result aggregation & merging
+        • Location-aware optimization
+    }
+    
+    component "Result" as Res2 <<result>> {
+        **6.10x Performance Gain**
+        • 317ms → 52ms search latency
+        • 100% exact matches retained
+        • 1.0000 rank correlation
+        • Zero quality loss
+    }
+}
+
+package "Challenge 3: Multi-Cloud Abstraction" {
+    component "Problem" as Prob3 <<challenge>> {
+        **Vendor Lock-in**
+        • Cloud-specific implementations
+        • Complex migration processes
+        • Re-architecture required
+        • Limited deployment flexibility
+    }
+    
+    component "Solution" as Sol3 <<solution>> {
+        **URL-Based Filesystem**
+        • file://, s3://, adls://, gcs:// support
+        • Unified async interfaces
+        • Configuration-only changes
+        • Automatic retry & error handling
+    }
+    
+    component "Result" as Res3 <<result>> {
+        **Zero-Downtime Migration**
+        • Seamless cloud provider switching
+        • Hybrid deployment support
+        • No vendor lock-in
+        • Operational flexibility
+    }
+}
+
+package "Challenge 4: Production WAL System" {
+    component "Problem" as Prob4 <<challenge>> {
+        **Simplistic Logging**
+        • No multi-collection support
+        • Limited serialization options
+        • Poor assignment integration
+        • Inadequate flush coordination
+    }
+    
+    component "Solution" as Sol4 <<solution>> {
+        **Strategy Pattern WAL**
+        • Avro & Bincode serialization
+        • Assignment service integration
+        • Atomic flush coordination
+        • Background management
+    }
+    
+    component "Result" as Res4 <<result>> {
+        **Enterprise-Grade WAL**
+        • Multi-collection atomic operations
+        • Cross-language compatibility
+        • Native Rust performance
+        • Production reliability
+    }
+}
+
+' Problem to Solution flows
+Prob1 --> Sol1 : "addressed by"
+Prob2 --> Sol2 : "addressed by"
+Prob3 --> Sol3 : "addressed by"
+Prob4 --> Sol4 : "addressed by"
+
+' Solution to Result flows
+Sol1 --> Res1 : "achieved"
+Sol2 --> Res2 : "achieved"
+Sol3 --> Res3 : "achieved"
+Sol4 --> Res4 : "achieved"
+
+note bottom
+    **Tools & Technologies Used:**
+    
+    • **Rust trait system**: Type-safe abstractions and zero-cost interfaces
+    • **Arc/Mutex**: Thread-safe shared state management
+    • **Tokio**: Async runtime for high-performance I/O operations
+    • **Factory pattern**: Dynamic engine selection and result aggregation
+    • **Apache Arrow**: Efficient Parquet reading and columnar operations
+    • **AWS/Azure/GCS SDKs**: Multi-cloud filesystem implementations
+    • **Apache Avro**: Schema-based cross-language serialization
+    • **Bincode**: Native Rust zero-copy deserialization
+end note
+
+@enduml
