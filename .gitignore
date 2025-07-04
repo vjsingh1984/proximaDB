@@ -237,6 +237,87 @@ cobertura.xml
 *.log
 *.log.*
 
+# Test data directories
+test_100k_*/
+test_10k_*/
+test_*/
+tests_new/
+misc/
+obsolete/
+simple_wal_test
+
+# Generated test and benchmark data
+*.json
+!package.json
+!config.json
+!clients/**/package.json
+!examples/**/*.json
+bert_*.json
+msmarco_*.json
+viper_quantization_test_results_*.json
+wal_*.json
+corpus_*.json
+*_benchmark_*.json
+*_test_results_*.json
+
+# Generated Python test scripts and data files
+test_*.py
+!tests/**/*.py
+!clients/**/test_*.py
+debug_*.py
+analyze_*.py
+check_*.py
+clean_*.py
+comprehensive_*.py
+concrete_*.py
+final_*.py
+layered_*.py
+migrate_*.py
+monitor_*.py
+python_*.py
+quick_*.py
+run_*.py
+show_*.py
+simple_*.py
+
+# Generated corpus and data files
+bert_*.json
+*_corpus.json
+*.parquet
+
+# Generated report files
+*.md
+!README.md
+!docs/**/*.md
+!clients/**/*.md
+!examples/**/*.md
+COMPREHENSIVE_*.md
+CRITICAL_*.md
+FINAL_*.md
+GRPC_*.md
+TEST_*.md
+WAL_*.md
+*_REPORT.md
+*_SUMMARY.md
+*_PLAN.md
+
+# Generated HTML reports
+reports/
+*.html
+!docs/**/*.html
+
+# Generated configuration files (but keep examples)
+*_config.toml
+staging_*.toml
+test_*.toml
+!examples/**/*.toml
+
+# Shell scripts for testing
+test_*.sh
+*.sh
+!scripts/**/*.sh
+!examples/**/*.sh
+
 # Build artifacts
 target/
 build_rs_cov.profraw
