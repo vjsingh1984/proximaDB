@@ -190,7 +190,7 @@ class Vector(BaseModel):
 
 class SearchResult(BaseModel):
     """Search result with similarity score"""
-    id: str
+    id: Optional[str] = None  # Made optional to match protobuf definition
     score: float
     metadata: Optional[Dict[str, Any]] = None
     distance: Optional[float] = None
