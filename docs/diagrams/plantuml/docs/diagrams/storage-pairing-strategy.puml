@@ -1,0 +1,127 @@
+@startuml Storage_Pairing_Strategy
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<lsm>> LightBlue
+    BackgroundColor<<viper>> LightGreen
+    BackgroundColor<<optimal>> Gold
+    BackgroundColor<<suboptimal>> LightGray
+}
+
+title Optimal Memtable Pairing for Storage Engines\n(Note: Only WAL and LSM have memtables)
+header ProximaDB Vector Database
+footer Generated with PlantUML
+
+package "LSM Storage Collections" <<lsm>> {
+    component "BincodeWAL" as LSM_WAL <<optimal>>
+    
+    component "BTree MemTable" as LSM_Mem <<optimal>> {
+        note right
+            **Ordered Operations**
+            - Natural sort order
+            - Efficient range scans
+            - Direct SSTable generation
+        end note
+    }
+    
+    component "SSTable Writer" as SSTable {
+        note bottom
+            **Output Format**
+            - Sorted key-value pairs
+            - Bloom filters
+            - Block compression
+            - Efficient compaction
+        end note
+    }
+}
+
+package "VIPER Storage (No Memtable)" <<viper>> {
+    component "WAL with HashMap" as VIPER_WAL <<optimal>> {
+        note right
+            **WAL Memtable for VIPER**
+            - HashMap in WAL layer
+            - Batches vectors
+            - Delegates to VIPER
+            - No VIPER memtable
+        end note
+    }
+    
+    component "VIPER Engine" as VIPER_Engine {
+        note right
+            **Direct Processing**
+            - Receives batches from WAL
+            - No intermediate storage
+            - Straight to Parquet
+            - No memtable needed
+        end note
+    }
+    
+    component "Parquet Writer" as Parquet {
+        note bottom
+            **Output Format**
+            - Columnar storage
+            - Vector compression
+            - ML clustering
+            - Analytics ready
+        end note
+    }
+}
+
+package "Alternative Configurations" {
+    component "AvroWAL" as Avro <<suboptimal>> {
+        note right
+            **When to Use:**
+            - Schema evolution needed
+            - Long-term archival
+            - Cross-system compatibility
+        end note
+    }
+    
+    component "SkipList MemTable" as Skip <<suboptimal>> {
+        note right
+            **When to Use:**
+            - High concurrency
+            - Probabilistic ordering OK
+            - Write-heavy workloads
+        end note
+    }
+    
+    component "ART MemTable" as ART <<suboptimal>> {
+        note right
+            **When to Use:**
+            - Sparse collections
+            - String-heavy metadata
+            - Memory constrained
+        end note
+    }
+}
+
+' LSM Optimal Path
+LSM_WAL --> LSM_Mem : "writes to"
+LSM_Mem --> SSTable : "flushes to"
+
+' VIPER Path (through WAL delegation)
+VIPER_WAL --> VIPER_Engine : "delegates batches"
+VIPER_Engine --> Parquet : "writes directly"
+
+' Alternative paths (dashed)
+Avro ..> LSM_Mem : "compatible"
+Avro ..> VIPER_WAL : "compatible"
+Skip ..> SSTable : "can flush to"
+ART ..> Parquet : "can flush to"
+
+' Performance indicators
+note top of LSM_WAL
+    **LSM Performance Targets**
+    ✓ 100K+ writes/sec
+    ✓ <1ms latency
+    ✓ Ordered flush
+end note
+
+note top of VIPER_WAL
+    **VIPER Performance Targets**
+    ✓ 200K+ writes/sec
+    ✓ <0.5ms latency
+    ✓ Random access
+end note
+
+@enduml
