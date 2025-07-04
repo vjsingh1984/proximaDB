@@ -983,7 +983,21 @@ impl WalStrategy for AvroWalStrategy {
                         tracing::info!("🚀 TRIGGERING: Coordinated flush for collection {}", collection_id);
                         let storage_flush_start = std::time::Instant::now();
                         
-                        let flush_data = FlushDataSource::DiskWalFiles(vec![format!("wal_files_for_{}", collection_id)]);
+                        // Extract vector records from WAL entries for storage engine flush
+                        let vector_records: Vec<crate::core::VectorRecord> = entries.iter()
+                            .filter_map(|entry| {
+                                match &entry.operation {
+                                    crate::storage::persistence::wal::WalOperation::Insert { record, .. } => Some(record.clone()),
+                                    crate::storage::persistence::wal::WalOperation::Update { record, .. } => Some(record.clone()),
+                                    _ => None,
+                                }
+                            })
+                            .collect();
+                        
+                        tracing::info!("🔍 DELEGATION: Extracted {} vector records from {} WAL entries for storage engine", 
+                                      vector_records.len(), entries.len());
+                        
+                        let flush_data = FlushDataSource::VectorRecords(vector_records);
                         match self.flush_coordinator.execute_coordinated_flush(&collection_id, flush_data, None, None).await {
                             Ok(storage_result) => {
                                 let storage_flush_time = storage_flush_start.elapsed();

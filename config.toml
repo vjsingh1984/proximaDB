@@ -25,8 +25,8 @@ wal_urls = [
 ]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 1048576  # 1MB flush trigger - background flush after ~2 batches (500*384*4≈768KB)
-global_flush_threshold = 2097152  # 2MB global trigger for background flush coordination
+memory_flush_size_bytes = 67108864  # 64MB flush trigger - aligned with LSM memtable size for fair comparison
+global_flush_threshold = 134217728  # 128MB global trigger for background flush coordination (2x individual threshold)
 
 # WAL durability and performance configuration
 strategy_type = "Avro"  # Options: "Avro" (schema evolution), "Bincode" (performance)
@@ -46,7 +46,7 @@ memtable_type = "BTree"
 sync_mode = "PerBatch"
 
 # Performance tuning
-batch_threshold = 500  # Number of operations per batch
+batch_threshold = 250  # Number of operations per batch - reduced for more frequent flushes
 write_buffer_size_mb = 8  # Write buffer size for throughput
 concurrent_flushes = 4  # Max concurrent flush operations
 

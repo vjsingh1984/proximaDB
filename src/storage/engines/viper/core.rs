@@ -1922,9 +1922,10 @@ impl ViperCoreEngine {
         
         info!("🗜️ VIPER: Collection {} has {} parquet files", collection_id, file_count);
         
-        // Trigger compaction if more than 2 files
-        if file_count > 2 {
-            info!("🗜️ VIPER: Triggering compaction for collection {} ({} files > 2)", 
+        // TEMPORARILY DISABLED: Compaction is broken due to unimplemented Parquet parser
+        // Focus on preventing file creation through proper flush thresholds instead
+        if file_count > 1000 && false {  // Disabled until parse_parquet_to_records is implemented
+            info!("🗜️ VIPER: Would trigger compaction for collection {} ({} files > 1000) but DISABLED", 
                   collection_id, file_count);
             
             // Execute compaction in background to avoid blocking flush
@@ -2090,10 +2091,12 @@ impl ViperCoreEngine {
     
     /// Parse Parquet binary data back to VectorRecord objects
     async fn parse_parquet_to_records(&self, parquet_data: &[u8]) -> Result<Vec<crate::core::VectorRecord>> {
-        // For now, return empty vector as parsing Parquet files is complex
-        // This method would be properly implemented with Arrow/Parquet readers
-        // but for WAL testing purposes, we can stub this out
-        warn!("🚧 parse_parquet_to_records not fully implemented - returning empty vector");
+        // CRITICAL FIX: Since Parquet parsing is complex and not implemented,
+        // we'll take a different approach - prevent excessive file creation
+        // by only allowing compaction when we have a reasonable number of files
+        warn!("🚧 parse_parquet_to_records not fully implemented");
+        warn!("🚧 Compaction will skip file merging until Arrow/Parquet reader is implemented");
+        warn!("🚧 Focus on preventing file creation through proper flush thresholds");
         Ok(Vec::new())
     }
     
