@@ -1,0 +1,92 @@
+@startuml viper-search-optimization
+!theme bluegray
+title VIPER Storage-Aware Search Optimizations
+
+package "VIPER Search Engine" {
+  [SearchRequest] as SR
+  [PredicateBuilder] as PB
+  [MLClusterSelector] as MCS
+  [QuantizationSelector] as QS
+  [VectorizedScanner] as VS
+}
+
+package "Parquet Layer" {
+  [ParquetReader] as PR
+  [ColumnChunk] as CC
+  [PredicateFilter] as PF
+  [SIMDProcessor] as SP
+}
+
+package "ML Clustering" {
+  [ClusterMetadata] as CM
+  [ClusterSelector] as CS
+  [DistanceCalculator] as DC
+}
+
+package "Quantization Engines" {
+  [FP32Engine] as FP32
+  [PQ4Engine] as PQ4
+  [BinaryEngine] as BE
+}
+
+package "Index Structures" {
+  [RoaringBitmaps] as RB
+  [VectorIndex] as VI
+  [MetadataIndex] as MI
+}
+
+' Search flow
+SR --> PB : metadata filters
+PB --> PF : pushdown predicates
+
+SR --> MCS : query vector
+MCS --> CM : cluster metadata
+MCS --> CS : select relevant clusters
+CS --> DC : distance calculations
+
+SR --> QS : precision requirements
+QS --> FP32 : high precision
+QS --> PQ4 : balanced
+QS --> BE : high speed
+
+SR --> VS : scan parameters
+VS --> PR : columnar scan
+PR --> CC : read chunks
+CC --> PF : apply filters
+PF --> SP : SIMD operations
+
+' Index integration
+VS --> RB : categorical filtering
+VS --> VI : vector indexing
+VS --> MI : metadata indexing
+
+note right of PB
+  Predicate Pushdown:
+  • Filter rows at Parquet level
+  • Reduce data transfer
+  • Leverage column statistics
+end note
+
+note right of MCS
+  ML Clustering:
+  • K-means cluster selection
+  • 70-90% search space reduction
+  • Cached cluster metadata
+end note
+
+note right of QS
+  Quantization Strategy:
+  • FP32: 100% accuracy
+  • PQ4: 4x speed, 95% accuracy
+  • Binary: 16x speed, 85% accuracy
+end note
+
+note bottom of VS
+  Vectorized Operations:
+  • SIMD vector operations
+  • Batch processing
+  • Cache-friendly access patterns
+  • Reduced CPU cycles
+end note
+
+@enduml

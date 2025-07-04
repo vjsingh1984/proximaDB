@@ -1,0 +1,125 @@
+@startuml Storage Architecture
+!theme plain
+title ProximaDB Storage Architecture
+
+package "Storage Abstraction Layer" {
+  interface "Filesystem" {
+    +read(path) : Vec<u8>
+    +write(path, data) : Result
+    +atomic_write(path, data) : Result
+    +delete(path) : Result
+    +list(path) : Vec<FileInfo>
+  }
+}
+
+package "Filesystem Implementations" {
+  class "LocalFilesystem" {
+    -base_path: PathBuf
+    -permissions: FilePermissions
+    +ensure_directory()
+    +atomic_write_with_rename()
+  }
+  
+  class "S3Filesystem" {
+    -client: S3Client
+    -bucket: String
+    -region: String
+    +upload_multipart()
+    +download_with_retry()
+  }
+  
+  class "AzureFilesystem" {
+    -client: BlobServiceClient
+    -container: String
+    +upload_block_blob()
+    +download_blob()
+  }
+  
+  class "GcsFilesystem" {
+    -client: CloudStorageClient
+    -bucket: String
+    +upload_object()
+    +download_object()
+  }
+}
+
+package "Storage Components" {
+  class "FilestoreMetadataBackend" {
+    -filesystem_factory: Arc<FilesystemFactory>
+    -base_path: String
+    -cache: LruCache<CollectionId, Collection>
+    +store_collection()
+    +get_collection()
+    +list_collections()
+    +create_snapshot()
+  }
+  
+  class "WalManager" {
+    -strategies: HashMap<String, WalStrategy>
+    -active_strategy: String
+    +append_entry()
+    +read_entries()
+    +compact()
+  }
+  
+  class "VectorStorageCoordinator" {
+    -engines: HashMap<String, VectorEngine>
+    -routing_strategy: RoutingStrategy
+    +insert_vectors()
+    +search_vectors()
+    +delete_vectors()
+  }
+  
+  class "ViperPipeline" {
+    -processor: VectorRecordProcessor
+    -flusher: ParquetFlusher
+    -compaction_engine: CompactionEngine
+    +process_records()
+    +sorted_rewrite_optimization()
+    +compress_optimize()
+  }
+  
+  class "CompactionEngine" {
+    -sorting_strategies: SortingStrategy
+    -reorganization_strategies: ReorganizationStrategy
+    +execute_sorted_rewrite()
+    +apply_reorganization()
+    +calculate_compression()
+  }
+}
+
+package "Data Organization" {
+  note as N1
+    <b>Collection Storage Layout:</b>
+    /data/proximadb/
+    ├── collections/
+    │   ├── {collection_name}/
+    │   │   ├── metadata.json
+    │   │   ├── vectors/
+    │   │   │   └── *.parquet
+    │   │   └── indexes/
+    │   │       └── *.idx
+    └── wal/
+        └── {collection_id}/
+            └── wal_current.avro
+  end note
+}
+
+' Inheritance
+LocalFilesystem --|> Filesystem
+S3Filesystem --|> Filesystem
+AzureFilesystem --|> Filesystem
+GcsFilesystem --|> Filesystem
+
+' Usage
+FilestoreMetadataBackend --> Filesystem : uses
+WalManager --> Filesystem : uses
+VectorStorageCoordinator --> Filesystem : uses
+VectorStorageCoordinator --> ViperPipeline : delegates to
+ViperPipeline --> CompactionEngine : uses
+
+note right of Filesystem : All storage operations\ngo through this abstraction\nfor multi-cloud support
+
+note bottom : Storage URLs:\nfile:///path/to/data\ns3://bucket/path\nadls://account/container/path\ngcs://bucket/path
+
+@enduml

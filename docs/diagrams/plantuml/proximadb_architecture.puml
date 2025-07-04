@@ -1,0 +1,119 @@
+@startuml ProximaDB_Architecture_Overview
+!theme aws-orange
+!define AWSPUML https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v18.0/dist
+!includeurl AWSPUML/AWSCommon.puml
+!includeurl AWSPUML/ApplicationIntegration/APIGateway.puml
+!includeurl AWSPUML/Compute/EC2.puml
+!includeurl AWSPUML/Database/DynamoDB.puml
+!includeurl AWSPUML/Storage/S3.puml
+
+title ProximaDB High-Level Architecture
+
+skinparam rectangle {
+    BackgroundColor LightBlue
+    BorderColor Navy
+}
+
+skinparam database {
+    BackgroundColor LightGreen
+    BorderColor DarkGreen
+}
+
+skinparam cloud {
+    BackgroundColor LightYellow
+    BorderColor Orange
+}
+
+' Client Layer
+rectangle "Client Applications" as clients {
+    rectangle "Python SDK" as python_sdk
+    rectangle "REST Clients" as rest_clients
+    rectangle "gRPC Clients" as grpc_clients
+}
+
+' API Layer
+rectangle "ProximaDB Server" as server {
+    rectangle "REST API\n(Port 5678)" as rest_api
+    rectangle "gRPC API\n(Port 5679)" as grpc_api
+    rectangle "Protocol Router" as router
+}
+
+' Service Layer
+rectangle "Core Services" as services {
+    rectangle "UnifiedAvroService\n(Database Operations)" as unified_service
+    rectangle "CollectionService\n(Collection Management)" as collection_service
+    rectangle "VectorStorageCoordinator\n(Vector Operations)" as coordinator
+}
+
+' Storage Layer
+rectangle "Storage Layer" as storage {
+    database "VIPER Engine\n(Vector-optimized Parquet)" as viper
+    database "WAL System\n(Write-Ahead Logging)" as wal
+    database "Metadata Store\n(Collection Config)" as metadata
+}
+
+' Filesystem Abstraction
+cloud "Multi-Cloud Storage" as cloud_storage {
+    rectangle "Local Filesystem\n(file://)" as local_fs
+    rectangle "AWS S3\n(s3://)" as s3
+    rectangle "Azure Blob\n(adls://)" as azure
+    rectangle "Google Cloud\n(gcs://)" as gcs
+}
+
+' Index Layer
+rectangle "AXIS Indexing System" as indexing {
+    rectangle "HNSW Index" as hnsw
+    rectangle "IVF Index" as ivf
+    rectangle "Flat Index" as flat
+}
+
+' Connections
+clients --> server : "HTTP/gRPC"
+python_sdk --> rest_api
+python_sdk --> grpc_api
+rest_clients --> rest_api
+grpc_clients --> grpc_api
+
+rest_api --> router
+grpc_api --> router
+router --> services
+
+unified_service --> collection_service
+unified_service --> coordinator
+collection_service --> metadata
+coordinator --> viper
+coordinator --> indexing
+
+viper --> wal
+viper --> cloud_storage
+wal --> cloud_storage
+metadata --> cloud_storage
+
+local_fs -.-> cloud_storage
+s3 -.-> cloud_storage
+azure -.-> cloud_storage
+gcs -.-> cloud_storage
+
+indexing --> hnsw
+indexing --> ivf
+indexing --> flat
+
+note right of server
+  Dual-protocol architecture
+  REST for compatibility
+  gRPC for performance
+end note
+
+note right of storage
+  VIPER = Vector-optimized
+  Parquet storage with
+  compression and SIMD
+end note
+
+note right of cloud_storage
+  URL-based configuration
+  allows seamless switching
+  between storage backends
+end note
+
+@enduml

@@ -1,0 +1,18 @@
+@startuml Test
+title Simple Test Diagram
+
+package "API Layer" {
+  [gRPC Server] as grpc
+  [REST Server] as rest
+}
+
+package "Service Layer" {
+  [Collection Service] as collection
+  [Avro Service] as avro
+}
+
+grpc --> collection
+rest --> collection
+collection --> avro
+
+@enduml

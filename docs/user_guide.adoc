@@ -111,7 +111,7 @@ pip install proximadb-python
 
 === Step 1: Create Your First Collection
 
-image::Collection Lifecycle.png[Collection Lifecycle,width=100%]
+image::Assignment Service Flow.png[Collection Management Flow,width=100%]
 
 A collection in ProximaDB is a container for vectors with the same dimensions and distance metric.
 

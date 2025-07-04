@@ -1,15 +1,41 @@
 @startuml Unified_Memtable_Architecture
-skinparam backgroundColor #FEFEFE
+
+skinparam backgroundColor #FAFAFA
+skinparam roundCorner 10
+skinparam shadowing false
+
 skinparam component {
-    BackgroundColor<<core>> LightBlue
-    BackgroundColor<<wrapper>> LightGreen
-    BackgroundColor<<impl>> LightYellow
-    BackgroundColor<<behavior>> Pink
+    BackgroundColor #2196F3
+    BorderColor #1976D2
+    BorderThickness 2
+    FontColor white
+    FontStyle bold
+    BackgroundColor<<core>> #2196F3
+    BackgroundColor<<wrapper>> #4CAF50
+    BackgroundColor<<impl>> #E0E0E0
+    BorderColor<<impl>> #9E9E9E
+    FontColor<<impl>> #424242
+    BackgroundColor<<behavior>> #FF9800
+}
+
+skinparam package {
+    BackgroundColor white
+    BorderColor #2196F3
+    BorderThickness 2
+    FontColor #2196F3
+    FontStyle bold
+}
+
+skinparam note {
+    BackgroundColor #FFF3E0
+    BorderColor #FF9800
+    BorderThickness 1
+    FontColor #E65100
 }
 
 title Unified Memtable Architecture with Behavior Wrappers
 header ProximaDB Vector Database
-footer Generated with PlantUML
+footer Generated with PlantUML | ProximaDB Architecture
 
 package "Core Memtable Interface" <<core>> {
     interface "MemtableCore<K, V>" as Core {
