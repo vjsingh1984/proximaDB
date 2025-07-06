@@ -342,6 +342,7 @@ pub fn convert_from_avro_entry(avro_entry: AvroWalEntry) -> Result<WalEntry> {
             .expires_at
             .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
         version: avro_entry.version as u64,
+        batch_id: None, // BatchId not stored in Avro format - will be assigned later
     })
 }
 

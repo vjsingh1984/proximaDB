@@ -1499,6 +1499,7 @@ fn convert_from_bincode_entry(bincode_entry: BincodeWalEntry) -> Result<WalEntry
             .expires_at
             .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
         version: bincode_entry.version,
+        batch_id: None, // BatchId not stored in bincode format - will be assigned later
     })
 }
 
