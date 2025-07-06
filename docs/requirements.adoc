@@ -21,7 +21,7 @@ ProximaDB is a cloud-native vector database engineered for AI applications. This
 **Tagline**: _proximity at scale_
 
 **Major Cleanup Complete**: Removed 4,457 lines of obsolete code (December 2024) ✅
-**Latest Achievement**: Collection persistence and multi-server architecture fully functional ✅
+**Latest Achievement**: Unified VectorService with multi-tier deduplication and upsert-only semantics ✅
 **BERT Embeddings**: Full support for BERT collections with 384, 768, and 1024 dimensions ✅
 
 image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
@@ -39,7 +39,7 @@ Deliver a cloud-native vector database that provides:
 - Single-node architecture optimized for performance
 - Open source transparency with accurate documentation
 
-=== Current Implementation Status (85% Complete)
+=== Current Implementation Status (90% Complete)
 
 [cols="2,1,2"]
 |===
@@ -50,7 +50,7 @@ Deliver a cloud-native vector database that provides:
 |**Multi-Server Architecture** |✅ Complete |REST:5678, gRPC:5679, separate servers
 |**WAL System** |✅ Complete |Avro/Bincode strategies, MVCC support
 |**Python SDK** |✅ Complete |Protocol abstraction, async support
-|**Vector Search** |✅ Infrastructure Complete |**Storage-aware VIPER + LSM search engines**
+|**Vector Search** |✅ Complete |**Multi-tier unified search with deduplication, VectorService**
 |**AXIS Indexing** |🚧 60% Complete |Framework ready, HNSW basic implementation
 |**Advanced Search Features** |🚧 30% Complete |**ML clustering, quantization, GPU acceleration planned**
 |**SIMD Optimizations** |🚧 x86 Ready |ARM NEON planned
@@ -1355,12 +1355,12 @@ impl CollectionService {
 ==== TODO-002: Delete Vectors by Filter
 **Requirement**: VR-024, SDK-009  
 **Test**: `test_conditional_vector_operations`
-**Implementation Location**: `src/services/unified_avro_service.rs`
+**Implementation Location**: `src/services/vector_service.rs`
 **Effort**: 4-5 days
 
 ```rust
 // Required server-side implementation:
-impl UnifiedAvroService {
+impl VectorService {
     pub async fn delete_vectors_by_filter(
         &self,
         collection_id: &str,
@@ -1383,12 +1383,12 @@ impl UnifiedAvroService {
 ==== TODO-003: Multi-Vector Search
 **Requirement**: VR-009, SDK-011
 **Test**: `test_multi_vector_search`  
-**Implementation Location**: `src/services/unified_avro_service.rs`
+**Implementation Location**: `src/services/vector_service.rs`
 **Effort**: 3-4 days
 
 ```rust
 // Required server-side implementation:
-impl UnifiedAvroService {
+impl VectorService {
     pub async fn multi_search(
         &self,
         collection_id: &str,
@@ -1408,12 +1408,12 @@ impl UnifiedAvroService {
 ==== TODO-004: Atomic Vector Operations
 **Requirement**: VR-025, SDK-013
 **Test**: `test_atomic_batch_operations`
-**Implementation Location**: `src/services/unified_avro_service.rs`
+**Implementation Location**: `src/services/vector_service.rs`
 **Effort**: 3-4 days
 
 ```rust
 // Required server-side implementation:
-impl UnifiedAvroService {
+impl VectorService {
     pub async fn atomic_insert_vectors(
         &self,
         collection_id: &str,
@@ -1435,12 +1435,12 @@ impl UnifiedAvroService {
 ==== TODO-005: Search with Aggregations
 **Requirement**: VR-026, SDK-012
 **Test**: `test_search_with_aggregations`
-**Implementation Location**: `src/services/unified_avro_service.rs`  
+**Implementation Location**: `src/services/vector_service.rs`  
 **Effort**: 5-7 days
 
 ```rust
 // Required server-side implementation:
-impl UnifiedAvroService {
+impl VectorService {
     pub async fn search_with_aggregations(
         &self,
         collection_id: &str,
@@ -1461,12 +1461,12 @@ impl UnifiedAvroService {
 ==== TODO-006: Vector Version Control
 **Requirement**: VR-022, SDK-010
 **Test**: `test_vector_version_control`
-**Implementation Location**: `src/services/unified_avro_service.rs`
+**Implementation Location**: `src/services/vector_service.rs`
 **Effort**: 7-10 days
 
 ```rust
 // Required server-side implementation:
-impl UnifiedAvroService {
+impl VectorService {
     pub async fn get_vector_history(
         &self,
         collection_id: &str,

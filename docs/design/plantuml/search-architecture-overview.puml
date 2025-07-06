@@ -1,5 +1,5 @@
 @startuml
-title Storage-Aware Polymorphic Search Architecture
+title Unified Vector Search Architecture with Multi-Tier Deduplication
 
 package "API Layer" {
   [REST Handler] as REST
@@ -7,65 +7,87 @@ package "API Layer" {
 }
 
 package "Service Layer" {
-  [UnifiedAvroService] as UAS
+  [VectorService] as VS
   [CollectionService] as CS
   
-  UAS --> CS : collection metadata
+  VS --> CS : collection metadata
 }
 
-package "Search Engine Layer" {
-  interface "StorageSearchEngine" as SSE {
-    +search_vectors()
-    +search_capabilities()
-    +engine_type()
-  }
+package "Unified Search Factory" {
+  component [SearchEngineFactory] as SEF
+  note right of SEF : search_with_deduplication()\ncreate_for_collection()\ncreate_optimized_hints()
   
-  [ViperSearchEngine] as VSE
-  [LSMSearchEngine] as LSE
+  component [MultiTierDeduplicator] as MTD
+  note right of MTD : add_tier_results()\nget_final_results()\nID-based deduplication
+  
+  SEF --> MTD : unified deduplication
+}
+
+package "Storage-Aware Search Engines" {
+  interface "StorageSearchEngine" as SSE
+  note right of SSE : search_vectors()\nsearch_capabilities()\nengine_type()
+  
+  component [ViperSearchEngine] as VSE
+  component [LSMSearchEngine] as LSE
   
   VSE ..|> SSE
   LSE ..|> SSE
 }
 
-package "Storage Layer" {
-  package "VIPER Storage" {
-    [ViperCoreEngine] as VCE
-    [ParquetReader] as PR
-    [MLClusterSelector] as MCS
-    [QuantizationEngine] as QE
+package "Storage Tiers" {
+  package "WAL (Unflushed)" {
+    [WAL Manager] as WAL
+    [Memtable] as MEM
     
-    VCE --> PR
-    VCE --> MCS
-    VCE --> QE
+    WAL --> MEM : in-memory data
   }
   
-  package "LSM Storage" {
+  package "VIPER Storage (Compacted)" {
+    [ViperCoreEngine] as VCE
+    [Parquet Files] as PF
+    [ML Clustering] as MLC
+    
+    VCE --> PF
+    VCE --> MLC
+  }
+  
+  package "LSM Storage (Flushed)" {
     [LsmTree] as LT
-    [MemTable] as MT
     [SSTable] as ST
     [BloomFilter] as BF
     
-    LT --> MT
     LT --> ST
     LT --> BF
   }
 }
 
 ' Connections
-REST --> UAS
-GRPC --> UAS
+REST --> VS
+GRPC --> VS
 
-UAS --> SSE : polymorphic dispatch
+VS --> SEF : unified search request
+
+SEF --> WAL : search unflushed (priority 1)
+SEF --> SSE : search flushed/compacted
+SEF --> MTD : deduplicate by ID
 
 VSE --> VCE : VIPER optimizations
 LSE --> LT : LSM optimizations
 
-note right of UAS
-  Search Router:
-  1. Detect collection type
-  2. Create search hints
-  3. Dispatch to engine
-  4. Merge results
+note right of SEF
+  Unified Search Pipeline:
+  1. Search WAL (unflushed)
+  2. Search storage engines
+  3. Multi-tier deduplication
+  4. Latest version wins
+  5. Return top-k results
+end note
+
+note left of MTD
+  Deduplication Priority:
+  Unflushed > Flushed > Compacted
+  
+  Ordering: Sequence > Version > Timestamp
 end note
 
 @enduml
