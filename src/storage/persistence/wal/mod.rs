@@ -13,7 +13,7 @@
 //! - Configurable compression and smart defaults
 //! - Batch operations for optimal performance
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,11 @@ pub use flush_coordinator::{
 /// WAL operation types - simplified to zero-copy Avro payloads only
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalOperation {
+    /// Legacy insert operation (being phased out in favor of AvroPayload)
+    Insert {
+        vector_id: VectorId,
+        record: VectorRecord,
+    },
     /// Soft delete with TTL - uses typed data for precise control
     Delete {
         vector_id: VectorId,
@@ -958,6 +963,7 @@ impl WalManager {
             global_sequence: 0, // Will be set by strategy
             expires_at: None,
             version: 1,
+            batch_id: None,
         };
 
         let result = self.strategy.write_entry(entry).await;
@@ -1010,6 +1016,7 @@ impl WalManager {
             global_sequence: 0, // Will be set by strategy
             expires_at: None,
             version: 1,
+            batch_id: None,
         };
 
         // Write single batch entry - strategy will handle batch processing
@@ -1043,6 +1050,7 @@ impl WalManager {
             global_sequence: 0, // Will be set by strategy
             expires_at: None,
             version: 1,
+            batch_id: None,
         };
 
         // Write with sync option
@@ -1071,7 +1079,7 @@ impl WalManager {
     ) -> Result<u64> {
         // Get current version for MVCC (optional optimization)
         if let Ok(Some(current)) = self.strategy.get_latest_entry(&collection_id, &vector_id).await {
-            record.version = current.version + 1;
+            record.version = (current.version + 1) as i64;
         } else {
             record.version = 1;
         }
@@ -1094,6 +1102,7 @@ impl WalManager {
             global_sequence: 0,
             expires_at: Some(Utc::now() + chrono::Duration::days(30)),
             version: 1,
+            batch_id: None,
         };
 
         self.strategy.write_entry(entry).await
@@ -1186,6 +1195,7 @@ impl WalManager {
             global_sequence: 0, // Will be set by strategy
             expires_at: None,   // Extracted during compaction if needed
             version: 1,
+            batch_id: None,
         };
 
         // Write to WAL immediately - no validation, maximum throughput
@@ -1248,6 +1258,7 @@ impl WalManager {
             global_sequence: 0, // Will be set by strategy
             expires_at: None,
             version: 1,
+            batch_id: None,
         };
 
         // Use write_batch_with_sync for immediate_sync support

@@ -3140,6 +3140,7 @@ impl ViperCoreEngine {
             completed_at: Utc::now(),
             engine_metrics,
             compaction_triggered: files_created > 2, // Trigger compaction if we created more than 2 files
+            flushed_batch_ids: vec![],
         })
     }
 

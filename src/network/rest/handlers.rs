@@ -16,6 +16,7 @@
 
 //! REST API handlers that delegate to unified services
 
+use anyhow::Result;
 use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
@@ -583,7 +584,7 @@ pub async fn insert_vector(
 
     // Use the UnifiedAvroService handle_vector_insert method with proper Avro binary payload
     match state
-        .unified_service
+        .vector_service
         .handle_vector_insert(&collection_id, false, &avro_payload)
         .await
     {
@@ -614,7 +615,7 @@ pub async fn get_vector(
 
     // Get vector through UnifiedAvroService
     match state
-        .unified_service
+        .vector_service
         .get_vector(&collection_id, &vector_id, true, true)
         .await
     {
@@ -712,7 +713,7 @@ pub async fn update_vector(
     match create_avro_vector_batch(&[vector_record]) {
         Ok(avro_data) => {
             match state
-                .unified_service
+                .vector_service
                 .handle_vector_insert(&collection_id, true, &avro_data) // upsert_mode = true
                 .await
             {
@@ -820,7 +821,7 @@ pub async fn search_vectors_optimized(
 
     // Use the storage-aware polymorphic search method
     match state
-        .unified_service
+        .vector_service
         .search_vectors_polymorphic(&json_payload)
         .await
     {
@@ -943,7 +944,7 @@ pub async fn batch_insert_vectors(
 
     // Insert through UnifiedAvroService (using Avro binary)
     match state
-        .unified_service
+        .vector_service
         .handle_vector_insert(&collection_id, false, &avro_payload)
         .await
     {
@@ -999,7 +1000,7 @@ pub async fn internal_flush_collection(
     );
 
     match state
-        .unified_service
+        .vector_service
         .force_flush_collection(&collection_id)
         .await
     {

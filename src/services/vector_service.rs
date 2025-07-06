@@ -1596,7 +1596,7 @@ impl VectorService {
                 info!("🔧 [DEBUG] BINCODE STRATEGY: Processing batch with unified pattern");
 
                 // 🎯 ALIGNMENT: Use same validation approach as AVRO
-                let vector_count = self.quick_validate_avro_payload(vectors_avro_payload)?;
+                let vector_count = Self::quick_validate_avro_payload(vectors_avro_payload)?;
                 
                 let operation_type = if upsert_mode {
                     format!("vector_batch_upsert_{}", collection_id)
@@ -1956,16 +1956,16 @@ impl VectorService {
             .into_iter()
             .map(|result| {
                 let mut json_result = json!({
-                    "id": result.vector_record.id,
+                    "id": result.id,
                     "score": result.score,
                 });
 
                 if include_vectors {
-                    json_result["vector"] = json!(result.vector_record.vector);
+                    json_result["vector"] = json!(result.vector);
                 }
 
                 if include_metadata {
-                    json_result["metadata"] = json!(result.vector_record.metadata);
+                    json_result["metadata"] = json!(result.metadata);
                 }
 
                 json_result

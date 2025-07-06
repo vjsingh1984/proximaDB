@@ -859,6 +859,7 @@ impl Default for FlushResult {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            flushed_batch_ids: vec![],
         }
     }
 }

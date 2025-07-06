@@ -327,6 +327,7 @@ impl UnifiedStorageEngine for LsmTree {
                     metrics
                 },
                 compaction_triggered: false,
+                flushed_batch_ids: vec![],
             });
         }
 
@@ -410,6 +411,7 @@ impl UnifiedStorageEngine for LsmTree {
                 metrics
             },
             compaction_triggered: false,
+            flushed_batch_ids: vec![],
         })
     }
 
