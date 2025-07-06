@@ -226,6 +226,7 @@ impl MetadataWalManager {
             global_sequence: 0,
             expires_at: None,
             version: metadata.version,
+            batch_id: None,
         };
 
         // Write to WAL (stays in memory, will be recovered on restart)
@@ -475,6 +476,7 @@ impl MetadataWalManager {
                 global_sequence: 0,
                 expires_at: None,
                 version: 1,
+                batch_id: None,
             };
 
             // Write to WAL

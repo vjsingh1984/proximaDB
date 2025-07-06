@@ -59,24 +59,42 @@ pub use flush_coordinator::{
 /// WAL operation types - simplified to zero-copy Avro payloads only
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalOperation {
-    /// Legacy insert operation (being phased out in favor of AvroPayload)
+    /// 🚫 DEPRECATED: Legacy insert operation - use AvroPayload with upsert instead
+    /// This is kept only for backward compatibility with existing test code
+    #[deprecated(note = "Use AvroPayload with upsert operation instead")]
     Insert {
         vector_id: VectorId,
         record: VectorRecord,
+        expires_at: Option<DateTime<Utc>>,
     },
+    
+    /// 🚫 DEPRECATED: Legacy update operation - use AvroPayload with upsert instead  
+    /// This is kept only for backward compatibility with existing test code
+    #[deprecated(note = "Use AvroPayload with upsert operation instead")]
+    Update {
+        vector_id: VectorId,
+        record: VectorRecord,
+        expires_at: Option<DateTime<Utc>>,
+    },
+    
     /// Soft delete with TTL - uses typed data for precise control
+    /// Note: Production should use AvroPayload with delete_batch operation
     Delete {
         vector_id: VectorId,
         expires_at: Option<DateTime<Utc>>, // Soft delete with TTL
     },
-    /// Flush operation
+    
+    /// Flush operation - internal system operation
     Flush,
-    /// Checkpoint operation
+    
+    /// Checkpoint operation - internal system operation  
     Checkpoint,
-    /// Binary Avro payload operation (zero-copy) - handles upsert/batch operations
+    
+    /// 🎯 PRIMARY: Binary Avro payload operation (zero-copy) - handles all production operations
+    /// This is the main operation type used in production for optimal performance
     AvroPayload {
         operation_type: String, // "upsert", "delete_batch", etc.
-        avro_data: Vec<u8>,
+        avro_data: Vec<u8>,     // Zero-copy binary Avro data
     },
 }
 

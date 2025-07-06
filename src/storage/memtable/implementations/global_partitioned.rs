@@ -468,6 +468,21 @@ impl GlobalPartitionedMemtable {
         Ok(collections_to_flush)
     }
 
+    /// Get metrics for external access
+    pub async fn get_metrics(&self) -> MemtableMetrics {
+        self.metrics.read().await.clone()
+    }
+
+    /// Update metrics externally (for specialized behavior wrappers)
+    pub async fn update_metrics<F>(&self, updater: F) -> Result<()>
+    where
+        F: FnOnce(&mut MemtableMetrics),
+    {
+        let mut metrics = self.metrics.write().await;
+        updater(&mut *metrics);
+        Ok(())
+    }
+
     /// Get entries from sequence number onwards (for recovery)
     pub async fn get_from_sequence(
         &self,

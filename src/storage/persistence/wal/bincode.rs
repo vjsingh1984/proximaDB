@@ -666,6 +666,7 @@ impl WalStrategy for BincodeWalStrategy {
                 timeout_ms: None,
                 vector_records: Vec::new(), // Empty for this old delegation pattern
                 trigger_compaction: false,
+                batch_ids: Vec::new(), // No batch IDs for this legacy delegation pattern
             };
 
             storage_engine.do_flush(&flush_params).await

@@ -255,27 +255,26 @@ impl WalFlushCoordinator {
                 storage_result.flushed_batch_ids.len()
             );
 
-            // Cleanup WAL using BatchIds returned from storage
-            if let Some(wal) = &wal_manager {
-                for batch_id in &storage_result.flushed_batch_ids {
-                    match wal.cleanup_flushed_batch(&batch_id.batch_uuid).await {
-                        Ok(cleanup_result) => {
-                            info!(
-                                "✅ Coordinator: WAL batch {} cleanup SUCCESS - {} bytes reclaimed",
-                                batch_id.batch_uuid,
-                                cleanup_result.bytes_reclaimed
-                            );
-                        }
-                        Err(cleanup_error) => {
-                            warn!(
-                                "⚠️ Coordinator: WAL batch {} cleanup FAILED: {}",
-                                batch_id.batch_uuid,
-                                cleanup_error
-                            );
-                            // Continue with other batches even if one fails
-                        }
+            // Cleanup WAL using flush cycle completion
+            if let (Some(wal), Some(ref cycle)) = (&wal_manager, &flush_cycle_data) {
+                match wal.complete_flush_cycle(cycle.clone()).await {
+                    Ok(completion_result) => {
+                        info!(
+                            "✅ Coordinator: WAL flush cycle completion SUCCESS - {} entries removed, {} bytes reclaimed",
+                            completion_result.entries_removed,
+                            completion_result.bytes_reclaimed
+                        );
+                    }
+                    Err(cleanup_error) => {
+                        warn!(
+                            "⚠️ Coordinator: WAL flush cycle completion FAILED: {}",
+                            cleanup_error
+                        );
+                        // Continue processing - the data was successfully stored
                     }
                 }
+            } else {
+                info!("📋 Coordinator: No WAL flush cycle to complete (memory-only or no cycle data)");
             }
 
             // Cleanup memtable using BatchIds  

@@ -230,11 +230,13 @@ impl WalBehaviorWrapper {
         drop(metrics);
 
         // Update global metrics
-        let mut global_metrics = self.inner.metrics.write().await;
-        global_metrics.insert_count += vector_count;
-        global_metrics.entry_count += vector_count;
-        global_metrics.size_bytes += batch.total_size_bytes;
-        drop(global_metrics);
+        self.inner
+            .update_metrics(|metrics| {
+                metrics.insert_count += vector_count as u64;
+                metrics.entry_count += vector_count;
+                metrics.size_bytes += batch.total_size_bytes;
+            })
+            .await?;
 
         tracing::info!(
             "✅ WAL_UNIFIED: Added batch {} with sequences: {:?}",
