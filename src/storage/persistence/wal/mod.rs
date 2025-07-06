@@ -301,6 +301,8 @@ pub struct FlushCycle {
     pub marked_segments: Vec<String>,
     /// Sequence ranges marked as flush-pending
     pub marked_sequences: Vec<(u64, u64)>, // (start_seq, end_seq) pairs
+    /// Batch IDs for coordination with storage engines
+    pub batch_ids: Vec<BatchId>,
     /// Current state of the flush cycle
     pub state: FlushCycleState,
 }
@@ -579,6 +581,7 @@ pub trait WalStrategy: Send + Sync + DistanceComputeProvider {
             vector_records,
             marked_segments: Vec::new(), // Default: no disk segments
             marked_sequences,
+            batch_ids: vec![],
             state: FlushCycleState::Active,
         })
     }

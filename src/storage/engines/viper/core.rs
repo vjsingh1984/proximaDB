@@ -125,6 +125,7 @@ pub struct ProcessedVectorRecord {
     pub timestamp: DateTime<Utc>,
     pub filterable_data: HashMap<String, Value>,
     pub extra_meta: HashMap<String, Value>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 // NOTE: SearchResult moved to avro_unified.rs - use from crate::core (re-exported there)
@@ -869,6 +870,7 @@ impl ViperCoreEngine {
             vector_records: Vec::new(),
             marked_segments: Vec::new(),
             marked_sequences: Vec::new(),
+            batch_ids: vec![],
             state: crate::storage::persistence::wal::FlushCycleState::Active,
         })
     }
@@ -1375,6 +1377,7 @@ impl ViperCoreEngine {
                     .unwrap_or_else(|| Utc::now()),
                 filterable_data,
                 extra_meta,
+                expires_at: None,
             })
         } else {
             // Collection metadata not found - treat all metadata as extra_meta
@@ -1390,6 +1393,7 @@ impl ViperCoreEngine {
                     .unwrap_or_else(|| Utc::now()),
                 filterable_data: HashMap::new(),
                 extra_meta: record.metadata.clone(),
+                expires_at: None,
             })
         }
     }
@@ -3461,13 +3465,13 @@ impl ViperCoreEngine {
 
         // Timestamp column
         let timestamp_array = TimestampMillisecondArray::from(
-            timestamps.into_iter().map(|ts| Some(ts)).collect::<Vec<_>>()
+            timestamps.into_iter().map(|ts| Some(ts.timestamp_millis())).collect::<Vec<_>>()
         );
         arrays.push(Arc::new(timestamp_array));
 
         // Expires_at column (optional timestamps)
         let expires_at_array = TimestampMillisecondArray::from(
-            expires_ats.into_iter().map(|opt_ts| opt_ts).collect::<Vec<_>>()
+            expires_ats.into_iter().map(|opt_ts| opt_ts.map(|ts| ts.timestamp_millis())).collect::<Vec<_>>()
         );
         arrays.push(Arc::new(expires_at_array));
 

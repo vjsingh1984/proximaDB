@@ -763,6 +763,7 @@ impl LsmTree {
             completed_at: Utc::now(),
             compaction_triggered,
             engine_metrics,
+            flushed_batch_ids: vec![],
         })
     }
 

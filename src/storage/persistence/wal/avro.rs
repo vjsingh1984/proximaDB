@@ -1953,6 +1953,7 @@ impl WalStrategy for AvroWalStrategy {
                 vector_records,
                 marked_segments: Vec::new(), // TODO: Add disk segment support
                 marked_sequences,
+                batch_ids: vec![],
                 state: FlushCycleState::Active,
             })
         } else {
@@ -1987,6 +1988,7 @@ impl WalStrategy for AvroWalStrategy {
                 vector_records,
                 marked_segments: Vec::new(),
                 marked_sequences: Vec::new(),
+                batch_ids: vec![],
                 state: FlushCycleState::Active,
             })
         }
