@@ -18,7 +18,7 @@ fn create_test_vector(collection_id: &str, dimension: usize) -> VectorRecord {
     metadata.insert("test_key".to_string(), serde_json::json!("test_value"));
 
     let now = Utc::now().timestamp_millis();
-    
+
     VectorRecord {
         id: Uuid::new_v4().to_string(),
         collection_id: collection_id.to_string(),
@@ -43,29 +43,41 @@ mod tests {
     async fn test_axis_manager_creation() {
         let config = AxisConfig::default();
         let result = AxisIndexManager::new(config).await;
-        
-        assert!(result.is_ok(), "AXIS manager should be created successfully");
+
+        assert!(
+            result.is_ok(),
+            "AXIS manager should be created successfully"
+        );
     }
 
     #[tokio::test]
     async fn test_collection_strategy_creation() {
         let config = AxisConfig::default();
         println!("✅ Created AXIS config");
-        
+
         let axis_manager = AxisIndexManager::new(config).await.unwrap();
         println!("✅ Created AXIS manager");
 
         // Test just the strategy creation part
         let collection_id = "test_collection".to_string();
-        println!("🔍 About to ensure collection strategy for: {}", collection_id);
-        
-        match axis_manager.ensure_collection_strategy(&collection_id).await {
+        println!(
+            "🔍 About to ensure collection strategy for: {}",
+            collection_id
+        );
+
+        match axis_manager
+            .ensure_collection_strategy(&collection_id)
+            .await
+        {
             Ok(_) => {
                 println!("✅ Collection strategy creation succeeded");
             }
             Err(e) => {
                 println!("❌ Collection strategy creation failed: {}", e);
-                panic!("Collection strategy creation should succeed, but got error: {}", e);
+                panic!(
+                    "Collection strategy creation should succeed, but got error: {}",
+                    e
+                );
             }
         }
     }
@@ -77,7 +89,7 @@ mod tests {
 
         let test_vector = create_test_vector("test_collection", 128);
         let result = axis_manager.insert(test_vector).await;
-        
+
         assert!(result.is_ok(), "Vector insertion should succeed");
     }
 
@@ -87,10 +99,14 @@ mod tests {
         let axis_manager = AxisIndexManager::new(config).await.unwrap();
 
         let mut expired_vector = create_test_vector("test_collection", 128);
-        expired_vector.expires_at = Some((Utc::now() - chrono::Duration::hours(1)).timestamp_millis());
+        expired_vector.expires_at =
+            Some((Utc::now() - chrono::Duration::hours(1)).timestamp_millis());
 
         let result = axis_manager.insert(expired_vector).await;
-        assert!(result.is_ok(), "Expired vector insertion should succeed but be skipped");
+        assert!(
+            result.is_ok(),
+            "Expired vector insertion should succeed but be skipped"
+        );
     }
 
     #[tokio::test]
@@ -101,7 +117,9 @@ mod tests {
         let vector_id = Uuid::new_v4();
         let collection_id = "test_collection".to_string();
 
-        let result = axis_manager.delete(&collection_id, vector_id.to_string()).await;
+        let result = axis_manager
+            .delete(&collection_id, vector_id.to_string())
+            .await;
         assert!(result.is_ok(), "Vector deletion should succeed");
     }
 
@@ -112,7 +130,7 @@ mod tests {
 
         let collection_id = "analysis_test_collection".to_string();
         let result = axis_manager.analyze_and_optimize(&collection_id).await;
-        
+
         assert!(result.is_ok(), "Collection analysis should succeed");
     }
 
@@ -122,7 +140,7 @@ mod tests {
         let axis_manager = AxisIndexManager::new(config).await.unwrap();
 
         let metrics = axis_manager.get_metrics().await;
-        
+
         // Initially should have zero metrics
         assert_eq!(metrics.total_vectors_indexed, 0);
         assert_eq!(metrics.total_collections_managed, 0);
@@ -135,7 +153,7 @@ mod tests {
 
         let collection_id = "stats_test_collection".to_string();
         let result = axis_manager.get_collection_stats(&collection_id).await;
-        
+
         // Should handle non-existent collection gracefully
         assert!(result.is_err() || result.is_ok());
     }
@@ -147,7 +165,7 @@ mod tests {
 
         let collection_id = "drop_test_collection".to_string();
         let result = axis_manager.drop_collection(&collection_id).await;
-        
+
         assert!(result.is_ok(), "Collection drop should succeed");
     }
 
@@ -179,7 +197,7 @@ mod tests {
 
         let collection_id = "migration_test_collection".to_string();
         let status = axis_manager.get_migration_status(&collection_id).await;
-        
+
         // Should be None if no migration in progress
         assert!(status.is_none());
     }

@@ -15,7 +15,7 @@
  */
 
 //! REST API handlers for ProximaDB
-//! 
+//!
 //! Provides HTTP/JSON endpoints that delegate to the unified service layer
 
 pub mod handlers;

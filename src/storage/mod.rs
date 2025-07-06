@@ -2,10 +2,10 @@
 // ORGANIZED STORAGE MODULE STRUCTURE
 // =============================================================================
 
-pub mod builder;
-pub mod validation;
-pub mod traits;
 pub mod assignment_service;
+pub mod builder;
+pub mod traits;
+pub mod validation;
 
 // Core storage engines (organized)
 pub mod engines;
@@ -19,17 +19,17 @@ pub mod atomic;
 // Legacy modules removed - use organized structure instead
 
 // Other legacy modules
+pub mod atomicity;
 pub mod encoding;
 pub mod engine;
 pub mod mmap;
-pub mod atomicity;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
-#[deprecated(note = "Use indexing/ instead")]
-pub mod search_index;
 #[deprecated(note = "Use query/ instead")]
 pub mod search;
+#[deprecated(note = "Use indexing/ instead")]
+pub mod search_index;
 pub mod strategy;
 
 // Vector storage system removed - functionality integrated into engines/
@@ -40,22 +40,20 @@ pub use validation::ConfigValidator;
 
 // Strategy pattern exports
 pub use traits::{
-    UnifiedStorageEngine, StorageEngineStrategy,
-    FlushParameters, CompactionParameters,
-    FlushResult as TraitFlushResult, CompactionResult,
-    EngineStatistics, EngineHealth
+    CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
+    FlushResult as TraitFlushResult, StorageEngineStrategy, UnifiedStorageEngine,
 };
 
 // Engine exports
 pub use engines::{lsm::LsmTree, viper::ViperCoreEngine};
 
-// Persistence exports  
-pub use persistence::{FilesystemConfig, FilesystemFactory, DiskManager};
+// Persistence exports
+pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
 
 // Atomic operations exports
 pub use atomic::{
+    AtomicOperationMetadata, AtomicOperationStatus, StagingConfig, StagingOperationType,
     UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
-    StagingConfig, StagingOperationType, AtomicOperationMetadata, AtomicOperationStatus
 };
 
 // Legacy exports (deprecated)
@@ -77,7 +75,9 @@ pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 // VIPER exports removed - use engines/viper/ instead
 pub use persistence::wal::avro::AvroWalStrategy;
 pub use persistence::wal::bincode::BincodeWalStrategy;
-pub use persistence::wal::{WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy};
+pub use persistence::wal::{
+    WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy,
+};
 
 // Vector storage system removed - functionality integrated into engines/
 // ResultProcessor has naming conflicts, import explicitly when needed

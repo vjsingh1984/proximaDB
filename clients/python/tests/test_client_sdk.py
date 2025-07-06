@@ -6,6 +6,7 @@ Consolidated tests for client creation, configuration, error handling, and SDK f
 
 import pytest
 import asyncio
+import time
 from typing import Dict, Any
 
 from proximadb import (
@@ -57,7 +58,7 @@ class TestClientCreation:
         """Test direct client class instantiation"""
         rest_client = ProximaDBRestClient("http://localhost:5678")
         assert rest_client is not None
-        assert hasattr(rest_client, 'endpoint') or hasattr(rest_client, 'base_url')
+        assert hasattr(rest_client, 'config') or hasattr(rest_client, '_http_client')
         
         grpc_client = ProximaDBGrpcClient("http://localhost:5679")
         assert grpc_client is not None
@@ -100,12 +101,12 @@ class TestClientConfiguration:
     def test_client_config_creation(self):
         """Test ClientConfig creation and validation"""
         # Basic config
-        config = ClientConfig(endpoint="localhost:5678")
-        assert config.endpoint == "localhost:5678"
+        config = ClientConfig(url="http://localhost:5678")
+        assert config.url == "http://localhost:5678"
         
         # Advanced config
         advanced_config = ClientConfig(
-            endpoint="localhost:5678",
+            url="http://localhost:5678",
             timeout=10.0,
             retry_attempts=5,
             enable_debug_logging=True,
@@ -119,7 +120,7 @@ class TestClientConfiguration:
     def test_config_serialization(self):
         """Test configuration serialization"""
         config = ClientConfig(
-            endpoint="localhost:5678",
+            url="http://localhost:5678",
             timeout=15.0,
             retry_attempts=3
         )
@@ -127,7 +128,7 @@ class TestClientConfiguration:
         # Test dict conversion
         config_dict = config.model_dump() if hasattr(config, 'model_dump') else config.__dict__
         assert isinstance(config_dict, dict)
-        assert config_dict.get('endpoint') == "localhost:5678"
+        assert config_dict.get('url') == "http://localhost:5678"
         assert config_dict.get('timeout') == 15.0
     
     def test_config_defaults(self):

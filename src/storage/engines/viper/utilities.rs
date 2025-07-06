@@ -27,29 +27,29 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::core::{CollectionId, VectorRecord, CompressionAlgorithm};
+use crate::core::{CollectionId, CompressionAlgorithm, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Utilities coordinator - Central management for all utility services
 pub struct ViperUtilities {
     /// Performance statistics collector
     stats_collector: Arc<PerformanceStatsCollector>,
-    
+
     /// TTL cleanup service
     ttl_service: Arc<Mutex<TTLCleanupService>>,
-    
+
     /// Staging operations coordinator
     staging_coordinator: Arc<StagingOperationsCoordinator>,
-    
+
     /// Data partitioner
     partitioner: Arc<DataPartitioner>,
-    
+
     /// Compression optimizer
     compression_optimizer: Arc<CompressionOptimizer>,
-    
+
     /// Utilities configuration
     config: ViperUtilitiesConfig,
-    
+
     /// Background service handles
     service_handles: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -59,19 +59,19 @@ pub struct ViperUtilities {
 pub struct ViperUtilitiesConfig {
     /// Statistics collection configuration
     pub stats_config: StatsConfig,
-    
+
     /// TTL configuration
     pub ttl_config: TTLConfig,
-    
+
     /// Staging operations configuration
     pub staging_config: StagingConfig,
-    
+
     /// Partitioning configuration
     pub partitioning_config: PartitioningConfig,
-    
+
     /// Compression configuration
     pub compression_config: CompressionConfig,
-    
+
     /// Enable background services
     pub enable_background_services: bool,
 }
@@ -82,13 +82,13 @@ pub struct ViperUtilitiesConfig {
 pub struct PerformanceStatsCollector {
     /// Operation metrics
     operation_metrics: Arc<RwLock<HashMap<String, OperationMetrics>>>,
-    
+
     /// Collection-level statistics
     collection_stats: Arc<RwLock<HashMap<CollectionId, CollectionStats>>>,
-    
+
     /// Global VIPER statistics
     global_stats: Arc<RwLock<GlobalViperStats>>,
-    
+
     /// Configuration
     config: StatsConfig,
 }
@@ -98,16 +98,16 @@ pub struct PerformanceStatsCollector {
 pub struct StatsConfig {
     /// Enable detailed operation tracking
     pub enable_detailed_tracking: bool,
-    
+
     /// Enable real-time metrics
     pub enable_realtime_metrics: bool,
-    
+
     /// Statistics retention period
     pub retention_period_hours: u64,
-    
+
     /// Metrics collection interval
     pub collection_interval_secs: u64,
-    
+
     /// Enable performance profiling
     pub enable_profiling: bool,
 }
@@ -170,16 +170,16 @@ pub struct OperationStatsCollector {
 pub struct TTLCleanupService {
     /// TTL configuration
     config: TTLConfig,
-    
+
     /// Filesystem access for file operations
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// Partition metadata tracking
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
-    
+
     /// Background cleanup task handle
     cleanup_task: Option<tokio::task::JoinHandle<()>>,
-    
+
     /// TTL statistics
     stats: Arc<RwLock<TTLStats>>,
 }
@@ -189,22 +189,22 @@ pub struct TTLCleanupService {
 pub struct TTLConfig {
     /// Enable TTL functionality
     pub enabled: bool,
-    
+
     /// Default TTL duration for vectors
     pub default_ttl: Option<Duration>,
-    
+
     /// Background cleanup interval
     pub cleanup_interval: Duration,
-    
+
     /// Maximum vectors to clean per batch
     pub max_cleanup_batch_size: usize,
-    
+
     /// Enable file-level TTL filtering
     pub enable_file_level_filtering: bool,
-    
+
     /// Minimum expiration age before file deletion
     pub min_expiration_age: Duration,
-    
+
     /// Cleanup priority scheduling
     pub enable_priority_scheduling: bool,
 }
@@ -238,13 +238,13 @@ pub struct CleanupResult {
 pub struct StagingOperationsCoordinator {
     /// Filesystem interface
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// Staging configuration
     config: StagingConfig,
-    
+
     /// Active staging operations
     active_operations: Arc<RwLock<HashMap<String, StagingOperation>>>,
-    
+
     /// Optimization cache
     optimization_cache: Arc<RwLock<HashMap<String, ParquetOptimizationConfig>>>,
 }
@@ -254,16 +254,16 @@ pub struct StagingOperationsCoordinator {
 pub struct StagingConfig {
     /// Enable staging optimizations
     pub enable_optimizations: bool,
-    
+
     /// Default staging directory
     pub staging_directory: String,
-    
+
     /// Cleanup interval for staging files
     pub cleanup_interval_secs: u64,
-    
+
     /// Maximum staging file age before cleanup
     pub max_staging_age_secs: u64,
-    
+
     /// Enable atomic operations
     pub enable_atomic_operations: bool,
 }
@@ -302,22 +302,22 @@ pub enum StagingStatus {
 pub struct ParquetOptimizationConfig {
     /// Rows per row group
     pub rows_per_rowgroup: usize,
-    
+
     /// Number of row groups
     pub num_rowgroups: usize,
-    
+
     /// Target file size in MB
     pub target_file_size_mb: usize,
-    
+
     /// Enable dictionary encoding
     pub enable_dictionary_encoding: bool,
-    
+
     /// Enable bloom filters
     pub enable_bloom_filters: bool,
-    
+
     /// Compression level
     pub compression_level: i32,
-    
+
     /// Column ordering for optimization
     pub column_order: Vec<String>,
 }
@@ -338,13 +338,13 @@ pub struct OptimizedParquetRecords {
 pub struct DataPartitioner {
     /// Partitioning configuration
     config: PartitioningConfig,
-    
+
     /// ML models for clustering
     clustering_models: Arc<RwLock<HashMap<CollectionId, ClusteringModel>>>,
-    
+
     /// Partition metadata
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
-    
+
     /// Partitioning statistics
     stats: Arc<RwLock<PartitioningStats>>,
 }
@@ -354,22 +354,22 @@ pub struct DataPartitioner {
 pub struct PartitioningConfig {
     /// Enable ML-driven clustering
     pub enable_ml_clustering: bool,
-    
+
     /// Default number of clusters
     pub default_cluster_count: usize,
-    
+
     /// Minimum vectors per partition
     pub min_vectors_per_partition: usize,
-    
+
     /// Maximum vectors per partition
     pub max_vectors_per_partition: usize,
-    
+
     /// Clustering algorithm
     pub clustering_algorithm: ClusteringAlgorithm,
-    
+
     /// Enable adaptive clustering
     pub enable_adaptive_clustering: bool,
-    
+
     /// Re-clustering threshold
     pub reclustering_threshold: f32,
 }
@@ -430,13 +430,13 @@ pub type ClusterId = String;
 pub struct CompressionOptimizer {
     /// Compression configuration
     config: CompressionConfig,
-    
+
     /// Compression models per collection
     compression_models: Arc<RwLock<HashMap<CollectionId, CompressionModel>>>,
-    
+
     /// Compression statistics
     stats: Arc<RwLock<CompressionStats>>,
-    
+
     /// Algorithm performance cache
     algorithm_cache: Arc<RwLock<HashMap<String, AlgorithmPerformance>>>,
 }
@@ -446,23 +446,22 @@ pub struct CompressionOptimizer {
 pub struct CompressionConfig {
     /// Enable adaptive compression
     pub enable_adaptive_compression: bool,
-    
+
     /// Default compression algorithm
     pub default_algorithm: CompressionAlgorithm,
-    
+
     /// Compression level range
     pub compression_level_range: (u8, u8),
-    
+
     /// Enable format-specific optimization
     pub enable_format_optimization: bool,
-    
+
     /// Enable compression benchmarking
     pub enable_benchmarking: bool,
-    
+
     /// Optimization interval
     pub optimization_interval_secs: u64,
 }
-
 
 /// Compression model for optimal algorithm selection
 #[derive(Debug)]
@@ -516,32 +515,23 @@ impl ViperUtilities {
         config: ViperUtilitiesConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self> {
-        let stats_collector = Arc::new(
-            PerformanceStatsCollector::new(config.stats_config.clone()).await?
-        );
-        
+        let stats_collector =
+            Arc::new(PerformanceStatsCollector::new(config.stats_config.clone()).await?);
+
         let ttl_service = Arc::new(Mutex::new(
-            TTLCleanupService::new(
-                config.ttl_config.clone(),
-                filesystem.clone(),
-            ).await?
+            TTLCleanupService::new(config.ttl_config.clone(), filesystem.clone()).await?,
         ));
-        
+
         let staging_coordinator = Arc::new(
-            StagingOperationsCoordinator::new(
-                filesystem.clone(),
-                config.staging_config.clone(),
-            ).await?
+            StagingOperationsCoordinator::new(filesystem.clone(), config.staging_config.clone())
+                .await?,
         );
-        
-        let partitioner = Arc::new(
-            DataPartitioner::new(config.partitioning_config.clone()).await?
-        );
-        
-        let compression_optimizer = Arc::new(
-            CompressionOptimizer::new(config.compression_config.clone()).await?
-        );
-        
+
+        let partitioner = Arc::new(DataPartitioner::new(config.partitioning_config.clone()).await?);
+
+        let compression_optimizer =
+            Arc::new(CompressionOptimizer::new(config.compression_config.clone()).await?);
+
         Ok(Self {
             stats_collector,
             ttl_service,
@@ -552,87 +542,105 @@ impl ViperUtilities {
             service_handles: Vec::new(),
         })
     }
-    
+
     /// Start all background services
     pub async fn start_services(&mut self) -> Result<()> {
         if !self.config.enable_background_services {
             info!("🔧 VIPER Utilities: Background services disabled");
             return Ok(());
         }
-        
+
         info!("🚀 VIPER Utilities: Starting background services");
-        
+
         // Start TTL cleanup service
         {
             let mut ttl_service = self.ttl_service.lock().await;
             ttl_service.start().await?;
         }
-        
+
         // Start statistics collection
         self.stats_collector.start_collection().await?;
-        
+
         // Start staging cleanup
         self.staging_coordinator.start_cleanup().await?;
-        
+
         // Start compression optimization
         self.compression_optimizer.start_optimization().await?;
-        
+
         info!("✅ VIPER Utilities: All background services started");
         Ok(())
     }
-    
+
     /// Stop all background services
     pub async fn stop_services(&mut self) -> Result<()> {
         info!("🛑 VIPER Utilities: Stopping background services");
-        
+
         // Stop TTL service
         {
             let mut ttl_service = self.ttl_service.lock().await;
             ttl_service.stop().await?;
         }
-        
+
         // Stop other services
         for handle in self.service_handles.drain(..) {
             let _ = handle.await;
         }
-        
+
         info!("✅ VIPER Utilities: All background services stopped");
         Ok(())
     }
-    
+
     /// Record operation metrics
     pub async fn record_operation(&self, metrics: OperationMetrics) -> Result<()> {
         self.stats_collector.record_operation(metrics).await
     }
-    
+
     /// Get performance statistics
-    pub async fn get_performance_stats(&self, collection_id: Option<&CollectionId>) -> Result<PerformanceReport> {
-        self.stats_collector.get_performance_report(collection_id).await
+    pub async fn get_performance_stats(
+        &self,
+        collection_id: Option<&CollectionId>,
+    ) -> Result<PerformanceReport> {
+        self.stats_collector
+            .get_performance_report(collection_id)
+            .await
     }
-    
+
     /// Schedule TTL cleanup
     pub async fn schedule_ttl_cleanup(&self, collection_id: &CollectionId) -> Result<()> {
         let ttl_service = self.ttl_service.lock().await;
         ttl_service.schedule_cleanup(collection_id).await
     }
-    
+
     /// Optimize compression for collection
-    pub async fn optimize_compression(&self, collection_id: &CollectionId) -> Result<CompressionRecommendation> {
-        self.compression_optimizer.optimize_for_collection(collection_id).await
+    pub async fn optimize_compression(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<CompressionRecommendation> {
+        self.compression_optimizer
+            .optimize_for_collection(collection_id)
+            .await
     }
-    
+
     /// Partition data for optimal storage
-    pub async fn partition_data(&self, collection_id: &CollectionId, records: Vec<VectorRecord>) -> Result<Vec<PartitionedData>> {
-        self.partitioner.partition_records(collection_id, records).await
+    pub async fn partition_data(
+        &self,
+        collection_id: &CollectionId,
+        records: Vec<VectorRecord>,
+    ) -> Result<Vec<PartitionedData>> {
+        self.partitioner
+            .partition_records(collection_id, records)
+            .await
     }
-    
+
     /// Create staging operation
     pub async fn create_staging_operation(
         &self,
         operation_type: StagingOperationType,
         records: Vec<VectorRecord>,
     ) -> Result<StagingOperationResult> {
-        self.staging_coordinator.create_operation(operation_type, records).await
+        self.staging_coordinator
+            .create_operation(operation_type, records)
+            .await
     }
 }
 
@@ -692,16 +700,19 @@ impl PerformanceStatsCollector {
             config: _config,
         })
     }
-    
+
     async fn start_collection(&self) -> Result<()> {
         Ok(())
     }
-    
+
     async fn record_operation(&self, _metrics: OperationMetrics) -> Result<()> {
         Ok(())
     }
-    
-    async fn get_performance_report(&self, _collection_id: Option<&CollectionId>) -> Result<PerformanceReport> {
+
+    async fn get_performance_report(
+        &self,
+        _collection_id: Option<&CollectionId>,
+    ) -> Result<PerformanceReport> {
         Ok(PerformanceReport {
             global_stats: GlobalViperStats::default(),
             collection_stats: None,
@@ -721,15 +732,15 @@ impl TTLCleanupService {
             stats: Arc::new(RwLock::new(TTLStats::default())),
         })
     }
-    
+
     async fn start(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     async fn stop(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     async fn schedule_cleanup(&self, _collection_id: &CollectionId) -> Result<()> {
         Ok(())
     }
@@ -744,11 +755,11 @@ impl StagingOperationsCoordinator {
             optimization_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
-    
+
     async fn start_cleanup(&self) -> Result<()> {
         Ok(())
     }
-    
+
     async fn create_operation(
         &self,
         _operation_type: StagingOperationType,
@@ -786,7 +797,7 @@ impl DataPartitioner {
             stats: Arc::new(RwLock::new(PartitioningStats::default())),
         })
     }
-    
+
     async fn partition_records(
         &self,
         _collection_id: &CollectionId,
@@ -805,11 +816,11 @@ impl CompressionOptimizer {
             algorithm_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
-    
+
     async fn start_optimization(&self) -> Result<()> {
         Ok(())
     }
-    
+
     async fn optimize_for_collection(
         &self,
         _collection_id: &CollectionId,
@@ -849,19 +860,20 @@ impl OperationStatsCollector {
             },
         }
     }
-    
+
     pub fn start_operation(&mut self) {
         self.operation_start = Some(Instant::now());
     }
-    
+
     pub fn start_phase(&mut self, phase_name: &str) {
-        self.phase_timers.insert(phase_name.to_string(), Instant::now());
+        self.phase_timers
+            .insert(phase_name.to_string(), Instant::now());
     }
-    
+
     pub fn end_phase(&mut self, phase_name: &str) {
         if let Some(start_time) = self.phase_timers.remove(phase_name) {
             let duration_ms = start_time.elapsed().as_millis() as u64;
-            
+
             match phase_name {
                 "preprocessing" => self.metrics.preprocessing_time_ms = duration_ms,
                 "processing" => self.metrics.processing_time_ms = duration_ms,
@@ -870,28 +882,28 @@ impl OperationStatsCollector {
             }
         }
     }
-    
+
     pub fn finalize(&mut self) -> OperationMetrics {
         if let Some(start_time) = self.operation_start {
             self.metrics.total_time_ms = start_time.elapsed().as_millis() as u64;
-            
+
             if self.metrics.total_time_ms > 0 {
-                self.metrics.throughput_ops_sec = 
-                    self.metrics.records_processed as f64 * 1000.0 / self.metrics.total_time_ms as f64;
+                self.metrics.throughput_ops_sec = self.metrics.records_processed as f64 * 1000.0
+                    / self.metrics.total_time_ms as f64;
             }
         }
-        
+
         self.metrics.clone()
     }
-    
+
     pub fn set_records_processed(&mut self, count: u64) {
         self.metrics.records_processed = count;
     }
-    
+
     pub fn set_bytes_written(&mut self, bytes: u64) {
         self.metrics.bytes_written = bytes;
     }
-    
+
     pub fn set_compression_ratio(&mut self, ratio: f32) {
         self.metrics.compression_ratio = ratio;
     }

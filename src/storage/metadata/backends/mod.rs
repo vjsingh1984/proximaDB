@@ -23,8 +23,8 @@
 // pub mod sqlite_backend;      // MOVED: obsolete/storage/metadata/backends/
 
 // Active backends used in metadata-first architecture
-pub mod filestore_backend;    // Primary filestore-based backend with Avro and filesystem API
-pub mod memory_backend;       // In-memory backend for testing
+pub mod filestore_backend; // Primary filestore-based backend with Avro and filesystem API
+pub mod memory_backend; // In-memory backend for testing
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -416,24 +416,24 @@ impl MetadataBackendFactory {
                 Ok(backend)
             }
             // Obsolete backends - return error for now, could be re-enabled if needed
-            MetadataBackendType::PostgreSQL => {
-                Err(anyhow::anyhow!("PostgreSQL backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
-            MetadataBackendType::MySQL => {
-                Err(anyhow::anyhow!("MySQL backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
-            MetadataBackendType::SQLite => {
-                Err(anyhow::anyhow!("SQLite backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
-            MetadataBackendType::DynamoDB => {
-                Err(anyhow::anyhow!("DynamoDB backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
-            MetadataBackendType::CosmosDB => {
-                Err(anyhow::anyhow!("CosmosDB backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
-            MetadataBackendType::Firestore => {
-                Err(anyhow::anyhow!("Firestore backend moved to obsolete/ directory. Use Disk backend instead."))
-            }
+            MetadataBackendType::PostgreSQL => Err(anyhow::anyhow!(
+                "PostgreSQL backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
+            MetadataBackendType::MySQL => Err(anyhow::anyhow!(
+                "MySQL backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
+            MetadataBackendType::SQLite => Err(anyhow::anyhow!(
+                "SQLite backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
+            MetadataBackendType::DynamoDB => Err(anyhow::anyhow!(
+                "DynamoDB backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
+            MetadataBackendType::CosmosDB => Err(anyhow::anyhow!(
+                "CosmosDB backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
+            MetadataBackendType::Firestore => Err(anyhow::anyhow!(
+                "Firestore backend moved to obsolete/ directory. Use Disk backend instead."
+            )),
             MetadataBackendType::MultiBackend {
                 primary,
                 fallback: _,
@@ -469,7 +469,7 @@ impl MetadataBackendFactory {
                 supports_full_text_search: false,
                 supports_geo_queries: false,
                 supports_auto_scaling: false,
-                supports_multi_region: true, // Supports S3/GCS/ADLS
+                supports_multi_region: true,       // Supports S3/GCS/ADLS
                 supports_encryption_at_rest: true, // Via filesystem encryption
                 max_document_size_mb: 16,
                 max_connections: 1000,

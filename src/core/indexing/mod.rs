@@ -8,4 +8,4 @@ pub mod roaring_bitmap;
 
 // Re-export main types for convenience
 pub use bloom_filter::{BloomFilter, BloomFilterCollection, BloomFilterStats};
-pub use roaring_bitmap::{RoaringBitmapIndex, BitmapIndexStats};
+pub use roaring_bitmap::{BitmapIndexStats, RoaringBitmapIndex};

@@ -1,13 +1,13 @@
 //! Unified Avro-based schema types for ProximaDB
 //!
-//! This module provides zero-copy, schema-evolution enabled types that serve as the 
+//! This module provides zero-copy, schema-evolution enabled types that serve as the
 //! single source of truth for all ProximaDB operations. No wrapper objects, no conversions.
 
-use apache_avro::{Schema, Reader, Writer};
+use apache_avro::{Reader, Schema, Writer};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
-use chrono::{DateTime, Utc};
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
 const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
@@ -115,7 +115,7 @@ pub struct VectorRecord {
     pub updated_at: i64,
     pub expires_at: Option<i64>,
     pub version: i64,
-    
+
     // Optional fields for search results and compatibility
     pub rank: Option<i32>,
     pub score: Option<f32>,
@@ -150,7 +150,7 @@ impl VectorRecord {
             distance: None,
         }
     }
-    
+
     /// Create with explicit timestamp (for WAL recovery, etc.)
     pub fn with_timestamp(
         id: String,
@@ -175,7 +175,7 @@ impl VectorRecord {
             distance: None,
         }
     }
-    
+
     /// Zero-copy serialization to Avro binary format
     /// This is used for WAL writes, network transmission, storage
     pub fn to_avro_bytes(&self) -> Result<Vec<u8>, apache_avro::Error> {
@@ -183,33 +183,35 @@ impl VectorRecord {
         writer.append_ser(self)?;
         Ok(writer.into_inner()?)
     }
-    
+
     /// Zero-copy deserialization from Avro binary format
     /// This is used for WAL recovery, network reception, storage reads
     pub fn from_avro_bytes(bytes: &[u8]) -> Result<Self, apache_avro::Error> {
         let cursor = Cursor::new(bytes);
         let reader = Reader::new(cursor)?;
-        
+
         for record in reader {
             let record = record?;
             return Ok(apache_avro::from_value::<Self>(&record)?);
         }
-        
-        Err(apache_avro::Error::DeserializeValue("No records found".to_string()))
+
+        Err(apache_avro::Error::DeserializeValue(
+            "No records found".to_string(),
+        ))
     }
-    
+
     /// Get the Avro schema for this record
     pub fn avro_schema() -> &'static Schema {
         &*VECTOR_RECORD_SCHEMA
     }
-    
+
     /// Update record and increment version
     pub fn update(&mut self) -> &mut Self {
         self.updated_at = Utc::now().timestamp_millis();
         self.version += 1;
         self
     }
-    
+
     /// Check if record has expired
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
@@ -218,7 +220,7 @@ impl VectorRecord {
             false
         }
     }
-    
+
     /// Convert to search result (zero-copy field mapping)
     pub fn to_search_result(&self, score: f32, rank: Option<i32>) -> SearchResult {
         SearchResult {
@@ -233,6 +235,61 @@ impl VectorRecord {
             created_at: Some(self.created_at),
             algorithm_used: None,
             processing_time_us: None,
+        }
+    }
+
+    /// Calculate the actual memory size of this vector record including vector data
+    pub fn actual_size_bytes(&self) -> usize {
+        let mut size = 0;
+
+        // Fixed-size fields
+        size += std::mem::size_of::<i64>() * 4; // timestamp, created_at, updated_at, version
+        size += std::mem::size_of::<Option<i64>>(); // expires_at
+        size += std::mem::size_of::<Option<i32>>(); // rank
+        size += std::mem::size_of::<Option<f32>>() * 2; // score, distance
+
+        // Variable-size fields
+        size += self.id.len();
+        size += self.collection_id.len();
+
+        // Vector data (this is the big one!)
+        size += self.vector.len() * std::mem::size_of::<f32>();
+        size += std::mem::size_of::<Vec<f32>>(); // Vec overhead
+
+        // Metadata (can be significant)
+        for (key, value) in &self.metadata {
+            size += key.len();
+            size += Self::estimate_json_value_size(value);
+        }
+        size += std::mem::size_of::<HashMap<String, serde_json::Value>>(); // HashMap overhead
+
+        // Add some overhead for struct padding and heap allocations
+        size += 32; // Conservative overhead estimate
+
+        size
+    }
+
+    /// Estimate the memory size of a JSON value
+    fn estimate_json_value_size(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::Null => 1,
+            serde_json::Value::Bool(_) => std::mem::size_of::<bool>(),
+            serde_json::Value::Number(_) => 16, // Conservative estimate for any number type
+            serde_json::Value::String(s) => s.len() + std::mem::size_of::<String>(),
+            serde_json::Value::Array(arr) => {
+                let mut size = std::mem::size_of::<Vec<serde_json::Value>>();
+                for item in arr {
+                    size += Self::estimate_json_value_size(item);
+                }
+                size
+            }
+            serde_json::Value::Object(obj) => {
+                let mut size = std::mem::size_of::<serde_json::Map<String, serde_json::Value>>();
+                for (key, val) in obj {
+                    size += key.len() + Self::estimate_json_value_size(val);
+                }
+                size
+            }
         }
     }
 }
@@ -260,18 +317,20 @@ impl SearchResult {
         writer.append_ser(self)?;
         Ok(writer.into_inner()?)
     }
-    
+
     /// Zero-copy deserialization from Avro binary
     pub fn from_avro_bytes(bytes: &[u8]) -> Result<Self, apache_avro::Error> {
         let cursor = Cursor::new(bytes);
         let reader = Reader::new(cursor)?;
-        
+
         for record in reader {
             let record = record?;
             return Ok(apache_avro::from_value::<Self>(&record)?);
         }
-        
-        Err(apache_avro::Error::DeserializeValue("No records found".to_string()))
+
+        Err(apache_avro::Error::DeserializeValue(
+            "No records found".to_string(),
+        ))
     }
 }
 
@@ -293,67 +352,11 @@ pub struct Collection {
 }
 
 /// Distance metrics - retains hardware acceleration via compute::distance_optimized
-/// Automatically detects and uses ARM NEON, Intel SSE3/SSE4/AVX/AVX2 capabilities
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum DistanceMetric {
-    #[serde(rename = "COSINE")]
-    Cosine,
-    #[serde(rename = "EUCLIDEAN")]
-    Euclidean,
-    #[serde(rename = "MANHATTAN")]
-    Manhattan,
-    #[serde(rename = "DOT_PRODUCT")]
-    DotProduct,
-    #[serde(rename = "HAMMING")]
-    Hamming,
-}
+// Use the canonical DistanceMetric from compute distance module
+pub use crate::compute::distance::DistanceMetric;
 
-impl DistanceMetric {
-    /// Get optimized distance calculator for current hardware platform
-    /// Automatically detects and uses ARM NEON, Intel SSE3/SSE4/AVX/AVX2 capabilities
-    pub fn get_distance_calculator(&self) -> Box<dyn crate::compute::distance::DistanceCompute> {
-        // Convert to compute::distance::DistanceMetric and create calculator
-        let compute_metric = match self {
-            DistanceMetric::Cosine => crate::compute::distance::DistanceMetric::Cosine,
-            DistanceMetric::Euclidean => crate::compute::distance::DistanceMetric::Euclidean,
-            DistanceMetric::Manhattan => crate::compute::distance::DistanceMetric::Manhattan,
-            DistanceMetric::DotProduct => crate::compute::distance::DistanceMetric::DotProduct,
-            DistanceMetric::Hamming => crate::compute::distance::DistanceMetric::Hamming,
-        };
-        crate::compute::distance::create_distance_calculator(compute_metric)
-    }
-    
-    /// Check if this metric supports SIMD acceleration
-    pub fn supports_simd(&self) -> bool {
-        match self {
-            DistanceMetric::Cosine | DistanceMetric::Euclidean | DistanceMetric::DotProduct => true,
-            DistanceMetric::Manhattan | DistanceMetric::Hamming => false,
-        }
-    }
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
-}
-
-/// Storage engines - simplified for Filesystem API
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum StorageEngine {
-    #[serde(rename = "VIPER")]
-    Viper,
-    #[serde(rename = "LSM")]
-    Lsm,
-    #[serde(rename = "STANDARD")]
-    Standard,
-}
-
-impl Default for StorageEngine {
-    fn default() -> Self {
-        Self::Viper
-    }
-}
+// Use the canonical StorageEngine from proto instead of duplicate enum
+pub use crate::proto::proximadb::StorageEngine;
 
 /// Indexing algorithms - matches Avro enum  
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -589,7 +592,6 @@ impl VectorInsertResponse {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorSearchRequest {
     pub collection_id: String,
@@ -743,7 +745,6 @@ pub struct SearchResultsBinary {
     pub collection_id: String,
 }
 
-
 // Implementation blocks for new types
 impl CollectionRequest {
     /// Create a new collection creation request
@@ -848,8 +849,6 @@ impl CollectionResponse {
     }
 }
 
-
-
 // Core type aliases from types.rs
 pub type VectorId = String;
 pub type CollectionId = String;
@@ -860,7 +859,10 @@ pub type Vector = Vec<f32>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MetadataFilter {
     /// Field-based filter with specific condition
-    Field { field: String, condition: FieldCondition },
+    Field {
+        field: String,
+        condition: FieldCondition,
+    },
     /// Logical AND of multiple filters
     And(Vec<MetadataFilter>),
     /// Logical OR of multiple filters
@@ -899,7 +901,10 @@ pub enum FieldCondition {
     /// Value is not null
     IsNotNull,
     /// Range query
-    Range { min: serde_json::Value, max: serde_json::Value },
+    Range {
+        min: serde_json::Value,
+        max: serde_json::Value,
+    },
 }
 
 /// Vector operations for batch processing
@@ -1146,7 +1151,11 @@ impl OperationResponse {
     }
 
     /// Create a failed operation response
-    pub fn error(error_message: String, error_code: Option<String>, processing_time_us: i64) -> Self {
+    pub fn error(
+        error_message: String,
+        error_code: Option<String>,
+        processing_time_us: i64,
+    ) -> Self {
         Self {
             success: false,
             error_message: Some(error_message),
@@ -1160,6 +1169,6 @@ impl OperationResponse {
 
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
-pub type UnifiedSearchResult = SearchResult; 
+pub type UnifiedSearchResult = SearchResult;
 pub type UnifiedCollection = Collection;
 pub type VectorSearchResult = SearchResult; // Alias from schema_types.rs

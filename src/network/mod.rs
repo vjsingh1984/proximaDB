@@ -5,6 +5,7 @@
 
 //! Network layer implementation for ProximaDB
 
+pub mod distributed_compute;
 pub mod grpc;
 pub mod metrics_service;
 pub mod middleware;
@@ -18,12 +19,13 @@ mod tests;
 
 use serde::{Deserialize, Serialize};
 
+pub use distributed_compute::*;
 pub use metrics_service::*;
+pub use middleware::*;
 pub use multi_server::{
     GrpcHttpServerConfig, MultiServer, MultiServerConfig, RestHttpServerConfig,
 };
 pub use server_builder::{GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder};
-pub use middleware::*;
 
 /// Network server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,4 +135,3 @@ impl Default for RateLimitConfig {
         }
     }
 }
-

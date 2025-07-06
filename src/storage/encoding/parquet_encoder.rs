@@ -1,6 +1,6 @@
 use crate::core::VectorRecord;
 use crate::storage::encoding::{CompressionType, Encoder};
-use arrow_array::{ArrayRef, Float32Array, StringArray, TimestampNanosecondArray, RecordBatch};
+use arrow_array::{ArrayRef, Float32Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;

@@ -25,26 +25,15 @@ pub enum VectorIndexType {
         ef_search: u32,
     },
     /// Inverted File Index
-    IVF {
-        nlist: u32,
-        nprobe: u32,
-    },
+    IVF { nlist: u32, nprobe: u32 },
     /// Product Quantization
-    PQ {
-        m: u32,
-        nbits: u32,
-    },
+    PQ { m: u32, nbits: u32 },
     /// Flat (exhaustive) search
     Flat,
     /// Locality Sensitive Hashing
-    LSH {
-        num_tables: u32,
-        num_bits: u32,
-    },
+    LSH { num_tables: u32, num_bits: u32 },
     /// Annoy index
-    Annoy {
-        num_trees: u32,
-    },
+    Annoy { num_trees: u32 },
     /// Full-text search
     FullText,
 }

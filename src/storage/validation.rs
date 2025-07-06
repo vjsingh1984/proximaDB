@@ -96,17 +96,23 @@ impl ConfigValidator {
         for data_dir_url in &config.multi_disk.data_directories {
             // Convert URL to path for local file systems
             let data_dir_path = if data_dir_url.starts_with("file://") {
-                std::path::PathBuf::from(data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url))
+                std::path::PathBuf::from(
+                    data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url),
+                )
             } else if data_dir_url.contains("://") {
                 // For cloud URLs, skip local filesystem validation
                 continue;
             } else {
                 std::path::PathBuf::from(data_dir_url)
             };
-            
+
             if !data_dir_path.exists() {
                 if let Err(e) = std::fs::create_dir_all(&data_dir_path) {
-                    bail!("Cannot create WAL data directory {:?}: {}", data_dir_path, e);
+                    bail!(
+                        "Cannot create WAL data directory {:?}: {}",
+                        data_dir_path,
+                        e
+                    );
                 }
             }
         }
@@ -259,7 +265,6 @@ impl ConfigValidator {
             }
         }
     }
-
 
     /// Validate performance settings compatibility
     fn validate_performance_settings(config: &StorageSystemConfig) -> Result<()> {

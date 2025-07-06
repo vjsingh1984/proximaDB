@@ -8,13 +8,13 @@
 pub mod axis;
 
 // Re-export main types for easier access
-pub use axis::{AxisIndexManager, AxisConfig};
+pub use axis::{AxisConfig, AxisIndexManager};
 
 // Placeholder index structures for compilation
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{CollectionId, VectorId, avro_unified::VectorRecord};
+use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
 
 /// Placeholder Global ID Index
 #[derive(Debug)]

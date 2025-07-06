@@ -141,9 +141,7 @@ impl BackgroundMaintenanceManager {
 
             debug!(
                 "🚿 [FLUSH] Collection: {}, Start time: {:?}, Memory size: {} bytes",
-                collection_id_clone,
-                start_time,
-                current_memory_size
+                collection_id_clone, start_time, current_memory_size
             );
 
             // TODO: Implement actual flush logic here
@@ -156,8 +154,7 @@ impl BackgroundMaintenanceManager {
 
             debug!(
                 "🚿 [FLUSH] Collection: {}, Flush operation completed in: {:?}",
-                collection_id_clone,
-                flush_duration
+                collection_id_clone, flush_duration
             );
 
             let duration = start_time.elapsed();
@@ -184,8 +181,7 @@ impl BackgroundMaintenanceManager {
                 let compaction_start = std::time::Instant::now();
                 debug!(
                     "🔄 [COMPACTION] Collection: {}, Compaction start time: {:?}",
-                    collection_id_clone,
-                    compaction_start
+                    collection_id_clone, compaction_start
                 );
 
                 // TODO: Implement actual compaction logic here
@@ -194,8 +190,7 @@ impl BackgroundMaintenanceManager {
                 let compaction_duration = compaction_start.elapsed();
                 debug!(
                     "🔄 [COMPACTION] Collection: {}, Compaction operation completed in: {:?}",
-                    collection_id_clone,
-                    compaction_duration
+                    collection_id_clone, compaction_duration
                 );
 
                 // Update stats

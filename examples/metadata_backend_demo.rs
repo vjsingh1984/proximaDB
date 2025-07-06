@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         })
         .build()
         .await?;
-    
+
     println!("✅ Local filesystem metadata backend configured");
     println!("   📂 Storage path: /data/proximadb/metadata");
 
@@ -37,14 +37,14 @@ async fn main() -> Result<()> {
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
             storage.with_s3_metadata_backend(
-                "my-proximadb-bucket", 
-                "us-west-2", 
-                true  // Use IAM role
+                "my-proximadb-bucket",
+                "us-west-2",
+                true, // Use IAM role
             )
         })
         .build()
         .await?;
-    
+
     println!("✅ S3 metadata backend configured with IAM role");
     println!("   🪣 Bucket: my-proximadb-bucket");
     println!("   🌍 Region: us-west-2");
@@ -58,12 +58,12 @@ async fn main() -> Result<()> {
             storage.with_azure_metadata_backend(
                 "myproximadbaccount",
                 "metadata-container",
-                true  // Use Managed Identity
+                true, // Use Managed Identity
             )
         })
         .build()
         .await?;
-    
+
     println!("✅ Azure metadata backend configured with Managed Identity");
     println!("   🏦 Account: myproximadbaccount");
     println!("   📦 Container: metadata-container");
@@ -77,12 +77,12 @@ async fn main() -> Result<()> {
             storage.with_gcs_metadata_backend(
                 "my-project-id",
                 "proximadb-metadata-bucket",
-                true  // Use Workload Identity
+                true, // Use Workload Identity
             )
         })
         .build()
         .await?;
-    
+
     println!("✅ GCS metadata backend configured with Workload Identity");
     println!("   📊 Project: my-project-id");
     println!("   🪣 Bucket: proximadb-metadata-bucket");
@@ -92,12 +92,10 @@ async fn main() -> Result<()> {
     println!("\n🧠 Example 5: Memory Metadata Backend (Testing)");
     let _server_memory = ServerBuilder::new()
         .with_server_endpoint("127.0.0.1", 5678)
-        .configure_storage(|storage| {
-            storage.with_memory_metadata_backend()
-        })
+        .configure_storage(|storage| storage.with_memory_metadata_backend())
         .build()
         .await?;
-    
+
     println!("✅ Memory metadata backend configured");
     println!("   ⚠️  Note: Data will not persist across restarts");
 
@@ -107,8 +105,10 @@ async fn main() -> Result<()> {
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
             storage.configure_metadata_backend(|| {
-                use proximadb::core::config::{MetadataBackendConfig, CloudStorageConfig, S3Config};
-                
+                use proximadb::core::config::{
+                    CloudStorageConfig, MetadataBackendConfig, S3Config,
+                };
+
                 MetadataBackendConfig {
                     backend_type: "filestore".to_string(),
                     storage_url: "s3://custom-bucket/custom-path/metadata".to_string(),
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         })
         .build()
         .await?;
-    
+
     println!("✅ Custom metadata backend configured");
     println!("   🪣 Custom S3 endpoint with access keys");
     println!("   💾 Cache: 512MB, Flush: 90s");

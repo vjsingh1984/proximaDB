@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
+use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
+use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::services::collection_service::CollectionService;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
 
@@ -47,22 +50,16 @@ pub use config::WalStrategyType;
 pub use config::{CompressionConfig, PerformanceConfig, WalConfig};
 pub use disk::WalDiskManager;
 pub use factory::WalFactory;
-pub use flush_coordinator::{WalFlushCoordinator, FlushState, PendingFlush, FlushDataSource, CleanupInstructions, FlushCoordinatorCallbacks};
+pub use flush_coordinator::{
+    CleanupInstructions, FlushCoordinatorCallbacks, FlushDataSource, FlushState, PendingFlush,
+    WalFlushCoordinator,
+};
 // pub use memtable::WalMemTable;  // Moved to obsolete - using new unified memtable system
 
-/// WAL operation types with MVCC support and binary Avro payload
+/// WAL operation types - simplified to zero-copy Avro payloads only
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalOperation {
-    Insert {
-        vector_id: VectorId,
-        record: VectorRecord,
-        expires_at: Option<DateTime<Utc>>, // TTL support
-    },
-    Update {
-        vector_id: VectorId,
-        record: VectorRecord,
-        expires_at: Option<DateTime<Utc>>,
-    },
+    /// Soft delete with TTL - uses typed data for precise control
     Delete {
         vector_id: VectorId,
         expires_at: Option<DateTime<Utc>>, // Soft delete with TTL
@@ -71,14 +68,49 @@ pub enum WalOperation {
     Flush,
     /// Checkpoint operation
     Checkpoint,
-    /// Binary Avro payload operation (zero-copy)
+    /// Binary Avro payload operation (zero-copy) - handles upsert/batch operations
     AvroPayload {
-        operation_type: String,
+        operation_type: String, // "upsert", "delete_batch", etc.
         avro_data: Vec<u8>,
     },
 }
 
-/// WAL entry with MVCC versioning
+/// Batch coordination identifier for WAL disk ↔ Memtable mapping
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BatchId {
+    /// Collection ID this batch belongs to
+    pub collection_id: String,
+    /// Sequence range this batch covers
+    pub sequence_range: (u64, u64), // (start_seq, end_seq)
+    /// Unique batch identifier
+    pub batch_uuid: String,
+    /// Timestamp when batch was created
+    pub created_at: DateTime<Utc>,
+}
+
+impl BatchId {
+    /// Create new batch ID
+    pub fn new(collection_id: String, start_seq: u64, end_seq: u64) -> Self {
+        Self {
+            collection_id,
+            sequence_range: (start_seq, end_seq),
+            batch_uuid: uuid::Uuid::new_v4().to_string(),
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Check if sequence is within this batch range
+    pub fn contains_sequence(&self, sequence: u64) -> bool {
+        sequence >= self.sequence_range.0 && sequence <= self.sequence_range.1
+    }
+
+    /// Get batch size (number of sequences)
+    pub fn batch_size(&self) -> u64 {
+        self.sequence_range.1 - self.sequence_range.0 + 1
+    }
+}
+
+/// WAL entry with MVCC versioning and batch coordination
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalEntry {
     /// Vector ID (client-provided or system-generated)
@@ -104,6 +136,124 @@ pub struct WalEntry {
 
     /// Entry version for MVCC
     pub version: u64,
+
+    /// Batch coordination ID for disk ↔ memtable mapping
+    pub batch_id: Option<BatchId>,
+}
+
+impl WalEntry {
+    /// Generate deterministic content-based key from vector data
+    ///
+    /// Uses full precision f32 values to ensure identical vectors have same key
+    /// while different vectors (even slightly different) get unique keys
+    pub fn content_key_from_vector(vector: &[f32]) -> String {
+        let mut hasher = blake3::Hasher::new();
+
+        // Hash vector data with full f32 precision (no rounding)
+        // This ensures identical vectors get same key, different vectors get different keys
+        for &value in vector {
+            hasher.update(&value.to_le_bytes());
+        }
+
+        // Use 16 hex chars (64 bits) for strong collision resistance
+        let hex_str = hasher.finalize().to_hex();
+        format!("vec_{}", &hex_str[..16])
+    }
+
+    /// Extract vector data from WAL operation and generate content key
+    pub fn content_key(&self) -> Result<String, anyhow::Error> {
+        match &self.operation {
+            WalOperation::Insert { record, .. } => {
+                Ok(Self::content_key_from_vector(&record.vector))
+            }
+            WalOperation::Update { record, .. } => {
+                Ok(Self::content_key_from_vector(&record.vector))
+            }
+            WalOperation::AvroPayload { avro_data, .. } => {
+                // For Avro payload, we need to extract vector from binary data
+                // For now, use a hash of the entire payload as key
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(avro_data);
+                let hex_str = hasher.finalize().to_hex();
+                Ok(format!("avro_{}", &hex_str[..16]))
+            }
+            WalOperation::Delete { vector_id, .. } => {
+                // For deletes, use the vector_id directly since we don't have vector content
+                Ok(format!("del_{}", vector_id))
+            }
+            WalOperation::Flush => Ok("flush_op".to_string()),
+            WalOperation::Checkpoint => Ok("checkpoint_op".to_string()),
+        }
+    }
+
+    /// Calculate the actual memory size of this WAL entry including vector data
+    pub fn actual_size_bytes(&self) -> usize {
+        let mut size = 0;
+
+        // Fixed fields
+        size += std::mem::size_of::<u64>() * 3; // sequence, global_sequence, version
+        size += std::mem::size_of::<DateTime<Utc>>(); // timestamp
+        size += std::mem::size_of::<Option<DateTime<Utc>>>(); // expires_at
+
+        // Variable size fields
+        size += self.entry_id.len();
+        size += self.collection_id.len(); // CollectionId is a String
+
+        // Operation size (this is the critical part that includes vector data)
+        size += self.operation.actual_size_bytes();
+
+        // Add some overhead for struct padding and heap allocations
+        size += 64; // Conservative overhead estimate
+
+        size
+    }
+}
+
+impl WalOperation {
+    /// Calculate the actual memory size of this WAL operation including vector data
+    pub fn actual_size_bytes(&self) -> usize {
+        let mut size = std::mem::size_of::<u8>(); // Enum discriminant
+
+        match self {
+            WalOperation::Insert {
+                vector_id,
+                record,
+                expires_at,
+            } => {
+                size += vector_id.len();
+                size += record.actual_size_bytes(); // This includes the vector data!
+                size += std::mem::size_of::<Option<DateTime<Utc>>>();
+            }
+            WalOperation::Update {
+                vector_id,
+                record,
+                expires_at,
+            } => {
+                size += vector_id.len();
+                size += record.actual_size_bytes(); // This includes the vector data!
+                size += std::mem::size_of::<Option<DateTime<Utc>>>();
+            }
+            WalOperation::Delete {
+                vector_id,
+                expires_at,
+            } => {
+                size += vector_id.len();
+                size += std::mem::size_of::<Option<DateTime<Utc>>>();
+            }
+            WalOperation::Flush | WalOperation::Checkpoint => {
+                // No additional data
+            }
+            WalOperation::AvroPayload {
+                operation_type,
+                avro_data,
+            } => {
+                size += operation_type.len();
+                size += avro_data.len(); // Actual byte data size
+            }
+        }
+
+        size
+    }
 }
 
 /// WAL statistics for monitoring
@@ -172,9 +322,12 @@ pub struct FlushCompletionResult {
     pub bytes_reclaimed: u64,
 }
 
+// Distance computation functions moved to unified distance system
+// These functions are now available through UnifiedDistanceCompute
+
 /// Main WAL strategy trait
 #[async_trait]
-pub trait WalStrategy: Send + Sync {
+pub trait WalStrategy: Send + Sync + DistanceComputeProvider {
     /// Strategy name for identification
     fn strategy_name(&self) -> &'static str;
 
@@ -184,7 +337,7 @@ pub trait WalStrategy: Send + Sync {
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<()>;
-    
+
     /// Set storage engine for delegated flush/compaction operations
     fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>);
 
@@ -207,7 +360,11 @@ pub trait WalStrategy: Send + Sync {
     }
 
     /// Write batch of entries with immediate disk sync for durability
-    async fn write_batch_with_sync(&self, entries: Vec<WalEntry>, immediate_sync: bool) -> Result<Vec<u64>> {
+    async fn write_batch_with_sync(
+        &self,
+        entries: Vec<WalEntry>,
+        immediate_sync: bool,
+    ) -> Result<Vec<u64>> {
         // Default implementation falls back to regular write_batch
         // Individual strategies can override for optimized immediate sync
         self.write_batch(entries).await
@@ -234,44 +391,76 @@ pub trait WalStrategy: Send + Sync {
         vector_id: &VectorId,
     ) -> Result<Option<WalEntry>>;
 
-    /// Similarity search for unflushed vectors in WAL
+    /// Similarity search for unflushed vectors in WAL with configurable distance metric
     async fn search_vectors_similarity(
         &self,
         collection_id: &CollectionId,
         query_vector: &[f32],
         k: usize,
+        distance_metric: Option<CoreDistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, WalEntry)>> {
-        // Simple implementation - WAL is not optimized for similarity search
-        // This is just for finding vectors that haven't been flushed yet
+        tracing::info!(
+            "🔍 WAL_SEARCH: Starting similarity search for collection '{}', k={}",
+            collection_id,
+            k
+        );
+
+        // Resolve distance metric using unified distance system
+        let resolved_metric = self.resolve_metric(distance_metric, collection_id).await;
+        tracing::debug!(
+            "🔍 WAL_SEARCH: Using distance metric: {:?}",
+            resolved_metric
+        );
+
         if let Some(memtable) = self.memtable() {
-            let entries = memtable.get_all_entries(collection_id).await?;
+            // Use the specialized memtable's search method which properly handles distance metrics
+            let wal_results = memtable
+                .search_unflushed_vectors(query_vector, k, collection_id, resolved_metric)
+                .await?;
+
+            // Convert from memtable format (f32, WalEntry) to trait format (VectorId, f32, WalEntry)
             let mut results = Vec::new();
-            
-            for entry in entries {
-                if let WalOperation::Insert { vector_id, record, .. } | WalOperation::Update { vector_id, record, .. } = &entry.operation {
-                    // Simple L2 distance calculation
-                    let distance = record.vector.iter()
-                        .zip(query_vector.iter())
-                        .map(|(a, b)| (a - b).powi(2))
-                        .sum::<f32>()
-                        .sqrt();
-                    
-                    results.push((vector_id.clone(), distance, entry));
-                }
+            for (score, entry) in wal_results {
+                // Extract vector ID from the WAL entry
+                let vector_id = match &entry.operation {
+                    WalOperation::Insert { vector_id, .. }
+                    | WalOperation::Update { vector_id, .. } => vector_id.clone(),
+                    WalOperation::AvroPayload { .. } => {
+                        // For Avro payloads, try to extract the ID from the entry_id or deserialized content
+                        entry.entry_id.clone()
+                    }
+                    _ => {
+                        // For other operations, use the entry_id
+                        entry.entry_id.clone()
+                    }
+                };
+
+                results.push((vector_id, score, entry));
             }
-            
-            // Sort by distance and take top k
-            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            results.truncate(k);
-            
+
+            tracing::info!(
+                "🔍 WAL_SEARCH: Memtable search returned {} results for collection '{}'",
+                results.len(),
+                collection_id
+            );
+            for (i, (vector_id, score, _)) in results.iter().enumerate() {
+                tracing::info!(
+                    "🔍 WAL_SEARCH: Result {}: {} (score: {:.4})",
+                    i + 1,
+                    vector_id,
+                    score
+                );
+            }
+
             Ok(results)
         } else {
+            tracing::warn!("🔍 WAL_SEARCH: No memtable available for similarity search");
             Ok(Vec::new())
         }
     }
 
     /// Get memtable reference for similarity search - using new unified memtable system
-    fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable<u64, WalEntry>>;
+    fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable>;
 
     /// Get latest entry for a vector (for MVCC)
     async fn get_latest_entry(
@@ -285,17 +474,27 @@ pub trait WalStrategy: Send + Sync {
 
     /// Flush memory entries to disk - delegates to storage engine if available
     async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<FlushResult>;
-    
+
     /// Delegate flush to storage engine (common implementation for all strategies)
-    async fn delegate_to_storage_engine_flush(&self, _collection_id: &CollectionId) -> Result<crate::storage::traits::FlushResult> {
+    async fn delegate_to_storage_engine_flush(
+        &self,
+        _collection_id: &CollectionId,
+    ) -> Result<crate::storage::traits::FlushResult> {
         // Default implementation - override in implementing strategies
-        Err(anyhow::anyhow!("Storage engine not available for flush delegation"))
+        Err(anyhow::anyhow!(
+            "Storage engine not available for flush delegation"
+        ))
     }
-    
+
     /// Delegate compaction to storage engine (common implementation for all strategies)  
-    async fn delegate_to_storage_engine_compact(&self, _collection_id: &CollectionId) -> Result<crate::storage::traits::CompactionResult> {
+    async fn delegate_to_storage_engine_compact(
+        &self,
+        _collection_id: &CollectionId,
+    ) -> Result<crate::storage::traits::CompactionResult> {
         // Default implementation - override in implementing strategies
-        Err(anyhow::anyhow!("Storage engine not available for compaction delegation"))
+        Err(anyhow::anyhow!(
+            "Storage engine not available for compaction delegation"
+        ))
     }
 
     /// Compact entries for a collection (MVCC cleanup)
@@ -308,54 +507,66 @@ pub trait WalStrategy: Send + Sync {
     async fn get_stats(&self) -> Result<WalStats>;
 
     /// Atomically retrieve and mark WAL entries for flush operation
-    /// 
+    ///
     /// This method provides atomic access to WAL entries that need to be flushed to storage.
     /// It ensures no gaps or duplicates by:
     /// 1. Atomically retrieving entries from memtable and disk segments
     /// 2. Marking them as "flush-pending" to prevent concurrent modifications
     /// 3. Returning entries in sequence order for consistent flush
-    /// 
+    ///
     /// The caller MUST call `complete_flush_cycle()` after successful storage write
     /// to permanently remove the entries, or `abort_flush_cycle()` on failure
     /// to restore them for retry.
-    /// 
+    ///
     /// **Memtable-Specific Optimizations:**
     /// - **BTree**: Provides ordered retrieval for consistent flush order
     /// - **HashMap**: O(1) retrieval per entry, best for large collections
     /// - **SkipList**: Probabilistic ordering with good concurrency
     /// - **ART**: Space-efficient retrieval, ideal for sparse collections
-    async fn atomic_retrieve_for_flush(&self, collection_id: &CollectionId, flush_id: &str) -> Result<FlushCycle> {
+    async fn atomic_retrieve_for_flush(
+        &self,
+        collection_id: &CollectionId,
+        flush_id: &str,
+    ) -> Result<FlushCycle> {
         // Default implementation - get all entries for the collection
         let entries = self.get_collection_entries(collection_id).await?;
-        
+
         // Extract VectorRecord data from WAL entries
         let mut vector_records = Vec::new();
         let mut marked_sequences = Vec::new();
-        
+
         if !entries.is_empty() {
             let min_seq = entries.iter().map(|e| e.sequence).min().unwrap_or(0);
             let max_seq = entries.iter().map(|e| e.sequence).max().unwrap_or(0);
             marked_sequences.push((min_seq, max_seq));
-            
+
             // Extract vector records from Insert/Update operations
             for entry in &entries {
                 match &entry.operation {
-                    WalOperation::Insert { vector_id: _, record, expires_at: _ } => {
+                    WalOperation::Insert {
+                        vector_id: _,
+                        record,
+                        expires_at: _,
+                    } => {
                         vector_records.push(record.clone());
-                    },
-                    WalOperation::Update { vector_id: _, record, expires_at: _ } => {
+                    }
+                    WalOperation::Update {
+                        vector_id: _,
+                        record,
+                        expires_at: _,
+                    } => {
                         vector_records.push(record.clone());
-                    },
+                    }
                     _ => {
                         // Skip other operation types but include in flush cycle
                     }
                 }
             }
         }
-        
+
         tracing::info!("🔄 {}: Default atomic flush retrieval - {} entries, {} vector records (collection: {}, flush_id: {})",
                       self.strategy_name(), entries.len(), vector_records.len(), collection_id, flush_id);
-        
+
         Ok(FlushCycle {
             flush_id: flush_id.to_string(),
             collection_id: collection_id.clone(),
@@ -366,14 +577,14 @@ pub trait WalStrategy: Send + Sync {
             state: FlushCycleState::Active,
         })
     }
-    
+
     /// Complete flush cycle - permanently remove flushed entries
-    /// 
+    ///
     /// This method is called after successful storage engine flush to:
     /// 1. Remove entries from memtable and disk segments
     /// 2. Update WAL sequence tracking
     /// 3. Trigger cleanup of obsolete segments
-    /// 
+    ///
     /// **Memtable-Specific Optimizations:**
     /// - **BTree**: Batch removal in sequence order for optimal B+ tree performance
     /// - **HashMap**: O(1) removal per entry, fastest for large flush cycles
@@ -382,28 +593,35 @@ pub trait WalStrategy: Send + Sync {
     async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<FlushCompletionResult> {
         // Default implementation - remove all entries for the collection
         // Individual strategies can override for optimized removal
-        tracing::info!("✅ {}: Default flush completion - {} entries for collection {} (flush_id: {})", 
-                      self.strategy_name(), flush_cycle.entries.len(), flush_cycle.collection_id, flush_cycle.flush_id);
-        
+        tracing::info!(
+            "✅ {}: Default flush completion - {} entries for collection {} (flush_id: {})",
+            self.strategy_name(),
+            flush_cycle.entries.len(),
+            flush_cycle.collection_id,
+            flush_cycle.flush_id
+        );
+
         // Drop collection data (simplified default)
         self.drop_collection(&flush_cycle.collection_id).await?;
-        
+
         Ok(FlushCompletionResult {
             entries_removed: flush_cycle.entries.len(),
             segments_cleaned: 0,
-            bytes_reclaimed: flush_cycle.entries.iter()
+            bytes_reclaimed: flush_cycle
+                .entries
+                .iter()
                 .map(|entry| std::mem::size_of_val(entry))
                 .sum::<usize>() as u64,
         })
     }
-    
+
     /// Abort flush cycle - restore entries for retry
-    /// 
+    ///
     /// This method is called when storage engine flush fails to:
     /// 1. Restore entries to active state in memtable
     /// 2. Clear "flush-pending" marks
     /// 3. Allow retry of flush operation
-    /// 
+    ///
     /// **Memtable-Specific Optimizations:**
     /// - **BTree**: Ordered restoration maintains B+ tree structure
     /// - **HashMap**: O(1) restoration per entry, fastest recovery
@@ -414,59 +632,80 @@ pub trait WalStrategy: Send + Sync {
         // Individual strategies can override for advanced restoration logic
         tracing::warn!("❌ {}: Default flush abort - {} entries restored for collection {} (flush_id: {}, reason: {})", 
                       self.strategy_name(), flush_cycle.entries.len(), flush_cycle.collection_id, flush_cycle.flush_id, reason);
-        
+
         // In the default implementation, entries are never actually marked as pending,
         // so there's nothing to restore. Advanced strategies can implement proper restoration.
         Ok(())
     }
 
     /// Assignment Service Integration (Base Implementation for All WAL Strategies)
-    
+
     /// Get the assignment service used by this WAL strategy
-    fn get_assignment_service(&self) -> &Arc<dyn crate::storage::assignment_service::AssignmentService>;
-    
+    fn get_assignment_service(
+        &self,
+    ) -> &Arc<dyn crate::storage::assignment_service::AssignmentService>;
+
     /// Select WAL directory URL for a collection using assignment service
     /// This method provides consistent assignment logic across all WAL implementations
-    async fn select_wal_url_for_collection(&self, collection_id: &str, config: &WalConfig) -> Result<String> {
+    async fn select_wal_url_for_collection(
+        &self,
+        collection_id: &str,
+        config: &WalConfig,
+    ) -> Result<String> {
         use crate::storage::assignment_service::{StorageAssignmentConfig, StorageComponentType};
-        
+
         // Check if collection already has an assignment
-        if let Some(assignment) = self.get_assignment_service().get_assignment(
-            &CollectionId::from(collection_id.to_string()),
-            StorageComponentType::Wal
-        ).await {
+        if let Some(assignment) = self
+            .get_assignment_service()
+            .get_assignment(
+                &CollectionId::from(collection_id.to_string()),
+                StorageComponentType::Wal,
+            )
+            .await
+        {
             return Ok(assignment.storage_url);
         }
-        
+
         // Create new assignment using service
         let assignment_config = StorageAssignmentConfig {
             storage_urls: config.multi_disk.data_directories.clone(),
             component_type: StorageComponentType::Wal,
             collection_affinity: config.multi_disk.collection_affinity,
         };
-        
-        let assignment_result = self.get_assignment_service().assign_storage_url(
-            &CollectionId::from(collection_id.to_string()),
-            &assignment_config
-        ).await?;
-        
-        tracing::info!("📍 Assigned collection '{}' to WAL directory '{}'", 
-                      collection_id, assignment_result.storage_url);
-        
+
+        let assignment_result = self
+            .get_assignment_service()
+            .assign_storage_url(
+                &CollectionId::from(collection_id.to_string()),
+                &assignment_config,
+            )
+            .await?;
+
+        tracing::info!(
+            "📍 Assigned collection '{}' to WAL directory '{}'",
+            collection_id,
+            assignment_result.storage_url
+        );
+
         Ok(assignment_result.storage_url)
     }
-    
+
     /// Discover existing collections from all configured WAL directories
     /// This method provides consistent discovery logic across all WAL implementations
-    async fn discover_existing_assignments(&self, config: &WalConfig, filesystem: &Arc<FilesystemFactory>) -> Result<usize> {
+    async fn discover_existing_assignments(
+        &self,
+        config: &WalConfig,
+        filesystem: &Arc<FilesystemFactory>,
+    ) -> Result<usize> {
         use crate::storage::assignment_service::{AssignmentDiscovery, StorageComponentType};
-        
+
         AssignmentDiscovery::discover_and_record_assignments(
             StorageComponentType::Wal,
             &config.multi_disk.data_directories,
             filesystem,
             self.get_assignment_service(),
-        ).await
+        )
+        .await
     }
 
     /// Recover from disk on startup
@@ -478,7 +717,10 @@ pub trait WalStrategy: Send + Sync {
     /// Force flush all collections - FOR TESTING ONLY
     /// WARNING: This method should only be used for testing and debugging
     async fn force_flush_all(&self) -> Result<()> {
-        tracing::warn!("⚠️ {}: FORCE FLUSH ALL - TESTING ONLY", self.strategy_name());
+        tracing::warn!(
+            "⚠️ {}: FORCE FLUSH ALL - TESTING ONLY",
+            self.strategy_name()
+        );
         // Default implementation - trigger flush for all known collections
         // Individual strategies can override with more efficient bulk operations
         // For now, just return success as a placeholder
@@ -487,17 +729,33 @@ pub trait WalStrategy: Send + Sync {
 
     /// Force flush specific collection - FOR TESTING ONLY
     /// WARNING: This method should only be used for testing and debugging
-    async fn force_flush_collection(&self, collection_id: &str, storage_engine: Option<&str>) -> Result<()> {
-        tracing::warn!("⚠️ {}: FORCE FLUSH COLLECTION {} - TESTING ONLY", self.strategy_name(), collection_id);
+    async fn force_flush_collection(
+        &self,
+        collection_id: &str,
+        storage_engine: Option<&str>,
+    ) -> Result<()> {
+        tracing::warn!(
+            "⚠️ {}: FORCE FLUSH COLLECTION {} - TESTING ONLY",
+            self.strategy_name(),
+            collection_id
+        );
         // Default implementation - trigger immediate flush for this collection
         // Individual strategies can override with collection-specific logic
         // For now, just return success as a placeholder
         Ok(())
     }
-    
+
     /// Register storage engine with the strategy's flush coordinator
-    async fn register_storage_engine(&self, engine_name: &str, engine: Arc<dyn UnifiedStorageEngine>) -> Result<()> {
-        tracing::warn!("⚠️ {}: register_storage_engine not implemented for {}", self.strategy_name(), engine_name);
+    async fn register_storage_engine(
+        &self,
+        engine_name: &str,
+        engine: Arc<dyn UnifiedStorageEngine>,
+    ) -> Result<()> {
+        tracing::warn!(
+            "⚠️ {}: register_storage_engine not implemented for {}",
+            self.strategy_name(),
+            engine_name
+        );
         Ok(())
     }
 }
@@ -508,6 +766,7 @@ pub struct WalManager {
     config: WalConfig,
     stats: Arc<tokio::sync::RwLock<WalStats>>,
     atomicity_manager: Option<Arc<crate::storage::atomicity::AtomicityManager>>,
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl WalManager {
@@ -546,6 +805,7 @@ impl WalManager {
             config,
             stats,
             atomicity_manager: None,
+            distance_compute: UnifiedDistanceCompute::default(),
         })
     }
 
@@ -557,11 +817,16 @@ impl WalManager {
         self.atomicity_manager = Some(atomicity_manager);
         tracing::info!("🔒 Atomicity manager attached to WAL manager");
     }
-    
+
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
         self.strategy.set_storage_engine(storage_engine);
         tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
+    }
+
+    /// Get WAL configuration (read-only access)
+    pub fn get_config(&self) -> &WalConfig {
+        &self.config
     }
 
     /// Execute atomic operation with transaction support
@@ -661,7 +926,7 @@ impl WalManager {
         }
     }
 
-    /// Insert single vector record
+    /// Insert single vector record (converted to upsert via AvroPayload)
     pub async fn insert(
         &self,
         collection_id: CollectionId,
@@ -669,21 +934,24 @@ impl WalManager {
         record: VectorRecord,
     ) -> Result<u64> {
         let start_time = std::time::Instant::now();
-        
+
         debug!(
-            "📝 [WAL_INSERT] Starting insert for collection: {}, vector_id: {}, vector_size: {} dims",
+            "📝 [WAL_UPSERT] Starting upsert for collection: {}, vector_id: {}, vector_size: {} dims",
             collection_id,
             vector_id,
             record.vector.len()
         );
 
+        // Convert VectorRecord to Avro bytes for zero-copy processing
+        let avro_data = record.to_avro_bytes()
+            .context("Failed to serialize VectorRecord to Avro")?;
+
         let entry = WalEntry {
             entry_id: vector_id.clone(),
             collection_id: collection_id.clone(),
-            operation: WalOperation::Insert {
-                vector_id: vector_id.clone(),
-                record,
-                expires_at: None,
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert".to_string(),
+                avro_data,
             },
             timestamp: Utc::now(),
             sequence: 0,        // Will be set by strategy
@@ -694,11 +962,11 @@ impl WalManager {
 
         let result = self.strategy.write_entry(entry).await;
         let duration = start_time.elapsed();
-        
+
         match &result {
             Ok(sequence) => {
                 debug!(
-                    "📝 [WAL_INSERT] Successfully inserted vector {} in collection {} (sequence: {}) in {:?}",
+                    "📝 [WAL_UPSERT] Successfully upserted vector {} in collection {} (sequence: {}) in {:?}",
                     vector_id,
                     collection_id,
                     sequence,
@@ -707,7 +975,7 @@ impl WalManager {
             }
             Err(e) => {
                 debug!(
-                    "📝 [WAL_INSERT] Failed to insert vector {} in collection {}: {} (duration: {:?})",
+                    "📝 [WAL_UPSERT] Failed to upsert vector {} in collection {}: {} (duration: {:?})",
                     vector_id,
                     collection_id,
                     e,
@@ -715,67 +983,78 @@ impl WalManager {
                 );
             }
         }
-        
+
         result
     }
 
-    /// Insert batch of vector records
+    /// Insert batch of vector records (converted to upsert via single AvroPayload)
     pub async fn insert_batch(
         &self,
         collection_id: CollectionId,
         records: Vec<(VectorId, VectorRecord)>,
     ) -> Result<Vec<u64>> {
-        let entries: Vec<WalEntry> = records
-            .into_iter()
-            .map(|(vector_id, record)| {
-                WalEntry {
-                    entry_id: vector_id.clone(),
-                    collection_id: collection_id.clone(),
-                    operation: WalOperation::Insert {
-                        vector_id,
-                        record,
-                        expires_at: None,
-                    },
-                    timestamp: Utc::now(),
-                    sequence: 0,        // Will be set by strategy
-                    global_sequence: 0, // Will be set by strategy
-                    expires_at: None,
-                    version: 1,
-                }
-            })
-            .collect();
+        // Convert batch to single Avro payload for efficient processing
+        let vector_records: Vec<VectorRecord> = records.into_iter().map(|(_, record)| record).collect();
+        let avro_data = crate::storage::persistence::wal::schema::serialize_vector_batch(&vector_records)
+            .context("Failed to serialize vector batch to Avro")?;
 
-        self.strategy.write_batch(entries).await
+        let entry = WalEntry {
+            entry_id: format!("batch_{}", uuid::Uuid::new_v4()),
+            collection_id: collection_id.clone(),
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert_batch".to_string(),
+                avro_data,
+            },
+            timestamp: Utc::now(),
+            sequence: 0,        // Will be set by strategy
+            global_sequence: 0, // Will be set by strategy
+            expires_at: None,
+            version: 1,
+        };
+
+        // Write single batch entry - strategy will handle batch processing
+        let sequence = self.strategy.write_entry(entry).await?;
+        
+        // Return sequences for all vectors in batch (strategy generates these)
+        Ok(vec![sequence; vector_records.len()])
     }
 
-    /// Insert batch of vector records with immediate sync option
+    /// Insert batch of vector records with immediate sync option (converted to upsert via AvroPayload)
     pub async fn insert_batch_with_sync(
         &self,
         collection_id: CollectionId,
         records: Vec<(VectorId, VectorRecord)>,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let entries: Vec<WalEntry> = records
-            .into_iter()
-            .map(|(vector_id, record)| {
-                WalEntry {
-                    entry_id: vector_id.clone(),
-                    collection_id: collection_id.clone(),
-                    operation: WalOperation::Insert {
-                        vector_id,
-                        record,
-                        expires_at: None,
-                    },
-                    timestamp: Utc::now(),
-                    sequence: 0,        // Will be set by strategy
-                    global_sequence: 0, // Will be set by strategy
-                    expires_at: None,
-                    version: 1,
-                }
-            })
-            .collect();
+        // Convert batch to single Avro payload for efficient processing
+        let vector_records: Vec<VectorRecord> = records.into_iter().map(|(_, record)| record).collect();
+        let avro_data = crate::storage::persistence::wal::schema::serialize_vector_batch(&vector_records)
+            .context("Failed to serialize vector batch to Avro")?;
 
-        self.strategy.write_batch_with_sync(entries, immediate_sync).await
+        let entry = WalEntry {
+            entry_id: format!("batch_sync_{}", uuid::Uuid::new_v4()),
+            collection_id: collection_id.clone(),
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert_batch".to_string(),
+                avro_data,
+            },
+            timestamp: Utc::now(),
+            sequence: 0,        // Will be set by strategy
+            global_sequence: 0, // Will be set by strategy
+            expires_at: None,
+            version: 1,
+        };
+
+        // Write with sync option
+        let sequence = if immediate_sync {
+            let sequences = self.strategy.write_batch_with_sync(vec![entry], true).await?;
+            sequences.into_iter().next().unwrap_or(0)
+        } else {
+            self.strategy.write_entry(entry).await?
+        };
+        
+        // Return sequences for all vectors in batch
+        Ok(vec![sequence; vector_records.len()])
     }
 
     /// Force immediate sync of WAL data to disk
@@ -783,36 +1062,22 @@ impl WalManager {
         self.strategy.force_sync(collection_id).await
     }
 
-    /// Update vector record
+    /// Update vector record (redirects to upsert for consistency)
     pub async fn update(
         &self,
         collection_id: CollectionId,
         vector_id: VectorId,
-        record: VectorRecord,
+        mut record: VectorRecord,
     ) -> Result<u64> {
-        // Get current version for MVCC
-        let current = self
-            .strategy
-            .get_latest_entry(&collection_id, &vector_id)
-            .await?;
-        let next_version = current.map(|e| e.version + 1).unwrap_or(1);
+        // Get current version for MVCC (optional optimization)
+        if let Ok(Some(current)) = self.strategy.get_latest_entry(&collection_id, &vector_id).await {
+            record.version = current.version + 1;
+        } else {
+            record.version = 1;
+        }
 
-        let entry = WalEntry {
-            entry_id: vector_id.clone(),
-            collection_id: collection_id.clone(),
-            operation: WalOperation::Update {
-                vector_id: vector_id.clone(),
-                record,
-                expires_at: None,
-            },
-            timestamp: Utc::now(),
-            sequence: 0,
-            global_sequence: 0,
-            expires_at: None,
-            version: next_version,
-        };
-
-        self.strategy.write_entry(entry).await
+        // Redirect to insert (which is now upsert)
+        self.insert(collection_id, vector_id, record).await
     }
 
     /// Delete vector record (soft delete with TTL)
@@ -848,15 +1113,16 @@ impl WalManager {
             .await
     }
 
-    /// Similarity search for unflushed vectors in WAL
+    /// Similarity search for unflushed vectors in WAL with configurable distance metric
     pub async fn search_vectors_similarity(
         &self,
         collection_id: &CollectionId,
         query_vector: &[f32],
         k: usize,
+        distance_metric: Option<CoreDistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, WalEntry)>> {
         self.strategy
-            .search_vectors_similarity(collection_id, query_vector, k)
+            .search_vectors_similarity(collection_id, query_vector, k, distance_metric)
             .await
     }
 
@@ -889,7 +1155,7 @@ impl WalManager {
     }
 
     /// Append binary Avro entry directly (zero-copy WAL operation)
-    /// 
+    ///
     /// RESILIENCE GUARANTEES:
     /// - Treats vector data as opaque binary blobs (never parsed)
     /// - Only extracts metadata fields (id, expires_at) for compaction
@@ -898,14 +1164,19 @@ impl WalManager {
     /// - WAL writes succeed regardless of vector content validity
     pub async fn append_avro_entry(
         &self,
+        collection_id: &str,
         operation_type: &str,
         avro_payload: &[u8],
     ) -> Result<u64> {
         // Create WAL entry with raw Avro payload (NO VALIDATION)
         // Vector content is stored as opaque bytes
         let entry = WalEntry {
-            entry_id: format!("avro_{}_{}", operation_type, Utc::now().timestamp_nanos_opt().unwrap_or_default()),
-            collection_id: "avro_ops".to_string(), // Generic collection for Avro operations
+            entry_id: format!(
+                "avro_{}_{}",
+                operation_type,
+                Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ),
+            collection_id: collection_id.to_string(), // Use actual collection_id from request
             operation: WalOperation::AvroPayload {
                 operation_type: operation_type.to_string(),
                 avro_data: avro_payload.to_vec(), // Raw bytes - never parsed
@@ -924,12 +1195,13 @@ impl WalManager {
     /// Read binary Avro entries by operation type
     pub async fn read_avro_entries(
         &self,
+        collection_id: &str,
         operation_type: &str,
         limit: Option<usize>,
     ) -> Result<Vec<Vec<u8>>> {
         let entries = self
             .strategy
-            .read_entries(&"avro_ops".to_string(), 0, limit)
+            .read_entries(&collection_id.to_string(), 0, limit)
             .await?;
 
         let mut avro_payloads = Vec::new();
@@ -948,8 +1220,46 @@ impl WalManager {
         Ok(avro_payloads)
     }
 
+    /// Append batch entry with strategy-specific payload handling (unified for AVRO/BINCODE)
+    ///
+    /// This method provides a unified interface for both AVRO and BINCODE strategies
+    /// to store batch data as single WAL entries, maintaining consistency in batch processing.
+    pub async fn append_batch_entry(
+        &self,
+        collection_id: &str,
+        operation_type: &str,
+        payload: &[u8],
+        immediate_sync: bool,
+    ) -> Result<u64> {
+        // Create WAL entry with binary payload (strategy-agnostic)
+        let entry = WalEntry {
+            entry_id: format!(
+                "batch_{}_{}",
+                operation_type,
+                Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ),
+            collection_id: collection_id.to_string(),
+            operation: WalOperation::AvroPayload {
+                operation_type: operation_type.to_string(),
+                avro_data: payload.to_vec(), // Generic binary data (AVRO, Bincode, etc.)
+            },
+            timestamp: Utc::now(),
+            sequence: 0,        // Will be set by strategy
+            global_sequence: 0, // Will be set by strategy
+            expires_at: None,
+            version: 1,
+        };
+
+        // Use write_batch_with_sync for immediate_sync support
+        let sequences = self.strategy.write_batch_with_sync(vec![entry], immediate_sync).await?;
+        Ok(sequences[0])
+    }
+
     /// Get all entries for a collection from memtable (for similarity search)
-    pub async fn get_collection_entries(&self, collection_id: &CollectionId) -> Result<Vec<WalEntry>> {
+    pub async fn get_collection_entries(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<Vec<WalEntry>> {
         self.strategy.get_collection_entries(collection_id).await
     }
 
@@ -969,15 +1279,24 @@ impl WalManager {
     }
 
     /// Atomically retrieve and mark WAL entries for flush operation
-    pub async fn atomic_retrieve_for_flush(&self, collection_id: &CollectionId, flush_id: &str) -> Result<FlushCycle> {
-        self.strategy.atomic_retrieve_for_flush(collection_id, flush_id).await
+    pub async fn atomic_retrieve_for_flush(
+        &self,
+        collection_id: &CollectionId,
+        flush_id: &str,
+    ) -> Result<FlushCycle> {
+        self.strategy
+            .atomic_retrieve_for_flush(collection_id, flush_id)
+            .await
     }
-    
+
     /// Complete flush cycle - permanently remove flushed entries
-    pub async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<FlushCompletionResult> {
+    pub async fn complete_flush_cycle(
+        &self,
+        flush_cycle: FlushCycle,
+    ) -> Result<FlushCompletionResult> {
         self.strategy.complete_flush_cycle(flush_cycle).await
     }
-    
+
     /// Abort flush cycle - restore entries for retry
     pub async fn abort_flush_cycle(&self, flush_cycle: FlushCycle, reason: &str) -> Result<()> {
         self.strategy.abort_flush_cycle(flush_cycle, reason).await
@@ -992,14 +1311,35 @@ impl WalManager {
 
     /// Force flush specific collection - FOR TESTING ONLY
     /// WARNING: This method should only be used for testing and debugging
-    pub async fn force_flush_collection(&self, collection_id: &str, storage_engine: Option<&str>) -> Result<()> {
-        tracing::warn!("⚠️ WAL MANAGER: FORCE FLUSH COLLECTION {} - TESTING ONLY", collection_id);
-        self.strategy.force_flush_collection(collection_id, storage_engine).await
+    pub async fn force_flush_collection(
+        &self,
+        collection_id: &str,
+        storage_engine: Option<&str>,
+    ) -> Result<()> {
+        tracing::warn!(
+            "⚠️ WAL MANAGER: FORCE FLUSH COLLECTION {} - TESTING ONLY",
+            collection_id
+        );
+        self.strategy
+            .force_flush_collection(collection_id, storage_engine)
+            .await
     }
-    
+
     /// Register storage engine with the WAL's flush coordinator
-    pub async fn register_storage_engine(&self, engine_name: &str, engine: Arc<dyn UnifiedStorageEngine>) -> Result<()> {
-        self.strategy.register_storage_engine(engine_name, engine).await
+    pub async fn register_storage_engine(
+        &self,
+        engine_name: &str,
+        engine: Arc<dyn UnifiedStorageEngine>,
+    ) -> Result<()> {
+        self.strategy
+            .register_storage_engine(engine_name, engine)
+            .await
+    }
+}
+
+impl DistanceComputeProvider for WalManager {
+    fn distance_compute(&self) -> &UnifiedDistanceCompute {
+        &self.distance_compute
     }
 }
 

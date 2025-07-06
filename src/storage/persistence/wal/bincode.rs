@@ -13,10 +13,11 @@ use std::io::Write;
 use std::sync::Arc;
 
 use super::{
-    FlushResult, WalConfig, WalDiskManager, WalEntry, WalOperation, WalStats,
-    WalStrategy, FlushCycle, FlushCycleState, FlushCompletionResult,
-    flush_coordinator::{WalFlushCoordinator, FlushCoordinatorCallbacks},
+    flush_coordinator::{FlushCoordinatorCallbacks, WalFlushCoordinator},
+    FlushCompletionResult, FlushCycle, FlushCycleState, FlushResult, WalConfig, WalDiskManager,
+    WalEntry, WalOperation, WalStats, WalStrategy,
 };
+use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -55,13 +56,15 @@ mod op_types {
 pub struct BincodeWalStrategy {
     config: Option<WalConfig>,
     filesystem: Option<Arc<FilesystemFactory>>,
-    memory_table: Option<crate::storage::memtable::specialized::WalMemtable<u64, WalEntry>>,
+    memory_table: Option<crate::storage::memtable::specialized::WalMemtable>,
     disk_manager: Option<WalDiskManager>,
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
     /// Common flush coordinator for coordinated cleanup
     flush_coordinator: WalFlushCoordinator,
     /// Assignment service for directory assignment
     assignment_service: Arc<dyn crate::storage::assignment_service::AssignmentService>,
+    /// Unified distance computation manager
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl BincodeWalStrategy {
@@ -75,6 +78,7 @@ impl BincodeWalStrategy {
             storage_engine: Arc::new(tokio::sync::RwLock::new(None)),
             flush_coordinator: WalFlushCoordinator::new(),
             assignment_service: crate::storage::assignment_service::get_assignment_service(),
+            distance_compute: UnifiedDistanceCompute::default(),
         }
     }
 
@@ -120,8 +124,11 @@ impl BincodeWalStrategy {
                 crate::core::CompressionAlgorithm::Gzip => {
                     // Use gzip compression
                     use std::io::Write;
-                    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-                    encoder.write_all(&serialized).context("Gzip compression failed")?;
+                    let mut encoder =
+                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                    encoder
+                        .write_all(&serialized)
+                        .context("Gzip compression failed")?;
                     Ok(encoder.finish().context("Gzip finish failed")?)
                 }
                 // Note: Deflate not available in new enum, mapping to Gzip
@@ -191,7 +198,9 @@ impl WalStrategy for BincodeWalStrategy {
         self.filesystem = Some(filesystem.clone());
         // Create new unified memtable system for WAL
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        self.memory_table = Some(crate::storage::memtable::MemtableFactory::create_for_wal(memtable_config));
+        self.memory_table = Some(crate::storage::memtable::MemtableFactory::create_for_wal(
+            memtable_config,
+        ));
         self.disk_manager = Some(WalDiskManager::new(config.clone(), filesystem).await?);
 
         tracing::info!(
@@ -199,23 +208,31 @@ impl WalStrategy for BincodeWalStrategy {
         );
         Ok(())
     }
-    
+
     fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
-        tracing::info!("🏗️ BincodeWalStrategy: Setting storage engine: {}", storage_engine.engine_name());
-        
+        tracing::info!(
+            "🏗️ BincodeWalStrategy: Setting storage engine: {}",
+            storage_engine.engine_name()
+        );
+
         // Use async block in a blocking context for interior mutability
         let storage_engine_clone = storage_engine.clone();
         let storage_engine_ref = self.storage_engine.clone();
         tokio::spawn(async move {
             *storage_engine_ref.write().await = Some(storage_engine_clone.clone());
         });
-        
+
         // Register with flush coordinator using engine name
         let engine_name = storage_engine.engine_name().to_string();
         let coordinator_ref = self.flush_coordinator.clone();
         tokio::spawn(async move {
-            coordinator_ref.register_storage_engine(&engine_name, storage_engine).await;
-            tracing::info!("✅ Registered storage engine {} with flush coordinator", engine_name);
+            coordinator_ref
+                .register_storage_engine(&engine_name, storage_engine)
+                .await;
+            tracing::info!(
+                "✅ Registered storage engine {} with flush coordinator",
+                engine_name
+            );
         });
     }
 
@@ -233,66 +250,140 @@ impl WalStrategy for BincodeWalStrategy {
             .as_ref()
             .context("Bincode WAL strategy not initialized")?;
 
-        let sequence = memory_table.insert_entry(entry).await?;
+        // Convert single entry to batch for unified API - simplified to only handle AvroPayload
+        let sequence = match &entry.operation {
+            crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, operation_type } => {
+                tracing::info!("BINCODE: Processing AvroPayload operation: {}", operation_type);
+                
+                // Deserialize Avro data - supports both single records and batches
+                let vector_records = if let Ok(single_record) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
+                    // Single record
+                    vec![single_record]
+                } else if let Ok(batch_records) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
+                    // Batch of records
+                    batch_records
+                } else {
+                    tracing::error!("BINCODE: Failed to deserialize Avro payload for operation: {}", operation_type);
+                    return Err(anyhow::anyhow!("Invalid Avro payload"));
+                };
+                
+                if !vector_records.is_empty() {
+                    let start_seq = memory_table.current_sequence();
+                    let end_seq = start_seq + vector_records.len() as u64 - 1;
+                    let batch_id = crate::storage::persistence::wal::BatchId::new(
+                        entry.collection_id.clone(),
+                        start_seq,
+                        end_seq,
+                    );
+
+                    let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+                        batch_id,
+                        vector_records,
+                        created_at: std::time::SystemTime::now(),
+                        total_size_bytes: entry.actual_size_bytes(),
+                        is_flushed: false,
+                    };
+
+                    let sequences = memory_table.add_vector_batch(batch).await?;
+                    sequences.into_iter().next().unwrap_or(0)
+                } else {
+                    tracing::warn!("BINCODE: Empty Avro payload for operation: {}", operation_type);
+                    0
+                }
+            }
+            _ => {
+                // For non-vector operations (Delete, Flush, Checkpoint), skip memtable processing
+                tracing::debug!("BINCODE: Non-vector operation in single entry write, skipping memtable: {:?}", entry.operation);
+                0
+            }
+        };
 
         // Per-collection flush threshold checking (enhanced for memory-only durability)
         let collections_to_flush = memory_table.collections_needing_flush().await?;
         if !collections_to_flush.is_empty() {
-            tracing::info!("🚨 FLUSH_TRIGGER: {} collections need flushing: {:?}", 
-                          collections_to_flush.len(), collections_to_flush);
-            
+            tracing::info!(
+                "🚨 FLUSH_TRIGGER: {} collections need flushing: {:?}",
+                collections_to_flush.len(),
+                collections_to_flush
+            );
+
             // Trigger coordinated flush for each collection that needs it
             for collection_id in &collections_to_flush {
-                tracing::info!("🚀 TRIGGERING: Coordinated flush for collection {}", collection_id);
+                tracing::info!(
+                    "🚀 TRIGGERING: Coordinated flush for collection {}",
+                    collection_id
+                );
                 tracing::info!("🔧 DEBUG: About to extract vector records - NEW CODE PATH");
-                
+
                 // Extract vector records from memtable before calling FlushCoordinator
-                let (vector_records, max_sequence) = if let Some(memory_table) = &self.memory_table {
+                let (vector_records, max_sequence) = if let Some(memory_table) = &self.memory_table
+                {
                     let entries = memory_table.get_all_entries(collection_id).await?;
-                    tracing::info!("📦 EXTRACTED: {} WAL entries for collection {}", entries.len(), collection_id);
-                    
+                    tracing::info!(
+                        "📦 EXTRACTED: {} WAL entries for collection {}",
+                        entries.len(),
+                        collection_id
+                    );
+
                     // Convert WAL entries to vector records and track max sequence
                     let mut extracted_records = Vec::new();
                     let mut max_seq = 0u64;
-                    
+
                     for entry in entries {
                         max_seq = max_seq.max(entry.sequence);
-                        if let WalOperation::Insert {  record, .. } = &entry.operation {
+                        if let WalOperation::Insert { record, .. } = &entry.operation {
                             extracted_records.push(record.clone());
                         }
                     }
-                    tracing::info!("📦 CONVERTED: {} vector records for flushing (max_sequence: {})", extracted_records.len(), max_seq);
+                    tracing::info!(
+                        "📦 CONVERTED: {} vector records for flushing (max_sequence: {})",
+                        extracted_records.len(),
+                        max_seq
+                    );
                     (extracted_records, max_seq)
                 } else {
                     tracing::warn!("📦 No memory table available for data extraction");
                     (Vec::new(), 0)
                 };
-                
+
                 // Create flush data source from extracted vector records
                 let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vector_records);
-                
+
                 // TODO: Get collection metadata to determine storage engine type
                 // For now, default to VIPER but this will be fixed when collection service is accessible
-                
+
                 // Execute coordinated flush through flush coordinator
-                match self.flush_coordinator.execute_coordinated_flush(&collection_id, flush_data, None, None).await {
+                match self
+                    .flush_coordinator
+                    .execute_coordinated_flush(&collection_id, flush_data, None, None)
+                    .await
+                {
                     Ok(storage_result) => {
-                        tracing::info!("✅ FLUSH_SUCCESS: Collection {} - {} entries flushed to storage", 
-                                      collection_id, storage_result.entries_flushed);
-                        
+                        tracing::info!(
+                            "✅ FLUSH_SUCCESS: Collection {} - {} entries flushed to storage",
+                            collection_id,
+                            storage_result.entries_flushed
+                        );
+
                         // Clear flushed entries from memtable after successful storage flush
                         // CRITICAL FIX: Use max_sequence instead of entries_flushed count
                         if storage_result.entries_flushed > 0 && max_sequence > 0 {
                             if let Some(memory_table) = &self.memory_table {
                                 tracing::info!("🧹 MEMTABLE_CLEANUP: Clearing entries up to sequence {} for collection {}", 
                                              max_sequence, collection_id);
-                                memory_table.clear_flushed(collection_id, max_sequence).await?;
+                                memory_table
+                                    .clear_flushed(collection_id, max_sequence)
+                                    .await?;
                                 tracing::info!("✅ MEMTABLE_CLEARED: Successfully cleared flushed entries for collection {}", collection_id);
                             }
                         }
-                    },
+                    }
                     Err(e) => {
-                        tracing::error!("❌ FLUSH_ERROR: Collection {} flush failed: {}", collection_id, e);
+                        tracing::error!(
+                            "❌ FLUSH_ERROR: Collection {} flush failed: {}",
+                            collection_id,
+                            e
+                        );
                         // Continue processing other collections
                     }
                 }
@@ -300,6 +391,110 @@ impl WalStrategy for BincodeWalStrategy {
         }
 
         Ok(sequence)
+    }
+
+    /// Write batch of entries with sync control (aligned with AVRO strategy)
+    async fn write_batch_with_sync(&self, entries: Vec<WalEntry>, immediate_sync: bool) -> Result<Vec<u64>> {
+        let memory_table = self
+            .memory_table
+            .as_ref()
+            .context("Bincode WAL strategy not initialized")?;
+
+        // Extract vector records from AvroPayload operations (BINCODE strategy)
+        let mut all_vector_records = Vec::new();
+        let mut sequences = Vec::new();
+
+        for entry in &entries {
+            match &entry.operation {
+                crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, operation_type } => {
+                    tracing::info!("BINCODE: Processing batch AvroPayload operation: {}", operation_type);
+                    
+                    // Deserialize Avro data - supports both single records and batches
+                    let vector_records = if let Ok(single_record) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
+                        vec![single_record]
+                    } else if let Ok(batch_records) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
+                        batch_records
+                    } else {
+                        tracing::error!("BINCODE: Failed to deserialize Avro payload for batch operation: {}", operation_type);
+                        continue;
+                    };
+                    
+                    if !vector_records.is_empty() {
+                        let start_seq = memory_table.current_sequence();
+                        let end_seq = start_seq + vector_records.len() as u64 - 1;
+                        let batch_id = crate::storage::persistence::wal::BatchId::new(
+                            entry.collection_id.clone(),
+                            start_seq,
+                            end_seq,
+                        );
+
+                        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+                            batch_id,
+                            vector_records: vector_records.clone(),
+                            created_at: std::time::SystemTime::now(),
+                            total_size_bytes: entry.actual_size_bytes(),
+                            is_flushed: false,
+                        };
+
+                        let batch_sequences = memory_table.add_vector_batch(batch).await?;
+                        sequences.extend(batch_sequences);
+                        all_vector_records.extend(vector_records);
+                    }
+                }
+                _ => {
+                    // Non-vector operations (Delete, Flush, etc.) don't go to memtable
+                    tracing::debug!("BINCODE: Skipping non-vector operation in batch: {:?}", entry.operation);
+                }
+            }
+        }
+
+        if all_vector_records.is_empty() {
+            tracing::warn!("BINCODE: No vector records found in WAL entries for batch write");
+        }
+
+        // Handle sync if immediate_sync is requested
+        if immediate_sync {
+            // For Bincode, immediate sync means triggering flush to storage
+            let collections_to_flush = memory_table.collections_needing_flush().await?;
+            if !collections_to_flush.is_empty() {
+                for collection_id in &collections_to_flush {
+                    let (vector_records, max_sequence) = if let Some(memory_table) = &self.memory_table {
+                        let entries = memory_table.get_all_entries(collection_id).await?;
+                        let mut extracted_records = Vec::new();
+                        let mut max_seq = 0u64;
+
+                        for entry in entries {
+                            max_seq = max_seq.max(entry.sequence);
+                            if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } = &entry.operation {
+                                extracted_records.push(record.clone());
+                            }
+                        }
+                        (extracted_records, max_seq)
+                    } else {
+                        (Vec::new(), 0)
+                    };
+
+                    let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vector_records);
+                    
+                    if let Ok(storage_result) = self
+                        .flush_coordinator
+                        .execute_coordinated_flush(&collection_id, flush_data, None, None)
+                        .await
+                    {
+                        if storage_result.entries_flushed > 0 && max_sequence > 0 {
+                            if let Some(memory_table) = &self.memory_table {
+                                memory_table.clear_flushed(collection_id, max_sequence).await?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!("🔧 BINCODE_BATCH_WRITE: Wrote {} entries with sync={}, sequences: {:?}", 
+                       sequences.len(), immediate_sync, sequences);
+
+        Ok(sequences)
     }
 
     async fn read_entries(
@@ -369,12 +564,12 @@ impl WalStrategy for BincodeWalStrategy {
             .memory_table
             .as_ref()
             .context("Bincode WAL strategy not initialized")?;
-        
+
         tracing::debug!(
             "📋 Getting all entries for collection {} from bincode memtable",
             collection_id
         );
-        
+
         memory_table.get_all_entries(collection_id).await
     }
 
@@ -449,14 +644,20 @@ impl WalStrategy for BincodeWalStrategy {
 
         Ok(total_result)
     }
-    
+
     /// Delegate flush to storage engine (WAL strategy pattern)
-    async fn delegate_to_storage_engine_flush(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::FlushResult> {
+    async fn delegate_to_storage_engine_flush(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<crate::storage::traits::FlushResult> {
         let storage_engine_guard = self.storage_engine.read().await;
         if let Some(storage_engine) = storage_engine_guard.as_ref() {
-            tracing::info!("🔄 WAL DELEGATION: Delegating flush to {} storage engine for collection {}", 
-                          storage_engine.engine_name(), collection_id);
-            
+            tracing::info!(
+                "🔄 WAL DELEGATION: Delegating flush to {} storage engine for collection {}",
+                storage_engine.engine_name(),
+                collection_id
+            );
+
             let flush_params = crate::storage::traits::FlushParameters {
                 collection_id: Some(collection_id.clone()),
                 force: false,
@@ -466,20 +667,28 @@ impl WalStrategy for BincodeWalStrategy {
                 vector_records: Vec::new(), // Empty for this old delegation pattern
                 trigger_compaction: false,
             };
-            
+
             storage_engine.do_flush(&flush_params).await
         } else {
-            Err(anyhow::anyhow!("No storage engine available for flush delegation"))
+            Err(anyhow::anyhow!(
+                "No storage engine available for flush delegation"
+            ))
         }
     }
-    
+
     /// Delegate compaction to storage engine (WAL strategy pattern)
-    async fn delegate_to_storage_engine_compact(&self, collection_id: &CollectionId) -> Result<crate::storage::traits::CompactionResult> {
+    async fn delegate_to_storage_engine_compact(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<crate::storage::traits::CompactionResult> {
         let storage_engine_guard = self.storage_engine.read().await;
         if let Some(storage_engine) = storage_engine_guard.as_ref() {
-            tracing::info!("🔄 WAL DELEGATION: Delegating compaction to {} storage engine for collection {}", 
-                          storage_engine.engine_name(), collection_id);
-            
+            tracing::info!(
+                "🔄 WAL DELEGATION: Delegating compaction to {} storage engine for collection {}",
+                storage_engine.engine_name(),
+                collection_id
+            );
+
             let compact_params = crate::storage::traits::CompactionParameters {
                 collection_id: Some(collection_id.clone()),
                 force: false,
@@ -488,10 +697,12 @@ impl WalStrategy for BincodeWalStrategy {
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
             };
-            
+
             storage_engine.do_compact(&compact_params).await
         } else {
-            Err(anyhow::anyhow!("No storage engine available for compaction delegation"))
+            Err(anyhow::anyhow!(
+                "No storage engine available for compaction delegation"
+            ))
         }
     }
 
@@ -551,7 +762,10 @@ impl WalStrategy for BincodeWalStrategy {
 
         // Aggregate memory stats
         let total_memory_entries: u64 = memory_stats.values().map(|s| s.total_entries).sum();
-        let total_memory_bytes: u64 = memory_stats.values().map(|s| s.memory_size_bytes as u64).sum();
+        let total_memory_bytes: u64 = memory_stats
+            .values()
+            .map(|s| s.memory_size_bytes as u64)
+            .sum();
         let memory_collections_count = memory_stats.len();
 
         Ok(WalStats {
@@ -581,79 +795,95 @@ impl WalStrategy for BincodeWalStrategy {
         tracing::info!("✅ Bincode WAL strategy closed");
         Ok(())
     }
-    
-    fn get_assignment_service(&self) -> &Arc<dyn crate::storage::assignment_service::AssignmentService> {
+
+    fn get_assignment_service(
+        &self,
+    ) -> &Arc<dyn crate::storage::assignment_service::AssignmentService> {
         &self.assignment_service
     }
-    
+
     /// **BincodeWAL PRODUCTION-OPTIMIZED Implementation** ⭐
-    /// 
+    ///
     /// This implementation is specifically optimized for **high-throughput production environments**:
-    /// 
+    ///
     /// **Performance Characteristics:**
     /// - **HashMap MemTable**: O(1) atomic operations, best for large collections
     /// - **Binary Serialization**: Fastest encoding/decoding for flush operations  
     /// - **Multi-Trigger Support**: Optimized for Memory + Disk + Time-based flush triggers
     /// - **Production-Ready**: Handles variable workloads and concurrent access patterns
-    /// 
+    ///
     /// **Recommended Use Cases:**
     /// - Large collections (>100K entries)
     /// - High-throughput scenarios (>10K ops/sec)
     /// - Mixed flush triggers (memory + disk thresholds)
     /// - Production environments requiring predictable performance
-    async fn atomic_retrieve_for_flush(&self, collection_id: &CollectionId, flush_id: &str) -> Result<FlushCycle> {
+    async fn atomic_retrieve_for_flush(
+        &self,
+        collection_id: &CollectionId,
+        flush_id: &str,
+    ) -> Result<FlushCycle> {
         tracing::info!("🚀 BincodeWAL: Starting PRODUCTION-OPTIMIZED atomic flush for collection {} (flush_id: {})", 
                       collection_id, flush_id);
-        
+
         // Bincode optimization: Use HashMap for O(1) operations
         if let Some(memory_table) = &self.memory_table {
             let start_time = std::time::Instant::now();
-            
+
             // **CRITICAL**: Use HashMap's O(1) atomic marking
             // Get current sequence number for this flush operation
             let current_sequence = memory_table.current_sequence();
-            let wal_entries = memory_table.atomic_mark_for_flush(collection_id, current_sequence).await?;
-            
+            let wal_entries = memory_table
+                .atomic_mark_for_flush(collection_id, current_sequence)
+                .await?;
+
             // **PERFORMANCE**: Bincode's binary serialization advantage
             let mut vector_records = Vec::new();
             let mut marked_sequences = Vec::new();
-            
+
             if !wal_entries.is_empty() {
                 let min_seq = wal_entries.iter().map(|e| e.sequence).min().unwrap_or(0);
                 let max_seq = wal_entries.iter().map(|e| e.sequence).max().unwrap_or(0);
                 marked_sequences.push((min_seq, max_seq));
-                
+
                 // **OPTIMIZATION**: Fast binary deserialization for vector records
                 for entry in &wal_entries {
                     match &entry.operation {
-                        WalOperation::Insert { vector_id: _, record, expires_at: _ } => {
+                        WalOperation::Insert {
+                            vector_id: _,
+                            record,
+                            expires_at: _,
+                        } => {
                             vector_records.push(record.clone());
-                        },
-                        WalOperation::Update { vector_id: _, record, expires_at: _ } => {
+                        }
+                        WalOperation::Update {
+                            vector_id: _,
+                            record,
+                            expires_at: _,
+                        } => {
                             vector_records.push(record.clone());
-                        },
+                        }
                         _ => {
                             // Include in flush cycle for completeness
                         }
                     }
                 }
             }
-            
+
             let retrieval_time = start_time.elapsed();
             let throughput = if retrieval_time.as_millis() > 0 {
                 wal_entries.len() as f64 / retrieval_time.as_secs_f64()
             } else {
                 f64::INFINITY
             };
-            
+
             tracing::info!("⚡ BincodeWAL: PRODUCTION flush retrieval complete - {} entries, {} vector records in {:?} ({:.0} entries/sec)", 
                           wal_entries.len(), vector_records.len(), retrieval_time, throughput);
-            
+
             // **PRODUCTION METRICS**: Track performance for monitoring
             if throughput < 50000.0 && wal_entries.len() > 1000 {
                 tracing::warn!("⚠️ BincodeWAL: Flush throughput below target (50K entries/sec): {:.0} entries/sec", throughput);
             }
-            
+
             Ok(FlushCycle {
                 flush_id: flush_id.to_string(),
                 collection_id: collection_id.clone(),
@@ -665,17 +895,27 @@ impl WalStrategy for BincodeWalStrategy {
             })
         } else {
             // Fallback to default implementation
-            tracing::warn!("⚠️ BincodeWAL: Memory table not available, using default implementation");
+            tracing::warn!(
+                "⚠️ BincodeWAL: Memory table not available, using default implementation"
+            );
             let entries = self.get_collection_entries(collection_id).await?;
             let mut vector_records = Vec::new();
             for entry in &entries {
                 match &entry.operation {
-                    WalOperation::Insert { vector_id: _, record, expires_at: _ } => {
+                    WalOperation::Insert {
+                        vector_id: _,
+                        record,
+                        expires_at: _,
+                    } => {
                         vector_records.push(record.clone());
-                    },
-                    WalOperation::Update { vector_id: _, record, expires_at: _ } => {
+                    }
+                    WalOperation::Update {
+                        vector_id: _,
+                        record,
+                        expires_at: _,
+                    } => {
                         vector_records.push(record.clone());
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -690,52 +930,60 @@ impl WalStrategy for BincodeWalStrategy {
             })
         }
     }
-    
+
     /// **BincodeWAL PRODUCTION-OPTIMIZED Completion**
-    /// 
+    ///
     /// **HashMap Advantage**: O(1) removal per entry, fastest for large flush cycles
     async fn complete_flush_cycle(&self, flush_cycle: FlushCycle) -> Result<FlushCompletionResult> {
         tracing::info!("🗑️ BincodeWAL: Starting PRODUCTION-OPTIMIZED completion for collection {} (flush_id: {})", 
                       flush_cycle.collection_id, flush_cycle.flush_id);
-        
+
         if let Some(memory_table) = &self.memory_table {
             let start_time = std::time::Instant::now();
-            
+
             // **CRITICAL**: Use HashMap's O(1) removal operations
             // Extract max sequence from marked sequences (stored in the flush cycle)
-            let max_sequence = flush_cycle.marked_sequences.iter()
+            let max_sequence = flush_cycle
+                .marked_sequences
+                .iter()
                 .map(|(_, max)| *max)
                 .max()
                 .unwrap_or(0);
-            let entries_removed = memory_table.complete_flush_removal(&flush_cycle.collection_id, max_sequence).await?;
-            
+            let entries_removed = memory_table
+                .complete_flush_removal(&flush_cycle.collection_id, max_sequence)
+                .await?;
+
             let completion_time = start_time.elapsed();
             let removal_throughput = if completion_time.as_millis() > 0 {
                 entries_removed as f64 / completion_time.as_secs_f64()
             } else {
                 f64::INFINITY
             };
-            
+
             let result = FlushCompletionResult {
                 entries_removed,
                 segments_cleaned: 0, // TODO: Add disk segment cleanup
-                bytes_reclaimed: flush_cycle.entries.iter()
+                bytes_reclaimed: flush_cycle
+                    .entries
+                    .iter()
                     .map(|entry| std::mem::size_of_val(entry))
                     .sum::<usize>() as u64,
             };
-            
+
             tracing::info!("⚡ BincodeWAL: PRODUCTION completion finished - {} entries removed in {:?} ({:.0} entries/sec)", 
                           result.entries_removed, completion_time, removal_throughput);
-            
+
             // **PRODUCTION MONITORING**: Alert on slow removals
             if removal_throughput < 100000.0 && entries_removed > 1000 {
                 tracing::warn!("⚠️ BincodeWAL: Removal throughput below target (100K entries/sec): {:.0} entries/sec", removal_throughput);
             }
-            
+
             Ok(result)
         } else {
             // Fallback to default implementation
-            tracing::warn!("⚠️ BincodeWAL: Memory table not available, using default implementation");
+            tracing::warn!(
+                "⚠️ BincodeWAL: Memory table not available, using default implementation"
+            );
             self.drop_collection(&flush_cycle.collection_id).await?;
             Ok(FlushCompletionResult {
                 entries_removed: flush_cycle.entries.len(),
@@ -744,31 +992,44 @@ impl WalStrategy for BincodeWalStrategy {
             })
         }
     }
-    
+
     /// **BincodeWAL PRODUCTION-OPTIMIZED Abort**
-    /// 
+    ///
     /// **HashMap Advantage**: O(1) restoration per entry, fastest recovery
     async fn abort_flush_cycle(&self, flush_cycle: FlushCycle, reason: &str) -> Result<()> {
-        tracing::warn!("❌ BincodeWAL: Starting PRODUCTION-OPTIMIZED abort for collection {} - reason: {}", 
-                      flush_cycle.collection_id, reason);
-        
+        tracing::warn!(
+            "❌ BincodeWAL: Starting PRODUCTION-OPTIMIZED abort for collection {} - reason: {}",
+            flush_cycle.collection_id,
+            reason
+        );
+
         if let Some(memory_table) = &self.memory_table {
             let start_time = std::time::Instant::now();
-            
+
             // **CRITICAL**: Use HashMap's O(1) restoration operations
-            memory_table.abort_flush_restore(&flush_cycle.collection_id, flush_cycle.entries.clone()).await?;
-            
+            memory_table
+                .abort_flush_restore(&flush_cycle.collection_id, flush_cycle.entries.clone())
+                .await?;
+
             let abort_time = start_time.elapsed();
-            tracing::info!("⚡ BincodeWAL: PRODUCTION abort completed in {:?} - entries restored efficiently", abort_time);
-            
+            tracing::info!(
+                "⚡ BincodeWAL: PRODUCTION abort completed in {:?} - entries restored efficiently",
+                abort_time
+            );
+
             // **MONITORING**: Track abort performance for reliability metrics
             if abort_time.as_millis() > 100 {
-                tracing::warn!("⚠️ BincodeWAL: Slow abort operation: {:?} (target: <100ms)", abort_time);
+                tracing::warn!(
+                    "⚠️ BincodeWAL: Slow abort operation: {:?} (target: <100ms)",
+                    abort_time
+                );
             }
         } else {
-            tracing::warn!("⚠️ BincodeWAL: Memory table not available, using default abort handling");
+            tracing::warn!(
+                "⚠️ BincodeWAL: Memory table not available, using default abort handling"
+            );
         }
-        
+
         Ok(())
     }
 
@@ -777,103 +1038,158 @@ impl WalStrategy for BincodeWalStrategy {
     /// Override the default implementation to actually trigger flush operations
     async fn force_flush_all(&self) -> Result<()> {
         tracing::warn!("⚠️ BincodeWalStrategy: FORCE FLUSH ALL - TESTING ONLY");
-        
+
         let memory_table = self
             .memory_table
             .as_ref()
             .context("Bincode WAL strategy not initialized")?;
-        
+
         // Get all collections that need flushing
         let collections_needing_flush = memory_table.collections_needing_flush().await?;
-        
+
         if collections_needing_flush.is_empty() {
             tracing::info!("📋 BincodeWalStrategy: No collections need flushing");
             return Ok(());
         }
-        
-        tracing::info!("🚀 BincodeWalStrategy: Force flushing {} collections: {:?}", 
-                      collections_needing_flush.len(), collections_needing_flush);
-        
+
+        tracing::info!(
+            "🚀 BincodeWalStrategy: Force flushing {} collections: {:?}",
+            collections_needing_flush.len(),
+            collections_needing_flush
+        );
+
         // Force flush each collection
         for collection_id in &collections_needing_flush {
-            if let Err(e) = self.force_flush_collection(&collection_id.to_string(), None).await {
-                tracing::error!("❌ BincodeWalStrategy: Force flush failed for collection {}: {}", collection_id, e);
+            if let Err(e) = self
+                .force_flush_collection(&collection_id.to_string(), None)
+                .await
+            {
+                tracing::error!(
+                    "❌ BincodeWalStrategy: Force flush failed for collection {}: {}",
+                    collection_id,
+                    e
+                );
                 // Continue with other collections
             }
         }
-        
+
         tracing::info!("✅ BincodeWalStrategy: Force flush completed for all collections");
         Ok(())
     }
-    
+
     /// Register storage engine with the flush coordinator
-    async fn register_storage_engine(&self, engine_name: &str, engine: Arc<dyn UnifiedStorageEngine>) -> Result<()> {
+    async fn register_storage_engine(
+        &self,
+        engine_name: &str,
+        engine: Arc<dyn UnifiedStorageEngine>,
+    ) -> Result<()> {
         // BincodeWalStrategy implementation - would register with its flush coordinator
-        tracing::info!("✅ BincodeWalStrategy: Registered {} storage engine with flush coordinator", engine_name);
+        tracing::info!(
+            "✅ BincodeWalStrategy: Registered {} storage engine with flush coordinator",
+            engine_name
+        );
         Ok(())
     }
 
     /// Force flush specific collection - FOR TESTING ONLY (trait implementation)
     /// WARNING: This method should only be used for testing and debugging
     /// Override the default implementation to actually trigger flush operations
-    async fn force_flush_collection(&self, collection_id: &str, storage_engine: Option<&str>) -> Result<()> {
-        tracing::warn!("⚠️ BincodeWalStrategy: FORCE FLUSH COLLECTION {} with engine {:?} - TESTING ONLY", collection_id, storage_engine);
-        
+    async fn force_flush_collection(
+        &self,
+        collection_id: &str,
+        storage_engine: Option<&str>,
+    ) -> Result<()> {
+        tracing::warn!(
+            "⚠️ BincodeWalStrategy: FORCE FLUSH COLLECTION {} with engine {:?} - TESTING ONLY",
+            collection_id,
+            storage_engine
+        );
+
         let memory_table = self
             .memory_table
             .as_ref()
             .context("Bincode WAL strategy not initialized")?;
-        
+
         // Convert string to CollectionId
         let collection_id = CollectionId::from(collection_id.to_string());
-        
+
         // Extract vector records from memtable
         let entries = memory_table.get_all_entries(&collection_id).await?;
-        
+
         if entries.is_empty() {
-            tracing::info!("📋 BincodeWalStrategy: No entries to flush for collection {}", collection_id);
+            tracing::info!(
+                "📋 BincodeWalStrategy: No entries to flush for collection {}",
+                collection_id
+            );
             return Ok(());
         }
-        
-        tracing::info!("🚀 BincodeWalStrategy: Force flushing {} entries for collection {}", 
-                      entries.len(), collection_id);
-        
+
+        tracing::info!(
+            "🚀 BincodeWalStrategy: Force flushing {} entries for collection {}",
+            entries.len(),
+            collection_id
+        );
+
         // Convert WAL entries to vector records
         let mut vector_records = Vec::new();
         for entry in &entries {
-            if let WalOperation::Insert { vector_id: _, record, .. } = &entry.operation {
+            if let WalOperation::Insert {
+                vector_id: _,
+                record,
+                ..
+            } = &entry.operation
+            {
                 vector_records.push(record.clone());
             }
         }
-        
-        tracing::info!("📦 BincodeWalStrategy: Extracted {} vector records for flushing", vector_records.len());
-        
+
+        tracing::info!(
+            "📦 BincodeWalStrategy: Extracted {} vector records for flushing",
+            vector_records.len()
+        );
+
         // Create flush data source from extracted vector records
-        let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vector_records);
-        
+        let flush_data =
+            crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(
+                vector_records,
+            );
+
         // Execute coordinated flush through flush coordinator
-        match self.flush_coordinator.execute_coordinated_flush(&collection_id, flush_data, None, None).await {
+        match self
+            .flush_coordinator
+            .execute_coordinated_flush(&collection_id, flush_data, None, None)
+            .await
+        {
             Ok(storage_result) => {
                 tracing::info!("✅ BincodeWalStrategy: Force flush SUCCESS - {} entries flushed to storage for collection {}", 
                               storage_result.entries_flushed, collection_id);
-                
+
                 // Clear flushed entries from memtable after successful storage flush
                 if storage_result.entries_flushed > 0 {
-                    memory_table.clear_flushed(&collection_id, storage_result.entries_flushed).await?;
-                    tracing::info!("🧹 BincodeWalStrategy: Cleared {} entries from memtable", storage_result.entries_flushed);
+                    memory_table
+                        .clear_flushed(&collection_id, storage_result.entries_flushed)
+                        .await?;
+                    tracing::info!(
+                        "🧹 BincodeWalStrategy: Cleared {} entries from memtable",
+                        storage_result.entries_flushed
+                    );
                 }
-            },
+            }
             Err(e) => {
-                tracing::error!("❌ BincodeWalStrategy: Force flush FAILED for collection {}: {}", collection_id, e);
+                tracing::error!(
+                    "❌ BincodeWalStrategy: Force flush FAILED for collection {}: {}",
+                    collection_id,
+                    e
+                );
                 return Err(e);
             }
         }
-        
+
         Ok(())
     }
 
     /// Get memtable reference for similarity search
-    fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable<u64, WalEntry>> {
+    fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable> {
         self.memory_table.as_ref()
     }
 }
@@ -882,28 +1198,58 @@ impl WalStrategy for BincodeWalStrategy {
 impl BincodeWalStrategy {
     /// Initialize flush state for a collection based on configuration
     pub async fn initialize_flush_state(&self, collection_id: &CollectionId) -> Result<()> {
-        self.flush_coordinator.initialize_flush_state(collection_id).await
+        self.flush_coordinator
+            .initialize_flush_state(collection_id)
+            .await
     }
 
     /// Start a flush operation and return data source for storage engine
-    pub async fn initiate_flush(&self, collection_id: &CollectionId, sequences: Vec<u64>) -> Result<super::flush_coordinator::FlushDataSource> {
-        let config = self.config.as_ref().ok_or_else(|| anyhow::anyhow!("WAL config not initialized"))?;
-        self.flush_coordinator.initiate_flush(collection_id, sequences, &config.performance.sync_mode).await
+    pub async fn initiate_flush(
+        &self,
+        collection_id: &CollectionId,
+        sequences: Vec<u64>,
+    ) -> Result<super::flush_coordinator::FlushDataSource> {
+        let config = self
+            .config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("WAL config not initialized"))?;
+        self.flush_coordinator
+            .initiate_flush(collection_id, sequences, &config.performance.sync_mode)
+            .await
     }
 
     /// Acknowledge successful flush and cleanup WAL data
-    pub async fn acknowledge_flush(&self, collection_id: &CollectionId, flush_id: u64, flushed_sequences: Vec<u64>) -> Result<()> {
-        let cleanup_instructions = self.flush_coordinator.acknowledge_flush(collection_id, flush_id, flushed_sequences).await?;
-        
+    pub async fn acknowledge_flush(
+        &self,
+        collection_id: &CollectionId,
+        flush_id: u64,
+        flushed_sequences: Vec<u64>,
+    ) -> Result<()> {
+        let cleanup_instructions = self
+            .flush_coordinator
+            .acknowledge_flush(collection_id, flush_id, flushed_sequences)
+            .await?;
+
         // Execute cleanup instructions
         if cleanup_instructions.cleanup_memory {
             if let Some(memory_table) = &self.memory_table {
-                let max_sequence = cleanup_instructions.sequences_to_cleanup.iter().max().copied().unwrap_or(0);
-                memory_table.clear_flushed(collection_id, max_sequence).await?;
-                tracing::debug!("🧹 [Bincode] Cleaned memory structures for {} up to sequence {}", collection_id, max_sequence);
+                let max_sequence = cleanup_instructions
+                    .sequences_to_cleanup
+                    .iter()
+                    .max()
+                    .copied()
+                    .unwrap_or(0);
+                memory_table
+                    .clear_flushed(collection_id, max_sequence)
+                    .await?;
+                tracing::debug!(
+                    "🧹 [Bincode] Cleaned memory structures for {} up to sequence {}",
+                    collection_id,
+                    max_sequence
+                );
             }
         }
-        
+
         // Clean up disk files (bincode WAL files have .bin extension)
         for wal_file in &cleanup_instructions.cleanup_disk_files {
             if let Some(filesystem) = &self.filesystem {
@@ -913,9 +1259,12 @@ impl BincodeWalStrategy {
                 }
             }
         }
-        
-        tracing::info!("✅ [Bincode] Flush acknowledged for {}: {} sequences processed", 
-                      collection_id, cleanup_instructions.sequences_to_cleanup.len());
+
+        tracing::info!(
+            "✅ [Bincode] Flush acknowledged for {}: {} sequences processed",
+            collection_id,
+            cleanup_instructions.sequences_to_cleanup.len()
+        );
         Ok(())
     }
 }
@@ -930,9 +1279,11 @@ impl FlushCoordinatorCallbacks for BincodeWalStrategy {
     ) -> Result<Vec<String>> {
         // Similar to AvroWAL but looks for .bin files instead of .avro
         if let Some(config) = &self.config {
-            let wal_url = self.select_wal_url_for_collection(collection_id, config).await?;
+            let wal_url = self
+                .select_wal_url_for_collection(collection_id, config)
+                .await?;
             let dir_path = wal_url.trim_start_matches("file://");
-            
+
             if let Some(filesystem) = &self.filesystem {
                 if let Ok(fs) = filesystem.get_filesystem("file://") {
                     match fs.list(&format!("{}/{}", dir_path, collection_id)).await {
@@ -942,18 +1293,26 @@ impl FlushCoordinatorCallbacks for BincodeWalStrategy {
                                 .filter(|f| f.name.contains("wal_") && f.name.ends_with(".bin"))
                                 .map(|f| f.name)
                                 .collect();
-                            tracing::debug!("📁 [Bincode] Found {} WAL files for collection {} sequences {:?}", 
-                                          wal_files.len(), collection_id, sequences);
+                            tracing::debug!(
+                                "📁 [Bincode] Found {} WAL files for collection {} sequences {:?}",
+                                wal_files.len(),
+                                collection_id,
+                                sequences
+                            );
                             return Ok(wal_files);
                         }
                         Err(e) => {
-                            tracing::warn!("📁 [Bincode] Failed to list WAL files for {}: {}", collection_id, e);
+                            tracing::warn!(
+                                "📁 [Bincode] Failed to list WAL files for {}: {}",
+                                collection_id,
+                                e
+                            );
                         }
                     }
                 }
             }
         }
-        
+
         Ok(Vec::new())
     }
 
@@ -1161,5 +1520,11 @@ impl Default for FlushResult {
             collections_affected: Vec::new(),
             flush_duration_ms: 0,
         }
+    }
+}
+
+impl DistanceComputeProvider for BincodeWalStrategy {
+    fn distance_compute(&self) -> &UnifiedDistanceCompute {
+        &self.distance_compute
     }
 }

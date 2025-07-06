@@ -392,50 +392,107 @@ class ProximaDBRestClient:
     def insert_vector(
         self,
         collection_id: str,
-        vector_id: str,
-        vector: Union[List[float], np.ndarray],
-        metadata: Optional[MetadataDict] = None,
+        vector_id: Optional[str] = None,
+        vector: Optional[Union[List[float], np.ndarray]] = None,
+        vectors: Optional[Union[List[List[float]], np.ndarray]] = None,
+        ids: Optional[List[str]] = None,
+        metadata: Optional[Union[MetadataDict, List[MetadataDict]]] = None,
         upsert: bool = False,
-    ) -> InsertResult:
-        """Insert a single vector
+    ) -> Union[InsertResult, BatchResult]:
+        """Insert single or multiple vectors
+        
+        Supports both formats:
+        - 1D array: Single vector insertion
+        - 2D array: Bulk vector insertion
         
         Args:
             collection_id: Target collection ID
-            vector_id: Unique vector identifier
-            vector: Vector data
-            metadata: Optional metadata dictionary
+            vector_id: Single vector ID (for 1D array)
+            vector: Single vector data (1D array)
+            vectors: Multiple vectors data (2D array)
+            ids: List of vector IDs (for 2D array)
+            metadata: Metadata dict (single) or list of dicts (bulk)
             upsert: Update if vector already exists
             
         Returns:
-            InsertResult: Insert operation result
+            InsertResult or BatchResult depending on input format
             
-        Example:
-            >>> client = ProximaDBRestClient()
+        Examples:
+            >>> # Single vector (1D array)
             >>> result = client.insert_vector(
             ...     "col_123",
-            ...     "doc_001", 
-            ...     [0.1, 0.2, 0.3, 0.4],
-            ...     {"category": "research", "priority": 8}
+            ...     vector_id="doc_001",
+            ...     vector=[0.1, 0.2, 0.3, 0.4],
+            ...     metadata={"category": "research"}
+            ... )
+            
+            >>> # Bulk vectors (2D array)
+            >>> result = client.insert_vector(
+            ...     "col_123",
+            ...     vectors=[[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
+            ...     ids=["doc_001", "doc_002", "doc_003"],
+            ...     metadata=[{"cat": "A"}, {"cat": "B"}, {"cat": "C"}]
             ... )
         """
-        vector_data = self._normalize_vector(vector)
-        
-        request_data = {
-            "id": vector_id,
-            "vector": vector_data,
-            "metadata": metadata or {}
-        }
-        
-        logger.debug(f"📥 Inserting vector: {vector_id} to {collection_id}")
-        response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
-        
-        data = response.json()
-        return InsertResult(
-            count=1 if data.get("success", True) else 0,
-            failed_count=0 if data.get("success", True) else 1,
-            duration_ms=data.get("processing_time_us", 0) // 1000,
-            errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
-        )
+        # Determine format: single vector or bulk
+        if vector is not None and vectors is None:
+            # Single vector (1D array) format
+            vector_data = self._normalize_vector(vector)
+            
+            request_data = {
+                "id": vector_id,
+                "vector": vector_data,
+                "metadata": metadata or {}
+            }
+            
+            logger.debug(f"📥 Inserting single vector: {vector_id} to {collection_id}")
+            response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
+            
+            data = response.json()
+            result_data = data.get("data", {})
+            
+            if result_data.get("type") == "single":
+                return InsertResult(
+                    count=1 if data.get("success", True) else 0,
+                    failed_count=0 if data.get("success", True) else 1,
+                    duration_ms=data.get("processing_time_us", 0) // 1000,
+                    errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
+                )
+            else:
+                # Server handled it as bulk
+                return BatchResult(
+                    total_count=1,
+                    successful_count=1 if data.get("success", True) else 0,
+                    failed_count=0 if data.get("success", True) else 1,
+                    duration_ms=data.get("processing_time_us", 0) // 1000,
+                    errors=None
+                )
+                
+        elif vectors is not None and vector is None:
+            # Bulk vectors (2D array) format
+            vectors_list = self._normalize_vectors(vectors)
+            
+            request_data = {
+                "ids": ids,
+                "vectors": vectors_list,
+                "metadata": metadata if isinstance(metadata, list) else None
+            }
+            
+            logger.debug(f"📥 Bulk inserting {len(vectors_list)} vectors to {collection_id}")
+            response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
+            
+            data = response.json()
+            result_data = data.get("data", {})
+            
+            return BatchResult(
+                total_count=result_data.get("count", len(vectors_list)),
+                successful_count=result_data.get("count", len(vectors_list)) if data.get("success", True) else 0,
+                failed_count=0 if data.get("success", True) else result_data.get("count", len(vectors_list)),
+                duration_ms=data.get("processing_time_us", 0) // 1000,
+                errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
+            )
+        else:
+            raise ValueError("Provide either 'vector' (1D) or 'vectors' (2D), not both")
     
     def insert_vectors(
         self,

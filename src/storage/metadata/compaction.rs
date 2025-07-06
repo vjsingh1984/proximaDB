@@ -19,13 +19,12 @@ use chrono::Utc;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::metadata::backends::filestore_backend::{
-    CollectionRecord, IncrementalOperation, OperationType,
-    COLLECTION_AVRO_SCHEMA,
+    CollectionRecord, IncrementalOperation, OperationType, COLLECTION_AVRO_SCHEMA,
 };
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
 // This specific metadata compaction config extends the base config
@@ -101,7 +100,7 @@ impl FilestoreCompactionManager {
 
         let fs = self.filesystem.get_filesystem(&self.filestore_url)?;
         let incremental_dir = self.metadata_path.join("incremental");
-        
+
         let mut count = 0;
         let mut total_size = 0;
 
@@ -114,8 +113,8 @@ impl FilestoreCompactionManager {
             }
         }
 
-        Ok(count >= self.config.max_incremental_operations || 
-           total_size >= self.config.max_incremental_size_bytes)
+        Ok(count >= self.config.max_incremental_operations
+            || total_size >= self.config.max_incremental_size_bytes)
     }
 
     /// Perform compaction - merge incremental operations into new snapshot
@@ -160,27 +159,35 @@ impl FilestoreCompactionManager {
             archive_path: Some(archive_path),
         };
 
-        info!("✅ Compaction completed: {} operations in {:?}", 
-              ops_count, start_time.elapsed());
+        info!(
+            "✅ Compaction completed: {} operations in {:?}",
+            ops_count,
+            start_time.elapsed()
+        );
 
         Ok(result)
     }
 
     /// Load current snapshot
-    async fn load_current_snapshot(&self, fs: &dyn FileSystem) -> Result<BTreeMap<String, CollectionRecord>> {
-        let snapshot_path = self.metadata_path.join("snapshots/current_collections.avro");
+    async fn load_current_snapshot(
+        &self,
+        fs: &dyn FileSystem,
+    ) -> Result<BTreeMap<String, CollectionRecord>> {
+        let snapshot_path = self
+            .metadata_path
+            .join("snapshots/current_collections.avro");
         let mut memtable = BTreeMap::new();
 
         if fs.exists(&snapshot_path.to_string_lossy()).await? {
             debug!("Loading current snapshot");
             let data = fs.read(&snapshot_path.to_string_lossy()).await?;
-            
+
             let reader = apache_avro::Reader::new(&data[..])?;
             for value in reader {
                 let record: CollectionRecord = apache_avro::from_value(&value?)?;
                 memtable.insert(record.uuid.clone(), record);
             }
-            
+
             debug!("Loaded {} collections from snapshot", memtable.len());
         }
 
@@ -199,10 +206,11 @@ impl FilestoreCompactionManager {
 
         // Read all incremental operation files
         if let Ok(entries) = fs.list(&incremental_dir.to_string_lossy()).await {
-            let mut op_files: Vec<_> = entries.into_iter()
+            let mut op_files: Vec<_> = entries
+                .into_iter()
                 .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".avro"))
                 .collect();
-            
+
             // Sort by filename (which includes sequence number)
             op_files.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -212,7 +220,7 @@ impl FilestoreCompactionManager {
 
                 if let Ok(data) = fs.read(&path.to_string_lossy()).await {
                     let reader = apache_avro::Reader::new(&data[..])?;
-                    
+
                     for value in reader {
                         if let Ok(avro_value) = value {
                             // Parse the Avro record manually
@@ -276,17 +284,15 @@ impl FilestoreCompactionManager {
                         collection_id = s;
                     }
                 }
-                "collection_data" => {
-                    match field_value {
-                        apache_avro::types::Value::String(s) => {
-                            collection_data_json = Some(s);
-                        }
-                        apache_avro::types::Value::Null => {
-                            collection_data_json = None;
-                        }
-                        _ => {}
+                "collection_data" => match field_value {
+                    apache_avro::types::Value::String(s) => {
+                        collection_data_json = Some(s);
                     }
-                }
+                    apache_avro::types::Value::Null => {
+                        collection_data_json = None;
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -316,21 +322,25 @@ impl FilestoreCompactionManager {
         fs: &dyn FileSystem,
         memtable: &BTreeMap<String, CollectionRecord>,
     ) -> Result<()> {
-        let snapshot_path = self.metadata_path.join("snapshots/current_collections.avro");
-        let temp_path = self.metadata_path.join("snapshots/current_collections.avro.tmp");
+        let snapshot_path = self
+            .metadata_path
+            .join("snapshots/current_collections.avro");
+        let temp_path = self
+            .metadata_path
+            .join("snapshots/current_collections.avro.tmp");
 
         info!("Creating new snapshot with {} collections", memtable.len());
 
         // Parse schema
         let schema = apache_avro::Schema::parse_str(COLLECTION_AVRO_SCHEMA)?;
-        
+
         // Create writer with compression
         let codec = if self.config.compress_snapshots {
             apache_avro::Codec::Deflate
         } else {
             apache_avro::Codec::Null
         };
-        
+
         let mut writer = apache_avro::Writer::with_codec(&schema, Vec::new(), codec);
 
         // Write all records
@@ -342,7 +352,11 @@ impl FilestoreCompactionManager {
 
         // Write atomically
         fs.write(&temp_path.to_string_lossy(), &data, None).await?;
-        fs.move_file(&temp_path.to_string_lossy(), &snapshot_path.to_string_lossy()).await?;
+        fs.move_file(
+            &temp_path.to_string_lossy(),
+            &snapshot_path.to_string_lossy(),
+        )
+        .await?;
 
         info!("✅ Created new snapshot: {} bytes", data.len());
         Ok(())
@@ -359,28 +373,33 @@ impl FilestoreCompactionManager {
         info!("📦 Archiving to: {}", archive_dir.display());
 
         // Copy current snapshot if exists
-        let current_snapshot = self.metadata_path.join("snapshots/current_collections.avro");
+        let current_snapshot = self
+            .metadata_path
+            .join("snapshots/current_collections.avro");
         if fs.exists(&current_snapshot.to_string_lossy()).await? {
             let archive_snapshot = archive_dir.join("snapshot_collections.avro");
             fs.copy(
                 &current_snapshot.to_string_lossy(),
                 &archive_snapshot.to_string_lossy(),
-            ).await?;
+            )
+            .await?;
         }
 
         // Move incremental files
         let incremental_dir = self.metadata_path.join("incremental");
         if let Ok(entries) = fs.list(&incremental_dir.to_string_lossy()).await {
             let archive_incremental = archive_dir.join("incremental");
-            fs.create_dir(&archive_incremental.to_string_lossy()).await?;
+            fs.create_dir(&archive_incremental.to_string_lossy())
+                .await?;
 
             for entry in entries {
                 if entry.name.ends_with(".avro") {
                     let src = incremental_dir.join(&entry.name);
                     let dst = archive_incremental.join(&entry.name);
-                    
+
                     // Copy then delete
-                    fs.copy(&src.to_string_lossy(), &dst.to_string_lossy()).await?;
+                    fs.copy(&src.to_string_lossy(), &dst.to_string_lossy())
+                        .await?;
                     fs.delete(&src.to_string_lossy()).await?;
                 }
             }
@@ -394,7 +413,8 @@ impl FilestoreCompactionManager {
         let archive_base_dir = self.metadata_path.join("archive");
 
         if let Ok(entries) = fs.list(&archive_base_dir.to_string_lossy()).await {
-            let mut archive_dirs: Vec<_> = entries.into_iter()
+            let mut archive_dirs: Vec<_> = entries
+                .into_iter()
                 .filter(|e| e.metadata.is_directory)
                 .map(|e| e.name)
                 .collect();
@@ -406,7 +426,7 @@ impl FilestoreCompactionManager {
             while archive_dirs.len() > self.config.keep_snapshots {
                 if let Some(oldest) = archive_dirs.first() {
                     let path = archive_base_dir.join(oldest);
-                    
+
                     match fs.delete(&path.to_string_lossy()).await {
                         Ok(_) => {
                             debug!("🗑️ Removed old archive: {}", oldest);
@@ -433,7 +453,7 @@ impl FilestoreCompactionManager {
     pub async fn update_incremental_stats(&mut self) -> Result<()> {
         let fs = self.filesystem.get_filesystem(&self.filestore_url)?;
         let incremental_dir = self.metadata_path.join("incremental");
-        
+
         let mut count = 0;
         let mut size = 0;
 

@@ -198,16 +198,8 @@ pub struct SearchConfig {
     pub caching: Option<SearchCacheConfig>,
 }
 
-/// Distance metrics
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DistanceMetric {
-    Cosine,
-    Euclidean,
-    DotProduct,
-    Manhattan,
-    Hamming,
-    Jaccard,
-}
+// Use the canonical DistanceMetric from compute distance module
+pub use crate::compute::distance::DistanceMetric;
 
 /// Performance tuning configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,8 @@
 //! Index Types for ProximaDB Unified Schema
 
-pub mod types;
 pub mod algorithms;
+pub mod types;
 
 // Re-export all index types
-pub use types::*;
 pub use algorithms::*;
+pub use types::*;

@@ -1,14 +1,14 @@
 use crate::compute::algorithms::SearchResult;
 use crate::core::{BatchSearchRequest, CollectionId, StorageConfig, VectorId, VectorRecord};
-use crate::index::{AxisIndexManager, AxisConfig};
-use crate::storage::{
-    persistence::disk_manager::DiskManager,
-    engines::lsm::{CompactionManager, LsmTree},
-    mmap::MmapReader,
-    CollectionMetadata,
-};
+use crate::index::{AxisConfig, AxisIndexManager};
 use crate::services::collection_service::CollectionService;
 use crate::storage::persistence::wal::{WalConfig, WalManager};
+use crate::storage::{
+    engines::lsm::{CompactionManager, LsmTree},
+    mmap::MmapReader,
+    persistence::disk_manager::DiskManager,
+    CollectionMetadata,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,12 +36,9 @@ fn calculate_euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return f32::MAX;
     }
-    
-    let sum_squared_diff: f32 = a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x - y).powi(2))
-        .sum();
-    
+
+    let sum_squared_diff: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+
     sum_squared_diff.sqrt()
 }
 
@@ -50,11 +47,8 @@ fn calculate_manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return f32::MAX;
     }
-    
-    a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x - y).abs())
-        .sum()
+
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
 }
 
 /// Calculate dot product similarity between two vectors
@@ -62,7 +56,7 @@ fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return 0.0;
     }
-    
+
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
@@ -75,15 +69,15 @@ pub struct StorageEngine {
     axis_index_manager: Arc<AxisIndexManager>,
     compaction_manager: Arc<CompactionManager>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-    
+
     /// Collection service for metadata operations (separation of concerns)
     collection_service: Arc<CollectionService>,
 }
 
 impl StorageEngine {
     pub async fn new(
-        config: StorageConfig, 
-        collection_service: Arc<CollectionService>
+        config: StorageConfig,
+        collection_service: Arc<CollectionService>,
     ) -> crate::storage::Result<Self> {
         let disk_manager = Arc::new(DiskManager::new(config.data_dirs.clone())?);
 
@@ -94,7 +88,8 @@ impl StorageEngine {
         } else {
             // Fallback to legacy single directory for backward compatibility
             let mut wal_config = WalConfig::default();
-            wal_config.multi_disk.data_directories = vec![format!("file://{}", config.wal_dir.display())];
+            wal_config.multi_disk.data_directories =
+                vec![format!("file://{}", config.wal_dir.display())];
             wal_config
         };
 
@@ -113,10 +108,12 @@ impl StorageEngine {
         );
 
         // Create WAL strategy and manager using factory pattern
-        let wal_strategy =
-            crate::storage::persistence::wal::WalFactory::create_from_config(&wal_config, filesystem.clone())
-                .await
-                .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
+        let wal_strategy = crate::storage::persistence::wal::WalFactory::create_from_config(
+            &wal_config,
+            filesystem.clone(),
+        )
+        .await
+        .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
         let wal_manager = Arc::new(
             WalManager::new(wal_strategy, wal_config)
                 .await
@@ -253,9 +250,7 @@ impl StorageEngine {
             record.id,
             collection_id
         );
-        self.axis_index_manager
-            .insert(record.clone())
-            .await?;
+        self.axis_index_manager.insert(record.clone()).await?;
         tracing::debug!(
             "✅ Completed AXIS index insertion for vector {} in collection {}",
             record.id,
@@ -357,17 +352,19 @@ impl StorageEngine {
         // NOTE: Collection metadata should be managed by CollectionService
         // Storage layer should only handle storage concerns, not metadata
         tracing::debug!("💾 Creating storage for collection: {}", collection_id);
-        
+
         // Verify collection exists in collection service before creating storage
-        let collection_uuid = self.collection_service
+        let collection_uuid = self
+            .collection_service
             .get_collection_uuid(&collection_id)
             .await
             .map_err(|e| crate::core::StorageError::MetadataError(anyhow::anyhow!(e)))?;
-            
+
         if collection_uuid.is_none() {
-            return Err(crate::core::StorageError::MetadataError(
-                anyhow::anyhow!("Collection {} not found in collection service", collection_id)
-            ));
+            return Err(crate::core::StorageError::MetadataError(anyhow::anyhow!(
+                "Collection {} not found in collection service",
+                collection_id
+            )));
         }
 
         // Create LSM tree
@@ -400,7 +397,10 @@ impl StorageEngine {
 
         // TODO: Create search index using metadata from SharedServices
         // For now, skip search index creation entirely
-        tracing::debug!("TODO: Create search index for collection {} via SharedServices", collection_id);
+        tracing::debug!(
+            "TODO: Create search index for collection {} via SharedServices",
+            collection_id
+        );
 
         Ok(())
     }
@@ -452,7 +452,10 @@ impl StorageEngine {
 
                         // TODO: Initialize search index for existing collection using SharedServices
                         // For now, skip search index initialization
-                        tracing::debug!("TODO: Initialize search index for collection {} via SharedServices", collection_id);
+                        tracing::debug!(
+                            "TODO: Initialize search index for collection {} via SharedServices",
+                            collection_id
+                        );
                     }
                 }
             }
@@ -467,13 +470,21 @@ impl StorageEngine {
         tracing::info!("📋 WAL RECOVERY: Getting collection list from collection service");
         let existing_collections = match self.collection_service.list_collections().await {
             Ok(collections) => {
-                tracing::info!("📋 WAL RECOVERY: Found {} existing collections from collection service", collections.len());
-                tracing::debug!("📋 WAL RECOVERY: Existing collections: {:?}", 
-                    collections.iter().map(|c| &c.uuid).collect::<Vec<_>>());
+                tracing::info!(
+                    "📋 WAL RECOVERY: Found {} existing collections from collection service",
+                    collections.len()
+                );
+                tracing::debug!(
+                    "📋 WAL RECOVERY: Existing collections: {:?}",
+                    collections.iter().map(|c| &c.uuid).collect::<Vec<_>>()
+                );
                 collections
             }
             Err(e) => {
-                tracing::warn!("⚠️ WAL RECOVERY: Failed to get collections from collection service: {}", e);
+                tracing::warn!(
+                    "⚠️ WAL RECOVERY: Failed to get collections from collection service: {}",
+                    e
+                );
                 Vec::new()
             }
         };
@@ -485,15 +496,17 @@ impl StorageEngine {
                     "✅ WAL recovery completed successfully, recovered {} entries",
                     recovered_entries
                 );
-                
+
                 // Add debug info about which collections had WAL entries vs those that didn't
                 if existing_collections.len() > 0 && recovered_entries == 0 {
                     tracing::warn!("🔍 WAL RECOVERY: Found {} existing collections but recovered 0 WAL entries. This might indicate:", existing_collections.len());
-                    tracing::warn!("   - Collections were created but no vectors were inserted yet");
+                    tracing::warn!(
+                        "   - Collections were created but no vectors were inserted yet"
+                    );
                     tracing::warn!("   - WAL files were cleaned up or lost");
                     tracing::warn!("   - WAL recovery is not finding the correct WAL files");
                 }
-                
+
                 Ok(())
             }
             Err(e) => {
@@ -506,7 +519,9 @@ impl StorageEngine {
 
     /// Extract unique collection IDs and their metadata from recovered WAL entries
     /// This method is called by SharedServices during initialization to restore collection metadata
-    pub async fn get_recovered_collections_metadata(&self) -> crate::storage::Result<Vec<(CollectionId, CollectionMetadata)>> {
+    pub async fn get_recovered_collections_metadata(
+        &self,
+    ) -> crate::storage::Result<Vec<(CollectionId, CollectionMetadata)>> {
         tracing::info!("📊 Extracting collection metadata from recovered WAL entries");
 
         let mut collections_metadata = Vec::new();
@@ -515,12 +530,15 @@ impl StorageEngine {
         // Get all collections that have entries in the WAL
         match self.wal_manager.stats().await {
             Ok(stats) => {
-                tracing::info!("📊 WAL stats: {} total entries across {} collections", 
-                              stats.total_entries, stats.collections_count);
+                tracing::info!(
+                    "📊 WAL stats: {} total entries across {} collections",
+                    stats.total_entries,
+                    stats.collections_count
+                );
 
                 // Try to get collection entries to extract metadata
                 // Since WAL doesn't expose collection enumeration directly, we'll use a different approach
-                
+
                 // For each potential collection, try to get its entries and derive metadata
                 // This is a temporary solution until WAL exposes collection enumeration
                 let potential_collection_names = vec![
@@ -528,15 +546,22 @@ impl StorageEngine {
                     "test_persistence_collection_2",
                     "embeddings",
                     "documents",
-                    "vectors"
+                    "vectors",
                 ];
 
                 for collection_id in potential_collection_names {
-                    match self.wal_manager.get_collection_entries(&collection_id.to_string()).await {
+                    match self
+                        .wal_manager
+                        .get_collection_entries(&collection_id.to_string())
+                        .await
+                    {
                         Ok(entries) if !entries.is_empty() => {
                             if seen_collections.insert(collection_id.to_string()) {
-                                tracing::info!("📦 Found collection {} with {} entries in WAL", 
-                                              collection_id, entries.len());
+                                tracing::info!(
+                                    "📦 Found collection {} with {} entries in WAL",
+                                    collection_id,
+                                    entries.len()
+                                );
 
                                 // Extract metadata from the first vector entry
                                 if let Some(entry) = entries.first() {
@@ -571,7 +596,10 @@ impl StorageEngine {
             }
         }
 
-        tracing::info!("✅ Extracted metadata for {} collections from WAL", collections_metadata.len());
+        tracing::info!(
+            "✅ Extracted metadata for {} collections from WAL",
+            collections_metadata.len()
+        );
         Ok(collections_metadata)
     }
 
@@ -623,7 +651,6 @@ impl StorageEngine {
         }
     }
 
-
     /// Calculate distance/similarity based on collection's configured metric
     fn calculate_distance_metric(
         &self,
@@ -635,23 +662,26 @@ impl StorageEngine {
             "cosine" | "1" => {
                 // For cosine similarity, higher is better
                 Ok(calculate_cosine_similarity(query, vector))
-            },
+            }
             "euclidean" | "l2" | "2" => {
                 // For euclidean distance, lower is better, so return negative
                 let distance = calculate_euclidean_distance(query, vector);
                 Ok(-distance) // Negative so higher scores are better
-            },
+            }
             "manhattan" | "l1" | "3" => {
                 // For manhattan distance, lower is better, so return negative
                 let distance = calculate_manhattan_distance(query, vector);
                 Ok(-distance) // Negative so higher scores are better
-            },
+            }
             "dot_product" | "inner_product" | "4" => {
                 // For dot product, higher is better
                 Ok(calculate_dot_product(query, vector))
-            },
+            }
             _ => {
-                tracing::warn!("🔍 Unknown distance metric '{}', falling back to cosine", distance_metric);
+                tracing::warn!(
+                    "🔍 Unknown distance metric '{}', falling back to cosine",
+                    distance_metric
+                );
                 Ok(calculate_cosine_similarity(query, vector))
             }
         }
@@ -666,44 +696,63 @@ impl StorageEngine {
     ) -> crate::storage::Result<Vec<SearchResult>> {
         tracing::info!(
             "🔍 VIPER ENGINE: Starting search_vectors for collection={}, query_dim={}, k={}",
-            collection_id, query.len(), k
+            collection_id,
+            query.len(),
+            k
         );
-        tracing::debug!("🔍 VIPER ENGINE: Query vector preview: {:?}", &query[..std::cmp::min(5, query.len())]);
+        tracing::debug!(
+            "🔍 VIPER ENGINE: Query vector preview: {:?}",
+            &query[..std::cmp::min(5, query.len())]
+        );
 
         // STEP 1: Query collection metadata from collection service (proper separation of concerns)
         tracing::debug!("🔍 VIPER ENGINE: Fetching collection metadata");
-        let collection_record = match self.collection_service
+        let collection_record = match self
+            .collection_service
             .get_collection_by_name(collection_id)
-            .await {
+            .await
+        {
             Ok(record) => {
                 tracing::debug!("✅ VIPER ENGINE: Successfully fetched collection metadata");
                 record
             }
             Err(e) => {
-                tracing::error!("❌ VIPER ENGINE: Failed to fetch collection metadata: {:?}", e);
+                tracing::error!(
+                    "❌ VIPER ENGINE: Failed to fetch collection metadata: {:?}",
+                    e
+                );
                 return Err(crate::core::StorageError::MetadataError(anyhow::anyhow!(e)));
             }
         };
-            
+
         let collection_record = match collection_record {
             Some(record) => {
-                tracing::info!("✅ VIPER ENGINE: Found collection: {} (dimension: {})", collection_id, record.dimension);
+                tracing::info!(
+                    "✅ VIPER ENGINE: Found collection: {} (dimension: {})",
+                    collection_id,
+                    record.dimension
+                );
                 record
             }
             None => {
                 tracing::error!("❌ VIPER ENGINE: Collection not found: {}", collection_id);
-                return Err(crate::core::StorageError::CollectionNotFound(collection_id.clone()));
+                return Err(crate::core::StorageError::CollectionNotFound(
+                    collection_id.clone(),
+                ));
             }
         };
 
         // STEP 2: Validate query vector dimensions against collection metadata
         tracing::debug!("🔍 VIPER ENGINE: Validating vector dimensions");
         if query.len() != collection_record.dimension as usize {
-            tracing::error!("❌ VIPER ENGINE: Dimension mismatch - expected: {}, actual: {}", 
-                collection_record.dimension, query.len());
-            return Err(crate::core::StorageError::InvalidDimension { 
-                expected: collection_record.dimension as usize, 
-                actual: query.len() 
+            tracing::error!(
+                "❌ VIPER ENGINE: Dimension mismatch - expected: {}, actual: {}",
+                collection_record.dimension,
+                query.len()
+            );
+            return Err(crate::core::StorageError::InvalidDimension {
+                expected: collection_record.dimension as usize,
+                actual: query.len(),
             });
         }
 
@@ -723,7 +772,10 @@ impl StorageEngine {
 
         // Part 1: Search memtable for recent unflushed data (with collection-specific distance metric)
         tracing::info!("🔍 VIPER ENGINE: Starting memtable search");
-        match self.search_memtable_with_metadata(collection_id, &query, k * 2, &collection_record).await {
+        match self
+            .search_memtable_with_metadata(collection_id, &query, k * 2, &collection_record)
+            .await
+        {
             Ok(memtable_results) => {
                 tracing::info!(
                     "✅ VIPER ENGINE: Found {} results from memtable",
@@ -757,13 +809,17 @@ impl StorageEngine {
                     query_result.strategy_used.primary_index_type
                 );
                 // Convert AXIS ScoredResult to SearchResult
-                let search_results: Vec<SearchResult> = query_result.results.into_iter().map(|scored| {
-                    SearchResult {
-                        vector_id: scored.vector_id,
-                        score: scored.score,
-                        metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
-                    }
-                }).collect();
+                let search_results: Vec<SearchResult> = query_result
+                    .results
+                    .into_iter()
+                    .map(|scored| {
+                        SearchResult {
+                            vector_id: scored.vector_id,
+                            score: scored.score,
+                            metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                        }
+                    })
+                    .collect();
                 all_results.extend(search_results);
             }
             Err(e) => {
@@ -778,7 +834,11 @@ impl StorageEngine {
         }
 
         // Sort by score (similarity) and take top k
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(k);
 
         tracing::debug!(
@@ -817,7 +877,9 @@ impl StorageEngine {
 
         // Brute-force search through memtable entries
         for entry in entries {
-            if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } = &entry.operation {
+            if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } =
+                &entry.operation
+            {
                 // Skip if vector dimensions don't match (should not happen due to validation above)
                 if record.vector.len() != query.len() {
                     tracing::warn!(
@@ -828,13 +890,17 @@ impl StorageEngine {
                 }
 
                 // Calculate similarity using collection-specific distance metric
-                let similarity = self.calculate_distance_metric(query, &record.vector, &collection_record.distance_metric)?;
-                
+                let similarity = self.calculate_distance_metric(
+                    query,
+                    &record.vector,
+                    &collection_record.distance_metric,
+                )?;
+
                 candidates.push(SearchResult {
-                    vector_id: if record.id.is_empty() { 
-                        format!("mem_{}", entry.sequence) 
-                    } else { 
-                        record.id.clone() 
+                    vector_id: if record.id.is_empty() {
+                        format!("mem_{}", entry.sequence)
+                    } else {
+                        record.id.clone()
                     },
                     score: similarity,
                     metadata: Some(record.metadata.clone()),
@@ -843,13 +909,14 @@ impl StorageEngine {
         }
 
         // Sort by similarity score (descending) and take top k
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(k);
 
-        tracing::debug!(
-            "🔍 Memtable search found {} candidates",
-            candidates.len()
-        );
+        tracing::debug!("🔍 Memtable search found {} candidates", candidates.len());
 
         Ok(candidates)
     }
@@ -884,18 +951,25 @@ impl StorageEngine {
             include_expired: false,
         };
 
-        let result = self.axis_index_manager.query(hybrid_query).await
+        let result = self
+            .axis_index_manager
+            .query(hybrid_query)
+            .await
             .map(|query_result| {
-                query_result.results.into_iter().map(|scored| {
-                    SearchResult {
-                        vector_id: scored.vector_id,
-                        score: scored.score,
-                        metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
-                    }
-                }).collect()
+                query_result
+                    .results
+                    .into_iter()
+                    .map(|scored| {
+                        SearchResult {
+                            vector_id: scored.vector_id,
+                            score: scored.score,
+                            metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                        }
+                    })
+                    .collect()
             })
             .map_err(|e| crate::core::StorageError::IndexError(e.to_string()));
-        
+
         tracing::debug!(
             "🔍 search_vectors_with_filter result: {:?}",
             result.as_ref().map(|r: &Vec<SearchResult>| r.len())
@@ -909,9 +983,11 @@ impl StorageEngine {
         collection_id: &CollectionId,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
         // Get AXIS index statistics
-        match self.axis_index_manager
+        match self
+            .axis_index_manager
             .get_collection_stats(collection_id)
-            .await {
+            .await
+        {
             Ok(stats) => {
                 let json_value = serde_json::to_value(stats).unwrap_or(serde_json::json!({}));
                 if let Some(obj) = json_value.as_object() {
@@ -923,8 +999,8 @@ impl StorageEngine {
                 } else {
                     Ok(None)
                 }
-            },
-            Err(_) => Ok(None)
+            }
+            Err(_) => Ok(None),
         }
     }
 
@@ -1029,7 +1105,7 @@ impl StorageEngine {
             );
             for collection_id in &collection_ids {
                 // Note: WAL no longer handles collection operations - handled by CollectionService
-            if let Err(e) = self.wal_manager.flush(Some(collection_id)).await {
+                if let Err(e) = self.wal_manager.flush(Some(collection_id)).await {
                     tracing::warn!(
                         "Failed to cleanup WAL entries for collection {}: {}",
                         collection_id,
@@ -1073,42 +1149,62 @@ impl StorageEngine {
 
     /// Get all vectors from a collection for linear search
     /// Retrieves vectors from both LSM tree (recent writes) and MMAP readers (historical data)
-    pub async fn get_all_vectors(&self, collection_id: &str) -> crate::storage::Result<Vec<VectorRecord>> {
+    pub async fn get_all_vectors(
+        &self,
+        collection_id: &str,
+    ) -> crate::storage::Result<Vec<VectorRecord>> {
         let mut vectors = Vec::new();
-        
+
         // Get vectors from LSM tree (recent writes)
         let trees = self.lsm_trees.read().await;
         if let Some(tree) = trees.get(collection_id) {
             match tree.iter_all().await {
                 Ok(mut lsm_vectors) => {
-                    tracing::debug!("Found {} vectors in LSM tree for collection {}", 
-                                   lsm_vectors.len(), collection_id);
+                    tracing::debug!(
+                        "Found {} vectors in LSM tree for collection {}",
+                        lsm_vectors.len(),
+                        collection_id
+                    );
                     vectors.append(&mut lsm_vectors);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to iterate LSM tree for collection {}: {}", collection_id, e);
+                    tracing::warn!(
+                        "Failed to iterate LSM tree for collection {}: {}",
+                        collection_id,
+                        e
+                    );
                 }
             }
         }
 
-        // Get vectors from MMAP readers (historical data)  
+        // Get vectors from MMAP readers (historical data)
         let readers = self.mmap_readers.read().await;
         if let Some(reader) = readers.get(collection_id) {
             match reader.iter_all().await {
                 Ok(mut mmap_vectors) => {
-                    tracing::debug!("Found {} vectors in MMAP reader for collection {}", 
-                                   mmap_vectors.len(), collection_id);
+                    tracing::debug!(
+                        "Found {} vectors in MMAP reader for collection {}",
+                        mmap_vectors.len(),
+                        collection_id
+                    );
                     vectors.append(&mut mmap_vectors);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to iterate MMAP reader for collection {}: {}", collection_id, e);
+                    tracing::warn!(
+                        "Failed to iterate MMAP reader for collection {}: {}",
+                        collection_id,
+                        e
+                    );
                 }
             }
         }
-        
-        tracing::info!("get_all_vectors retrieved {} total vectors for collection {}", 
-                      vectors.len(), collection_id);
-        
+
+        tracing::info!(
+            "get_all_vectors retrieved {} total vectors for collection {}",
+            vectors.len(),
+            collection_id
+        );
+
         Ok(vectors)
     }
 }

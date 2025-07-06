@@ -41,7 +41,12 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    pub fn new(max_retries: usize, initial_delay_ms: u64, max_delay_ms: u64, backoff_multiplier: f64) -> Self {
+    pub fn new(
+        max_retries: usize,
+        initial_delay_ms: u64,
+        max_delay_ms: u64,
+        backoff_multiplier: f64,
+    ) -> Self {
         Self {
             max_retries,
             initial_delay_ms,
@@ -49,7 +54,7 @@ impl RetryConfig {
             backoff_multiplier,
         }
     }
-    
+
     pub fn calculate_delay(&self, attempt: usize) -> std::time::Duration {
         let delay_ms = (self.initial_delay_ms as f64 * self.backoff_multiplier.powi(attempt as i32))
             .min(self.max_delay_ms as f64) as u64;
@@ -68,7 +73,7 @@ struct FilesystemKey {
 impl FilesystemKey {
     fn from_url(url: &str) -> FsResult<Self> {
         let parsed = Url::parse(url)?;
-        
+
         let base_path = match parsed.scheme() {
             "file" => parsed.path().to_string(),
             "s3" | "gcs" => {
@@ -80,14 +85,15 @@ impl FilesystemKey {
                 } else {
                     format!("{}/{}", bucket, prefix)
                 }
-            },
+            }
             "adls" => {
                 // For Azure, base path is account + container + prefix
                 let host = parsed.host_str().unwrap_or("");
-                let path_parts: Vec<&str> = parsed.path().trim_start_matches('/').split('/').collect();
+                let path_parts: Vec<&str> =
+                    parsed.path().trim_start_matches('/').split('/').collect();
                 format!("{}/{}", host, path_parts.join("/"))
-            },
-            _ => parsed.path().to_string()
+            }
+            _ => parsed.path().to_string(),
         };
 
         Ok(Self {
@@ -109,15 +115,17 @@ impl ManagedFilesystem {
     /// Execute operation with retry and auth refresh
     async fn execute_with_retry<F, T>(&self, operation: F) -> FsResult<T>
     where
-        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = FsResult<T>> + Send>> + Send + Sync,
+        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = FsResult<T>> + Send>>
+            + Send
+            + Sync,
         T: Send,
     {
         let mut attempts = 0;
         let max_attempts = self.retry_config.max_retries + 1;
-        
+
         loop {
             attempts += 1;
-            
+
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(err) if attempts >= max_attempts => return Err(err),
@@ -140,14 +148,14 @@ impl ManagedFilesystem {
                     std::io::ErrorKind::PermissionDenied => true,
                     std::io::ErrorKind::InvalidInput => {
                         // Some cloud providers return InvalidInput for auth issues
-                        io_err.to_string().to_lowercase().contains("auth") ||
-                        io_err.to_string().to_lowercase().contains("credential") ||
-                        io_err.to_string().to_lowercase().contains("token")
-                    },
-                    _ => false
+                        io_err.to_string().to_lowercase().contains("auth")
+                            || io_err.to_string().to_lowercase().contains("credential")
+                            || io_err.to_string().to_lowercase().contains("token")
+                    }
+                    _ => false,
                 }
-            },
-            _ => false
+            }
+            _ => false,
         }
     }
 
@@ -158,7 +166,11 @@ impl ManagedFilesystem {
         } else if relative_path.is_empty() {
             self.base_path.clone()
         } else {
-            format!("{}/{}", self.base_path.trim_end_matches('/'), relative_path.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                self.base_path.trim_end_matches('/'),
+                relative_path.trim_start_matches('/')
+            )
         }
     }
 }
@@ -169,7 +181,7 @@ impl ManagedFilesystem {
 impl FileSystem for ManagedFilesystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -179,7 +191,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn write(&self, path: &str, data: &[u8], options: Option<super::FileOptions>) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -191,7 +203,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -202,7 +214,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn create_dir_all(&self, path: &str) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -213,7 +225,7 @@ impl FileSystem for ManagedFilesystem {
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
         let from_resolved = self.resolve_path(from);
         let to_resolved = self.resolve_path(to);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let from = from_resolved.clone();
@@ -235,7 +247,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn write_atomic(&self, path: &str, data: &[u8], options: Option<super::FileOptions>) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -247,7 +259,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn delete(&self, path: &str) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -257,7 +269,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -267,7 +279,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn list(&self, path: &str) -> FsResult<Vec<super::DirEntry>> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -277,7 +289,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn create_dir(&self, path: &str) -> FsResult<()> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -288,7 +300,7 @@ impl FileSystem for ManagedFilesystem {
     async fn copy(&self, from: &str, to: &str) -> FsResult<()> {
         let from_resolved = self.resolve_path(from);
         let to_resolved = self.resolve_path(to);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let from = from_resolved.clone();
@@ -299,7 +311,7 @@ impl FileSystem for ManagedFilesystem {
 
     async fn metadata(&self, path: &str) -> FsResult<super::FileMetadata> {
         let resolved_path = self.resolve_path(path);
-        
+
         self.execute_with_retry(|| {
             let fs = &self.filesystem;
             let path = resolved_path.clone();
@@ -316,13 +328,13 @@ impl FileSystem for ManagedFilesystem {
 pub struct FilesystemManager {
     /// Cache of filesystem instances by URL base path
     filesystems: Arc<RwLock<HashMap<FilesystemKey, Arc<ManagedFilesystem>>>>,
-    
+
     /// Authentication providers by scheme (temporarily removed for compilation)
     // auth_providers: HashMap<String, Arc<dyn AuthProvider>>,
-    
+
     /// Default retry configuration
     default_retry_config: RetryConfig,
-    
+
     /// Configuration for creating new filesystems
     config: super::FilesystemConfig,
 }
@@ -343,7 +355,7 @@ impl FilesystemManager {
     /// Get or create filesystem instance for URL
     pub async fn get_filesystem(&self, url: &str) -> FsResult<Arc<ManagedFilesystem>> {
         let key = FilesystemKey::from_url(url)?;
-        
+
         // Check cache first
         {
             let cache = self.filesystems.read().await;
@@ -351,16 +363,16 @@ impl FilesystemManager {
                 return Ok(fs.clone());
             }
         }
-        
+
         // Create new filesystem instance
         let managed_fs: Arc<ManagedFilesystem> = Arc::new(self.create_filesystem_for_key(&key, url).await?);
-        
+
         // Cache it
         {
             let mut cache = self.filesystems.write().await;
             cache.insert(key, managed_fs.clone());
         }
-        
+
         Ok(managed_fs)
     }
 
@@ -368,17 +380,17 @@ impl FilesystemManager {
     pub async fn copy_cross_storage(&self, from_url: &str, to_url: &str) -> FsResult<()> {
         let from_fs = self.get_filesystem(from_url).await?;
         let to_fs = self.get_filesystem(to_url).await?;
-        
+
         // Extract relative paths
         let from_path = self.extract_relative_path(from_url)?;
         let to_path = self.extract_relative_path(to_url)?;
-        
+
         // Read from source
         let data = from_fs.filesystem.read(&from_path).await?;
-        
+
         // Write to destination atomically
         to_fs.filesystem.write_atomic(&to_path, &data, None).await?;
-        
+
         Ok(())
     }
 
@@ -386,12 +398,12 @@ impl FilesystemManager {
     pub async fn move_cross_storage(&self, from_url: &str, to_url: &str) -> FsResult<()> {
         // Copy first
         self.copy_cross_storage(from_url, to_url).await?;
-        
+
         // Delete source after successful copy
         let from_fs = self.get_filesystem(from_url).await?;
         let from_path = self.extract_relative_path(from_url)?;
         from_fs.filesystem.delete(&from_path).await?;
-        
+
         Ok(())
     }
 
@@ -399,7 +411,7 @@ impl FilesystemManager {
     async fn create_filesystem_for_key(&self, key: &FilesystemKey, url: &str) -> FsResult<ManagedFilesystem> {
         let parsed_url = Url::parse(url)?;
         // let auth_provider = self.auth_providers.get(&key.scheme).cloned();
-        
+
         let filesystem: Box<dyn FileSystem> = match key.scheme.as_str() {
             "file" => {
                 let mut local_config = self.config.local.clone().unwrap_or_default();
@@ -410,21 +422,21 @@ impl FilesystemManager {
             "s3" => {
                 let s3_config = self.config.s3.clone()
                     .ok_or_else(|| FilesystemError::Config("S3 not configured".to_string()))?;
-                
+
                 // Use default configuration for now
                 Box::new(S3FileSystem::new(s3_config).await?)
             },
             "adls" => {
                 let azure_config = self.config.azure.clone()
                     .ok_or_else(|| FilesystemError::Config("Azure not configured".to_string()))?;
-                
+
                 // Use default configuration for now
                 Box::new(AzureFileSystem::new(azure_config).await?)
             },
             "gcs" => {
                 let gcs_config = self.config.gcs.clone()
                     .ok_or_else(|| FilesystemError::Config("GCS not configured".to_string()))?;
-                
+
                 // Use default configuration for now
                 Box::new(GcsFileSystem::new(gcs_config).await?)
             },
@@ -442,12 +454,12 @@ impl FilesystemManager {
     fn extract_relative_path(&self, url: &str) -> FsResult<String> {
         let parsed_url = Url::parse(url)?;
         let key = FilesystemKey::from_url(url)?;
-        
+
         // For file URLs, return path relative to base
         if key.scheme == "file" {
             let full_path = parsed_url.path();
             let base_path = &key.base_path;
-            
+
             if full_path.starts_with(base_path) {
                 Ok(full_path.strip_prefix(base_path)
                     .unwrap_or("")

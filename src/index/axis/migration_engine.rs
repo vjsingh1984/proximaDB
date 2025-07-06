@@ -34,8 +34,7 @@ pub struct IndexMigrationEngine {
 
 impl std::fmt::Debug for IndexMigrationEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IndexMigrationEngine")
-            .finish()
+        f.debug_struct("IndexMigrationEngine").finish()
     }
 }
 
