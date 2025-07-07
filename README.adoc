@@ -1,11 +1,26 @@
-= ProximaDB
+= ProximaDB: Enterprise Vector Database
+:doctype: book
 :toc: left
-:toclevels: 2
+:toclevels: 3
 :sectlinks:
 :sectanchors:
+:sectnums:
 :source-highlighter: rouge
+:rouge-style: github
 :icons: font
 :imagesdir: docs/diagrams/images
+:experimental:
+:version: 1.0.0
+:revdate: {docdate}
+:author: ProximaDB Team
+
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
 
 // Licensed to Vijaykumar Singh under one or more contributor
 // license agreements. See the NOTICE file distributed with
@@ -32,6 +47,25 @@ _Enterprise-grade vector database engineered for AI workloads with unified memta
 
 A production-ready, cloud-native vector database built in Rust featuring unified memtable systems, polymorphic search engines, and comprehensive multi-cloud support for modern AI applications.
 
+== 🚀 Quick Navigation
+
+[cols="1,3"]
+|===
+|👤 **New Users** |Start with <<quick-start,Quick Start>> → <<demo-overview,Demo Guide>> → <<python-sdk-example,SDK Examples>>
+|🔧 **Developers** |Jump to <<development-setup,Development Setup>> → <<engineering-approaches,Architecture>> → <<contributing,Contributing>>
+|🏢 **Enterprise** |Review <<competitive-differentiation-matrix,Competitive Analysis>> → <<enterprise-security,Security>> → <<deployment,Deployment>>
+|📚 **Researchers** |Explore <<performance-scalability,Benchmarks>> → <<engineering-challenges,Technical Challenges>> → <<documentation,Research Papers>>
+|===
+
+[TIP]
+====
+🎯 **Quick Start**: Get ProximaDB running in 5 minutes with Docker:
+```bash
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb/demo && docker compose up -d
+```
+====
+
 == 🎯 Why ProximaDB?
 
 The rapid evolution of AI applications demands vector databases that balance performance, scalability, and operational simplicity. ProximaDB addresses these challenges through innovative architectural decisions and proven engineering approaches:
@@ -50,9 +84,14 @@ The rapid evolution of AI applications demands vector databases that balance per
 
 **Comprehensive Demo Suite** 🎭:: Real server integration demos (not simulations) with platform-specific setup guides (Windows, macOS, Ubuntu), Docker support, and competitive analysis vs leading vector databases.
 
-== ⚡ Where ProximaDB Shines - Unique Value Propositions
+== ⚡ Competitive Advantages & Unique Value Propositions
 
-=== 🏆 Technical Excellence USPs
+[NOTE]
+====
+📊 **Evidence-Based Claims**: All performance metrics and competitive advantages listed below are backed by benchmarks, real implementations, and measurable results documented in our demos.
+====
+
+=== 🏆 Technical Excellence & Innovation
 
 **1. Revolutionary Unified Memtable Architecture**::
 - **Unique**: Only vector database with behavior wrappers eliminating code duplication
@@ -106,9 +145,15 @@ The rapid evolution of AI applications demands vector databases that balance per
 
 === 🚀 Competitive Differentiation Matrix
 
+[IMPORTANT]
+====
+🎯 **Decision Matrix**: Use this table to compare ProximaDB against leading vector databases across key differentiators
+====
+
 [cols="2,2,2,2,2"]
 |===
-|USP Category |ProximaDB |Pinecone |Milvus |Qdrant
+.2+^.^|**Capability** 4+^.^|**Vector Database Comparison**
+^.^|**ProximaDB** ^.^|**Pinecone** ^.^|**Milvus** ^.^|**Qdrant**
 
 |**Code Architecture**
 |✅ Unified memtable (unique)
@@ -185,7 +230,13 @@ The rapid evolution of AI applications demands vector databases that balance per
 - ✅ Docker and Kubernetes production-ready configurations
 - ✅ Zero-downtime cloud migration capabilities
 
+[[architecture-overview]]
 == 🏗️ Architecture Overview
+
+[NOTE]
+====
+🔗 **Deep Dive**: For detailed architectural analysis, see link:docs/hld.adoc[High-Level Design] and link:docs/lld.adoc[Low-Level Design] documents
+====
 
 ProximaDB implements a sophisticated layered architecture designed for enterprise-scale vector operations:
 
@@ -343,8 +394,15 @@ Our engineering team conducted extensive evaluations of leading vector database 
 - **Data Migration**: Assessed import/export capabilities and migration tools
 - **SDK Quality**: Evaluated client library design and language support
 
+[[quick-start]]
 == 🚀 Quick Start
 
+[TIP]
+====
+⏱️ **Time Investment**: 5 minutes for Docker setup, 15 minutes for comprehensive demo
+====
+
+[[docker-quickstart]]
 === Docker Quick Start (Recommended)
 
 [source,bash]
@@ -363,7 +421,13 @@ docker run --network proximadb_default \
   proximadb-demo:latest python working_demo.py
 ----
 
+[[platform-setup]]
 === Platform-Specific Setup
+
+[NOTE]
+====
+🔗 **Detailed Instructions**: For comprehensive setup guides, see link:demo/demo.adoc[Demo Guide] with platform-specific troubleshooting
+====
 
 **Windows (PowerShell)**:
 [source,powershell]
@@ -407,7 +471,13 @@ make test
 cargo run --bin proximadb-server -- --config demo/docker-config.toml
 ----
 
+[[python-sdk-example]]
 === Python SDK Example with Text Chunking
+
+[TIP]
+====
+🔗 **Complete Examples**: See link:demo/financial_analysis_demo.py[Financial Analysis Demo] for advanced BERT embedding workflows
+====
 
 [source,python]
 ----
@@ -506,6 +576,7 @@ for result in results:
 print(f"Found {len(filtered_results)} relevant chunks with advanced filtering")
 ----
 
+[[comparative-analysis]]
 == 📊 Comparative Analysis: Vector Database Landscape
 
 === Performance & Scalability Comparison
@@ -711,6 +782,7 @@ image::Engineering_Challenges_Simple.png[Engineering Challenges Overview,800,ali
 
 **Tools Used**: Apache Avro, Bincode, tokio for background tasks, atomic filesystem operations
 
+[[performance-scalability]]
 == 📊 Performance & Scalability
 
 === Real-World Benchmarks
@@ -785,7 +857,13 @@ image::Engineering_Challenges_Simple.png[Engineering Challenges Overview,800,ali
 |99.999% availability
 |===
 
+[[documentation]]
 == 📚 Documentation
+
+[TIP]
+====
+📖 **Documentation Map**: All documentation is cross-linked and follows a progressive learning path from basic concepts to advanced implementation
+====
 
 Comprehensive documentation following enterprise standards:
 
@@ -813,7 +891,13 @@ Comprehensive documentation following enterprise standards:
 - **Docker Deployment** - Full containerization with production configurations
 - **Vector Database Migration** - Step-by-step guides from Pinecone, Milvus, Qdrant, Weaviate
 
+[[contributing]]
 == 🤝 Contributing
+
+[IMPORTANT]
+====
+🤝 **Community Driven**: ProximaDB thrives on community contributions. See link:docs/developer_guide.adoc[Developer Guide] for detailed contribution workflows
+====
 
 We welcome contributions from the AI and systems engineering community! Our development process follows industry best practices:
 
@@ -829,6 +913,7 @@ We welcome contributions from the AI and systems engineering community! Our deve
 - Performance regression testing
 - Memory safety verification
 
+[[development-setup]]
 === Development Setup
 
 [source,bash]
@@ -942,6 +1027,7 @@ RUST_LOG=debug cargo run --bin proximadb-server
 |JavaScript, Go, Java SDK implementations
 |===
 
+[[enterprise-security]]
 == 🛡️ Enterprise Security & Compliance
 
 ProximaDB implements enterprise-grade security features:

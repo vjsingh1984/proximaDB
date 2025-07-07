@@ -1,33 +1,88 @@
-= ProximaDB Demo Guide
-:toc:
-:toc-placement: preamble
+= ProximaDB Demo Guide: Complete Feature Showcase
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectlinks:
+:sectanchors:
 :sectnums:
-:imagesdir: images
-:icons: font
-:experimental:
 :source-highlighter: rouge
 :rouge-style: github
+:icons: font
+:imagesdir: images
+:experimental:
+:version: 1.0.0
+:revdate: {docdate}
+:author: ProximaDB Team
+
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
 
 [.lead]
 *ProximaDB* is a production-ready vector database built with Rust, featuring a unified memtable architecture and Python SDK. This comprehensive guide provides step-by-step instructions for running demonstrations across Windows, macOS, and Ubuntu platforms.
 
+== 🎯 Demo Roadmap & Quick Navigation
+
+[cols="2,3,1"]
+|===
+|**Experience Level** |**Recommended Path** |**Time**
+
+|🟢 **Beginner**
+|<<docker-quick-start,Docker Quick Start>> → <<basic-demo,Working Demo>> → <<demo-output-analysis,Results Analysis>>
+|15-30 min
+
+|🟡 **Intermediate** 
+|<<storage-engines-demo,Storage Engines>> → <<chunking-strategies,Text Chunking>> → <<advanced-features,Advanced Features>>
+|45-60 min
+
+|🔴 **Advanced**
+|<<financial-analysis-demo,Financial Intelligence>> → <<reproducing-benchmarks,Benchmark Reproduction>> → <<customization,Custom Extensions>>
+|90+ min
+
+|🏢 **Enterprise**
+|<<competitive-analysis,Competitive Analysis>> → <<production-deployment,Production Setup>> → <<monitoring,Operations>>
+|2+ hours
+|===
+
 [IMPORTANT]
 ====
-🚀 *Quick Start*: Jump to <<docker-quickstart,Docker Quick Start>> for the fastest setup experience.
+🚀 **Quick Start**: Get running in 5 minutes with <<docker-quick-start,Docker Quick Start>>
 
-⚡ *Performance*: ProximaDB achieves 6.10x performance improvement with 100% accuracy in benchmarks.
+⚡ **Performance**: ProximaDB achieves 6.10x performance improvement with 100% accuracy in benchmarks
+
+📊 **Real Results**: All performance data comes from actual server execution, not simulations
 ====
 
-== What You'll Learn
+== 📚 Learning Objectives & Progress Tracking
 
-After completing this guide, you will be able to:
+[NOTE]
+====
+✅ **Track Your Progress**: Check off objectives as you complete them throughout this guide
+====
 
-* [x] Set up ProximaDB on your platform (Windows/macOS/Ubuntu)
-* [x] Run comprehensive demos showcasing all features
-* [x] Understand text chunking strategies for RAG applications
-* [x] Implement semantic search with metadata filtering
-* [x] Benchmark performance across different configurations
-* [x] Deploy using Docker for production-like environments
+.Foundation Knowledge
+* [ ] **Setup & Installation**: Configure ProximaDB on your platform (Windows/macOS/Ubuntu)
+* [ ] **Basic Operations**: Create collections, insert vectors, perform searches
+* [ ] **Docker Deployment**: Run ProximaDB in containerized environments
+
+.Intermediate Skills  
+* [ ] **Text Processing**: Implement chunking strategies for RAG applications
+* [ ] **Advanced Search**: Use metadata filtering and logical operators
+* [ ] **Performance Analysis**: Benchmark and optimize different configurations
+
+.Advanced Capabilities
+* [ ] **Storage Engines**: Compare LSM vs VIPER for different workloads
+* [ ] **Financial Intelligence**: Analyze 13F filings with BERT embeddings  
+* [ ] **Custom Extensions**: Build domain-specific analysis workflows
+
+.Production Readiness
+* [ ] **Monitoring**: Set up health checks and performance metrics
+* [ ] **Troubleshooting**: Diagnose and resolve common issues
+* [ ] **Scaling**: Deploy for enterprise production workloads
 
 == Architecture Overview
 
@@ -66,20 +121,50 @@ ProximaDB's key innovation is the *Unified Memtable Architecture* that eliminate
 
 This comprehensive guide provides step-by-step instructions for running ProximaDB demonstrations using Docker containers or direct script execution.
 
-== Overview
+== 📋 Demo Scripts Overview
 
-ProximaDB provides multiple demonstration scripts showcasing different features:
+[cols="3,2,2,1"]
+|===
+|**Demo Script** |**Features Demonstrated** |**Use Cases** |**Difficulty**
 
-* **working_demo.py** - Basic ProximaDB functionality and performance
-* **full_demo.py** - Advanced features with chunking, quantization, HNSW, and dual protocols
-* **chunking_demo.py** - Comprehensive text chunking strategies
-* **storage_engines_demo.py** - LSM vs VIPER storage engine comparison with real benchmarks
-* **financial_analysis_demo.py** - 13F filings analysis with BERT embeddings and financial intelligence
+|**working_demo.py**
+|Basic operations, collections, search
+|Learning fundamentals, quick validation
+|🟢 Beginner
 
-Each demo can be run either:
+|**full_demo.py** 
+|Advanced features, quantization, HNSW, dual protocols
+|Production features, performance optimization
+|🟡 Intermediate
 
-1. **With Docker** (recommended for isolated environment)
-2. **Direct execution** (requires local Python setup)
+|**chunking_demo.py**
+|6 text chunking strategies for RAG
+|Document processing, content analysis
+|🟡 Intermediate
+
+|**storage_engines_demo.py**
+|LSM vs VIPER comparison with real benchmarks
+|Storage optimization, workload analysis
+|🔴 Advanced
+
+|**financial_analysis_demo.py**
+|13F filings analysis with BERT embeddings
+|Financial intelligence, domain-specific AI
+|🔴 Advanced
+|===
+
+.Execution Options
+[horizontal]
+🐳 **Docker**:: Recommended for isolated, reproducible environments
+🔧 **Direct**:: Local Python setup with more control and debugging options
+
+[TIP]
+====
+💡 **Demo Selection Guide**:
+- New to ProximaDB? Start with `working_demo.py`
+- Evaluating for production? Run `storage_engines_demo.py`
+- Building AI applications? Try `financial_analysis_demo.py`
+====
 
 == Prerequisites
 
