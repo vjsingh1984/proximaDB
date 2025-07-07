@@ -1,0 +1,90 @@
+// Quick Start Guide Module
+// This file is included by the main README.adoc
+
+== 🚀 Quick Start Guide
+
+[.lead]
+Get ProximaDB running in under 5 minutes with our streamlined setup process.
+
+=== Option 1: Docker Compose (Recommended)
+
+[source,bash]
+----
+# Navigate to demo directory
+cd demo
+
+# Start the complete demo environment
+docker-compose up --build
+
+# View demo logs in another terminal
+docker-compose logs -f demo
+
+# View ProximaDB logs
+docker-compose logs -f proximadb
+
+# Clean up when done
+docker-compose down -v
+----
+
+[TIP]
+====
+🐳 **Docker Benefits**: Complete environment setup with monitoring, no dependency management needed
+====
+
+=== Option 2: Local Development
+
+[source,bash]
+----
+# Install dependencies
+pip install -r requirements.txt
+
+# Install ProximaDB Python SDK
+cd ../clients/python
+pip install -e .
+cd ../../demo
+
+# Start ProximaDB server (in another terminal)
+cd ..
+cargo run --bin proximadb-server
+
+# Run demo
+python demo.py
+----
+
+[IMPORTANT]
+====
+📋 **Prerequisites**: Ensure Rust toolchain and Python 3.8+ are installed
+====
+
+=== Verification Steps
+
+After setup, verify installation:
+
+[source,bash]
+----
+# Check server health
+curl http://localhost:5678/health
+
+# Check gRPC endpoint
+grpcurl -plaintext localhost:5679 list
+
+# Run basic demo
+python working_demo.py
+----
+
+=== Expected First Run Output
+
+[source,text]
+----
+🚀 ProximaDB Demo Starting...
+✅ Server connection successful
+✅ Collection created: demo_collection_xyz
+✅ Vectors inserted: 100 vectors
+✅ Search completed: 10 results found
+📊 Performance: 12.5ms average search latency
+----
+
+[NOTE]
+====
+⏱️ **Time Estimate**: First run takes 2-3 minutes, subsequent runs under 30 seconds
+====

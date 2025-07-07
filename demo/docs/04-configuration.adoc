@@ -1,0 +1,265 @@
+// Configuration and Environment Setup Module
+// This file is included by the main README.adoc
+
+== ⚙️ Configuration & Environment Setup
+
+=== Docker Environment (Recommended)
+
+[IMPORTANT]
+====
+🐳 **Docker Advantage**: Complete environment with monitoring, zero dependency conflicts
+====
+
+==== Docker Compose Configuration
+
+The `docker-compose.yml` provides a complete demo environment:
+
+[source,yaml]
+----
+version: '3.8'
+services:
+  proximadb:
+    build: ..
+    ports:
+      - "5678:5678"  # REST API
+      - "5679:5679"  # gRPC API
+    volumes:
+      - ./docker-config.toml:/app/config.toml
+      - proximadb_data:/data
+    environment:
+      - RUST_LOG=info
+  
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    depends_on:
+      - proximadb
+    environment:
+      - PROXIMADB_SERVER_URL=http://proximadb:5678
+      - PYTHONPATH=/app
+  
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+----
+
+==== ProximaDB Server Configuration
+
+The `docker-config.toml` optimizes ProximaDB for demo scenarios:
+
+[source,toml]
+----
+[server]
+host = "0.0.0.0"
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+data_dir = "/data"
+storage_engine = "viper"  # Optimized for demos
+
+[storage.wal_config]
+strategy_type = "Avro"
+memtable_type = "BTree"
+sync_mode = "PerBatch"    # Balanced performance
+max_memory_mb = 512
+max_entries = 50000
+
+[storage.viper]
+enable_compression = true
+compression_type = "zstd"
+enable_quantization = true
+
+[api]
+enable_rest = true
+enable_grpc = true
+cors_enabled = true
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+----
+
+=== Direct Execution Setup
+
+==== Environment Variables
+
+[source,bash]
+----
+# Core settings
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export PROXIMADB_GRPC_URL="localhost:5679"
+
+# Demo configuration
+export DEMO_COLLECTION_NAME="demo_collection"
+export DEMO_NUM_VECTORS=1000
+export DEMO_VECTOR_DIMENSION=768
+
+# Performance tuning
+export RUST_LOG=info
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Storage configuration
+export PROXIMADB_DATA_DIR="./demo_data"
+export PROXIMADB_WAL_STRATEGY="avro"
+----
+
+==== Python Environment
+
+[source,bash]
+----
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install ProximaDB SDK in development mode
+cd ../clients/python
+pip install -e .
+cd ../../demo
+----
+
+=== Platform-Specific Configuration
+
+==== Windows Configuration
+
+[source,powershell]
+----
+# PowerShell environment setup
+$env:PROXIMADB_SERVER_URL = "http://localhost:5678"
+$env:DEMO_NUM_VECTORS = "1000"
+$env:PYTHONPATH = "${PWD};${env:PYTHONPATH}"
+
+# Start ProximaDB server
+Start-Process powershell -ArgumentList "cd ..; cargo run --bin proximadb-server"
+
+# Wait for server startup
+Start-Sleep 5
+
+# Run demo
+python working_demo.py
+----
+
+==== macOS Configuration
+
+[source,bash]
+----
+# Bash/Zsh environment setup
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export DEMO_NUM_VECTORS=1000
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Use correct Python version
+alias python=/usr/local/bin/python3.11
+
+# Start server in background
+cd .. && cargo run --bin proximadb-server &
+cd demo
+
+# Wait for startup
+sleep 5
+
+# Run demo
+python working_demo.py
+----
+
+==== Ubuntu Configuration
+
+[source,bash]
+----
+# Environment setup
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export DEMO_NUM_VECTORS=1000
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Ensure proper permissions
+sudo chown -R $USER:$USER ./demo_data
+
+# Start server with systemd (optional)
+sudo systemctl start proximadb  # If service installed
+
+# Or start manually
+cd .. && cargo run --bin proximadb-server &
+cd demo && sleep 5
+
+# Run demo
+python3 working_demo.py
+----
+
+=== Demo Configuration Options
+
+==== Basic Demo Configuration
+
+[source,python]
+----
+# In demo scripts, modify these settings:
+@dataclass
+class DemoConfig:
+    vector_dimension: int = 768          # BERT embedding size
+    num_vectors: int = 1000              # Dataset size
+    enable_quantization: bool = True     # Use compression
+    enable_hnsw: bool = True             # Use HNSW indexing
+    benchmark_iterations: int = 5        # Benchmark runs
+    batch_size: int = 100                # Insert batch size
+    search_k: int = 10                   # Results per query
+----
+
+==== Performance Tuning
+
+[source,bash]
+----
+# For high-performance demos
+export DEMO_NUM_VECTORS=10000
+export DEMO_BATCH_SIZE=1000
+export RUST_LOG=warn  # Reduce logging overhead
+
+# For development/debugging
+export DEMO_NUM_VECTORS=100
+export DEMO_BATCH_SIZE=50
+export RUST_LOG=debug  # Verbose logging
+----
+
+=== Monitoring Setup
+
+==== Prometheus Configuration
+
+The included `prometheus.yml` monitors ProximaDB:
+
+[source,yaml]
+----
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'proximadb'
+    static_configs:
+      - targets: ['proximadb:9090']
+    metrics_path: /metrics
+    scrape_interval: 5s
+----
+
+==== Access Monitoring
+
+[source,bash]
+----
+# Prometheus metrics
+curl http://localhost:9091/graph
+
+# ProximaDB health
+curl http://localhost:5678/health
+
+# Admin statistics
+curl http://localhost:5678/admin/stats
+----
+
+[TIP]
+====
+📊 **Monitoring Benefits**: Real-time performance visualization during demos
+====
