@@ -1,73 +1,193 @@
-//! WAL Behavior Wrapper for BTree
-//! 
-//! Extends BTreeMemtable with WAL-specific behaviors using composition:
+//! WAL Behavior Wrapper with Batch Coordination
+//!
+//! Extends GlobalPartitionedMemtable with WAL-specific behaviors using composition:
+//! - Batch coordination for WAL consistency  
 //! - Sequential write optimizations for compression
 //! - MVCC support for recovery consistency
 //! - Ordered flush operations for RLE/dictionary encodings
 //! - Specialized serialization strategies
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::RwLock;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use crate::storage::memtable::core::{MemtableCore, MemtableConfig};
-use crate::storage::persistence::wal::{WalEntry, WalOperation};
+use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
+use crate::storage::memtable::core::{MemtableConfig, MemtableCore};
+use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
+use crate::storage::persistence::wal::{BatchId, WalEntry, WalOperation};
 
-/// WAL-specific behavior wrapper around any ordered memtable implementation
-/// 
-/// This extends the core BTree with WAL-specific functionality without modifying
-/// the base implementation. Uses composition over inheritance.
+/// WAL-specific vector batch for tracking deserialized data
+#[derive(Debug, Clone)]
+pub struct WalVectorBatch {
+    /// Batch coordination ID
+    pub batch_id: BatchId,
+    /// Deserialized vector records (ready for search/flush)  
+    pub vector_records: Vec<crate::core::VectorRecord>,
+    /// Batch metadata
+    pub created_at: std::time::SystemTime,
+    pub total_size_bytes: usize,
+    pub is_flushed: bool,
+}
+
+/// WAL-specific batch coordinator
 #[derive(Debug)]
-pub struct WalBehaviorWrapper<T> {
-    /// The wrapped memtable implementation (typically BTreeMemtable)
-    inner: T,
-    
+struct BatchCoordinator {
+    /// Active batches by collection (collection_id -> batch_id -> WalVectorBatch)
+    batches: HashMap<String, HashMap<String, WalVectorBatch>>,
+    /// Individual vector index for fast search (vector_id -> (collection_id, batch_id, index_in_batch))
+    vector_index: HashMap<String, (String, String, usize)>,
+}
+
+impl BatchCoordinator {
+    fn new() -> Self {
+        Self {
+            batches: HashMap::new(),
+            vector_index: HashMap::new(),
+        }
+    }
+
+    /// Add a vector batch to the coordinator
+    fn add_batch(&mut self, collection_id: &str, batch: WalVectorBatch) -> Result<()> {
+        let batch_id = batch.batch_id.batch_uuid.clone();
+        
+        // Update vector index
+        for (index, vector_record) in batch.vector_records.iter().enumerate() {
+            self.vector_index.insert(
+                vector_record.id.clone(),
+                (collection_id.to_string(), batch_id.clone(), index),
+            );
+        }
+
+        // Store batch
+        self.batches
+            .entry(collection_id.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(batch_id, batch);
+
+        Ok(())
+    }
+
+    /// Get all unflushed batches for a collection
+    fn get_unflushed_batches(&self, collection_id: &str) -> Vec<&WalVectorBatch> {
+        if let Some(collection_batches) = self.batches.get(collection_id) {
+            collection_batches
+                .values()
+                .filter(|batch| !batch.is_flushed)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Mark batch as flushed
+    fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
+        if let Some(collection_batches) = self.batches.get_mut(collection_id) {
+            if let Some(batch) = collection_batches.get_mut(batch_id) {
+                batch.is_flushed = true;
+                tracing::debug!("✅ Marked batch {} as flushed", batch_id);
+                return Ok(());
+            }
+        }
+        Err(anyhow::anyhow!("Batch {}:{} not found", collection_id, batch_id))
+    }
+
+    /// Clear flushed batches from coordinator
+    fn clear_flushed_batches(&mut self, collection_id: &str) -> Result<usize> {
+        let mut cleared_count = 0;
+
+        if let Some(collection_batches) = self.batches.get_mut(collection_id) {
+            let batch_ids_to_remove: Vec<String> = collection_batches
+                .iter()
+                .filter(|(_, batch)| batch.is_flushed)
+                .map(|(batch_id, _)| batch_id.clone())
+                .collect();
+
+            for batch_id in &batch_ids_to_remove {
+                if let Some(batch) = collection_batches.remove(batch_id) {
+                    // Remove vector index entries
+                    for vector_record in &batch.vector_records {
+                        self.vector_index.remove(&vector_record.id);
+                    }
+                    cleared_count += 1;
+                }
+            }
+        }
+
+        tracing::debug!("🧹 Cleared {} flushed batches from collection {}", cleared_count, collection_id);
+        Ok(cleared_count)
+    }
+}
+
+/// WAL-specific behavior wrapper around global partitioned memtable implementation
+///
+/// This uses a global partitioned memtable that supports:
+/// - Global sequence ordering for flush coordination
+/// - Per-collection data partitions for efficient operations
+/// - Content-based search within collections on unflushed data
+#[derive(Debug, Clone)]
+pub struct WalBehaviorWrapper {
+    /// The wrapped global partitioned memtable implementation (generic storage) - Arc for memory efficiency
+    inner: Arc<GlobalPartitionedMemtable>,
+
+    /// WAL-specific batch coordinator (handles deserialized batches)
+    batch_coordinator: Arc<RwLock<BatchCoordinator>>,
+
     /// WAL-specific configuration
     config: MemtableConfig,
-    
-    /// Sequence number generator for WAL entries
-    sequence_generator: AtomicU64,
-    
-    /// MVCC tracking: vector_id -> [sequences]
+
+    /// Sequence number generator for WAL entries (Arc for Clone)
+    sequence_generator: Arc<AtomicU64>,
+
+    /// MVCC tracking: vector_id -> [sequences] - Not needed for WAL, but kept for compatibility
     mvcc_versions: Arc<RwLock<std::collections::HashMap<String, Vec<u64>>>>,
-    
+
     /// WAL-specific metrics
     wal_metrics: Arc<RwLock<WalMetrics>>,
-    
+
     /// Flush coordination state
     flush_state: Arc<RwLock<FlushState>>,
 }
 
-impl<T> WalBehaviorWrapper<T> {
-    /// Create new WAL behavior wrapper around a memtable implementation
-    pub fn new(inner: T, config: MemtableConfig) -> Self {
+impl WalBehaviorWrapper {
+    /// Create new WAL behavior wrapper with global partitioned memtable
+    pub fn new(config: MemtableConfig) -> Self {
         Self {
-            inner,
+            inner: Arc::new(GlobalPartitionedMemtable::new()),
+            batch_coordinator: Arc::new(RwLock::new(BatchCoordinator::new())),
             config,
-            sequence_generator: AtomicU64::new(1),
+            sequence_generator: Arc::new(AtomicU64::new(1)),
             mvcc_versions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             wal_metrics: Arc::new(RwLock::new(WalMetrics::default())),
             flush_state: Arc::new(RwLock::new(FlushState::default())),
         }
     }
-    
+
     /// Get the wrapped implementation
-    pub fn inner(&self) -> &T {
-        &self.inner
+    pub fn inner(&self) -> &GlobalPartitionedMemtable {
+        &*self.inner
     }
-    
+
     /// Get next sequence number for WAL ordering
     pub fn next_sequence(&self) -> u64 {
-        self.sequence_generator.fetch_add(1, Ordering::SeqCst)
+        let old_value = self.sequence_generator.load(Ordering::SeqCst);
+        let new_value = self.sequence_generator.fetch_add(1, Ordering::SeqCst);
+        tracing::info!(
+            "🔍 SEQUENCE_TRACE: next_sequence() - old_value={}, returned_value={}, new_current={}",
+            old_value,
+            new_value,
+            old_value + 1
+        );
+        new_value
     }
-    
+
     /// Get current sequence number without incrementing
     pub fn current_sequence(&self) -> u64 {
         self.sequence_generator.load(Ordering::SeqCst)
     }
-    
+
     /// Extract vector ID from WAL entry for MVCC tracking
     fn extract_vector_id(entry: &WalEntry) -> Option<String> {
         match &entry.operation {
@@ -77,74 +197,223 @@ impl<T> WalBehaviorWrapper<T> {
             _ => None,
         }
     }
-}
 
-/// WAL-specific trait implementation
-impl<T> WalBehaviorWrapper<T>
-where
-    T: MemtableCore<u64, WalEntry> + Send + Sync,
-{
-    /// Insert WAL entry with automatic sequence number
-    pub async fn insert_wal_entry(&self, mut entry: WalEntry) -> Result<u64> {
-        let sequence = self.next_sequence();
-        entry.sequence = sequence;
-        
-        // Track MVCC versions if enabled
-        if self.config.enable_mvcc {
-            if let Some(vector_id) = Self::extract_vector_id(&entry) {
-                let mut versions = self.mvcc_versions.write().await;
-                versions.entry(vector_id).or_insert_with(Vec::new).push(sequence);
-            }
+    /// Unified batch addition method - handles single vectors or batches efficiently
+    /// This is the ONLY method for adding data to WAL memtable
+    pub async fn add_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
+        let collection_id = batch.batch_id.collection_id.clone();
+        let batch_id = batch.batch_id.batch_uuid.clone();
+        let vector_count = batch.vector_records.len();
+
+        tracing::info!(
+            "🔄 WAL_UNIFIED: Adding batch {} to collection {} ({} vectors)",
+            batch_id,
+            collection_id,
+            vector_count
+        );
+
+        // Store batch in WAL-specific coordinator
+        let mut coordinator = self.batch_coordinator.write().await;
+        coordinator.add_batch(&collection_id, batch.clone())?;
+        drop(coordinator);
+
+        // Generate sequences for coordination and update sequence generator
+        let mut sequences = Vec::new();
+        for _ in 0..vector_count {
+            sequences.push(self.next_sequence());
         }
-        
-        // Insert with sequence as key
-        let result = self.inner.insert(sequence, entry).await?;
-        
+
         // Update WAL metrics
         let mut metrics = self.wal_metrics.write().await;
-        metrics.entries_written += 1;
-        metrics.bytes_written += result;
+        metrics.entries_written += vector_count as u64;
+        metrics.bytes_written += batch.total_size_bytes as u64;
+        drop(metrics);
+
+        // Update global metrics
+        self.inner
+            .update_metrics(|metrics| {
+                metrics.insert_count += vector_count as u64;
+                metrics.entry_count += vector_count;
+                metrics.size_bytes += batch.total_size_bytes;
+            })
+            .await?;
+
+        tracing::info!(
+            "✅ WAL_UNIFIED: Added batch {} with sequences: {:?}",
+            batch_id,
+            sequences
+        );
+
+        Ok(sequences)
+    }
+
+    /// Get all unflushed batches for a collection (WAL-specific)
+    /// Returns deserialized batches that are ready for search without disk I/O
+    pub async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WalVectorBatch>> {
+        let coordinator = self.batch_coordinator.read().await;
+        let batches: Vec<WalVectorBatch> = coordinator
+            .get_unflushed_batches(collection_id)
+            .into_iter()
+            .cloned()
+            .collect();
         
-        Ok(sequence)
+        tracing::debug!(
+            "🔍 WAL_BATCH_ACCESS: Retrieved {} unflushed batches for collection {}",
+            batches.len(),
+            collection_id
+        );
+
+        Ok(batches)
     }
-    
+
+    /// Mark batch as flushed (WAL-specific behavior)
+    pub async fn mark_batch_flushed(&self, collection_id: &str, batch_id: &str) -> Result<()> {
+        let mut coordinator = self.batch_coordinator.write().await;
+        coordinator.mark_batch_flushed(collection_id, batch_id)?;
+        
+        tracing::info!("✅ WAL_BATCH: Marked batch {} as flushed", batch_id);
+        Ok(())
+    }
+
+    /// Clear flushed batches from memory (WAL-specific behavior)
+    pub async fn clear_flushed_batches(&self, collection_id: &str) -> Result<usize> {
+        let mut coordinator = self.batch_coordinator.write().await;
+        let cleared_count = coordinator.clear_flushed_batches(collection_id)?;
+        
+        tracing::info!("🧹 WAL_BATCH: Cleared {} flushed batches", cleared_count);
+        Ok(cleared_count)
+    }
+}
+
+/// WAL-specific implementation
+impl WalBehaviorWrapper {
+    // REMOVED: insert_wal_entry() - Use add_vector_batch() for unified API
+
     /// Get entries from sequence number (for recovery)
-    pub async fn get_from_sequence(&self, from_seq: u64, limit: Option<usize>) -> Result<Vec<WalEntry>> {
-        let entries = self.inner.range_scan(from_seq, limit).await?;
-        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
+    pub async fn get_from_sequence(
+        &self,
+        from_seq: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>> {
+        self.inner.get_from_sequence(from_seq, limit).await
     }
-    
+
+    /// Search vectors in unflushed WAL data with configurable distance metric
+    ///
+    /// This searches the WAL memtable for similar vectors that haven't been flushed yet.
+    /// Should be called BEFORE searching storage engines to get complete results.
+    pub async fn search_unflushed_vectors(
+        &self,
+        query_vector: &[f32],
+        k: usize,
+        collection_id: &str,
+        distance_metric: CoreDistanceMetric,
+    ) -> Result<Vec<(f32, WalEntry)>> {
+        tracing::info!(
+            "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (k={}) using {:?}",
+            collection_id,
+            k,
+            distance_metric
+        );
+
+        let results = self
+            .inner
+            .search_vectors(query_vector, k, collection_id, distance_metric)
+            .await?;
+
+        tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", results.len());
+
+        Ok(results)
+    }
+
+    /// Get vector by content key (for exact lookups)
+    pub async fn get_by_content(&self, content_key: &str) -> Result<Option<WalEntry>> {
+        self.inner.get_by_content(content_key).await
+    }
+
+    /// Check if global flush is needed
+    pub async fn needs_global_flush(&self) -> Result<bool> {
+        // Use the same logic as should_flush but with a more conservative threshold
+        let size = self.size_bytes().await; // Use our actual size calculation
+        let count = self.inner.len().await;
+
+        // Global flush needed if we exceed larger thresholds
+        Ok(size >= self.config.flush_threshold_bytes * 2 || count >= 50000)
+    }
+
+    /// Clear flushed entries for a specific collection (global WAL, collection-partitioned)
+    pub async fn clear_flushed(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        up_to_sequence: u64,
+    ) -> Result<usize> {
+        // Use collection-aware cleanup from global partitioned memtable
+        self.inner
+            .clear_collection_up_to(collection_id, up_to_sequence)
+            .await
+    }
+
+    // REMOVED: insert_batch() - Use add_vector_batch() for unified API
+
+    // REMOVED: insert_with_sequence() - Use add_vector_batch() for unified API with custom sequence
+
     /// Check if flush is needed based on WAL-specific thresholds
     pub async fn should_flush(&self) -> bool {
-        let size = self.inner.size_bytes().await;
+        let size = self.size_bytes().await; // Use our actual size calculation
         let count = self.inner.len().await;
-        
-        size >= self.config.flush_threshold_bytes || 
-        count >= 10000 // WAL-specific entry count threshold
+        let size_threshold = self.config.flush_threshold_bytes;
+        let count_threshold = 10000;
+
+        let size_exceeds = size >= size_threshold;
+        let count_exceeds = count >= count_threshold;
+        let should_flush = size_exceeds || count_exceeds;
+
+        tracing::info!(
+            "🔍 FLUSH_CHECK: size={}B ({}MB), threshold={}B ({}MB), size_exceeds={}",
+            size,
+            size / 1024 / 1024,
+            size_threshold,
+            size_threshold / 1024 / 1024,
+            size_exceeds
+        );
+        tracing::info!(
+            "🔍 FLUSH_CHECK: count={}, threshold={}, count_exceeds={}",
+            count,
+            count_threshold,
+            count_exceeds
+        );
+        tracing::info!(
+            "🔍 FLUSH_CHECK: Final result - should_flush={} (size_exceeds={} OR count_exceeds={})",
+            should_flush,
+            size_exceeds,
+            count_exceeds
+        );
+
+        should_flush
     }
-    
+
     /// Create ordered flush data optimized for compression
     pub async fn create_flush_data(&self) -> Result<Vec<u8>> {
-        let entries = self.inner.get_all_ordered().await?;
-        
-        // WAL entries are already ordered by sequence number (BTree key)
+        let entries = self.inner.get_all().await?;
+
+        // WAL entries are already ordered by insertion sequence (Vec index)
         // This enables optimal compression through RLE and dictionary encoding
         let mut flush_data = Vec::new();
-        
-        for (sequence, entry) in entries {
+
+        for (sequence, entry) in entries.into_iter().enumerate() {
             // Serialize entry with sequence for ordered storage
-            let serialized_entry = self.serialize_wal_entry(sequence, &entry).await?;
+            let serialized_entry = self.serialize_wal_entry(sequence as u64, &entry).await?;
             flush_data.extend_from_slice(&serialized_entry);
         }
-        
+
         // Update flush metrics
         let mut metrics = self.wal_metrics.write().await;
         metrics.flushes_performed += 1;
         metrics.total_flushed_bytes += flush_data.len() as u64;
-        
+
         Ok(flush_data)
     }
-    
+
     /// Serialize WAL entry with compression-friendly ordering
     async fn serialize_wal_entry(&self, sequence: u64, entry: &WalEntry) -> Result<Vec<u8>> {
         // Create ordered structure for optimal compression
@@ -155,11 +424,11 @@ where
             vector_id: Self::extract_vector_id(entry).unwrap_or_default(),
             operation_data: self.serialize_operation(&entry.operation).await?,
         };
-        
+
         // Use Avro for compression-friendly serialization
         Ok(bincode::serialize(&ordered_entry)?)
     }
-    
+
     fn get_operation_type(&self, operation: &WalOperation) -> u8 {
         match operation {
             WalOperation::Insert { .. } => 1,
@@ -170,21 +439,23 @@ where
             WalOperation::AvroPayload { .. } => 6,
         }
     }
-    
+
     async fn serialize_operation(&self, operation: &WalOperation) -> Result<Vec<u8>> {
         Ok(bincode::serialize(operation)?)
     }
-    
+
     /// Flush entries up to sequence number
     pub async fn flush_up_to_sequence(&self, seq: u64) -> Result<Vec<WalEntry>> {
-        let entries_to_flush = self.get_from_sequence(0, None).await?
+        let entries_to_flush = self
+            .get_from_sequence(0, None)
+            .await?
             .into_iter()
             .filter(|entry| entry.sequence <= seq)
             .collect::<Vec<_>>();
-        
+
         // Remove flushed entries
         self.inner.clear_up_to(seq).await?;
-        
+
         // Update MVCC tracking
         if self.config.enable_mvcc {
             let mut versions = self.mvcc_versions.write().await;
@@ -193,209 +464,243 @@ where
             }
             versions.retain(|_, v| !v.is_empty());
         }
-        
+
         Ok(entries_to_flush)
     }
-    
+
     /// Get WAL-specific metrics
     pub async fn get_wal_metrics(&self) -> WalMetrics {
         self.wal_metrics.read().await.clone()
     }
-    
+
     /// Get MVCC versions for a vector ID
     pub async fn get_versions(&self, vector_id: &str) -> Result<Vec<WalEntry>> {
         if !self.config.enable_mvcc {
             return Ok(vec![]);
         }
-        
+
         let versions = self.mvcc_versions.read().await;
         let sequences = match versions.get(vector_id) {
             Some(seqs) => seqs.clone(),
             None => return Ok(vec![]),
         };
         drop(versions);
-        
+
         let mut entries = Vec::new();
         for seq in sequences {
             if let Ok(Some(entry)) = self.inner.get(&seq).await {
                 entries.push(entry);
             }
         }
-        
+
         // Sort by sequence number
         entries.sort_by_key(|e| e.sequence);
-        
+
         Ok(entries)
     }
-    
+
     /// Get latest version of a vector
     pub async fn get_latest_version(&self, vector_id: &str) -> Result<Option<WalEntry>> {
         let versions = self.get_versions(vector_id).await?;
         Ok(versions.into_iter().last())
     }
-    
+
     /// Cleanup old versions (keep only N latest)
     pub async fn cleanup_versions(&self, vector_id: &str, keep_count: usize) -> Result<usize> {
         if !self.config.enable_mvcc {
             return Ok(0);
         }
-        
+
         let mut versions = self.mvcc_versions.write().await;
         let sequences = match versions.get_mut(vector_id) {
             Some(seqs) => seqs,
             None => return Ok(0),
         };
-        
+
         if sequences.len() <= keep_count {
             return Ok(0);
         }
-        
+
         // Sort and keep only latest versions
         sequences.sort();
-        let old_sequences = sequences.drain(0..sequences.len() - keep_count).collect::<Vec<_>>();
+        let old_sequences = sequences
+            .drain(0..sequences.len() - keep_count)
+            .collect::<Vec<_>>();
         let removed_count = old_sequences.len();
-        
+
         drop(versions);
-        
+
         // Remove old entries from underlying memtable
         for seq in old_sequences {
             self.inner.clear_up_to(seq).await?;
         }
-        
+
         Ok(removed_count)
     }
 }
 
 #[async_trait]
-impl<T> MemtableCore<u64, WalEntry> for WalBehaviorWrapper<T>
-where
-    T: MemtableCore<u64, WalEntry> + Send + Sync,
-{
-    async fn insert(&self, key: u64, value: WalEntry) -> Result<u64> {
-        // Delegate to inner implementation
-        self.inner.insert(key, value).await
+impl MemtableCore<u64, WalEntry> for WalBehaviorWrapper {
+    /// Base insert method - for Vec implementation, key is ignored and entry is appended
+    ///
+    /// Use this method for:
+    /// - Recovery operations when you need to maintain order
+    /// - Batch loading from disk
+    ///
+    /// For new client operations, use insert_wal_entry() instead
+    async fn insert(&self, _key: u64, value: WalEntry) -> Result<u64> {
+        // For Vec implementation, we ignore the key and just append
+        self.inner.append(value).await
     }
-    
+
     async fn get(&self, key: &u64) -> Result<Option<WalEntry>> {
-        self.inner.get(key).await
+        self.inner.get_by_sequence(*key).await
     }
-    
+
     async fn range_scan(&self, from: u64, limit: Option<usize>) -> Result<Vec<(u64, WalEntry)>> {
         self.inner.range_scan(from, limit).await
     }
-    
+
     async fn size_bytes(&self) -> usize {
+        // Vec implementation already calculates actual size including vector data
         self.inner.size_bytes().await
     }
-    
+
     async fn len(&self) -> usize {
         self.inner.len().await
     }
-    
+
     async fn clear_up_to(&self, threshold: u64) -> Result<usize> {
         self.inner.clear_up_to(threshold).await
     }
-    
+
     async fn clear(&self) -> Result<()> {
         let result = self.inner.clear().await;
-        
+
         // Reset WAL-specific state
         if self.config.enable_mvcc {
             let mut versions = self.mvcc_versions.write().await;
             versions.clear();
         }
-        
+
         let mut metrics = self.wal_metrics.write().await;
         *metrics = WalMetrics::default();
-        
+
         result
     }
-    
+
     async fn get_all_ordered(&self) -> Result<Vec<(u64, WalEntry)>> {
         self.inner.get_all_ordered().await
     }
 }
 
-impl<T> WalBehaviorWrapper<T>
-where
-    T: MemtableCore<u64, WalEntry> + Send + Sync,
-{
-    /// Get all entries (compatible with old WAL interface)
-    pub async fn get_all_entries(&self, collection_id: &crate::core::CollectionId) -> Result<Vec<WalEntry>> {
-        let entries = self.inner.get_all_ordered().await?;
-        // Filter entries by collection_id
-        let filtered_entries: Vec<WalEntry> = entries
-            .into_iter()
-            .map(|(_, entry)| entry)
-            .filter(|entry| &entry.collection_id == collection_id)
-            .collect();
-        Ok(filtered_entries)
+impl WalBehaviorWrapper {
+    /// Get all entries for a specific collection (global WAL, collection-filtered)
+    pub async fn get_all_entries(
+        &self,
+        collection_id: &crate::core::CollectionId,
+    ) -> Result<Vec<WalEntry>> {
+        // Use collection-aware method from global partitioned memtable
+        self.inner.get_collection_entries(collection_id).await
     }
-    
-    /// Get collections that need flushing
+
+    /// Get current size in bytes (with actual vector data size calculation)
+    pub async fn size_bytes(&self) -> usize {
+        // Delegate to the trait implementation
+        <Self as MemtableCore<u64, WalEntry>>::size_bytes(self).await
+    }
+
+    /// Get current entry count
+    pub async fn len(&self) -> usize {
+        // Delegate to the trait implementation
+        <Self as MemtableCore<u64, WalEntry>>::len(self).await
+    }
+
+    /// Get collections that need flushing (global WAL, collection-partitioned)
     pub async fn collections_needing_flush(&self) -> Result<Vec<crate::core::CollectionId>> {
-        // For now, simple implementation - could be enhanced with per-collection tracking
-        if self.should_flush().await {
-            // Extract unique collection IDs from current entries
-            let all_entries = self.inner.get_all_ordered().await?;
-            let mut collections = std::collections::HashSet::new();
-            for (_, entry) in all_entries {
-                collections.insert(entry.collection_id.clone());
-            }
-            Ok(collections.into_iter().collect())
-        } else {
-            Ok(vec![])
+        tracing::info!("🔍 COLLECTIONS_FLUSH_CHECK: Checking which collections need flushing...");
+
+        // Use collection-aware flush detection from global partitioned memtable
+        let threshold_bytes = self.config.flush_threshold_bytes;
+        let collections_to_flush = self
+            .inner
+            .collections_needing_flush(threshold_bytes)
+            .await?;
+
+        tracing::info!(
+            "🔍 COLLECTIONS_FLUSH_CHECK: {} collections need flushing with threshold {}MB",
+            collections_to_flush.len(),
+            threshold_bytes / 1024 / 1024
+        );
+
+        for collection_id in &collections_to_flush {
+            let (entries, size) = self.inner.get_collection_stats(collection_id).await;
+            tracing::info!(
+                "🔍 COLLECTIONS_FLUSH_CHECK: Collection {} has {} entries, {} bytes ({}MB)",
+                collection_id,
+                entries,
+                size,
+                size / 1024 / 1024
+            );
         }
+
+        Ok(collections_to_flush)
     }
-    
-    /// Clear flushed entries
-    pub async fn clear_flushed(&self, collection_id: &crate::core::CollectionId, up_to_sequence: u64) -> Result<usize> {
-        // Get all entries for this collection up to the sequence number
-        let entries = self.inner.get_all_ordered().await?;
-        let mut cleared_count = 0;
+
+
+    /// Remove a specific batch from the memtable (for atomic rollback)
+    pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
+        let mut coordinator = self.batch_coordinator.write().await;
         
-        for (seq, entry) in entries {
-            if &entry.collection_id == collection_id && seq <= up_to_sequence {
-                // Remove this specific entry - for now use a simple approach
-                // In a real implementation, we'd need a more efficient removal method
-                cleared_count += 1;
+        // Remove batch from coordinator
+        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id) {
+            if let Some(removed_batch) = collection_batches.remove(batch_id) {
+                // Remove vector index entries for this batch
+                for vector_record in &removed_batch.vector_records {
+                    coordinator.vector_index.remove(&vector_record.id);
+                }
+                
+                tracing::debug!(
+                    "🗑️ Removed batch {} from collection {} ({} vectors)",
+                    batch_id,
+                    collection_id,
+                    removed_batch.vector_records.len()
+                );
+                
+                return Ok(());
             }
         }
         
-        // For simplicity, clear all entries up to sequence (this could be optimized)
-        let total_cleared = self.inner.clear_up_to(up_to_sequence).await?;
-        Ok(cleared_count)
+        Err(anyhow::anyhow!(
+            "Batch {} not found in collection {} for removal",
+            batch_id,
+            collection_id
+        ))
     }
-    
-    /// Insert batch of entries
-    pub async fn insert_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
-        let mut sequences = Vec::new();
-        for entry in entries {
-            let seq = self.insert(entry.sequence, entry).await?;
-            sequences.push(seq);
-        }
-        Ok(sequences)
-    }
-    
-    /// Insert single entry (compatible interface)
-    pub async fn insert_entry(&self, entry: WalEntry) -> Result<u64> {
-        self.insert(entry.sequence, entry).await
-    }
-    
+
     /// Get statistics (compatible interface)
-    pub async fn get_stats(&self) -> Result<std::collections::HashMap<crate::core::CollectionId, crate::storage::persistence::wal::WalStats>> {
+    pub async fn get_stats(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<
+            crate::core::CollectionId,
+            crate::storage::persistence::wal::WalStats,
+        >,
+    > {
         // Simple implementation - could be enhanced with detailed per-collection stats
         let mut stats = std::collections::HashMap::new();
-        let total_size = self.inner.size_bytes().await;
+        let total_size = self.size_bytes().await; // Use our actual size calculation
         let total_entries = self.inner.len().await;
-        
+
         // Get unique collections from entries
         let entries = self.inner.get_all_ordered().await?;
         let mut collection_counts = std::collections::HashMap::new();
         for (_, entry) in entries {
-            *collection_counts.entry(entry.collection_id.clone()).or_insert(0) += 1;
+            *collection_counts
+                .entry(entry.collection_id.clone())
+                .or_insert(0) += 1;
         }
-        
+
         // Create stats for each collection
         for (collection_id, count) in collection_counts {
             let wal_stats = crate::storage::persistence::wal::WalStats {
@@ -403,7 +708,11 @@ where
                 memory_entries: count as u64,
                 disk_segments: 0,
                 total_disk_size_bytes: 0,
-                memory_size_bytes: if total_entries > 0 { (total_size / total_entries * count) as u64 } else { 0 },
+                memory_size_bytes: if total_entries > 0 {
+                    (total_size / total_entries * count) as u64
+                } else {
+                    0
+                },
                 collections_count: 1,
                 last_flush_time: None,
                 write_throughput_entries_per_sec: 0.0,
@@ -412,58 +721,60 @@ where
             };
             stats.insert(collection_id, wal_stats);
         }
-        
+
         Ok(stats)
     }
-    
-    /// Check if global flush is needed
-    pub async fn needs_global_flush(&self) -> Result<bool> {
-        // Use the same logic as should_flush but with a more conservative threshold
-        let size = self.inner.size_bytes().await;
-        let count = self.inner.len().await;
-        
-        // Global flush needed if we exceed larger thresholds
-        Ok(size >= self.config.flush_threshold_bytes * 2 || count >= 50000)
-    }
-    
+
     /// Search for specific vector entry
-    pub async fn search_vector(&self, collection_id: &crate::core::CollectionId, vector_id: &str) -> Result<Option<WalEntry>> {
+    pub async fn search_vector(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        vector_id: &str,
+    ) -> Result<Option<WalEntry>> {
         let entries = self.inner.get_all_ordered().await?;
-        
+
         for (_, entry) in entries {
             if &entry.collection_id == collection_id && entry.entry_id == vector_id {
                 return Ok(Some(entry));
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Get entries for specific collection
-    pub async fn get_entries(&self, collection_id: &crate::core::CollectionId, from_sequence: u64, limit: Option<usize>) -> Result<Vec<WalEntry>> {
+    pub async fn get_entries(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<WalEntry>> {
         let all_entries = self.get_all_entries(collection_id).await?;
-        
+
         // Filter by sequence number and apply limit
         let mut filtered: Vec<WalEntry> = all_entries
             .into_iter()
             .filter(|entry| entry.sequence >= from_sequence)
             .collect();
-        
+
         // Sort by sequence number
         filtered.sort_by_key(|entry| entry.sequence);
-        
+
         // Apply limit if specified
         if let Some(limit) = limit {
             filtered.truncate(limit);
         }
-        
+
         Ok(filtered)
     }
-    
+
     /// Get collection-specific statistics
-    pub async fn get_collection_stats(&self, collection_id: &crate::core::CollectionId) -> Result<crate::storage::persistence::wal::WalStats> {
+    pub async fn get_collection_stats(
+        &self,
+        collection_id: &crate::core::CollectionId,
+    ) -> Result<crate::storage::persistence::wal::WalStats> {
         let all_stats = self.get_stats().await?;
-        
+
         match all_stats.get(collection_id) {
             Some(stats) => Ok(stats.clone()),
             None => Ok(crate::storage::persistence::wal::WalStats {
@@ -477,16 +788,19 @@ where
                 write_throughput_entries_per_sec: 0.0,
                 read_throughput_entries_per_sec: 0.0,
                 compression_ratio: 1.0,
-            })
+            }),
         }
     }
-    
+
     /// Drop collection from memtable
-    pub async fn drop_collection(&self, collection_id: &crate::core::CollectionId) -> Result<usize> {
+    pub async fn drop_collection(
+        &self,
+        collection_id: &crate::core::CollectionId,
+    ) -> Result<usize> {
         // Get all entries to find ones for this collection
         let entries = self.inner.get_all_ordered().await?;
         let mut removed_count = 0;
-        
+
         // For simplicity, we'll clear all entries for this collection
         // In a real implementation, this would be more efficient with selective removal
         for (seq, entry) in entries {
@@ -495,26 +809,26 @@ where
                 removed_count += 1;
             }
         }
-        
+
         // Note: Actual removal would require a more sophisticated approach
         // For now, this is a placeholder implementation
         Ok(removed_count)
     }
-    
+
     /// Perform maintenance operations
     pub async fn maintenance(&self) -> Result<crate::storage::persistence::wal::WalStats> {
         // Cleanup old MVCC versions if enabled
         if self.config.enable_mvcc {
             let _cleaned = self.cleanup_versions("", 10).await?; // Keep 10 versions
         }
-        
+
         // Return current stats after maintenance
         let all_stats = self.get_stats().await?;
-        
+
         // Return aggregated stats
         let total_entries: u64 = all_stats.values().map(|s| s.total_entries).sum();
         let total_memory: u64 = all_stats.values().map(|s| s.memory_size_bytes).sum();
-        
+
         Ok(crate::storage::persistence::wal::WalStats {
             total_entries,
             memory_entries: total_entries,
@@ -528,29 +842,44 @@ where
             compression_ratio: 1.0,
         })
     }
-    
+
     /// Atomically mark entries for flush
-    pub async fn atomic_mark_for_flush(&self, collection_id: &crate::core::CollectionId, up_to_sequence: u64) -> Result<Vec<WalEntry>> {
+    pub async fn atomic_mark_for_flush(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        up_to_sequence: u64,
+    ) -> Result<Vec<WalEntry>> {
         // Get entries for this collection up to the sequence
         let entries = self.get_all_entries(collection_id).await?;
         let marked_entries: Vec<WalEntry> = entries
             .into_iter()
             .filter(|entry| entry.sequence <= up_to_sequence)
             .collect();
-        
+
         Ok(marked_entries)
     }
-    
+
     /// Complete flush and remove marked entries
-    pub async fn complete_flush_removal(&self, collection_id: &crate::core::CollectionId, up_to_sequence: u64) -> Result<usize> {
+    pub async fn complete_flush_removal(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        up_to_sequence: u64,
+    ) -> Result<usize> {
         self.clear_flushed(collection_id, up_to_sequence).await
     }
-    
+
     /// Abort flush and restore entries
-    pub async fn abort_flush_restore(&self, collection_id: &crate::core::CollectionId, _entries: Vec<WalEntry>) -> Result<()> {
+    pub async fn abort_flush_restore(
+        &self,
+        collection_id: &crate::core::CollectionId,
+        _entries: Vec<WalEntry>,
+    ) -> Result<()> {
         // In a real implementation, this would restore the entries
         // For now, this is a no-op since we haven't actually removed them
-        tracing::warn!("Flush aborted for collection {}, entries preserved in memtable", collection_id);
+        tracing::warn!(
+            "Flush aborted for collection {}, entries preserved in memtable",
+            collection_id
+        );
         Ok(())
     }
 }
@@ -587,18 +916,16 @@ struct FlushState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::memtable::implementations::btree::BTreeMemtable;
-    use crate::storage::persistence::wal::{WalEntry, WalOperation};
-    
+    // Tests now use unified add_vector_batch API only
+
     #[tokio::test]
     async fn test_wal_behavior_wrapper() {
         let config = MemtableConfig::default();
-        let btree = BTreeMemtable::new(config.enable_mvcc);
-        let mut wal_wrapper = WalBehaviorWrapper::new(btree, config);
-        
-        // Create test WAL entry
+        let wal_wrapper = WalBehaviorWrapper::new(config);
+
+        // Create test vector records using the new unified API
         let now = chrono::Utc::now().timestamp_millis();
-        let vector_record = crate::core::VectorRecord {
+        let vector_record1 = crate::core::VectorRecord {
             id: "test_vector_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![0.1, 0.2, 0.3],
@@ -612,105 +939,146 @@ mod tests {
             score: None,
             distance: None,
         };
-        
-        let wal_entry = WalEntry {
-            entry_id: "test_vector_1".to_string(),
-            collection_id: crate::core::CollectionId::from("test_collection".to_string()),
-            sequence: 0, // Will be auto-assigned
-            global_sequence: 0,
-            timestamp: chrono::Utc::now(),
+
+        let vector_record2 = crate::core::VectorRecord {
+            id: "test_vector_2".to_string(),
+            collection_id: "test_collection".to_string(),
+            vector: vec![0.4, 0.5, 0.6],
+            metadata: std::collections::HashMap::new(),
+            timestamp: now + 1,
+            created_at: now + 1,
+            updated_at: now + 1,
             expires_at: None,
             version: 1,
-            operation: WalOperation::Insert {
-                vector_id: crate::core::VectorId::from("test_vector_1".to_string()),
-                record: vector_record,
-                expires_at: None,
+            rank: None,
+            score: None,
+            distance: None,
+        };
+
+        // Test first batch insertion using unified add_vector_batch API
+        let batch1 = WalVectorBatch {
+            batch_id: BatchId {
+                collection_id: "test_collection".to_string(),
+                sequence_range: (1, 1),
+                batch_uuid: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now(),
             },
+            vector_records: vec![vector_record1],
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
         };
         
-        // Test WAL entry insertion
-        let seq1 = wal_wrapper.insert_wal_entry(wal_entry.clone()).await.unwrap();
-        let seq2 = wal_wrapper.insert_wal_entry(wal_entry.clone()).await.unwrap();
+        let sequences1 = wal_wrapper
+            .add_vector_batch(batch1)
+            .await
+            .unwrap();
+        let seq1 = sequences1[0];
+
+        // Test second batch insertion
+        let batch2 = WalVectorBatch {
+            batch_id: BatchId {
+                collection_id: "test_collection".to_string(),
+                sequence_range: (2, 2),
+                batch_uuid: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now(),
+            },
+            vector_records: vec![vector_record2],
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+        };
         
+        let sequences2 = wal_wrapper
+            .add_vector_batch(batch2)
+            .await
+            .unwrap();
+        let seq2 = sequences2[0];
+
+        // Verify sequence ordering (newer batches get higher sequences)
         assert!(seq2 > seq1);
-        assert_eq!(wal_wrapper.len().await, 2);
         
+        // Verify batch count
+        let unflushed_batches = wal_wrapper.get_unflushed_batches("test_collection").await.unwrap();
+        assert_eq!(unflushed_batches.len(), 2);
+
         // Test sequence-based retrieval
         let entries = wal_wrapper.get_from_sequence(seq1, None).await.unwrap();
         assert_eq!(entries.len(), 2);
-        
+
         // Test flush threshold
         assert!(!wal_wrapper.should_flush().await); // Small entries shouldn't trigger flush
-        
+
         // Test flush operation
         let flushed = wal_wrapper.flush_up_to_sequence(seq1).await.unwrap();
         assert_eq!(flushed.len(), 1);
         assert_eq!(wal_wrapper.len().await, 1);
-        
+
         // Test metrics
         let metrics = wal_wrapper.get_wal_metrics().await;
         assert_eq!(metrics.entries_written, 2);
         assert_eq!(metrics.flushes_performed, 0); // flush_up_to_sequence doesn't update this metric
     }
-    
+
     #[tokio::test]
     async fn test_wal_mvcc_functionality() {
         let mut config = MemtableConfig::default();
         config.enable_mvcc = true;
-        
-        let btree = BTreeMemtable::new(config.enable_mvcc);
-        let mut wal_wrapper = WalBehaviorWrapper::new(btree, config);
-        
+
+        let wal_wrapper = WalBehaviorWrapper::new(config);
+
         let vector_id = "test_vector_mvcc";
-        
-        // Insert multiple versions of the same vector
+
+        // Insert multiple versions of the same vector using unified API
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
             let vector_record = crate::core::VectorRecord {
                 id: vector_id.to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![i as f32, (i + 1) as f32],
-                metadata: std::collections::HashMap::new(),
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                metadata: {
+                    let mut meta = std::collections::HashMap::new();
+                    meta.insert("version".to_string(), serde_json::Value::Number(serde_json::Number::from(i)));
+                    meta
+                },
+                timestamp: now + i as i64,
+                created_at: now + i as i64,
+                updated_at: now + i as i64,
                 expires_at: None,
-                version: 1,
+                version: (i + 1) as i64,
                 rank: None,
                 score: None,
                 distance: None,
             };
-            
-            let wal_entry = WalEntry {
-                entry_id: vector_id.to_string(),
-                collection_id: crate::core::CollectionId::from("test_collection".to_string()),
-                sequence: 0,
-                global_sequence: 0,
-                timestamp: chrono::Utc::now(),
-                expires_at: None,
-                version: 1,
-                operation: WalOperation::Update {
-                    vector_id: crate::core::VectorId::from(vector_id.to_string()),
-                    record: vector_record,
-                    expires_at: None,
+
+            let batch = WalVectorBatch {
+                batch_id: BatchId {
+                    collection_id: "test_collection".to_string(),
+                    sequence_range: ((i + 1) as u64, (i + 1) as u64),
+                    batch_uuid: uuid::Uuid::new_v4().to_string(),
+                    created_at: chrono::Utc::now(),
                 },
+                vector_records: vec![vector_record],
+                created_at: std::time::SystemTime::now(),
+                total_size_bytes: 1024,
+                is_flushed: false,
             };
             
-            wal_wrapper.insert_wal_entry(wal_entry).await.unwrap();
+            wal_wrapper.add_vector_batch(batch).await.unwrap();
         }
-        
+
         // Test version retrieval
         let versions = wal_wrapper.get_versions(vector_id).await.unwrap();
         assert_eq!(versions.len(), 3);
-        
+
         // Test latest version
         let latest = wal_wrapper.get_latest_version(vector_id).await.unwrap();
         assert!(latest.is_some());
-        
+
         // Test version cleanup
         let removed = wal_wrapper.cleanup_versions(vector_id, 1).await.unwrap();
         assert_eq!(removed, 2);
-        
+
         let remaining_versions = wal_wrapper.get_versions(vector_id).await.unwrap();
         assert_eq!(remaining_versions.len(), 1);
     }

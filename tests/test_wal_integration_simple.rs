@@ -7,37 +7,43 @@ use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory, WalStrategyType};
-use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb::storage::persistence::wal::{WalConfig, WalFactory, WalManager, WalStrategyType};
 
 /// Test the WAL testing helper integration
 #[tokio::test]
 async fn test_wal_testing_helper_integration() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    
+
     // Create WAL manager using the same pattern as existing tests
     let mut config = WalConfig::default();
     config.strategy_type = WalStrategyType::Avro;
     config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
-    
+
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
     let strategy = WalFactory::create_from_config(&config, filesystem).await?;
     let wal_manager = WalManager::new(strategy, config).await?;
-    
+
     // Test basic WAL functionality
     let collection_id = "test_collection".to_string();
-    
+
     // Test WAL stats - this should work with the current implementation
     let stats = wal_manager.stats().await?;
-    println!("✅ WAL manager created successfully with stats: {:?}", stats);
-    
+    println!(
+        "✅ WAL manager created successfully with stats: {:?}",
+        stats
+    );
+
     // Test WAL stats work
     let stats = wal_manager.stats().await?;
     assert_eq!(stats.total_entries, 0);
-    println!("✅ WAL stats integration verified - {} total entries", stats.total_entries);
-    
+    println!(
+        "✅ WAL stats integration verified - {} total entries",
+        stats.total_entries
+    );
+
     Ok(())
 }
 
@@ -45,20 +51,20 @@ async fn test_wal_testing_helper_integration() -> Result<()> {
 #[tokio::test]
 async fn test_basic_wal_operations() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    
+
     let mut config = WalConfig::default();
     config.strategy_type = WalStrategyType::Avro;
     config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
-    
+
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
     let strategy = WalFactory::create_from_config(&config, filesystem).await?;
     let wal_manager = WalManager::new(strategy, config).await?;
-    
+
     let collection_id = "test_collection".to_string();
     let vector_id = "test_vector_1".to_string();
-    
+
     // Create a test vector record
     let now = chrono::Utc::now().timestamp_millis();
     let test_record = proximadb::core::VectorRecord {
@@ -75,21 +81,21 @@ async fn test_basic_wal_operations() -> Result<()> {
         score: None,
         distance: None,
     };
-    
+
     // Write to WAL using the correct insert method
-    wal_manager.insert(
-        collection_id.clone(),
-        vector_id.clone(),
-        test_record,
-    ).await?;
-    
+    wal_manager
+        .insert(collection_id.clone(), vector_id.clone(), test_record)
+        .await?;
+
     // Check stats
     let stats = wal_manager.stats().await?;
     assert_eq!(stats.total_entries, 1);
     assert!(stats.memory_entries > 0);
-    
-    println!("✅ Basic WAL operations verified - {} total entries, {} memory entries", 
-             stats.total_entries, stats.memory_entries);
-    
+
+    println!(
+        "✅ Basic WAL operations verified - {} total entries, {} memory entries",
+        stats.total_entries, stats.memory_entries
+    );
+
     Ok(())
 }

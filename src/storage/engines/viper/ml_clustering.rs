@@ -129,7 +129,9 @@ impl MLClusteringEngine {
             if vector.len() != dimension {
                 return Err(anyhow::anyhow!(
                     "Vector {} has dimension {} but expected {}",
-                    i, vector.len(), dimension
+                    i,
+                    vector.len(),
+                    dimension
                 ));
             }
         }
@@ -149,8 +151,7 @@ impl MLClusteringEngine {
 
         info!(
             "✅ K-means training complete: silhouette={:.3}, WCSS={:.3}",
-            quality_metrics.silhouette_score,
-            quality_metrics.wcss
+            quality_metrics.silhouette_score, quality_metrics.wcss
         );
 
         let model = MLClusteringModel {
@@ -168,12 +169,10 @@ impl MLClusteringEngine {
     }
 
     /// Assign vectors to clusters using trained model
-    pub fn assign_clusters(
-        &self,
-        vector_records: &[VectorRecord],
-    ) -> Result<ClusterAssignment> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No trained model available. Call train_model() first."))?;
+    pub fn assign_clusters(&self, vector_records: &[VectorRecord]) -> Result<ClusterAssignment> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No trained model available. Call train_model() first.")
+        })?;
 
         if vector_records.is_empty() {
             return Ok(ClusterAssignment {
@@ -183,20 +182,28 @@ impl MLClusteringEngine {
             });
         }
 
-        debug!("🎯 Assigning {} vectors to {} clusters", 
-               vector_records.len(), model.centroids.len());
+        debug!(
+            "🎯 Assigning {} vectors to {} clusters",
+            vector_records.len(),
+            model.centroids.len()
+        );
 
         let mut clusters: Vec<Vec<usize>> = vec![Vec::new(); model.centroids.len()];
         let mut confidence_scores = Vec::with_capacity(vector_records.len());
 
         for (idx, record) in vector_records.iter().enumerate() {
             if record.vector.len() != model.dimension {
-                warn!("Vector {} dimension mismatch: {} vs expected {}", 
-                      idx, record.vector.len(), model.dimension);
+                warn!(
+                    "Vector {} dimension mismatch: {} vs expected {}",
+                    idx,
+                    record.vector.len(),
+                    model.dimension
+                );
                 continue;
             }
 
-            let (cluster_idx, confidence) = self.find_best_cluster(&record.vector, &model.centroids)?;
+            let (cluster_idx, confidence) =
+                self.find_best_cluster(&record.vector, &model.centroids)?;
             clusters[cluster_idx].push(idx);
             confidence_scores.push(confidence);
         }
@@ -207,7 +214,8 @@ impl MLClusteringEngine {
         // Calculate quality metrics for this assignment
         let vectors: Vec<Vec<f32>> = vector_records.iter().map(|r| r.vector.clone()).collect();
         let assignments = self.clusters_to_assignments(&clusters, vector_records.len());
-        let quality_metrics = self.calculate_quality_metrics(&vectors, &model.centroids, &assignments)?;
+        let quality_metrics =
+            self.calculate_quality_metrics(&vectors, &model.centroids, &assignments)?;
 
         Ok(ClusterAssignment {
             clusters,
@@ -224,9 +232,13 @@ impl MLClusteringEngine {
     ) -> Result<(Vec<Vec<f32>>, Vec<usize>)> {
         let n = vectors.len();
         let d = vectors[0].len();
-        
+
         if k >= n {
-            return Err(anyhow::anyhow!("Number of clusters ({}) must be less than number of vectors ({})", k, n));
+            return Err(anyhow::anyhow!(
+                "Number of clusters ({}) must be less than number of vectors ({})",
+                k,
+                n
+            ));
         }
 
         // Initialize centroids using K-means++ algorithm for better initialization
@@ -268,8 +280,11 @@ impl MLClusteringEngine {
                 .map(|(new, old)| self.euclidean_distance(new, old))
                 .fold(0.0, f32::max);
 
-            debug!("K-means iteration {}: max centroid movement = {:.6}", 
-                   iteration + 1, max_movement);
+            debug!(
+                "K-means iteration {}: max centroid movement = {:.6}",
+                iteration + 1,
+                max_movement
+            );
 
             if max_movement < self.config.convergence_threshold {
                 info!("✅ K-means converged after {} iterations", iteration + 1);
@@ -289,7 +304,7 @@ impl MLClusteringEngine {
     /// Initialize centroids using K-means++ algorithm
     fn kmeans_plus_plus_init(&mut self, vectors: &[Vec<f32>], k: usize) -> Result<Vec<Vec<f32>>> {
         let mut centroids = Vec::with_capacity(k);
-        
+
         // Choose first centroid randomly
         let first_idx = self.rng.gen_range(0..vectors.len());
         centroids.push(vectors[first_idx].clone());
@@ -313,7 +328,7 @@ impl MLClusteringEngine {
             // Choose next centroid with weighted probability
             let target = self.rng.gen::<f32>() * total_distance;
             let mut cumulative = 0.0;
-            
+
             for (i, &dist) in distances.iter().enumerate() {
                 cumulative += dist;
                 if cumulative >= target {
@@ -327,11 +342,7 @@ impl MLClusteringEngine {
     }
 
     /// Find the best cluster for a vector and return confidence score
-    fn find_best_cluster(
-        &self,
-        vector: &[f32],
-        centroids: &[Vec<f32>],
-    ) -> Result<(usize, f32)> {
+    fn find_best_cluster(&self, vector: &[f32], centroids: &[Vec<f32>]) -> Result<(usize, f32)> {
         if centroids.is_empty() {
             return Err(anyhow::anyhow!("No centroids available"));
         }
@@ -343,7 +354,7 @@ impl MLClusteringEngine {
         for (i, centroid) in centroids.iter().enumerate() {
             let distance = self.euclidean_distance(vector, centroid);
             distances.push(distance);
-            
+
             if distance < min_distance {
                 min_distance = distance;
                 best_cluster = i;
@@ -412,7 +423,8 @@ impl MLClusteringEngine {
         let silhouette_score = self.calculate_silhouette_score(vectors, assignments)?;
         let (wcss, bcss) = self.calculate_wcss_bcss(vectors, centroids, assignments)?;
         let separation_score = self.calculate_separation_score(centroids)?;
-        let compactness_score = self.calculate_compactness_score(vectors, centroids, assignments)?;
+        let compactness_score =
+            self.calculate_compactness_score(vectors, centroids, assignments)?;
 
         Ok(ClusterQualityMetrics {
             silhouette_score,
@@ -424,7 +436,11 @@ impl MLClusteringEngine {
     }
 
     /// Calculate silhouette score for clustering quality assessment
-    fn calculate_silhouette_score(&self, vectors: &[Vec<f32>], assignments: &[usize]) -> Result<f32> {
+    fn calculate_silhouette_score(
+        &self,
+        vectors: &[Vec<f32>],
+        assignments: &[usize],
+    ) -> Result<f32> {
         if vectors.len() != assignments.len() {
             return Err(anyhow::anyhow!("Vector and assignment lengths don't match"));
         }
@@ -434,49 +450,50 @@ impl MLClusteringEngine {
 
         for (i, vector) in vectors.iter().enumerate() {
             let cluster_i = assignments[i];
-            
+
             // Calculate average intra-cluster distance (a_i)
             let mut intra_distance = 0.0;
             let mut intra_count = 0;
-            
+
             for (j, other_vector) in vectors.iter().enumerate() {
                 if i != j && assignments[j] == cluster_i {
                     intra_distance += self.euclidean_distance(vector, other_vector);
                     intra_count += 1;
                 }
             }
-            
+
             if intra_count == 0 {
                 continue; // Skip singleton clusters
             }
-            
+
             let a_i = intra_distance / intra_count as f32;
-            
+
             // Calculate minimum average inter-cluster distance (b_i)
             let mut min_inter_distance = f32::INFINITY;
-            
-            let unique_clusters: std::collections::HashSet<usize> = assignments.iter().cloned().collect();
+
+            let unique_clusters: std::collections::HashSet<usize> =
+                assignments.iter().cloned().collect();
             for &other_cluster in &unique_clusters {
                 if other_cluster == cluster_i {
                     continue;
                 }
-                
+
                 let mut inter_distance = 0.0;
                 let mut inter_count = 0;
-                
+
                 for (j, other_vector) in vectors.iter().enumerate() {
                     if assignments[j] == other_cluster {
                         inter_distance += self.euclidean_distance(vector, other_vector);
                         inter_count += 1;
                     }
                 }
-                
+
                 if inter_count > 0 {
                     let avg_inter = inter_distance / inter_count as f32;
                     min_inter_distance = min_inter_distance.min(avg_inter);
                 }
             }
-            
+
             if min_inter_distance.is_finite() {
                 let b_i = min_inter_distance;
                 let silhouette_i = (b_i - a_i) / a_i.max(b_i);
@@ -500,10 +517,10 @@ impl MLClusteringEngine {
         assignments: &[usize],
     ) -> Result<(f32, f32)> {
         let mut wcss = 0.0;
-        
+
         // Calculate overall centroid
         let overall_centroid = self.calculate_centroid(&vectors.iter().collect::<Vec<_>>());
-        
+
         // WCSS: sum of squared distances from points to their cluster centroids
         for (i, vector) in vectors.iter().enumerate() {
             let cluster_idx = assignments[i];
@@ -512,21 +529,24 @@ impl MLClusteringEngine {
                 wcss += distance * distance;
             }
         }
-        
+
         // BCSS: sum of squared distances from cluster centroids to overall centroid
         let mut bcss = 0.0;
-        let cluster_counts: HashMap<usize, usize> = assignments.iter().fold(HashMap::new(), |mut acc, &cluster| {
-            *acc.entry(cluster).or_insert(0) += 1;
-            acc
-        });
-        
+        let cluster_counts: HashMap<usize, usize> =
+            assignments
+                .iter()
+                .fold(HashMap::new(), |mut acc, &cluster| {
+                    *acc.entry(cluster).or_insert(0) += 1;
+                    acc
+                });
+
         for (cluster_idx, centroid) in centroids.iter().enumerate() {
             if let Some(&count) = cluster_counts.get(&cluster_idx) {
                 let distance = self.euclidean_distance(centroid, &overall_centroid);
                 bcss += (count as f32) * distance * distance;
             }
         }
-        
+
         Ok((wcss, bcss))
     }
 
@@ -603,7 +623,7 @@ impl MLClusteringEngine {
     /// Convert cluster assignments to vector format
     fn clusters_to_assignments(&self, clusters: &[Vec<usize>], total_vectors: usize) -> Vec<usize> {
         let mut assignments = vec![0; total_vectors];
-        
+
         for (cluster_idx, indices) in clusters.iter().enumerate() {
             for &vector_idx in indices {
                 if vector_idx < total_vectors {
@@ -611,7 +631,7 @@ impl MLClusteringEngine {
                 }
             }
         }
-        
+
         assignments
     }
 
@@ -633,7 +653,7 @@ mod tests {
     #[test]
     fn test_kmeans_clustering() {
         let mut engine = MLClusteringEngine::new(KMeansConfig::default());
-        
+
         // Create simple test data with clear clusters
         let vectors = vec![
             vec![1.0, 1.0],
@@ -643,7 +663,7 @@ mod tests {
             vec![10.1, 10.1],
             vec![9.9, 9.9],
         ];
-        
+
         let model = engine.train_model(&vectors, 2).unwrap();
         assert_eq!(model.centroids.len(), 2);
         assert_eq!(model.dimension, 2);
@@ -653,18 +673,20 @@ mod tests {
     #[test]
     fn test_cluster_assignment() {
         let mut engine = MLClusteringEngine::new(KMeansConfig::default());
-        
+
         let vectors = vec![
             vec![0.0, 0.0],
             vec![1.0, 1.0],
             vec![10.0, 10.0],
             vec![11.0, 11.0],
         ];
-        
+
         engine.train_model(&vectors, 2).unwrap();
-        
-        let vector_records: Vec<VectorRecord> = vectors.into_iter().enumerate().map(|(i, v)| {
-            VectorRecord {
+
+        let vector_records: Vec<VectorRecord> = vectors
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| VectorRecord {
                 id: format!("vec_{}", i),
                 collection_id: "test".to_string(),
                 vector: v,
@@ -677,9 +699,9 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         let assignment = engine.assign_clusters(&vector_records).unwrap();
         assert_eq!(assignment.clusters.len(), 2);
         assert_eq!(assignment.confidence_scores.len(), 4);

@@ -725,8 +725,9 @@ mod tests {
             ..Default::default()
         };
 
-        let credential_provider =
-            Box::new(crate::storage::persistence::filesystem::auth::GcsApplicationDefaultProvider::new());
+        let credential_provider = Box::new(
+            crate::storage::persistence::filesystem::auth::GcsApplicationDefaultProvider::new(),
+        );
         let client = GcsClient::new(config.clone()).await.unwrap();
 
         let fs = GcsFileSystem {

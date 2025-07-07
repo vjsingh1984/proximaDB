@@ -158,17 +158,17 @@ impl MmapReader {
     pub async fn iter_all(&self) -> Result<Vec<VectorRecord>> {
         let sst_files = self.sst_files.read().await;
         let mut records = Vec::new();
-        
+
         // Iterate through all SST files
         for sst_file in sst_files.iter() {
             // Iterate through all index entries in this SST file
             for (vector_id, index_entry) in &sst_file.index {
                 let start = index_entry.offset as usize;
                 let end = start + index_entry.length as usize;
-                
+
                 if end <= sst_file.mmap.len() {
                     let data = &sst_file.mmap[start..end];
-                    
+
                     // Deserialize the entry
                     match bincode::deserialize::<(VectorId, LsmStorageEntry)>(data) {
                         Ok((_, lsm_entry)) => {
@@ -182,15 +182,22 @@ impl MmapReader {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to deserialize entry for vector {}: {}", vector_id, e);
+                            tracing::warn!(
+                                "Failed to deserialize entry for vector {}: {}",
+                                vector_id,
+                                e
+                            );
                         }
                     }
                 }
             }
         }
-        
-        tracing::debug!("MmapReader::iter_all found {} active records across {} SST files", 
-                       records.len(), sst_files.len());
+
+        tracing::debug!(
+            "MmapReader::iter_all found {} active records across {} SST files",
+            records.len(),
+            sst_files.len()
+        );
         Ok(records)
     }
 }

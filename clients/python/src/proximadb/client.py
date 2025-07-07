@@ -247,17 +247,58 @@ class ProximaDBClient:
             request_data["config"] = {"description": config.description}
         
         response = self._make_request("POST", "/collections", json=request_data)
-        return Collection(**response.json())
+        response_data = response.json()
+        
+        # Handle wrapped response format where data is the collection name
+        if "data" in response_data and "success" in response_data:
+            collection_name = response_data["data"]
+            # Construct Collection object from available data
+            return Collection(
+                id=collection_name,
+                name=collection_name,
+                config=config,
+                dimension=config.dimension if config else None,
+                metric=str(config.distance_metric) if config else None,
+                vector_count=0,
+                status="active"
+            )
+        elif "data" in response_data and isinstance(response_data["data"], dict):
+            return Collection(**response_data["data"])
+        else:
+            return Collection(**response_data)
     
     def get_collection(self, collection_id: str) -> Collection:
         """Get collection metadata"""
         response = self._make_request("GET", f"/collections/{collection_id}")
-        return Collection(**response.json())
+        response_data = response.json()
+        # Handle wrapped response format: {"success": True, "data": {...}}
+        if "data" in response_data and isinstance(response_data["data"], dict):
+            collection_data = response_data["data"]
+            # Map server response format to Collection model
+            return Collection(
+                id=collection_data.get("uuid", collection_data.get("name")),
+                name=collection_data.get("name"),
+                dimension=collection_data.get("dimension"),
+                metric=collection_data.get("distance_metric", "").lower(),
+                vector_count=collection_data.get("vector_count", 0),
+                status="active",
+                config=None  # Server returns config as string, we'll skip it for now
+            )
+        else:
+            return Collection(**response_data)
     
     def list_collections(self) -> List[Collection]:
         """List all collections"""
         response = self._make_request("GET", "/collections")
-        return [Collection(**item) for item in response.json()["collections"]]
+        response_data = response.json()
+        # Handle wrapped response format: {"success": True, "data": {"collections": [...]}}
+        if "data" in response_data and "collections" in response_data["data"]:
+            collections_data = response_data["data"]["collections"]
+        elif "collections" in response_data:
+            collections_data = response_data["collections"]
+        else:
+            collections_data = response_data if isinstance(response_data, list) else []
+        return [Collection(**item) for item in collections_data]
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
@@ -352,19 +393,23 @@ class ProximaDBClient:
         effective_batch_size = batch_size or self.config.default_batch_size
         
         if len(vector_data) <= effective_batch_size:
-            # Single batch
-            request_data = {
-                "vectors": vector_data,
-                "upsert": upsert
-            }
-            
+            # Single batch - send vectors as array directly
             response = self._make_request(
                 "POST",
                 f"/collections/{collection_id}/vectors/batch",
-                json=request_data
+                json=vector_data
             )
             
-            return BatchResult(**response.json())
+            response_data = response.json()
+            # Handle server response format: {"success": true, "data": ["id1", "id2"], ...}
+            if "data" in response_data and "success" in response_data:
+                return BatchResult(
+                    successful_count=len(response_data["data"]) if response_data["data"] else 0,
+                    failed_count=0,
+                    duration_ms=0.0  # Server doesn't provide timing info
+                )
+            else:
+                return BatchResult(**response_data)
         
         else:
             # Multiple batches
@@ -376,23 +421,23 @@ class ProximaDBClient:
                 batch_data = vector_data[i:i + effective_batch_size]
                 
                 try:
-                    request_data = {
-                        "vectors": batch_data,
-                        "upsert": upsert
-                    }
-                    
+                    # Send batch data as array directly
                     response = self._make_request(
                         "POST",
                         f"/collections/{collection_id}/vectors/batch",
-                        json=request_data
+                        json=batch_data
                     )
                     
-                    result = InsertResult(**response.json())
-                    total_successful += result.count
-                    total_failed += result.failed_count
+                    batch_response = response.json()
+                    if "data" in batch_response and "success" in batch_response:
+                        batch_count = len(batch_response["data"]) if batch_response["data"] else 0
+                        total_successful += batch_count
+                    else:
+                        total_failed += len(batch_data)
                     
-                    if result.errors:
-                        all_errors.extend(result.errors)
+                    # Check for errors in response
+                    if batch_response.get("error"):
+                        all_errors.append(f"Batch {i//effective_batch_size}: {batch_response['error']}")
                 
                 except Exception as e:
                     total_failed += len(batch_data)
@@ -467,8 +512,7 @@ class ProximaDBClient:
             }
         }
         
-        if ef is not None:
-            request_data["params"]["ef"] = ef
+        # ef parameter is not supported in this client version
         
         response = self._make_request(
             "POST",
@@ -477,8 +521,23 @@ class ProximaDBClient:
             timeout=timeout or self.config.timeout,
         )
         
-        search_response = SearchResponse(**response.json())
-        return search_response.results
+        response_data = response.json()
+        # Handle server response format: {"success": true, "data": [...]}
+        if "data" in response_data and "success" in response_data:
+            # Extract search results from data field
+            results_data = response_data["data"]
+            if isinstance(results_data, list):
+                # Convert each result to SearchResult
+                search_results = []
+                for result in results_data:
+                    search_results.append(SearchResult(**result))
+                return search_results
+            else:
+                return []
+        else:
+            # Standard SearchResponse format
+            search_response = SearchResponse(**response_data)
+            return search_response.results
     
     def search_batch(
         self,

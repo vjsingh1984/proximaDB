@@ -113,18 +113,18 @@ pub struct DirEntry {
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
     DirectWrite,
-    
+
     /// Write to ___temp subdirectory in same location (same mount point)
     /// Ensures move operations are filesystem renames, not copies
     SameDirectory,
-    
+
     /// Write to user-configured temp directory
     /// Falls back to system /tmp if not configured (R&D mode)
     ConfiguredTemp {
         /// Custom temp directory path (optional)
         temp_dir: Option<String>,
     },
-    
+
     /// Write to system /tmp directory (fallback for R&D)
     SystemTemp,
 }
@@ -145,7 +145,7 @@ pub struct FileOptions {
     pub encryption: Option<String>,
     pub storage_class: Option<String>, // For cloud storage
     pub metadata: Option<HashMap<String, String>>,
-    
+
     /// Pre-computed temp path (cached for performance)
     /// None means direct write, Some means atomic write-temp-rename
     pub temp_path: Option<String>,
@@ -296,39 +296,39 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Local filesystems can write directly, object stores need atomic pattern
     fn supports_atomic_writes(&self) -> bool {
         match self.filesystem_type() {
-            "local" => true,  // Local filesystem supports atomic writes natively
-            _ => false,       // Object stores (S3, ADLS, GCS) need write-temp-rename pattern
+            "local" => true, // Local filesystem supports atomic writes natively
+            _ => false,      // Object stores (S3, ADLS, GCS) need write-temp-rename pattern
         }
     }
 
     /// Generate temporary file path based on strategy (called once during setup)
     /// Ensures optimal temp location for each filesystem type
     fn generate_temp_path(&self, final_path: &str, strategy: &TempStrategy) -> FsResult<String> {
-        use std::path::{Path, PathBuf};
         use std::env;
-        
+        use std::path::{Path, PathBuf};
+
         let final_path = Path::new(final_path);
-        let filename = final_path.file_name()
+        let filename = final_path
+            .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| FilesystemError::InvalidPath("Invalid filename".to_string()))?;
-        
+
         match strategy {
             TempStrategy::DirectWrite => {
                 // No temp file needed for direct writes
                 Err(FilesystemError::InvalidOperation(
-                    "DirectWrite strategy should not generate temp paths".to_string()
+                    "DirectWrite strategy should not generate temp paths".to_string(),
                 ))
-            },
-            
+            }
+
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
                 let parent = final_path.parent().unwrap_or(Path::new("."));
                 let temp_dir = parent.join("___temp");
-                let temp_file = temp_dir.join(format!("{}.{}", filename, 
-                    std::process::id())); // Add PID for uniqueness
+                let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
-            },
-            
+            }
+
             TempStrategy::ConfiguredTemp { temp_dir } => {
                 // Use configured temp dir or fall back to system temp
                 let temp_base = if let Some(dir) = temp_dir {
@@ -337,15 +337,15 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
                     // Fallback to system temp for R&D mode
                     env::temp_dir()
                 };
-                let temp_file = temp_base.join(format!("proximadb_{}.{}", filename, 
-                    std::process::id()));
+                let temp_file =
+                    temp_base.join(format!("proximadb_{}.{}", filename, std::process::id()));
                 Ok(temp_file.to_string_lossy().to_string())
-            },
-            
+            }
+
             TempStrategy::SystemTemp => {
                 // Use system /tmp directory
-                let temp_file = env::temp_dir().join(format!("proximadb_{}.{}", filename, 
-                    std::process::id()));
+                let temp_file =
+                    env::temp_dir().join(format!("proximadb_{}.{}", filename, std::process::id()));
                 Ok(temp_file.to_string_lossy().to_string())
             }
         }
@@ -353,30 +353,35 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 
     /// Fast atomic write using pre-computed temp path (performance optimized)
     /// Called during actual write operations with cached temp strategy
-    async fn write_atomic(&self, final_path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
+    async fn write_atomic(
+        &self,
+        final_path: &str,
+        data: &[u8],
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
         let opts = options.unwrap_or_default();
-        
+
         match &opts.temp_path {
             None => {
                 // Direct write (optimal for local filesystem)
                 self.write(final_path, data, Some(opts)).await
-            },
+            }
             Some(temp_path_str) => {
                 // Atomic write-temp-rename (optimal for object stores)
                 let temp_path = std::path::Path::new(temp_path_str);
-                
+
                 // Ensure temp directory exists
                 if let Some(temp_parent) = temp_path.parent() {
                     self.create_dir_all(&temp_parent.to_string_lossy()).await?;
                 }
-                
+
                 // Write to temp location
                 let temp_opts = FileOptions {
                     temp_path: None, // Prevent recursion
                     ..opts.clone()
                 };
                 self.write(temp_path_str, data, Some(temp_opts)).await?;
-                
+
                 // Atomic move (rename on same mount point)
                 self.move_file(temp_path_str, final_path).await
             }
@@ -545,17 +550,17 @@ impl FilesystemFactory {
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
         let from_fs = self.get_filesystem(from_url)?;
         let to_fs = self.get_filesystem(to_url)?;
-        
+
         // Extract paths from URLs
         let from_path = self.extract_path_from_url(from_url)?;
         let to_path = self.extract_path_from_url(to_url)?;
-        
+
         // Read from source
         let data = from_fs.read(&from_path).await?;
-        
+
         // Write to destination atomically
         to_fs.write_atomic(&to_path, &data, None).await?;
-        
+
         Ok(())
     }
 
@@ -563,12 +568,12 @@ impl FilesystemFactory {
     pub async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
         // Copy first
         self.copy_atomic(from_url, to_url).await?;
-        
+
         // Delete source after successful copy
         let from_fs = self.get_filesystem(from_url)?;
         let from_path = self.extract_path_from_url(from_url)?;
         from_fs.delete(&from_path).await?;
-        
+
         Ok(())
     }
 
@@ -576,16 +581,16 @@ impl FilesystemFactory {
     fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
         let parsed_url = Url::parse(url)?;
         let path = parsed_url.path();
-        
+
         match parsed_url.scheme() {
             "file" => {
                 // For file URLs, return the full absolute path
                 Ok(path.to_string())
-            },
+            }
             "s3" | "gcs" => {
                 // For object stores, remove the bucket from path
                 Ok(path.trim_start_matches('/').to_string())
-            },
+            }
             "adls" => {
                 // For Azure, remove account/container from path
                 let path_parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -594,8 +599,8 @@ impl FilesystemFactory {
                 } else {
                     Ok(String::new())
                 }
-            },
-            _ => Ok(path.to_string())
+            }
+            _ => Ok(path.to_string()),
         }
     }
 
@@ -603,23 +608,25 @@ impl FilesystemFactory {
     pub async fn create_filesystem_for_url(&self, url: &str) -> FsResult<Box<dyn FileSystem>> {
         let parsed_url = Url::parse(url)?;
         let scheme = parsed_url.scheme();
-        
+
         match scheme {
             "file" => {
                 // Extract base path from file:// URL and create LocalFileSystem with it as root
                 let base_path = PathBuf::from(parsed_url.path());
                 let mut local_config = self.config.local.clone().unwrap_or_default();
                 local_config.root_dir = Some(base_path);
-                
+
                 let local_fs = LocalFileSystem::new(local_config).await?;
                 Ok(Box::new(local_fs))
-            },
+            }
             _ => {
                 // For other schemes, use existing cached instance
                 let fs = self.get_filesystem(url)?;
                 // Note: This is a limitation - we can't return both &dyn and Box<dyn>
                 // In a real implementation, we'd need to restructure this
-                Err(FilesystemError::Config("URL-specific filesystems not supported for this scheme".to_string()))
+                Err(FilesystemError::Config(
+                    "URL-specific filesystems not supported for this scheme".to_string(),
+                ))
             }
         }
     }

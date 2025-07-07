@@ -6,8 +6,8 @@
 //! Collection Analyzer - Analyzes collection characteristics for strategy selection
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use chrono::Duration as ChronoDuration;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -16,7 +16,7 @@ use super::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
-use crate::core::{CollectionId, avro_unified::VectorRecord};
+use crate::core::{avro_unified::VectorRecord, CollectionId};
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {
@@ -38,8 +38,7 @@ pub struct CollectionAnalyzer {
 
 impl std::fmt::Debug for CollectionAnalyzer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CollectionAnalyzer")
-            .finish()
+        f.debug_struct("CollectionAnalyzer").finish()
     }
 }
 
@@ -478,12 +477,15 @@ impl VectorCharacteristicsAnalyzer {
 
         Ok(characteristics)
     }
-    
+
     /// Analyze vectors from collection (real implementation)
-    async fn analyze_collection_vectors(&self, collection_id: &CollectionId) -> Result<VectorCharacteristics> {
+    async fn analyze_collection_vectors(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<VectorCharacteristics> {
         // For new collections without data, return reasonable defaults
         // In production, this would query the storage layer for actual vector data
-        
+
         // Simulate basic analysis based on collection ID patterns
         let (vector_count, dimension, sparsity) = match collection_id.as_str() {
             id if id.contains("small") => (1_000, 128, 0.1),
@@ -491,9 +493,9 @@ impl VectorCharacteristicsAnalyzer {
             id if id.contains("large") => (100_000, 768, 0.2),
             _ => (10_000, 384, 0.3), // Default for test collections
         };
-        
+
         let dimension_variance = vec![0.5; dimension];
-        
+
         Ok(VectorCharacteristics {
             vector_count,
             dimension,

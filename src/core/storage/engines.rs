@@ -2,67 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Unified distance metric enum - used across storage engines  
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum DistanceMetric {
-    /// Cosine similarity (1 - cosine distance)
-    Cosine,
-    /// Euclidean distance (L2)
-    Euclidean,
-    /// Manhattan distance (L1)
-    Manhattan,
-    /// Dot product similarity
-    DotProduct,
-    /// Hamming distance for binary vectors
-    Hamming,
-}
+// Use the canonical DistanceMetric from compute distance module
+pub use crate::compute::distance::DistanceMetric;
 
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
-}
-
-impl DistanceMetric {
-    /// Get all available distance metrics
-    pub fn all() -> &'static [DistanceMetric] {
-        &[
-            DistanceMetric::Cosine,
-            DistanceMetric::Euclidean,
-            DistanceMetric::Manhattan,
-            DistanceMetric::DotProduct,
-            DistanceMetric::Hamming,
-        ]
-    }
-    
-    /// Check if metric is suitable for normalized vectors
-    pub fn supports_normalized_vectors(&self) -> bool {
-        matches!(self, DistanceMetric::Cosine | DistanceMetric::DotProduct)
-    }
-}
-
-/// Unified storage engine enum - supports multiple backends
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum StorageEngine {
-    /// VIPER - Vector-optimized Parquet storage
-    Viper,
-    /// LSM Tree based storage
-    Lsm,
-    /// Memory-mapped file storage
-    Mmap,
-    /// Hybrid storage combining multiple engines
-    Hybrid,
-    /// In-memory only (for testing/caching)
-    Memory,
-    /// Object store backend (S3, Azure, GCS)
-    ObjectStore,
-}
-
-impl Default for StorageEngine {
-    fn default() -> Self {
-        Self::Viper
-    }
-}
+// Use the canonical StorageEngine from proto instead of duplicate enum
+pub use crate::proto::proximadb::StorageEngine;
 
 impl StorageEngine {
     /// Get all available storage engines

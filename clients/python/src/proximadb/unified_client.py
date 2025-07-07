@@ -107,24 +107,23 @@ class ProximaDBClient:
     def _create_grpc_client(self):
         """Create gRPC client"""
         try:
-            from .grpc_client import ProximaDBClient as ProximaDBGrpcClient
+            from .sync_grpc_client import ProximaDBSyncGrpcClient
             
             # Extract host and port from URL
             url = self.config.url
             if url.startswith(('http://', 'https://')):
                 url = url.split('://', 1)[1]
             
-            return ProximaDBGrpcClient(
-                endpoint=url,
-                timeout=self.config.timeout,
-                enable_debug_logging=self.config.enable_debug_logging
+            return ProximaDBSyncGrpcClient(
+                server_address=url,
+                timeout=self.config.timeout
             )
         except ImportError:
             raise ImportError("gRPC dependencies not available. Install with: pip install grpcio grpcio-tools protobuf")
     
     def _create_rest_client(self):
         """Create REST client"""
-        from .rest_client import ProximaDBRestClient
+        from .client import ProximaDBClient as ProximaDBRestClient
         return ProximaDBRestClient(config=self.config)
     
     @property
@@ -220,9 +219,15 @@ class ProximaDBClient:
         timeout: Optional[float] = None,
     ) -> List[SearchResult]:
         """Search for similar vectors"""
+        # Map unified client parameters to REST client parameters
         return self._client.search(
-            collection_id, query, k, filter, include_vectors, 
-            include_metadata, ef, exact, timeout
+            collection_id=collection_id,
+            query=query,
+            k=k,
+            filter=filter,
+            include_vectors=include_vectors,
+            include_metadata=include_metadata,
+            timeout=timeout
         )
     
     def get_vector(

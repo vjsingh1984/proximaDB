@@ -74,7 +74,7 @@ impl Default for PerformanceConfig {
         Self {
             // Optimized for write-triggered size-based flush only
             memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB memory limit for testing metadata filtering performance
-            disk_segment_size: 512 * 1024 * 1024, // 512MB segments optimized for large vectors
+            disk_segment_size: 512 * 1024 * 1024,     // 512MB segments optimized for large vectors
             global_flush_threshold: 512 * 1024 * 1024, // 512MB global limit for write-triggered flush
             write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput
             concurrent_flushes: num_cpus::get().min(4), // Max 4 concurrent flushes to avoid I/O contention
@@ -270,20 +270,24 @@ pub struct CollectionWalConfig {
 impl From<&crate::core::config::WalStorageConfig> for WalConfig {
     fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
         let mut wal_config = WalConfig::default();
-        
+
         // Convert URLs to MultiDiskConfig
         wal_config.multi_disk.data_directories = core_config.wal_urls.clone();
         wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
-            crate::core::config::WalDistributionStrategy::RoundRobin => DiskDistributionStrategy::RoundRobin,
+            crate::core::config::WalDistributionStrategy::RoundRobin => {
+                DiskDistributionStrategy::RoundRobin
+            }
             crate::core::config::WalDistributionStrategy::Hash => DiskDistributionStrategy::Hash,
-            crate::core::config::WalDistributionStrategy::LoadBalanced => DiskDistributionStrategy::LoadBalanced,
+            crate::core::config::WalDistributionStrategy::LoadBalanced => {
+                DiskDistributionStrategy::LoadBalanced
+            }
         };
         wal_config.multi_disk.collection_affinity = core_config.collection_affinity;
-        
+
         // Set performance thresholds
         wal_config.performance.memory_flush_size_bytes = core_config.memory_flush_size_bytes;
         wal_config.performance.global_flush_threshold = core_config.global_flush_threshold;
-        
+
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
             wal_config.strategy_type = match strategy_type.as_str() {
@@ -292,7 +296,7 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
                 _ => WalStrategyType::default(),
             };
         }
-        
+
         if let Some(memtable_type) = &core_config.memtable_type {
             wal_config.memtable.memtable_type = match memtable_type.as_str() {
                 "BTree" => MemTableType::BTree,
@@ -302,7 +306,7 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
                 _ => MemTableType::default(),
             };
         }
-        
+
         if let Some(sync_mode) = &core_config.sync_mode {
             wal_config.performance.sync_mode = match sync_mode.as_str() {
                 "Always" => SyncMode::Always,
@@ -313,19 +317,20 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
                 _ => SyncMode::PerBatch, // Default to balanced mode
             };
         }
-        
+
         if let Some(batch_threshold) = core_config.batch_threshold {
             wal_config.performance.batch_threshold = batch_threshold;
         }
-        
+
         if let Some(write_buffer_mb) = core_config.write_buffer_size_mb {
-            wal_config.performance.write_buffer_size = write_buffer_mb * 1024 * 1024; // Convert MB to bytes
+            wal_config.performance.write_buffer_size = write_buffer_mb * 1024 * 1024;
+            // Convert MB to bytes
         }
-        
+
         if let Some(concurrent_flushes) = core_config.concurrent_flushes {
             wal_config.performance.concurrent_flushes = concurrent_flushes;
         }
-        
+
         wal_config
     }
 }

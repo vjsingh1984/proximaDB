@@ -61,7 +61,10 @@ async fn test_axis_large_scale_insertion() {
 
         for vector in test_vectors {
             let result = axis_manager.insert(vector).await;
-            assert!(result.is_ok(), "Large-scale vector insertion should succeed");
+            assert!(
+                result.is_ok(),
+                "Large-scale vector insertion should succeed"
+            );
         }
     }
 
@@ -134,7 +137,9 @@ async fn test_axis_adaptive_optimization() {
     // Sparse collection (simulated high sparsity via metadata)
     let mut sparse_vectors = create_test_vectors(500, 256, sparse_collection);
     for vector in &mut sparse_vectors {
-        vector.metadata.insert("sparse_type".to_string(), serde_json::json!(true));
+        vector
+            .metadata
+            .insert("sparse_type".to_string(), serde_json::json!(true));
     }
     for vector in sparse_vectors {
         let _ = axis_manager.insert(vector).await;
@@ -148,8 +153,14 @@ async fn test_axis_adaptive_optimization() {
         .analyze_and_optimize(&sparse_collection.to_string())
         .await;
 
-    assert!(dense_result.is_ok(), "Dense collection optimization should succeed");
-    assert!(sparse_result.is_ok(), "Sparse collection optimization should succeed");
+    assert!(
+        dense_result.is_ok(),
+        "Dense collection optimization should succeed"
+    );
+    assert!(
+        sparse_result.is_ok(),
+        "Sparse collection optimization should succeed"
+    );
 }
 
 #[tokio::test]
@@ -162,9 +173,16 @@ async fn test_axis_complex_hybrid_queries() {
     // Insert test data with rich metadata
     let mut test_vectors = create_test_vectors(100, 128, collection_id);
     for (i, vector) in test_vectors.iter_mut().enumerate() {
-        vector.metadata.insert("region".to_string(), serde_json::json!(format!("region_{}", i % 3)));
-        vector.metadata.insert("score".to_string(), serde_json::json!(i as f64 / 10.0));
-        vector.metadata.insert("active".to_string(), serde_json::json!(i % 2 == 0));
+        vector.metadata.insert(
+            "region".to_string(),
+            serde_json::json!(format!("region_{}", i % 3)),
+        );
+        vector
+            .metadata
+            .insert("score".to_string(), serde_json::json!(i as f64 / 10.0));
+        vector
+            .metadata
+            .insert("active".to_string(), serde_json::json!(i % 2 == 0));
     }
 
     for vector in test_vectors {
@@ -196,13 +214,13 @@ async fn test_axis_complex_hybrid_queries() {
     };
 
     let result = axis_manager.query(query).await;
-    assert!(result.is_ok(), "Complex hybrid query should execute successfully");
+    assert!(
+        result.is_ok(),
+        "Complex hybrid query should execute successfully"
+    );
 
     let query_result = result.unwrap();
-    assert!(
-        query_result.results.len() <= 10,
-        "Should respect k limit"
-    );
+    assert!(query_result.results.len() <= 10, "Should respect k limit");
 }
 
 #[tokio::test]
@@ -264,11 +282,18 @@ async fn test_axis_collection_lifecycle() {
     }
 
     // Phase 3: Analysis and optimization
-    let optimization_result = axis_manager.analyze_and_optimize(&collection_id.to_string()).await;
-    assert!(optimization_result.is_ok(), "Collection optimization should succeed");
+    let optimization_result = axis_manager
+        .analyze_and_optimize(&collection_id.to_string())
+        .await;
+    assert!(
+        optimization_result.is_ok(),
+        "Collection optimization should succeed"
+    );
 
     // Phase 4: Collection cleanup
-    let cleanup_result = axis_manager.drop_collection(&collection_id.to_string()).await;
+    let cleanup_result = axis_manager
+        .drop_collection(&collection_id.to_string())
+        .await;
     assert!(cleanup_result.is_ok(), "Collection cleanup should succeed");
 
     // Verify metrics reflect the lifecycle

@@ -451,43 +451,63 @@ impl CompactionManager {
         // DETAILED COMPACTION PERFORMANCE ANALYSIS
         let total_time = start_time.elapsed();
         let input_files_count = task.input_files.len();
-        let compression_ratio = if bytes_read > 0 { bytes_written as f64 / bytes_read as f64 } else { 1.0 };
-        let read_throughput_mb_sec = (bytes_read as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
-        let write_throughput_mb_sec = (bytes_written as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
-        
+        let compression_ratio = if bytes_read > 0 {
+            bytes_written as f64 / bytes_read as f64
+        } else {
+            1.0
+        };
+        let read_throughput_mb_sec =
+            (bytes_read as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
+        let write_throughput_mb_sec =
+            (bytes_written as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
+
         tracing::info!(
             "🗜️ [LSM COMPACTION] Level {} complete: {} files → 1 file in {:?}",
-            task.level, input_files_count, total_time
+            task.level,
+            input_files_count,
+            total_time
         );
-        
+
         tracing::info!(
             "⚡ [LSM COMPACTION PERFORMANCE] Read: {:.1}MB/s, Write: {:.1}MB/s, Compression: {:.1}x",
             read_throughput_mb_sec, write_throughput_mb_sec, compression_ratio
         );
-        
+
         // COMPACTION PERFORMANCE WARNINGS (compaction can be slower than flush)
-        if total_time.as_millis() > 5000 { // >5s is very slow for compaction
-            tracing::warn!("⚠️ SLOW LSM COMPACTION: {}ms for {} files. Consider:", 
-                          total_time.as_millis(), input_files_count);
+        if total_time.as_millis() > 5000 {
+            // >5s is very slow for compaction
+            tracing::warn!(
+                "⚠️ SLOW LSM COMPACTION: {}ms for {} files. Consider:",
+                total_time.as_millis(),
+                input_files_count
+            );
             tracing::warn!("   • Moving compaction to dedicated background process");
             tracing::warn!("   • Using faster storage for compaction temp files");
             tracing::warn!("   • Reducing compaction scope/frequency");
         }
-        
-        if read_throughput_mb_sec < 50.0 { // <50MB/s read is slow
-            tracing::warn!("⚠️ LSM COMPACTION READ WARNING: {:.1}MB/s below target 50MB/s", read_throughput_mb_sec);
+
+        if read_throughput_mb_sec < 50.0 {
+            // <50MB/s read is slow
+            tracing::warn!(
+                "⚠️ LSM COMPACTION READ WARNING: {:.1}MB/s below target 50MB/s",
+                read_throughput_mb_sec
+            );
         }
-        
-        if write_throughput_mb_sec < 30.0 { // <30MB/s write is slow
-            tracing::warn!("⚠️ LSM COMPACTION WRITE WARNING: {:.1}MB/s below target 30MB/s", write_throughput_mb_sec);
+
+        if write_throughput_mb_sec < 30.0 {
+            // <30MB/s write is slow
+            tracing::warn!(
+                "⚠️ LSM COMPACTION WRITE WARNING: {:.1}MB/s below target 30MB/s",
+                write_throughput_mb_sec
+            );
         }
-        
+
         // DESIGN INSIGHT: Comparison with flush performance
         if total_time.as_millis() > 1000 {
             tracing::info!("💡 DESIGN INSIGHT: LSM compaction ({}ms) much slower than VIPER flush target (<200ms) - async compaction recommended", 
                           total_time.as_millis());
         }
-        
+
         debug!(
             "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged",
             bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len()

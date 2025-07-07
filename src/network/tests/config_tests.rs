@@ -2,15 +2,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::network::{
-        NetworkConfig, AuthConfig, RateLimitConfig
-    };
+    use crate::network::{AuthConfig, NetworkConfig, RateLimitConfig};
     use serde_json;
 
     #[tokio::test]
     async fn test_network_config_default() {
         let config = NetworkConfig::default();
-        
+
         assert_eq!(config.bind_address, "0.0.0.0");
         assert_eq!(config.port, 5678);
         assert!(config.enable_grpc);
@@ -32,14 +30,14 @@ mod tests {
             jwt_expiration_secs: 7200,
             api_keys: vec!["key1".to_string(), "key2".to_string()],
         };
-        
+
         let custom_rate_limit = RateLimitConfig {
             enabled: true,
             requests_per_minute: 2000,
             burst_size: 200,
             by_ip: false,
         };
-        
+
         let config = NetworkConfig {
             bind_address: "127.0.0.1".to_string(),
             port: 8080,
@@ -53,7 +51,7 @@ mod tests {
             keep_alive_timeout_secs: 120,
             tcp_nodelay: false,
         };
-        
+
         assert_eq!(config.bind_address, "127.0.0.1");
         assert_eq!(config.port, 8080);
         assert!(!config.enable_grpc);
@@ -66,7 +64,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_config_default() {
         let config = AuthConfig::default();
-        
+
         assert!(!config.enabled);
         assert_eq!(config.jwt_secret, None);
         assert_eq!(config.jwt_expiration_secs, 3600);
@@ -76,7 +74,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
-        
+
         assert!(config.enabled);
         assert_eq!(config.requests_per_minute, 1000);
         assert_eq!(config.burst_size, 100);
@@ -86,18 +84,18 @@ mod tests {
     #[tokio::test]
     async fn test_network_config_serialization() {
         let config = NetworkConfig::default();
-        
+
         let serialized = serde_json::to_string(&config);
         assert!(serialized.is_ok());
-        
+
         let json_str = serialized.unwrap();
         assert!(json_str.contains("0.0.0.0"));
         assert!(json_str.contains("5678"));
         assert!(json_str.contains("enable_grpc"));
-        
+
         let deserialized: Result<NetworkConfig, _> = serde_json::from_str(&json_str);
         assert!(deserialized.is_ok());
-        
+
         let restored_config = deserialized.unwrap();
         assert_eq!(config.bind_address, restored_config.bind_address);
         assert_eq!(config.port, restored_config.port);
@@ -115,7 +113,7 @@ mod tests {
                 "api_key_3".to_string(),
             ],
         };
-        
+
         assert!(config.enabled);
         assert_eq!(config.jwt_secret, Some("my_jwt_secret".to_string()));
         assert_eq!(config.jwt_expiration_secs, 1800);
@@ -131,7 +129,7 @@ mod tests {
             burst_size: 50,
             by_ip: false,
         };
-        
+
         assert!(!config.enabled);
         assert_eq!(config.requests_per_minute, 500);
         assert_eq!(config.burst_size, 50);
@@ -142,7 +140,7 @@ mod tests {
     async fn test_network_config_clone() {
         let config = NetworkConfig::default();
         let cloned_config = config.clone();
-        
+
         assert_eq!(config.bind_address, cloned_config.bind_address);
         assert_eq!(config.port, cloned_config.port);
         assert_eq!(config.enable_grpc, cloned_config.enable_grpc);
@@ -153,7 +151,7 @@ mod tests {
     async fn test_network_config_debug_format() {
         let config = NetworkConfig::default();
         let debug_str = format!("{:?}", config);
-        
+
         assert!(debug_str.contains("NetworkConfig"));
         assert!(debug_str.contains("bind_address"));
         assert!(debug_str.contains("port"));

@@ -11,8 +11,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::avro::{AvroOpType, AvroWalEntry, AvroWalOperation};
 use super::{WalEntry, WalOperation};
-use super::avro::{AvroWalEntry, AvroWalOperation, AvroOpType};
 use crate::core::{CollectionId, VectorId, VectorRecord};
 
 /// Canonical Avro schema for WAL entries (Version 1)
@@ -85,36 +85,80 @@ pub struct AvroVector {
     pub timestamp: Option<i64>,
 }
 
-/// Deserialize Avro binary vector batch payload from gRPC (zero-copy)
-pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>> {
+/// Serialize vector records to Avro binary format
+pub fn serialize_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>> {
     use apache_avro::Schema;
-    
+
     // Parse the vector batch schema
     let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
         .context("Failed to parse vector batch Avro schema")?;
-    
+
+    // Convert VectorRecord to AvroVector format
+    let avro_vectors: Vec<AvroVector> = vector_records
+        .iter()
+        .map(|record| AvroVector {
+            id: record.id.clone(),
+            vector: record.vector.clone(),
+            metadata: if record.metadata.is_empty() {
+                None
+            } else {
+                Some(
+                    record
+                        .metadata
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.to_string()))
+                        .collect(),
+                )
+            },
+            timestamp: Some(record.timestamp),
+        })
+        .collect();
+
+    let batch = AvroVectorBatch {
+        vectors: avro_vectors,
+    };
+
+    // Convert to Avro Value first, then serialize to binary datum
+    let avro_value = apache_avro::to_value(batch)
+        .context("Failed to convert vector batch to Avro value")?;
+
+    apache_avro::to_avro_datum(&schema, avro_value)
+        .context("Failed to serialize vector batch to Avro datum")
+}
+
+/// Deserialize Avro binary vector batch payload from gRPC (zero-copy)
+pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>> {
+    use apache_avro::Schema;
+
+    // Parse the vector batch schema
+    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
+        .context("Failed to parse vector batch Avro schema")?;
+
     // Deserialize from Avro binary datum (schema-less, matches to_avro_datum)
     let mut reader = std::io::Cursor::new(avro_payload);
     let avro_value = apache_avro::from_avro_datum(&schema, &mut reader, None)
         .context("Failed to deserialize Avro vector batch datum")?;
-    
+
     // Convert Avro Value to our struct
     let avro_batch: AvroVectorBatch = apache_avro::from_value::<AvroVectorBatch>(&avro_value)
         .context("Failed to convert Avro value to AvroVectorBatch")?;
-    
+
     let mut vector_records = Vec::new();
-    
+
     // Process each vector in the batch
     for avro_vector in avro_batch.vectors {
-        let timestamp_ms = avro_vector.timestamp.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-        
+        let timestamp_ms = avro_vector
+            .timestamp
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
         // Convert metadata from Option<HashMap<String, String>> to HashMap<String, serde_json::Value>
-        let metadata: HashMap<String, serde_json::Value> = avro_vector.metadata
+        let metadata: HashMap<String, serde_json::Value> = avro_vector
+            .metadata
             .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, serde_json::Value::String(v)))
             .collect();
-        
+
         let record = VectorRecord {
             id: avro_vector.id.clone(),
             collection_id: String::new(), // Will be set by caller
@@ -129,10 +173,10 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
             score: None,
             distance: None,
         };
-        
+
         vector_records.push(record);
     }
-    
+
     Ok(vector_records)
 }
 
@@ -298,6 +342,7 @@ pub fn convert_from_avro_entry(avro_entry: AvroWalEntry) -> Result<WalEntry> {
             .expires_at
             .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
         version: avro_entry.version as u64,
+        batch_id: None, // BatchId not stored in Avro format - will be assigned later
     })
 }
 

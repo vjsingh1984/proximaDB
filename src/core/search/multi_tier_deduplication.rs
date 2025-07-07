@@ -1,0 +1,402 @@
+//! Multi-Tier Vector Deduplication for ProximaDB
+//!
+//! Handles ID-based deduplication across storage tiers:
+//! 1. Unflushed WAL data (memtable) - highest priority
+//! 2. Flushed SST files - medium priority  
+//! 3. Compacted storage - lowest priority
+//!
+//! The merge strategy ensures that for vectors with the same ID:
+//! - Unflushed data overrides flushed data
+//! - Flushed data overrides compacted data
+//! - Records without IDs are included without deduplication
+
+use std::collections::HashMap;
+use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
+use crate::core::VectorRecord;
+
+/// Vector search result with storage tier metadata
+#[derive(Debug, Clone)]
+pub struct TieredSearchResult {
+    pub vector_record: VectorRecord,
+    pub score: f32,
+    pub tier: StorageTier,
+    pub engine: DeduplicationStorageEngine,
+    pub timestamp: DateTime<Utc>,
+    pub sequence: u64,
+    /// File path for flushed/compacted results (SST or Parquet)
+    pub file_path: Option<String>,
+}
+
+/// Storage tier hierarchy for deduplication priority
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StorageTier {
+    Compacted = 0,    // Lowest priority - final compacted storage
+    Flushed = 1,      // Medium priority - flushed but not compacted
+    Unflushed = 2,    // Highest priority - WAL data in memtable
+}
+
+/// Storage engine type for search result context (includes WAL for unflushed data)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeduplicationStorageEngine {
+    LSM,    // LSM-Tree with SST files
+    VIPER,  // VIPER with Parquet files  
+    WAL,    // WAL memtable (unflushed)
+}
+
+/// Metadata filter for client-side filtering
+pub type MetadataFilter = HashMap<String, JsonValue>;
+
+/// Multi-tier deduplication manager with metadata filtering support
+pub struct MultiTierDeduplicator {
+    /// Track latest version of each vector ID across tiers
+    id_to_latest: HashMap<String, TieredSearchResult>,
+    /// Results without IDs (no deduplication possible)
+    results_without_id: Vec<TieredSearchResult>,
+    /// Optional metadata filters to apply
+    metadata_filters: Option<MetadataFilter>,
+}
+
+impl MultiTierDeduplicator {
+    pub fn new() -> Self {
+        Self {
+            id_to_latest: HashMap::new(),
+            results_without_id: Vec::new(),
+            metadata_filters: None,
+        }
+    }
+
+    /// Create with metadata filters for client-side filtering
+    pub fn with_filters(metadata_filters: MetadataFilter) -> Self {
+        Self {
+            id_to_latest: HashMap::new(),
+            results_without_id: Vec::new(),
+            metadata_filters: Some(metadata_filters),
+        }
+    }
+
+    /// Check if a vector record matches the metadata filters
+    fn matches_filters(&self, vector_record: &VectorRecord) -> bool {
+        match &self.metadata_filters {
+            None => true, // No filters - all records match
+            Some(filters) => {
+                // Apply each filter
+                for (key, expected_value) in filters {
+                    match vector_record.metadata.get(key) {
+                        Some(actual_value) => {
+                            // Compare values (strict equality for now)
+                            if actual_value != expected_value {
+                                tracing::debug!(
+                                    "🔍 Filter mismatch: {} expected {:?}, got {:?}",
+                                    key, expected_value, actual_value
+                                );
+                                return false;
+                            }
+                        }
+                        None => {
+                            tracing::debug!("🔍 Filter mismatch: {} not found in metadata", key);
+                            return false; // Required metadata key missing
+                        }
+                    }
+                }
+                true // All filters passed
+            }
+        }
+    }
+
+    /// Add search results from a specific storage tier
+    pub fn add_tier_results(&mut self, results: Vec<TieredSearchResult>) {
+        for result in results {
+            // Apply metadata filters first
+            if !self.matches_filters(&result.vector_record) {
+                tracing::debug!(
+                    "🚫 Filter: Skipping vector {} due to metadata filter mismatch",
+                    result.vector_record.id
+                );
+                continue;
+            }
+
+            if result.vector_record.id.is_empty() {
+                // No ID - include directly (no deduplication possible)
+                self.results_without_id.push(result);
+            } else {
+                // ID-based deduplication across and within tiers
+                let should_replace = match self.id_to_latest.get(&result.vector_record.id) {
+                    Some(existing) => {
+                        // Multi-criteria replacement logic (in order of priority):
+                        if result.tier > existing.tier {
+                            // 1. Higher tier always wins (unflushed > flushed > compacted)
+                            true
+                        } else if result.tier < existing.tier {
+                            // Lower tier never wins
+                            false
+                        } else {
+                            // Same tier - use fine-grained ordering
+                            if result.sequence > existing.sequence {
+                                // 2. Higher sequence number (newer operation)
+                                true
+                            } else if result.sequence < existing.sequence {
+                                // Older sequence number
+                                false
+                            } else {
+                                // Same sequence - use version and timestamp
+                                if result.vector_record.version > existing.vector_record.version {
+                                    // 3. Higher version number (explicit versioning)
+                                    true
+                                } else if result.vector_record.version < existing.vector_record.version {
+                                    // Lower version
+                                    false
+                                } else {
+                                    // Same version - use timestamp as final tiebreaker
+                                    result.timestamp > existing.timestamp
+                                }
+                            }
+                        }
+                    }
+                    None => true, // First occurrence
+                };
+
+                if should_replace {
+                    if let Some(existing) = self.id_to_latest.get(&result.vector_record.id) {
+                        tracing::debug!(
+                            "🔄 Dedup: Replacing vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}) with {:?}/{:?} (seq:{}, v:{}, ts:{})",
+                            result.vector_record.id,
+                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis(),
+                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
+                        );
+                    } else {
+                        tracing::debug!(
+                            "✅ Dedup: Adding new vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{})",
+                            result.vector_record.id,
+                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
+                        );
+                    }
+                    self.id_to_latest.insert(result.vector_record.id.clone(), result);
+                } else {
+                    if let Some(existing) = self.id_to_latest.get(&result.vector_record.id) {
+                        tracing::debug!(
+                            "🚫 Dedup: Skipping older vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}), keeping {:?}/{:?} (seq:{}, v:{}, ts:{})",
+                            result.vector_record.id,
+                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis(),
+                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get final deduplicated results sorted by score
+    pub fn get_final_results(self, k: usize) -> Vec<TieredSearchResult> {
+        let mut final_results = Vec::new();
+        
+        // Capture lengths before moving
+        let unique_ids_count = self.id_to_latest.len();
+        let without_id_count = self.results_without_id.len();
+        
+        // Add latest version of each ID
+        for (_, result) in self.id_to_latest {
+            final_results.push(result);
+        }
+        
+        // Add non-ID results
+        final_results.extend(self.results_without_id);
+
+        // Sort by score (ascending for distance metrics)
+        final_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        
+        // Limit to k results
+        final_results.truncate(k);
+
+        tracing::info!(
+            "🎯 Multi-tier deduplication complete: {} unique IDs, {} without ID, {} final results",
+            unique_ids_count,
+            without_id_count,
+            final_results.len()
+        );
+
+        final_results
+    }
+
+    /// Get deduplication statistics
+    pub fn get_stats(&self) -> DeduplicationStats {
+        DeduplicationStats {
+            unique_ids: self.id_to_latest.len(),
+            records_without_id: self.results_without_id.len(),
+            total_records: self.id_to_latest.len() + self.results_without_id.len(),
+        }
+    }
+}
+
+/// Statistics for deduplication process
+#[derive(Debug, Clone)]
+pub struct DeduplicationStats {
+    pub unique_ids: usize,
+    pub records_without_id: usize,
+    pub total_records: usize,
+}
+
+impl Default for MultiTierDeduplicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_multi_tier_deduplication() {
+        let mut deduplicator = MultiTierDeduplicator::new();
+        
+        let now = chrono::Utc::now();
+        
+        // Add compacted result
+        let compacted_result = TieredSearchResult {
+            vector_record: VectorRecord {
+                id: "vector_1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: HashMap::new(),
+                timestamp: now.timestamp_millis(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            score: 0.5,
+            tier: StorageTier::Compacted,
+            engine: DeduplicationDeduplicationStorageEngine::VIPER,
+            timestamp: now,
+            sequence: 100,
+            file_path: Some("/data/compacted.parquet".to_string()),
+        };
+        
+        // Add flushed result (should override compacted)
+        let flushed_result = TieredSearchResult {
+            vector_record: VectorRecord {
+                id: "vector_1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.1, 2.1, 3.1],
+                metadata: HashMap::new(),
+                timestamp: now.timestamp_millis(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+                expires_at: None,
+                version: 2,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            score: 0.4,
+            tier: StorageTier::Flushed,
+            engine: DeduplicationStorageEngine::LSM,
+            timestamp: now,
+            sequence: 200,
+            file_path: Some("/data/flushed.sst".to_string()),
+        };
+        
+        // Add unflushed result (should override flushed)
+        let unflushed_result = TieredSearchResult {
+            vector_record: VectorRecord {
+                id: "vector_1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.2, 2.2, 3.2],
+                metadata: HashMap::new(),
+                timestamp: now.timestamp_millis(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+                expires_at: None,
+                version: 3,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            score: 0.3,
+            tier: StorageTier::Unflushed,
+            engine: DeduplicationStorageEngine::WAL,
+            timestamp: now,
+            sequence: 300,
+            file_path: None, // WAL data not in files
+        };
+        
+        deduplicator.add_tier_results(vec![compacted_result]);
+        deduplicator.add_tier_results(vec![flushed_result]);
+        deduplicator.add_tier_results(vec![unflushed_result]);
+        
+        let final_results = deduplicator.get_final_results(10);
+        
+        assert_eq!(final_results.len(), 1);
+        assert_eq!(final_results[0].tier, StorageTier::Unflushed);
+        assert_eq!(final_results[0].vector_record.version, 3);
+        assert_eq!(final_results[0].score, 0.3);
+    }
+
+    #[test]
+    fn test_same_tier_ordering() {
+        let mut deduplicator = MultiTierDeduplicator::new();
+        let now = chrono::Utc::now();
+        
+        // Add two unflushed results with same sequence but different versions
+        let unflushed_v1 = TieredSearchResult {
+            vector_record: VectorRecord {
+                id: "vector_1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: HashMap::new(),
+                timestamp: now.timestamp_millis(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            score: 0.5,
+            tier: StorageTier::Unflushed,
+            engine: DeduplicationStorageEngine::WAL,
+            timestamp: now,
+            sequence: 100,
+            file_path: None,
+        };
+        
+        let unflushed_v2 = TieredSearchResult {
+            vector_record: VectorRecord {
+                id: "vector_1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.1, 2.1, 3.1],
+                metadata: HashMap::new(),
+                timestamp: now.timestamp_millis(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+                expires_at: None,
+                version: 2, // Higher version
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            score: 0.4,
+            tier: StorageTier::Unflushed,
+            engine: DeduplicationStorageEngine::WAL,
+            timestamp: now,
+            sequence: 100, // Same sequence
+            file_path: None,
+        };
+        
+        // Add v1 first, then v2 - v2 should win due to higher version
+        deduplicator.add_tier_results(vec![unflushed_v1]);
+        deduplicator.add_tier_results(vec![unflushed_v2]);
+        
+        let final_results = deduplicator.get_final_results(10);
+        
+        assert_eq!(final_results.len(), 1);
+        assert_eq!(final_results[0].vector_record.version, 2); // v2 should win
+        assert_eq!(final_results[0].score, 0.4);
+    }
+}

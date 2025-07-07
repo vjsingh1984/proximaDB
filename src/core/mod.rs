@@ -1,14 +1,14 @@
+pub mod avro_serialization;
+pub mod avro_unified;
 pub mod config;
 pub mod error;
 pub mod global_coordination;
-pub mod routing;
-pub mod serverless;
-pub mod storage_layout;
-pub mod avro_unified;
-pub mod avro_serialization;
 pub mod index;
 pub mod indexing;
+pub mod routing;
 pub mod search;
+pub mod serverless;
+pub mod storage_layout;
 
 // Legacy modules removed - using avro_unified as single source of truth
 

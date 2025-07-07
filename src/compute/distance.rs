@@ -23,12 +23,12 @@
 //! 4. Zero compilation errors across platforms
 //! 5. Optimal performance per platform
 
-use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use tracing::info;
 
 /// Distance metrics supported by ProximaDB
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DistanceMetric {
     Cosine,
     Euclidean,
@@ -37,6 +37,12 @@ pub enum DistanceMetric {
     Hamming,
     Jaccard,
     Custom(String),
+}
+
+impl Default for DistanceMetric {
+    fn default() -> Self {
+        DistanceMetric::Cosine // Cosine is the default distance metric
+    }
 }
 
 /// Platform-agnostic SIMD capability detection
@@ -53,6 +59,24 @@ pub enum PlatformCapability {
     ArmNeon,
     #[cfg(target_arch = "aarch64")]
     ArmSve,
+}
+
+impl std::fmt::Display for PlatformCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlatformCapability::Scalar => write!(f, "Scalar"),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Sse2 => write!(f, "x86_64 SSE2"),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx => write!(f, "x86_64 AVX"),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx2 => write!(f, "x86_64 AVX2"),
+            #[cfg(target_arch = "aarch64")]
+            PlatformCapability::ArmNeon => write!(f, "ARM NEON"),
+            #[cfg(target_arch = "aarch64")]
+            PlatformCapability::ArmSve => write!(f, "ARM SVE"),
+        }
+    }
 }
 
 /// Global capability cache - detected once at startup
@@ -78,7 +102,7 @@ pub fn detect_platform_capability() -> PlatformCapability {
             }
             info!("⚠️ x86_64 detected but no SIMD support, using scalar");
         }
-        
+
         // ARM64 detection - only compiles on aarch64
         #[cfg(target_arch = "aarch64")]
         {
@@ -86,9 +110,12 @@ pub fn detect_platform_capability() -> PlatformCapability {
             info!("🚀 Detected ARM64 NEON SIMD support");
             return PlatformCapability::ArmNeon;
         }
-        
+
         // Default fallback for all other platforms
-        info!("🔧 Using scalar implementation (platform: {})", std::env::consts::ARCH);
+        info!(
+            "🔧 Using scalar implementation (platform: {})",
+            std::env::consts::ARCH
+        );
         PlatformCapability::Scalar
     })
 }
@@ -104,7 +131,7 @@ pub trait DistanceCompute: Send + Sync {
 /// Factory function to create optimal distance calculator for current platform
 pub fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCompute> {
     let capability = detect_platform_capability();
-    
+
     match metric {
         DistanceMetric::Cosine => match capability {
             #[cfg(target_arch = "x86_64")]
@@ -139,6 +166,17 @@ pub fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCom
             PlatformCapability::ArmNeon => Box::new(DotProductNeon),
             _ => Box::new(DotProductScalar),
         },
+        DistanceMetric::Jaccard => match capability {
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx2 => Box::new(JaccardAvx2),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx => Box::new(JaccardAvx),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Sse2 => Box::new(JaccardSse2),
+            #[cfg(target_arch = "aarch64")]
+            PlatformCapability::ArmNeon => Box::new(JaccardNeon),
+            _ => Box::new(JaccardScalar),
+        },
         _ => Box::new(GenericScalar::new(metric)),
     }
 }
@@ -154,22 +192,26 @@ impl DistanceCompute for CosineScalar {
         let mut dot = 0.0;
         let mut norm_a = 0.0;
         let mut norm_b = 0.0;
-        
+
         for i in 0..a.len() {
             dot += a[i] * b[i];
             norm_a += a[i] * a[i];
             norm_b += b[i] * b[i];
         }
-        
+
         1.0 - (dot / (norm_a.sqrt() * norm_b.sqrt()))
     }
-    
+
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
         vectors.iter().map(|v| self.distance(query, v)).collect()
     }
-    
-    fn is_similarity(&self) -> bool { false }
-    fn metric(&self) -> DistanceMetric { DistanceMetric::Cosine }
+
+    fn is_similarity(&self) -> bool {
+        false
+    }
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::Cosine
+    }
 }
 
 pub struct EuclideanScalar;
@@ -183,13 +225,17 @@ impl DistanceCompute for EuclideanScalar {
         }
         sum.sqrt()
     }
-    
+
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
         vectors.iter().map(|v| self.distance(query, v)).collect()
     }
-    
-    fn is_similarity(&self) -> bool { false }
-    fn metric(&self) -> DistanceMetric { DistanceMetric::Euclidean }
+
+    fn is_similarity(&self) -> bool {
+        false
+    }
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::Euclidean
+    }
 }
 
 pub struct DotProductScalar;
@@ -202,13 +248,55 @@ impl DistanceCompute for DotProductScalar {
         }
         sum
     }
-    
+
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
         vectors.iter().map(|v| self.distance(query, v)).collect()
     }
+
+    fn is_similarity(&self) -> bool {
+        true
+    }
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::DotProduct
+    }
+}
+
+pub struct JaccardScalar;
+impl DistanceCompute for JaccardScalar {
+    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        debug_assert_eq!(a.len(), b.len());
+        
+        // Jaccard distance = 1 - Jaccard similarity
+        // Jaccard similarity = |intersection| / |union|
+        let mut intersection = 0.0;
+        let mut union = 0.0;
+        
+        for i in 0..a.len() {
+            let min_val = a[i].min(b[i]);
+            let max_val = a[i].max(b[i]);
+            intersection += min_val;
+            union += max_val;
+        }
+        
+        if union == 0.0 {
+            // Both vectors are zero vectors - identical, so distance = 0
+            0.0
+        } else {
+            1.0 - (intersection / union)  // Jaccard distance
+        }
+    }
+
+    fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+        vectors.iter().map(|v| self.distance(query, v)).collect()
+    }
+
+    fn is_similarity(&self) -> bool {
+        false  // Jaccard distance (lower = more similar)
+    }
     
-    fn is_similarity(&self) -> bool { true }
-    fn metric(&self) -> DistanceMetric { DistanceMetric::DotProduct }
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::Jaccard
+    }
 }
 
 pub struct GenericScalar {
@@ -230,7 +318,7 @@ impl DistanceCompute for GenericScalar {
                     sum += (a[i] - b[i]).abs();
                 }
                 sum
-            },
+            }
             DistanceMetric::Hamming => {
                 let mut count = 0;
                 for i in 0..a.len() {
@@ -239,17 +327,45 @@ impl DistanceCompute for GenericScalar {
                     }
                 }
                 count as f32
-            },
+            }
+            DistanceMetric::Jaccard => {
+                // Jaccard distance = 1 - Jaccard similarity
+                // Jaccard similarity = |intersection| / |union|
+                let mut intersection = 0.0;
+                let mut union = 0.0;
+                
+                for i in 0..a.len() {
+                    let min_val = a[i].min(b[i]);
+                    let max_val = a[i].max(b[i]);
+                    intersection += min_val;
+                    union += max_val;
+                }
+                
+                if union == 0.0 {
+                    // Both vectors are zero vectors
+                    0.0  // Identical, so distance = 0
+                } else {
+                    1.0 - (intersection / union)  // Jaccard distance
+                }
+            }
+            DistanceMetric::Custom(_) => {
+                // Custom metrics fall back to cosine distance
+                CosineScalar.distance(a, b)
+            }
             _ => panic!("Metric {:?} not implemented in GenericScalar", self.metric),
         }
     }
-    
+
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
         vectors.iter().map(|v| self.distance(query, v)).collect()
     }
-    
-    fn is_similarity(&self) -> bool { false }
-    fn metric(&self) -> DistanceMetric { self.metric.clone() }
+
+    fn is_similarity(&self) -> bool {
+        false
+    }
+    fn metric(&self) -> DistanceMetric {
+        self.metric.clone()
+    }
 }
 
 // ============================================================================
@@ -260,7 +376,7 @@ impl DistanceCompute for GenericScalar {
 mod x86_implementations {
     use super::*;
     use std::arch::x86_64::*;
-    
+
     pub struct CosineAvx2;
     impl DistanceCompute for CosineAvx2 {
         fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -269,49 +385,53 @@ mod x86_implementations {
         fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
             vectors.iter().map(|v| self.distance(query, v)).collect()
         }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Cosine }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Cosine
+        }
     }
-    
+
     #[target_feature(enable = "avx2,fma")]
     unsafe fn cosine_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
         let chunks = a.len() / 8;
         let remainder = a.len() % 8;
-        
+
         let mut dot = _mm256_setzero_ps();
         let mut norm_a = _mm256_setzero_ps();
         let mut norm_b = _mm256_setzero_ps();
-        
+
         for i in 0..chunks {
             let offset = i * 8;
             let va = _mm256_loadu_ps(a.as_ptr().add(offset));
             let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
-            
+
             dot = _mm256_fmadd_ps(va, vb, dot);
             norm_a = _mm256_fmadd_ps(va, va, norm_a);
             norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
         }
-        
+
         // Horizontal sum using AVX2
         let dot_sum = hsum_ps_avx2(dot);
         let norm_a_sum = hsum_ps_avx2(norm_a);
         let norm_b_sum = hsum_ps_avx2(norm_b);
-        
+
         // Handle remainder with scalar
         let mut dot_final = dot_sum;
         let mut norm_a_final = norm_a_sum;
         let mut norm_b_final = norm_b_sum;
-        
+
         let start = chunks * 8;
         for i in start..a.len() {
             dot_final += a[i] * b[i];
             norm_a_final += a[i] * a[i];
             norm_b_final += b[i] * b[i];
         }
-        
+
         1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
     }
-    
+
     #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn hsum_ps_avx2(v: __m256) -> f32 {
@@ -320,70 +440,183 @@ mod x86_implementations {
         let v32 = _mm_add_ss(v64, _mm_movehdup_ps(v64));
         _mm_cvtss_f32(v32)
     }
-    
+
     // Stub implementations for other x86 variants (full implementations would follow similar pattern)
     pub struct CosineAvx;
     impl DistanceCompute for CosineAvx {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { CosineScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { CosineScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Cosine }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            CosineScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            CosineScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Cosine
+        }
     }
-    
+
     pub struct CosineSse2;
     impl DistanceCompute for CosineSse2 {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { CosineScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { CosineScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Cosine }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            CosineScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            CosineScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Cosine
+        }
     }
-    
+
     pub struct EuclideanAvx2;
     impl DistanceCompute for EuclideanAvx2 {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { EuclideanScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { EuclideanScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Euclidean }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            EuclideanScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            EuclideanScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Euclidean
+        }
     }
-    
+
     pub struct EuclideanAvx;
     impl DistanceCompute for EuclideanAvx {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { EuclideanScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { EuclideanScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Euclidean }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            EuclideanScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            EuclideanScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Euclidean
+        }
     }
-    
+
     pub struct EuclideanSse2;
     impl DistanceCompute for EuclideanSse2 {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { EuclideanScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { EuclideanScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Euclidean }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            EuclideanScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            EuclideanScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Euclidean
+        }
     }
-    
+
     pub struct DotProductAvx2;
     impl DistanceCompute for DotProductAvx2 {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { DotProductScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { DotProductScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { true }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::DotProduct }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            DotProductScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            DotProductScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            true
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::DotProduct
+        }
     }
-    
+
     pub struct DotProductAvx;
     impl DistanceCompute for DotProductAvx {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { DotProductScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { DotProductScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { true }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::DotProduct }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            DotProductScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            DotProductScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            true
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::DotProduct
+        }
     }
-    
+
     pub struct DotProductSse2;
     impl DistanceCompute for DotProductSse2 {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { DotProductScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { DotProductScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { true }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::DotProduct }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            DotProductScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            DotProductScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            true
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::DotProduct
+        }
+    }
+
+    // Jaccard implementations - start with scalar fallbacks for now, can optimize later
+    pub struct JaccardAvx2;
+    impl DistanceCompute for JaccardAvx2 {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            JaccardScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            JaccardScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Jaccard
+        }
+    }
+
+    pub struct JaccardAvx;
+    impl DistanceCompute for JaccardAvx {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            JaccardScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            JaccardScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Jaccard
+        }
+    }
+
+    pub struct JaccardSse2;
+    impl DistanceCompute for JaccardSse2 {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            JaccardScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            JaccardScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Jaccard
+        }
     }
 }
 
@@ -399,7 +632,7 @@ pub use x86_implementations::*;
 mod arm_implementations {
     use super::*;
     use std::arch::aarch64::*;
-    
+
     pub struct CosineNeon;
     impl DistanceCompute for CosineNeon {
         fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -408,62 +641,98 @@ mod arm_implementations {
         fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
             vectors.iter().map(|v| self.distance(query, v)).collect()
         }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Cosine }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Cosine
+        }
     }
-    
+
     #[target_feature(enable = "neon")]
     unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let chunks = a.len() / 4;
-        
+
         let mut dot = vdupq_n_f32(0.0);
         let mut norm_a = vdupq_n_f32(0.0);
         let mut norm_b = vdupq_n_f32(0.0);
-        
+
         for i in 0..chunks {
             let offset = i * 4;
             let va = vld1q_f32(a.as_ptr().add(offset));
             let vb = vld1q_f32(b.as_ptr().add(offset));
-            
+
             dot = vmlaq_f32(dot, va, vb);
             norm_a = vmlaq_f32(norm_a, va, va);
             norm_b = vmlaq_f32(norm_b, vb, vb);
         }
-        
+
         // Horizontal sum
         let dot_sum = vaddvq_f32(dot);
         let norm_a_sum = vaddvq_f32(norm_a);
         let norm_b_sum = vaddvq_f32(norm_b);
-        
+
         // Handle remainder
         let start = chunks * 4;
         let mut dot_final = dot_sum;
         let mut norm_a_final = norm_a_sum;
         let mut norm_b_final = norm_b_sum;
-        
+
         for i in start..a.len() {
             dot_final += a[i] * b[i];
             norm_a_final += a[i] * a[i];
             norm_b_final += b[i] * b[i];
         }
-        
+
         1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
     }
-    
+
     pub struct EuclideanNeon;
     impl DistanceCompute for EuclideanNeon {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { EuclideanScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { EuclideanScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { false }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::Euclidean }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            EuclideanScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            EuclideanScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Euclidean
+        }
     }
-    
+
     pub struct DotProductNeon;
     impl DistanceCompute for DotProductNeon {
-        fn distance(&self, a: &[f32], b: &[f32]) -> f32 { DotProductScalar.distance(a, b) }
-        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> { DotProductScalar.distance_batch(query, vectors) }
-        fn is_similarity(&self) -> bool { true }
-        fn metric(&self) -> DistanceMetric { DistanceMetric::DotProduct }
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            DotProductScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            DotProductScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            true
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::DotProduct
+        }
+    }
+
+    pub struct JaccardNeon;
+    impl DistanceCompute for JaccardNeon {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            JaccardScalar.distance(a, b)
+        }
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            JaccardScalar.distance_batch(query, vectors)
+        }
+        fn is_similarity(&self) -> bool {
+            false
+        }
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Jaccard
+        }
     }
 }
 
@@ -500,4 +769,3 @@ impl From<PlatformCapability> for SimdLevel {
         }
     }
 }
-

@@ -1,12 +1,10 @@
 //! Binary Avro Serialization Helper Module
-//! 
+//!
 //! Provides high-performance binary Avro serialization for ProximaDB responses
 //! Replaces JSON serialization for better performance and type safety
 
 use anyhow::{Context, Result};
-use apache_avro::{Schema, Writer, to_avro_datum, from_avro_datum};
-use serde::{Serialize, Deserialize};
-use std::io::Cursor;
+use apache_avro::Schema;
 
 use super::avro_unified::*;
 
@@ -24,7 +22,8 @@ impl AvroSerializer {
     /// Create a new Avro serializer with pre-compiled schemas
     pub fn new() -> Result<Self> {
         // Define schemas for common response types
-        let vector_search_schema = Schema::parse_str(r#"
+        let vector_search_schema = Schema::parse_str(
+            r#"
         {
             "type": "record",
             "name": "VectorSearchResponse",
@@ -54,9 +53,11 @@ impl AvroSerializer {
                 {"name": "error_message", "type": ["null", "string"], "default": null}
             ]
         }
-        "#)?;
+        "#,
+        )?;
 
-        let collection_response_schema = Schema::parse_str(r#"
+        let collection_response_schema = Schema::parse_str(
+            r#"
         {
             "type": "record",
             "name": "CollectionResponse",
@@ -88,9 +89,11 @@ impl AvroSerializer {
                 {"name": "processing_time_us", "type": "long"}
             ]
         }
-        "#)?;
+        "#,
+        )?;
 
-        let health_response_schema = Schema::parse_str(r#"
+        let health_response_schema = Schema::parse_str(
+            r#"
         {
             "type": "record",
             "name": "HealthResponse",
@@ -107,9 +110,11 @@ impl AvroSerializer {
                 {"name": "timestamp", "type": "long"}
             ]
         }
-        "#)?;
+        "#,
+        )?;
 
-        let metrics_response_schema = Schema::parse_str(r#"
+        let metrics_response_schema = Schema::parse_str(
+            r#"
         {
             "type": "record",
             "name": "MetricsResponse",
@@ -139,9 +144,11 @@ impl AvroSerializer {
                 {"name": "timestamp", "type": "long"}
             ]
         }
-        "#)?;
+        "#,
+        )?;
 
-        let operation_response_schema = Schema::parse_str(r#"
+        let operation_response_schema = Schema::parse_str(
+            r#"
         {
             "type": "record",
             "name": "OperationResponse",
@@ -154,7 +161,8 @@ impl AvroSerializer {
                 {"name": "metadata", "type": {"type": "map", "values": "string"}}
             ]
         }
-        "#)?;
+        "#,
+        )?;
 
         Ok(Self {
             vector_search_schema,
@@ -204,35 +212,38 @@ impl AvroSerializer {
     /// Deserialize binary Avro to VectorSearchRequest
     pub fn deserialize_search_request(&self, avro_bytes: &[u8]) -> Result<VectorSearchRequest> {
         // For now, assume JSON format and convert - TODO: implement proper Avro deserialization
-        let json_value: serde_json::Value = serde_json::from_slice(avro_bytes)
-            .context("Failed to parse search request as JSON")?;
-        
-        let collection_id = json_value.get("collection_id")
+        let json_value: serde_json::Value =
+            serde_json::from_slice(avro_bytes).context("Failed to parse search request as JSON")?;
+
+        let collection_id = json_value
+            .get("collection_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing collection_id"))?
             .to_string();
-            
-        let query_vector = json_value.get("vector")
+
+        let query_vector = json_value
+            .get("vector")
             .and_then(|v| v.as_array())
             .context("Missing or invalid vector field")?
             .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
-            
-        let k = json_value.get("k")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(10) as i32;
-            
-        let metadata_filter = json_value.get("metadata_filter")
+
+        let k = json_value.get("k").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+
+        let metadata_filter = json_value
+            .get("metadata_filter")
             .and_then(|v| v.as_object())
             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
-            
-        let include_vector = json_value.get("include_vector")
+
+        let include_vector = json_value
+            .get("include_vector")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-            
-        let include_metadata = json_value.get("include_metadata")
+
+        let include_metadata = json_value
+            .get("include_metadata")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
@@ -248,8 +259,9 @@ impl AvroSerializer {
 }
 
 /// Global Avro serializer instance
-static AVRO_SERIALIZER: once_cell::sync::Lazy<AvroSerializer> = 
-    once_cell::sync::Lazy::new(|| AvroSerializer::new().expect("Failed to initialize Avro serializer"));
+static AVRO_SERIALIZER: once_cell::sync::Lazy<AvroSerializer> = once_cell::sync::Lazy::new(|| {
+    AvroSerializer::new().expect("Failed to initialize Avro serializer")
+});
 
 /// Get the global Avro serializer instance
 pub fn get_avro_serializer() -> &'static AvroSerializer {

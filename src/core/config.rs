@@ -32,23 +32,23 @@ pub struct StorageConfig {
     /// Legacy fields (deprecated, use storage_layout instead)
     pub data_dirs: Vec<PathBuf>,
     pub wal_dir: PathBuf,
-    
+
     /// Modern WAL configuration with multi-disk support
     #[serde(default)]
     pub wal_config: WalStorageConfig,
-    
+
     /// ProximaDB hierarchical storage layout configuration
     pub storage_layout: crate::core::storage_layout::StorageLayoutConfig,
-    
+
     /// Storage engine configuration
     pub mmap_enabled: bool,
     pub lsm_config: LsmConfig,
     pub cache_size_mb: u64,
     pub bloom_filter_bits: u32,
-    
+
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemConfig,
-    
+
     /// Metadata backend configuration
     pub metadata_backend: Option<MetadataBackendConfig>,
 }
@@ -58,13 +58,13 @@ pub struct StorageConfig {
 pub struct MetadataBackendConfig {
     /// Backend type (filestore, memory)
     pub backend_type: String,
-    
+
     /// Storage URL (file://, s3://, adls://, gcs://)
     pub storage_url: String,
-    
+
     /// Cloud-specific configuration
     pub cloud_config: Option<CloudStorageConfig>,
-    
+
     /// Performance settings
     pub cache_size_mb: Option<u64>,
     pub flush_interval_secs: Option<u64>,
@@ -75,10 +75,10 @@ pub struct MetadataBackendConfig {
 pub struct CloudStorageConfig {
     /// AWS S3 configuration
     pub s3_config: Option<S3Config>,
-    
+
     /// Azure Blob Storage configuration
     pub azure_config: Option<AzureConfig>,
-    
+
     /// Google Cloud Storage configuration
     pub gcs_config: Option<GcsConfig>,
 }
@@ -118,10 +118,10 @@ pub struct GcsConfig {
 pub struct FilesystemConfig {
     /// Enable write strategy caching
     pub enable_write_strategy_cache: bool,
-    
+
     /// Temp directory configuration
     pub temp_strategy: TempStrategy,
-    
+
     /// Atomic operations configuration
     pub atomic_config: AtomicOperationsConfig,
 }
@@ -131,10 +131,10 @@ pub struct FilesystemConfig {
 pub enum TempStrategy {
     /// Same directory temp (recommended for local filesystem)
     SameDirectory,
-    
+
     /// Configured temp directory
     ConfiguredTemp { temp_dir: String },
-    
+
     /// System temp directory (fallback)
     SystemTemp,
 }
@@ -144,10 +144,10 @@ pub enum TempStrategy {
 pub struct AtomicOperationsConfig {
     /// Enable atomic writes for local filesystem
     pub enable_local_atomic: bool,
-    
+
     /// Enable write-temp-rename for object stores
     pub enable_object_store_atomic: bool,
-    
+
     /// Cleanup temp files on startup
     pub cleanup_temp_on_startup: bool,
 }
@@ -175,7 +175,10 @@ impl Default for AtomicOperationsConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            data_dirs: vec![PathBuf::from("/data/proximadb/1"), PathBuf::from("/data/proximadb/2")],
+            data_dirs: vec![
+                PathBuf::from("/data/proximadb/1"),
+                PathBuf::from("/data/proximadb/2"),
+            ],
             wal_dir: PathBuf::from("/data/proximadb/1/wal"),
             wal_config: WalStorageConfig::default(),
             storage_layout: crate::core::storage_layout::StorageLayoutConfig::default_2_disk(),
@@ -232,43 +235,43 @@ pub struct WalStorageConfig {
     /// WAL storage URLs - supports file://, s3://, adls://, gcs://
     /// Multiple URLs enable multi-disk performance scaling
     pub wal_urls: Vec<String>,
-    
+
     /// Distribution strategy for collections across WAL directories
     #[serde(default)]
     pub distribution_strategy: WalDistributionStrategy,
-    
+
     /// Whether to keep each collection on a single WAL directory
     #[serde(default = "default_collection_affinity")]
     pub collection_affinity: bool,
-    
+
     /// Memory flush threshold per collection (bytes)
     #[serde(default = "default_memory_flush_size")]
     pub memory_flush_size_bytes: usize,
-    
+
     /// Global WAL size threshold for forced flush (bytes)
     #[serde(default = "default_global_flush_threshold")]
     pub global_flush_threshold: usize,
-    
+
     /// WAL strategy type (Avro vs Bincode)
     #[serde(default = "default_strategy_type")]
     pub strategy_type: Option<String>,
-    
+
     /// Memtable type for memory structure
     #[serde(default = "default_memtable_type")]
     pub memtable_type: Option<String>,
-    
+
     /// Sync mode for durability vs performance tradeoff
     #[serde(default = "default_sync_mode")]
     pub sync_mode: Option<String>,
-    
+
     /// Batch threshold for operations
     #[serde(default = "default_batch_threshold")]
     pub batch_threshold: Option<usize>,
-    
+
     /// Write buffer size in MB
     #[serde(default = "default_write_buffer_size_mb")]
     pub write_buffer_size_mb: Option<usize>,
-    
+
     /// Maximum concurrent flush operations
     #[serde(default = "default_concurrent_flushes")]
     pub concurrent_flushes: Option<usize>,
@@ -296,28 +299,46 @@ impl Default for WalStorageConfig {
             wal_urls: vec!["file:///workspace/data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
-            memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB
+            memory_flush_size_bytes: 1 * 1024 * 1024,  // 1MB
             global_flush_threshold: 512 * 1024 * 1024, // 512MB
-            strategy_type: None, // Use WAL defaults
-            memtable_type: None, // Use WAL defaults
-            sync_mode: None, // Use WAL defaults  
-            batch_threshold: None, // Use WAL defaults
-            write_buffer_size_mb: None, // Use WAL defaults
-            concurrent_flushes: None, // Use WAL defaults
+            strategy_type: None,                       // Use WAL defaults
+            memtable_type: None,                       // Use WAL defaults
+            sync_mode: None,                           // Use WAL defaults
+            batch_threshold: None,                     // Use WAL defaults
+            write_buffer_size_mb: None,                // Use WAL defaults
+            concurrent_flushes: None,                  // Use WAL defaults
         }
     }
 }
 
 // Helper functions for serde defaults
-fn default_collection_affinity() -> bool { true }
-fn default_memory_flush_size() -> usize { 1 * 1024 * 1024 }
-fn default_global_flush_threshold() -> usize { 512 * 1024 * 1024 }
-fn default_strategy_type() -> Option<String> { None }
-fn default_memtable_type() -> Option<String> { None }
-fn default_sync_mode() -> Option<String> { None }
-fn default_batch_threshold() -> Option<usize> { None }
-fn default_write_buffer_size_mb() -> Option<usize> { None }
-fn default_concurrent_flushes() -> Option<usize> { None }
+fn default_collection_affinity() -> bool {
+    true
+}
+fn default_memory_flush_size() -> usize {
+    1 * 1024 * 1024
+}
+fn default_global_flush_threshold() -> usize {
+    512 * 1024 * 1024
+}
+fn default_strategy_type() -> Option<String> {
+    None
+}
+fn default_memtable_type() -> Option<String> {
+    None
+}
+fn default_sync_mode() -> Option<String> {
+    None
+}
+fn default_batch_threshold() -> Option<usize> {
+    None
+}
+fn default_write_buffer_size_mb() -> Option<usize> {
+    None
+}
+fn default_concurrent_flushes() -> Option<usize> {
+    None
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {

@@ -34,4 +34,10 @@ pub mod storage;
 // Vector operations integration tests
 pub mod vector;
 
+// Search distance metrics integration tests
+pub mod search_distance_metrics;
+
+// Unified distance system integration tests
+pub mod unified_distance_system_integration;
+
 // Middleware integration tests are at this level since they cross-cut concerns

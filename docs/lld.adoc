@@ -481,10 +481,10 @@ impl ProximaDb for ProximaDbService {
 }
 ```
 
-**3. Service Layer Implementation (src/services/unified_avro_service.rs):**
+**3. Service Layer Implementation (src/services/vector_service.rs):**
 
 ```rust
-impl UnifiedAvroService {
+impl VectorService {
     // Collection update enhancement
     pub async fn update_collection_metadata(&self, collection_id: &str, updates: CollectionUpdates) -> Result<Collection>
     
@@ -561,7 +561,7 @@ impl TransactionManager {
 
 == 6. Service Layer Implementation
 
-=== 1.1 UnifiedAvroService Architecture
+=== 1.1 VectorService Architecture
 
 ==== Service Structure and Integration
 
@@ -569,7 +569,7 @@ impl TransactionManager {
 ----
 /// Central service handling all database operations
 /// NOTE: Currently using JSON serialization, Avro migration planned
-pub struct UnifiedAvroService {
+pub struct VectorService {
     /// Storage engine with filesystem abstraction
     storage: Arc<RwLock<StorageEngine>>,
     /// Write-ahead log manager
@@ -584,7 +584,7 @@ pub struct UnifiedAvroService {
     scheduler: Arc<TaskScheduler>,
 }
 
-impl UnifiedAvroService {
+impl VectorService {
     /// Create new unified service with all components
     pub async fn new(config: ServiceConfig) -> Result<Self> {
         // Initialize storage with filesystem factory
@@ -677,26 +677,21 @@ impl UnifiedAvroService {
 }
 ----
 
-=== 1.2 VectorStorageCoordinator Implementation
+=== 1.2 SearchEngineFactory Implementation
 
 ==== Coordinator Architecture
 
 [source,rust]
 ----
-[source,rust]
-----
-/// Coordinator for managing multiple vector storage engines
-pub struct VectorStorageCoordinator {
-    /// Registered storage engines
-    engines: HashMap<String, Arc<dyn VectorStorage>>,
-    /// Index manager for all collections
-    index_manager: Arc<UnifiedIndexManager>,
-    /// Engine selection strategy
-    selection_strategy: Arc<EngineSelectionStrategy>,
-    /// Operation metrics
-    metrics: Arc<OperationMetrics>,
-    /// Configuration
-    config: CoordinatorConfig,
+/// Factory for creating storage-aware search engines with multi-tier deduplication
+pub struct SearchEngineFactory {
+    /// Direct storage engine access (current implementation)
+    /// Future: Support for pluggable storage engines
+    
+    /// Multi-tier search coordination
+    /// - WAL (unflushed): Latest data, highest priority
+    /// - Flushed storage: SST files (LSM) or Parquet files (VIPER)
+    /// - Compacted storage: Background compacted data
 }
 
 /// Vector storage trait for engine implementations
@@ -4761,8 +4756,8 @@ The LLD demonstrates how theoretical concepts from the HLD translate into concre
 - Atomic write strategies ✅
 
 **Service Layer**
-- UnifiedAvroService (using JSON, Avro planned) ✅
-- VectorStorageCoordinator ✅
+- VectorService (using JSON, Avro planned) ✅
+- SearchEngineFactory with multi-tier deduplication ✅
 - CollectionService with full CRUD ✅
 - Metadata persistence with recovery ✅
 

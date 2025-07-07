@@ -17,25 +17,25 @@
 //! Atomic Write Strategies for Different Environments and Storage Types
 
 use async_trait::async_trait;
+use rand;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use rand;
 
-use super::{FileSystem, FileOptions, FsResult, FilesystemError};
+use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 
 /// Atomic write strategy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AtomicWriteConfig {
     /// Strategy to use based on environment
     pub strategy: AtomicWriteStrategy,
-    
+
     /// Temp directory configuration
     pub temp_config: TempDirectoryConfig,
-    
+
     /// Cleanup configuration
     pub cleanup_config: CleanupConfig,
-    
+
     /// Retry configuration for atomic operations
     pub retry_config: AtomicRetryConfig,
 }
@@ -46,19 +46,17 @@ pub enum AtomicWriteStrategy {
     /// Direct write - fastest, suitable for R&D and local testing
     /// Risk: Power failure can corrupt files
     Direct,
-    
+
     /// Same-mount temp strategy - robust for local filesystems
     /// Write to ___temp directory on same mount, then atomic move
     SameMountTemp {
         temp_suffix: String, // Default: "___temp"
     },
-    
+
     /// Configured temp directory - for cross-mount scenarios
     /// Write to specific temp directory, then atomic move
-    ConfiguredTemp {
-        temp_directory: PathBuf,
-    },
-    
+    ConfiguredTemp { temp_directory: PathBuf },
+
     /// Cloud-optimized strategy - local temp + object store flush
     /// Write locally first, then flush to cloud storage atomically
     CloudOptimized {
@@ -66,7 +64,7 @@ pub enum AtomicWriteStrategy {
         enable_compression: bool,
         chunk_size_mb: usize,
     },
-    
+
     /// Auto-detect based on filesystem capabilities
     AutoDetect,
 }
@@ -76,10 +74,10 @@ pub enum AtomicWriteStrategy {
 pub struct TempDirectoryConfig {
     /// Enable cleanup of temp files on startup
     pub cleanup_on_startup: bool,
-    
+
     /// Maximum age of temp files before cleanup (hours)
     pub max_temp_age_hours: u64,
-    
+
     /// Custom temp directory patterns
     pub temp_patterns: Vec<String>,
 }
@@ -89,10 +87,10 @@ pub struct TempDirectoryConfig {
 pub struct CleanupConfig {
     /// Enable automatic cleanup of failed operations
     pub enable_auto_cleanup: bool,
-    
+
     /// Cleanup interval in seconds
     pub cleanup_interval_secs: u64,
-    
+
     /// File patterns to clean up
     pub cleanup_patterns: Vec<String>,
 }
@@ -157,10 +155,10 @@ pub trait AtomicWriteExecutor: Send + Sync {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()>;
-    
+
     /// Cleanup temporary files from failed operations
     async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()>;
-    
+
     /// Get strategy name for logging/monitoring
     fn strategy_name(&self) -> &str;
 }
@@ -181,16 +179,16 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         if let Some(parent) = Path::new(final_path).parent() {
             filesystem.create_dir(&parent.to_string_lossy()).await.ok();
         }
-        
+
         // Direct write - fastest but not atomic
         filesystem.write(final_path, data, None).await
     }
-    
+
     async fn cleanup_temp_files(&self, _filesystem: &dyn FileSystem) -> FsResult<()> {
         // No temp files to clean up
         Ok(())
     }
-    
+
     fn strategy_name(&self) -> &str {
         "direct"
     }
@@ -206,27 +204,37 @@ pub struct SameMountTempExecutor {
 
 impl SameMountTempExecutor {
     pub fn new(temp_suffix: String, config: AtomicWriteConfig) -> Self {
-        Self { temp_suffix, config }
+        Self {
+            temp_suffix,
+            config,
+        }
     }
-    
+
     fn generate_temp_path(&self, final_path: &str) -> FsResult<String> {
         let final_path = Path::new(final_path);
         let parent = final_path.parent().unwrap_or(Path::new("."));
-        let filename = final_path.file_name()
+        let filename = final_path
+            .file_name()
             .and_then(|f| f.to_str())
             .ok_or_else(|| FilesystemError::InvalidPath("Invalid filename".to_string()))?;
-        
+
         // Create temp directory path in same mount
         let temp_dir = parent.join(&self.temp_suffix);
-        
+
         // Generate unique temp filename with timestamp and process ID
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
         let pid = std::process::id();
-        let temp_filename = format!("{}_{}_{}_{}.tmp", filename, timestamp, pid, rand::random::<u32>());
-        
+        let temp_filename = format!(
+            "{}_{}_{}_{}.tmp",
+            filename,
+            timestamp,
+            pid,
+            rand::random::<u32>()
+        );
+
         Ok(temp_dir.join(temp_filename).to_string_lossy().to_string())
     }
 }
@@ -241,7 +249,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         _options: Option<FileOptions>,
     ) -> FsResult<()> {
         let temp_path = self.generate_temp_path(final_path)?;
-        
+
         // Create parent directories for both temp and final paths
         if let Some(parent) = Path::new(&temp_path).parent() {
             filesystem.create_dir(&parent.to_string_lossy()).await.ok();
@@ -249,24 +257,24 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         if let Some(parent) = Path::new(final_path).parent() {
             filesystem.create_dir(&parent.to_string_lossy()).await.ok();
         }
-        
+
         // Write to temp file
         filesystem.write(&temp_path, data, None).await?;
-        
+
         // Atomic move to final location
         filesystem.copy(&temp_path, final_path).await?;
         filesystem.delete(&temp_path).await.ok(); // Best effort cleanup
-        
+
         Ok(())
     }
-    
+
     async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
         // Implementation for cleaning up temp files older than configured age
         // This would scan for files matching temp patterns and clean them up
         tracing::debug!("Cleaning up temp files with suffix: {}", self.temp_suffix);
         Ok(())
     }
-    
+
     fn strategy_name(&self) -> &str {
         "same_mount_temp"
     }
@@ -294,22 +302,22 @@ impl CloudOptimizedExecutor {
             config,
         }
     }
-    
+
     async fn compress_data(&self, data: &[u8]) -> FsResult<Vec<u8>> {
         if !self.enable_compression {
             return Ok(data.to_vec());
         }
-        
+
         // Use compression (e.g., Snappy for speed or ZSTD for ratio)
         use flate2::write::GzEncoder;
         use flate2::Compression;
         use std::io::Write;
-        
+
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-        encoder.write_all(data)
+        encoder
+            .write_all(data)
             .map_err(|e| FilesystemError::Io(e))?;
-        encoder.finish()
-            .map_err(|e| FilesystemError::Io(e))
+        encoder.finish().map_err(|e| FilesystemError::Io(e))
     }
 }
 
@@ -330,17 +338,20 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         let pid = std::process::id();
         let temp_filename = format!("proximadb_{}_{}.tmp", timestamp, pid);
         let local_temp_path = self.local_temp_dir.join(temp_filename);
-        
+
         // Compress data if enabled
         let data_to_write = self.compress_data(data).await?;
-        
+
         // Write to local temp file first
         let local_fs = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
-            crate::storage::persistence::filesystem::local::LocalConfig::default()
-        ).await?;
-        
-        local_fs.write(&local_temp_path.to_string_lossy(), &data_to_write, None).await?;
-        
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await?;
+
+        local_fs
+            .write(&local_temp_path.to_string_lossy(), &data_to_write, None)
+            .await?;
+
         // Atomic flush to cloud storage
         let cloud_data = if self.enable_compression {
             // If compressed, upload compressed data
@@ -348,26 +359,34 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         } else {
             data.to_vec()
         };
-        
+
         // Use atomic write if filesystem supports it, otherwise fallback to regular write
         if filesystem.supports_atomic_writes() {
-            filesystem.write_atomic(final_path, &cloud_data, options).await?;
+            filesystem
+                .write_atomic(final_path, &cloud_data, options)
+                .await?;
         } else {
             filesystem.write(final_path, &cloud_data, None).await?;
         }
-        
+
         // Cleanup local temp file
-        local_fs.delete(&local_temp_path.to_string_lossy()).await.ok();
-        
+        local_fs
+            .delete(&local_temp_path.to_string_lossy())
+            .await
+            .ok();
+
         Ok(())
     }
-    
+
     async fn cleanup_temp_files(&self, _filesystem: &dyn FileSystem) -> FsResult<()> {
         // Clean up local temp directory
-        tracing::debug!("Cleaning up cloud-optimized temp files in: {:?}", self.local_temp_dir);
+        tracing::debug!(
+            "Cleaning up cloud-optimized temp files in: {:?}",
+            self.local_temp_dir
+        );
         Ok(())
     }
-    
+
     fn strategy_name(&self) -> &str {
         "cloud_optimized"
     }
@@ -382,8 +401,11 @@ impl AutoDetectExecutor {
     pub fn new(config: AtomicWriteConfig) -> Self {
         Self { config }
     }
-    
-    fn create_executor_for_filesystem(&self, filesystem: &dyn FileSystem) -> Box<dyn AtomicWriteExecutor> {
+
+    fn create_executor_for_filesystem(
+        &self,
+        filesystem: &dyn FileSystem,
+    ) -> Box<dyn AtomicWriteExecutor> {
         if filesystem.supports_atomic_writes() {
             // Local filesystem - use same-mount temp strategy
             Box::new(SameMountTempExecutor::new(
@@ -412,14 +434,16 @@ impl AtomicWriteExecutor for AutoDetectExecutor {
         options: Option<FileOptions>,
     ) -> FsResult<()> {
         let executor = self.create_executor_for_filesystem(filesystem);
-        executor.write_atomic(filesystem, final_path, data, options).await
+        executor
+            .write_atomic(filesystem, final_path, data, options)
+            .await
     }
-    
+
     async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
         let executor = self.create_executor_for_filesystem(filesystem);
         executor.cleanup_temp_files(filesystem).await
     }
-    
+
     fn strategy_name(&self) -> &str {
         "auto_detect"
     }
@@ -432,12 +456,10 @@ impl AtomicWriteExecutorFactory {
     /// Create executor based on strategy configuration
     pub fn create_executor(config: &AtomicWriteConfig) -> Box<dyn AtomicWriteExecutor> {
         match &config.strategy {
-            AtomicWriteStrategy::Direct => {
-                Box::new(DirectWriteExecutor)
-            },
-            AtomicWriteStrategy::SameMountTemp { temp_suffix } => {
-                Box::new(SameMountTempExecutor::new(temp_suffix.clone(), config.clone()))
-            },
+            AtomicWriteStrategy::Direct => Box::new(DirectWriteExecutor),
+            AtomicWriteStrategy::SameMountTemp { temp_suffix } => Box::new(
+                SameMountTempExecutor::new(temp_suffix.clone(), config.clone()),
+            ),
             AtomicWriteStrategy::ConfiguredTemp { temp_directory } => {
                 Box::new(CloudOptimizedExecutor::new(
                     temp_directory.clone(),
@@ -445,26 +467,26 @@ impl AtomicWriteExecutorFactory {
                     8,
                     config.clone(),
                 ))
-            },
-            AtomicWriteStrategy::CloudOptimized { local_temp_dir, enable_compression, chunk_size_mb } => {
-                Box::new(CloudOptimizedExecutor::new(
-                    local_temp_dir.clone(),
-                    *enable_compression,
-                    *chunk_size_mb,
-                    config.clone(),
-                ))
-            },
-            AtomicWriteStrategy::AutoDetect => {
-                Box::new(AutoDetectExecutor::new(config.clone()))
-            },
+            }
+            AtomicWriteStrategy::CloudOptimized {
+                local_temp_dir,
+                enable_compression,
+                chunk_size_mb,
+            } => Box::new(CloudOptimizedExecutor::new(
+                local_temp_dir.clone(),
+                *enable_compression,
+                *chunk_size_mb,
+                config.clone(),
+            )),
+            AtomicWriteStrategy::AutoDetect => Box::new(AutoDetectExecutor::new(config.clone())),
         }
     }
-    
+
     /// Create development/testing executor (direct writes)
     pub fn create_dev_executor() -> Box<dyn AtomicWriteExecutor> {
         Box::new(DirectWriteExecutor)
     }
-    
+
     /// Create production executor (robust atomic writes)
     pub fn create_production_executor() -> Box<dyn AtomicWriteExecutor> {
         let config = AtomicWriteConfig {
@@ -475,7 +497,7 @@ impl AtomicWriteExecutorFactory {
         };
         Box::new(SameMountTempExecutor::new("___temp".to_string(), config))
     }
-    
+
     /// Create cloud-optimized executor for object stores
     pub fn create_cloud_executor(local_temp_dir: PathBuf) -> Box<dyn AtomicWriteExecutor> {
         let config = AtomicWriteConfig {
@@ -489,4 +511,3 @@ impl AtomicWriteExecutorFactory {
         Box::new(CloudOptimizedExecutor::new(local_temp_dir, true, 8, config))
     }
 }
-

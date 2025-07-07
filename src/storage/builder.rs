@@ -13,9 +13,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::core::CompressionAlgorithm;
 use super::persistence::wal::config::{MemTableType, WalStrategyType};
 use super::persistence::wal::{WalConfig, WalFactory, WalManager};
+use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
@@ -63,7 +63,6 @@ pub struct DataStorageConfig {
 
     /// Compaction settings
     pub compaction_config: crate::core::CompactionConfig,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,7 +113,6 @@ pub enum CompressionLevel {
 
 // NOTE: CompactionConfig and CompactionStrategy moved to unified_types.rs
 pub use crate::core::{CompactionConfig, CompactionStrategy};
-
 
 /// Storage-focused system configuration (storage, WAL, filesystem only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -396,7 +394,6 @@ impl StorageSystemBuilder {
     // NOTE: Indexing configuration methods have been moved to src/indexing/builder.rs
     // Use IndexingBuilder for configuring search algorithms, distance metrics, etc.
 
-
     /// Configure storage performance settings
     pub fn with_storage_performance_config(mut self, config: StoragePerformanceConfig) -> Self {
         self.config.storage_performance = config;
@@ -457,7 +454,7 @@ impl StorageSystemBuilder {
     /// Configure local filesystem metadata backend
     pub fn with_local_metadata_backend(mut self, storage_path: impl Into<String>) -> Self {
         use crate::core::config::MetadataBackendConfig;
-        
+
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
             storage_url: format!("file://{}", storage_path.into()),
@@ -470,13 +467,13 @@ impl StorageSystemBuilder {
 
     /// Configure S3 metadata backend
     pub fn with_s3_metadata_backend(
-        mut self, 
-        bucket: impl Into<String>, 
+        mut self,
+        bucket: impl Into<String>,
         region: impl Into<String>,
-        use_iam_role: bool
+        use_iam_role: bool,
     ) -> Self {
-        use crate::core::config::{MetadataBackendConfig, CloudStorageConfig, S3Config};
-        
+        use crate::core::config::{CloudStorageConfig, MetadataBackendConfig, S3Config};
+
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
@@ -504,16 +501,19 @@ impl StorageSystemBuilder {
         mut self,
         account_name: impl Into<String>,
         container: impl Into<String>,
-        use_managed_identity: bool
+        use_managed_identity: bool,
     ) -> Self {
-        use crate::core::config::{MetadataBackendConfig, CloudStorageConfig, AzureConfig};
-        
+        use crate::core::config::{AzureConfig, CloudStorageConfig, MetadataBackendConfig};
+
         let account_name_str = account_name.into();
         let container_str = container.into();
-        
+
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
-            storage_url: format!("adls://{}.dfs.core.windows.net/{}/metadata", account_name_str, container_str),
+            storage_url: format!(
+                "adls://{}.dfs.core.windows.net/{}/metadata",
+                account_name_str, container_str
+            ),
             cloud_config: Some(CloudStorageConfig {
                 s3_config: None,
                 azure_config: Some(AzureConfig {
@@ -536,10 +536,10 @@ impl StorageSystemBuilder {
         mut self,
         project_id: impl Into<String>,
         bucket: impl Into<String>,
-        use_workload_identity: bool
+        use_workload_identity: bool,
     ) -> Self {
-        use crate::core::config::{MetadataBackendConfig, CloudStorageConfig, GcsConfig};
-        
+        use crate::core::config::{CloudStorageConfig, GcsConfig, MetadataBackendConfig};
+
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
@@ -563,7 +563,7 @@ impl StorageSystemBuilder {
     /// Configure memory-only metadata backend (for testing)
     pub fn with_memory_metadata_backend(mut self) -> Self {
         use crate::core::config::MetadataBackendConfig;
-        
+
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "memory".to_string(),
             storage_url: "memory://localhost".to_string(),

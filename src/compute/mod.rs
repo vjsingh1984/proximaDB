@@ -27,12 +27,18 @@ pub mod hardware;
 pub mod hardware_detection;
 pub mod indexing;
 pub mod quantization;
+pub mod unified_distance;
+
+// Unit tests
+#[cfg(test)]
+pub mod tests;
 
 pub use algorithms::*;
 pub use distance::*;
 pub use hardware::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
 pub use quantization::*;
+pub use unified_distance::*;
 
 use serde::{Deserialize, Serialize};
 

@@ -12,19 +12,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::core::{
-    SearchResult, MetadataFilter, StorageEngine as StorageEngineType
-};
-use crate::core::search::storage_aware::{
-    StorageSearchEngine, SearchHints, SearchCapabilities, QuantizationLevel,
-    SearchMetrics, ClusteringHints, SearchValidator
-};
 use crate::core::indexing::RoaringBitmapIndex;
+use crate::core::search::storage_aware::{
+    ClusteringHints, QuantizationLevel, SearchCapabilities, SearchHints, SearchMetrics,
+    SearchValidator, StorageSearchEngine,
+};
+use crate::core::{SearchResult, StorageEngine as StorageEngineType};
+use super::multi_tier_deduplication::MetadataFilter;
 use crate::storage::engines::viper::core::ViperCoreEngine;
 use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
 
 /// VIPER-specific search engine with Parquet optimizations
-/// 
+///
 /// Leverages VIPER's columnar Parquet storage for:
 /// - Efficient predicate pushdown filtering
 /// - ML-driven cluster selection
@@ -33,19 +32,19 @@ use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
 pub struct ViperSearchEngine {
     /// Core VIPER engine for storage operations
     viper_engine: Arc<ViperCoreEngine>,
-    
+
     /// Collection metadata for optimization decisions
     collection_record: CollectionRecord,
-    
+
     /// Roaring bitmap index for categorical metadata filtering
     metadata_index: Arc<tokio::sync::RwLock<RoaringBitmapIndex>>,
-    
+
     /// ML cluster metadata cache for fast cluster selection
     cluster_cache: Arc<tokio::sync::RwLock<ClusterMetadataCache>>,
-    
+
     /// Search performance metrics
     metrics: Arc<tokio::sync::RwLock<ViperSearchMetrics>>,
-    
+
     /// Engine capabilities
     capabilities: SearchCapabilities,
 }
@@ -72,14 +71,20 @@ impl ViperSearchEngine {
             max_dimension: 65536,
             engine_features: {
                 let mut features = HashMap::new();
-                features.insert("predicate_pushdown".to_string(), serde_json::Value::Bool(true));
+                features.insert(
+                    "predicate_pushdown".to_string(),
+                    serde_json::Value::Bool(true),
+                );
                 features.insert("ml_clustering".to_string(), serde_json::Value::Bool(true));
                 features.insert("quantization".to_string(), serde_json::Value::Bool(true));
-                features.insert("simd_vectorization".to_string(), serde_json::Value::Bool(true));
+                features.insert(
+                    "simd_vectorization".to_string(),
+                    serde_json::Value::Bool(true),
+                );
                 features
             },
         };
-        
+
         Ok(Self {
             viper_engine,
             collection_record,
@@ -89,14 +94,14 @@ impl ViperSearchEngine {
             capabilities,
         })
     }
-    
+
     /// Optimize search hints for VIPER storage characteristics
     fn optimize_search_hints(&self, hints: &SearchHints) -> SearchHints {
         let mut optimized = hints.clone();
-        
+
         // Enable predicate pushdown for any metadata filters
         optimized.predicate_pushdown = true;
-        
+
         // Optimize quantization based on collection characteristics
         if let Some(dimension) = self.collection_record.get_dimension() {
             optimized.quantization_level = match (dimension, hints.quantization_level) {
@@ -110,7 +115,7 @@ impl ViperSearchEngine {
                 (_, level) => level,
             };
         }
-        
+
         // Optimize clustering hints
         if optimized.clustering_hints.is_none() {
             optimized.clustering_hints = Some(ClusteringHints {
@@ -118,20 +123,21 @@ impl ViperSearchEngine {
                 max_clusters_to_search: 10,
                 cluster_confidence_threshold: 0.7,
                 cluster_centroids_cache: None,
-                cluster_distance_metric: crate::core::search::storage_aware::ClusterDistanceMetric::Cosine,
+                cluster_distance_metric:
+                    crate::core::search::storage_aware::ClusterDistanceMetric::Cosine,
             });
         }
-        
+
         optimized
     }
-    
+
     /// Build Parquet predicate filters from metadata filters
     async fn build_parquet_predicates(
         &self,
         filters: Option<&MetadataFilter>,
     ) -> Result<Vec<ParquetPredicate>> {
         let predicates = Vec::new();
-        
+
         if let Some(_filter) = filters {
             // TODO: Implement metadata filter conversion after fixing enum variants
             warn!("Metadata filtering temporarily disabled for VIPER search");
@@ -189,10 +195,10 @@ impl ViperSearchEngine {
             }
             */
         }
-        
+
         Ok(predicates)
     }
-    
+
     /// Select relevant clusters using ML-driven approach
     async fn select_clusters_ml(
         &self,
@@ -200,7 +206,7 @@ impl ViperSearchEngine {
         clustering_hints: &ClusteringHints,
     ) -> Result<Vec<ClusterId>> {
         let cache = self.cluster_cache.read().await;
-        
+
         if let Some(centroids) = &clustering_hints.cluster_centroids_cache {
             // Use cached centroids for fast cluster selection
             let mut cluster_distances: Vec<(ClusterId, f32)> = centroids
@@ -224,16 +230,19 @@ impl ViperSearchEngine {
                     (ClusterId(i), distance)
                 })
                 .collect();
-            
+
             // Sort by distance and select top clusters
-            cluster_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            
+            cluster_distances
+                .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
             let max_clusters = if clustering_hints.max_clusters_to_search == 0 {
                 cluster_distances.len()
             } else {
-                clustering_hints.max_clusters_to_search.min(cluster_distances.len())
+                clustering_hints
+                    .max_clusters_to_search
+                    .min(cluster_distances.len())
             };
-            
+
             Ok(cluster_distances
                 .into_iter()
                 .take(max_clusters)
@@ -246,7 +255,7 @@ impl ViperSearchEngine {
             Ok(cache.get_all_cluster_ids())
         }
     }
-    
+
     /// Execute quantization-aware vector search
     async fn quantized_vector_search(
         &self,
@@ -259,23 +268,33 @@ impl ViperSearchEngine {
         match quantization_level {
             QuantizationLevel::FP32 => {
                 // Full precision search
-                self.fp32_search(query_vector, k, cluster_ids, parquet_predicates).await
+                self.fp32_search(query_vector, k, cluster_ids, parquet_predicates)
+                    .await
             }
             QuantizationLevel::PQ8 | QuantizationLevel::PQ4 => {
                 // Product quantization with two-phase search
-                self.pq_search(query_vector, k, quantization_level, cluster_ids, parquet_predicates).await
+                self.pq_search(
+                    query_vector,
+                    k,
+                    quantization_level,
+                    cluster_ids,
+                    parquet_predicates,
+                )
+                .await
             }
             QuantizationLevel::Binary => {
                 // Binary quantization search
-                self.binary_search(query_vector, k, cluster_ids, parquet_predicates).await
+                self.binary_search(query_vector, k, cluster_ids, parquet_predicates)
+                    .await
             }
             QuantizationLevel::INT8 => {
                 // Scalar quantization search
-                self.int8_search(query_vector, k, cluster_ids, parquet_predicates).await
+                self.int8_search(query_vector, k, cluster_ids, parquet_predicates)
+                    .await
             }
         }
     }
-    
+
     /// Full precision FP32 search
     async fn fp32_search(
         &self,
@@ -286,16 +305,22 @@ impl ViperSearchEngine {
     ) -> Result<Vec<SearchResult>> {
         // Delegate to VIPER engine with cluster-based optimization
         let collection_id = &self.collection_record.name;
-        
+
         if cluster_ids.is_empty() {
             // No cluster optimization - full search
-            self.viper_engine.search_vectors(collection_id, query_vector, k).await
+            self.viper_engine
+                .search_vectors(collection_id, query_vector, k)
+                .await
         } else {
             // Cluster-optimized search
             let mut all_results = Vec::new();
-            
+
             for cluster_id in cluster_ids {
-                match self.viper_engine.search_vectors_in_cluster(collection_id, query_vector, k * 2, cluster_id.0).await {
+                match self
+                    .viper_engine
+                    .search_vectors_in_cluster(collection_id, query_vector, k * 2, cluster_id.0)
+                    .await
+                {
                     Ok(cluster_results) => {
                         all_results.extend(cluster_results);
                     }
@@ -305,15 +330,19 @@ impl ViperSearchEngine {
                     }
                 }
             }
-            
+
             // Merge and re-rank results
-            all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            all_results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             all_results.truncate(k);
-            
+
             Ok(all_results)
         }
     }
-    
+
     /// Product quantization search with two-phase approach
     async fn pq_search(
         &self,
@@ -329,22 +358,24 @@ impl ViperSearchEngine {
             QuantizationLevel::PQ4 => 5, // 5x candidates for re-ranking (lower precision)
             _ => 2,
         };
-        
+
         let candidates_k = k * candidate_multiplier;
-        
+
         // This would use quantized vector comparison in production
         // For now, use FP32 as placeholder
-        let candidates = self.fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates).await?;
-        
+        let candidates = self
+            .fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates)
+            .await?;
+
         // Phase 2: Re-rank top candidates with full precision
         // In production, this would load full precision vectors from Parquet
         // and recalculate distances
         let mut reranked = candidates;
         reranked.truncate(k);
-        
+
         Ok(reranked)
     }
-    
+
     /// Binary quantization search
     async fn binary_search(
         &self,
@@ -356,16 +387,18 @@ impl ViperSearchEngine {
         // Binary quantization would use Hamming distance
         // For now, use FP32 as placeholder with larger candidate set
         let candidates_k = k * 10; // Much larger candidate set for binary quantization
-        
-        let candidates = self.fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates).await?;
-        
+
+        let candidates = self
+            .fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates)
+            .await?;
+
         // Re-rank with full precision
         let mut reranked = candidates;
         reranked.truncate(k);
-        
+
         Ok(reranked)
     }
-    
+
     /// Scalar quantization (INT8) search
     async fn int8_search(
         &self,
@@ -377,59 +410,61 @@ impl ViperSearchEngine {
         // INT8 scalar quantization with learned min/max per dimension
         // For now, use FP32 as placeholder
         let candidates_k = k * 2; // 2x candidates for re-ranking
-        
-        let candidates = self.fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates).await?;
-        
+
+        let candidates = self
+            .fp32_search(query_vector, candidates_k, cluster_ids, _parquet_predicates)
+            .await?;
+
         // Re-rank with full precision
         let mut reranked = candidates;
         reranked.truncate(k);
-        
+
         Ok(reranked)
     }
-    
+
     // Distance calculation utilities
-    
+
     fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return f32::MAX;
         }
-        
+
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             return f32::MAX;
         }
-        
+
         1.0 - (dot_product / (norm_a * norm_b))
     }
-    
+
     fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return f32::MAX;
         }
-        
+
         a.iter()
             .zip(b.iter())
             .map(|(x, y)| (x - y).powi(2))
             .sum::<f32>()
             .sqrt()
     }
-    
+
     fn dot_product(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return 0.0;
         }
-        
+
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
-    
+
     fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return f32::MAX;
         }
-        
+
         a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
     }
 }
@@ -445,86 +480,100 @@ impl StorageSearchEngine for ViperSearchEngine {
         search_hints: &SearchHints,
     ) -> Result<Vec<SearchResult>> {
         let start_time = std::time::Instant::now();
-        
+
         info!(
             "🔍 VIPER: Starting search - collection={}, dimension={}, k={}, quantization={:?}",
-            collection_id, query_vector.len(), k, search_hints.quantization_level
+            collection_id,
+            query_vector.len(),
+            k,
+            search_hints.quantization_level
         );
-        
+
         // Validate parameters
         if let Some(dimension) = self.collection_record.get_dimension() {
             if query_vector.len() != dimension {
-                return Err(anyhow::anyhow!("Query vector dimension {} does not match collection dimension {}", query_vector.len(), dimension));
+                return Err(anyhow::anyhow!(
+                    "Query vector dimension {} does not match collection dimension {}",
+                    query_vector.len(),
+                    dimension
+                ));
             }
         }
         if k == 0 {
             return Err(anyhow::anyhow!("k must be greater than 0"));
         }
-        
+
         // Optimize hints for VIPER characteristics
         let optimized_hints = self.optimize_search_hints(search_hints);
-        
+
         // Build Parquet predicates for pushdown filtering
         let parquet_predicates = if optimized_hints.predicate_pushdown {
             self.build_parquet_predicates(filters).await?
         } else {
             Vec::new()
         };
-        
+
         // Select relevant clusters using ML
         let cluster_ids = if let Some(clustering_hints) = &optimized_hints.clustering_hints {
             if clustering_hints.enable_ml_clustering {
-                self.select_clusters_ml(query_vector, clustering_hints).await?
+                self.select_clusters_ml(query_vector, clustering_hints)
+                    .await?
             } else {
                 Vec::new() // No clustering
             }
         } else {
             Vec::new()
         };
-        
+
         info!(
             "🔍 VIPER: Optimization phase complete - predicates={}, clusters={}, ml_clustering={}",
             parquet_predicates.len(),
             cluster_ids.len(),
-            optimized_hints.clustering_hints.as_ref().map(|h| h.enable_ml_clustering).unwrap_or(false)
+            optimized_hints
+                .clustering_hints
+                .as_ref()
+                .map(|h| h.enable_ml_clustering)
+                .unwrap_or(false)
         );
-        
+
         // Execute quantization-aware search
-        let results = self.quantized_vector_search(
-            query_vector,
-            k,
-            optimized_hints.quantization_level,
-            &cluster_ids,
-            &parquet_predicates,
-        ).await?;
-        
+        let results = self
+            .quantized_vector_search(
+                query_vector,
+                k,
+                optimized_hints.quantization_level,
+                &cluster_ids,
+                &parquet_predicates,
+            )
+            .await?;
+
         // Update metrics
         let search_time = start_time.elapsed();
         let mut metrics = self.metrics.write().await;
         metrics.update_search_stats(search_time, results.len(), cluster_ids.len());
-        
+
         info!(
             "✅ VIPER: Search complete - found {} results in {}μs",
             results.len(),
             search_time.as_micros()
         );
-        
+
         Ok(results)
     }
-    
+
     fn search_capabilities(&self) -> SearchCapabilities {
         self.capabilities.clone()
     }
-    
+
     fn engine_type(&self) -> StorageEngineType {
         StorageEngineType::Viper
     }
-    
+
     async fn get_search_metrics(&self) -> Result<SearchMetrics> {
         let metrics = self.metrics.read().await;
         Ok(metrics.to_search_metrics())
     }
-    
+
     fn validate_search_params(
         &self,
         query_vector: &[f32],
@@ -532,24 +581,33 @@ impl StorageSearchEngine for ViperSearchEngine {
         hints: &SearchHints,
     ) -> Result<()> {
         // Common validation
-        SearchValidator::validate_common_params(query_vector, k, self.collection_record.get_dimension().unwrap_or(0))?;
+        SearchValidator::validate_common_params(
+            query_vector,
+            k,
+            self.collection_record.get_dimension().unwrap_or(0),
+        )?;
         SearchValidator::validate_search_hints(hints)?;
-        
+
         // VIPER-specific validation
-        if !self.capabilities.supported_quantization.contains(&hints.quantization_level) {
+        if !self
+            .capabilities
+            .supported_quantization
+            .contains(&hints.quantization_level)
+        {
             return Err(anyhow::anyhow!(
                 "Quantization level {:?} not supported by VIPER engine",
                 hints.quantization_level
             ));
         }
-        
+
         if k > self.capabilities.max_k {
             return Err(anyhow::anyhow!(
                 "k={} exceeds maximum supported k={}",
-                k, self.capabilities.max_k
+                k,
+                self.capabilities.max_k
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -561,12 +619,28 @@ struct ClusterId(usize);
 
 #[derive(Debug, Clone)]
 enum ParquetPredicate {
-    Equals { column: String, value: serde_json::Value },
-    In { column: String, values: Vec<serde_json::Value> },
-    GreaterThanOrEquals { column: String, value: serde_json::Value },
-    LessThanOrEquals { column: String, value: serde_json::Value },
-    Or { predicates: Vec<ParquetPredicate> },
-    Not { predicate: Box<ParquetPredicate> },
+    Equals {
+        column: String,
+        value: serde_json::Value,
+    },
+    In {
+        column: String,
+        values: Vec<serde_json::Value>,
+    },
+    GreaterThanOrEquals {
+        column: String,
+        value: serde_json::Value,
+    },
+    LessThanOrEquals {
+        column: String,
+        value: serde_json::Value,
+    },
+    Or {
+        predicates: Vec<ParquetPredicate>,
+    },
+    Not {
+        predicate: Box<ParquetPredicate>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -580,7 +654,7 @@ impl ClusterMetadataCache {
     fn new() -> Self {
         Self::default()
     }
-    
+
     fn get_all_cluster_ids(&self) -> Vec<ClusterId> {
         (0..self.cluster_centroids.len()).map(ClusterId).collect()
     }
@@ -596,35 +670,50 @@ struct ViperSearchMetrics {
 }
 
 impl ViperSearchMetrics {
-    fn update_search_stats(&mut self, search_time: std::time::Duration, results_count: usize, clusters_searched: usize) {
+    fn update_search_stats(
+        &mut self,
+        search_time: std::time::Duration,
+        results_count: usize,
+        clusters_searched: usize,
+    ) {
         self.total_searches += 1;
         self.total_search_time_us += search_time.as_micros() as u64;
         self.total_results_returned += results_count as u64;
         self.total_clusters_searched += clusters_searched as u64;
     }
-    
+
     fn to_search_metrics(&self) -> SearchMetrics {
         let avg_latency = if self.total_searches > 0 {
             self.total_search_time_us as f64 / self.total_searches as f64
         } else {
             0.0
         };
-        
+
         SearchMetrics {
             total_searches: self.total_searches,
             avg_latency_us: avg_latency,
             p95_latency_us: avg_latency * 1.5, // Approximation
             p99_latency_us: avg_latency * 2.0, // Approximation
-            avg_vectors_scanned: self.total_results_returned as f64 / self.total_searches.max(1) as f64,
+            avg_vectors_scanned: self.total_results_returned as f64
+                / self.total_searches.max(1) as f64,
             cache_hit_rate: 0.8, // Placeholder
             index_efficiency: HashMap::new(),
             quantization_accuracy: None,
             engine_metrics: {
                 let mut metrics = HashMap::new();
-                metrics.insert("clusters_per_search".to_string(), 
-                    serde_json::Value::Number(serde_json::Number::from_f64(self.total_clusters_searched as f64 / self.total_searches.max(1) as f64).unwrap_or(serde_json::Number::from(0))));
-                metrics.insert("engine_type".to_string(), 
-                    serde_json::Value::String("VIPER".to_string()));
+                metrics.insert(
+                    "clusters_per_search".to_string(),
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(
+                            self.total_clusters_searched as f64 / self.total_searches.max(1) as f64,
+                        )
+                        .unwrap_or(serde_json::Number::from(0)),
+                    ),
+                );
+                metrics.insert(
+                    "engine_type".to_string(),
+                    serde_json::Value::String("VIPER".to_string()),
+                );
                 metrics
             },
         }

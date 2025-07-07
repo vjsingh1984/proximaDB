@@ -1,9 +1,11 @@
 //! Common utilities for integration tests
 
+use proximadb::core::{
+    CollectionConfig, DistanceMetric, IndexingAlgorithm, StorageEngine, VectorRecord,
+};
+use std::collections::HashMap;
 use std::sync::Once;
 use tokio::sync::Mutex;
-use proximadb::core::{VectorRecord, CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 static INIT: Once = Once::new();
@@ -50,16 +52,23 @@ pub fn create_test_vector_record(
     collection_id: String,
     dimension: usize,
 ) -> VectorRecord {
-    let vector: Vec<f32> = (0..dimension)
-        .map(|i| (i as f32) * 0.1)
-        .collect();
-    
+    let vector: Vec<f32> = (0..dimension).map(|i| (i as f32) * 0.1).collect();
+
     let mut metadata = HashMap::new();
-    metadata.insert("category".to_string(), serde_json::Value::String("test".to_string()));
-    metadata.insert("author".to_string(), serde_json::Value::String("test_author".to_string()));
-    metadata.insert("doc_type".to_string(), serde_json::Value::String("unit_test".to_string()));
+    metadata.insert(
+        "category".to_string(),
+        serde_json::Value::String("test".to_string()),
+    );
+    metadata.insert(
+        "author".to_string(),
+        serde_json::Value::String("test_author".to_string()),
+    );
+    metadata.insert(
+        "doc_type".to_string(),
+        serde_json::Value::String("unit_test".to_string()),
+    );
     metadata.insert("test_id".to_string(), serde_json::Value::String(id.clone()));
-    
+
     VectorRecord::new(id, collection_id, vector, metadata)
 }
 
@@ -100,7 +109,7 @@ impl PerformanceMeasurement {
         } else {
             0.0
         };
-        
+
         Self {
             operation,
             duration_ms,
@@ -108,14 +117,11 @@ impl PerformanceMeasurement {
             throughput,
         }
     }
-    
+
     pub fn print_results(&self) {
         println!(
             "📊 {}: {:.2}ms, {} items, {:.1} ops/sec",
-            self.operation,
-            self.duration_ms,
-            self.items_processed,
-            self.throughput
+            self.operation, self.duration_ms, self.items_processed, self.throughput
         );
     }
 }
@@ -127,11 +133,8 @@ macro_rules! measure_performance {
         let start = std::time::Instant::now();
         let result = $code;
         let duration = start.elapsed();
-        let measurement = crate::common::PerformanceMeasurement::new(
-            $operation.to_string(),
-            duration,
-            $items,
-        );
+        let measurement =
+            crate::common::PerformanceMeasurement::new($operation.to_string(), duration, $items);
         measurement.print_results();
         (result, measurement)
     }};
@@ -167,7 +170,7 @@ impl TestCleanup {
             collections_to_delete: Vec::new(),
         }
     }
-    
+
     pub fn add_collection(&mut self, collection_id: String) {
         self.collections_to_delete.push(collection_id);
     }

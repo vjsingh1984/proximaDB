@@ -1,32 +1,42 @@
 @startuml search-flow-sequence
-title Storage-Aware Search Flow Sequence
+title Unified Vector Search Flow with Multi-Tier Deduplication
 
 actor User
 participant "REST API" as REST
-participant "UnifiedAvroService" as UAS
+participant "VectorService" as VS
 participant "CollectionService" as CS
 participant "SearchEngineFactory" as SEF
+participant "MultiTierDeduplicator" as MTD
+participant "WAL Manager" as WAL
 participant "ViperSearchEngine" as VSE
 participant "LSMSearchEngine" as LSE
 participant "ViperCoreEngine" as VCE
 participant "LsmTree" as LT
 
 User -> REST : POST /collections/{id}/search
-REST -> UAS : search_vectors_simple(payload)
+REST -> VS : search_vectors_polymorphic(payload)
 
-note over UAS : Parse search request
-UAS -> UAS : extract collection_id, vector, k
+note over VS : Parse search request
+VS -> VS : extract collection_id, vector, k
 
-UAS -> CS : get_collection_by_name(collection_id)
-CS -> UAS : CollectionRecord
+VS -> CS : get_collection_by_name(collection_id)
+CS -> VS : CollectionRecord
 
-note over UAS : Determine storage type
+note over VS : Unified search with deduplication
+VS -> SEF : search_with_deduplication(collection_record, query, k)
+
+note over SEF : Multi-tier search pipeline
+SEF -> MTD : new(metadata_filters)
+
+note over SEF : Phase 1: Search unflushed WAL (priority 1)
+SEF -> WAL : search_vectors_unified(query, k, hints)
+WAL -> SEF : unflushed_results
+SEF -> MTD : add_tier_results(unflushed_results, tier=1)
+
+note over SEF : Phase 2: Search flushed storage
 alt Collection uses VIPER storage
-    UAS -> SEF : create_viper_engine(collection_record)
     SEF -> VSE : new(viper_core, search_hints)
-    SEF -> UAS : ViperSearchEngine
-    
-    UAS -> VSE : search_vectors(query, k, hints)
+    SEF -> VSE : search_vectors(query, k, hints)
     
     note over VSE : VIPER-specific optimizations
     VSE -> VSE : build_predicate_filters()
@@ -35,14 +45,12 @@ alt Collection uses VIPER storage
     
     VSE -> VCE : vectorized_parquet_scan(clusters, filters)
     VCE -> VSE : search_results
-    VSE -> UAS : optimized_results
+    VSE -> SEF : viper_results
+    SEF -> MTD : add_tier_results(viper_results, tier=2)
 
 else Collection uses LSM storage
-    UAS -> SEF : create_lsm_engine(collection_record)
     SEF -> LSE : new(lsm_tree, search_hints)
-    SEF -> UAS : LSMSearchEngine
-    
-    UAS -> LSE : search_vectors(query, k, hints)
+    SEF -> LSE : search_vectors(query, k, hints)
     
     note over LSE : LSM-specific optimizations
     LSE -> LSE : search_memtable()
@@ -51,18 +59,27 @@ else Collection uses LSM storage
     
     LSE -> LT : optimized_search_with_filters()
     LT -> LSE : search_results
-    LSE -> UAS : merged_results
+    LSE -> SEF : lsm_results
+    SEF -> MTD : add_tier_results(lsm_results, tier=2)
 end
 
-UAS -> UAS : serialize_search_response()
-UAS -> REST : search_results_json
+note over MTD : Multi-tier deduplication
+MTD -> MTD : deduplicate_by_id()
+MTD -> MTD : apply_ordering(sequence > version > timestamp)
+MTD -> MTD : select_top_k(k)
+MTD -> SEF : final_deduplicated_results
+
+SEF -> VS : unified_search_results
+VS -> VS : serialize_search_response()
+VS -> REST : search_results_json
 REST -> User : HTTP 200 + results
 
 note over User, LT
-  Performance Benefits:
-  • VIPER: 3-5x faster via predicate pushdown & clustering
-  • LSM: 2-3x faster via bloom filters & optimized search
-  • Both: Storage-format aware optimizations
+  Unified Architecture Benefits:
+  • Multi-tier deduplication: Unflushed > Flushed > Compacted
+  • ID-based merge: Latest version wins (sequence > version > timestamp)
+  • Storage-aware optimization: VIPER (3-5x) + LSM (2-3x) performance
+  • Consistent search pipeline across all storage tiers
 end note
 
 @enduml

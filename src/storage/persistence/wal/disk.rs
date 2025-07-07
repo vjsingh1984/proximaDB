@@ -15,9 +15,9 @@ use tokio::fs;
 // use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
+use super::avro::{AvroOpType, AvroWalEntry, AvroWalOperation};
 use super::config::{DiskDistributionStrategy, SyncMode, WalConfig};
 use super::{FlushResult, WalEntry};
-use super::avro::{AvroWalEntry, AvroWalOperation, AvroOpType};
 use crate::core::CollectionId;
 use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
 
@@ -100,7 +100,7 @@ impl CollectionDiskLayout {
 }
 
 /// WAL disk manager with multi-disk support
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WalDiskManager {
     /// Filesystem factory for multi-backend support
     filesystem: Arc<FilesystemFactory>,
@@ -116,7 +116,7 @@ pub struct WalDiskManager {
 
     /// Disk directories as URLs
     disk_directories: Vec<String>,
-    
+
     /// Sequence numbers per collection for WAL file ordering
     sequence_counters: Arc<RwLock<HashMap<CollectionId, u64>>>,
 }
@@ -128,16 +128,17 @@ impl WalDiskManager {
 
         // Initialize directories using filesystem API
         for url in &disk_directories {
-            let fs = filesystem.get_filesystem(url)
+            let fs = filesystem
+                .get_filesystem(url)
                 .with_context(|| format!("Failed to get filesystem for WAL URL: {}", url))?;
-            
+
             // Extract path for creation
             let path = if url.starts_with("file://") {
                 url.strip_prefix("file://").unwrap_or(url)
             } else {
                 url
             };
-            
+
             fs.create_dir_all(path)
                 .await
                 .with_context(|| format!("Failed to create WAL directory: {}", path))?;
@@ -167,8 +168,6 @@ impl WalDiskManager {
         *current += 1;
         Ok(*current)
     }
-
-
 
     /// Write raw serialized data for a collection (used by strategies)
     pub async fn write_raw(
@@ -315,23 +314,34 @@ impl WalDiskManager {
             // Assign disk based on strategy
             let disk_index = self.assign_disk_for_collection(collection_id).await?;
             let base_url = &self.disk_directories[disk_index];
-            
+
             // Build collection directory URL
             let collection_dir_url = if base_url.starts_with("file://") {
                 let base_path = base_url.strip_prefix("file://").unwrap_or(base_url);
                 format!("{}/{}", base_path, collection_id.as_str())
             } else {
-                format!("{}/{}", base_url.trim_end_matches('/'), collection_id.as_str())
+                format!(
+                    "{}/{}",
+                    base_url.trim_end_matches('/'),
+                    collection_id.as_str()
+                )
             };
-            
+
             // Create collection directory using filesystem API
-            let fs = self.filesystem.get_filesystem(base_url)
+            let fs = self
+                .filesystem
+                .get_filesystem(base_url)
                 .with_context(|| format!("Failed to get filesystem for URL: {}", base_url))?;
-            
-            fs.create_dir_all(&collection_dir_url).await.with_context(|| {
-                format!("Failed to create collection directory: {}", collection_dir_url)
-            })?;
-            
+
+            fs.create_dir_all(&collection_dir_url)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to create collection directory: {}",
+                        collection_dir_url
+                    )
+                })?;
+
             // Convert back to PathBuf for compatibility with existing code
             let base_dir = if base_url.starts_with("file://") {
                 PathBuf::from(collection_dir_url)
@@ -407,7 +417,6 @@ impl WalDiskManager {
 
         Ok(data.len() as u64)
     }
-
 
     /// Estimate compression ratio
     fn estimate_compression_ratio(&self, entries: &[WalEntry], compressed_size: u64) -> f64 {
@@ -549,11 +558,12 @@ impl WalDiskManager {
         }
 
         use std::collections::HashMap;
-        
+
         // Group entries by collection for efficient I/O
         let mut by_collection: HashMap<CollectionId, Vec<&WalEntry>> = HashMap::new();
         for entry in entries {
-            by_collection.entry(entry.collection_id.clone())
+            by_collection
+                .entry(entry.collection_id.clone())
                 .or_default()
                 .push(entry);
         }
@@ -561,54 +571,68 @@ impl WalDiskManager {
         // Write to collection-specific WAL files
         for (collection_id, collection_entries) in by_collection {
             let entry_count = collection_entries.len(); // Store count before move
-            
+
             // Get WAL file path with error handling
             let wal_path = match self.get_wal_file_path(&collection_id).await {
                 Ok(path) => path,
                 Err(e) => {
                     tracing::warn!(
                         "⚠️ Failed to get WAL file path for {}: {}. Skipping disk write.",
-                        collection_id, e
+                        collection_id,
+                        e
                     );
                     continue; // Skip this collection but continue with others
                 }
             };
-            
+
             // Serialize entries to Avro format with error handling
-            tracing::info!("💾 [DISK] About to serialize {} WAL entries for collection {}", 
-                          collection_entries.len(), collection_id);
-            
+            tracing::info!(
+                "💾 [DISK] About to serialize {} WAL entries for collection {}",
+                collection_entries.len(),
+                collection_id
+            );
+
             let avro_data = match self.serialize_entries_to_avro(collection_entries).await {
                 Ok(data) => {
-                    tracing::info!("💾 [DISK] ✅ Successfully serialized {} bytes for collection {}", 
-                                  data.len(), collection_id);
+                    tracing::info!(
+                        "💾 [DISK] ✅ Successfully serialized {} bytes for collection {}",
+                        data.len(),
+                        collection_id
+                    );
                     data
-                },
+                }
                 Err(e) => {
                     tracing::error!(
                         "💾 [DISK] ❌ CRITICAL: Failed to serialize WAL entries for {}: {}. Skipping disk write.",
                         collection_id, e
                     );
-                    tracing::error!("💾 [DISK] This means ZERO durability for collection {}", collection_id);
+                    tracing::error!(
+                        "💾 [DISK] This means ZERO durability for collection {}",
+                        collection_id
+                    );
                     continue; // Skip this collection but continue with others
                 }
             };
-            
+
             // Write to sequential WAL file (each batch gets a new sequence file) with robust error handling
-            tracing::info!("💾 [DISK] About to write {} bytes to WAL file: {}", avro_data.len(), wal_path);
-            
+            tracing::info!(
+                "💾 [DISK] About to write {} bytes to WAL file: {}",
+                avro_data.len(),
+                wal_path
+            );
+
             match self.filesystem.get_filesystem("file://") {
                 Ok(filesystem) => {
                     tracing::debug!("💾 [DISK] Got filesystem for writing to {}", wal_path);
-                    
+
                     let file_options = FileOptions {
                         overwrite: false, // Each file is unique by sequence/timestamp
                         create_dirs: true,
                         ..Default::default()
                     };
-                    
+
                     tracing::debug!("💾 [DISK] File options: overwrite=false, create_dirs=true");
-                    
+
                     filesystem.write_atomic(&wal_path, &avro_data, Some(file_options)).await
                         .map_err(|e| {
                             tracing::error!(
@@ -617,16 +641,19 @@ impl WalDiskManager {
                             );
                             anyhow::anyhow!("WAL disk write failed: {}", e)
                         })?;
-                    
+
                     tracing::info!("💾 [DISK] ✅ SUCCESS: WAL file written: {} ({} bytes) - DURABILITY ACHIEVED", 
                                   wal_path, avro_data.len());
-                },
+                }
                 Err(e) => {
                     tracing::error!(
                         "💾 [DISK] ❌ CRITICAL: Failed to get filesystem for WAL write: {}",
                         e
                     );
-                    return Err(anyhow::anyhow!("Failed to get filesystem for WAL write: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "Failed to get filesystem for WAL write: {}",
+                        e
+                    ));
                 }
             }
 
@@ -651,13 +678,17 @@ impl WalDiskManager {
         } else {
             format!("{}/{}", base_url.trim_end_matches('/'), collection_id)
         };
-        
+
         if let Err(e) = fs::create_dir_all(&dir_path).await {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
-                return Err(anyhow::anyhow!("Failed to create WAL directory {}: {}", dir_path, e));
+                return Err(anyhow::anyhow!(
+                    "Failed to create WAL directory {}: {}",
+                    dir_path,
+                    e
+                ));
             }
         }
-        
+
         // WAL file format: {collection_id}/wal_{sequence:010}_{timestamp}.avro
         // This enables point-in-time recovery and safe deletion of flushed segments
         let timestamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
@@ -668,73 +699,118 @@ impl WalDiskManager {
 
     /// Serialize WAL entries to PROPER Avro binary format for immediate persistence
     async fn serialize_entries_to_avro(&self, entries: Vec<&WalEntry>) -> Result<Vec<u8>> {
-        use apache_avro::{Schema, Writer, Codec};
-        
-        tracing::info!("💾 [DISK] Starting Avro serialization for {} WAL entries", entries.len());
-        
+        use apache_avro::{Codec, Schema, Writer};
+
+        tracing::info!(
+            "💾 [DISK] Starting Avro serialization for {} WAL entries",
+            entries.len()
+        );
+
         // Use the canonical Avro schema from the schema module
         let schema = Schema::parse_str(super::schema::AVRO_SCHEMA_V1)
             .context("Failed to parse Avro schema")?;
-        
+
         tracing::debug!("💾 [DISK] Avro schema parsed successfully");
         tracing::debug!("💾 [DISK] Schema: {}", super::schema::AVRO_SCHEMA_V1);
-        
+
         // Create Avro writer with Deflate compression
         let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Deflate);
-        
+
         tracing::debug!("💾 [DISK] Avro writer created with Deflate compression");
-        
+
         // Serialize each WAL entry to Avro format using the canonical conversion function
         for (i, entry) in entries.iter().enumerate() {
-            tracing::debug!("💾 [DISK] Processing WAL entry {}/{}: {}", i + 1, entries.len(), entry.entry_id);
-            tracing::debug!("💾 [DISK] Entry details: collection={}, operation={:?}", entry.collection_id, entry.operation);
-            
+            tracing::debug!(
+                "💾 [DISK] Processing WAL entry {}/{}: {}",
+                i + 1,
+                entries.len(),
+                entry.entry_id
+            );
+            tracing::debug!(
+                "💾 [DISK] Entry details: collection={}, operation={:?}",
+                entry.collection_id,
+                entry.operation
+            );
+
             let avro_entry = match super::schema::convert_to_avro_entry(entry) {
                 Ok(avro_entry) => {
-                    tracing::debug!("💾 [DISK] ✅ Converted WAL entry {} to AvroWalEntry", entry.entry_id);
+                    tracing::debug!(
+                        "💾 [DISK] ✅ Converted WAL entry {} to AvroWalEntry",
+                        entry.entry_id
+                    );
                     tracing::debug!("💾 [DISK] AvroWalEntry: {:?}", avro_entry);
                     avro_entry
-                },
+                }
                 Err(e) => {
-                    tracing::error!("💾 [DISK] ❌ Failed to convert WAL entry {} to AvroWalEntry: {}", entry.entry_id, e);
+                    tracing::error!(
+                        "💾 [DISK] ❌ Failed to convert WAL entry {} to AvroWalEntry: {}",
+                        entry.entry_id,
+                        e
+                    );
                     tracing::error!("💾 [DISK] Original entry: {:?}", entry);
-                    return Err(anyhow::anyhow!("Failed to convert WAL entry to Avro: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "Failed to convert WAL entry to Avro: {}",
+                        e
+                    ));
                 }
             };
-            
-            // Convert to Avro Value first, then append
-            let avro_value = match apache_avro::to_value(&avro_entry) {
+
+            // Convert to Avro Value with manual bytes handling
+            let avro_value = match convert_to_avro_value_with_bytes(&avro_entry) {
                 Ok(value) => {
-                    tracing::debug!("💾 [DISK] ✅ Converted AvroWalEntry {} to Avro Value", entry.entry_id);
+                    tracing::debug!(
+                        "💾 [DISK] ✅ Converted AvroWalEntry {} to Avro Value with proper bytes",
+                        entry.entry_id
+                    );
                     tracing::debug!("💾 [DISK] Avro Value type: {:?}", value);
                     value
-                },
+                }
                 Err(e) => {
-                    tracing::error!("💾 [DISK] ❌ Failed to convert AvroWalEntry {} to Avro Value: {}", entry.entry_id, e);
+                    tracing::error!(
+                        "💾 [DISK] ❌ Failed to convert AvroWalEntry {} to Avro Value: {}",
+                        entry.entry_id,
+                        e
+                    );
                     tracing::error!("💾 [DISK] AvroWalEntry that failed: {:?}", avro_entry);
-                    return Err(anyhow::anyhow!("Failed to convert WAL entry to Avro value: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "Failed to convert WAL entry to Avro value: {}",
+                        e
+                    ));
                 }
             };
-            
+
             if let Err(e) = writer.append(avro_value) {
-                tracing::error!("💾 [DISK] ❌ Failed to append Avro Value for entry {} to writer: {}", entry.entry_id, e);
-                return Err(anyhow::anyhow!("Failed to append WAL entry to Avro writer: {}", e));
+                tracing::error!(
+                    "💾 [DISK] ❌ Failed to append Avro Value for entry {} to writer: {}",
+                    entry.entry_id,
+                    e
+                );
+                return Err(anyhow::anyhow!(
+                    "Failed to append WAL entry to Avro writer: {}",
+                    e
+                ));
             }
-            
-            tracing::debug!("💾 [DISK] ✅ Successfully appended WAL entry {} to Avro writer", entry.entry_id);
+
+            tracing::debug!(
+                "💾 [DISK] ✅ Successfully appended WAL entry {} to Avro writer",
+                entry.entry_id
+            );
         }
-        
+
         // Get the binary Avro data
         tracing::debug!("💾 [DISK] Finalizing Avro writer...");
-        let avro_data = writer.into_inner()
+        let avro_data = writer
+            .into_inner()
             .context("Failed to finalize Avro writer")?;
-            
-        tracing::info!("💾 [DISK] ✅ Successfully serialized {} WAL entries to {} bytes of Avro data", 
-                      entries.len(), avro_data.len());
-        
+
+        tracing::info!(
+            "💾 [DISK] ✅ Successfully serialized {} WAL entries to {} bytes of Avro data",
+            entries.len(),
+            avro_data.len()
+        );
+
         Ok(avro_data)
     }
-    
 }
 
 /// Disk usage information
@@ -753,4 +829,93 @@ pub struct DiskStats {
     pub collections_count: usize,
     pub disk_distribution: Vec<DiskUsage>,
     pub compression_ratio: f64,
+}
+
+/// Convert AvroWalEntry to Avro Value with proper bytes handling for vector_data
+fn convert_to_avro_value_with_bytes(
+    avro_entry: &super::avro::AvroWalEntry,
+) -> anyhow::Result<apache_avro::types::Value> {
+    use apache_avro::types::Value;
+
+    // Build the operation record manually as Vec<(String, Value)>
+    let operation_fields = vec![
+        (
+            "op_type".to_string(),
+            Value::String(match avro_entry.operation.op_type {
+                super::avro::AvroOpType::Insert => "INSERT".to_string(),
+                super::avro::AvroOpType::Update => "UPDATE".to_string(),
+                super::avro::AvroOpType::Delete => "DELETE".to_string(),
+            }),
+        ),
+        (
+            "vector_id".to_string(),
+            if let Some(ref vector_id) = avro_entry.operation.vector_id {
+                Value::Union(1, Box::new(Value::String(vector_id.clone())))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+        (
+            "vector_data".to_string(),
+            if let Some(ref vector_data) = avro_entry.operation.vector_data {
+                Value::Union(1, Box::new(Value::Bytes(vector_data.clone())))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+        (
+            "metadata".to_string(),
+            if let Some(ref metadata) = avro_entry.operation.metadata {
+                Value::Union(1, Box::new(Value::String(metadata.clone())))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+        (
+            "config".to_string(),
+            if let Some(ref config) = avro_entry.operation.config {
+                Value::Union(1, Box::new(Value::String(config.clone())))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+        (
+            "expires_at".to_string(),
+            if let Some(expires_at) = avro_entry.operation.expires_at {
+                Value::Union(1, Box::new(Value::Long(expires_at)))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+    ];
+
+    // Build the main record as Vec<(String, Value)>
+    let main_fields = vec![
+        (
+            "entry_id".to_string(),
+            Value::String(avro_entry.entry_id.clone()),
+        ),
+        (
+            "collection_id".to_string(),
+            Value::String(avro_entry.collection_id.clone()),
+        ),
+        ("operation".to_string(), Value::Record(operation_fields)),
+        ("timestamp".to_string(), Value::Long(avro_entry.timestamp)),
+        ("sequence".to_string(), Value::Long(avro_entry.sequence)),
+        (
+            "global_sequence".to_string(),
+            Value::Long(avro_entry.global_sequence),
+        ),
+        (
+            "expires_at".to_string(),
+            if let Some(expires_at) = avro_entry.expires_at {
+                Value::Union(1, Box::new(Value::Long(expires_at)))
+            } else {
+                Value::Union(0, Box::new(Value::Null))
+            },
+        ),
+        ("version".to_string(), Value::Long(avro_entry.version)),
+    ];
+
+    Ok(Value::Record(main_fields))
 }

@@ -13,11 +13,13 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::monitoring::MetricsCollector;
-use crate::storage::StorageEngine;
 use crate::services::collection_service::CollectionService;
-use crate::services::unified_avro_service::UnifiedAvroService;
-use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
+use crate::services::vector_service::VectorService;
+use crate::storage::metadata::backends::filestore_backend::{
+    FilestoreMetadataBackend, FilestoreMetadataConfig,
+};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::StorageEngine;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 #[derive(Debug, Clone)]
@@ -277,7 +279,7 @@ impl MultiServerConfig {
 #[derive(Clone)]
 pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
-    pub vector_service: Arc<UnifiedAvroService>,
+    pub vector_service: Arc<VectorService>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     // Internal state for business logic coordination
     storage: Arc<RwLock<StorageEngine>>,
@@ -292,13 +294,18 @@ impl SharedServices {
         metadata_config: Option<crate::core::config::MetadataBackendConfig>,
     ) -> Result<Self> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
-        
+
         // SharedServices owns metadata configuration logic
         let (filestore_config, filesystem_config) = if let Some(config) = metadata_config {
-            info!("🔧 SharedServices: Metadata config received - backend_type: {}, storage_url: {}", 
-                  config.backend_type, config.storage_url);
-            info!("📂 SharedServices: Configuring metadata backend from TOML: {}", config.storage_url);
-            
+            info!(
+                "🔧 SharedServices: Metadata config received - backend_type: {}, storage_url: {}",
+                config.backend_type, config.storage_url
+            );
+            info!(
+                "📂 SharedServices: Configuring metadata backend from TOML: {}",
+                config.storage_url
+            );
+
             let filestore_config = FilestoreMetadataConfig {
                 filestore_url: config.storage_url.clone(),
                 enable_compression: config.cache_size_mb.map(|_| true).unwrap_or(true),
@@ -307,17 +314,18 @@ impl SharedServices {
                 max_archived_snapshots: 5,
                 temp_directory: None,
             };
-            
+
             // SharedServices handles cloud vs local filesystem logic
-            let filesystem_config = if config.storage_url.starts_with("s3://") || 
-                                      config.storage_url.starts_with("gcs://") || 
-                                      config.storage_url.starts_with("adls://") {
+            let filesystem_config = if config.storage_url.starts_with("s3://")
+                || config.storage_url.starts_with("gcs://")
+                || config.storage_url.starts_with("adls://")
+            {
                 info!("☁️ SharedServices: Configuring cloud filesystem for metadata");
                 // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
                 crate::storage::persistence::filesystem::FilesystemConfig::default()
             } else {
                 info!("📁 SharedServices: Configuring local filesystem for metadata");
-                
+
                 // Parse the base path from file:// URL for local filesystem
                 let base_path = if config.storage_url.starts_with("file://") {
                     let path = config.storage_url.strip_prefix("file://").unwrap_or("");
@@ -325,46 +333,59 @@ impl SharedServices {
                 } else {
                     Some(std::path::PathBuf::from(&config.storage_url))
                 };
-                
-                info!("📂 SharedServices: Setting local filesystem root_dir to: {:?}", base_path);
-                
-                let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+
+                info!(
+                    "📂 SharedServices: Setting local filesystem root_dir to: {:?}",
+                    base_path
+                );
+
+                let mut fs_config =
+                    crate::storage::persistence::filesystem::FilesystemConfig::default();
                 if let Some(ref mut local_config) = fs_config.local {
                     local_config.root_dir = base_path;
                 }
                 fs_config
             };
-            
+
             (filestore_config, filesystem_config)
         } else {
             info!("📂 SharedServices: Using default metadata configuration");
-            (FilestoreMetadataConfig::default(), crate::storage::persistence::filesystem::FilesystemConfig::default())
+            (
+                FilestoreMetadataConfig::default(),
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
+            )
         };
-        
-        info!("📁 SharedServices: Unified metadata backend URL: {}", filestore_config.filestore_url);
-        
+
+        info!(
+            "📁 SharedServices: Unified metadata backend URL: {}",
+            filestore_config.filestore_url
+        );
+
         // SharedServices creates the unified metadata backend for all protocols
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(filesystem_config).await?
-        );
-        
-        let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?
-        );
-        
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+
+        let filestore_backend =
+            Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
+
         let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
-        
+
         // SharedServices coordinates vector operations with WAL
-        let avro_config = crate::services::unified_avro_service::UnifiedServiceConfig::default();
+        let avro_config = crate::services::vector_service::UnifiedServiceConfig::default();
         let wal_manager = {
             let storage_ref = storage.read().await;
             storage_ref.get_wal_manager()
         };
-        
+
         let vector_service = Arc::new(
-            UnifiedAvroService::with_existing_wal(storage.clone(), wal_manager, collection_service.clone(), avro_config).await?
+            VectorService::with_existing_wal(
+                storage.clone(),
+                wal_manager,
+                collection_service.clone(),
+                avro_config,
+            )
+            .await?,
         );
-        
+
         // CRITICAL: Restore collection metadata from WAL during startup
         // This ensures collections are visible to gRPC service after server restart
         info!("🔄 SharedServices: Starting metadata recovery from WAL");
@@ -372,51 +393,71 @@ impl SharedServices {
             let storage_ref = storage.read().await;
             storage_ref.get_recovered_collections_metadata().await?
         };
-        
+
         if !recovered_collections.is_empty() {
-            info!("📦 SharedServices: Restoring {} collections to metadata backend", recovered_collections.len());
-            
+            info!(
+                "📦 SharedServices: Restoring {} collections to metadata backend",
+                recovered_collections.len()
+            );
+
             let collection_count = recovered_collections.len();
             for (collection_id, metadata) in recovered_collections {
-                info!("📝 SharedServices: Restoring collection metadata for {}", collection_id);
-                
+                info!(
+                    "📝 SharedServices: Restoring collection metadata for {}",
+                    collection_id
+                );
+
                 // Convert storage metadata to collection record format
-                let collection_record = crate::storage::metadata::backends::filestore_backend::CollectionRecord {
-                    uuid: format!("recovered-{}", Uuid::new_v4()),
-                    name: metadata.name,
-                    dimension: metadata.dimension as i32,
-                    distance_metric: metadata.distance_metric,
-                    storage_engine: "viper".to_string(),
-                    indexing_algorithm: metadata.indexing_algorithm,
-                    vector_count: metadata.vector_count as i64,
-                    total_size_bytes: metadata.total_size_bytes as i64,
-                    created_at: metadata.created_at.timestamp(),
-                    updated_at: metadata.updated_at.timestamp(),
-                    version: 1,
-                    config: "{}".to_string(), // Empty JSON config
-                    description: Some("Recovered from WAL".to_string()),
-                    tags: vec![],
-                    owner: Some("system".to_string()),
-                };
-                
+                let collection_record =
+                    crate::storage::metadata::backends::filestore_backend::CollectionRecord {
+                        uuid: format!("recovered-{}", Uuid::new_v4()),
+                        name: metadata.name,
+                        dimension: metadata.dimension as i32,
+                        distance_metric: metadata.distance_metric,
+                        storage_engine: "viper".to_string(),
+                        indexing_algorithm: metadata.indexing_algorithm,
+                        vector_count: metadata.vector_count as i64,
+                        total_size_bytes: metadata.total_size_bytes as i64,
+                        created_at: metadata.created_at.timestamp(),
+                        updated_at: metadata.updated_at.timestamp(),
+                        version: 1,
+                        config: "{}".to_string(), // Empty JSON config
+                        description: Some("Recovered from WAL".to_string()),
+                        tags: vec![],
+                        owner: Some("system".to_string()),
+                    };
+
                 // Store the recovered collection in the metadata backend
-                match collection_service.get_metadata_backend().upsert_collection_record(collection_record).await {
+                match collection_service
+                    .get_metadata_backend()
+                    .upsert_collection_record(collection_record)
+                    .await
+                {
                     Ok(_) => {
-                        info!("✅ SharedServices: Successfully restored collection metadata for {}", collection_id);
+                        info!(
+                            "✅ SharedServices: Successfully restored collection metadata for {}",
+                            collection_id
+                        );
                     }
                     Err(e) => {
-                        warn!("⚠️ SharedServices: Failed to restore collection metadata for {}: {}", collection_id, e);
+                        warn!(
+                            "⚠️ SharedServices: Failed to restore collection metadata for {}: {}",
+                            collection_id, e
+                        );
                     }
                 }
             }
-            
-            info!("✅ SharedServices: Metadata recovery completed - {} collections restored", collection_count);
+
+            info!(
+                "✅ SharedServices: Metadata recovery completed - {} collections restored",
+                collection_count
+            );
         } else {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
-        
+
         info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
-        
+
         Ok(Self {
             collection_service,
             vector_service,
@@ -424,7 +465,7 @@ impl SharedServices {
             storage,
         })
     }
-    
+
     /// Get storage engine (for advanced operations)
     pub fn storage(&self) -> &Arc<RwLock<StorageEngine>> {
         &self.storage
@@ -442,15 +483,14 @@ pub struct MultiServer {
 impl MultiServer {
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
-    pub fn new(
-        config: MultiServerConfig,
-        shared_services: SharedServices,
-    ) -> Self {
+    pub fn new(config: MultiServerConfig, shared_services: SharedServices) -> Self {
         info!("🚀 MultiServer: Initializing network orchestrator");
-        info!("📡 MultiServer: gRPC port: {}, REST port: {}", 
-              config.grpc_config.port, config.http_config.port);
+        info!(
+            "📡 MultiServer: gRPC port: {}, REST port: {}",
+            config.grpc_config.port, config.http_config.port
+        );
         info!("🔒 MultiServer: TLS enabled: {}", config.is_tls_enabled());
-        
+
         Self {
             config,
             shared_services: Some(shared_services),
@@ -468,18 +508,20 @@ impl MultiServer {
         // Start gRPC server on port 5679 if configured
         if self.config.grpc_config.enable_grpc {
             info!("🔗 Starting gRPC Server on port 5679");
-            
+
             // Create thin gRPC handler with shared services
-            let grpc_handler = crate::network::grpc::service::ProximaDbGrpcService::new_with_services(
-                services.clone()
-            ).await;
-            
+            let grpc_handler =
+                crate::network::grpc::service::ProximaDbGrpcService::new_with_services(
+                    services.clone(),
+                )
+                .await;
+
             // Create gRPC server
-            let grpc_service = crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
-            
-            let mut server_builder = tonic::transport::Server::builder()
-                .add_service(grpc_service);
-            
+            let grpc_service =
+                crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
+
+            let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
+
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service");
@@ -490,18 +532,21 @@ impl MultiServer {
                         .build()?,
                 );
             }
-            
+
             let grpc_bind_addr = self.config.get_grpc_bind_address();
-            
+
             let grpc_handle = tokio::spawn(async move {
-                if let Err(e) = server_builder.serve_with_shutdown(grpc_bind_addr, async {
-                    tokio::signal::ctrl_c().await.ok();
-                    debug!("gRPC server graceful shutdown signal received");
-                }).await {
+                if let Err(e) = server_builder
+                    .serve_with_shutdown(grpc_bind_addr, async {
+                        tokio::signal::ctrl_c().await.ok();
+                        debug!("gRPC server graceful shutdown signal received");
+                    })
+                    .await
+                {
                     tracing::error!("gRPC server error: {}", e);
                 }
             });
-            
+
             handles.push(grpc_handle);
             info!("✅ gRPC Server started on {}", grpc_bind_addr);
         }
@@ -509,15 +554,18 @@ impl MultiServer {
         // Start REST server on port 5678 if configured
         if self.config.http_config.enable_rest {
             info!("📡 Starting REST Server on port 5678");
-            
+
             let rest_bind_addr = self.config.get_http_bind_address();
             let unified_service = services.vector_service.clone();
             let collection_service = services.collection_service.clone();
-            
+
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::RestServer;
-                
-                match RestServer::new(rest_bind_addr, unified_service, collection_service).start().await {
+
+                match RestServer::new(rest_bind_addr, unified_service, collection_service)
+                    .start()
+                    .await
+                {
                     Ok(_) => {
                         info!("✅ REST Server completed");
                     }
@@ -526,7 +574,7 @@ impl MultiServer {
                     }
                 }
             });
-            
+
             handles.push(rest_handle);
             info!("✅ REST Server started on {}", rest_bind_addr);
         }
@@ -554,7 +602,7 @@ impl MultiServer {
             handle.abort();
             let _ = handle.await;
         }
-        
+
         info!("✅ All servers stopped");
 
         info!("🎯 All servers stopped successfully");
@@ -565,7 +613,7 @@ impl MultiServer {
     pub async fn get_status(&self) -> ServerStatus {
         let handles = self.server_handles.lock().await;
         let servers_running = !handles.is_empty();
-        
+
         ServerStatus {
             http_running: self.config.http_config.enable_rest && servers_running,
             grpc_running: self.config.grpc_config.enable_grpc && servers_running,

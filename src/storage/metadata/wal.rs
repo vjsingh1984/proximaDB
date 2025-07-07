@@ -27,8 +27,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::core::CollectionId;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::CompressionAlgorithm;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::{
     config::{MemTableType, WalStrategyType},
     WalConfig, WalEntry, WalOperation, WalStrategy,
@@ -200,10 +200,10 @@ impl MetadataWalManager {
             cache_timestamps: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             stats: Arc::new(tokio::sync::RwLock::new(MetadataStats::default())),
         };
-        
+
         // Initialize by recovering any existing metadata from WAL
         manager.recover_metadata_from_wal().await?;
-        
+
         Ok(manager)
     }
 
@@ -226,6 +226,7 @@ impl MetadataWalManager {
             global_sequence: 0,
             expires_at: None,
             version: metadata.version,
+            batch_id: None,
         };
 
         // Write to WAL (stays in memory, will be recovered on restart)
@@ -354,16 +355,19 @@ impl MetadataWalManager {
 
         // Otherwise, scan WAL (this is where B+Tree memtable helps with sorted iteration)
         tracing::debug!("📂 Scanning WAL for collection metadata...");
-        
+
         // For now, return empty list when cache is not populated
         // The cache will be populated on-demand when collections are accessed
         // This is a simplified approach - in production, we'd implement full WAL scanning
         tracing::warn!("⚠️ Cache empty and full WAL scan not implemented - collections will be loaded on-demand");
-        
+
         // Try to get stats to see if there's any data
         if let Ok(stats) = self.wal_strategy.get_stats().await {
             if stats.total_entries > 0 {
-                tracing::info!("📊 WAL contains {} entries - metadata will be loaded when accessed", stats.total_entries);
+                tracing::info!(
+                    "📊 WAL contains {} entries - metadata will be loaded when accessed",
+                    stats.total_entries
+                );
             }
         }
 
@@ -373,40 +377,48 @@ impl MetadataWalManager {
     /// Recover metadata from WAL on startup and populate cache
     async fn recover_metadata_from_wal(&self) -> Result<()> {
         tracing::info!("🔄 Recovering collection metadata from WAL...");
-        
+
         // Call WAL strategy recover to load from disk
         let recovered_entries = self.wal_strategy.recover().await?;
         tracing::info!("📂 WAL recovery found {} total entries", recovered_entries);
-        
+
         if recovered_entries == 0 {
             tracing::info!("📭 No existing metadata found in WAL - starting fresh");
             return Ok(());
         }
-        
+
         // Now populate our cache by reading all metadata entries from WAL memtable
         let mut recovered_collections = 0;
-        
+
         // Get WAL statistics to see what collections exist
         if let Ok(stats) = self.wal_strategy.get_stats().await {
-            tracing::info!("📊 WAL stats: {} total entries, {} collections", 
-                          stats.total_entries, stats.collections_count);
-                          
+            tracing::info!(
+                "📊 WAL stats: {} total entries, {} collections",
+                stats.total_entries,
+                stats.collections_count
+            );
+
             // Try to enumerate collections by looking at WAL entries
             // Since we store metadata with vector_id = "metadata_{collection_id}"
             // we can scan for these entries and rebuild our cache
             if let Ok(collection_ids) = self.get_all_collection_ids().await {
                 for collection_id in collection_ids {
                     if let Ok(Some(metadata)) = self.get_collection(&collection_id).await {
-                        tracing::debug!("📦 Recovered collection: {} ({})", 
-                                       metadata.name, collection_id);
+                        tracing::debug!(
+                            "📦 Recovered collection: {} ({})",
+                            metadata.name,
+                            collection_id
+                        );
                         recovered_collections += 1;
                     }
                 }
             }
         }
-        
-        tracing::info!("✅ Metadata recovery completed - {} collections recovered into cache", 
-                      recovered_collections);
+
+        tracing::info!(
+            "✅ Metadata recovery completed - {} collections recovered into cache",
+            recovered_collections
+        );
         Ok(())
     }
 
@@ -419,24 +431,27 @@ impl MetadataWalManager {
                 return Ok(cache.keys().cloned().collect());
             }
         }
-        
+
         // Get stats to find collections
         match self.wal_strategy.get_stats().await {
             Ok(stats) => {
                 // Extract collection IDs from WAL stats
                 // This is a simple implementation - in practice, the WAL might track collection IDs
                 let collection_ids = Vec::new();
-                
+
                 // For now, try common collection patterns since WAL stats doesn't expose collection list
                 // This is a temporary solution until WAL exposes collection enumeration
-                tracing::debug!("📊 WAL has {} total entries across {} collections", 
-                               stats.total_entries, stats.collections_count);
-                
+                tracing::debug!(
+                    "📊 WAL has {} total entries across {} collections",
+                    stats.total_entries,
+                    stats.collections_count
+                );
+
                 // Since we don't have a direct way to get collection IDs from WAL,
                 // we'll return empty and rely on cache population during operations
                 Ok(collection_ids)
             }
-            Err(_) => Ok(Vec::new())
+            Err(_) => Ok(Vec::new()),
         }
     }
 
@@ -461,6 +476,7 @@ impl MetadataWalManager {
                 global_sequence: 0,
                 expires_at: None,
                 version: 1,
+                batch_id: None,
             };
 
             // Write to WAL

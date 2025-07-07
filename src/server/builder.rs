@@ -137,38 +137,8 @@ impl Default for ComputeConfig {
     }
 }
 
-/// Distance metric algorithms
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DistanceMetric {
-    /// Cosine similarity (default for most text/semantic vectors)
-    Cosine,
-    /// Euclidean distance (L2)
-    Euclidean,
-    /// Manhattan distance (L1)
-    Manhattan,
-    /// Dot product (inner product)
-    DotProduct,
-    /// Hamming distance (for binary vectors)
-    Hamming,
-    /// Jaccard similarity
-    Jaccard,
-    /// Minkowski distance with custom p parameter
-    Minkowski { p: f32 },
-    /// Angular distance
-    Angular,
-    /// Canberra distance
-    Canberra,
-    /// Chebyshev distance (L∞)
-    Chebyshev,
-    /// Auto-select based on data characteristics
-    Auto,
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine // Cosine is best for most ML embeddings
-    }
-}
+// Use the canonical DistanceMetric from compute distance module
+pub use crate::compute::distance::DistanceMetric;
 
 /// Indexing algorithm configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -601,4 +571,3 @@ impl std::fmt::Debug for ProximaDBServer {
             .finish()
     }
 }
-

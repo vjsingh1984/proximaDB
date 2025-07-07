@@ -1,11 +1,16 @@
 //! Search module for ProximaDB storage-aware search implementations
 
+pub mod lsm_search;
+pub mod multi_tier_deduplication;
 pub mod storage_aware;
 pub mod viper_search;
-pub mod lsm_search;
 
 // Re-export main types
+pub use multi_tier_deduplication::{
+    DeduplicationStats, MultiTierDeduplicator, StorageTier, TieredSearchResult, 
+    DeduplicationStorageEngine, MetadataFilter,
+};
 pub use storage_aware::{
-    StorageSearchEngine, SearchHints, SearchCapabilities, ClusteringHints,
-    QuantizationLevel, SearchMetrics, SearchValidator, SearchEngineFactory
+    ClusteringHints, QuantizationLevel, SearchCapabilities, SearchEngineFactory, SearchHints,
+    SearchMetrics, SearchValidator, StorageSearchEngine,
 };

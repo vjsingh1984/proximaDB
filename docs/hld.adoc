@@ -299,18 +299,20 @@ let search_engine = SearchEngineFactory::create_for_collection(
 
 ProximaDB employs a **multi-server architecture** that separates protocol handling for optimal performance:
 
-==== UnifiedAvroService
-**Primary Responsibility**: Central entry point for all database operations
+==== VectorService
+**Primary Responsibility**: Central entry point for all vector database operations
 
-- **JSON Protocol**: Currently uses JSON serialization (Avro planned for future)
+- **Unified Architecture**: Handles vector insert/upsert, search, and delete operations
+- **Multi-tier Deduplication**: Coordinates search across WAL, flushed, and compacted storage tiers
+- **Storage-aware Search**: Leverages SearchEngineFactory for optimized polymorphic search
 - **Operation Types**: 
   * Vector operations (insert, update, delete, search)
   * Collection management (create, drop, configure)
   * Metadata operations (schema updates, indexing)
 - **Integration Points**:
-  * Delegates to VectorStorageCoordinator for vector operations
-  * Uses CollectionService for collection lifecycle
-  * Integrates with WAL for durability
+  * Uses SearchEngineFactory for polymorphic storage-aware search
+  * Uses CollectionService for collection lifecycle management
+  * Directly integrates with StorageEngine and WAL for durability
 - **Current Status**: 🚧 JSON-based implementation with Avro migration planned
 
 ==== Storage-Aware Polymorphic Search Engine
@@ -356,12 +358,15 @@ image::images/search-architecture-simple.png[Storage-Aware Search Architecture,w
 
 **Implementation Status**: 🚧 Phase 1 Complete (design + infrastructure), Phase 2 In Progress
 
-==== VectorStorageCoordinator (Legacy)
-**Note**: Being replaced by storage-aware search engines
+==== SearchEngineFactory (Current Implementation)
+**Purpose**: Provides unified, storage-aware search coordination with multi-tier deduplication
 
-- **Engine Management**: Routes operations to registered storage engines  
+- **Polymorphic Search**: Automatically selects optimal search engines based on collection storage type
+- **Multi-tier Search**: Coordinates search across WAL (unflushed), flushed, and compacted storage tiers
+- **Deduplication**: ID-based merge logic with priority ordering (unflushed > flushed > compacted)
 - **Currently Supported**:
-  * VIPER: Primary ML-driven clustering with Parquet storage
+  * VIPER: ML-driven clustering with Parquet storage and predicate pushdown
+  * LSM: Log-structured merge trees with bloom filter optimization
   * Architecture supports pluggable engines
 - **Migration Plan**: Gradual replacement with polymorphic search engines
 - **Current Status**: ✅ Implemented, ⚡ Optimization in progress
@@ -1049,38 +1054,31 @@ async fn flush_with_compaction_check(collection_id: &str) -> Result<()> {
 [source,mermaid]
 ----
 classDiagram
-    class UnifiedAvroService {
+    class VectorService {
         +storage: Arc~RwLock~StorageEngine~~
-        +wal: Arc~WalManager~
-        +vector_coordinator: Arc~VectorStorageCoordinator~
+        +wal_manager: Arc~WalManager~
         +collection_service: Arc~CollectionService~
-        +insert_vector(record: VectorRecord) Future~Result~
-        +update_vector(id: VectorId, record: VectorRecord) Future~Result~
+        +handle_vector_insert(vectors: Vec~VectorRecord~) Future~Result~
+        +search_vectors_polymorphic(query: SearchQuery) Future~Vec~SearchResult~~
         +delete_vector(id: VectorId) Future~Result~
-        +search_vectors(query: SearchQuery) Future~Vec~SearchResult~~
-        +create_collection(config: CollectionConfig) Future~Result~
-        +drop_collection(id: CollectionId) Future~Result~
     }
 
-    class VectorStorageCoordinator {
-        +engines: HashMap~String, Arc~dyn VectorStorage~~
-        +index_manager: Arc~UnifiedIndexManager~
-        +config: CoordinatorConfig
-        +execute_operation(op: VectorOperation) Future~OperationResult~
-        +select_engine(collection: &CollectionConfig) String
-        +coordinate_search(query: SearchQuery) Future~Vec~SearchResult~~
+    class SearchEngineFactory {
+        +search_with_deduplication(collection, query, k) Future~Vec~SearchResult~~
+        +create_for_collection(collection_record) Future~Box~dyn StorageSearchEngine~~
+        +create_optimized_hints(collection) SearchHints
     }
 
-    class VectorStorage {
-        <<interface>>
-        +engine_name() &str
-        +capabilities() EngineCapabilities
-        +execute_operation(op: VectorOperation) Future~OperationResult~
-        +search(context: SearchContext) Future~Vec~SearchResult~~
-        +get_statistics() Future~EngineStatistics~
+    class MultiTierDeduplicator {
+        +add_tier_results(results: Vec~SearchResult~, tier: u8)
+        +get_final_results(k: usize) Future~Vec~SearchResult~~
+        +deduplicate_by_id() Future~()~
     }
 
     class ViperCoreEngine {
+        +search_vectors(query: Vec~f32~, k: usize) Future~Vec~SearchResult~~
+        +get_statistics() Future~EngineStatistics~
+    }
         +config: ViperConfig
         +pipeline: Arc~ViperPipeline~
         +compactor: Arc~CompactionEngine~
@@ -1126,14 +1124,12 @@ classDiagram
         +drop_collection(id: &CollectionId) Future~Result~
     }
 
-    UnifiedAvroService --> VectorStorageCoordinator
-    UnifiedAvroService --> WalManager
-    UnifiedAvroService --> CollectionService
-    VectorStorageCoordinator --> VectorStorage
-    VectorStorageCoordinator --> UnifiedIndexManager
-    VectorStorageCoordinator --> StoragePolicy
-    ViperCoreEngine ..|> VectorStorage
-    UnifiedIndexManager --> MultiIndex
+    VectorService --> SearchEngineFactory
+    VectorService --> WalManager
+    VectorService --> CollectionService
+    SearchEngineFactory --> MultiTierDeduplicator
+    SearchEngineFactory --> ViperCoreEngine
+    SearchEngineFactory --> WalManager
     WalManager --> WalStrategy
 ----
 
@@ -1637,7 +1633,7 @@ image::diagrams/plantuml/coordinator-operation-flow.png[Coordinator Operation Fl
 **Operation Types:**
 
 1. **Vector Insertion Flow:**
-   - Client request → UnifiedAvroService
+   - Client request → VectorService
    - WAL insertion to collection-specific memtable
    - Immediate AXIS indexing via per-collection coordinator
    - Metrics tracking per collection
@@ -1852,7 +1848,7 @@ pub struct TenantConfig {
 - **Independent Scaling**: REST and gRPC servers can scale independently
 - **Clear Separation**: No protocol detection overhead or ambiguity
 - **TLS Flexibility**: Different TLS configurations per protocol
-- **Shared Business Logic**: Both servers use UnifiedAvroService ensuring identical behavior
+- **Shared Business Logic**: Both servers use VectorService ensuring identical behavior
 
 === gRPC Primary API ✅ IMPLEMENTED
 - **Protocol Buffers**: Strongly typed, version-safe contracts using `proximadb.v1` package
@@ -1983,7 +1979,7 @@ pub struct TenantConfig {
 
 == Conclusion
 
-ProximaDB's high-level architecture provides a solid foundation for building a cloud-native, enterprise-grade vector database. The modular design with unified services (UnifiedAvroService, VectorStorageCoordinator, UnifiedIndexManager) and flexible storage policies enable ProximaDB to serve a wide range of use cases while maintaining high performance, cost efficiency, and operational simplicity.
+ProximaDB's high-level architecture provides a solid foundation for building a cloud-native, enterprise-grade vector database. The modular design with unified services (VectorService, SearchEngineFactory, CollectionService) and multi-tier deduplication enables ProximaDB to serve a wide range of use cases while maintaining high performance, cost efficiency, and operational simplicity.
 
 The next phase involves detailed implementation of core components, starting with the storage engine and vector indexing algorithms outlined in the Low-Level Design document.
 

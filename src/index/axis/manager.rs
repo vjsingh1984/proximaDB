@@ -15,7 +15,7 @@ use super::{
     AdaptiveIndexEngine, AxisConfig, IndexMigrationEngine, IndexStrategy, IndexType,
     MigrationDecision, PerformanceMonitor,
 };
-use crate::core::{CollectionId, VectorId, avro_unified::VectorRecord};
+use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 
 /// Central manager for AXIS with adaptive capabilities
@@ -181,10 +181,10 @@ impl AxisIndexManager {
     pub async fn query(&self, query: HybridQuery) -> Result<QueryResult> {
         // Execute query using current strategy
         let collection_id = &query.collection_id;
-        
+
         // Ensure we have a strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
-        
+
         let strategy = self.get_collection_strategy(collection_id).await?;
 
         // Use join engine to combine results from multiple indexes
@@ -400,7 +400,10 @@ impl AxisIndexManager {
 
     /// Drop all indexes for a collection (used during collection deletion)
     pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
-        tracing::info!("🗑️ Dropping all AXIS indexes for collection: {}", collection_id);
+        tracing::info!(
+            "🗑️ Dropping all AXIS indexes for collection: {}",
+            collection_id
+        );
 
         // Remove from collection strategies
         let mut strategies = self.collection_strategies.write().await;
@@ -408,10 +411,16 @@ impl AxisIndexManager {
         drop(strategies);
 
         // Clean up from all indexes
-        self.global_id_index.remove_collection(collection_id).await?;
+        self.global_id_index
+            .remove_collection(collection_id)
+            .await?;
         self.metadata_index.remove_collection(collection_id).await?;
-        self.dense_vector_index.remove_collection(collection_id).await?;
-        self.sparse_vector_index.remove_collection(collection_id).await?;
+        self.dense_vector_index
+            .remove_collection(collection_id)
+            .await?;
+        self.sparse_vector_index
+            .remove_collection(collection_id)
+            .await?;
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -419,18 +428,24 @@ impl AxisIndexManager {
             metrics.total_collections_managed -= 1;
         }
 
-        tracing::info!("✅ Successfully dropped all indexes for collection: {}", collection_id);
+        tracing::info!(
+            "✅ Successfully dropped all indexes for collection: {}",
+            collection_id
+        );
         Ok(())
     }
 
     /// Get collection statistics
-    pub async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<CollectionStats> {
+    pub async fn get_collection_stats(
+        &self,
+        collection_id: &CollectionId,
+    ) -> Result<CollectionStats> {
         let strategy = self.get_collection_strategy(collection_id).await?;
-        
+
         Ok(CollectionStats {
             collection_id: collection_id.clone(),
             strategy_type: strategy.primary_index_type,
-            total_vectors: 0, // TODO: Implement actual counting
+            total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
             last_updated: Utc::now(),
         })
@@ -444,7 +459,11 @@ impl AxisIndexManager {
         collection_id: &CollectionId,
         file_path: &str,
     ) -> Result<()> {
-        tracing::debug!("🗂️ AXIS: Updating file reference for vector {} → {}", vector_id, file_path);
+        tracing::debug!(
+            "🗂️ AXIS: Updating file reference for vector {} → {}",
+            vector_id,
+            file_path
+        );
 
         // Ensure we have a strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
@@ -459,19 +478,28 @@ impl AxisIndexManager {
         for index_type in &strategy.secondary_indexes {
             match index_type {
                 IndexType::Metadata => {
-                    self.metadata_index.update_file_reference(vector_id, file_path).await?;
+                    self.metadata_index
+                        .update_file_reference(vector_id, file_path)
+                        .await?;
                 }
                 IndexType::DenseVector => {
-                    self.dense_vector_index.update_file_reference(vector_id, file_path).await?;
+                    self.dense_vector_index
+                        .update_file_reference(vector_id, file_path)
+                        .await?;
                 }
                 IndexType::SparseVector => {
-                    self.sparse_vector_index.update_file_reference(vector_id, file_path).await?;
+                    self.sparse_vector_index
+                        .update_file_reference(vector_id, file_path)
+                        .await?;
                 }
                 _ => {}
             }
         }
 
-        tracing::debug!("✅ AXIS: Updated file reference for vector {} in all indexes", vector_id);
+        tracing::debug!(
+            "✅ AXIS: Updated file reference for vector {} in all indexes",
+            vector_id
+        );
         Ok(())
     }
 
@@ -483,8 +511,15 @@ impl AxisIndexManager {
         old_files: &[String],
         new_files: &[String],
     ) -> Result<()> {
-        tracing::info!("🔄 AXIS: Rebuilding indexes after compaction for collection {}", collection_id);
-        tracing::debug!("🔄 AXIS: Old files: {:?} → New files: {:?}", old_files, new_files);
+        tracing::info!(
+            "🔄 AXIS: Rebuilding indexes after compaction for collection {}",
+            collection_id
+        );
+        tracing::debug!(
+            "🔄 AXIS: Old files: {:?} → New files: {:?}",
+            old_files,
+            new_files
+        );
 
         // Ensure we have a strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
@@ -496,7 +531,7 @@ impl AxisIndexManager {
         // 3. Updating file references atomically
 
         let rebuild_start = Utc::now();
-        
+
         // Update file references for all affected vectors
         // This is a simplified implementation - production would be more sophisticated
         for old_file in old_files {
@@ -508,8 +543,11 @@ impl AxisIndexManager {
         }
 
         let rebuild_duration = Utc::now().signed_duration_since(rebuild_start);
-        tracing::info!("✅ AXIS: Completed index rebuild for collection {} in {}ms", 
-                      collection_id, rebuild_duration.num_milliseconds());
+        tracing::info!(
+            "✅ AXIS: Completed index rebuild for collection {} in {}ms",
+            collection_id,
+            rebuild_duration.num_milliseconds()
+        );
 
         // Update metrics
         let mut metrics = self.metrics.write().await;

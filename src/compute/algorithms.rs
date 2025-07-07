@@ -725,4 +725,3 @@ pub fn create_search_algorithm(
         }
     }
 }
-

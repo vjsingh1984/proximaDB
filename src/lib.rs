@@ -47,7 +47,6 @@ pub mod services;
 pub mod storage;
 pub mod utils;
 
-
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));
@@ -71,28 +70,33 @@ pub struct ProximaDB {
 impl ProximaDB {
     pub async fn new(config: core::Config) -> Result<Self> {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
-        
+
         // Create collection service
-        use crate::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
-        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
         use crate::services::collection_service::CollectionService;
-        
+        use crate::storage::metadata::backends::filestore_backend::{
+            FilestoreMetadataBackend, FilestoreMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+
         let filestore_config = FilestoreMetadataConfig::default();
         let filesystem_config = FilesystemConfig::default();
-        
+
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(filesystem_config).await
-                .map_err(|e| format!("Failed to create filesystem factory: {}", e))?
+            FilesystemFactory::new(filesystem_config)
+                .await
+                .map_err(|e| format!("Failed to create filesystem factory: {}", e))?,
         );
-        
+
         let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await
-                .map_err(|e| format!("Failed to create filestore backend: {}", e))?
+            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .map_err(|e| format!("Failed to create filestore backend: {}", e))?,
         );
-        
+
         let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
-        
-        let storage_engine = storage::StorageEngine::new(config.storage.clone(), collection_service.clone()).await?;
+
+        let storage_engine =
+            storage::StorageEngine::new(config.storage.clone(), collection_service.clone()).await?;
         tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
 
@@ -104,12 +108,14 @@ impl ProximaDB {
 
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
-        let rest_addr: SocketAddr = format!("{}:{}", config.server.bind_address, config.api.rest_port)
-            .parse()
-            .map_err(|e| format!("Invalid REST address: {}", e))?;
-        let grpc_addr: SocketAddr = format!("{}:{}", config.server.bind_address, config.api.grpc_port)
-            .parse()
-            .map_err(|e| format!("Invalid gRPC address: {}", e))?;
+        let rest_addr: SocketAddr =
+            format!("{}:{}", config.server.bind_address, config.api.rest_port)
+                .parse()
+                .map_err(|e| format!("Invalid REST address: {}", e))?;
+        let grpc_addr: SocketAddr =
+            format!("{}:{}", config.server.bind_address, config.api.grpc_port)
+                .parse()
+                .map_err(|e| format!("Invalid gRPC address: {}", e))?;
 
         let mut builder = network::MultiServerBuilder::custom()
             .http(|h| h.bind_address(rest_addr))
@@ -118,12 +124,14 @@ impl ProximaDB {
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
             let tls_config = config.tls.as_ref().unwrap();
-            if let (Some(cert_file), Some(key_file)) = (&tls_config.cert_file, &tls_config.key_file) {
+            if let (Some(cert_file), Some(key_file)) = (&tls_config.cert_file, &tls_config.key_file)
+            {
                 builder = builder.with_tls(cert_file.clone(), key_file.clone());
             }
         }
 
-        let multi_config = builder.build()
+        let multi_config = builder
+            .build()
             .map_err(|e| format!("Failed to create server config: {}", e))?;
 
         // Create metrics collector for monitoring
@@ -132,13 +140,20 @@ impl ProximaDB {
         let metrics_collector = Arc::new(metrics_collector);
 
         // Create SharedServices first with metadata configuration (business logic hub)
-        tracing::info!("🔧 ProximaDB::new: Creating SharedServices with metadata config: {:?}", 
-                      config.storage.metadata_backend.as_ref().map(|c| &c.storage_url));
+        tracing::info!(
+            "🔧 ProximaDB::new: Creating SharedServices with metadata config: {:?}",
+            config
+                .storage
+                .metadata_backend
+                .as_ref()
+                .map(|c| &c.storage_url)
+        );
         let shared_services = network::multi_server::SharedServices::new(
             storage.clone(),
             Some(metrics_collector),
-            config.storage.metadata_backend.clone()
-        ).await?;
+            config.storage.metadata_backend.clone(),
+        )
+        .await?;
         tracing::info!("✅ ProximaDB::new: SharedServices created successfully");
 
         // Create MultiServer with SharedServices (network orchestrator)

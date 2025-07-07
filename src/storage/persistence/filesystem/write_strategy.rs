@@ -16,7 +16,7 @@
 
 //! Write Strategy Factory - Optimized Write Patterns for Different Use Cases
 
-use crate::storage::persistence::filesystem::{FileSystem, FileOptions, FsResult, TempStrategy};
+use crate::storage::persistence::filesystem::{FileOptions, FileSystem, FsResult, TempStrategy};
 
 /// Write strategy factory for different optimization patterns
 pub struct WriteStrategyFactory;
@@ -34,10 +34,8 @@ impl WriteStrategyFactory {
         } else {
             TempStrategy::SameDirectory
         };
-        
-        Ok(MetadataWriteStrategy {
-            temp_strategy,
-        })
+
+        Ok(MetadataWriteStrategy { temp_strategy })
     }
 }
 
@@ -60,7 +58,7 @@ impl MetadataWriteStrategy {
             // Use temp strategy for object stores
             Some(fs.generate_temp_path(final_path, &self.temp_strategy)?)
         };
-        
+
         Ok(FileOptions {
             create_dirs: true,
             overwrite: true,

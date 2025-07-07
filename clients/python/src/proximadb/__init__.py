@@ -21,7 +21,7 @@ from .unified_client import ProximaDBClient, connect, connect_grpc, connect_rest
 
 # Specialized clients (for advanced use cases)
 from .client import ProximaDBClient as ProximaDBRestClient
-from .grpc_client import ProximaDBGrpcClient
+from .sync_grpc_client import ProximaDBSyncGrpcClient as ProximaDBGrpcClient
 from .config import ClientConfig
 from .models import (
     Collection,
@@ -31,6 +31,8 @@ from .models import (
     SearchStats,
     InsertResult,
     BatchResult,
+    DistanceMetric,
+    IndexAlgorithm,
 )
 from .exceptions import (
     ProximaDBError,
@@ -67,6 +69,8 @@ __all__ = [
     "SearchStats",
     "InsertResult",
     "BatchResult",
+    "DistanceMetric",
+    "IndexAlgorithm",
     
     # Exceptions
     "ProximaDBError",

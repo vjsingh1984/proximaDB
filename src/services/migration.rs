@@ -268,7 +268,7 @@ impl StrategyTemplates {
             ef_construction: 200,
             ef_search: 50,
         };
-        config.storage_config.engine_type = StorageEngineType::LSM;
+        config.storage_config.engine_type = StorageEngineType::Lsm;
         config.search_config.distance_metric = DistanceMetric::Cosine;
         config
     }
@@ -280,7 +280,7 @@ impl StrategyTemplates {
             nlist: 4096,
             nprobe: 32,
         };
-        config.storage_config.engine_type = StorageEngineType::LSM;
+        config.storage_config.engine_type = StorageEngineType::Lsm;
         config.search_config.distance_metric = DistanceMetric::DotProduct;
         config.performance_config.enable_simd = true;
         config.performance_config.enable_gpu = true;
@@ -291,7 +291,7 @@ impl StrategyTemplates {
     pub fn viper_optimized() -> CollectionStrategyConfig {
         let mut config = CollectionStrategyConfig::default();
         config.indexing_config.algorithm = IndexingAlgorithm::PQ { m: 16, nbits: 8 };
-        config.storage_config.engine_type = StorageEngineType::VIPER;
+        config.storage_config.engine_type = StorageEngineType::Viper;
         config.search_config.distance_metric = DistanceMetric::Cosine;
         config.search_config.enable_optimization = true;
         config
@@ -301,7 +301,7 @@ impl StrategyTemplates {
     pub fn memory_optimized() -> CollectionStrategyConfig {
         let mut config = CollectionStrategyConfig::default();
         config.indexing_config.algorithm = IndexingAlgorithm::PQ { m: 8, nbits: 4 };
-        config.storage_config.engine_type = StorageEngineType::LSM;
+        config.storage_config.engine_type = StorageEngineType::Lsm;
         config.performance_config.memory_limit_mb = 256;
         config.performance_config.batch_config.batch_size = 100;
         config

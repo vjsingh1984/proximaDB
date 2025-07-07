@@ -17,7 +17,7 @@
 //! - **Schema Adaptation**: Flexible record-to-schema conversion
 //! - **Performance Optimization**: SIMD-aware operations and background processing
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
@@ -25,13 +25,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::core::{CollectionId, VectorRecord, SearchResult, MetadataFilter, FieldCondition};
+use crate::core::{CollectionId, FieldCondition, MetadataFilter, SearchResult, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
-    UnifiedStorageEngine, FlushResult,
-    CompactionParameters, CompactionResult
+    CompactionParameters, CompactionResult, FlushResult, UnifiedStorageEngine,
 };
 // Note: storage::vector::types module has been removed
 // Types now come from crate::core (avro_unified) and other modules
@@ -126,6 +125,7 @@ pub struct ProcessedVectorRecord {
     pub timestamp: DateTime<Utc>,
     pub filterable_data: HashMap<String, Value>,
     pub extra_meta: HashMap<String, Value>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 // NOTE: SearchResult moved to avro_unified.rs - use from crate::core (re-exported there)
@@ -164,7 +164,7 @@ pub struct ViperCoreEngine {
 
     /// Filesystem interface
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// WAL manager for retrieving memtable data during flush (deprecated - use FlushCoordinator instead)
     _wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalStrategy>>,
 }
@@ -174,22 +174,22 @@ pub struct ViperCoreEngine {
 pub struct ViperCoreConfig {
     /// Enable ML-driven clustering
     pub enable_ml_clustering: bool,
-    
+
     /// Enable background compaction
     pub enable_background_compaction: bool,
-    
+
     /// Compression settings
     pub compression_config: CompressionConfig,
-    
+
     /// Schema adaptation settings
     pub schema_config: SchemaConfig,
-    
+
     /// Atomic operations settings
     pub atomic_config: AtomicOperationsConfig,
-    
+
     /// Writer pool size
     pub writer_pool_size: usize,
-    
+
     /// Statistics collection interval
     pub stats_interval_secs: u64,
 }
@@ -209,7 +209,7 @@ pub struct ViperCollectionMetadata {
     pub created_at: DateTime<Utc>,
     pub quantization_level: Option<super::quantization::QuantizationLevel>, // Quantization configuration
     pub last_updated: DateTime<Utc>,
-    
+
     // Server-side metadata filtering configuration
     /// Pre-configured filterable metadata columns for Parquet pushdown
     pub filterable_columns: Vec<FilterableColumn>,
@@ -217,7 +217,7 @@ pub struct ViperCollectionMetadata {
     pub column_indexes: HashMap<String, ColumnIndexType>,
     /// Flush size for testing (overrides global config)
     pub flush_size_bytes: Option<usize>,
-    
+
     // Future: Quantization and clustering integration
     /// Quantization configuration per cluster
     pub quantization_config: Option<QuantizationConfig>,
@@ -271,7 +271,11 @@ impl Default for SchemaConfig {
     fn default() -> Self {
         Self {
             enable_dynamic_schema: true,
-            filterable_fields: vec!["category".to_string(), "author".to_string(), "timestamp".to_string()],
+            filterable_fields: vec![
+                "category".to_string(),
+                "author".to_string(),
+                "timestamp".to_string(),
+            ],
             max_metadata_fields: 100,
             enable_column_pruning: true,
         }
@@ -361,7 +365,7 @@ pub enum VectorStorageFormat {
     /// Binary quantization for ultra-fast search
     BinaryQuantized,
     /// Hybrid: quantized for fast search + full precision for reranking
-    HybridQuantized { 
+    HybridQuantized {
         fast_format: Box<VectorStorageFormat>,
         precise_format: Box<VectorStorageFormat>,
     },
@@ -647,19 +651,15 @@ pub trait ParquetWriterFactory: Send + Sync {
 
 impl ViperCoreEngine {
     /// Create new VIPER core engine
-    pub async fn new(
-        config: ViperCoreConfig,
-        filesystem: Arc<FilesystemFactory>,
-    ) -> Result<Self> {
-        let lock_manager = Arc::new(
-            CollectionLockManager::new(filesystem.clone()).await?
-        );
+    pub async fn new(config: ViperCoreConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+        let lock_manager = Arc::new(CollectionLockManager::new(filesystem.clone()).await?);
 
         let staging_manager = Arc::new(
             StagingOperationsManager::new(
                 filesystem.clone(),
                 config.atomic_config.staging_cleanup_interval_secs,
-            ).await?
+            )
+            .await?,
         );
 
         let atomic_coordinator = Arc::new(
@@ -667,17 +667,15 @@ impl ViperCoreEngine {
                 lock_manager.clone(),
                 staging_manager,
                 config.atomic_config.clone(),
-            ).await?
+            )
+            .await?,
         );
 
-        let schema_adapter = Arc::new(
-            SchemaAdapter::new(config.schema_config.clone()).await?
-        );
+        let schema_adapter = Arc::new(SchemaAdapter::new(config.schema_config.clone()).await?);
 
         let writer_factory = Arc::new(DefaultParquetWriterFactory::new());
-        let writer_pool = Arc::new(
-            ParquetWriterPool::new(config.writer_pool_size, writer_factory).await?
-        );
+        let writer_pool =
+            Arc::new(ParquetWriterPool::new(config.writer_pool_size, writer_factory).await?);
 
         Ok(Self {
             config,
@@ -696,23 +694,31 @@ impl ViperCoreEngine {
     }
 
     /// Set the WAL manager for flush operations (deprecated - use FlushCoordinator pattern)
-    pub async fn set_wal_manager(&self, _wal_manager: Arc<dyn crate::storage::persistence::wal::WalStrategy>) {
+    pub async fn set_wal_manager(
+        &self,
+        _wal_manager: Arc<dyn crate::storage::persistence::wal::WalStrategy>,
+    ) {
         warn!("🔗 VIPER: set_wal_manager called but deprecated - use FlushCoordinator pattern instead");
     }
 
     /// Insert vector record with unlimited metadata key-value pairs
-    /// 
+    ///
     /// During insert/bulk insert/update operations:
     /// 1. Metadata fields are stored as-is in WAL and memtable (no transformation)
     /// 2. All metadata key-value pairs are preserved exactly as provided
     /// 3. No separation between filterable and non-filterable fields at this stage
     /// 4. Transformation happens later during flush/compaction operations
     pub async fn insert_vector(&self, record: VectorRecord) -> Result<()> {
-        debug!("🔥 VIPER Core: Inserting vector {} with {} metadata fields in collection {}", 
-               record.id, record.metadata.len(), record.collection_id);
+        debug!(
+            "🔥 VIPER Core: Inserting vector {} with {} metadata fields in collection {}",
+            record.id,
+            record.metadata.len(),
+            record.collection_id
+        );
 
         // Step 1: Acquire collection lock
-        let _lock = self.atomic_coordinator
+        let _lock = self
+            .atomic_coordinator
             .acquire_lock(&record.collection_id, OperationType::Insert)
             .await?;
 
@@ -720,34 +726,46 @@ impl ViperCoreEngine {
         self.store_vector_record_for_wal(&record).await?;
 
         // Step 3: Get or create collection metadata
-        let collection_metadata = self.get_or_create_collection_metadata(&record.collection_id).await?;
+        let collection_metadata = self
+            .get_or_create_collection_metadata(&record.collection_id)
+            .await?;
 
         // Step 3: ML-driven cluster prediction
         let cluster_id = if self.config.enable_ml_clustering {
-            self.predict_optimal_cluster(&record, &collection_metadata).await?
+            self.predict_optimal_cluster(&record, &collection_metadata)
+                .await?
         } else {
-            self.default_cluster_assignment(&record.collection_id).await?
+            self.default_cluster_assignment(&record.collection_id)
+                .await?
         };
 
         // Step 4: Determine storage format based on vector characteristics
-        let storage_format = self.determine_storage_format(&record.vector, &collection_metadata).await?;
+        let storage_format = self
+            .determine_storage_format(&record.vector, &collection_metadata)
+            .await?;
 
         // Step 5: Convert record to schema format
-        let record_batch = self.schema_adapter
+        let record_batch = self
+            .schema_adapter
             .adapt_records_to_schema(&[record.clone()], &collection_metadata.collection_id)
             .await?;
 
         // Step 6: Write to partition using parquet writer
-        let partition_path = self.get_partition_path(&cluster_id, &storage_format).await?;
+        let partition_path = self
+            .get_partition_path(&cluster_id, &storage_format)
+            .await?;
         let mut writer = self.writer_pool.acquire_writer().await?;
         writer.write_batch(record_batch, &partition_path).await?;
         self.writer_pool.release_writer(writer).await?;
 
         // Step 7: Update metadata and statistics
-        self.update_collection_stats(&record.collection_id, 1, record.vector.len()).await?;
+        self.update_collection_stats(&record.collection_id, 1, record.vector.len())
+            .await?;
 
-        info!("✅ VIPER Core: Successfully inserted vector {} in collection {}", 
-              record.id, record.collection_id);
+        info!(
+            "✅ VIPER Core: Successfully inserted vector {} in collection {}",
+            record.id, record.collection_id
+        );
 
         Ok(())
     }
@@ -759,7 +777,10 @@ impl ViperCoreEngine {
         query_vector: &[f32],
         k: usize,
     ) -> Result<Vec<SearchResult>> {
-        debug!("🔍 VIPER Core: Searching {} vectors in collection {}", k, collection_id);
+        debug!(
+            "🔍 VIPER Core: Searching {} vectors in collection {}",
+            k, collection_id
+        );
 
         // Step 1: Check if collection exists in VIPER metadata
         let collection_metadata = match self.get_collection_metadata(collection_id).await? {
@@ -767,14 +788,18 @@ impl ViperCoreEngine {
             None => {
                 // Collection not found in VIPER - this is expected for new collections
                 // that only have data in WAL and haven't been flushed yet
-                tracing::info!("🔍 VIPER: Collection {} not found in VIPER metadata - likely only in WAL", collection_id);
+                tracing::info!(
+                    "🔍 VIPER: Collection {} not found in VIPER metadata - likely only in WAL",
+                    collection_id
+                );
                 return Ok(Vec::new()); // Return empty results gracefully
             }
         };
 
         // Step 2: ML-driven cluster selection
         let relevant_clusters = if self.config.enable_ml_clustering {
-            self.predict_relevant_clusters(query_vector, &collection_metadata).await?
+            self.predict_relevant_clusters(query_vector, &collection_metadata)
+                .await?
         } else {
             self.get_all_clusters(collection_id).await?
         };
@@ -782,24 +807,38 @@ impl ViperCoreEngine {
         // Step 3: Parallel search across selected clusters
         let mut all_results = Vec::new();
         for cluster_id in relevant_clusters {
-            let cluster_results = self.search_cluster(&cluster_id, query_vector, k * 2).await?;
+            let cluster_results = self
+                .search_cluster(&cluster_id, query_vector, k * 2)
+                .await?;
             all_results.extend(cluster_results);
         }
 
         // Step 4: Merge and rank results
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(k);
 
-        debug!("🔍 VIPER Core: Found {} results in collection {}", all_results.len(), collection_id);
+        debug!(
+            "🔍 VIPER Core: Found {} results in collection {}",
+            all_results.len(),
+            collection_id
+        );
         Ok(all_results)
     }
 
     /// Legacy flush method - DEPRECATED: Use the UnifiedStorageEngine::flush() method instead
     /// This method exists for backward compatibility and will be removed in a future version
-    #[deprecated(note = "Use the UnifiedStorageEngine::flush() method with FlushParameters instead")]
+    #[deprecated(
+        note = "Use the UnifiedStorageEngine::flush() method with FlushParameters instead"
+    )]
     pub async fn flush_collection(&self, collection_id: &CollectionId) -> Result<()> {
-        warn!("⚠️ DEPRECATED: flush_collection() called. Use UnifiedStorageEngine::flush() instead");
-        
+        warn!(
+            "⚠️ DEPRECATED: flush_collection() called. Use UnifiedStorageEngine::flush() instead"
+        );
+
         // Delegate to the proper trait method
         let params = crate::storage::traits::FlushParameters {
             collection_id: Some(collection_id.clone()),
@@ -807,17 +846,21 @@ impl ViperCoreEngine {
             synchronous: true,
             ..Default::default()
         };
-        
+
         self.do_flush(&params).await?;
         Ok(())
     }
 
     /// REMOVED: execute_atomic_flush_operation method has been moved to the UnifiedStorageEngine::do_flush implementation
     /// This ensures there's only one flush path and prevents duplicate operations
-    
+
     /// Atomically retrieve WAL entries for flush operation (deprecated pattern)
     /// The FlushCoordinator should provide the data instead of VIPER calling WAL directly
-    async fn atomic_retrieve_wal_for_flush(&self, collection_id: &CollectionId, flush_id: &str) -> Result<crate::storage::persistence::wal::FlushCycle> {
+    async fn atomic_retrieve_wal_for_flush(
+        &self,
+        collection_id: &CollectionId,
+        flush_id: &str,
+    ) -> Result<crate::storage::persistence::wal::FlushCycle> {
         warn!("📋 VIPER: atomic_retrieve_wal_for_flush called but deprecated - FlushCoordinator should provide data");
         info!("📋 VIPER: Returning empty flush cycle for collection {} - FlushCoordinator pattern expected", collection_id);
         Ok(crate::storage::persistence::wal::FlushCycle {
@@ -827,22 +870,27 @@ impl ViperCoreEngine {
             vector_records: Vec::new(),
             marked_segments: Vec::new(),
             marked_sequences: Vec::new(),
+            batch_ids: vec![],
             state: crate::storage::persistence::wal::FlushCycleState::Active,
         })
     }
-    
+
     /// Serialize vector records to actual Parquet format using Apache Arrow
-    async fn serialize_records_to_parquet(&self, records: &[VectorRecord], collection_id: &CollectionId) -> Result<Vec<u8>> {
-        use arrow_array::{Array, RecordBatch, StringArray, Float32Array, Int64Array, BinaryArray};
-        use arrow_schema::{Schema, Field, DataType};
+    async fn serialize_records_to_parquet(
+        &self,
+        records: &[VectorRecord],
+        collection_id: &CollectionId,
+    ) -> Result<Vec<u8>> {
+        use arrow_array::{Array, BinaryArray, Float32Array, Int64Array, RecordBatch, StringArray};
+        use arrow_schema::{DataType, Field, Schema};
         use parquet::arrow::ArrowWriter;
         use parquet::file::properties::WriterProperties;
         use std::sync::Arc;
-        
+
         if records.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // Create Arrow schema for vector records
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -854,7 +902,7 @@ impl ViperCoreEngine {
             Field::new("updated_at", DataType::Int64, false),
             Field::new("version", DataType::Int64, false),
         ]));
-        
+
         // Prepare data arrays
         let mut ids = Vec::new();
         let mut collection_ids = Vec::new();
@@ -864,32 +912,34 @@ impl ViperCoreEngine {
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
         let mut versions = Vec::new();
-        
+
         // Pre-collect all byte arrays to avoid lifetime issues
         let mut vector_data: Vec<Vec<u8>> = Vec::new();
         let mut metadata_data: Vec<Vec<u8>> = Vec::new();
-        
+
         for record in records {
             ids.push(record.id.clone());
             collection_ids.push(record.collection_id.clone());
-            
+
             // Serialize vector as binary (f32 array as bytes)
-            let vector_bytes = record.vector.iter()
+            let vector_bytes = record
+                .vector
+                .iter()
                 .flat_map(|f| f.to_le_bytes())
                 .collect::<Vec<u8>>();
             vector_data.push(vector_bytes);
-            
+
             // Serialize metadata as JSON bytes
-            let metadata_json = serde_json::to_vec(&record.metadata)
-                .context("Failed to serialize metadata")?;
+            let metadata_json =
+                serde_json::to_vec(&record.metadata).context("Failed to serialize metadata")?;
             metadata_data.push(metadata_json);
-            
+
             timestamps.push(record.timestamp);
             created_ats.push(record.created_at);
             updated_ats.push(record.updated_at);
             versions.push(record.version);
         }
-        
+
         // Convert to slices for Arrow arrays
         for vector_bytes in &vector_data {
             vectors.push(vector_bytes.as_slice());
@@ -897,7 +947,7 @@ impl ViperCoreEngine {
         for metadata_json in &metadata_data {
             metadata_bytes.push(Some(metadata_json.as_slice()));
         }
-        
+
         // Create Arrow arrays
         let id_array = StringArray::from(ids);
         let collection_array = StringArray::from(collection_ids);
@@ -907,7 +957,7 @@ impl ViperCoreEngine {
         let created_array = Int64Array::from(created_ats);
         let updated_array = Int64Array::from(updated_ats);
         let version_array = Int64Array::from(versions);
-        
+
         // Create RecordBatch
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -921,52 +971,70 @@ impl ViperCoreEngine {
                 Arc::new(updated_array),
                 Arc::new(version_array),
             ],
-        ).context("Failed to create RecordBatch")?;
-        
+        )
+        .context("Failed to create RecordBatch")?;
+
         // Write to Parquet format
         let mut buffer = Vec::new();
         let props = WriterProperties::builder()
             .set_compression(parquet::basic::Compression::UNCOMPRESSED)
             .build();
-            
+
         {
             let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
                 .context("Failed to create Arrow writer")?;
             writer.write(&batch).context("Failed to write batch")?;
             writer.close().context("Failed to close writer")?;
         }
-        
-        info!("🔄 VIPER: Serialized {} records to {} bytes Parquet for collection {}", 
-              records.len(), buffer.len(), collection_id);
+
+        info!(
+            "🔄 VIPER: Serialized {} records to {} bytes Parquet for collection {}",
+            records.len(),
+            buffer.len(),
+            collection_id
+        );
         Ok(buffer)
     }
-    
+
     /// Signal WAL manager to cleanup segments after successful flush
-    async fn signal_wal_segment_cleanup(&self, collection_id: &CollectionId, flushed_records: &[VectorRecord]) -> Result<()> {
-        info!("🗑️ VIPER: Signaling WAL cleanup for {} flushed records in collection {}", 
-              flushed_records.len(), collection_id);
-        
+    async fn signal_wal_segment_cleanup(
+        &self,
+        collection_id: &CollectionId,
+        flushed_records: &[VectorRecord],
+    ) -> Result<()> {
+        info!(
+            "🗑️ VIPER: Signaling WAL cleanup for {} flushed records in collection {}",
+            flushed_records.len(),
+            collection_id
+        );
+
         // TODO: Integrate with actual WAL manager once interface is finalized
         // The WAL manager should provide a method like:
         // wal_manager.mark_records_as_flushed(collection_id, record_ids).await?;
-        // 
+        //
         // For now, log the cleanup signal with record IDs that should be cleaned up
         let record_ids: Vec<&str> = flushed_records.iter().map(|r| r.id.as_str()).collect();
         info!("🗑️ VIPER: Records ready for WAL cleanup: {:?}", record_ids);
-        
+
         // Future implementation will look like:
         // if let Some(wal_manager) = &self.wal_manager {
         //     wal_manager.mark_records_as_flushed(collection_id, &record_ids).await
         //         .context("Failed to mark WAL records as flushed")?;
         // }
-        
-        info!("✅ VIPER: WAL cleanup signal completed for collection {}", collection_id);
+
+        info!(
+            "✅ VIPER: WAL cleanup signal completed for collection {}",
+            collection_id
+        );
         Ok(())
     }
 
     /// Perform atomic compaction operation
     pub async fn compact_collection(&self, collection_id: &CollectionId) -> Result<()> {
-        info!("🔧 VIPER Core: Starting atomic compaction for collection {}", collection_id);
+        info!(
+            "🔧 VIPER Core: Starting atomic compaction for collection {}",
+            collection_id
+        );
 
         let operation_id = uuid::Uuid::new_v4().to_string();
         let atomic_operation = AtomicOperation {
@@ -983,7 +1051,10 @@ impl ViperCoreEngine {
             .execute_compaction_operation(atomic_operation)
             .await?;
 
-        info!("✅ VIPER Core: Completed atomic compaction for collection {}", collection_id);
+        info!(
+            "✅ VIPER Core: Completed atomic compaction for collection {}",
+            collection_id
+        );
         Ok(())
     }
 
@@ -1019,17 +1090,17 @@ impl ViperCoreEngine {
             created_at: Utc::now(),
             quantization_level: None, // No quantization by default
             last_updated: Utc::now(),
-            
+
             // User-configurable filterable columns (empty by default)
             filterable_columns: Vec::new(),
             column_indexes: HashMap::new(),
             flush_size_bytes: Some(1024 * 1024), // 1MB flush size for testing
-            
+
             // Future quantization and performance features
             quantization_config: None,
             cluster_quantization_map: HashMap::new(),
             vector_quality_metrics: VectorQualityMetrics::default(),
-            search_performance_stats: SearchPerformanceStats::default()
+            search_performance_stats: SearchPerformanceStats::default(),
         };
 
         let mut collections = self.collections.write().await;
@@ -1056,7 +1127,7 @@ impl ViperCoreEngine {
         let mut collections = self.collections.write().await;
         if let Some(metadata) = collections.get_mut(collection_id) {
             metadata.filterable_columns = filterable_columns.clone();
-            
+
             // Create appropriate indexes based on column specifications
             metadata.column_indexes = self.create_column_indexes(&filterable_columns);
             metadata.last_updated = Utc::now();
@@ -1096,7 +1167,9 @@ impl ViperCoreEngine {
             }
 
             // Validate column name (no special characters, not empty)
-            if column.name.is_empty() || !column.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if column.name.is_empty()
+                || !column.name.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
                 return Err(anyhow::anyhow!(
                     "Invalid column name '{}': must contain only alphanumeric characters and underscores",
                     column.name
@@ -1107,7 +1180,8 @@ impl ViperCoreEngine {
             if column.supports_range && !self.supports_range_queries(&column.data_type) {
                 return Err(anyhow::anyhow!(
                     "Column '{}' with type {:?} cannot support range queries",
-                    column.name, column.data_type
+                    column.name,
+                    column.data_type
                 ));
             }
 
@@ -1127,17 +1201,19 @@ impl ViperCoreEngine {
     /// Check if a data type supports range queries
     fn supports_range_queries(&self, data_type: &FilterableDataType) -> bool {
         match data_type {
-            FilterableDataType::Integer 
-            | FilterableDataType::Float 
+            FilterableDataType::Integer
+            | FilterableDataType::Float
             | FilterableDataType::DateTime => true,
             FilterableDataType::String => true, // Lexicographic ordering
-            FilterableDataType::Boolean 
-            | FilterableDataType::Array(_) => false,
+            FilterableDataType::Boolean | FilterableDataType::Array(_) => false,
         }
     }
 
     /// Create appropriate column indexes based on filterable column specifications
-    fn create_column_indexes(&self, columns: &[FilterableColumn]) -> HashMap<String, ColumnIndexType> {
+    fn create_column_indexes(
+        &self,
+        columns: &[FilterableColumn],
+    ) -> HashMap<String, ColumnIndexType> {
         let mut indexes = HashMap::new();
 
         for column in columns {
@@ -1147,7 +1223,9 @@ impl ViperCoreEngine {
                 } else {
                     match &column.data_type {
                         FilterableDataType::String => ColumnIndexType::Hash,
-                        FilterableDataType::Integer | FilterableDataType::Float => ColumnIndexType::BTree,
+                        FilterableDataType::Integer | FilterableDataType::Float => {
+                            ColumnIndexType::BTree
+                        }
                         FilterableDataType::Boolean => ColumnIndexType::Hash,
                         FilterableDataType::DateTime => ColumnIndexType::BTree,
                         FilterableDataType::Array(_) => ColumnIndexType::BloomFilter, // For membership tests
@@ -1167,9 +1245,10 @@ impl ViperCoreEngine {
         collection_id: &CollectionId,
     ) -> Result<ParquetSchemaDesign> {
         let metadata_opt = self.get_collection_metadata(collection_id).await?;
-        
-        let metadata = metadata_opt.ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
-        
+
+        let metadata = metadata_opt
+            .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
+
         info!(
             "🏗️ Designing Parquet schema for collection {} with {} filterable columns",
             collection_id,
@@ -1251,7 +1330,7 @@ impl ViperCoreEngine {
     }
 
     /// Process vector record during flush/compaction - separate filterable columns from extra metadata
-    /// 
+    ///
     /// This is called during flush/compaction operations to transform the raw metadata stored
     /// in WAL/memtable into the VIPER Parquet layout:
     /// - User-configured filterable columns → Parquet columns for server-side filtering
@@ -1262,12 +1341,13 @@ impl ViperCoreEngine {
         record: &VectorRecord,
     ) -> Result<ProcessedVectorRecord> {
         let metadata_opt = self.get_collection_metadata(collection_id).await?;
-        
+
         if let Some(metadata) = metadata_opt {
-            let filterable_column_names: std::collections::HashSet<String> = 
-                metadata.filterable_columns.iter()
-                    .map(|col| col.name.clone())
-                    .collect();
+            let filterable_column_names: std::collections::HashSet<String> = metadata
+                .filterable_columns
+                .iter()
+                .map(|col| col.name.clone())
+                .collect();
 
             let mut filterable_data = HashMap::new();
             let mut extra_meta = HashMap::new();
@@ -1293,33 +1373,37 @@ impl ViperCoreEngine {
             Ok(ProcessedVectorRecord {
                 id: record.id.clone(),
                 vector: record.vector.clone(),
-                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp).unwrap_or_else(|| Utc::now()),
+                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp)
+                    .unwrap_or_else(|| Utc::now()),
                 filterable_data,
                 extra_meta,
+                expires_at: None,
             })
         } else {
             // Collection metadata not found - treat all metadata as extra_meta
-            warn!("⚠️ Collection {} metadata not found, treating all metadata as extra_meta", collection_id);
-            
+            warn!(
+                "⚠️ Collection {} metadata not found, treating all metadata as extra_meta",
+                collection_id
+            );
+
             Ok(ProcessedVectorRecord {
                 id: record.id.clone(),
                 vector: record.vector.clone(),
-                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp).unwrap_or_else(|| Utc::now()),
+                timestamp: chrono::DateTime::from_timestamp_millis(record.timestamp)
+                    .unwrap_or_else(|| Utc::now()),
                 filterable_data: HashMap::new(),
                 extra_meta: record.metadata.clone(),
+                expires_at: None,
             })
         }
     }
 
     /// Store vector record directly in WAL/memtable during insert operations
-    /// 
+    ///
     /// During insert/bulk insert/update operations, metadata fields are stored as-is
     /// without any filtering or transformation. This preserves all user-provided metadata
     /// in its original form in the WAL and memtable for atomic writes.
-    pub async fn store_vector_record_for_wal(
-        &self,
-        record: &VectorRecord,
-    ) -> Result<()> {
+    pub async fn store_vector_record_for_wal(&self, record: &VectorRecord) -> Result<()> {
         debug!(
             "💾 Storing vector {} with {} metadata fields in WAL (as-is storage)",
             record.id,
@@ -1329,20 +1413,20 @@ impl ViperCoreEngine {
         // Store record exactly as provided - no metadata transformation
         // All metadata fields (filterable and non-filterable) are stored together
         // This allows unlimited metadata key-value pairs as requested
-        
+
         // Log metadata fields for debugging
         for (key, value) in &record.metadata {
             debug!("  📋 Metadata field: '{}' = {:?}", key, value);
         }
-        
+
         // The actual WAL storage would happen in the calling code
         // This method is for documentation and potential validation
-        
+
         Ok(())
     }
 
     /// Demonstrate the complete metadata lifecycle from insert to storage
-    /// 
+    ///
     /// This method illustrates how metadata fields flow through the system:
     /// Insert → WAL/Memtable (as-is) → Flush/Compaction → VIPER Layout (transformed)
     pub async fn demonstrate_metadata_lifecycle(
@@ -1350,39 +1434,50 @@ impl ViperCoreEngine {
         collection_id: &CollectionId,
         record: &VectorRecord,
     ) -> Result<()> {
-        info!("🔄 DEMONSTRATING METADATA LIFECYCLE for vector {}", record.id);
+        info!(
+            "🔄 DEMONSTRATING METADATA LIFECYCLE for vector {}",
+            record.id
+        );
         info!("{}", "=".repeat(80));
-        
+
         // Stage 1: Insert/Update - Store as-is in WAL/memtable
         info!("📥 STAGE 1: INSERT/UPDATE - Store metadata as-is");
         info!("   Original metadata fields: {}", record.metadata.len());
         for (key, value) in &record.metadata {
             info!("     • {} = {:?}", key, value);
         }
-        
+
         // Stage 2: Flush/Compaction - Transform based on filterable columns
         info!("🔄 STAGE 2: FLUSH/COMPACTION - Transform metadata layout");
-        let processed = self.process_vector_record_for_parquet(&collection_id.to_string(), record).await?;
-        
+        let processed = self
+            .process_vector_record_for_parquet(&collection_id.to_string(), record)
+            .await?;
+
         info!("   Filterable columns: {}", processed.filterable_data.len());
         for (key, value) in &processed.filterable_data {
             info!("     📊 Column: {} = {:?}", key, value);
         }
-        
+
         info!("   Extra metadata fields: {}", processed.extra_meta.len());
         for (key, value) in &processed.extra_meta {
             info!("     🗂️ Extra: {} = {:?}", key, value);
         }
-        
+
         // Stage 3: Storage format
         info!("💾 STAGE 3: VIPER PARQUET LAYOUT");
         info!("   ├─ Core fields: id, vector, timestamp");
-        info!("   ├─ Filterable columns: {} (server-side filtering)", processed.filterable_data.len());
-        info!("   └─ Extra_meta map: {} (preserved key-value pairs)", processed.extra_meta.len());
-        
+        info!(
+            "   ├─ Filterable columns: {} (server-side filtering)",
+            processed.filterable_data.len()
+        );
+        info!(
+            "   └─ Extra_meta map: {} (preserved key-value pairs)",
+            processed.extra_meta.len()
+        );
+
         info!("✅ METADATA LIFECYCLE COMPLETE");
         info!("{}", "=".repeat(80));
-        
+
         Ok(())
     }
 
@@ -1430,14 +1525,17 @@ impl ViperCoreEngine {
     ) -> Result<String> {
         let format_suffix = match storage_format {
             VectorStorageFormat::Dense => "dense",
-            VectorStorageFormat::Sparse => "sparse", 
+            VectorStorageFormat::Sparse => "sparse",
             VectorStorageFormat::Adaptive => "adaptive",
             VectorStorageFormat::ProductQuantized { .. } => "pq",
             VectorStorageFormat::ScalarQuantized { .. } => "sq",
             VectorStorageFormat::BinaryQuantized => "bq",
             VectorStorageFormat::HybridQuantized { .. } => "hybrid",
         };
-        Ok(format!("/data/viper/{}/{}.parquet", cluster_id, format_suffix))
+        Ok(format!(
+            "/data/viper/{}/{}.parquet",
+            cluster_id, format_suffix
+        ))
     }
 
     async fn predict_relevant_clusters(
@@ -1480,7 +1578,8 @@ impl ViperCoreEngine {
     ) -> Result<()> {
         let mut collections = self.collections.write().await;
         if let Some(metadata) = collections.get_mut(collection_id) {
-            metadata.vector_count = (metadata.vector_count as i64 + vector_count_delta).max(0) as usize;
+            metadata.vector_count =
+                (metadata.vector_count as i64 + vector_count_delta).max(0) as usize;
             if metadata.dimension == 0 {
                 metadata.dimension = vector_dimension;
             }
@@ -1607,82 +1706,101 @@ impl ParquetWriter for DefaultParquetWriter {
         let flush_start = std::time::Instant::now();
         let num_rows = batch.num_rows();
         let estimated_size_mb = (num_rows * 384 * 4) as f64 / 1024.0 / 1024.0; // 384d float32 vectors
-        
-        tracing::info!("🗄️ [VIPER FLUSH] Starting REAL Parquet write: {} rows (~{:.1}MB) to {}", 
-                      num_rows, estimated_size_mb, path);
-        
+
+        tracing::info!(
+            "🗄️ [VIPER FLUSH] Starting REAL Parquet write: {} rows (~{:.1}MB) to {}",
+            num_rows,
+            estimated_size_mb,
+            path
+        );
+
         // REAL PARQUET IMPLEMENTATION (not simulation)
-        
+
         use std::fs::File;
-        
+
         // Ensure directory exists
         if let Some(parent) = std::path::Path::new(path).parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to create directory: {}", e))?;
         }
-        
+
         // Create Parquet file writer
         let file = File::create(path)
             .map_err(|e| anyhow::anyhow!("Failed to create Parquet file {}: {}", path, e))?;
-        
+
         // Get schema from the RecordBatch
         let schema = batch.schema();
-        
-        tracing::debug!("🗄️ [VIPER SCHEMA] Writing Parquet with {} columns: {:?}", 
-                       schema.fields().len(), 
-                       schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>());
-        
+
+        tracing::debug!(
+            "🗄️ [VIPER SCHEMA] Writing Parquet with {} columns: {:?}",
+            schema.fields().len(),
+            schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>()
+        );
+
         // Write the actual Parquet file using Arrow
         use parquet::arrow::arrow_writer::ArrowWriter;
         use parquet::file::properties::WriterProperties;
-        
+
         // Configure Parquet compression and optimization
         let props = WriterProperties::builder()
             .set_compression(parquet::basic::Compression::UNCOMPRESSED) // Use uncompressed for compatibility
             .set_write_batch_size(1024) // Optimize batch size
             .build();
-        
+
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
             .map_err(|e| anyhow::anyhow!("Failed to create Parquet writer: {}", e))?;
-        
+
         // Write the RecordBatch to Parquet
-        writer.write(&batch)
+        writer
+            .write(&batch)
             .map_err(|e| anyhow::anyhow!("Failed to write RecordBatch to Parquet: {}", e))?;
-        
+
         // Close the writer to finalize the file
-        writer.close()
+        writer
+            .close()
             .map_err(|e| anyhow::anyhow!("Failed to close Parquet writer: {}", e))?;
-        
+
         // Verify file was written
-        let written_size = tokio::fs::metadata(path).await
+        let written_size = tokio::fs::metadata(path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get file metadata: {}", e))?
             .len();
-        
+
         let total_time = flush_start.elapsed();
         let throughput = num_rows as f64 / total_time.as_secs_f64();
         let mb_per_sec = (written_size as f64 / 1024.0 / 1024.0) / total_time.as_secs_f64();
-        
+
         tracing::info!("⚡ [VIPER FLUSH COMPLETE] {} rows written to {} ({:.1}KB) in {:?} ({:.0} rows/sec, {:.1}MB/sec)", 
                       num_rows, path, written_size / 1024, total_time, throughput, mb_per_sec);
-        
+
         // PERFORMANCE WARNINGS for VIPER flush
-        if total_time.as_millis() > 200 { // >200ms is slow for VIPER
-            tracing::warn!("⚠️ SLOW VIPER FLUSH: {}ms for {} rows. Consider:", total_time.as_millis(), num_rows);
+        if total_time.as_millis() > 200 {
+            // >200ms is slow for VIPER
+            tracing::warn!(
+                "⚠️ SLOW VIPER FLUSH: {}ms for {} rows. Consider:",
+                total_time.as_millis(),
+                num_rows
+            );
             tracing::warn!("   • Optimizing Parquet compression settings");
             tracing::warn!("   • Using faster storage (NVMe SSD)");
             tracing::warn!("   • Reducing batch size for more frequent smaller flushes");
         }
-        
-        if throughput < 5000.0 { // <5K rows/sec is concerning for VIPER
-            tracing::warn!("⚠️ VIPER THROUGHPUT WARNING: {:.0} rows/sec below target 5K/sec", throughput);
+
+        if throughput < 5000.0 {
+            // <5K rows/sec is concerning for VIPER
+            tracing::warn!(
+                "⚠️ VIPER THROUGHPUT WARNING: {:.0} rows/sec below target 5K/sec",
+                throughput
+            );
         }
-        
+
         // COMPACTION TRIGGER: Check if we need to merge small files
         if let Some(parent_dir) = std::path::Path::new(path).parent() {
             if let Ok(entries) = tokio::fs::read_dir(parent_dir).await {
                 let mut file_count = 0;
                 let mut total_size = 0u64;
-                
+
                 let mut entries = entries;
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     if let Some(ext) = entry.path().extension() {
@@ -1694,18 +1812,18 @@ impl ParquetWriter for DefaultParquetWriter {
                         }
                     }
                 }
-                
+
                 // COMPACTION THRESHOLD: >10 files or >50MB total
                 if file_count > 10 || total_size > 50 * 1024 * 1024 {
                     tracing::info!("🗜️ [VIPER COMPACTION TRIGGER] {} Parquet files ({:.1}MB) - compaction needed", 
                                   file_count, total_size as f64 / 1024.0 / 1024.0);
-                    
+
                     // TODO: Implement actual Parquet file compaction/merging
                     // For now, just log the trigger
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1784,35 +1902,57 @@ impl crate::storage::traits::UnifiedStorageEngine for ViperCoreEngine {
     // =============================================================================
     // REQUIRED ABSTRACT METHODS
     // =============================================================================
-    
+
     fn engine_name(&self) -> &'static str {
         "VIPER"
     }
-    
+
     fn engine_version(&self) -> &'static str {
         "1.0.0"
     }
-    
+
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
         crate::storage::traits::StorageEngineStrategy::Viper
     }
-    
-    fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
         &self.filesystem
     }
-    
+
     /// Core flush operation using proper staging pattern
-    async fn do_flush(&self, params: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult> {
+    async fn do_flush(
+        &self,
+        params: &crate::storage::traits::FlushParameters,
+    ) -> Result<crate::storage::traits::FlushResult> {
         info!("🔄 VIPER: Starting do_flush operation with staging pattern");
-        
-        let collection_id = params.collection_id.as_ref()
+        info!(
+            "🔍 VIPER: Flush params - force: {}, synchronous: {}, vector_records_len: {}, batch_ids: {}",
+            params.force,
+            params.synchronous,
+            params.vector_records.len(),
+            params.batch_ids.len()
+        );
+
+        let collection_id = params
+            .collection_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER flush"))?;
-        
+
+        info!(
+            "🔍 VIPER: Processing flush for collection: {}",
+            collection_id
+        );
+
         let operation_id = uuid::Uuid::new_v4().to_string();
         let vector_records = &params.vector_records;
-        
+
         if vector_records.is_empty() {
-            info!("📋 VIPER: No vector records provided for collection {}", collection_id);
+            info!(
+                "📋 VIPER: No vector records provided for collection {}",
+                collection_id
+            );
             return Ok(crate::storage::traits::FlushResult {
                 success: true,
                 collections_affected: vec![collection_id.clone()],
@@ -1822,81 +1962,202 @@ impl crate::storage::traits::UnifiedStorageEngine for ViperCoreEngine {
                 duration_ms: 0,
                 completed_at: chrono::Utc::now(),
                 compaction_triggered: false,
+                flushed_batch_ids: Vec::new(), // ✅ Empty for empty flush
                 engine_metrics: {
                     let mut metrics = std::collections::HashMap::new();
-                    metrics.insert("operation_id".to_string(), serde_json::Value::String(operation_id.clone()));
+                    metrics.insert(
+                        "operation_id".to_string(),
+                        serde_json::Value::String(operation_id.clone()),
+                    );
                     metrics.insert("empty_flush".to_string(), serde_json::Value::Bool(true));
                     metrics
                 },
             });
         }
-        
-        info!("💾 VIPER: Processing {} vector records for flush", vector_records.len());
-        
+
+        info!(
+            "💾 VIPER: Processing {} vector records for flush",
+            vector_records.len()
+        );
+
         // Step 1: Ensure __flush staging directory exists
-        let staging_dir = self.ensure_staging_directory(collection_id, "__flush").await
-            .context("Failed to create __flush staging directory")?;
-        
+        info!(
+            "🔄 VIPER: Step 1 - Creating staging directory for collection {}",
+            collection_id
+        );
+        let staging_dir = match self
+            .ensure_staging_directory(collection_id, "__flush")
+            .await
+        {
+            Ok(dir) => {
+                info!("✅ VIPER: Step 1 - Staging directory created: {}", dir);
+                dir
+            }
+            Err(e) => {
+                error!(
+                    "❌ VIPER: Step 1 - Failed to create staging directory: {}",
+                    e
+                );
+                return Err(e.context("Failed to create __flush staging directory"));
+            }
+        };
+
         // Step 2: Serialize vector records to Parquet format
-        let parquet_data = self.serialize_records_to_parquet(vector_records, collection_id).await
-            .context("Failed to serialize records to Parquet")?;
-        
-        info!("📦 VIPER: Serialized {} vector records to {} bytes of Parquet data", 
-              vector_records.len(), parquet_data.len());
-        
+        info!(
+            "🔄 VIPER: Step 2 - Serializing {} vector records to Parquet",
+            vector_records.len()
+        );
+        let parquet_data = match self
+            .serialize_records_to_parquet(vector_records, collection_id)
+            .await
+        {
+            Ok(data) => {
+                info!(
+                    "✅ VIPER: Step 2 - Serialized {} vector records to {} bytes of Parquet data",
+                    vector_records.len(),
+                    data.len()
+                );
+                data
+            }
+            Err(e) => {
+                error!(
+                    "❌ VIPER: Step 2 - Failed to serialize records to Parquet: {}",
+                    e
+                );
+                return Err(e.context("Failed to serialize records to Parquet"));
+            }
+        };
+
         // Step 3: Write Parquet data to __flush staging directory
         let parquet_filename = format!("partition_{}.parquet", operation_id);
-        let staging_file_path = self.write_to_staging(&staging_dir, &parquet_filename, &parquet_data).await
-            .context("Failed to write Parquet data to staging")?;
-        
+        info!(
+            "🔄 VIPER: Step 3 - Writing Parquet to staging: {}",
+            parquet_filename
+        );
+        let staging_file_path = match self
+            .write_to_staging(&staging_dir, &parquet_filename, &parquet_data)
+            .await
+        {
+            Ok(path) => {
+                info!("✅ VIPER: Step 3 - Written to staging: {}", path);
+                path
+            }
+            Err(e) => {
+                error!("❌ VIPER: Step 3 - Failed to write to staging: {}", e);
+                return Err(e.context("Failed to write Parquet data to staging"));
+            }
+        };
+
         // Step 4: Determine final storage location (vectors subdirectory)
-        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        info!("🔄 VIPER: Step 4 - Determining final storage location");
+        let collection_storage_url = match self.get_collection_storage_url(collection_id).await {
+            Ok(url) => {
+                info!("✅ VIPER: Step 4 - Collection storage URL: {}", url);
+                url
+            }
+            Err(e) => {
+                error!(
+                    "❌ VIPER: Step 4 - Failed to get collection storage URL: {}",
+                    e
+                );
+                return Err(e);
+            }
+        };
         let final_storage_path = format!("{}/vectors/{}", collection_storage_url, parquet_filename);
-        
+        info!(
+            "🔍 VIPER: Step 4 - Final storage path: {}",
+            final_storage_path
+        );
+
         // Step 5: Atomically move from staging to final location
-        self.atomic_move_from_staging(&staging_file_path, &final_storage_path).await
-            .context("Failed to atomically move Parquet file from staging to storage")?;
-        
+        info!(
+            "🔄 VIPER: Step 5 - Atomic move from {} to {}",
+            staging_file_path, final_storage_path
+        );
+        match self
+            .atomic_move_from_staging(&staging_file_path, &final_storage_path)
+            .await
+        {
+            Ok(()) => {
+                info!("✅ VIPER: Step 5 - Atomic move completed successfully");
+            }
+            Err(e) => {
+                error!("❌ VIPER: Step 5 - Failed atomic move: {}", e);
+                return Err(
+                    e.context("Failed to atomically move Parquet file from staging to storage")
+                );
+            }
+        };
+
         // Step 6: Cleanup staging directory
         self.cleanup_staging_directory(&staging_dir).await.ok(); // Don't fail on cleanup errors
-        
+
         // Step 7: Check if compaction is needed (trigger if > 2 files)
-        let compaction_triggered = self.check_and_trigger_compaction(collection_id).await
+        let compaction_triggered = self
+            .check_and_trigger_compaction(collection_id)
+            .await
             .unwrap_or_else(|e| {
-                warn!("🗜️ VIPER: Failed to check compaction for collection {}: {}", collection_id, e);
+                warn!(
+                    "🗜️ VIPER: Failed to check compaction for collection {}: {}",
+                    collection_id, e
+                );
                 false
             });
-        
-        // Step 8: Return successful flush result
+
+        // Step 8: Return successful flush result with BatchId coordination
         Ok(crate::storage::traits::FlushResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
             entries_flushed: vector_records.len() as u64,
             bytes_written: parquet_data.len() as u64,
             files_created: 1,
-            duration_ms: 0,  // Will be set by high-level flush() method
+            duration_ms: 0, // Will be set by high-level flush() method
             completed_at: chrono::Utc::now(),
+            flushed_batch_ids: params.batch_ids.clone(), // ✅ Include for WAL cleanup
             engine_metrics: {
                 let mut metrics = std::collections::HashMap::new();
-                metrics.insert("operation_id".to_string(), serde_json::Value::String(operation_id));
-                metrics.insert("vector_records_count".to_string(), serde_json::Value::Number(serde_json::Number::from(vector_records.len())));
-                metrics.insert("parquet_size_bytes".to_string(), serde_json::Value::Number(serde_json::Number::from(parquet_data.len())));
-                metrics.insert("staging_dir".to_string(), serde_json::Value::String(staging_dir));
-                metrics.insert("final_storage_path".to_string(), serde_json::Value::String(final_storage_path));
-                metrics.insert("compaction_triggered".to_string(), serde_json::Value::Bool(compaction_triggered));
+                metrics.insert(
+                    "operation_id".to_string(),
+                    serde_json::Value::String(operation_id),
+                );
+                metrics.insert(
+                    "vector_records_count".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(vector_records.len())),
+                );
+                metrics.insert(
+                    "parquet_size_bytes".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(parquet_data.len())),
+                );
+                metrics.insert(
+                    "staging_dir".to_string(),
+                    serde_json::Value::String(staging_dir),
+                );
+                metrics.insert(
+                    "final_storage_path".to_string(),
+                    serde_json::Value::String(final_storage_path),
+                );
+                metrics.insert(
+                    "compaction_triggered".to_string(),
+                    serde_json::Value::Bool(compaction_triggered),
+                );
                 metrics
             },
             compaction_triggered,
         })
     }
-    
+
     /// Perform compaction on stored data
-    async fn do_compact(&self, params: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> {
+    async fn do_compact(
+        &self,
+        params: &crate::storage::traits::CompactionParameters,
+    ) -> Result<crate::storage::traits::CompactionResult> {
         self.do_compact_internal(params).await
     }
-    
+
     /// Collect engine-specific metrics
-    async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    async fn collect_engine_metrics(
+        &self,
+    ) -> Result<std::collections::HashMap<String, serde_json::Value>> {
         self.collect_engine_metrics_internal().await
     }
 }
@@ -1907,46 +2168,63 @@ impl ViperCoreEngine {
     async fn check_and_trigger_compaction(&self, collection_id: &str) -> Result<bool> {
         let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
         let vectors_path = format!("{}/vectors", collection_storage_url);
-        
+
         // Count existing parquet files
-        let fs = self.filesystem.get_filesystem("file://")
+        let fs = self
+            .filesystem
+            .get_filesystem("file://")
             .context("Failed to get filesystem")?;
-        let files = fs.list(&vectors_path).await
-            .unwrap_or_else(|_| Vec::new());
-        
-        let parquet_files: Vec<_> = files.into_iter()
+        let files = fs.list(&vectors_path).await.unwrap_or_else(|_| Vec::new());
+
+        let parquet_files: Vec<_> = files
+            .into_iter()
             .filter(|f| f.name.ends_with(".parquet"))
             .collect();
-            
+
         let file_count = parquet_files.len();
-        
-        info!("🗜️ VIPER: Collection {} has {} parquet files", collection_id, file_count);
-        
+
+        info!(
+            "🗜️ VIPER: Collection {} has {} parquet files",
+            collection_id, file_count
+        );
+
         // TEMPORARILY DISABLED: Compaction is broken due to unimplemented Parquet parser
         // Focus on preventing file creation through proper flush thresholds instead
-        if file_count > 1000 && false {  // Disabled until parse_parquet_to_records is implemented
+        if file_count > 1000 && false {
+            // Disabled until parse_parquet_to_records is implemented
             info!("🗜️ VIPER: Would trigger compaction for collection {} ({} files > 1000) but DISABLED", 
                   collection_id, file_count);
-            
+
             // Execute compaction in background to avoid blocking flush
             let mut hints = std::collections::HashMap::new();
-            hints.insert("target_file_size_mb".to_string(), serde_json::Value::Number(64.into()));
-            hints.insert("max_files_to_compact".to_string(), serde_json::Value::Number(file_count.into()));
-            
+            hints.insert(
+                "target_file_size_mb".to_string(),
+                serde_json::Value::Number(64.into()),
+            );
+            hints.insert(
+                "max_files_to_compact".to_string(),
+                serde_json::Value::Number(file_count.into()),
+            );
+
             let compaction_params = crate::storage::traits::CompactionParameters {
                 collection_id: Some(collection_id.to_string()),
                 hints,
                 ..Default::default()
             };
-            
+
             match self.do_compact_internal(&compaction_params).await {
                 Ok(result) => {
-                    info!("🗜️ VIPER: Compaction completed for collection {}: {} entries processed", 
-                          collection_id, result.entries_processed);
+                    info!(
+                        "🗜️ VIPER: Compaction completed for collection {}: {} entries processed",
+                        collection_id, result.entries_processed
+                    );
                     Ok(true)
                 }
                 Err(e) => {
-                    warn!("🗜️ VIPER: Compaction failed for collection {}: {}", collection_id, e);
+                    warn!(
+                        "🗜️ VIPER: Compaction failed for collection {}: {}",
+                        collection_id, e
+                    );
                     Ok(false) // Don't fail the flush if compaction fails
                 }
             }
@@ -1954,30 +2232,40 @@ impl ViperCoreEngine {
             Ok(false)
         }
     }
-    
+
     /// Core compaction operation that merges multiple Parquet files into fewer files  
-    async fn do_compact_internal(&self, params: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> {
+    async fn do_compact_internal(
+        &self,
+        params: &crate::storage::traits::CompactionParameters,
+    ) -> Result<crate::storage::traits::CompactionResult> {
         info!("🗜️ VIPER: Starting do_compact operation");
-        
-        let collection_id = params.collection_id.as_ref()
+
+        let collection_id = params
+            .collection_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction"))?;
-        
+
         let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
         let vectors_path = format!("{}/vectors", collection_storage_url);
-        
+
         // List all parquet files
-        let fs = self.filesystem.get_filesystem("file://")
+        let fs = self
+            .filesystem
+            .get_filesystem("file://")
             .context("Failed to get filesystem")?;
-        let files = fs.list(&vectors_path).await
-            .unwrap_or_else(|_| Vec::new());
-        
-        let mut parquet_files: Vec<_> = files.into_iter()
+        let files = fs.list(&vectors_path).await.unwrap_or_else(|_| Vec::new());
+
+        let mut parquet_files: Vec<_> = files
+            .into_iter()
             .filter(|f| f.name.ends_with(".parquet"))
             .map(|f| f.name)
             .collect();
-        
+
         if parquet_files.len() <= 2 {
-            info!("🗜️ VIPER: No compaction needed - only {} files", parquet_files.len());
+            info!(
+                "🗜️ VIPER: No compaction needed - only {} files",
+                parquet_files.len()
+            );
             return Ok(crate::storage::traits::CompactionResult {
                 success: true,
                 collections_affected: vec![collection_id.clone()],
@@ -1992,22 +2280,26 @@ impl ViperCoreEngine {
                 engine_metrics: std::collections::HashMap::new(),
             });
         }
-        
+
         // Sort files by name for deterministic processing
         parquet_files.sort();
-        
-        info!("🗜️ VIPER: Compacting {} files for collection {}", parquet_files.len(), collection_id);
-        
+
+        info!(
+            "🗜️ VIPER: Compacting {} files for collection {}",
+            parquet_files.len(),
+            collection_id
+        );
+
         // Read all vector records from existing files
         let mut all_records = Vec::new();
         let mut total_bytes_read = 0u64;
-        
+
         for file_name in &parquet_files {
             let file_path = format!("{}/{}", vectors_path, file_name);
             match self.filesystem.read(&file_path).await {
                 Ok(file_data) => {
                     total_bytes_read += file_data.len() as u64;
-                    
+
                     // Parse Parquet file to extract vector records
                     match self.parse_parquet_to_records(&file_data).await {
                         Ok(records) => {
@@ -2025,7 +2317,7 @@ impl ViperCoreEngine {
                 }
             }
         }
-        
+
         if all_records.is_empty() {
             return Ok(crate::storage::traits::CompactionResult {
                 success: false,
@@ -2041,25 +2333,35 @@ impl ViperCoreEngine {
                 engine_metrics: std::collections::HashMap::new(),
             });
         }
-        
+
         // Remove duplicates (keep latest version) and sort
         all_records.sort_by(|a, b| a.id.cmp(&b.id).then(b.updated_at.cmp(&a.updated_at)));
         all_records.dedup_by(|a, b| a.id == b.id);
-        
-        info!("🗜️ VIPER: Deduplicating resulted in {} unique records", all_records.len());
-        
+
+        info!(
+            "🗜️ VIPER: Deduplicating resulted in {} unique records",
+            all_records.len()
+        );
+
         // Create compacted file
-        let compacted_data = self.serialize_records_to_parquet(&all_records, collection_id).await
+        let compacted_data = self
+            .serialize_records_to_parquet(&all_records, collection_id)
+            .await
             .context("Failed to serialize compacted records")?;
-        
+
         let compacted_filename = format!("compacted_{}.parquet", uuid::Uuid::new_v4());
-        let staging_dir = self.ensure_staging_directory(collection_id, "__compaction").await?;
-        let staging_path = self.write_to_staging(&staging_dir, &compacted_filename, &compacted_data).await?;
-        
+        let staging_dir = self
+            .ensure_staging_directory(collection_id, "__compaction")
+            .await?;
+        let staging_path = self
+            .write_to_staging(&staging_dir, &compacted_filename, &compacted_data)
+            .await?;
+
         let final_path = format!("{}/{}", vectors_path, compacted_filename);
-        self.atomic_move_from_staging(&staging_path, &final_path).await
+        self.atomic_move_from_staging(&staging_path, &final_path)
+            .await
             .context("Failed to move compacted file to final location")?;
-        
+
         // Delete old files
         for file_name in &parquet_files {
             let file_path = format!("{}/{}", vectors_path, file_name);
@@ -2067,13 +2369,16 @@ impl ViperCoreEngine {
                 warn!("🗜️ VIPER: Failed to delete old file {}: {}", file_name, e);
             }
         }
-        
+
         // Cleanup staging
         self.cleanup_staging_directory(&staging_dir).await.ok();
-        
-        info!("🗜️ VIPER: Compaction completed: {} files → 1 file, {} records", 
-              parquet_files.len(), all_records.len());
-        
+
+        info!(
+            "🗜️ VIPER: Compaction completed: {} files → 1 file, {} records",
+            parquet_files.len(),
+            all_records.len()
+        );
+
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
@@ -2083,14 +2388,17 @@ impl ViperCoreEngine {
             bytes_written: compacted_data.len() as u64,
             input_files: parquet_files.len() as u64,
             output_files: 1,
-            duration_ms: 0,        // Will be set by high-level compact() method
+            duration_ms: 0, // Will be set by high-level compact() method
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
         })
     }
-    
+
     /// Parse Parquet binary data back to VectorRecord objects
-    async fn parse_parquet_to_records(&self, parquet_data: &[u8]) -> Result<Vec<crate::core::VectorRecord>> {
+    async fn parse_parquet_to_records(
+        &self,
+        parquet_data: &[u8],
+    ) -> Result<Vec<crate::core::VectorRecord>> {
         // CRITICAL FIX: Since Parquet parsing is complex and not implemented,
         // we'll take a different approach - prevent excessive file creation
         // by only allowing compaction when we have a reasonable number of files
@@ -2099,41 +2407,64 @@ impl ViperCoreEngine {
         warn!("🚧 Focus on preventing file creation through proper flush thresholds");
         Ok(Vec::new())
     }
-    
+
     /// Collect engine-specific metrics for internal monitoring  
-    async fn collect_engine_metrics_internal(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    async fn collect_engine_metrics_internal(
+        &self,
+    ) -> Result<std::collections::HashMap<String, serde_json::Value>> {
         let stats = self.stats.read().await;
         let mut metrics = std::collections::HashMap::new();
-        
-        metrics.insert("internal_operations".to_string(), serde_json::Value::Number(serde_json::Number::from(stats.total_operations)));
-        metrics.insert("internal_memory_usage".to_string(), serde_json::Value::Number(serde_json::Number::from(stats.total_storage_size_bytes / 10)));
-        metrics.insert("internal_collections".to_string(), serde_json::Value::Number(serde_json::Number::from(self.collections.read().await.len() as u64)));
-        
+
+        metrics.insert(
+            "internal_operations".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(stats.total_operations)),
+        );
+        metrics.insert(
+            "internal_memory_usage".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(
+                stats.total_storage_size_bytes / 10,
+            )),
+        );
+        metrics.insert(
+            "internal_collections".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(
+                self.collections.read().await.len() as u64,
+            )),
+        );
+
         Ok(metrics)
     }
-    
-    
+
     /// Get engine statistics
     async fn get_engine_stats(&self) -> Result<crate::storage::traits::EngineStatistics> {
         let stats = self.stats.read().await;
         let mut engine_specific = std::collections::HashMap::new();
-        engine_specific.insert("total_operations".to_string(), serde_json::Value::Number(serde_json::Number::from(stats.total_operations)));
-        engine_specific.insert("avg_compression_ratio".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(stats.avg_compression_ratio as f64).unwrap_or(serde_json::Number::from(0))));
-        
+        engine_specific.insert(
+            "total_operations".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(stats.total_operations)),
+        );
+        engine_specific.insert(
+            "avg_compression_ratio".to_string(),
+            serde_json::Value::Number(
+                serde_json::Number::from_f64(stats.avg_compression_ratio as f64)
+                    .unwrap_or(serde_json::Number::from(0)),
+            ),
+        );
+
         Ok(crate::storage::traits::EngineStatistics {
             engine_name: "VIPER".to_string(),
             engine_version: "1.0.0".to_string(),
             total_storage_bytes: stats.total_storage_size_bytes,
             memory_usage_bytes: stats.total_storage_size_bytes / 10, // Estimate
             collection_count: self.collections.read().await.len(),
-            last_flush: None, // TODO: Track last flush time
+            last_flush: None,      // TODO: Track last flush time
             last_compaction: None, // TODO: Track last compaction time
             pending_flushes: 0,
             pending_compactions: 0,
             engine_specific,
         })
     }
-    
+
     /// Health check for VIPER engine
     async fn health_check(&self) -> Result<crate::storage::traits::EngineHealth> {
         Ok(crate::storage::traits::EngineHealth {
@@ -2145,13 +2476,18 @@ impl ViperCoreEngine {
             warnings: Vec::new(),
             metrics: {
                 let mut metrics = std::collections::HashMap::new();
-                metrics.insert("filesystem_status".to_string(), serde_json::Value::String("healthy".to_string()));
-                metrics.insert("atomic_coordinator_status".to_string(), serde_json::Value::String("healthy".to_string()));
+                metrics.insert(
+                    "filesystem_status".to_string(),
+                    serde_json::Value::String("healthy".to_string()),
+                );
+                metrics.insert(
+                    "atomic_coordinator_status".to_string(),
+                    serde_json::Value::String("healthy".to_string()),
+                );
                 metrics
             },
         })
     }
-
 }
 
 // #[async_trait::async_trait]
@@ -2159,7 +2495,7 @@ impl ViperCoreEngine {
 //     fn engine_name(&self) -> &'static str {
 //         "VIPER"
 //     }
-//     
+//
 //     fn capabilities(&self) -> StorageCapabilities {
 //         StorageCapabilities {
 //             supports_transactions: true,
@@ -2186,38 +2522,38 @@ impl ViperCoreEngine {
 // and needs to be properly adapted to work with the new module structure
 /*
         debug!("🔥 VIPER executing operation: {:?}", std::mem::discriminant(&operation));
-        
+
         match operation {
             VectorOperation::Insert { record, index_immediately } => {
                 self.insert_vector(record.clone()).await?;
-                
+
                 if index_immediately {
                     // TODO: Trigger immediate indexing
                     debug!("🔥 VIPER: Immediate indexing requested for vector {}", record.id);
                 }
-                
+
                 Ok(OperationResult::Inserted { vector_id: record.id })
             }
-            
+
             VectorOperation::Update { vector_id, new_vector: _, new_metadata: _ } => {
                 // TODO: Implement vector update
                 debug!("🔄 VIPER: Update operation for vector {}", vector_id);
                 Ok(OperationResult::Updated { vector_id, changes: 1 })
             }
-            
+
             VectorOperation::Delete { vector_id, soft_delete } => {
                 // TODO: Implement vector deletion
                 debug!("🗑️ VIPER: Delete operation for vector {} (soft={})", vector_id, soft_delete);
                 Ok(OperationResult::Deleted { vector_id })
             }
-            
+
             VectorOperation::Search(search_context) => {
                 let results = self.search_vectors(
                     &search_context.collection_id,
                     &search_context.query_vector,
                     search_context.k,
                 ).await?;
-                
+
                 // Convert VIPER SearchResult to SearchResult (using VectorRecord format)
                 let converted_results: Vec<SearchResult> = results.into_iter().map(|r| {
                     SearchResult {
@@ -2229,7 +2565,7 @@ impl ViperCoreEngine {
                 }).collect();
                 Ok(OperationResult::SearchResults(converted_results))
             }
-            
+
             VectorOperation::Get { vector_id, include_vector } => {
                 // TODO: Implement vector retrieval
                 debug!("📝 VIPER: Get operation for vector {} (include_vector={})", vector_id, include_vector);
@@ -2239,13 +2575,13 @@ impl ViperCoreEngine {
                     metadata: Value::Null,
                 })
             }
-            
+
             VectorOperation::Batch { operations, transactional } => {
-                debug!("📦 VIPER: Batch operation with {} operations (transactional={})", 
+                debug!("📦 VIPER: Batch operation with {} operations (transactional={})",
                        operations.len(), transactional);
-                
+
                 let mut results = Vec::new();
-                
+
                 if transactional {
                     // TODO: Implement transactional batch operations
                     for operation in operations {
@@ -2265,16 +2601,16 @@ impl ViperCoreEngine {
                         }
                     }
                 }
-                
+
                 Ok(OperationResult::BatchResults(results))
             }
         }
     }
-    
+
     async fn get_statistics(&self) -> anyhow::Result<StorageStatistics> {
         let stats = self.get_statistics().await;
         let collections = self.collections.read().await;
-        
+
         Ok(StorageStatistics {
             total_vectors: stats.insert_operations as usize,
             total_collections: collections.len(),
@@ -2286,7 +2622,7 @@ impl ViperCoreEngine {
             last_compaction: None, // TODO: Track compaction timestamps
         })
     }
-    
+
     async fn health_check(&self) -> anyhow::Result<HealthStatus> {
         // TODO: Implement comprehensive health check
         Ok(HealthStatus {
@@ -2310,9 +2646,10 @@ impl ViperCoreEngine {
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
         let metadata_opt = self.get_collection_metadata(collection_id).await?;
-        
-        let metadata = metadata_opt.ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
-        
+
+        let metadata = metadata_opt
+            .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
+
         info!(
             "🔍 VIPER: Server-side metadata filtering on collection {} with {} filterable columns",
             collection_id,
@@ -2320,7 +2657,7 @@ impl ViperCoreEngine {
         );
 
         // Analyze which filters can be pushed down to Parquet level
-        let (pushdown_filters, client_filters) = 
+        let (pushdown_filters, client_filters) =
             self.analyze_filter_pushdown(&metadata, filters).await?;
 
         info!(
@@ -2330,11 +2667,9 @@ impl ViperCoreEngine {
         );
 
         // Execute Parquet-level filtering (simulated for now)
-        let mut results = self.execute_parquet_filters(
-            collection_id,
-            &pushdown_filters,
-            limit
-        ).await?;
+        let mut results = self
+            .execute_parquet_filters(collection_id, &pushdown_filters, limit)
+            .await?;
 
         // Apply remaining client-side filters
         if !client_filters.is_empty() {
@@ -2388,26 +2723,26 @@ impl ViperCoreEngine {
                     match condition {
                         FieldCondition::Equals(_) | FieldCondition::NotEquals(_) => true,
                         FieldCondition::In(_) | FieldCondition::NotIn(_) => true,
-                        FieldCondition::GreaterThan(_) 
+                        FieldCondition::GreaterThan(_)
                         | FieldCondition::LessThan(_)
                         | FieldCondition::Range { .. } => column.supports_range,
-                        FieldCondition::Contains(_) 
-                        | FieldCondition::StartsWith(_) 
+                        FieldCondition::Contains(_)
+                        | FieldCondition::StartsWith(_)
                         | FieldCondition::EndsWith(_) => {
                             matches!(column.data_type, FilterableDataType::String)
-                        },
+                        }
                         _ => false,
                     }
                 } else {
                     false
                 }
             }
-            MetadataFilter::And(sub_filters) => {
-                sub_filters.iter().all(|f| self.can_pushdown_filter(f, filterable_fields))
-            }
-            MetadataFilter::Or(sub_filters) => {
-                sub_filters.iter().all(|f| self.can_pushdown_filter(f, filterable_fields))
-            }
+            MetadataFilter::And(sub_filters) => sub_filters
+                .iter()
+                .all(|f| self.can_pushdown_filter(f, filterable_fields)),
+            MetadataFilter::Or(sub_filters) => sub_filters
+                .iter()
+                .all(|f| self.can_pushdown_filter(f, filterable_fields)),
             _ => false,
         }
     }
@@ -2419,7 +2754,10 @@ impl ViperCoreEngine {
         filters: &[MetadataFilter],
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
-        info!("🏗️ VIPER: Executing Parquet-level filtering with {} conditions", filters.len());
+        info!(
+            "🏗️ VIPER: Executing Parquet-level filtering with {} conditions",
+            filters.len()
+        );
 
         // Get all clusters for this collection
         let clusters = self.get_all_clusters(collection_id).await?;
@@ -2434,21 +2772,30 @@ impl ViperCoreEngine {
             }
 
             // Simulate Parquet column filtering within each cluster
-            let cluster_results = self.filter_cluster_parquet(
-                &cluster_id,
-                filters,
-                limit.map(|l| l.saturating_sub(all_results.len()))
-            ).await?;
+            let cluster_results = self
+                .filter_cluster_parquet(
+                    &cluster_id,
+                    filters,
+                    limit.map(|l| l.saturating_sub(all_results.len())),
+                )
+                .await?;
 
             total_scanned += cluster_results.len();
             all_results.extend(cluster_results);
 
-            info!("📊 Cluster {} contributed {} results (total: {})", 
-                  cluster_id, total_scanned, all_results.len());
+            info!(
+                "📊 Cluster {} contributed {} results (total: {})",
+                cluster_id,
+                total_scanned,
+                all_results.len()
+            );
         }
 
-        info!("🎯 Parquet filtering scanned {} records, returned {} results", 
-              total_scanned, all_results.len());
+        info!(
+            "🎯 Parquet filtering scanned {} records, returned {} results",
+            total_scanned,
+            all_results.len()
+        );
 
         Ok(all_results)
     }
@@ -2463,13 +2810,17 @@ impl ViperCoreEngine {
         // Simulate efficient Parquet column scanning
         // In a real implementation, this would use Apache Arrow/Parquet
         // to scan only the required columns and apply predicates
-        
-        debug!("🔍 Scanning cluster {} with Parquet column filters", cluster_id);
-        
+
+        debug!(
+            "🔍 Scanning cluster {} with Parquet column filters",
+            cluster_id
+        );
+
         // For testing, return some mock results that match common filters
         let mut mock_results = Vec::new();
-        
-        for i in 0..10 { // Simulate finding 10 matching records per cluster
+
+        for i in 0..10 {
+            // Simulate finding 10 matching records per cluster
             if let Some(limit) = limit {
                 if mock_results.len() >= limit {
                     break;
@@ -2484,10 +2835,22 @@ impl ViperCoreEngine {
                 metadata: [
                     ("category".to_string(), Value::String("AI".to_string())),
                     ("author".to_string(), Value::String("Dr. Smith".to_string())),
-                    ("doc_type".to_string(), Value::String("research_paper".to_string())),
+                    (
+                        "doc_type".to_string(),
+                        Value::String("research_paper".to_string()),
+                    ),
                     ("year".to_string(), Value::String("2023".to_string())),
-                    ("text".to_string(), Value::String(format!("Parquet-filtered document {} from cluster {}", i, cluster_id))),
-                ].iter().cloned().collect(),
+                    (
+                        "text".to_string(),
+                        Value::String(format!(
+                            "Parquet-filtered document {} from cluster {}",
+                            i, cluster_id
+                        )),
+                    ),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
                 timestamp: now,
                 created_at: now,
                 updated_at: now,
@@ -2504,7 +2867,11 @@ impl ViperCoreEngine {
             }
         }
 
-        debug!("✅ Cluster {} returned {} filtered results", cluster_id, mock_results.len());
+        debug!(
+            "✅ Cluster {} returned {} filtered results",
+            cluster_id,
+            mock_results.len()
+        );
         Ok(mock_results)
     }
 
@@ -2514,19 +2881,30 @@ impl ViperCoreEngine {
         mut records: Vec<VectorRecord>,
         filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
-        info!("🎛️ Applying {} client-side filters to {} records", filters.len(), records.len());
+        info!(
+            "🎛️ Applying {} client-side filters to {} records",
+            filters.len(),
+            records.len()
+        );
 
         records.retain(|record| {
-            filters.iter().all(|filter| self.matches_filters(record, &[filter.clone()]))
+            filters
+                .iter()
+                .all(|filter| self.matches_filters(record, &[filter.clone()]))
         });
 
-        info!("✅ Client-side filtering retained {} records", records.len());
+        info!(
+            "✅ Client-side filtering retained {} records",
+            records.len()
+        );
         Ok(records)
     }
 
     /// Check if a record matches the given filters
     fn matches_filters(&self, record: &VectorRecord, filters: &[MetadataFilter]) -> bool {
-        filters.iter().all(|filter| self.matches_single_filter(record, filter))
+        filters
+            .iter()
+            .all(|filter| self.matches_single_filter(record, filter))
     }
 
     /// Check if a record matches a single filter
@@ -2539,15 +2917,13 @@ impl ViperCoreEngine {
                     false
                 }
             }
-            MetadataFilter::And(sub_filters) => {
-                sub_filters.iter().all(|f| self.matches_single_filter(record, f))
-            }
-            MetadataFilter::Or(sub_filters) => {
-                sub_filters.iter().any(|f| self.matches_single_filter(record, f))
-            }
-            MetadataFilter::Not(sub_filter) => {
-                !self.matches_single_filter(record, sub_filter)
-            }
+            MetadataFilter::And(sub_filters) => sub_filters
+                .iter()
+                .all(|f| self.matches_single_filter(record, f)),
+            MetadataFilter::Or(sub_filters) => sub_filters
+                .iter()
+                .any(|f| self.matches_single_filter(record, f)),
+            MetadataFilter::Not(sub_filter) => !self.matches_single_filter(record, sub_filter),
         }
     }
 
@@ -2601,101 +2977,163 @@ impl ViperCoreEngine {
         _force_flush: bool,
     ) -> Result<FlushResult> {
         let pipeline_start = std::time::Instant::now();
-        
-        tracing::info!("🔥 VIPER PIPELINE START: Processing {} entries for collection {}", 
-                      memtable_entries.len(), collection_id);
-        
+
+        tracing::info!(
+            "🔥 VIPER PIPELINE START: Processing {} entries for collection {}",
+            memtable_entries.len(),
+            collection_id
+        );
+
         // Stage 1: Vector Record Processing & Metadata Separation
         let preprocessing_start = std::time::Instant::now();
         let mut processed_records = Vec::new();
         for record in &memtable_entries {
-            let processed = self.process_vector_record_for_parquet(&collection_id.to_string(), record).await?;
+            let processed = self
+                .process_vector_record_for_parquet(&collection_id.to_string(), record)
+                .await?;
             processed_records.push(processed);
         }
         let preprocessing_time = preprocessing_start.elapsed().as_millis() as u64;
-        tracing::debug!("📊 VIPER STAGE 1: Preprocessed {} records in {}ms", 
-                       processed_records.len(), preprocessing_time);
-        
+        tracing::debug!(
+            "📊 VIPER STAGE 1: Preprocessed {} records in {}ms",
+            processed_records.len(),
+            preprocessing_time
+        );
+
         // Stage 2: ML-Guided Clustering
         let clustering_start = std::time::Instant::now();
-        let clusters = self.perform_ml_clustering(&processed_records, collection_id).await?;
+        let clusters = self
+            .perform_ml_clustering(&processed_records, collection_id)
+            .await?;
         let clustering_time = clustering_start.elapsed().as_millis() as u64;
-        tracing::debug!("🧠 VIPER STAGE 2: Created {} ML clusters in {}ms", 
-                       clusters.len(), clustering_time);
-        
+        tracing::debug!(
+            "🧠 VIPER STAGE 2: Created {} ML clusters in {}ms",
+            clusters.len(),
+            clustering_time
+        );
+
         // Stage 3: Schema Generation per Cluster
         let schema_start = std::time::Instant::now();
         let cluster_schemas = self.generate_cluster_schemas(&clusters).await?;
         let schema_time = schema_start.elapsed().as_millis() as u64;
-        tracing::debug!("📐 VIPER STAGE 3: Generated {} schemas in {}ms", 
-                       cluster_schemas.len(), schema_time);
-        
+        tracing::debug!(
+            "📐 VIPER STAGE 3: Generated {} schemas in {}ms",
+            cluster_schemas.len(),
+            schema_time
+        );
+
         // Stage 4: Columnar Conversion & Parquet Serialization
         let serialization_start = std::time::Instant::now();
         let mut total_bytes_written = 0u64;
         let mut files_created = 0u64;
         let mut fragments_created = Vec::new();
-        
+
         for (cluster_id, cluster_records) in &clusters {
             if cluster_records.is_empty() {
                 continue;
             }
-            
+
             // Convert to Arrow RecordBatch
-            let record_batch = self.convert_to_record_batch(cluster_records, &cluster_schemas[cluster_id]).await?;
-            
+            let record_batch = self
+                .convert_to_record_batch(cluster_records, &cluster_schemas[cluster_id])
+                .await?;
+
             // Apply quantization if configured for this collection
-            let augmented_batch = if let Some(metadata) = self.collections.read().await.get(collection_id) {
-                if let Some(quantization_level) = &metadata.quantization_level {
-                    self.apply_quantization_to_batch(record_batch, cluster_records, *quantization_level).await?
+            let augmented_batch =
+                if let Some(metadata) = self.collections.read().await.get(collection_id) {
+                    if let Some(quantization_level) = &metadata.quantization_level {
+                        self.apply_quantization_to_batch(
+                            record_batch,
+                            cluster_records,
+                            *quantization_level,
+                        )
+                        .await?
+                    } else {
+                        record_batch
+                    }
                 } else {
                     record_batch
-                }
-            } else {
-                record_batch
-            };
-            
+                };
+
             // Serialize to Parquet with compression (now includes quantized columns)
-            let parquet_data = self.serialize_to_parquet(&augmented_batch, collection_id, cluster_id).await?;
-            
+            let parquet_data = self
+                .serialize_to_parquet(&augmented_batch, collection_id, cluster_id)
+                .await?;
+
             // Stage 5: Fragmented Write to Filesystem
             let fragment_path = self.generate_fragment_path(collection_id, cluster_id).await;
-            let bytes_written = self.write_fragment_to_filesystem(&fragment_path, &parquet_data).await?;
-            
+            let bytes_written = self
+                .write_fragment_to_filesystem(&fragment_path, &parquet_data)
+                .await?;
+
             total_bytes_written += bytes_written;
             files_created += 1;
             fragments_created.push(fragment_path);
-            
-            tracing::debug!("💾 VIPER STAGE 5: Fragment {} written - {} bytes", 
-                           cluster_id, bytes_written);
+
+            tracing::debug!(
+                "💾 VIPER STAGE 5: Fragment {} written - {} bytes",
+                cluster_id,
+                bytes_written
+            );
         }
-        
+
         let serialization_time = serialization_start.elapsed().as_millis() as u64;
-        
+
         // Stage 6: Update Collection & Partition Metadata
         let metadata_start = std::time::Instant::now();
-        self.update_collection_metadata_after_flush(collection_id, &fragments_created, &clusters).await?;
+        self.update_collection_metadata_after_flush(collection_id, &fragments_created, &clusters)
+            .await?;
         let metadata_time = metadata_start.elapsed().as_millis() as u64;
-        
+
         // Stage 7: Notify coordinator of flush completion for AXIS updates
         // This is handled by the service layer via callback pattern
         tracing::debug!("🔄 VIPER: Flush completed, ready for coordinator notification");
-        
+
         let total_pipeline_time = pipeline_start.elapsed().as_millis() as u64;
-        
+
         // Build detailed engine metrics
         let mut engine_metrics = HashMap::new();
-        engine_metrics.insert("preprocessing_time_ms".to_string(), serde_json::Value::Number(preprocessing_time.into()));
-        engine_metrics.insert("ml_clustering_time_ms".to_string(), serde_json::Value::Number(clustering_time.into()));
-        engine_metrics.insert("schema_generation_time_ms".to_string(), serde_json::Value::Number(schema_time.into()));
-        engine_metrics.insert("serialization_time_ms".to_string(), serde_json::Value::Number(serialization_time.into()));
-        engine_metrics.insert("metadata_update_time_ms".to_string(), serde_json::Value::Number(metadata_time.into()));
-        engine_metrics.insert("total_pipeline_time_ms".to_string(), serde_json::Value::Number(total_pipeline_time.into()));
-        engine_metrics.insert("clusters_created".to_string(), serde_json::Value::Number(clusters.len().into()));
-        engine_metrics.insert("fragments_created".to_string(), serde_json::Value::Number(files_created.into()));
-        engine_metrics.insert("compression_algorithm".to_string(), serde_json::Value::String(format!("{:?}", self.config.compression_config.algorithm)));
-        engine_metrics.insert("ml_clustering_enabled".to_string(), serde_json::Value::Bool(self.config.enable_ml_clustering));
-        
+        engine_metrics.insert(
+            "preprocessing_time_ms".to_string(),
+            serde_json::Value::Number(preprocessing_time.into()),
+        );
+        engine_metrics.insert(
+            "ml_clustering_time_ms".to_string(),
+            serde_json::Value::Number(clustering_time.into()),
+        );
+        engine_metrics.insert(
+            "schema_generation_time_ms".to_string(),
+            serde_json::Value::Number(schema_time.into()),
+        );
+        engine_metrics.insert(
+            "serialization_time_ms".to_string(),
+            serde_json::Value::Number(serialization_time.into()),
+        );
+        engine_metrics.insert(
+            "metadata_update_time_ms".to_string(),
+            serde_json::Value::Number(metadata_time.into()),
+        );
+        engine_metrics.insert(
+            "total_pipeline_time_ms".to_string(),
+            serde_json::Value::Number(total_pipeline_time.into()),
+        );
+        engine_metrics.insert(
+            "clusters_created".to_string(),
+            serde_json::Value::Number(clusters.len().into()),
+        );
+        engine_metrics.insert(
+            "fragments_created".to_string(),
+            serde_json::Value::Number(files_created.into()),
+        );
+        engine_metrics.insert(
+            "compression_algorithm".to_string(),
+            serde_json::Value::String(format!("{:?}", self.config.compression_config.algorithm)),
+        );
+        engine_metrics.insert(
+            "ml_clustering_enabled".to_string(),
+            serde_json::Value::Bool(self.config.enable_ml_clustering),
+        );
+
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
@@ -2706,9 +3144,10 @@ impl ViperCoreEngine {
             completed_at: Utc::now(),
             engine_metrics,
             compaction_triggered: files_created > 2, // Trigger compaction if we created more than 2 files
+            flushed_batch_ids: vec![],
         })
     }
-    
+
     /// Extract vector records from memtable hint (simulation)
     async fn extract_vector_records_from_memtable_hint(
         &self,
@@ -2718,15 +3157,19 @@ impl ViperCoreEngine {
         // For now, simulate some records for demonstration
         Ok(vec![])
     }
-    
+
     /// VIPER-specific compaction using ML-driven clustering
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
         let collection_id = params.collection_id.as_deref().unwrap_or("all");
-        
-        tracing::info!("🗜️ VIPER COMPACTION START: Collection {} (force: {}, priority: {:?})", 
-                      collection_id, params.force, params.priority);
-        
+
+        tracing::info!(
+            "🗜️ VIPER COMPACTION START: Collection {} (force: {}, priority: {:?})",
+            collection_id,
+            params.force,
+            params.priority
+        );
+
         let mut result = CompactionResult {
             success: false,
             collections_affected: Vec::new(),
@@ -2740,15 +3183,18 @@ impl ViperCoreEngine {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         };
-        
+
         // VIPER-specific compaction: ML-driven clustering optimization
         if let Some(collection_id) = &params.collection_id {
-            tracing::debug!("🧠 VIPER COMPACTION: Optimizing ML clusters for {}", collection_id);
-            
+            tracing::debug!(
+                "🧠 VIPER COMPACTION: Optimizing ML clusters for {}",
+                collection_id
+            );
+
             let collections = self.collections.read().await;
             if let Some(collection_meta) = collections.get(collection_id) {
                 let cluster_count = collection_meta.total_clusters;
-                
+
                 // VIPER compaction: Re-cluster based on ML models
                 let old_clusters = cluster_count;
                 let optimized_clusters = (cluster_count as f32 * 0.8) as usize; // 20% reduction
@@ -2756,7 +3202,7 @@ impl ViperCoreEngine {
                 let entries_removed = 200; // Outdated/duplicate entries
                 let _bytes_reclaimed = entries_removed * 256;
                 let _files_merged = old_clusters.saturating_sub(optimized_clusters);
-                
+
                 result.collections_affected.push(collection_id.clone());
                 result.entries_processed = entries_processed as u64;
                 result.entries_removed = entries_removed as u64;
@@ -2765,16 +3211,20 @@ impl ViperCoreEngine {
                 result.input_files = old_clusters as u64;
                 result.output_files = optimized_clusters as u64;
                 result.success = true;
-                
-                tracing::info!("✅ VIPER COMPACTION: Collection {} - {} → {} clusters, {} entries removed", 
-                              collection_id, old_clusters, optimized_clusters, entries_removed);
+
+                tracing::info!(
+                    "✅ VIPER COMPACTION: Collection {} - {} → {} clusters, {} entries removed",
+                    collection_id,
+                    old_clusters,
+                    optimized_clusters,
+                    entries_removed
+                );
             }
         }
-        
+
         result.duration_ms = compact_start.elapsed().as_millis() as u64;
         Ok(result)
     }
-    
 }
 
 // =============================================================================
@@ -2789,49 +3239,57 @@ impl ViperCoreEngine {
         collection_id: &str,
     ) -> Result<HashMap<String, Vec<ProcessedVectorRecord>>> {
         let mut clusters = HashMap::new();
-        
+
         if !self.config.enable_ml_clustering || processed_records.is_empty() {
             // Fallback to single cluster
             clusters.insert("cluster_0".to_string(), processed_records.to_vec());
             return Ok(clusters);
         }
-        
+
         // Check if we have an ML model for this collection
         let ml_models = self.ml_models.read().await;
         if let Some(model) = ml_models.get(collection_id) {
             tracing::debug!("🧠 Using ML model {} for clustering", model.model_id);
-            
+
             // Apply ML clustering based on vector similarity
             for (i, record) in processed_records.iter().enumerate() {
                 // Simple clustering based on vector similarity to centroids
-                let cluster_id = self.predict_cluster(&record.vector, &model.cluster_centroids).await;
-                
-                clusters.entry(cluster_id)
+                let cluster_id = self
+                    .predict_cluster(&record.vector, &model.cluster_centroids)
+                    .await;
+
+                clusters
+                    .entry(cluster_id)
                     .or_insert_with(Vec::new)
                     .push(record.clone());
             }
         } else {
             // Create initial clusters using simple k-means approach
             let num_clusters = (processed_records.len() / 100).max(1).min(10); // 1-10 clusters
-            
+
             for (i, record) in processed_records.iter().enumerate() {
                 let cluster_id = format!("cluster_{}", i % num_clusters);
-                clusters.entry(cluster_id)
+                clusters
+                    .entry(cluster_id)
                     .or_insert_with(Vec::new)
                     .push(record.clone());
             }
-            
-            tracing::debug!("🔄 Created {} initial clusters for collection {}", num_clusters, collection_id);
+
+            tracing::debug!(
+                "🔄 Created {} initial clusters for collection {}",
+                num_clusters,
+                collection_id
+            );
         }
-        
+
         Ok(clusters)
     }
-    
+
     /// Predict cluster for a vector using trained model
     async fn predict_cluster(&self, vector: &[f32], centroids: &[Vec<f32>]) -> String {
         let mut best_cluster = 0;
         let mut best_similarity = f32::NEG_INFINITY;
-        
+
         for (i, centroid) in centroids.iter().enumerate() {
             if centroid.len() == vector.len() {
                 let similarity = self.calculate_cosine_similarity(vector, centroid);
@@ -2841,59 +3299,78 @@ impl ViperCoreEngine {
                 }
             }
         }
-        
+
         format!("cluster_{}", best_cluster)
     }
-    
+
     /// Calculate cosine similarity between two vectors
     fn calculate_cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() || a.is_empty() {
             return 0.0;
         }
-        
+
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             return 0.0;
         }
-        
+
         dot_product / (norm_a * norm_b)
     }
-    
+
     /// Generate Arrow schemas for each cluster
     async fn generate_cluster_schemas(
         &self,
         clusters: &HashMap<String, Vec<ProcessedVectorRecord>>,
     ) -> Result<HashMap<String, Arc<Schema>>> {
         let mut schemas = HashMap::new();
-        
+
         for (cluster_id, records) in clusters {
             if records.is_empty() {
                 continue;
             }
-            
+
             // Generate schema based on first record and filterable columns
             let sample_record = &records[0];
             let schema = self.create_arrow_schema_for_cluster(sample_record).await?;
             schemas.insert(cluster_id.clone(), Arc::new(schema));
         }
-        
+
         Ok(schemas)
     }
-    
+
     /// Create Arrow schema for a cluster based on sample record
-    async fn create_arrow_schema_for_cluster(&self, sample_record: &ProcessedVectorRecord) -> Result<Schema> {
+    async fn create_arrow_schema_for_cluster(
+        &self,
+        sample_record: &ProcessedVectorRecord,
+    ) -> Result<Schema> {
         use arrow_schema::{DataType, Field, TimeUnit};
-        
+
         let mut fields = Vec::new();
-        
+
         // Core fields
         fields.push(Field::new("id", DataType::Utf8, false));
-        fields.push(Field::new("vector", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), false));
-        fields.push(Field::new("timestamp", DataType::Timestamp(TimeUnit::Millisecond, None), false));
-        
+        fields.push(Field::new(
+            "vector",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                sample_record.vector.len() as i32,
+            ),
+            false,
+        ));
+        fields.push(Field::new(
+            "timestamp",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ));
+        fields.push(Field::new(
+            "expires_at",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            true, // Optional field
+        ));
+
         // Filterable columns as separate fields
         for (key, value) in &sample_record.filterable_data {
             let data_type = match value {
@@ -2904,26 +3381,126 @@ impl ViperCoreEngine {
             };
             fields.push(Field::new(key, data_type, true));
         }
-        
+
         // Extra metadata as JSON field
         if !sample_record.extra_meta.is_empty() {
             fields.push(Field::new("extra_meta", DataType::Utf8, true)); // JSON string
         }
-        
+
         Ok(Schema::new(fields))
     }
-    
-    /// Convert records to Arrow RecordBatch
+
+    /// Convert records to Arrow RecordBatch for true columnar storage
     async fn convert_to_record_batch(
         &self,
         records: &[ProcessedVectorRecord],
-        _schema: &Schema,
+        schema: &Schema,
     ) -> Result<RecordBatch> {
-        // Placeholder - would implement actual Arrow conversion
-        // This is complex and requires building Arrow arrays for each column
-        Err(anyhow::anyhow!("Arrow RecordBatch conversion not implemented - placeholder"))
+        use arrow_array::*;
+        use arrow_array::types::*;
+        
+        if records.is_empty() {
+            return Err(anyhow::anyhow!("Cannot convert empty records to RecordBatch"));
+        }
+
+        tracing::info!("🔄 ARROW: Converting {} records to columnar RecordBatch", records.len());
+
+        // Extract data for each column
+        let mut ids = Vec::new();
+        let mut vectors = Vec::new();
+        let mut timestamps = Vec::new();
+        let mut expires_ats = Vec::new();
+        let mut extra_metas = Vec::new();
+
+        // Track filterable columns dynamically
+        let mut filterable_columns: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        
+        for record in records {
+            // Core columns
+            ids.push(record.id.clone());
+            vectors.push(record.vector.clone());
+            timestamps.push(record.timestamp);
+            expires_ats.push(record.expires_at);
+            
+            // Extra metadata as JSON string
+            let extra_meta_json = if record.extra_meta.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&record.extra_meta)?)
+            };
+            extra_metas.push(extra_meta_json);
+
+            // Filterable columns
+            for (key, value) in &record.filterable_data {
+                let string_value = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => serde_json::to_string(value)?,
+                };
+                filterable_columns.entry(key.clone()).or_insert_with(Vec::new).push(string_value);
+            }
+        }
+
+        // Create Arrow arrays
+        let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
+
+        // ID column
+        arrays.push(Arc::new(StringArray::from(ids)));
+
+        // Vector column (FixedSizeList of Float32)
+        let vector_dimension = records[0].vector.len();
+        let mut vector_values = Vec::new();
+        for vector in vectors {
+            vector_values.extend(vector);
+        }
+        let float_array = Float32Array::from(vector_values);
+        let vector_list = FixedSizeListArray::try_new(
+            Arc::new(arrow_schema::Field::new("item", arrow_schema::DataType::Float32, false)),
+            vector_dimension as i32,
+            Arc::new(float_array),
+            None,
+        )?;
+        arrays.push(Arc::new(vector_list));
+
+        // Timestamp column
+        let timestamp_array = TimestampMillisecondArray::from(
+            timestamps.into_iter().map(|ts| Some(ts.timestamp_millis())).collect::<Vec<_>>()
+        );
+        arrays.push(Arc::new(timestamp_array));
+
+        // Expires_at column (optional timestamps)
+        let expires_at_array = TimestampMillisecondArray::from(
+            expires_ats.into_iter().map(|opt_ts| opt_ts.map(|ts| ts.timestamp_millis())).collect::<Vec<_>>()
+        );
+        arrays.push(Arc::new(expires_at_array));
+
+        // Filterable columns
+        for field in schema.fields() {
+            if let Some(column_data) = filterable_columns.get(field.name()) {
+                let string_array = StringArray::from(column_data.clone());
+                arrays.push(Arc::new(string_array));
+            }
+        }
+
+        // Extra metadata column
+        if schema.field_with_name("extra_meta").is_ok() {
+            let extra_meta_array = StringArray::from(extra_metas);
+            arrays.push(Arc::new(extra_meta_array));
+        }
+
+        // Create RecordBatch
+        let record_batch = RecordBatch::try_new(Arc::new(schema.clone()), arrays)?;
+        
+        tracing::info!(
+            "✅ ARROW: Created RecordBatch with {} rows, {} columns", 
+            record_batch.num_rows(), 
+            record_batch.num_columns()
+        );
+
+        Ok(record_batch)
     }
-    
+
     /// Serialize RecordBatch to Parquet with VIPER compression settings
     async fn serialize_to_parquet(
         &self,
@@ -2934,7 +3511,7 @@ impl ViperCoreEngine {
         // Simulate Parquet serialization with compression
         let simulated_size = 1024 * 64; // 64KB per fragment
         let mut data = vec![0u8; simulated_size];
-        
+
         // Simulate compression
         let compression_ratio = match self.config.compression_config.algorithm {
             CompressionAlgorithm::Snappy => 2.1,
@@ -2942,31 +3519,40 @@ impl ViperCoreEngine {
             CompressionAlgorithm::Lz4 => 1.9,
             CompressionAlgorithm::Brotli => 3.2,
         };
-        
+
         let compressed_size = (simulated_size as f32 / compression_ratio) as usize;
         data.truncate(compressed_size);
-        
-        tracing::debug!("📦 VIPER PARQUET: Serialized cluster {} → {} bytes (compression: {:.1}x)", 
-                       cluster_id, compressed_size, compression_ratio);
-        
+
+        tracing::debug!(
+            "📦 VIPER PARQUET: Serialized cluster {} → {} bytes (compression: {:.1}x)",
+            cluster_id,
+            compressed_size,
+            compression_ratio
+        );
+
         Ok(data)
     }
-    
+
     /// Generate fragment path for cluster
     async fn generate_fragment_path(&self, collection_id: &str, cluster_id: &str) -> String {
         let timestamp = Utc::now().timestamp();
-        format!("collections/{}/fragments/{}_{}.parquet", collection_id, cluster_id, timestamp)
+        format!(
+            "collections/{}/fragments/{}_{}.parquet",
+            collection_id, cluster_id, timestamp
+        )
     }
-    
+
     /// Write fragment to filesystem
     async fn write_fragment_to_filesystem(&self, path: &str, data: &[u8]) -> Result<u64> {
         // Use filesystem interface to write fragment
-        self.filesystem.write(path, data, None).await
+        self.filesystem
+            .write(path, data, None)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to write fragment {}: {}", path, e))?;
-        
+
         Ok(data.len() as u64)
     }
-    
+
     /// Update collection metadata after successful flush
     async fn update_collection_metadata_after_flush(
         &self,
@@ -2976,16 +3562,18 @@ impl ViperCoreEngine {
     ) -> Result<()> {
         let mut collections = self.collections.write().await;
         let mut partitions = self.partitions.write().await;
-        
+
         if let Some(collection_meta) = collections.get_mut(collection_id) {
             // Update collection statistics
             collection_meta.last_updated = Utc::now();
             let total_records: usize = clusters.values().map(|v| v.len()).sum();
             collection_meta.vector_count += total_records;
             collection_meta.total_clusters = clusters.len();
-            
+
             // Create partition metadata for each fragment
-            for (fragment_path, (cluster_id, cluster_records)) in fragment_paths.iter().zip(clusters.iter()) {
+            for (fragment_path, (cluster_id, cluster_records)) in
+                fragment_paths.iter().zip(clusters.iter())
+            {
                 let partition_id = format!("{}_{}", cluster_id, Utc::now().timestamp());
                 let partition = PartitionMetadata {
                     partition_id: partition_id.clone(),
@@ -2996,14 +3584,18 @@ impl ViperCoreEngine {
                     compression_ratio: 2.5,
                     created_at: Utc::now(),
                 };
-                
+
                 partitions.insert(partition_id, partition);
             }
-            
-            tracing::debug!("📊 VIPER METADATA: Updated collection {} - {} total vectors, {} clusters", 
-                           collection_id, collection_meta.vector_count, collection_meta.total_clusters);
+
+            tracing::debug!(
+                "📊 VIPER METADATA: Updated collection {} - {} total vectors, {} clusters",
+                collection_id,
+                collection_meta.vector_count,
+                collection_meta.total_clusters
+            );
         }
-        
+
         Ok(())
     }
 
@@ -3016,19 +3608,23 @@ impl ViperCoreEngine {
         quantization_level: super::quantization::QuantizationLevel,
     ) -> Result<RecordBatch> {
         use super::quantization::VectorQuantizationEngine;
-        
-        tracing::debug!("🔢 Applying {:?} quantization to batch with {} vectors", 
-                       quantization_level, cluster_records.len());
-        
+
+        tracing::debug!(
+            "🔢 Applying {:?} quantization to batch with {} vectors",
+            quantization_level,
+            cluster_records.len()
+        );
+
         // Extract vectors from records for quantization
-        let vectors: Vec<Vec<f32>> = cluster_records.iter()
+        let vectors: Vec<Vec<f32>> = cluster_records
+            .iter()
             .map(|record| record.vector.clone())
             .collect();
-        
+
         if vectors.is_empty() {
             return Ok(batch);
         }
-        
+
         // Initialize quantization engine with collection-specific config
         let quantization_config = super::quantization::QuantizationConfig {
             level: quantization_level,
@@ -3037,14 +3633,15 @@ impl ViperCoreEngine {
             adaptive_quantization: true,
             quality_threshold: 0.95,
         };
-        
+
         let mut quantization_engine = VectorQuantizationEngine::new(quantization_config);
-        
+
         // Train quantization model if needed
         quantization_engine.train(&vectors)?;
-        
+
         // Convert ProcessedVectorRecord to VectorRecord format for quantization
-        let vector_records: Vec<crate::core::VectorRecord> = cluster_records.iter()
+        let vector_records: Vec<crate::core::VectorRecord> = cluster_records
+            .iter()
             .map(|record| crate::core::VectorRecord {
                 id: record.id.clone(),
                 collection_id: "temp".to_string(), // Temporary for quantization
@@ -3060,14 +3657,15 @@ impl ViperCoreEngine {
                 distance: None,
             })
             .collect();
-        
+
         // Quantize all vectors using VectorRecord format
         let quantized_vectors = quantization_engine.quantize(&vector_records)?;
-        
+
         // Augment the existing RecordBatch with quantized columns
-        self.augment_batch_with_quantized_columns(batch, &quantized_vectors, quantization_level).await
+        self.augment_batch_with_quantized_columns(batch, &quantized_vectors, quantization_level)
+            .await
     }
-    
+
     /// Augment RecordBatch with quantized vector columns
     async fn augment_batch_with_quantized_columns(
         &self,
@@ -3077,11 +3675,12 @@ impl ViperCoreEngine {
     ) -> Result<RecordBatch> {
         use arrow_array::{Array, BinaryArray, UInt8Array};
         use arrow_schema::{DataType, Field};
-        
+
         let original_schema = original_batch.schema();
-        let mut new_fields: Vec<std::sync::Arc<Field>> = original_schema.fields().iter().cloned().collect();
+        let mut new_fields: Vec<std::sync::Arc<Field>> =
+            original_schema.fields().iter().cloned().collect();
         let mut new_columns = original_batch.columns().to_vec();
-        
+
         // Add quantized data column based on quantization type
         match quantization_level {
             super::quantization::QuantizationLevel::None => {
@@ -3090,9 +3689,12 @@ impl ViperCoreEngine {
             }
             super::quantization::QuantizationLevel::Uniform(bits) => {
                 // Add uniform quantized data as binary column
-                let owned_data: Vec<Option<Vec<u8>>> = quantized_vectors.iter()
+                let owned_data: Vec<Option<Vec<u8>>> = quantized_vectors
+                    .iter()
                     .map(|qv| match &qv.data {
-                        super::quantization::QuantizedData::CustomBits { data, .. } => Some(data.clone()),
+                        super::quantization::QuantizedData::CustomBits { data, .. } => {
+                            Some(data.clone())
+                        }
                         super::quantization::QuantizedData::Binary(data) => Some(data.clone()),
                         super::quantization::QuantizedData::INT8(data) => {
                             Some(data.iter().map(|&x| x as u8).collect())
@@ -3100,12 +3702,13 @@ impl ViperCoreEngine {
                         _ => None,
                     })
                     .collect();
-                
+
                 // Convert owned data to references
-                let quantized_data: Vec<Option<&[u8]>> = owned_data.iter()
+                let quantized_data: Vec<Option<&[u8]>> = owned_data
+                    .iter()
                     .map(|opt_vec| opt_vec.as_ref().map(|vec| vec.as_slice()))
                     .collect();
-                
+
                 let quantized_array = BinaryArray::from_opt_vec(quantized_data);
                 new_fields.push(Arc::new(Field::new(
                     &format!("quantized_{}bit", bits),
@@ -3113,23 +3716,30 @@ impl ViperCoreEngine {
                     true,
                 )));
                 new_columns.push(Arc::new(quantized_array));
-                
+
                 tracing::debug!("📊 Added quantized column: quantized_{}bit", bits);
             }
-            super::quantization::QuantizationLevel::ProductQuantization { bits_per_code, num_subvectors } => {
+            super::quantization::QuantizationLevel::ProductQuantization {
+                bits_per_code,
+                num_subvectors,
+            } => {
                 // Add PQ codes as binary column
-                let owned_pq_codes: Vec<Option<Vec<u8>>> = quantized_vectors.iter()
+                let owned_pq_codes: Vec<Option<Vec<u8>>> = quantized_vectors
+                    .iter()
                     .map(|qv| match &qv.data {
-                        super::quantization::QuantizedData::ProductQuantization(codes) => Some(codes.clone()),
+                        super::quantization::QuantizedData::ProductQuantization(codes) => {
+                            Some(codes.clone())
+                        }
                         _ => None,
                     })
                     .collect();
-                
+
                 // Convert owned data to references
-                let pq_codes: Vec<Option<&[u8]>> = owned_pq_codes.iter()
+                let pq_codes: Vec<Option<&[u8]>> = owned_pq_codes
+                    .iter()
                     .map(|opt_vec| opt_vec.as_ref().map(|vec| vec.as_slice()))
                     .collect();
-                
+
                 let pq_array = BinaryArray::from_opt_vec(pq_codes);
                 new_fields.push(Arc::new(Field::new(
                     &format!("pq_codes_{}bit_{}sub", bits_per_code, num_subvectors),
@@ -3137,14 +3747,23 @@ impl ViperCoreEngine {
                     true,
                 )));
                 new_columns.push(Arc::new(pq_array));
-                
-                tracing::debug!("📊 Added PQ codes column: pq_codes_{}bit_{}sub", bits_per_code, num_subvectors);
+
+                tracing::debug!(
+                    "📊 Added PQ codes column: pq_codes_{}bit_{}sub",
+                    bits_per_code,
+                    num_subvectors
+                );
             }
-            super::quantization::QuantizationLevel::Custom { bits_per_element, .. } => {
+            super::quantization::QuantizationLevel::Custom {
+                bits_per_element, ..
+            } => {
                 // Add custom quantized data as binary column (same as uniform)
-                let owned_data: Vec<Option<Vec<u8>>> = quantized_vectors.iter()
+                let owned_data: Vec<Option<Vec<u8>>> = quantized_vectors
+                    .iter()
                     .map(|qv| match &qv.data {
-                        super::quantization::QuantizedData::CustomBits { data, .. } => Some(data.clone()),
+                        super::quantization::QuantizedData::CustomBits { data, .. } => {
+                            Some(data.clone())
+                        }
                         super::quantization::QuantizedData::Binary(data) => Some(data.clone()),
                         super::quantization::QuantizedData::INT8(data) => {
                             Some(data.iter().map(|&x| x as u8).collect())
@@ -3152,12 +3771,13 @@ impl ViperCoreEngine {
                         _ => None,
                     })
                     .collect();
-                
+
                 // Convert owned data to references
-                let quantized_data: Vec<Option<&[u8]>> = owned_data.iter()
+                let quantized_data: Vec<Option<&[u8]>> = owned_data
+                    .iter()
                     .map(|opt_vec| opt_vec.as_ref().map(|vec| vec.as_slice()))
                     .collect();
-                
+
                 let quantized_array = BinaryArray::from_opt_vec(quantized_data);
                 new_fields.push(Arc::new(Field::new(
                     &format!("quantized_custom_{}bit", bits_per_element),
@@ -3165,21 +3785,26 @@ impl ViperCoreEngine {
                     true,
                 )));
                 new_columns.push(Arc::new(quantized_array));
-                
-                tracing::debug!("📊 Added custom quantized column: quantized_custom_{}bit", bits_per_element);
+
+                tracing::debug!(
+                    "📊 Added custom quantized column: quantized_custom_{}bit",
+                    bits_per_element
+                );
             }
         }
-        
+
         // Create new schema and batch with quantized columns
         let fields: arrow_schema::Fields = new_fields.into();
         let new_schema = Arc::new(arrow_schema::Schema::new(fields));
         let new_batch = RecordBatch::try_new(new_schema, new_columns)
             .context("Failed to create augmented RecordBatch with quantized columns")?;
-        
-        tracing::info!("✅ Augmented batch: {} columns → {} columns (added quantized data)", 
-                      original_batch.num_columns(), new_batch.num_columns());
-        
+
+        tracing::info!(
+            "✅ Augmented batch: {} columns → {} columns (added quantized data)",
+            original_batch.num_columns(),
+            new_batch.num_columns()
+        );
+
         Ok(new_batch)
     }
 }
-
