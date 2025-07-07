@@ -90,11 +90,31 @@ impl CompactionManager {
         info!("Starting {} compaction workers", worker_count);
 
         for worker_id in 0..worker_count {
-            let task_queue = self.task_queue.clone();
-            let shutdown_signal = self.shutdown_signal.clone();
-            let stats = self.stats.clone();
-            let active_compactions = self.active_compactions.clone();
-            let config = self.config.clone();
+            let task_queue = Arc::clone(&self.task_queue);
+            let shutdown_signal = Arc::clone(&self.shutdown_signal);
+            let stats = Arc::clone(&self.stats);
+            let active_compactions = Arc::clone(&self.active_compactions);
+            let config = LsmConfig {
+                memtable_size_mb: self.config.memtable_size_mb,
+                memory_flush_size_bytes: self.config.memory_flush_size_bytes,
+                memtable_type: self.config.memtable_type.clone(),
+                compaction_strategy: self.config.compaction_strategy.clone(),
+                compression: self.config.compression.clone(),
+                bloom_filter_config: self.config.bloom_filter_config.clone(),
+                cache_size_mb: self.config.cache_size_mb,
+                write_buffer_size_mb: self.config.write_buffer_size_mb,
+                max_files_per_level: self.config.max_files_per_level,
+                level_size_multiplier: self.config.level_size_multiplier,
+                max_levels: self.config.max_levels,
+                background_thread_count: self.config.background_thread_count,
+                sync_mode: self.config.sync_mode.clone(),
+                enable_wal: self.config.enable_wal,
+                wal_directory: self.config.wal_directory.clone(),
+                data_directory: self.config.data_directory.clone(),
+                mmap_enabled: self.config.mmap_enabled,
+                prefetch_enabled: self.config.prefetch_enabled,
+                prefetch_size_kb: self.config.prefetch_size_kb,
+            };
 
             let handle = tokio::spawn(async move {
                 Self::worker_loop(

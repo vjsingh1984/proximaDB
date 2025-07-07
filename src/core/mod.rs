@@ -3,8 +3,10 @@ pub mod avro_unified;
 pub mod config;
 pub mod error;
 pub mod global_coordination;
+pub mod grpc_metadata_parser;
 pub mod index;
 pub mod indexing;
+pub mod metadata_query;
 pub mod routing;
 pub mod search;
 pub mod serverless;
@@ -23,3 +25,5 @@ pub use routing::{
 pub use serverless::*;
 // Use avro_unified types as the single source of truth
 pub use avro_unified::*;
+pub use metadata_query::*;
+pub use grpc_metadata_parser::*;

@@ -1,0 +1,164 @@
+@startuml ProximaDB_Distributed_Architecture
+!theme aws-orange
+title ProximaDB Distributed Architecture - Storage-Aware Coordination
+
+package "Distributed Coordination Layer" {
+  class StorageAwareDistributedCoordinator {
+    - deployment_config: DeploymentConfig
+    - router: Arc<SmartRouter>
+    - global_config: GlobalCoordinationConfig
+    - node_registry: Arc<RwLock<StorageAwareNodeRegistry>>
+    - collection_storage_map: Arc<RwLock<CollectionStorageMap>>
+    
+    + route_request(collection_id, operation_type, routing_context): DistributedRoutingDecision
+    + route_write_operation(storage_info, routing_context): DistributedRoutingDecision
+    + route_search_operation(storage_info, routing_context): DistributedRoutingDecision
+    + route_wal_read_operation(storage_info, routing_context): DistributedRoutingDecision
+  }
+  
+  class ReplicationManager {
+    - deployment_config: DeploymentConfig
+    - replication_coordinators: Vec<Box<dyn ReplicationCoordinator>>
+    - assignment_service: Arc<AssignmentService>
+    - vector_service: Arc<VectorService>
+    
+    + replicate_data(collection_id, data, target_nodes): Vec<ReplicationResult>
+    + handle_node_failure(failed_node): Vec<FailureRecoveryPlan>
+  }
+  
+  interface ReplicationCoordinator {
+    + replicate_data(collection_id, data, target_nodes): ReplicationResult
+    + check_replication_health(collection_id): ReplicationHealthStatus
+    + handle_node_failure(failed_node, affected_collections): FailureRecoveryPlan
+    + get_coordinator_type(): ReplicationCoordinatorType
+  }
+}
+
+package "Deployment Types" {
+  enum DeploymentType {
+    Local { replication_factor, consistency_level }
+    Cloud { object_store_type, region_strategy, compute_scaling }
+    Hybrid { local_config, cloud_config, data_tier_strategy }
+  }
+  
+  class LocalFileReplicationCoordinator {
+    - replication_factor: u32
+    - consistency_level: LocalConsistencyLevel
+    - rack_awareness: bool
+    - az_awareness: bool
+    
+    + select_target_nodes(available_nodes, collection_id): Vec<String>
+    + replicate_to_node(node, data): Result<()>
+  }
+  
+  class CloudNativeReplicationCoordinator {
+    - object_store_type: ObjectStoreType
+    - cross_region_replication: bool
+    - metadata_consistency: CloudMetadataConsistency
+    
+    + coordinate_wal_replication(collection_id, data): ReplicationResult
+    + coordinate_metadata_update(collection_id, data): ReplicationResult
+  }
+  
+  class WalAffinityCoordinator {
+    - wal_affinity_map: Arc<RwLock<HashMap<String, String>>>
+    - failover_strategy: WalFailoverStrategy
+    
+    + get_wal_affinity_node(collection_id): String
+    + establish_wal_affinity(collection_id, node_id): Result<()>
+  }
+}
+
+package "Storage Awareness" {
+  class StorageAwareNodeRegistry {
+    - nodes: Vec<StorageAwareNode>
+    - rack_topology: RackTopology
+    - az_topology: AvailabilityZoneTopology
+  }
+  
+  class StorageAwareNode {
+    + node_id: String
+    + address: String
+    + rack_id: String
+    + availability_zone: String
+    + node_type: ComputeNodeType
+    + storage_capabilities: StorageCapabilities
+    + current_load: NodeLoad
+    + health_status: NodeHealthStatus
+  }
+  
+  class CollectionStorageMap {
+    - mappings: HashMap<String, CollectionStorageInfo>
+  }
+  
+  class CollectionStorageInfo {
+    + collection_id: String
+    + primary_storage_url: String
+    + replica_storage_urls: Vec<String>
+    + storage_type: StorageType
+    + replication_requirements: ReplicationRequirements
+    + wal_affinity_node: Option<String>
+  }
+}
+
+package "Existing ProximaDB Components" {
+  class SmartRouter {
+    - config: RoutingConfig
+    - tenant_cache: HashMap<String, RoutingContext>
+    - cluster_health: HashMap<String, ClusterHealth>
+    
+    + extract_routing_context(headers): RoutingContext
+    + route_request(context, operation_type): RoutingDecision
+  }
+  
+  class AssignmentService {
+    + assign_collection_to_disk(collection_id): Result<DiskAssignment>
+    + get_collection_assignments(): Vec<CollectionAssignment>
+  }
+  
+  class VectorService {
+    + handle_vector_insert(request): Result<InsertResponse>
+    + search_vectors_polymorphic(request): Result<SearchResponse>
+  }
+  
+  class GlobalCoordinationConfig {
+    + deployment_topology: DeploymentTopology
+    + consistency_model: ConsistencyModel
+    + replication_strategy: ReplicationStrategy
+    + conflict_resolution: ConflictResolution
+  }
+}
+
+' Relationships
+StorageAwareDistributedCoordinator --> SmartRouter : uses existing routing
+StorageAwareDistributedCoordinator --> GlobalCoordinationConfig : leverages config
+StorageAwareDistributedCoordinator --> StorageAwareNodeRegistry : manages nodes
+StorageAwareDistributedCoordinator --> CollectionStorageMap : tracks storage
+
+ReplicationManager --> ReplicationCoordinator : coordinates via
+ReplicationManager --> AssignmentService : integrates with
+ReplicationManager --> VectorService : integrates with
+
+LocalFileReplicationCoordinator ..|> ReplicationCoordinator
+CloudNativeReplicationCoordinator ..|> ReplicationCoordinator
+WalAffinityCoordinator ..|> ReplicationCoordinator
+
+StorageAwareNodeRegistry --> StorageAwareNode : manages
+CollectionStorageMap --> CollectionStorageInfo : maps
+
+note top of StorageAwareDistributedCoordinator
+  **Key Innovation**: Storage-aware coordination
+  - Local file:// storage requires active replication
+  - Cloud object storage leverages built-in replication
+  - WAL affinity ensures unflushed data routing
+  - Rack/AZ awareness for high availability
+end note
+
+note bottom of ReplicationManager
+  **Deployment-Specific Strategy**:
+  - Local: Active node-to-node replication
+  - Cloud: Metadata coordination only
+  - Hybrid: Intelligent tier-based replication
+end note
+
+@enduml

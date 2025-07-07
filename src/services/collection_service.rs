@@ -89,12 +89,13 @@ impl CollectionService {
         let record = CollectionRecord::from_grpc_config(config.name.clone(), config)
             .context("Failed to convert gRPC config to Avro record")?;
 
-        let collection_uuid = record.uuid.clone();
+        // Optimize: use reference instead of clone for UUID
+        let collection_uuid = &record.uuid;
         let storage_path = record.storage_path("${base_path}"); // Template - will be filled by storage engine
 
         // Create storage directories using assignment service
         let storage_assignments = self
-            .create_storage_directories(&config.name, &collection_uuid)
+            .create_storage_directories(&config.name, collection_uuid)
             .await
             .context("Failed to create storage directories")?;
 

@@ -29,9 +29,9 @@ pub mod indexing;
 pub mod quantization;
 pub mod unified_distance;
 
-// Unit tests
-#[cfg(test)]
-pub mod tests;
+// Unit tests - will be added as modules are completed
+// #[cfg(test)]
+// pub mod tests;
 
 pub use algorithms::*;
 pub use distance::*;

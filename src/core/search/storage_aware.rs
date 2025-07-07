@@ -268,7 +268,7 @@ impl SearchEngineFactory {
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Vec<SearchResult>> {
         let mut deduplicator = if let Some(filters) = filters {
-            MultiTierDeduplicator::with_filters(filters.clone())
+            MultiTierDeduplicator::with_filters(std::mem::take(&mut filters.clone()))
         } else {
             MultiTierDeduplicator::new()
         };
@@ -373,7 +373,20 @@ impl SearchEngineFactory {
 
                     let score = self.calculate_similarity(query_vector, &vector_record.vector);
                     results.push(TieredSearchResult {
-                        vector_record: vector_record.clone(),
+                        vector_record: VectorRecord {
+                            id: vector_record.id.clone(),
+                            collection_id: vector_record.collection_id.clone(),
+                            vector: vector_record.vector.clone(),
+                            metadata: vector_record.metadata.clone(),
+                            timestamp: vector_record.timestamp,
+                            created_at: vector_record.created_at,
+                            updated_at: vector_record.updated_at,
+                            expires_at: vector_record.expires_at,
+                            version: vector_record.version,
+                            rank: vector_record.rank,
+                            score: vector_record.score,
+                            distance: vector_record.distance,
+                        },
                         score,
                         tier: StorageTier::Unflushed,
                         engine: DeduplicationStorageEngine::WAL,
@@ -511,27 +524,35 @@ impl SearchEngineFactory {
 
         search_results
             .into_iter()
-            .map(|result| TieredSearchResult {
-                vector_record: VectorRecord {
-                    id: result.id.clone(),
-                    collection_id: result.collection_id.clone().unwrap_or_default(),
-                    vector: result.vector.clone().unwrap_or_default(),
-                    metadata: result.metadata.clone(),
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    updated_at: chrono::Utc::now().timestamp_millis(),
-                    expires_at: None,
-                    version: 1,
-                    rank: None,
-                    score: Some(result.score),
-                    distance: None,
-                },
+            .map(|result| {
+                let id = result.id;
+                let collection_id = result.collection_id.unwrap_or_default();
+                let vector = result.vector.unwrap_or_default();
+                let metadata = result.metadata;
+                let now = chrono::Utc::now().timestamp_millis();
+                
+                TieredSearchResult {
+                    vector_record: VectorRecord {
+                        id: id.clone(),
+                        collection_id,
+                        vector,
+                        metadata,
+                        timestamp: now,
+                        created_at: now,
+                        updated_at: now,
+                        expires_at: None,
+                        version: 1,
+                        rank: None,
+                        score: Some(result.score),
+                        distance: None,
+                    },
                 score: result.score,
                 tier,
                 engine,
                 timestamp: chrono::Utc::now(), // Approximation for flushed data
                 sequence: 0, // Storage engines don't track sequence
                 file_path: None, // Storage engines don't provide file paths in search results
+            }
             })
             .collect()
     }
@@ -540,18 +561,21 @@ impl SearchEngineFactory {
     fn convert_from_tiered_results(&self, tiered_results: Vec<TieredSearchResult>) -> Vec<SearchResult> {
         tiered_results
             .into_iter()
-            .map(|result| SearchResult {
-                id: result.vector_record.id.clone(),
-                vector_id: Some(result.vector_record.id.clone()),
-                score: result.score,
-                distance: None,
-                rank: None,
-                vector: Some(result.vector_record.vector),
-                metadata: result.vector_record.metadata,
-                collection_id: Some(result.vector_record.collection_id),
-                created_at: Some(result.timestamp.timestamp_millis()),
-                algorithm_used: None,
-                processing_time_us: None,
+            .map(|result| {
+                let id = result.vector_record.id;
+                SearchResult {
+                    id: id.clone(),
+                    vector_id: Some(id),
+                    score: result.score,
+                    distance: None,
+                    rank: None,
+                    vector: Some(result.vector_record.vector),
+                    metadata: result.vector_record.metadata,
+                    collection_id: Some(result.vector_record.collection_id),
+                    created_at: Some(result.timestamp.timestamp_millis()),
+                    algorithm_used: None,
+                    processing_time_us: None,
+                }
             })
             .collect()
     }

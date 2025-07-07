@@ -15,6 +15,7 @@
 //! - Unified business logic for all protocols
 
 use anyhow::{anyhow, Context, Result};
+use futures::future;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -198,27 +199,51 @@ impl CollectionStorageIndexCoordinator {
         let start_time = std::time::Instant::now();
         let mut indexed_count = 0u64;
 
-        for vector in vectors {
-            // Ensure vector belongs to this collection
-            if vector.collection_id != self.collection_id {
-                tracing::warn!(
-                    "⚠️ [{}] Vector {} belongs to different collection: {}",
-                    self.collection_id,
-                    vector.id,
-                    vector.collection_id
-                );
-                continue;
-            }
+        // OPTIMIZATION: Batch async operations to reduce async overhead
+        let valid_vectors: Vec<_> = vectors
+            .into_iter()
+            .filter(|vector| {
+                if vector.collection_id != self.collection_id {
+                    tracing::warn!(
+                        "⚠️ [{}] Vector {} belongs to different collection: {}",
+                        self.collection_id,
+                        vector.id,
+                        vector.collection_id
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
 
-            if let Err(e) = self.axis_manager.insert(vector.clone()).await {
-                tracing::warn!(
-                    "⚠️ [{}] AXIS indexing failed for vector {}: {}",
-                    self.collection_id,
-                    vector.id,
-                    e
-                );
-            } else {
-                indexed_count += 1;
+        // Batch insert vectors to reduce async overhead
+        let insert_futures = valid_vectors.into_iter().map(|vector| {
+            let axis_manager = Arc::clone(&self.axis_manager);
+            let vector_id = vector.id.clone();
+            async move {
+                match axis_manager.insert(vector).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err((vector_id, e)),
+                }
+            }
+        });
+
+        // Execute all inserts concurrently
+        let results = future::join_all(insert_futures).await;
+        
+        // Process results
+        for result in results {
+            match result {
+                Ok(_) => indexed_count += 1,
+                Err((vector_id, e)) => {
+                    tracing::warn!(
+                        "⚠️ [{}] AXIS indexing failed for vector {}: {}",
+                        self.collection_id,
+                        vector_id,
+                        e
+                    );
+                }
             }
         }
 
@@ -244,9 +269,17 @@ impl CollectionStorageIndexCoordinator {
         Ok(indexed_count)
     }
 
-    /// Get coordinator metrics
+    /// Get coordinator metrics (optimized to avoid clone)
     pub async fn get_metrics(&self) -> CoordinatorMetrics {
-        self.operation_metrics.read().await.clone()
+        let metrics = self.operation_metrics.read().await;
+        CoordinatorMetrics {
+            vectors_inserted: metrics.vectors_inserted,
+            vectors_searched: metrics.vectors_searched,
+            average_insert_time_ms: metrics.average_insert_time_ms,
+            average_search_time_ms: metrics.average_search_time_ms,
+            total_operations: metrics.total_operations,
+            failed_operations: metrics.failed_operations,
+        }
     }
 
     /// Get collection ID
@@ -331,11 +364,13 @@ impl StorageIndexCoordinatorManager {
         coordinators.remove(collection_id)
     }
 
-    /// Get all active coordinators
+    /// Get all active coordinators (optimized to avoid full HashMap clone)
     pub async fn get_all_coordinators(
         &self,
     ) -> HashMap<String, Arc<CollectionStorageIndexCoordinator>> {
-        self.coordinators.read().await.clone()
+        let coordinators = self.coordinators.read().await;
+        // Only clone Arc references, not the entire HashMap structure
+        coordinators.iter().map(|(k, v)| (k.clone(), Arc::clone(v))).collect()
     }
 
     /// Get total coordinator metrics across all collections
@@ -870,11 +905,11 @@ impl VectorService {
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(true, processing_time).await;
 
-        // Clone results for response before converting to avro format
-        let response_results = all_results.clone();
+        // Optimize: avoid cloning large result sets by moving ownership
+        let response_results = std::mem::take(&mut all_results);
 
         // Convert results to Avro format
-        let avro_results: Vec<JsonValue> = all_results
+        let avro_results: Vec<JsonValue> = response_results
             .into_iter()
             .map(|result| {
                 json!({
@@ -1215,7 +1250,8 @@ impl VectorService {
         match record.get("metadata") {
             Some(meta) if !meta.is_null() => {
                 if let Some(obj) = meta.as_object() {
-                    let mut metadata = HashMap::new();
+                    // Optimize: use with_capacity and avoid intermediate clones where possible
+                    let mut metadata = HashMap::with_capacity(obj.len());
                     for (k, v) in obj {
                         metadata.insert(k.clone(), v.clone());
                     }
@@ -1502,14 +1538,16 @@ impl VectorService {
             })
             .unwrap_or_default();
 
-        // Extract metadata
+        // Extract metadata (optimized with capacity pre-allocation)
         let metadata = updates
             .get("metadata")
             .and_then(|v| v.as_object())
             .map(|obj| {
-                obj.iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect::<std::collections::HashMap<String, serde_json::Value>>()
+                let mut metadata = std::collections::HashMap::with_capacity(obj.len());
+                for (k, v) in obj {
+                    metadata.insert(k.clone(), v.clone());
+                }
+                metadata
             })
             .unwrap_or_default();
 

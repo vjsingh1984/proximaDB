@@ -97,7 +97,10 @@ impl ViperSearchEngine {
 
     /// Optimize search hints for VIPER storage characteristics
     fn optimize_search_hints(&self, hints: &SearchHints) -> SearchHints {
-        let mut optimized = hints.clone();
+        let mut optimized = SearchHints {
+            predicate_pushdown: true, // Always enable for VIPER
+            ..*hints
+        };
 
         // Enable predicate pushdown for any metadata filters
         optimized.predicate_pushdown = true;

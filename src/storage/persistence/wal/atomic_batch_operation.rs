@@ -94,7 +94,11 @@ impl AtomicOperation for AtomicWalBatchOperation {
         let memtable_start = std::time::Instant::now();
         let sequences = self
             .memtable
-            .add_vector_batch(self.vector_batch.clone())
+            .add_vector_batch(WalVectorBatch {
+                batch_id: self.vector_batch.batch_id.clone(),
+                vector_records: std::mem::take(&mut self.vector_batch.vector_records.clone()),
+                total_size_bytes: self.vector_batch.total_size_bytes,
+            })
             .await
             .context("Failed to write batch to memtable")?;
         let memtable_time = memtable_start.elapsed().as_micros();

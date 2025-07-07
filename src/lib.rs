@@ -34,6 +34,7 @@ pub mod api;
 pub mod compute;
 // pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;
+// pub mod distributed;  // Temporarily disabled for single-node optimization
 pub mod index;
 pub mod monitoring;
 pub mod network;

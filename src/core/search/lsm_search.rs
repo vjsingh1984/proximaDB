@@ -91,16 +91,13 @@ impl LSMSearchEngine {
 
     /// Optimize search hints for LSM storage characteristics
     fn optimize_search_hints(&self, hints: &SearchHints) -> SearchHints {
-        let mut optimized = hints.clone();
+        let mut optimized = SearchHints {
+            predicate_pushdown: false, // LSM doesn't support predicate pushdown
+            use_bloom_filters: true,   // Enable bloom filters
+            quantization_level: QuantizationLevel::FP32, // LSM always uses full precision
+            ..*hints
+        };
 
-        // Disable predicate pushdown (not supported by LSM)
-        optimized.predicate_pushdown = false;
-
-        // Enable bloom filters for efficient SSTable skipping
-        optimized.use_bloom_filters = true;
-
-        // LSM always uses full precision
-        optimized.quantization_level = QuantizationLevel::FP32;
 
         // Add LSM-specific hints
         optimized.engine_specific.insert(
@@ -226,18 +223,22 @@ impl LSMSearchEngine {
         let results: Vec<SearchResult> = candidates
             .into_iter()
             .take(k)
-            .map(|(distance, record)| SearchResult {
-                id: record.id.clone(),
-                vector_id: Some(record.id),
-                score: 1.0 - distance, // Convert distance to similarity score
-                distance: Some(distance),
-                rank: None,
-                vector: Some(record.vector),
-                metadata: record.metadata,
-                collection_id: Some(record.collection_id.clone()),
-                created_at: Some(record.created_at),
-                algorithm_used: Some("LSM".to_string()),
-                processing_time_us: None,
+            .map(|(distance, record)| {
+                let id = std::mem::take(&mut record.id.clone());
+                let collection_id = std::mem::take(&mut record.collection_id.clone());
+                SearchResult {
+                    id: id.clone(),
+                    vector_id: Some(id),
+                    score: 1.0 - distance, // Convert distance to similarity score
+                    distance: Some(distance),
+                    rank: None,
+                    vector: Some(record.vector),
+                    metadata: record.metadata,
+                    collection_id: Some(collection_id),
+                    created_at: Some(record.created_at),
+                    algorithm_used: Some("LSM".to_string()),
+                    processing_time_us: None,
+                }
             })
             .collect();
 
@@ -434,7 +435,7 @@ impl LSMSearchEngine {
         let mut result_map: HashMap<String, SearchResult> = HashMap::new();
 
         for result in all_results {
-            let vector_id = result.id.clone(); // Use id instead of vector_id
+            let vector_id = &result.id; // Use reference instead of clone
 
             // Keep the result with the highest score (most recent/relevant)
             match result_map.get(&vector_id) {
@@ -443,7 +444,7 @@ impl LSMSearchEngine {
                 }
                 _ => {
                     // Use new result (better score or first occurrence)
-                    result_map.insert(vector_id, result);
+                    result_map.insert(vector_id.clone(), result);
                 }
             }
         }
@@ -556,7 +557,22 @@ impl StorageSearchEngine for LSMSearchEngine {
     }
 
     fn search_capabilities(&self) -> SearchCapabilities {
-        self.capabilities.clone()
+        SearchCapabilities {
+            supports_predicate_pushdown: self.capabilities.supports_predicate_pushdown,
+            supports_bloom_filters: self.capabilities.supports_bloom_filters,
+            supports_clustering: self.capabilities.supports_clustering,
+            supports_parallel_search: self.capabilities.supports_parallel_search,
+            supported_quantization: self.capabilities.supported_quantization.clone(),
+            max_k: self.capabilities.max_k,
+            max_dimension: self.capabilities.max_dimension,
+            engine_features: {
+                let mut features = HashMap::with_capacity(self.capabilities.engine_features.len());
+                for (key, value) in &self.capabilities.engine_features {
+                    features.insert(key.clone(), value.clone());
+                }
+                features
+            },
+        }
     }
 
     fn engine_type(&self) -> StorageEngineType {

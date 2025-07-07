@@ -11,6 +11,7 @@
 
 pub mod adaptive_engine;
 pub mod analyzer;
+pub mod hnsw_integration;
 pub mod manager;
 pub mod migration_engine;
 pub mod monitor;
@@ -29,6 +30,9 @@ pub use adaptive_engine::{
     PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
 pub use analyzer::CollectionAnalyzer;
+pub use hnsw_integration::{
+    AxisHnswConfig, AxisHnswManager, HnswStats, PartitionedHnswIndex,
+};
 pub use manager::{
     AxisIndexManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
     ScoredResult, VectorQuery,

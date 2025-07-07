@@ -1,0 +1,65 @@
+# ProximaDB Configuration for Docker Demo Environment
+
+[server]
+host = "0.0.0.0"
+port = 5678
+
+[grpc]
+host = "0.0.0.0"
+port = 5679
+
+[storage]
+# Storage layout with docker paths
+data_dir = "/app/data"
+wal_dir = "/app/wal"
+
+# WAL configuration
+wal_config = [
+    {url = "file:///app/wal/wal1", strategy = "Avro", sync_mode = "PerBatch"},
+    {url = "file:///app/wal/wal2", strategy = "Bincode", sync_mode = "PerBatch"}
+]
+
+# Storage layout for containers
+storage_layout = [
+    {name = "disk1", path = "/app/data/disk1", max_size_gb = 50},
+    {name = "disk2", path = "/app/data/disk2", max_size_gb = 50}
+]
+
+# Storage pairing
+storage_pairing = [
+    {wal = "file:///app/wal/wal1", storage = "disk1"},
+    {wal = "file:///app/wal/wal2", storage = "disk2"}
+]
+
+# Memory and performance settings optimized for containers
+memtable_size_mb = 32
+memory_flush_size_bytes = 16_777_216  # 16MB
+mmap_enabled = true
+
+[logging]
+level = "info"
+file_path = "/app/logs/proximadb.log"
+max_files = 5
+max_file_size_mb = 100
+
+[metrics]
+enabled = true
+port = 9090
+path = "/metrics"
+
+[security]
+enable_tls = false  # Disabled for demo simplicity
+
+[performance]
+# Optimized for demo workloads
+worker_threads = 4
+max_connections = 1000
+request_timeout_seconds = 30
+batch_size = 100
+
+[features]
+# Enable all features for demo
+quantization_enabled = true
+hnsw_indexing_enabled = true
+metadata_indexing_enabled = true
+distributed_mode = false  # Single node for demo

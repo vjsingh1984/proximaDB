@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use crate::core::VectorRecord;
+use crate::core::{VectorRecord, MetadataQuery, MetadataQueryEngine};
 
 /// Vector search result with storage tier metadata
 #[derive(Debug, Clone)]
@@ -47,14 +47,18 @@ pub enum DeduplicationStorageEngine {
 /// Metadata filter for client-side filtering
 pub type MetadataFilter = HashMap<String, JsonValue>;
 
-/// Multi-tier deduplication manager with metadata filtering support
+/// Multi-tier deduplication manager with advanced metadata filtering support
 pub struct MultiTierDeduplicator {
     /// Track latest version of each vector ID across tiers
     id_to_latest: HashMap<String, TieredSearchResult>,
     /// Results without IDs (no deduplication possible)
     results_without_id: Vec<TieredSearchResult>,
-    /// Optional metadata filters to apply
+    /// Legacy simple metadata filters for backward compatibility
     metadata_filters: Option<MetadataFilter>,
+    /// Advanced logical metadata query for complex filtering
+    metadata_query: Option<MetadataQuery>,
+    /// Query engine for evaluating metadata queries
+    query_engine: MetadataQueryEngine,
 }
 
 impl MultiTierDeduplicator {
@@ -63,20 +67,69 @@ impl MultiTierDeduplicator {
             id_to_latest: HashMap::new(),
             results_without_id: Vec::new(),
             metadata_filters: None,
+            metadata_query: None,
+            query_engine: MetadataQueryEngine::new(),
         }
     }
 
-    /// Create with metadata filters for client-side filtering
+    /// Create with simple metadata filters for backward compatibility
     pub fn with_filters(metadata_filters: MetadataFilter) -> Self {
         Self {
             id_to_latest: HashMap::new(),
             results_without_id: Vec::new(),
             metadata_filters: Some(metadata_filters),
+            metadata_query: None,
+            query_engine: MetadataQueryEngine::new(),
         }
     }
 
-    /// Check if a vector record matches the metadata filters
-    fn matches_filters(&self, vector_record: &VectorRecord) -> bool {
+    /// Create with advanced logical metadata query
+    pub fn with_query(metadata_query: MetadataQuery) -> Self {
+        Self {
+            id_to_latest: HashMap::new(),
+            results_without_id: Vec::new(),
+            metadata_filters: None,
+            metadata_query: Some(metadata_query),
+            query_engine: MetadataQueryEngine::new(),
+        }
+    }
+
+    /// Create with both simple filters and logical query (query takes precedence)
+    pub fn with_filters_and_query(metadata_filters: MetadataFilter, metadata_query: MetadataQuery) -> Self {
+        Self {
+            id_to_latest: HashMap::new(),
+            results_without_id: Vec::new(),
+            metadata_filters: Some(metadata_filters),
+            metadata_query: Some(metadata_query),
+            query_engine: MetadataQueryEngine::new(),
+        }
+    }
+
+    /// Check if a vector record matches the metadata filters or query
+    fn matches_filters(&mut self, vector_record: &VectorRecord) -> bool {
+        // If we have a logical metadata query, use that (takes precedence)
+        if let Some(ref query) = self.metadata_query {
+            match self.query_engine.evaluate(query, &vector_record.metadata) {
+                Ok(result) => {
+                    if !result {
+                        tracing::debug!(
+                            "🔍 Query filter: Vector {} did not match logical query",
+                            vector_record.id
+                        );
+                    }
+                    return result;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "🚨 Query evaluation error for vector {}: {}",
+                        vector_record.id, e
+                    );
+                    return false; // Fail safe on query evaluation error
+                }
+            }
+        }
+
+        // Fall back to legacy simple filters for backward compatibility
         match &self.metadata_filters {
             None => true, // No filters - all records match
             Some(filters) => {
@@ -87,14 +140,14 @@ impl MultiTierDeduplicator {
                             // Compare values (strict equality for now)
                             if actual_value != expected_value {
                                 tracing::debug!(
-                                    "🔍 Filter mismatch: {} expected {:?}, got {:?}",
+                                    "🔍 Simple filter mismatch: {} expected {:?}, got {:?}",
                                     key, expected_value, actual_value
                                 );
                                 return false;
                             }
                         }
                         None => {
-                            tracing::debug!("🔍 Filter mismatch: {} not found in metadata", key);
+                            tracing::debug!("🔍 Simple filter mismatch: {} not found in metadata", key);
                             return false; // Required metadata key missing
                         }
                     }
@@ -171,7 +224,8 @@ impl MultiTierDeduplicator {
                             result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
                         );
                     }
-                    self.id_to_latest.insert(result.vector_record.id.clone(), result);
+                    let vector_id = std::mem::take(&mut result.vector_record.id.clone());
+                    self.id_to_latest.insert(vector_id, result);
                 } else {
                     if let Some(existing) = self.id_to_latest.get(&result.vector_record.id) {
                         tracing::debug!(
@@ -194,10 +248,8 @@ impl MultiTierDeduplicator {
         let unique_ids_count = self.id_to_latest.len();
         let without_id_count = self.results_without_id.len();
         
-        // Add latest version of each ID
-        for (_, result) in self.id_to_latest {
-            final_results.push(result);
-        }
+        // Add latest version of each ID using into_values() to avoid clone
+        final_results.extend(self.id_to_latest.into_values());
         
         // Add non-ID results
         final_results.extend(self.results_without_id);
@@ -271,7 +323,7 @@ mod tests {
             },
             score: 0.5,
             tier: StorageTier::Compacted,
-            engine: DeduplicationDeduplicationStorageEngine::VIPER,
+            engine: DeduplicationStorageEngine::VIPER,
             timestamp: now,
             sequence: 100,
             file_path: Some("/data/compacted.parquet".to_string()),

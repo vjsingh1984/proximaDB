@@ -44,6 +44,18 @@ from .exceptions import (
     NetworkError,
 )
 
+# Text chunking utilities
+from .chunking import (
+    TextChunker,
+    ChunkingStrategy,
+    ChunkingConfig,
+    TextChunk,
+    create_chunker,
+    chunk_by_sentences,
+    chunk_by_paragraphs,
+    chunk_sliding_window,
+)
+
 __version__ = "0.1.0"
 __author__ = "Vijaykumar Singh"
 __email__ = "singhvjd@gmail.com"
@@ -80,4 +92,14 @@ __all__ = [
     "RateLimitError",
     "ServerError",
     "NetworkError",
+    
+    # Text chunking
+    "TextChunker",
+    "ChunkingStrategy",
+    "ChunkingConfig",
+    "TextChunk",
+    "create_chunker",
+    "chunk_by_sentences",
+    "chunk_by_paragraphs",
+    "chunk_sliding_window",
 ]

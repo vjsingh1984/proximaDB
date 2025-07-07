@@ -99,21 +99,24 @@ impl BatchCoordinator {
         let mut cleared_count = 0;
 
         if let Some(collection_batches) = self.batches.get_mut(collection_id) {
-            let batch_ids_to_remove: Vec<String> = collection_batches
-                .iter()
-                .filter(|(_, batch)| batch.is_flushed)
-                .map(|(batch_id, _)| batch_id.clone())
-                .collect();
-
-            for batch_id in &batch_ids_to_remove {
-                if let Some(batch) = collection_batches.remove(batch_id) {
-                    // Remove vector index entries
-                    for vector_record in &batch.vector_records {
-                        self.vector_index.remove(&vector_record.id);
-                    }
-                    cleared_count += 1;
+            // OPTIMIZATION: Use retain instead of collect+remove to avoid extra allocation
+            let mut cleared_batch_records = Vec::new();
+            let original_count = collection_batches.len();
+            collection_batches.retain(|_, batch| {
+                if batch.is_flushed {
+                    // Collect vector record IDs for index cleanup before removing
+                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.clone()));
+                    false // Remove this batch
+                } else {
+                    true // Keep this batch
                 }
+            });
+
+            // Remove vector index entries for cleared batches
+            for vector_id in cleared_batch_records {
+                self.vector_index.remove(&vector_id);
             }
+            cleared_count = original_count - collection_batches.len();
         }
 
         tracing::debug!("🧹 Cleared {} flushed batches from collection {}", cleared_count, collection_id);
