@@ -1,19 +1,26 @@
-= ProximaDB User Guide  
+= ProximaDB User Guide: Complete Usage Reference
 :doctype: book
 :toc: left
-:toclevels: 4
+:toclevels: 3
+:sectlinks:
+:sectanchors:
 :sectnums:
-:sectnumlevels: 4
-:author: Vijaykumar Singh
-:email: singhvjd@gmail.com
-:revdate: 2025-06-20
-:version: 0.1.0
-:copyright: Copyright 2025 Vijaykumar Singh
-:organization: ProximaDB
 :source-highlighter: rouge
+:rouge-style: github
 :icons: font
 :experimental:
 :imagesdir: diagrams/images
+:version: 1.0.0
+:revdate: {docdate}
+:author: ProximaDB Team
+
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
 
 [abstract]
 == Abstract

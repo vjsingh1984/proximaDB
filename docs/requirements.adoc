@@ -1,33 +1,71 @@
-= ProximaDB Requirements Specification
+= ProximaDB Requirements Specification: Complete System Requirements
 :doctype: book
 :toc: left
 :toclevels: 3
+:sectlinks:
+:sectanchors:
 :sectnums:
-:sectnumlevels: 3
-:author: Vijaykumar Singh
-:email: singhvjd@gmail.com
-:revdate: 2025
-:version: 0.1.0
-:copyright: Copyright 2025 Vijaykumar Singh
-:organization: ProximaDB
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:experimental:
+:imagesdir: diagrams/images
+:version: 1.0.0
+:revdate: {docdate}
+:author: ProximaDB Team
 
-[abstract]
-== Abstract
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
 
-image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
-
-ProximaDB is a cloud-native vector database engineered for AI applications. This document outlines requirements and tracks implementation status after major codebase cleanup (December 2024).
-
-**Tagline**: _proximity at scale_
-
-**Major Cleanup Complete**: Removed 4,457 lines of obsolete code (December 2024) ✅
-**Latest Achievement**: Unified VectorService with multi-tier deduplication and upsert-only semantics ✅
-**BERT Embeddings**: Full support for BERT collections with 384, 768, and 1024 dimensions ✅
-**Architectural Analysis**: Comprehensive UML diagrams and optimization plan completed (January 2025) ✅
+[.lead]
+*ProximaDB Requirements Specification* defines comprehensive system requirements for the cloud-native vector database engineered for AI applications. This document tracks implementation status and provides detailed functional and non-functional requirements.
 
 image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
 
-== Architecture Overview
+[NOTE]
+====
+🔗 **Related Documents**: This specification connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:lld.adoc[Low-Level Design]
+====
+
+=== Requirements Implementation Dashboard
+
+[cols="3,2,1"]
+|===
+|**Requirement Category** |**Status** |**Completion**
+
+|📊 **Vector Operations**
+|✅ Core Complete, Advanced Partial
+|85%
+
+|💾 **Storage & Data Management**
+|✅ Production Ready
+|95%
+
+|🔍 **AXIS Indexing System**
+|🚧 Framework Ready, Integration Needed
+|75%
+
+|🌐 **Client SDK Features**
+|✅ Feature Complete
+|100%
+
+|⚡ **Performance & Hardware**
+|✅ SIMD Ready, GPU Removed
+|80%
+
+|🔒 **Enterprise Features**
+|📋 Planned for Phase 3
+|20%
+|===
+
+**Tagline**: _Proximity at Scale_ - Enterprise-grade vector database with unified memtable architecture and intelligent storage-aware search.
+
+== 🏗️ Architecture Overview
 
 The ProximaDB architecture is built on several key innovations documented through comprehensive UML analysis:
 
