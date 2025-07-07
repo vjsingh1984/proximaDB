@@ -1,6 +1,7 @@
 // Troubleshooting Guide Module
 // This file is included by the main README.adoc
 
+[[_troubleshooting_guide]]
 == 🔧 Troubleshooting Guide
 
 === Common Issues & Solutions

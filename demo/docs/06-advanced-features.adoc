@@ -1,8 +1,10 @@
 // Advanced Features and Performance Module
 // This file is included by the main README.adoc
 
+[[_advanced_features_performance]]
 == ⚡ Advanced Features & Performance
 
+[[_storage_engine_comparison]]
 === Storage Engine Comparison
 
 ProximaDB offers two high-performance storage engines optimized for different workloads:
@@ -119,6 +121,7 @@ def select_quantization(vectors):
         return "pq8"     # 4x compression, high quality
 ----
 
+[[_text_processing_for_rag_applications]]
 === Text Processing for RAG Applications
 
 ==== Chunking Strategies Comparison
@@ -231,6 +234,7 @@ class AdaptiveIndexer:
             return "hnsw_static"   # Maximum performance
 ----
 
+[[_performance_monitoring_optimization]]
 === Performance Monitoring & Optimization
 
 ==== Real-Time Metrics
@@ -271,6 +275,7 @@ curl http://localhost:5678/admin/metrics | jq '
 |3-5x storage reduction
 |===
 
+[[_integration_examples]]
 === Integration Examples
 
 ==== Elasticsearch Migration

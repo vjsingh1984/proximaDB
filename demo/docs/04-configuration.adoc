@@ -1,6 +1,7 @@
 // Configuration and Environment Setup Module
 // This file is included by the main README.adoc
 
+[[_configuration_environment_setup]]
 == ⚙️ Configuration & Environment Setup
 
 === Docker Environment (Recommended)

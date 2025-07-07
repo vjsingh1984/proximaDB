@@ -37,22 +37,22 @@ endif::[]
 |**Experience Level** |**Recommended Path** |**Time** |**Key Features**
 
 |🟢 **Beginner**
-|<<quick-start,Quick Start>> → Basic Demo → Results Analysis
+|<<_quick_start_guide,Quick Start>> → <<_demo_execution_commands,Basic Demo>> → <<_what_youll_learn,Results Analysis>>
 |15-30 min
 |Vector CRUD, Simple Search
 
 |🟡 **Intermediate** 
-|Text Chunking → Advanced Features → Storage Engines
+|<<_text_processing_for_rag_applications,Text Processing>> → <<_advanced_features_performance,Advanced Features>> → <<_storage_engine_comparison,Storage Engines>>
 |45-60 min
 |RAG Pipelines, Performance Comparison
 
 |🔴 **Advanced**
-|Financial Intelligence → Benchmark Reproduction → Custom Extensions
+|<<_scenario_2_financial_document_intelligence,Financial Intelligence>> → <<_performance_monitoring_optimization,Performance Analysis>> → <<_integration_examples,Custom Extensions>>
 |90+ min
 |Real-world Applications, Production Optimization
 
 |🏢 **Enterprise**
-|Competitive Analysis → Production Setup → Operations
+|<<_demo_scenarios_features,Competitive Analysis>> → <<_configuration_environment_setup,Production Setup>> → <<_troubleshooting_guide,Operations>>
 |2+ hours
 |Enterprise Deployment, Monitoring
 |===
@@ -115,6 +115,7 @@ include::docs/05-troubleshooting.adoc[]
 
 include::docs/06-advanced-features.adoc[]
 
+[[_demo_execution_commands]]
 == 📊 Demo Execution Commands
 
 === Quick Reference
@@ -159,6 +160,7 @@ export DEMO_ENABLE_HNSW=true           # Advanced indexing
 export DEMO_ENABLE_MONITORING=true     # Prometheus metrics
 ----
 
+[[_what_youll_learn]]
 == 🎯 What You'll Learn
 
 After completing the demonstrations, you'll understand:

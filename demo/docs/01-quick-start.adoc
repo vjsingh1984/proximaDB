@@ -1,6 +1,7 @@
 // Quick Start Guide Module
 // This file is included by the main README.adoc
 
+[[_quick_start_guide]]
 == 🚀 Quick Start Guide
 
 [.lead]

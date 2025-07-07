@@ -1,6 +1,7 @@
 // Demo Scenarios and Features Module
 // This file is included by the main README.adoc
 
+[[_demo_scenarios_features]]
 == 🎭 Demo Scenarios & Features
 
 [.lead]
@@ -111,6 +112,7 @@ ProximaDB demonstrations showcase real-world applications across multiple domain
 |Performance Target |<20ms search latency, 1000+ QPS
 |===
 
+[[_scenario_2_financial_document_intelligence]]
 ==== Scenario 2: Financial Document Intelligence  
 [cols="2,3"]
 |===
