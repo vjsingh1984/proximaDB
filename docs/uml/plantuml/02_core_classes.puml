@@ -1,0 +1,191 @@
+@startuml ProximaDB_Core_Classes
+!theme aws-orange
+title ProximaDB Core Class Diagram
+
+package "Core Data Structures" {
+  class VectorRecord {
+    +id: String
+    +collection_id: String
+    +vector: Vec<f32>
+    +metadata: HashMap<String, Value>
+    +timestamp: i64
+    +created_at: i64
+    +updated_at: i64
+    +expires_at: Option<i64>
+    +version: i64
+    +rank: Option<i32>
+    +score: Option<f32>
+    +distance: Option<f32>
+    --
+    +from_avro_bytes(data: &[u8]) -> Result<Self>
+    +to_avro_bytes() -> Result<Vec<u8>>
+  }
+
+  class Collection {
+    +id: String
+    +name: String
+    +dimension: i32
+    +distance_metric: DistanceMetric
+    +storage_engine: StorageEngine
+    +indexing_algorithm: IndexingAlgorithm
+    +created_at: i64
+    +updated_at: i64
+    +vector_count: i64
+    +total_size_bytes: i64
+    +config: HashMap<String, String>
+  }
+
+  class WalEntry {
+    +entry_id: String
+    +collection_id: CollectionId
+    +operation: WalOperation
+    +timestamp: DateTime<Utc>
+    +sequence: u64
+    +global_sequence: u64
+    +expires_at: Option<DateTime<Utc>>
+    +version: u64
+    +batch_id: Option<BatchId>
+    --
+    +actual_size_bytes() -> usize
+    +content_key() -> Result<String>
+  }
+
+  enum WalOperation {
+    +Insert {vector_id, record, expires_at}
+    +Update {vector_id, record, expires_at}
+    +Delete {vector_id, expires_at}
+    +AvroPayload {data, operation_type}
+  }
+
+  enum DistanceMetric {
+    +Cosine
+    +Euclidean
+    +Manhattan
+    +DotProduct
+    +Hamming
+    +Jaccard
+    +Custom(String)
+  }
+}
+
+package "Memtable System" {
+  interface MemtableCore<K, V> {
+    +get(key: &K) -> Result<Option<V>>
+    +put(key: K, value: V) -> Result<Option<V>>
+    +delete(key: &K) -> Result<Option<V>>
+    +range_scan(from: &K, limit: Option<usize>) -> Result<Vec<(K, V)>>
+    +size_bytes() -> usize
+    +len() -> usize
+    +clear() -> Result<usize>
+  }
+
+  class GlobalPartitionedMemtable {
+    -global_sequence: AtomicU64
+    -collections: Arc<RwLock<HashMap<String, CollectionPartition>>>
+    -global_content_index: Arc<RwLock<HashMap<String, (String, usize)>>>
+    -distance_compute: UnifiedDistanceCompute
+    -metrics: Arc<RwLock<MemtableMetrics>>
+    --
+    +new() -> Self
+    +append(entry: WalEntry) -> Result<u64>
+    +get_from_sequence(from_seq: u64, limit: Option<usize>) -> Result<Vec<WalEntry>>
+    +search_by_similarity(query: &[f32], k: usize) -> Result<Vec<(String, f32)>>
+  }
+
+  class WalBehaviorWrapper {
+    -inner: Arc<GlobalPartitionedMemtable>
+    -batch_coordinator: Arc<RwLock<BatchCoordinator>>
+    -config: MemtableConfig
+    -sequence_generator: Arc<AtomicU64>
+    -wal_metrics: Arc<RwLock<WalMetrics>>
+    -flush_state: Arc<RwLock<FlushState>>
+    --
+    +new(config: MemtableConfig) -> Self
+    +add_vector_batch(batch: WalVectorBatch) -> Result<Vec<u64>>
+    +get_unflushed_batches(collection_id: &str) -> Result<Vec<WalVectorBatch>>
+    +remove_batch(collection_id: &str, batch_id: &str) -> Result<()>
+  }
+
+  class WalVectorBatch {
+    +batch_id: BatchId
+    +vector_records: Vec<VectorRecord>
+    +created_at: SystemTime
+    +total_size_bytes: usize
+    +is_flushed: bool
+  }
+}
+
+package "Storage Engines" {
+  interface UnifiedStorageEngine {
+    +engine_name() -> &'static str
+    +strategy() -> StorageEngineStrategy
+    +do_flush(params: &FlushParameters) -> Result<FlushResult>
+    +do_compact(params: &CompactionParameters) -> Result<CompactionResult>
+    +collect_engine_metrics() -> Result<HashMap<String, Value>>
+  }
+
+  class ViperEngine {
+    -config: ViperConfig
+    -parquet_encoder: Arc<ParquetEncoder>
+    -ml_clustering: Arc<MLClusteringEngine>
+    -quantization: Arc<QuantizationEngine>
+    -filesystem: Arc<FilesystemFactory>
+    --
+    +new(config: ViperConfig) -> Self
+    +write_parquet_batch(vectors: &[VectorRecord]) -> Result<String>
+    +search_with_clustering(query: &[f32], k: usize) -> Result<Vec<VectorRecord>>
+  }
+
+  class LsmEngine {
+    -levels: Vec<Level>
+    -memtable: Arc<WalBehaviorWrapper>
+    -bloom_filters: HashMap<String, BloomFilter>
+    -compaction_scheduler: Arc<CompactionScheduler>
+    --
+    +new(config: LsmConfig) -> Self
+    +compact_level(level: usize) -> Result<CompactionResult>
+    +search_sstables(query: &[f32], k: usize) -> Result<Vec<VectorRecord>>
+  }
+}
+
+package "Search System" {
+  class SearchEngineFactory {
+    +create_for_storage(engine: &UnifiedStorageEngine) -> Box<dyn StorageSearchEngine>
+    +create_wal_search_engine(wal: &WalStrategy) -> Box<dyn StorageSearchEngine>
+    +create_unified_search_engine() -> Box<dyn StorageSearchEngine>
+  }
+
+  interface StorageSearchEngine {
+    +search_vectors(query: &[f32], k: usize, filters: Option<&MetadataFilter>) -> Result<Vec<TieredSearchResult>>
+    +engine_type() -> StorageEngineType
+    +supports_filters() -> bool
+  }
+
+  class MultiTierDeduplicator {
+    -seen_vector_ids: HashSet<String>
+    -tier_priorities: HashMap<StorageEngineType, u8>
+    --
+    +new() -> Self
+    +deduplicate_results(results: Vec<TieredSearchResult>) -> Vec<TieredSearchResult>
+    +merge_and_sort(results: &mut [TieredSearchResult], k: usize) -> ()
+  }
+}
+
+' Relationships
+VectorRecord ||--o{ Collection : belongs_to
+WalEntry ||--|| WalOperation : contains
+WalBehaviorWrapper ||--|| GlobalPartitionedMemtable : wraps
+WalBehaviorWrapper ||--o{ WalVectorBatch : manages
+GlobalPartitionedMemtable ..|> MemtableCore : implements
+ViperEngine ..|> UnifiedStorageEngine : implements
+LsmEngine ..|> UnifiedStorageEngine : implements
+SearchEngineFactory ..> StorageSearchEngine : creates
+MultiTierDeduplicator ..> StorageSearchEngine : uses
+
+note top of WalBehaviorWrapper : **Memory Optimized**: Uses Arc<>\nfor heavy data structures to\nprevent deep cloning during\natomic operations
+
+note right of GlobalPartitionedMemtable : **Unified Architecture**: Single\nmemtable implementation with\nbehavior wrappers eliminates\ncode duplication
+
+note bottom of MultiTierDeduplicator : **Innovation**: Provides 6.10x\nperformance improvement through\nintelligent tier routing and\nID-based deduplication
+
+@enduml

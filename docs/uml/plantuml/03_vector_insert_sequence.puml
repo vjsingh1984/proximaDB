@@ -1,0 +1,113 @@
+@startuml ProximaDB_Vector_Insert_Sequence
+!theme aws-orange
+title Vector Insert Operation Sequence Diagram
+
+actor Client
+participant "REST/gRPC\nHandler" as Handler
+participant "Vector Service\n(Unified)" as VectorService
+participant "Avro Schema\nValidator" as Validator
+participant "WAL Strategy\n(Avro/Bincode)" as WAL
+participant "Atomic Batch\nOperation" as AtomicOp
+participant "WAL Behavior\nWrapper" as WalWrapper
+participant "Global Partitioned\nMemtable" as Memtable
+participant "Flush\nCoordinator" as FlushCoord
+participant "Storage Engine\n(VIPER/LSM)" as Storage
+participant "Filesystem\n(file://s3://)" as Filesystem
+
+Client -> Handler : POST /vectors\n{vector_data}
+activate Handler
+
+Handler -> VectorService : add_vector_batch(vectors)
+activate VectorService
+
+VectorService -> Validator : validate_vector_records(vectors)
+activate Validator
+Validator -> Validator : check_dimensions,\nvalidate_metadata
+Validator --> VectorService : ValidationResult
+deactivate Validator
+
+alt Validation Success
+  VectorService -> WAL : write_batch_atomic(entries, immediate_sync=false)
+  activate WAL
+  
+  ' Create atomic operation
+  WAL -> AtomicOp : new(entries, vector_batch,\ncollection_id, immediate_sync, memtable)
+  activate AtomicOp
+  
+  ' Phase 1: Write to memtable
+  AtomicOp -> WalWrapper : add_vector_batch(batch)
+  activate WalWrapper
+  
+  WalWrapper -> WalWrapper : generate_batch_id()
+  WalWrapper -> Memtable : append_batch(vector_records)
+  activate Memtable
+  
+  Memtable -> Memtable : assign_sequences(),\nupdate_content_index
+  Memtable --> WalWrapper : sequences: Vec<u64>
+  deactivate Memtable
+  
+  WalWrapper --> AtomicOp : memtable_sequences
+  deactivate WalWrapper
+  
+  ' Phase 2: Conditional disk write
+  alt immediate_sync == true
+    AtomicOp -> WAL : serialize_and_write_to_disk()
+    WAL -> Filesystem : write_atomic(wal_file, serialized_data)
+    activate Filesystem
+    Filesystem --> WAL : write_result
+    deactivate Filesystem
+  end
+  
+  AtomicOp --> WAL : OperationResult::BatchWrite
+  deactivate AtomicOp
+  
+  ' Background flush check
+  WAL -> WalWrapper : needs_flush_check()
+  activate WalWrapper
+  WalWrapper -> WalWrapper : check_memory_thresholds()
+  
+  alt Memory threshold exceeded
+    WalWrapper -> FlushCoord : trigger_background_flush(collection_id)
+    activate FlushCoord
+    
+    FlushCoord -> WalWrapper : atomic_retrieve_for_flush()
+    WalWrapper --> FlushCoord : FlushCycle{entries, batch_ids}
+    
+    FlushCoord -> Storage : do_flush(flush_params)
+    activate Storage
+    Storage -> Filesystem : write_parquet_files()
+    Storage --> FlushCoord : FlushResult
+    deactivate Storage
+    
+    FlushCoord -> WalWrapper : complete_flush_cycle(flush_result)
+    WalWrapper -> WalWrapper : clear_flushed_entries()
+    
+    FlushCoord --> WalWrapper : flush_completed
+    deactivate FlushCoord
+  end
+  
+  WalWrapper --> WAL : flush_check_complete
+  deactivate WalWrapper
+  
+  WAL --> VectorService : insert_result
+  deactivate WAL
+  
+  VectorService --> Handler : Success{sequences}
+  deactivate VectorService
+  
+  Handler --> Client : HTTP 201\n{vector_ids, sequences}
+  deactivate Handler
+
+else Validation Failed
+  Validator --> VectorService : ValidationError
+  VectorService --> Handler : Error{validation_details}
+  Handler --> Client : HTTP 400\n{error_message}
+end
+
+note over AtomicOp : **ACID Guarantee**: Two-phase commit\nensures memtable and disk consistency.\nAutomatic rollback on failure.
+
+note over FlushCoord : **Background Process**: Flush happens\nasynchronously when memory thresholds\nare exceeded. Client doesn't wait.
+
+note over WalWrapper : **Memory Optimized**: Arc-based design\nprevents deep cloning of vector data\nduring atomic operations.
+
+@enduml

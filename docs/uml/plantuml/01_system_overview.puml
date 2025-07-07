@@ -1,0 +1,110 @@
+@startuml ProximaDB_System_Overview
+!theme aws-orange
+title ProximaDB System Architecture Overview
+
+package "Client Layer" {
+  [REST Client] as RestClient
+  [gRPC Client] as GrpcClient
+  [Python SDK] as PySDK
+}
+
+package "Network Layer" {
+  [REST API\n(Port 5678)] as RestAPI
+  [gRPC Service\n(Port 5679)] as GrpcAPI
+  [Multi Server] as MultiServer
+}
+
+package "Service Layer" {
+  [Vector Service\n(Unified)] as VectorService
+  [Collection Service] as CollectionService
+  [Migration Service] as MigrationService
+}
+
+package "Core Layer" {
+  [Avro Unified Schema] as AvroSchema
+  [Storage-Aware Search] as SearchEngine
+  [Multi-Tier Deduplication] as Deduplicator
+}
+
+package "Storage Layer" {
+  package "Memtable (Unified)" {
+    [WAL Behavior Wrapper] as WalWrapper
+    [LSM Behavior Wrapper] as LsmWrapper
+    [Global Partitioned\nMemtable] as GlobalMemtable
+  }
+  
+  package "Engines" {
+    [VIPER Engine\n(Default)] as ViperEngine
+    [LSM Engine\n(Alternative)] as LsmEngine
+  }
+  
+  package "WAL System" {
+    [Avro WAL Strategy] as AvroWAL
+    [Bincode WAL Strategy] as BincodeWAL
+    [Flush Coordinator] as FlushCoord
+  }
+}
+
+package "Compute Layer" {
+  [Unified Distance\nCompute] as UnifiedDistance
+  [SIMD Optimizations] as SIMD
+  [Quantization] as Quantization
+}
+
+package "Filesystem Layer" {
+  [Local FS\n(file://)] as LocalFS
+  [S3 FS\n(s3://)] as S3FS
+  [GCS FS\n(gcs://)] as GCSFS
+  [Azure FS\n(adls://)] as AzureFS
+}
+
+' Client connections
+RestClient --> RestAPI
+GrpcClient --> GrpcAPI
+PySDK --> RestAPI
+
+' Network layer
+RestAPI --> MultiServer
+GrpcAPI --> MultiServer
+MultiServer --> VectorService
+MultiServer --> CollectionService
+
+' Service layer connections
+VectorService --> AvroSchema
+VectorService --> SearchEngine
+CollectionService --> AvroSchema
+
+' Core layer connections
+SearchEngine --> Deduplicator
+Deduplicator --> WalWrapper
+Deduplicator --> ViperEngine
+Deduplicator --> LsmEngine
+
+' Storage layer connections
+WalWrapper --> GlobalMemtable
+LsmWrapper --> GlobalMemtable
+WalWrapper --> AvroWAL
+LsmWrapper --> AvroWAL
+
+ViperEngine --> FlushCoord
+LsmEngine --> FlushCoord
+FlushCoord --> AvroWAL
+
+' Compute connections
+SearchEngine --> UnifiedDistance
+UnifiedDistance --> SIMD
+ViperEngine --> Quantization
+
+' Filesystem connections
+ViperEngine --> LocalFS
+ViperEngine --> S3FS
+LsmEngine --> LocalFS
+AvroWAL --> LocalFS
+
+note right of Deduplicator : **Innovation**: 6.10x performance\nimprovement with 100% accuracy\nthrough multi-tier search
+
+note right of WalWrapper : **Memory Optimized**: Arc-based\narchitecture prevents deep cloning\nof vector data during operations
+
+note bottom of ViperEngine : **Default Engine**: Parquet-based\ncolumnar storage with ML clustering\nand quantization support
+
+@enduml

@@ -1,0 +1,111 @@
+@startuml ProximaDB_WAL_Flush_Sequence
+!theme aws-orange
+title WAL Flush Coordination Sequence Diagram
+
+participant "Background\nScheduler" as Scheduler
+participant "WAL Behavior\nWrapper" as WalWrapper
+participant "Flush\nCoordinator" as FlushCoord
+participant "Assignment\nService" as Assignment
+participant "VIPER Engine" as ViperEngine
+participant "LSM Engine" as LsmEngine
+participant "Parquet\nEncoder" as ParquetEnc
+participant "ML Clustering\nEngine" as MLClustering
+participant "Filesystem\n(Multi-disk)" as Filesystem
+
+Scheduler -> WalWrapper : check_flush_thresholds()
+activate WalWrapper
+
+WalWrapper -> WalWrapper : calculate_memory_usage(),\ncheck_collection_thresholds()
+
+alt Memory threshold exceeded
+  WalWrapper -> FlushCoord : trigger_coordinated_flush(collection_id)
+  activate FlushCoord
+  
+  ' Phase 1: Atomic retrieval from WAL
+  FlushCoord -> WalWrapper : atomic_retrieve_for_flush(collection_id, flush_id)
+  WalWrapper -> WalWrapper : mark_entries_for_flush(),\ncreate_flush_cycle()
+  WalWrapper --> FlushCoord : FlushCycle{entries, batch_ids, marked_sequences}
+  
+  ' Phase 2: Assignment service determines target storage
+  FlushCoord -> Assignment : get_storage_assignment(collection_id, data_size)
+  activate Assignment
+  Assignment -> Assignment : collection_affinity_check(),\ndisk_load_balancing()
+  Assignment --> FlushCoord : StorageAssignment{engine_type, disk_path}
+  deactivate Assignment
+  
+  ' Phase 3: Engine-specific flush
+  alt engine_type == VIPER
+    FlushCoord -> ViperEngine : do_flush(flush_params)
+    activate ViperEngine
+    
+    ' ML-driven clustering optimization
+    ViperEngine -> MLClustering : analyze_vector_clusters(vectors)
+    activate MLClustering
+    MLClustering -> MLClustering : kmeans_clustering(),\nsimilarity_analysis()
+    MLClustering --> ViperEngine : ClusteringResult{partitions, centroids}
+    deactivate MLClustering
+    
+    ' Parquet encoding with clustering
+    loop for each cluster_partition
+      ViperEngine -> ParquetEnc : encode_clustered_vectors(partition)
+      activate ParquetEnc
+      ParquetEnc -> ParquetEnc : columnar_optimization(),\ncompression_analysis()
+      ParquetEnc --> ViperEngine : parquet_file_data
+      deactivate ParquetEnc
+      
+      ViperEngine -> Filesystem : write_parquet_file(cluster_file, data)
+      activate Filesystem
+      Filesystem --> ViperEngine : write_result
+      deactivate Filesystem
+    end
+    
+    ViperEngine -> ViperEngine : update_cluster_metadata(),\ncreate_search_indexes()
+    ViperEngine --> FlushCoord : FlushResult{files_created, bytes_written, cluster_info}
+    deactivate ViperEngine
+    
+  else engine_type == LSM
+    FlushCoord -> LsmEngine : do_flush(flush_params)
+    activate LsmEngine
+    
+    LsmEngine -> LsmEngine : create_sstable(),\nbuild_bloom_filter()
+    LsmEngine -> Filesystem : write_sstable_files(level0_file)
+    activate Filesystem
+    Filesystem --> LsmEngine : write_result
+    deactivate Filesystem
+    
+    LsmEngine -> LsmEngine : update_level_metadata(),\nschedule_compaction()
+    LsmEngine --> FlushCoord : FlushResult{sstables_created, bloom_filters}
+    deactivate LsmEngine
+  end
+  
+  ' Phase 4: Cleanup coordination
+  FlushCoord -> WalWrapper : complete_flush_cycle(flush_result)
+  WalWrapper -> WalWrapper : clear_flushed_entries(),\nupdate_flush_watermarks()
+  WalWrapper --> FlushCoord : cleanup_result
+  
+  ' Phase 5: Update assignment service statistics
+  FlushCoord -> Assignment : update_storage_stats(collection_id, flush_result)
+  activate Assignment
+  Assignment -> Assignment : update_disk_usage(),\ncollection_affinity_stats()
+  Assignment --> FlushCoord : stats_updated
+  deactivate Assignment
+  
+  FlushCoord --> WalWrapper : flush_completed
+  deactivate FlushCoord
+  
+else Memory within limits
+  WalWrapper -> WalWrapper : continue_monitoring()
+end
+
+WalWrapper --> Scheduler : threshold_check_complete
+deactivate WalWrapper
+
+note over FlushCoord : **Atomicity**: Two-phase operation ensures\nno data loss during flush. WAL entries\nare marked before storage write.
+
+note over MLClustering : **Performance Optimization**: ML-driven\nclustering improves search performance\nby co-locating similar vectors.
+
+note over Assignment : **Load Balancing**: Collection affinity\nensures related data stays together\nwhile balancing disk usage.
+
+note over ViperEngine : **Parquet Advantage**: Columnar storage\nwith clustering provides optimal\ncompression and query performance.
+
+@enduml
