@@ -72,13 +72,7 @@ endif::[]
 ----
 demo/
 ├── README.adoc                    # This guide (main entry point)
-├── docs/                          # Modular documentation
-│   ├── 01-quick-start.adoc       # Quick setup and verification
-│   ├── 02-prerequisites.adoc     # System requirements and dependencies
-│   ├── 03-demo-scenarios.adoc    # Feature demonstrations and use cases
-│   ├── 04-configuration.adoc     # Environment setup and tuning
-│   ├── 05-troubleshooting.adoc   # Issue resolution and debugging
-│   └── 06-advanced-features.adoc # Performance optimization and features
+├── docs/                          # Modular documentation (reference)
 ├── scripts/                       # Demo execution scripts
 │   ├── working_demo.py           # Basic vector operations
 │   ├── chunking_demo.py          # Text processing for RAG
@@ -91,29 +85,1330 @@ demo/
     └── prometheus.yml           # Monitoring configuration
 ----
 
+[[_quick_start_guide]]
 == 🏃‍♂️ Quick Start (5 Minutes)
 
-include::docs/01-quick-start.adoc[]
+[.lead]
+Get ProximaDB running in under 5 minutes with our streamlined setup process.
+
+=== Option 1: Docker Compose (Recommended)
+
+[source,bash]
+----
+# Navigate to demo directory
+cd demo
+
+# Start the complete demo environment
+docker-compose up --build
+
+# View demo logs in another terminal
+docker-compose logs -f demo
+
+# View ProximaDB logs
+docker-compose logs -f proximadb
+
+# Clean up when done
+docker-compose down -v
+----
+
+[TIP]
+====
+🐳 **Docker Benefits**: Complete environment setup with monitoring, no dependency management needed
+====
+
+=== Option 2: Local Development
+
+[source,bash]
+----
+# Install dependencies
+pip install -r requirements.txt
+
+# Install ProximaDB Python SDK
+cd ../clients/python
+pip install -e .
+cd ../../demo
+
+# Start ProximaDB server (in another terminal)
+cd ..
+cargo run --bin proximadb-server
+
+# Run demo
+python demo.py
+----
+
+[IMPORTANT]
+====
+📋 **Prerequisites**: Ensure Rust toolchain and Python 3.8+ are installed
+====
+
+=== Verification Steps
+
+After setup, verify installation:
+
+[source,bash]
+----
+# Check server health
+curl http://localhost:5678/health
+
+# Check gRPC endpoint
+grpcurl -plaintext localhost:5679 list
+
+# Run basic demo
+python working_demo.py
+----
+
+=== Expected First Run Output
+
+[source,text]
+----
+🚀 ProximaDB Demo Starting...
+✅ Server connection successful
+✅ Collection created: demo_collection_xyz
+✅ Vectors inserted: 100 vectors
+✅ Search completed: 10 results found
+📊 Performance: 12.5ms average search latency
+----
+
+[NOTE]
+====
+⏱️ **Time Estimate**: First run takes 2-3 minutes, subsequent runs under 30 seconds
+====
 
 == 📋 Prerequisites & System Requirements
 
-include::docs/02-prerequisites.adoc[]
+=== System Requirements
 
+[cols="2,3,2"]
+|===
+|**Component** |**Minimum Requirements** |**Recommended**
+
+|**Operating System**
+|Windows 10, macOS 10.15, Ubuntu 18.04
+|Windows 11, macOS 12+, Ubuntu 20.04+
+
+|**CPU**
+|2 cores, 2.0 GHz
+|4+ cores, 3.0+ GHz
+
+|**Memory**
+|4 GB RAM
+|8+ GB RAM
+
+|**Storage**
+|2 GB free space
+|10+ GB SSD
+
+|**Network**
+|Internet connection for Docker images
+|Stable broadband connection
+|===
+
+=== Platform-Specific Dependencies
+
+==== Windows 10/11
+
+[source,powershell]
+----
+# Install Rust
+winget install Rustlang.Rust.GNU
+
+# Install Python 3.8+
+winget install Python.Python.3.11
+
+# Install Docker Desktop
+winget install Docker.DockerDesktop
+
+# Install Git
+winget install Git.Git
+
+# Verify installations
+rust --version
+python --version
+docker --version
+git --version
+----
+
+==== macOS (Intel/Apple Silicon)
+
+[source,bash]
+----
+# Install Rust via rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Python via Homebrew
+brew install python@3.11
+
+# Install Docker Desktop
+brew install --cask docker
+
+# Install additional tools
+brew install git curl
+
+# Verify installations
+rustc --version
+python3 --version
+docker --version
+----
+
+==== Ubuntu 20.04/22.04 LTS
+
+[source,bash]
+----
+# Update package manager
+sudo apt update && sudo apt upgrade -y
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Install Python and development tools
+sudo apt install -y python3 python3-pip python3-venv build-essential
+
+# Install Docker
+sudo apt install -y docker.io docker-compose
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+
+# Install additional tools
+sudo apt install -y git curl protobuf-compiler
+
+# Verify installations (after logout/login for Docker)
+rustc --version
+python3 --version
+docker --version
+----
+
+[WARNING]
+====
+🔄 **Docker Group**: On Linux, logout and login after adding user to docker group
+====
+
+=== Software Version Requirements
+
+==== For Docker Execution
+
+[cols="2,2,3"]
+|===
+|**Software** |**Minimum Version** |**Notes**
+
+|Docker Engine |20.10+ |For container support
+|Docker Compose |2.0+ |For multi-container orchestration
+|Python |3.8+ |For demo scripts
+|Git |2.20+ |For repository cloning
+|===
+
+==== For Direct Execution
+
+[cols="2,2,3"]
+|===
+|**Software** |**Minimum Version** |**Notes**
+
+|Rust |1.70+ |For ProximaDB compilation
+|Python |3.8+ |With pip and venv
+|Protobuf Compiler |3.15+ |For gRPC code generation
+|OpenSSL |1.1+ |For TLS support
+|===
+
+=== Environment Preparation
+
+[source,bash]
+----
+# Clone repository
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb
+
+# Verify structure
+ls -la demo/
+
+# Check demo dependencies
+cat demo/requirements.txt
+
+# Verify Docker setup
+docker-compose version
+----
+
+[NOTE]
+====
+✅ **Ready to Continue**: Once all prerequisites are installed, proceed to the Quick Start Guide
+====
+
+[[_demo_scenarios_features]]
 == 🎭 Demo Scenarios & Features
 
-include::docs/03-demo-scenarios.adoc[]
+[.lead]
+ProximaDB demonstrations showcase real-world applications across multiple domains and complexity levels.
 
+=== Demo Roadmap by Experience Level
+
+[cols="2,3,1,2"]
+|===
+|**Experience Level** |**Recommended Path** |**Time** |**Key Features**
+
+|🟢 **Beginner**
+|Basic Demo → Quick Start
+|15-30 min
+|Vector CRUD, Simple Search
+
+|🟡 **Intermediate** 
+|Text Chunking → Advanced Features
+|45-60 min
+|RAG Pipelines, Metadata Filtering
+
+|🔴 **Advanced**
+|Storage Engines → Performance Analysis
+|90+ min
+|LSM vs VIPER, Benchmarking
+
+|🏢 **Enterprise**
+|Financial Intelligence → Production Setup
+|2+ hours
+|Real-world Applications
+|===
+
+=== Demo Scripts Overview
+
+[cols="2,3,1,2"]
+|===
+|**Script** |**Purpose** |**Complexity** |**Use Case**
+
+|`working_demo.py`
+|Basic vector operations and search
+|🟢 Beginner
+|Getting started, API exploration
+
+|`chunking_demo.py`
+|Text processing strategies for RAG
+|🟡 Intermediate
+|Document processing, content analysis
+
+|`full_demo.py`
+|Complete feature demonstration
+|🔴 Advanced
+|Production evaluation, benchmarking
+
+|`storage_engines_demo.py`
+|LSM vs VIPER performance comparison
+|🔴 Advanced
+|Architecture evaluation, optimization
+
+|`financial_analysis_demo.py`
+|13F filings analysis with BERT
+|🔴 Advanced
+|Real-world AI application
+|===
+
+=== Feature Demonstrations
+
+==== 1. Vector Operations
+- **Batch Upsert**: Efficiently insert large numbers of vectors
+- **Similarity Search**: Find nearest neighbors using various distance metrics  
+- **Vector Management**: Add, update, and delete vectors with ACID properties
+
+==== 2. Advanced Indexing
+- **HNSW Integration**: Hierarchical Navigable Small World indexing
+- **AXIS Support**: Adaptive eXtensible Indexing System
+- **Partitioned Indices**: Automatic partitioning for scalability
+
+==== 3. Metadata Filtering  
+- **Logical Operators**: AND, OR, NOT queries
+- **Comparison Operators**: =, !=, <, >, <=, >=
+- **Complex Queries**: Nested logical expressions
+
+==== 4. Text Processing (RAG Applications)
+- **6 Chunking Strategies**: Sentence, paragraph, sliding window, semantic, fixed-size, recursive
+- **BERT Integration**: 384, 768, 1024-dimensional embeddings
+- **Preprocessing Pipelines**: Text normalization and optimization
+
+==== 5. Vector Quantization
+- **Product Quantization**: Compressed vector representations
+- **Configurable Compression**: Adjustable compression ratios (4x-32x)
+- **Performance Optimization**: Memory usage vs. accuracy trade-offs
+
+==== 6. Storage Engine Comparison
+- **LSM Engine**: Optimized for frequent updates and mixed workloads
+- **VIPER Engine**: Optimized for analytics and compression (4x storage reduction)
+- **Performance Benchmarking**: Real server execution with tangible datasets
+
+=== Scenario Details
+
+==== Scenario 1: E-commerce Product Search
+[cols="2,3"]
+|===
+|**Data Type** |**Specification**
+
+|Vectors |Product embeddings (768-dimensional BERT)
+|Dataset Size |1,000-5,000 products
+|Metadata |Category, price, rating, brand, description
+|Sample Query |"Find similar electronics under $500 with rating > 4.0"
+|Performance Target |<20ms search latency, 1000+ QPS
+|===
+
+[[_scenario_2_financial_document_intelligence]]
+==== Scenario 2: Financial Document Intelligence  
+[cols="2,3"]
+|===
+|**Data Type** |**Specification**
+
+|Documents |13F SEC filings (Apple, major holdings)
+|Processing |Sliding window chunking with BERT embeddings
+|Analysis |Cross-period trend analysis, portfolio insights
+|Sample Query |"AAPL position changes across reporting periods"
+|Insights |Real holding patterns, strategic positioning
+|===
+
+==== Scenario 3: Performance Benchmarking
+[cols="2,3"]
+|===
+|**Test Type** |**Specification**
+
+|Load Testing |1,000+ vectors with batch operations
+|Latency Analysis |P50, P95, P99 response times
+|Throughput Testing |Concurrent search operations
+|Memory Profiling |Resource consumption analysis
+|Scalability Testing |Performance under increasing load
+|===
+
+=== Expected Performance Results
+
+[source,text]
+----
+📊 Typical Benchmark Results:
+  Search Latency (avg): 12.5ms
+  Search Latency (p95): 18.2ms  
+  Search Throughput: 850 queries/second
+  Memory Usage: 45.3 MB
+  Compression Ratio: 4.2x (VIPER)
+  
+🎯 Feature Demonstrations:
+  ✅ Vector upsert: 1000 vectors in 2.3s (435 vectors/sec)
+  ✅ Basic search: 10 results in 8.7ms
+  ✅ Filtered search: Complex metadata query in 15.2ms
+  ✅ Quantization: 4.2x compression with 98.5% accuracy
+  ✅ HNSW indexing: 60% faster search performance
+----
+
+[NOTE]
+====
+📊 **Real Performance Data**: All metrics come from actual server execution, not simulations
+====
+
+[[_configuration_environment_setup]]
 == ⚙️ Configuration & Environment Setup
 
-include::docs/04-configuration.adoc[]
+=== Docker Environment (Recommended)
 
+[IMPORTANT]
+====
+🐳 **Docker Advantage**: Complete environment with monitoring, zero dependency conflicts
+====
+
+==== Docker Compose Configuration
+
+The `docker-compose.yml` provides a complete demo environment:
+
+[source,yaml]
+----
+version: '3.8'
+services:
+  proximadb:
+    build: ..
+    ports:
+      - "5678:5678"  # REST API
+      - "5679:5679"  # gRPC API
+    volumes:
+      - ./docker-config.toml:/app/config.toml
+      - proximadb_data:/data
+    environment:
+      - RUST_LOG=info
+  
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    depends_on:
+      - proximadb
+    environment:
+      - PROXIMADB_SERVER_URL=http://proximadb:5678
+      - PYTHONPATH=/app
+  
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+----
+
+==== ProximaDB Server Configuration
+
+The `docker-config.toml` optimizes ProximaDB for demo scenarios:
+
+[source,toml]
+----
+[server]
+host = "0.0.0.0"
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+data_dir = "/data"
+storage_engine = "viper"  # Optimized for demos
+
+[storage.wal_config]
+strategy_type = "Avro"
+memtable_type = "BTree"
+sync_mode = "PerBatch"    # Balanced performance
+max_memory_mb = 512
+max_entries = 50000
+
+[storage.viper]
+enable_compression = true
+compression_type = "zstd"
+enable_quantization = true
+
+[api]
+enable_rest = true
+enable_grpc = true
+cors_enabled = true
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+----
+
+=== Direct Execution Setup
+
+==== Environment Variables
+
+[source,bash]
+----
+# Core settings
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export PROXIMADB_GRPC_URL="localhost:5679"
+
+# Demo configuration
+export DEMO_COLLECTION_NAME="demo_collection"
+export DEMO_NUM_VECTORS=1000
+export DEMO_VECTOR_DIMENSION=768
+
+# Performance tuning
+export RUST_LOG=info
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Storage configuration
+export PROXIMADB_DATA_DIR="./demo_data"
+export PROXIMADB_WAL_STRATEGY="avro"
+----
+
+==== Python Environment
+
+[source,bash]
+----
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install ProximaDB SDK in development mode
+cd ../clients/python
+pip install -e .
+cd ../../demo
+----
+
+=== Platform-Specific Configuration
+
+==== Windows Configuration
+
+[source,powershell]
+----
+# PowerShell environment setup
+$env:PROXIMADB_SERVER_URL = "http://localhost:5678"
+$env:DEMO_NUM_VECTORS = "1000"
+$env:PYTHONPATH = "${PWD};${env:PYTHONPATH}"
+
+# Start ProximaDB server
+Start-Process powershell -ArgumentList "cd ..; cargo run --bin proximadb-server"
+
+# Wait for server startup
+Start-Sleep 5
+
+# Run demo
+python working_demo.py
+----
+
+==== macOS Configuration
+
+[source,bash]
+----
+# Bash/Zsh environment setup
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export DEMO_NUM_VECTORS=1000
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Use correct Python version
+alias python=/usr/local/bin/python3.11
+
+# Start server in background
+cd .. && cargo run --bin proximadb-server &
+cd demo
+
+# Wait for startup
+sleep 5
+
+# Run demo
+python working_demo.py
+----
+
+==== Ubuntu Configuration
+
+[source,bash]
+----
+# Environment setup
+export PROXIMADB_SERVER_URL="http://localhost:5678"
+export DEMO_NUM_VECTORS=1000
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+
+# Ensure proper permissions
+sudo chown -R $USER:$USER ./demo_data
+
+# Start server with systemd (optional)
+sudo systemctl start proximadb  # If service installed
+
+# Or start manually
+cd .. && cargo run --bin proximadb-server &
+cd demo && sleep 5
+
+# Run demo
+python3 working_demo.py
+----
+
+=== Demo Configuration Options
+
+==== Basic Demo Configuration
+
+[source,python]
+----
+# In demo scripts, modify these settings:
+@dataclass
+class DemoConfig:
+    vector_dimension: int = 768          # BERT embedding size
+    num_vectors: int = 1000              # Dataset size
+    enable_quantization: bool = True     # Use compression
+    enable_hnsw: bool = True             # Use HNSW indexing
+    benchmark_iterations: int = 5        # Benchmark runs
+    batch_size: int = 100                # Insert batch size
+    search_k: int = 10                   # Results per query
+----
+
+==== Performance Tuning
+
+[source,bash]
+----
+# For high-performance demos
+export DEMO_NUM_VECTORS=10000
+export DEMO_BATCH_SIZE=1000
+export RUST_LOG=warn  # Reduce logging overhead
+
+# For development/debugging
+export DEMO_NUM_VECTORS=100
+export DEMO_BATCH_SIZE=50
+export RUST_LOG=debug  # Verbose logging
+----
+
+=== Monitoring Setup
+
+==== Prometheus Configuration
+
+The included `prometheus.yml` monitors ProximaDB:
+
+[source,yaml]
+----
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'proximadb'
+    static_configs:
+      - targets: ['proximadb:9090']
+    metrics_path: /metrics
+    scrape_interval: 5s
+----
+
+==== Access Monitoring
+
+[source,bash]
+----
+# Prometheus metrics
+curl http://localhost:9091/graph
+
+# ProximaDB health
+curl http://localhost:5678/health
+
+# Admin statistics
+curl http://localhost:5678/admin/stats
+----
+
+[TIP]
+====
+📊 **Monitoring Benefits**: Real-time performance visualization during demos
+====
+
+[[_troubleshooting_guide]]
 == 🔧 Troubleshooting Guide
 
-include::docs/05-troubleshooting.adoc[]
+=== Common Issues & Solutions
 
+==== Connection Issues
+
+===== "Connection refused" errors
+
+[source,bash]
+----
+# Check if ProximaDB server is running
+curl http://localhost:5678/health
+
+# Expected response:
+# {"status":"healthy","timestamp":"2025-01-07T..."}
+
+# Check server logs
+tail -f /var/log/proximadb.log
+
+# For Docker:
+docker-compose logs proximadb
+----
+
+**Solutions:**
+1. **Server not started**: Run `cargo run --bin proximadb-server`
+2. **Port conflicts**: Check with `netstat -tulpn | grep 5678`
+3. **Firewall blocking**: Temporary disable firewall for testing
+4. **Docker networking**: Use `proximadb:5678` in container-to-container communication
+
+===== "Module not found" errors
+
+[source,bash]
+----
+# Install ProximaDB SDK properly
+cd clients/python
+pip install -e .
+
+# Verify installation
+python -c "import proximadb; print('SDK installed successfully')"
+
+# Check Python path
+python -c "import sys; print('\n'.join(sys.path))"
+
+# Set PYTHONPATH if needed
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+----
+
+**Common causes:**
+- SDK not installed in current virtual environment
+- Wrong Python interpreter being used
+- Missing PYTHONPATH configuration
+
+==== Docker Issues
+
+===== Docker build failures
+
+[source,bash]
+----
+# Clean Docker cache
+docker system prune -a
+
+# Rebuild with no cache
+docker-compose build --no-cache
+
+# Check Docker memory allocation
+docker system df
+
+# Increase Docker memory (Docker Desktop):
+# Settings > Resources > Memory > 4GB+
+----
+
+===== Container startup failures
+
+[source,bash]
+----
+# Check container logs
+docker-compose logs proximadb
+
+# Check container status
+docker-compose ps
+
+# Restart specific service
+docker-compose restart proximadb
+
+# Full restart
+docker-compose down && docker-compose up
+----
+
+==== Performance Issues
+
+===== Slow demo execution
+
+[source,bash]
+----
+# Reduce dataset size
+export DEMO_NUM_VECTORS=100
+
+# Disable debug logging
+export RUST_LOG=warn
+
+# Use SSD storage for Docker volumes
+# Update docker-compose.yml volume configuration
+
+# Check available memory
+free -h
+
+# Monitor resource usage during demo
+htop  # or top on macOS
+----
+
+===== High memory usage
+
+[source,bash]
+----
+# Adjust ProximaDB memory settings in config.toml:
+[storage.wal_config]
+max_memory_mb = 256  # Reduce from 512
+max_entries = 25000  # Reduce from 50000
+
+# Use quantization to reduce memory
+[storage.viper]
+enable_quantization = true
+quantization_level = "pq8"  # Higher compression
+----
+
+=== Debug Mode & Diagnostics
+
+==== Enable Verbose Logging
+
+[source,bash]
+----
+# For ProximaDB server
+export RUST_LOG=debug
+cargo run --bin proximadb-server
+
+# For demo scripts
+python working_demo.py --verbose
+
+# For Docker environment
+docker-compose up --build
+# Check logs: docker-compose logs -f
+----
+
+==== Health Check Procedures
+
+[source,bash]
+----
+# Server health
+curl -v http://localhost:5678/health
+
+# gRPC health check (requires grpcurl)
+grpcurl -plaintext localhost:5679 grpc.health.v1.Health/Check
+
+# Collection statistics
+curl http://localhost:5678/admin/stats
+
+# Memory usage
+curl http://localhost:5678/admin/memory
+----
+
+==== Diagnostic Commands
+
+[source,bash]
+----
+# Check file descriptors
+lsof -p $(pgrep proximadb-server)
+
+# Check network connections
+netstat -tulpn | grep -E "(5678|5679)"
+
+# Check disk usage
+df -h
+du -sh ./demo_data
+
+# Check process resources
+ps aux | grep proximadb
+----
+
+=== Platform-Specific Issues
+
+==== Windows Issues
+
+[source,powershell]
+----
+# PowerShell execution policy
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Windows Defender exclusion for faster builds
+Add-MpPreference -ExclusionPath "C:\path\to\proximadb"
+
+# WSL2 memory issues
+# Edit .wslconfig in user directory:
+[wsl2]
+memory=4GB
+processors=4
+----
+
+==== macOS Issues
+
+[source,bash]
+----
+# Xcode command line tools
+xcode-select --install
+
+# Homebrew permissions
+sudo chown -R $(whoami) $(brew --prefix)/*
+
+# Apple Silicon Rust targets
+rustup target add aarch64-apple-darwin
+
+# Rosetta for Intel binaries (if needed)
+softwareupdate --install-rosetta
+----
+
+==== Linux Issues
+
+[source,bash]
+----
+# Docker permission issues
+sudo usermod -aG docker $USER
+# Then logout and login
+
+# Shared memory issues
+sudo sysctl -w kernel.shm_rmid_forced=1
+
+# File descriptor limits
+ulimit -n 65536
+
+# Check systemd journal for errors
+journalctl -u docker -f
+----
+
+=== Performance Troubleshooting
+
+==== Memory Optimization
+
+[source,toml]
+----
+# Optimize config.toml for limited memory:
+[storage.wal_config]
+max_memory_mb = 128
+sync_mode = "PerBatch"
+memtable_type = "HashMap"  # Lower memory overhead
+
+[storage.viper]
+enable_quantization = true
+compression_type = "lz4"  # Faster than zstd
+----
+
+==== Disk I/O Optimization
+
+[source,bash]
+----
+# Use tmpfs for temporary data (Linux)
+sudo mount -t tmpfs -o size=2G tmpfs ./demo_data
+
+# Monitor I/O
+iostat -x 1
+
+# Check disk space
+df -h ./demo_data
+----
+
+==== Network Optimization
+
+[source,bash]
+----
+# Increase network buffers for high throughput
+echo 'net.core.rmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+echo 'net.core.wmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
+
+# Apply changes
+sudo sysctl -p
+----
+
+=== Getting Help
+
+==== Debug Information Collection
+
+[source,bash]
+----
+# Collect system information
+./scripts/collect_debug_info.sh
+
+# Generate debug report
+python debug_report.py
+
+# Server configuration dump
+curl http://localhost:5678/admin/config
+----
+
+==== Reporting Issues
+
+When reporting issues, include:
+
+1. **System Information**: OS, version, hardware specs
+2. **Software Versions**: Rust, Python, Docker versions
+3. **Configuration**: config.toml and environment variables
+4. **Error Logs**: Complete error messages and stack traces
+5. **Reproduction Steps**: Exact commands that trigger the issue
+
+[IMPORTANT]
+====
+🐛 **Issue Reporting**: Use GitHub Issues with the bug report template for fastest resolution
+====
+
+==== Community Support
+
+- **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+- **Documentation**: ../docs/
+- **Demo Guide**: ./demo.adoc
+
+[TIP]
+====
+💡 **Quick Fix**: 90% of issues are resolved by restarting services and checking logs
+====
+
+[[_advanced_features_performance]]
 == ⚡ Advanced Features & Performance
 
-include::docs/06-advanced-features.adoc[]
+[[_storage_engine_comparison]]
+=== Storage Engine Comparison
+
+ProximaDB offers two high-performance storage engines optimized for different workloads:
+
+==== LSM Engine - Mixed Workloads
+[cols="2,3"]
+|===
+|**Optimized For** |Frequent updates, real-time processing, mixed read/write
+
+|**Architecture** |Log-Structured Merge trees with SkipList memtables
+|**ACID Support** |Full transactional guarantees
+|**Performance** |25-50ms real-time updates, 42.1ms average search
+|**Throughput** |1,847 vectors/sec sustained
+|**Best Use Cases** |IoT sensors, real-time analytics, live dashboards
+|===
+
+==== VIPER Engine - Analytics Workloads  
+[cols="2,3"]
+|===
+|**Optimized For** |Analytics, compression, read-heavy workloads
+
+|**Architecture** |Parquet columnar storage with sorted rewrite optimization
+|**Compression** |4.2x storage reduction with ZSTD
+|**Performance** |3,205 vectors/sec bulk loading, 38.7ms analytical queries
+|**Memory Efficiency** |Intelligent quantization with 98%+ accuracy retention
+|**Best Use Cases** |Data warehousing, batch analytics, archival storage
+|===
+
+=== Serialization Strategy Performance
+
+==== Avro-Based Schema Evolution
+
+[source,rust]
+----
+// Zero-copy deserialization with schema evolution
+pub struct AvroStrategy {
+    schema_registry: SchemaRegistry,
+    compression: CompressionType,
+}
+
+// Benefits:
+// - Schema evolution without version conflicts
+// - Cross-language compatibility
+// - Compact binary encoding
+// - Zero-copy memory mapping
+----
+
+**Performance Characteristics:**
+- **Throughput**: 2,100+ vectors/sec with schema validation
+- **Compression**: 3.8x reduction with built-in compression
+- **Compatibility**: Language-agnostic data exchange
+- **Evolution**: Backward/forward compatible schema changes
+
+==== Bincode Fast Memory Serialization
+
+[source,rust]
+----
+// Ultra-fast binary serialization for Rust-native apps
+pub struct BincodeStrategy {
+    compression: Option<CompressionType>,
+    endianness: Endianness,
+}
+
+// Benefits:
+// - Fastest possible serialization for Rust
+// - Zero-allocation hot paths
+// - Direct memory layout compatibility
+// - Optional compression for storage efficiency
+----
+
+**Performance Characteristics:**
+- **Throughput**: 3,800+ vectors/sec raw speed
+- **Memory**: Zero-allocation serialization paths
+- **Latency**: Sub-microsecond encoding/decoding
+- **Efficiency**: Native Rust memory layout preservation
+
+=== Vector Quantization
+
+==== Product Quantization (PQ)
+
+[source,python]
+----
+# Configure PQ for 4x compression with 95% accuracy retention
+config = {
+    "quantization": {
+        "type": "product",
+        "subvectors": 8,
+        "bits_per_code": 8,
+        "training_size": 10000
+    }
+}
+----
+
+**Benefits:**
+- **Compression**: 4x-8x memory reduction
+- **Accuracy**: 95%+ similarity preservation
+- **Speed**: 3x faster candidate selection
+- **Scalability**: Sub-linear memory growth
+
+==== Adaptive Quantization
+
+[source,python]
+----
+# Automatic quantization selection based on data characteristics
+def select_quantization(vectors):
+    sparsity = calculate_sparsity(vectors)
+    dimension = len(vectors[0])
+    
+    if sparsity > 0.7:
+        return "binary"  # 32x compression
+    elif dimension >= 512:
+        return "pq4"     # 8x compression  
+    else:
+        return "pq8"     # 4x compression, high quality
+----
+
+[[_text_processing_for_rag_applications]]
+=== Text Processing for RAG Applications
+
+==== Chunking Strategies Comparison
+
+[cols="2,2,2,2"]
+|===
+|**Strategy** |**Chunk Size** |**Overlap** |**Best For**
+
+|**Sentence**
+|Variable (10-100 tokens)
+|None
+|Precise semantic units
+
+|**Paragraph**  
+|Variable (50-500 tokens)
+|None
+|Document structure preservation
+
+|**Sliding Window**
+|Fixed (256 tokens)
+|50% overlap
+|Context preservation
+
+|**Semantic**
+|Variable (based on similarity)
+|Context-aware
+|Meaning preservation
+
+|**Fixed-Size**
+|Fixed (512 tokens)
+|10% overlap
+|Consistent processing
+
+|**Recursive**
+|Adaptive (hierarchy-based)
+|Smart boundaries
+|Complex documents
+|===
+
+==== BERT Integration Performance
+
+[source,python]
+----
+# Optimized BERT embedding generation
+class OptimizedBERTProcessor:
+    def __init__(self, model="bert-base-uncased"):
+        self.model = AutoModel.from_pretrained(model)
+        self.tokenizer = AutoTokenizer.from_pretrained(model)
+        
+    def batch_embed(self, texts, batch_size=32):
+        # Process in batches for optimal GPU utilization
+        embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            with torch.no_grad():
+                encoded = self.tokenizer(batch, 
+                                       padding=True, 
+                                       truncation=True,
+                                       return_tensors="pt")
+                outputs = self.model(**encoded)
+                batch_embeddings = outputs.last_hidden_state[:, 0, :]
+                embeddings.extend(batch_embeddings.cpu().numpy())
+        return embeddings
+----
+
+**Performance Metrics:**
+- **Throughput**: 150-200 documents/second (768D BERT)
+- **Accuracy**: 98%+ semantic similarity preservation
+- **Memory**: Batched processing for GPU efficiency
+- **Scalability**: Linear scaling with GPU compute
+
+=== Advanced Indexing (AXIS)
+
+==== Hierarchical Navigable Small World (HNSW)
+
+[source,python]
+----
+# HNSW configuration for optimal performance
+hnsw_config = {
+    "index_type": "hnsw",
+    "construction_params": {
+        "m": 16,              # Connections per element
+        "ef_construction": 200, # Search width during construction
+        "max_elements": 100000  # Index capacity
+    },
+    "search_params": {
+        "ef_search": 100      # Search width during query
+    }
+}
+----
+
+**Performance Benefits:**
+- **Search Speed**: 60-80% faster than brute force
+- **Memory**: Logarithmic space complexity
+- **Accuracy**: 95%+ recall at high speed
+- **Scalability**: Sub-linear search time complexity
+
+==== Adaptive Index Selection
+
+[source,python]
+----
+# Automatic index optimization based on collection characteristics
+class AdaptiveIndexer:
+    def select_index(self, collection_stats):
+        if collection_stats.size < 1000:
+            return "brute_force"  # Fast exact search
+        elif collection_stats.update_frequency > 0.1:
+            return "hnsw_dynamic"  # Incremental updates
+        else:
+            return "hnsw_static"   # Maximum performance
+----
+
+[[_performance_monitoring_optimization]]
+=== Performance Monitoring & Optimization
+
+==== Real-Time Metrics
+
+[source,bash]
+----
+# Key performance indicators to monitor
+curl http://localhost:5678/admin/metrics | jq '
+{
+  "search_latency_p95": .search_latency.p95,
+  "insert_throughput": .insert_ops.rate,
+  "memory_usage_mb": .memory.heap_mb,
+  "compression_ratio": .storage.compression_ratio,
+  "cache_hit_rate": .cache.hit_rate
+}'
+----
+
+==== Optimization Recommendations
+
+[cols="2,3,2"]
+|===
+|**Metric** |**Optimization** |**Expected Improvement**
+
+|High search latency
+|Enable HNSW indexing, tune ef_search
+|60-80% latency reduction
+
+|Low insert throughput  
+|Increase batch size, use Bincode serialization
+|2-3x throughput increase
+
+|High memory usage
+|Enable quantization, adjust memtable size
+|50-75% memory reduction
+
+|Poor compression ratio
+|Switch to VIPER engine, enable ZSTD
+|3-5x storage reduction
+|===
+
+[[_integration_examples]]
+=== Integration Examples
+
+==== Elasticsearch Migration
+
+[source,python]
+----
+# Migrate from Elasticsearch to ProximaDB
+class ElasticsearchMigrator:
+    def migrate_index(self, es_index, proximadb_collection):
+        # Extract vectors and metadata
+        docs = self.es.search(index=es_index, size=10000)
+        
+        # Transform to ProximaDB format
+        vectors = []
+        for doc in docs['hits']['hits']:
+            vectors.append({
+                'id': doc['_id'],
+                'vector': doc['_source']['vector'],
+                'metadata': doc['_source']['metadata']
+            })
+        
+        # Batch insert with optimized settings
+        self.proximadb.batch_insert(collection, vectors, 
+                                  batch_size=1000,
+                                  strategy="bincode")
+----
+
+==== Pinecone Migration
+
+[source,python]
+----
+# Migrate from Pinecone to ProximaDB
+class PineconeMigrator:
+    def migrate_namespace(self, pinecone_index, namespace, 
+                         proximadb_collection):
+        # Fetch all vectors from Pinecone
+        vectors = pinecone_index.query(
+            namespace=namespace,
+            top_k=10000,
+            include_values=True,
+            include_metadata=True
+        )
+        
+        # Transform and insert
+        batch = []
+        for vector in vectors.matches:
+            batch.append({
+                'id': vector.id,
+                'vector': vector.values,
+                'metadata': vector.metadata
+            })
+        
+        # Use ProximaDB's optimized batch insert
+        self.proximadb.batch_insert(collection, batch)
+----
+
+[IMPORTANT]
+====
+🚀 **Performance Tip**: Use VIPER engine for read-heavy workloads, LSM for write-heavy workloads
+====
 
 [[_demo_execution_commands]]
 == 📊 Demo Execution Commands
@@ -189,7 +1484,7 @@ After completing the demos:
 
 1. **Explore Documentation**: Visit link:../docs/[ProximaDB Documentation] for comprehensive guides
 2. **API Integration**: Use the link:../clients/python/[Python SDK] in your applications  
-3. **Performance Tuning**: Apply configurations from link:docs/04-configuration.adoc[Configuration Guide]
+3. **Performance Tuning**: Apply configurations from Configuration & Environment Setup section
 4. **Production Deployment**: Follow link:../docs/developer_guide.adoc#deployment[Deployment Guide]
 5. **Community**: Join discussions on https://github.com/vjsingh1984/proximadb/issues[GitHub Issues]
 
