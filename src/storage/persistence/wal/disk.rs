@@ -100,7 +100,7 @@ impl CollectionDiskLayout {
 }
 
 /// WAL disk manager with multi-disk support
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WalDiskManager {
     /// Filesystem factory for multi-backend support
     filesystem: Arc<FilesystemFactory>,

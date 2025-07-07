@@ -190,6 +190,10 @@ impl MultiTierDeduplicator {
     pub fn get_final_results(self, k: usize) -> Vec<TieredSearchResult> {
         let mut final_results = Vec::new();
         
+        // Capture lengths before moving
+        let unique_ids_count = self.id_to_latest.len();
+        let without_id_count = self.results_without_id.len();
+        
         // Add latest version of each ID
         for (_, result) in self.id_to_latest {
             final_results.push(result);
@@ -206,8 +210,8 @@ impl MultiTierDeduplicator {
 
         tracing::info!(
             "🎯 Multi-tier deduplication complete: {} unique IDs, {} without ID, {} final results",
-            self.id_to_latest.len(),
-            self.results_without_id.len(),
+            unique_ids_count,
+            without_id_count,
             final_results.len()
         );
 

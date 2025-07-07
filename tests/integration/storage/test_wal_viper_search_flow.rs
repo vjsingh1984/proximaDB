@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
 use proximadb::core::{VectorRecord, CollectionConfig, DistanceMetric, StorageEngine};
-use proximadb::services::{UnifiedAvroService, CollectionService};
+use proximadb::services::{VectorService, CollectionService};
 use proximadb::storage::engines::viper::core::{ViperCoreEngine, ViperCoreConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory, WalStrategyType};
@@ -20,7 +20,7 @@ use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 async fn create_test_infrastructure() -> Result<(
     Arc<WalManager>,
     Arc<ViperCoreEngine>,
-    Arc<UnifiedAvroService>,
+    Arc<VectorService>,
     Arc<CollectionService>,
     TempDir,
 )> {
@@ -53,7 +53,7 @@ async fn create_test_infrastructure() -> Result<(
     ).await?);
     
     // Create unified Avro service
-    let unified_service = Arc::new(UnifiedAvroService::new(
+    let unified_service = Arc::new(VectorService::new(
         wal_manager.clone(),
         viper_engine.clone(), // Pass VIPER engine as storage engine
         collection_service.clone(),

@@ -38,8 +38,7 @@ use std::sync::{Arc, OnceLock};
 /// Global hardware capability cache - detected once at startup
 static UNIFIED_PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
 
-/// Forward declaration for distributed distance manager
-use super::distributed_distance::DistributedDistanceManager;
+// Note: Distributed distance computation was removed in favor of unified local computation
 
 /// Unified distance computation manager with hardware acceleration and optional distributed support
 #[derive(Clone)]
@@ -48,8 +47,7 @@ pub struct UnifiedDistanceCompute {
     system_default: DistanceMetric,
     /// Hardware capability for SIMD optimization
     platform_capability: PlatformCapability,
-    /// Optional distributed distance manager for multi-node computation
-    distributed_manager: Option<Arc<DistributedDistanceManager>>,
+    // Note: Local-only computation - distributed features were removed
 }
 
 impl std::fmt::Debug for UnifiedDistanceCompute {
@@ -57,7 +55,7 @@ impl std::fmt::Debug for UnifiedDistanceCompute {
         f.debug_struct("UnifiedDistanceCompute")
             .field("system_default", &self.system_default)
             .field("platform_capability", &self.platform_capability)
-            .field("has_distributed_manager", &self.distributed_manager.is_some())
+            .field("local_only", &true)
             .finish()
     }
 }
@@ -67,7 +65,6 @@ impl Default for UnifiedDistanceCompute {
         Self {
             system_default: DistanceMetric::Cosine,
             platform_capability: Self::get_or_detect_platform_capability(),
-            distributed_manager: None,
         }
     }
 }
@@ -87,21 +84,9 @@ impl UnifiedDistanceCompute {
         Self {
             system_default: default_metric,
             platform_capability: Self::get_or_detect_platform_capability(),
-            distributed_manager: None,
         }
     }
 
-    /// Create a new unified distance compute manager with distributed support
-    pub fn with_distributed_manager(
-        default_metric: DistanceMetric,
-        distributed_manager: Arc<DistributedDistanceManager>,
-    ) -> Self {
-        Self {
-            system_default: default_metric,
-            platform_capability: Self::get_or_detect_platform_capability(),
-            distributed_manager: Some(distributed_manager),
-        }
-    }
 
     /// Get the detected platform capability
     pub fn platform_capability(&self) -> PlatformCapability {
@@ -282,24 +267,16 @@ impl UnifiedDistanceCompute {
         node_vectors: &[(&str, &[&[f32]])], 
         metric: &DistanceMetric,
     ) -> Result<Vec<(String, Vec<f32>)>> {
-        if let Some(ref distributed_manager) = self.distributed_manager {
-            // Use distributed computation
-            debug!("🌐 Using distributed distance computation across {} nodes", node_vectors.len());
-            distributed_manager
-                .calculate_distance_distributed(query, node_vectors, metric)
-                .await
-        } else {
-            // Fall back to local computation for each node
-            debug!("🖥️ Using local computation for {} node batches", node_vectors.len());
-            let mut results = Vec::new();
-            
-            for (node_id, vectors) in node_vectors {
-                let distances = self.calculate_distance_batch(query, vectors, metric);
-                results.push((node_id.to_string(), distances));
-            }
-            
-            Ok(results)
+        // Local computation for each node (distributed features removed)
+        debug!("🖥️ Using local computation for {} node batches", node_vectors.len());
+        let mut results = Vec::new();
+        
+        for (node_id, vectors) in node_vectors {
+            let distances = self.calculate_distance_batch(query, vectors, metric);
+            results.push((node_id.to_string(), distances));
         }
+        
+        Ok(results)
     }
 
     /// Aggregate distributed results with unified semantics
@@ -311,38 +288,27 @@ impl UnifiedDistanceCompute {
         metric: &DistanceMetric,
         k: usize,
     ) -> Result<Vec<(f32, String)>> {
-        if let Some(ref distributed_manager) = self.distributed_manager {
-            // Use distributed manager's aggregation
-            distributed_manager
-                .aggregate_distributed_results(node_results, metric, k)
-                .await
-        } else {
-            // Local aggregation using unified semantics
-            let mut all_results = Vec::new();
-            for (_node_id, results) in node_results {
-                for (distance, vector_id) in results {
-                    all_results.push((*distance, vector_id.clone()));
-                }
+        // Local aggregation using unified semantics (distributed features removed)
+        let mut all_results = Vec::new();
+        for (_node_id, results) in node_results {
+            for (distance, vector_id) in results {
+                all_results.push((*distance, vector_id.clone()));
             }
-            
-            // Sort and limit using unified semantics
-            DistanceResultOrdering::sort_and_limit(&mut all_results, metric, self, k);
-            Ok(all_results)
         }
+        
+        // Sort and limit using unified semantics
+        DistanceResultOrdering::sort_and_limit(&mut all_results, metric, self, k);
+        Ok(all_results)
     }
 
     /// Check if distributed computation is available
     pub fn has_distributed_support(&self) -> bool {
-        self.distributed_manager.is_some()
+        false // Distributed features removed
     }
 
-    /// Get number of distributed compute nodes (if available)
+    /// Get number of distributed compute nodes (always 1 for local-only)
     pub async fn distributed_nodes_count(&self) -> usize {
-        if let Some(ref distributed_manager) = self.distributed_manager {
-            distributed_manager.nodes_count().await
-        } else {
-            0
-        }
+        1 // Only local node available (distributed features removed)
     }
 
     /// Check if a metric represents similarity (higher is better) or distance (lower is better)

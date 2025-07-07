@@ -102,7 +102,7 @@ pub enum IndexingAlgorithm {
 }
 
 // Use the canonical StorageEngine from proto instead of duplicate enum
-pub use crate::proto::proximadb::StorageEngine;
+pub use crate::storage::strategy::StorageEngineType as StorageEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AccessPattern {
@@ -248,12 +248,16 @@ impl CollectionRecord {
                 DistanceMetric::Euclidean => 2,
                 DistanceMetric::DotProduct => 3,
                 DistanceMetric::Hamming => 4,
+                DistanceMetric::Manhattan => 5,
+                DistanceMetric::Jaccard => 6,
+                DistanceMetric::Custom(_) => 7,
             },
             storage_engine: match self.storage_engine {
                 StorageEngine::Viper => 1,
                 StorageEngine::Lsm => 2,
                 StorageEngine::Mmap => 3,
                 StorageEngine::Hybrid => 4,
+                StorageEngine::Custom { .. } => 5,
             },
             indexing_algorithm: match self.indexing_algorithm {
                 IndexingAlgorithm::Hnsw => 1,

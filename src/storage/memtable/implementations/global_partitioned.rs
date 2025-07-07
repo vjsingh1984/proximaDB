@@ -690,6 +690,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::AvroPayload {
                 operation_type: "upsert".to_string(),
                 avro_data: avro_data1,
@@ -705,6 +706,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::AvroPayload {
                 operation_type: "upsert".to_string(),
                 avro_data: avro_data2,

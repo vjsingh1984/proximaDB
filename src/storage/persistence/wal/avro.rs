@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::{
+    atomic_batch_operation::AtomicWalBatchOperation,
     flush_coordinator::{FlushCoordinatorCallbacks, FlushDataSource, WalFlushCoordinator},
     schema::AVRO_SCHEMA_V1,
     FlushCompletionResult, FlushCycle, FlushCycleState, FlushResult, WalConfig, WalDiskManager,
@@ -20,6 +21,7 @@ use super::{
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
+use crate::storage::atomicity::TransactionContext;
 use crate::storage::memtable::core::MemtableCore;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -93,6 +95,32 @@ impl AvroWalStrategy {
     /// Create new Avro WAL strategy with collection assignment tracking
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a dummy transaction context for standalone atomic operations
+    fn create_dummy_transaction_context(&self) -> TransactionContext {
+        use crate::storage::atomicity::{IsolationLevel, TransactionMetadata, TransactionState};
+        use std::collections::{HashMap, VecDeque};
+        use std::time::Duration;
+        use uuid::Uuid;
+
+        TransactionContext {
+            transaction_id: Uuid::new_v4(),
+            start_time: chrono::Utc::now(),
+            state: TransactionState::Active,
+            executed_operations: Vec::new(),
+            rollback_operations: VecDeque::new(),
+            isolation_level: IsolationLevel::ReadCommitted,
+            timeout: Duration::from_secs(30),
+            locked_resources: HashMap::new(),
+            metadata: TransactionMetadata {
+                client_id: None,
+                session_id: None,
+                tags: HashMap::new(),
+                operation_count: 0,
+                estimated_duration: Duration::from_secs(0),
+            },
+        }
     }
 
     /// Create new strategy with default values
@@ -798,9 +826,102 @@ impl WalStrategy for AvroWalStrategy {
     }
 
     async fn write_batch(&self, entries: Vec<WalEntry>) -> Result<Vec<u64>> {
-        // CRITICAL FIX: Use proper sync-aware write that respects PerBatch sync mode for durability
-        // PerBatch mode requires immediate disk sync after each batch for proper durability guarantees
-        self.write_batch_with_sync(entries, true).await // true = immediate sync per batch
+        // CRITICAL FIX: Use atomic batch operation to prevent half-writes
+        // This ensures both memtable and disk writes succeed or both are rolled back
+        self.write_batch_atomic(entries, true).await // true = immediate sync per batch
+    }
+
+}
+
+impl AvroWalStrategy {
+    /// **NEW: Atomic batch write with proper rollback on failure**
+    /// Addresses the user's concern about "half-writes" by ensuring atomicity
+    async fn write_batch_atomic(
+        &self,
+        entries: Vec<WalEntry>,
+        immediate_sync: bool,
+    ) -> Result<Vec<u64>> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let memory_table = self
+            .memory_table
+            .as_ref()
+            .context("Avro WAL strategy not initialized")?;
+
+        // Step 1: Prepare the vector batch (same as before)
+        let collection_id = entries[0].collection_id.clone();
+        let start_seq = entries.iter().map(|e| e.sequence).min().unwrap_or(0);
+        let end_seq = entries.iter().map(|e| e.sequence).max().unwrap_or(0);
+        let batch_id = crate::storage::persistence::wal::BatchId::new(collection_id.clone(), start_seq, end_seq);
+
+        // Step 2: Deserialize AVRO payload to vector records for memtable
+        let mut vector_records = Vec::new();
+        for entry in &entries {
+            if let crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, .. } = &entry.operation {
+                // Deserialize AVRO batch to individual vector records
+                match crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
+                    Ok(batch_vectors) => {
+                        vector_records.extend(batch_vectors);
+                    }
+                    Err(e) => {
+                        // Try single vector format
+                        if let Ok(single_vector) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
+                            vector_records.push(single_vector);
+                        } else {
+                            tracing::warn!("Failed to deserialize AVRO payload: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 3: Create atomic operation
+        let vector_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id: batch_id.clone(),
+            vector_records,
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: entries.iter().map(|e| e.actual_size_bytes()).sum(),
+            is_flushed: false,
+        };
+
+        let atomic_operation = AtomicWalBatchOperation::new(
+            entries,
+            vector_batch,
+            collection_id,
+            immediate_sync,
+            memory_table.clone(), // Clone Arc references, not actual data
+            self.disk_manager.as_ref().map(|dm| Arc::new(dm.clone())),
+        );
+
+        // Step 4: Execute atomic operation (with automatic rollback on failure)
+        let mut dummy_context = self.create_dummy_transaction_context();
+        let mut atomic_operation = atomic_operation; // Make mutable for execute
+        match atomic_operation.execute(&mut dummy_context).await {
+            Ok(crate::storage::atomicity::OperationResult::BatchWrite { sequences_written, .. }) => {
+                // Extract sequences for return value
+                let sequences: Vec<u64> = (start_seq..=start_seq + sequences_written - 1).collect();
+                
+                tracing::info!(
+                    "✅ ATOMIC_BATCH: Batch operation completed successfully (batch_id: {})",
+                    batch_id.batch_uuid
+                );
+
+                Ok(sequences)
+            }
+            Ok(_) => {
+                Err(anyhow::anyhow!("Unexpected operation result type"))
+            }
+            Err(e) => {
+                tracing::error!(
+                    "❌ ATOMIC_BATCH: Batch operation failed and was rolled back (batch_id: {}): {}",
+                    batch_id.batch_uuid,
+                    e
+                );
+                Err(e)
+            }
+        }
     }
 
     async fn write_batch_with_sync(
@@ -879,8 +1000,9 @@ impl WalStrategy for AvroWalStrategy {
             match &self.disk_manager {
                 Some(disk_manager) => {
                     // Write immutable binary batch file with BatchId
-                    match disk_manager.write_batch_file(&batch_id, &entries).await {
-                        Ok(()) => {
+                    let serialized_data = self.serialize_entries(&entries).await?;
+                    match disk_manager.write_raw(&collection_id, serialized_data).await {
+                        Ok(_flush_result) => {
                             let disk_time = disk_start.elapsed().as_micros();
                             tracing::info!(
                                 "✅ WAL atomic batch write succeeded: batch_id={}, memtable={}μs, disk={}μs, total={}μs",
@@ -1676,15 +1798,13 @@ impl WalStrategy for AvroWalStrategy {
                                 // Update sequence generator to handle recovery sequences
                                 let max_sequence = end_seq;
                                 loop {
-                                    let current = memory_table.sequence_generator.load(std::sync::atomic::Ordering::SeqCst);
+                                    let current = memory_table.current_sequence();
                                     if max_sequence <= current {
                                         break;
                                     }
-                                    if memory_table.sequence_generator.compare_exchange_weak(
-                                        current, max_sequence, 
-                                        std::sync::atomic::Ordering::SeqCst, 
-                                        std::sync::atomic::Ordering::SeqCst
-                                    ).is_ok() {
+                                    // Generate sequences up to max_sequence to sync the generator
+                                    let _ = memory_table.next_sequence();
+                                    if memory_table.current_sequence() >= max_sequence {
                                         break;
                                     }
                                 }
@@ -2073,6 +2193,12 @@ impl WalStrategy for AvroWalStrategy {
 
     /// Get memtable reference for similarity search
     fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable> {
+        self.memory_table.as_ref()
+    }
+
+    /// Get WAL behavior wrapper for direct batch access (optimization for search)
+    fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
+        // WalMemtable is a type alias for WalBehaviorWrapper, so we can return it directly
         self.memory_table.as_ref()
     }
 }

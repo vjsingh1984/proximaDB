@@ -12,14 +12,14 @@ use tempfile::TempDir;
 use proximadb::core::{CollectionId, VectorId, VectorRecord};
 use proximadb::compute::distance::DistanceMetric;
 use proximadb::compute::unified_distance::{UnifiedDistanceCompute, DistanceComputeProvider};
-use proximadb::services::unified_avro_service::UnifiedAvroService;
+use proximadb::services::vector_service::VectorService;
 use proximadb::storage::memtable::core::MemtableManager;
 use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 /// Comprehensive integration test fixture
 struct UnifiedDistanceIntegrationTest {
-    service: Arc<UnifiedAvroService>,
+    service: Arc<VectorService>,
     wal_manager: Arc<WalManager>,
     collection_id: String,
     _temp_dir: TempDir,
@@ -43,7 +43,7 @@ impl UnifiedDistanceIntegrationTest {
         let memtable_manager = Arc::new(MemtableManager::new_unified_for_wal());
         
         // Create unified service
-        let service = Arc::new(UnifiedAvroService::new(
+        let service = Arc::new(VectorService::new(
             wal_manager.clone(),
             memtable_manager,
             None,

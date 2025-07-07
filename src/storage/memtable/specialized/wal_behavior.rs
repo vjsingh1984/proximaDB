@@ -127,10 +127,10 @@ impl BatchCoordinator {
 /// - Global sequence ordering for flush coordination
 /// - Per-collection data partitions for efficient operations
 /// - Content-based search within collections on unflushed data
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WalBehaviorWrapper {
-    /// The wrapped global partitioned memtable implementation (generic storage)
-    inner: GlobalPartitionedMemtable,
+    /// The wrapped global partitioned memtable implementation (generic storage) - Arc for memory efficiency
+    inner: Arc<GlobalPartitionedMemtable>,
 
     /// WAL-specific batch coordinator (handles deserialized batches)
     batch_coordinator: Arc<RwLock<BatchCoordinator>>,
@@ -138,8 +138,8 @@ pub struct WalBehaviorWrapper {
     /// WAL-specific configuration
     config: MemtableConfig,
 
-    /// Sequence number generator for WAL entries
-    sequence_generator: AtomicU64,
+    /// Sequence number generator for WAL entries (Arc for Clone)
+    sequence_generator: Arc<AtomicU64>,
 
     /// MVCC tracking: vector_id -> [sequences] - Not needed for WAL, but kept for compatibility
     mvcc_versions: Arc<RwLock<std::collections::HashMap<String, Vec<u64>>>>,
@@ -155,10 +155,10 @@ impl WalBehaviorWrapper {
     /// Create new WAL behavior wrapper with global partitioned memtable
     pub fn new(config: MemtableConfig) -> Self {
         Self {
-            inner: GlobalPartitionedMemtable::new(),
+            inner: Arc::new(GlobalPartitionedMemtable::new()),
             batch_coordinator: Arc::new(RwLock::new(BatchCoordinator::new())),
             config,
-            sequence_generator: AtomicU64::new(1),
+            sequence_generator: Arc::new(AtomicU64::new(1)),
             mvcc_versions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             wal_metrics: Arc::new(RwLock::new(WalMetrics::default())),
             flush_state: Arc::new(RwLock::new(FlushState::default())),
@@ -167,7 +167,7 @@ impl WalBehaviorWrapper {
 
     /// Get the wrapped implementation
     pub fn inner(&self) -> &GlobalPartitionedMemtable {
-        &self.inner
+        &*self.inner
     }
 
     /// Get next sequence number for WAL ordering
@@ -248,16 +248,17 @@ impl WalBehaviorWrapper {
     }
 
     /// Get all unflushed batches for a collection (WAL-specific)
+    /// Returns deserialized batches that are ready for search without disk I/O
     pub async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WalVectorBatch>> {
         let coordinator = self.batch_coordinator.read().await;
-        let batches = coordinator
+        let batches: Vec<WalVectorBatch> = coordinator
             .get_unflushed_batches(collection_id)
             .into_iter()
             .cloned()
             .collect();
         
         tracing::debug!(
-            "📊 WAL_BATCH: Found {} unflushed batches for collection {}",
+            "🔍 WAL_BATCH_ACCESS: Retrieved {} unflushed batches for collection {}",
             batches.len(),
             collection_id
         );
@@ -646,6 +647,37 @@ impl WalBehaviorWrapper {
         Ok(collections_to_flush)
     }
 
+
+    /// Remove a specific batch from the memtable (for atomic rollback)
+    pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
+        let mut coordinator = self.batch_coordinator.write().await;
+        
+        // Remove batch from coordinator
+        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id) {
+            if let Some(removed_batch) = collection_batches.remove(batch_id) {
+                // Remove vector index entries for this batch
+                for vector_record in &removed_batch.vector_records {
+                    coordinator.vector_index.remove(&vector_record.id);
+                }
+                
+                tracing::debug!(
+                    "🗑️ Removed batch {} from collection {} ({} vectors)",
+                    batch_id,
+                    collection_id,
+                    removed_batch.vector_records.len()
+                );
+                
+                return Ok(());
+            }
+        }
+        
+        Err(anyhow::anyhow!(
+            "Batch {} not found in collection {} for removal",
+            batch_id,
+            collection_id
+        ))
+    }
+
     /// Get statistics (compatible interface)
     pub async fn get_stats(
         &self,
@@ -884,16 +916,16 @@ struct FlushState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::persistence::wal::{WalEntry, WalOperation};
+    // Tests now use unified add_vector_batch API only
 
     #[tokio::test]
     async fn test_wal_behavior_wrapper() {
         let config = MemtableConfig::default();
         let wal_wrapper = WalBehaviorWrapper::new(config);
 
-        // Create test WAL entry
+        // Create test vector records using the new unified API
         let now = chrono::Utc::now().timestamp_millis();
-        let vector_record = crate::core::VectorRecord {
+        let vector_record1 = crate::core::VectorRecord {
             id: "test_vector_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![0.1, 0.2, 0.3],
@@ -908,33 +940,67 @@ mod tests {
             distance: None,
         };
 
-        let wal_entry = WalEntry {
-            entry_id: "test_vector_1".to_string(),
-            collection_id: crate::core::CollectionId::from("test_collection".to_string()),
-            sequence: 0, // Will be auto-assigned
-            global_sequence: 0,
-            timestamp: chrono::Utc::now(),
+        let vector_record2 = crate::core::VectorRecord {
+            id: "test_vector_2".to_string(),
+            collection_id: "test_collection".to_string(),
+            vector: vec![0.4, 0.5, 0.6],
+            metadata: std::collections::HashMap::new(),
+            timestamp: now + 1,
+            created_at: now + 1,
+            updated_at: now + 1,
             expires_at: None,
             version: 1,
-            operation: WalOperation::Insert {
-                vector_id: crate::core::VectorId::from("test_vector_1".to_string()),
-                record: vector_record,
-                expires_at: None,
-            },
+            rank: None,
+            score: None,
+            distance: None,
         };
 
-        // Test WAL entry insertion
-        let seq1 = wal_wrapper
-            .insert_wal_entry(wal_entry.clone())
+        // Test first batch insertion using unified add_vector_batch API
+        let batch1 = WalVectorBatch {
+            batch_id: BatchId {
+                collection_id: "test_collection".to_string(),
+                sequence_range: (1, 1),
+                batch_uuid: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now(),
+            },
+            vector_records: vec![vector_record1],
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+        };
+        
+        let sequences1 = wal_wrapper
+            .add_vector_batch(batch1)
             .await
             .unwrap();
-        let seq2 = wal_wrapper
-            .insert_wal_entry(wal_entry.clone())
-            .await
-            .unwrap();
+        let seq1 = sequences1[0];
 
+        // Test second batch insertion
+        let batch2 = WalVectorBatch {
+            batch_id: BatchId {
+                collection_id: "test_collection".to_string(),
+                sequence_range: (2, 2),
+                batch_uuid: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now(),
+            },
+            vector_records: vec![vector_record2],
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+        };
+        
+        let sequences2 = wal_wrapper
+            .add_vector_batch(batch2)
+            .await
+            .unwrap();
+        let seq2 = sequences2[0];
+
+        // Verify sequence ordering (newer batches get higher sequences)
         assert!(seq2 > seq1);
-        assert_eq!(wal_wrapper.len().await, 2);
+        
+        // Verify batch count
+        let unflushed_batches = wal_wrapper.get_unflushed_batches("test_collection").await.unwrap();
+        assert_eq!(unflushed_batches.len(), 2);
 
         // Test sequence-based retrieval
         let entries = wal_wrapper.get_from_sequence(seq1, None).await.unwrap();
@@ -963,40 +1029,42 @@ mod tests {
 
         let vector_id = "test_vector_mvcc";
 
-        // Insert multiple versions of the same vector
+        // Insert multiple versions of the same vector using unified API
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
             let vector_record = crate::core::VectorRecord {
                 id: vector_id.to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![i as f32, (i + 1) as f32],
-                metadata: std::collections::HashMap::new(),
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                metadata: {
+                    let mut meta = std::collections::HashMap::new();
+                    meta.insert("version".to_string(), serde_json::Value::Number(serde_json::Number::from(i)));
+                    meta
+                },
+                timestamp: now + i as i64,
+                created_at: now + i as i64,
+                updated_at: now + i as i64,
                 expires_at: None,
-                version: 1,
+                version: (i + 1) as i64,
                 rank: None,
                 score: None,
                 distance: None,
             };
 
-            let wal_entry = WalEntry {
-                entry_id: vector_id.to_string(),
-                collection_id: crate::core::CollectionId::from("test_collection".to_string()),
-                sequence: 0,
-                global_sequence: 0,
-                timestamp: chrono::Utc::now(),
-                expires_at: None,
-                version: 1,
-                operation: WalOperation::Update {
-                    vector_id: crate::core::VectorId::from(vector_id.to_string()),
-                    record: vector_record,
-                    expires_at: None,
+            let batch = WalVectorBatch {
+                batch_id: BatchId {
+                    collection_id: "test_collection".to_string(),
+                    sequence_range: ((i + 1) as u64, (i + 1) as u64),
+                    batch_uuid: uuid::Uuid::new_v4().to_string(),
+                    created_at: chrono::Utc::now(),
                 },
+                vector_records: vec![vector_record],
+                created_at: std::time::SystemTime::now(),
+                total_size_bytes: 1024,
+                is_flushed: false,
             };
-
-            wal_wrapper.insert_wal_entry(wal_entry).await.unwrap();
+            
+            wal_wrapper.add_vector_batch(batch).await.unwrap();
         }
 
         // Test version retrieval

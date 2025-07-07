@@ -30,11 +30,11 @@ mod tests {
     }
 
     #[test]
-    fn test_unified_avro_service_lsm_integration() {
+    fn test_vector_service_lsm_integration() {
         // Test that the unified service no longer returns hardcoded LSM error
 
         // The key test is that our code change removed the hardcoded error
-        // The error was in src/services/unified_avro_service.rs:1493
+        // The error was in src/services/vector_service.rs
         // We changed it from: return Err(anyhow!("LSM search engine not yet fully integrated"));
         // To: SearchEngineFactory::create_for_collection(&collection_record, None, Some(self.lsm_engine.clone())).await?
         println!(
@@ -43,10 +43,10 @@ mod tests {
         println!("✅ LSM search now uses SearchEngineFactory::create_for_collection");
 
         // Verify the fix was applied by checking that the hardcoded string doesn't exist in code
-        let service_source = include_str!("../src/services/unified_avro_service.rs");
+        let service_source = include_str!("../src/services/vector_service.rs");
         assert!(
             !service_source.contains("LSM search engine not yet fully integrated"),
-            "❌ Hardcoded LSM error message still exists in unified_avro_service.rs"
+            "❌ Hardcoded LSM error message still exists in vector_service.rs"
         );
         println!("✅ Source code verified: hardcoded LSM error message removed");
     }

@@ -27,6 +27,7 @@ mod tests {
             timestamp: now,
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::Insert {
                 vector_id: vector_id.to_string(),
                 record: VectorRecord {
@@ -39,6 +40,7 @@ mod tests {
                     updated_at: now.timestamp_millis(),
                     expires_at: None,
                     version: 1,
+            batch_id: None,
                     rank: None,
                     score: None,
                     distance: None,
@@ -322,6 +324,7 @@ mod tests {
             timestamp: Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::AvroPayload {
                 operation_type: "insert".to_string(),
                 avro_data,
@@ -486,6 +489,7 @@ mod tests {
             timestamp: Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::Insert {
                 vector_id: "bincode_vector".to_string(),
                 record: vector_record,
@@ -560,6 +564,7 @@ mod tests {
             timestamp: Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::Update {
                 vector_id: "updated_vector".to_string(),
                 record: updated_vector_record,
@@ -593,6 +598,7 @@ mod tests {
             timestamp: Utc::now(),
             expires_at: None,
             version: 1,
+            batch_id: None,
             operation: WalOperation::AvroPayload {
                 operation_type: "insert".to_string(),
                 avro_data,

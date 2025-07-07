@@ -28,6 +28,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
 
 // Sub-modules
+pub mod atomic_batch_operation;
 pub mod avro;
 pub mod background_manager;
 pub mod bincode;
@@ -486,6 +487,12 @@ pub trait WalStrategy: Send + Sync + DistanceComputeProvider {
 
     /// Get memtable reference for similarity search - using new unified memtable system
     fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable>;
+
+    /// Get WAL behavior wrapper for direct batch access (optimization for search)
+    fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
+        // Default implementation returns None - concrete strategies can override
+        None
+    }
 
     /// Get latest entry for a vector (for MVCC)
     async fn get_latest_entry(
@@ -1366,6 +1373,12 @@ impl WalManager {
         self.strategy
             .register_storage_engine(engine_name, engine)
             .await
+    }
+
+    /// Get WAL behavior wrapper for direct batch access (optimization for search)
+    /// Returns the wrapper that provides access to unflushed batches in memory
+    pub fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
+        self.strategy.get_wal_behavior_wrapper()
     }
 }
 

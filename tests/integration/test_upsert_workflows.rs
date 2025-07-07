@@ -1,8 +1,8 @@
 //! Integration tests for end-to-end upsert workflows
 //!
 //! Tests the complete upsert pipeline across:
-//! - REST API → UnifiedAvroService → WAL → Memtable → Search
-//! - gRPC API → UnifiedAvroService → WAL → Memtable → Search  
+//! - REST API → VectorService → WAL → Memtable → Search
+//! - gRPC API → VectorService → WAL → Memtable → Search  
 //! - Multiple storage engines (LSM, VIPER, WAL)
 //! - Flush and compaction scenarios
 //! - Cross-tier search deduplication
@@ -14,13 +14,13 @@ use serde_json::json;
 
 use proximadb::core::VectorRecord;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::services::unified_avro_service::UnifiedAvroService;
+use proximadb::services::vector_service::VectorService;
 use proximadb::storage::persistence::wal::WalManager;
 use proximadb::proto::proximadb::{CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm};
 
 // Mock setup functions (these would need to be implemented based on your test infrastructure)
 
-async fn setup_test_environment() -> (Arc<UnifiedAvroService>, Arc<CollectionService>) {
+async fn setup_test_environment() -> (Arc<VectorService>, Arc<CollectionService>) {
     // This is a mock setup - you'll need to implement based on your test infrastructure
     todo!("Implement test environment setup")
 }
@@ -96,7 +96,7 @@ async fn test_basic_upsert_workflow() {
     // Serialize to Avro batch
     let avro_data = proximadb::storage::persistence::wal::schema::serialize_vector_batch(&vector_records).unwrap();
     
-    // Insert via UnifiedAvroService
+    // Insert via VectorService
     let result = unified_service.handle_vector_insert(&collection_id, false, &avro_data).await;
     assert!(result.is_ok(), "Initial insert should succeed");
     

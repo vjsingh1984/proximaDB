@@ -176,13 +176,45 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StorageEngineType {
     /// LSM Tree storage
-    LSM,
+    Lsm,
     /// VIPER columnar storage
-    VIPER,
+    Viper,
     /// Memory-mapped files
-    MMAP,
+    Mmap,
+    /// Hybrid storage engine
+    Hybrid,
     /// Custom storage engine
     Custom { name: String },
+}
+
+impl Default for StorageEngineType {
+    fn default() -> Self {
+        StorageEngineType::Viper // VIPER is the default storage engine
+    }
+}
+
+impl From<crate::proto::proximadb::StorageEngine> for StorageEngineType {
+    fn from(proto_engine: crate::proto::proximadb::StorageEngine) -> Self {
+        match proto_engine {
+            crate::proto::proximadb::StorageEngine::Viper => StorageEngineType::Viper,
+            crate::proto::proximadb::StorageEngine::Lsm => StorageEngineType::Lsm,
+            crate::proto::proximadb::StorageEngine::Mmap => StorageEngineType::Mmap,
+            crate::proto::proximadb::StorageEngine::Hybrid => StorageEngineType::Hybrid,
+            _ => StorageEngineType::Viper, // Default for unspecified
+        }
+    }
+}
+
+impl From<StorageEngineType> for crate::proto::proximadb::StorageEngine {
+    fn from(engine_type: StorageEngineType) -> Self {
+        match engine_type {
+            StorageEngineType::Viper => crate::proto::proximadb::StorageEngine::Viper,
+            StorageEngineType::Lsm => crate::proto::proximadb::StorageEngine::Lsm,
+            StorageEngineType::Mmap => crate::proto::proximadb::StorageEngine::Mmap,
+            StorageEngineType::Hybrid => crate::proto::proximadb::StorageEngine::Hybrid,
+            StorageEngineType::Custom { .. } => crate::proto::proximadb::StorageEngine::Viper, // Default to VIPER for custom
+        }
+    }
 }
 
 /// Search engine configuration
@@ -452,7 +484,7 @@ impl Default for CollectionStrategyConfig {
                 secondary_algorithm: None,
             },
             storage_config: StorageConfig {
-                engine_type: StorageEngineType::LSM,
+                engine_type: StorageEngineType::Lsm,
                 parameters: HashMap::new(),
                 compression: CompressionConfig {
                     enabled: true,

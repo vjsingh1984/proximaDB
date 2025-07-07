@@ -23,7 +23,6 @@
 
 pub mod algorithms;
 pub mod distance;
-pub mod distributed_distance;
 pub mod hardware;
 pub mod hardware_detection;
 pub mod indexing;
@@ -36,7 +35,6 @@ pub mod tests;
 
 pub use algorithms::*;
 pub use distance::*;
-pub use distributed_distance::*;
 pub use hardware::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
 pub use quantization::*;

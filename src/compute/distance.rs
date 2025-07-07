@@ -39,6 +39,12 @@ pub enum DistanceMetric {
     Custom(String),
 }
 
+impl Default for DistanceMetric {
+    fn default() -> Self {
+        DistanceMetric::Cosine // Cosine is the default distance metric
+    }
+}
+
 /// Platform-agnostic SIMD capability detection
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlatformCapability {

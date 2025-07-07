@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::{SearchResult, StorageEngine as StorageEngineType};
+use crate::core::{SearchResult, VectorRecord, StorageEngine as StorageEngineType};
 use super::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchResult, StorageTier, DeduplicationStorageEngine, MetadataFilter};
 
 /// Core trait for storage-aware search engines
@@ -325,8 +325,80 @@ impl SearchEngineFactory {
         Ok(final_results)
     }
 
-    /// Search unflushed WAL data for a collection
+    /// **OPTIMIZED: Search unflushed memtable batches directly (no disk I/O)**
+    /// Uses deserialized WalVectorBatch from memtable instead of re-deserializing from disk
     async fn search_wal_data(
+        &self,
+        wal_manager: &std::sync::Arc<crate::storage::persistence::wal::WalManager>,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        filters: Option<&MetadataFilter>,
+    ) -> Result<Vec<TieredSearchResult>> {
+        // 🚀 OPTIMIZATION: Search in-memory unflushed batches instead of disk
+        // This avoids disk I/O and deserialization since memtable already has parsed data
+        tracing::debug!("🔍 WAL_SEARCH: Using optimized batch-based search for collection {}", collection_id);
+        
+        let mut results = Vec::new();
+        
+        // Try to get unflushed batches from memtable first (fastest path)
+        if let Ok(memtable_wrapper) = self.get_wal_memtable_wrapper(wal_manager).await {
+            let unflushed_batches = memtable_wrapper.get_unflushed_batches(collection_id).await?;
+            
+            tracing::debug!("🔍 WAL_SEARCH: Found {} unflushed batches in memtable", unflushed_batches.len());
+            
+            for batch in unflushed_batches {
+                for vector_record in &batch.vector_records {
+                    // Apply metadata filters
+                    if let Some(filters) = filters {
+                        let mut matches = true;
+                        for (key, expected_value) in filters {
+                            match vector_record.metadata.get(key) {
+                                Some(actual_value) => {
+                                    if actual_value != expected_value {
+                                        matches = false;
+                                        break;
+                                    }
+                                }
+                                None => {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !matches {
+                            continue;
+                        }
+                    }
+
+                    let score = self.calculate_similarity(query_vector, &vector_record.vector);
+                    results.push(TieredSearchResult {
+                        vector_record: vector_record.clone(),
+                        score,
+                        tier: StorageTier::Unflushed,
+                        engine: DeduplicationStorageEngine::WAL,
+                        timestamp: batch.batch_id.created_at,
+                        sequence: 0, // Batch-based, no individual sequence
+                        file_path: None,
+                    });
+                }
+            }
+        } else {
+            // FALLBACK: Use old disk-based search if memtable wrapper unavailable
+            tracing::warn!("🔍 WAL_SEARCH: Falling back to disk-based search (performance degraded)");
+            return self.search_wal_data_fallback(wal_manager, collection_id, query_vector, k, filters).await;
+        }
+
+        // Sort by score and take top results
+        results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k);
+
+        tracing::debug!("🔍 WAL_SEARCH: Returning {} results from {} batches", results.len(), results.len());
+        Ok(results)
+    }
+
+    /// Fallback to old disk-based search when memtable wrapper unavailable
+    async fn search_wal_data_fallback(
         &self,
         wal_manager: &std::sync::Arc<crate::storage::persistence::wal::WalManager>,
         collection_id: &str,
@@ -341,42 +413,8 @@ impl SearchEngineFactory {
         for entry in wal_entries {
             match &entry.operation {
                 crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, .. } => {
-                    // Handle single record
-                    if let Ok(vector_record) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
-                        // Apply metadata filters
-                        if let Some(filters) = filters {
-                            let mut matches = true;
-                            for (key, expected_value) in filters {
-                                match vector_record.metadata.get(key) {
-                                    Some(actual_value) => {
-                                        if actual_value != expected_value {
-                                            matches = false;
-                                            break;
-                                        }
-                                    }
-                                    None => {
-                                        matches = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !matches {
-                                continue;
-                            }
-                        }
-
-                        let score = self.calculate_similarity(query_vector, &vector_record.vector);
-                        results.push(TieredSearchResult {
-                            vector_record,
-                            score,
-                            tier: StorageTier::Unflushed,
-                            engine: DeduplicationStorageEngine::WAL,
-                            timestamp: entry.timestamp,
-                            sequence: entry.sequence,
-                            file_path: None,
-                        });
-                    } else if let Ok(batch_records) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
-                        // Handle batch data
+                    if let Ok(batch_records) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
+                        // Handle batch data (primary path for production)
                         for vector_record in batch_records {
                             // Apply metadata filters
                             if let Some(filters) = filters {
@@ -414,7 +452,7 @@ impl SearchEngineFactory {
                     }
                 }
                 _ => {
-                    // Skip non-vector operations
+                    // Skip non-AvroPayload operations
                 }
             }
         }
@@ -424,6 +462,16 @@ impl SearchEngineFactory {
         results.truncate(k);
 
         Ok(results)
+    }
+
+    /// Get WAL memtable wrapper for direct batch access
+    async fn get_wal_memtable_wrapper<'a>(
+        &self,
+        wal_manager: &'a std::sync::Arc<crate::storage::persistence::wal::WalManager>,
+    ) -> Result<&'a crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
+        wal_manager
+            .get_wal_behavior_wrapper()
+            .ok_or_else(|| anyhow::anyhow!("WAL behavior wrapper not available from strategy"))
     }
 
     /// Calculate similarity score (cosine distance)
@@ -464,13 +512,26 @@ impl SearchEngineFactory {
         search_results
             .into_iter()
             .map(|result| TieredSearchResult {
-                vector_record: result.vector_record,
+                vector_record: VectorRecord {
+                    id: result.id.clone(),
+                    collection_id: result.collection_id.clone().unwrap_or_default(),
+                    vector: result.vector.clone().unwrap_or_default(),
+                    metadata: result.metadata.clone(),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    updated_at: chrono::Utc::now().timestamp_millis(),
+                    expires_at: None,
+                    version: 1,
+                    rank: None,
+                    score: Some(result.score),
+                    distance: None,
+                },
                 score: result.score,
                 tier,
                 engine,
                 timestamp: chrono::Utc::now(), // Approximation for flushed data
                 sequence: 0, // Storage engines don't track sequence
-                file_path: result.file_path,
+                file_path: None, // Storage engines don't provide file paths in search results
             })
             .collect()
     }
@@ -480,9 +541,17 @@ impl SearchEngineFactory {
         tiered_results
             .into_iter()
             .map(|result| SearchResult {
-                vector_record: result.vector_record,
+                id: result.vector_record.id.clone(),
+                vector_id: Some(result.vector_record.id.clone()),
                 score: result.score,
-                file_path: result.file_path,
+                distance: None,
+                rank: None,
+                vector: Some(result.vector_record.vector),
+                metadata: result.vector_record.metadata,
+                collection_id: Some(result.vector_record.collection_id),
+                created_at: Some(result.timestamp.timestamp_millis()),
+                algorithm_used: None,
+                processing_time_us: None,
             })
             .collect()
     }

@@ -7,7 +7,8 @@ pub mod viper_search;
 
 // Re-export main types
 pub use multi_tier_deduplication::{
-    DeduplicationStats, MultiTierDeduplicator, StorageTier, TieredSearchResult, DeduplicationStorageEngine,
+    DeduplicationStats, MultiTierDeduplicator, StorageTier, TieredSearchResult, 
+    DeduplicationStorageEngine, MetadataFilter,
 };
 pub use storage_aware::{
     ClusteringHints, QuantizationLevel, SearchCapabilities, SearchEngineFactory, SearchHints,

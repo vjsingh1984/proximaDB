@@ -1195,6 +1195,12 @@ impl WalStrategy for BincodeWalStrategy {
     fn memtable(&self) -> Option<&crate::storage::memtable::specialized::WalMemtable> {
         self.memory_table.as_ref()
     }
+
+    /// Get WAL behavior wrapper for direct batch access (optimization for search)
+    fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
+        // WalMemtable is a type alias for WalBehaviorWrapper, so we can return it directly
+        self.memory_table.as_ref()
+    }
 }
 
 // Flush coordination methods (outside trait implementation)

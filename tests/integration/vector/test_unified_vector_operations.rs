@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-//! Integration tests for unified vector operations using UnifiedAvroService
+//! Integration tests for unified vector operations using VectorService
 //!
 //! Tests: vector insert, update, delete, search operations through the unified service layer
 
 use chrono::Utc;
 use proximadb::core::{CollectionId, LsmConfig, StorageConfig, VectorRecord};
-use proximadb::services::unified_avro_service::UnifiedAvroService;
+use proximadb::services::vector_service::VectorService;
 use proximadb::storage::StorageEngine;
 use proximadb::storage::metadata::backends::memory_backend::MemoryMetadataBackend;
 use std::collections::HashMap;
@@ -49,14 +49,14 @@ fn create_test_config(temp_dir: &TempDir) -> StorageConfig {
     }
 }
 
-/// Helper function to create test UnifiedAvroService
-async fn create_test_service(config: StorageConfig) -> anyhow::Result<UnifiedAvroService> {
+/// Helper function to create test VectorService
+async fn create_test_service(config: StorageConfig) -> anyhow::Result<VectorService> {
     let storage = StorageEngine::new(config).await?;
     let storage = Arc::new(RwLock::new(storage));
     
     let metadata_backend = Arc::new(MemoryMetadataBackend::new());
     
-    UnifiedAvroService::new(storage, metadata_backend).await
+    VectorService::new(storage, metadata_backend).await
 }
 
 #[tokio::test]

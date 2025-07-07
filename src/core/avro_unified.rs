@@ -356,7 +356,7 @@ pub struct Collection {
 pub use crate::compute::distance::DistanceMetric;
 
 // Use the canonical StorageEngine from proto instead of duplicate enum
-pub use crate::proto::proximadb::StorageEngine;
+pub use crate::storage::strategy::StorageEngineType as StorageEngine;
 
 /// Indexing algorithms - matches Avro enum  
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

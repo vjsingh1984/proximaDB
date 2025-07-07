@@ -22,6 +22,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "vector_1".to_string(),
                     record: VectorRecord {
@@ -34,6 +35,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -49,6 +51,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "vector_2".to_string(),
                     record: VectorRecord {
@@ -61,6 +64,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -76,6 +80,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "vector_3".to_string(),
                     record: VectorRecord {
@@ -88,6 +93,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -103,6 +109,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "vector_4".to_string(),
                     record: VectorRecord {
@@ -115,6 +122,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -359,6 +367,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "binary_1".to_string(),
                     record: VectorRecord {
@@ -371,6 +380,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -386,6 +396,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "binary_2".to_string(),
                     record: VectorRecord {
@@ -398,6 +409,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -413,6 +425,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "binary_3".to_string(),
                     record: VectorRecord {
@@ -425,6 +438,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -493,6 +507,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "set_1".to_string(),
                     record: VectorRecord {
@@ -505,6 +520,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -520,6 +536,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "set_2".to_string(),
                     record: VectorRecord {
@@ -532,6 +549,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
@@ -547,6 +565,7 @@ mod tests {
                 timestamp: now,
                 expires_at: None,
                 version: 1,
+            batch_id: None,
                 operation: WalOperation::Insert {
                     vector_id: "set_3".to_string(),
                     record: VectorRecord {
@@ -559,6 +578,7 @@ mod tests {
                         updated_at: now.timestamp_millis(),
                         expires_at: None,
                         version: 1,
+            batch_id: None,
                         rank: None,
                         score: None,
                         distance: None,
