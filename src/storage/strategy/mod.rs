@@ -176,14 +176,19 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StorageEngineType {
     /// LSM Tree storage
+    #[serde(rename = "LSM")]
     Lsm,
     /// VIPER columnar storage
+    #[serde(rename = "VIPER")]
     Viper,
     /// Memory-mapped files
+    #[serde(rename = "MMAP")]
     Mmap,
     /// Hybrid storage engine
+    #[serde(rename = "HYBRID")]
     Hybrid,
     /// Custom storage engine
+    #[serde(rename = "CUSTOM")]
     Custom { name: String },
 }
 

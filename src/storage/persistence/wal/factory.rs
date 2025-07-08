@@ -15,31 +15,24 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 // Re-exports for factory users (avoid duplicate import)
 // pub use super::config::WalStrategyType;  // Already imported above
 
-/// Abstract factory for creating WAL strategies
+/// 🚫 DEPRECATED: Abstract factory for creating WAL strategies
+/// Use WalBatchFactory for new implementations - provides modern batch-oriented strategies
+#[deprecated(note = "Use WalBatchFactory for new implementations")]
 pub struct WalFactory;
 
 impl WalFactory {
     /// Create a WAL strategy based on configuration
+    #[deprecated(note = "Use WalBatchFactory::create_strategy for modern batch-oriented strategies")]
     pub async fn create_strategy(
         strategy_type: WalStrategyType,
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WalStrategy>> {
-        match strategy_type {
-            WalStrategyType::Avro => {
-                let mut strategy = Box::new(super::avro::AvroWalStrategy::new());
-                strategy.initialize(config, filesystem).await?;
-                Ok(strategy)
-            }
-            WalStrategyType::Bincode => {
-                let mut strategy = Box::new(super::bincode::BincodeWalStrategy::new());
-                strategy.initialize(config, filesystem).await?;
-                Ok(strategy)
-            }
-        }
+        anyhow::bail!("⚠️ Legacy WAL strategies have been removed. Please use WalBatchFactory for modern batch-oriented strategies")
     }
 
     /// Create strategy with automatic type detection from config
+    #[deprecated(note = "Use WalBatchFactory::create_from_config for modern batch-oriented strategies")]
     pub async fn create_from_config(
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
@@ -49,13 +42,13 @@ impl WalFactory {
 
     /// List available strategy types
     pub fn available_strategies() -> Vec<WalStrategyType> {
-        vec![WalStrategyType::Avro, WalStrategyType::Bincode]
+        vec![WalStrategyType::Avro, WalStrategyType::Bincode, WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch]
     }
 
     /// Get strategy information
     pub fn strategy_info(strategy_type: &WalStrategyType) -> StrategyInfo {
         match strategy_type {
-            WalStrategyType::Avro => StrategyInfo {
+            WalStrategyType::Avro | WalStrategyType::AvroBatch => StrategyInfo {
                 name: "Avro",
                 description:
                     "Schema evolution support, cross-language compatibility, built-in compression",
@@ -79,7 +72,7 @@ impl WalFactory {
                     "Data analytics pipelines",
                 ],
             },
-            WalStrategyType::Bincode => StrategyInfo {
+            WalStrategyType::Bincode | WalStrategyType::BincodeBatch => StrategyInfo {
                 name: "Bincode",
                 description: "Native Rust serialization, maximum performance, minimal overhead",
                 features: vec![

@@ -83,12 +83,19 @@ async fn test_basic_wal_operations() -> Result<()> {
     };
 
     // Write to WAL using the correct insert method
-    wal_manager
+    println!("🔍 DEBUG: About to insert vector_id={} into collection_id={}", vector_id, collection_id);
+    let sequence = wal_manager
         .insert(collection_id.clone(), vector_id.clone(), test_record)
         .await?;
+    println!("🔍 DEBUG: Insert completed with sequence={}", sequence);
 
     // Check stats
     let stats = wal_manager.stats().await?;
+    println!("🔍 DEBUG: Full WAL stats after insert: {:?}", stats);
+    
+    // Try to call the strategy stats directly for debugging
+    println!("🔍 DEBUG: Checking if we can do a simple search to see if data exists...");
+    
     assert_eq!(stats.total_entries, 1);
     assert!(stats.memory_entries > 0);
 

@@ -7,32 +7,34 @@
 //! - Efficient per-collection flush isolation
 
 use anyhow::Result;
-use async_trait::async_trait;
+// async_trait removed - no longer implementing trait methods
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::super::core::{MemtableCore, MemtableMetrics};
+use super::super::core::MemtableMetrics;
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{
     DistanceComputeProvider, DistanceResultOrdering, UnifiedDistanceCompute,
 };
-use crate::storage::persistence::wal::WalEntry;
+use crate::core::VectorRecord;
+// WalEntry removed - working directly with VectorRecord and WalVectorBatch
 
 /// Collection partition within the global memtable
 #[derive(Debug)]
 struct CollectionPartition {
-    /// Sequence-based storage within collection (local ordering)
-    entries: Vec<WalEntry>,
+    /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
+    wal_batches: HashMap<String, crate::storage::memtable::specialized::wal_behavior::WalVectorBatch>,
 
-    /// Content-based search index within collection (content_key -> vec index)
-    content_index: HashMap<String, usize>,
+    /// Vector ID to batch lookup index for fast get operations
+    vector_id_index: HashMap<String, String>, // vector_id -> batch_id
 
     /// Collection statistics
     total_size: usize,
-    entry_count: usize,
+    vector_count: usize,
+    batch_count: usize,
     last_flush_sequence: u64,
     created_at: std::time::SystemTime,
 }
@@ -40,79 +42,122 @@ struct CollectionPartition {
 impl CollectionPartition {
     fn new() -> Self {
         Self {
-            entries: Vec::new(),
-            content_index: HashMap::new(),
+            wal_batches: HashMap::new(),
+            vector_id_index: HashMap::new(),
             total_size: 0,
-            entry_count: 0,
+            vector_count: 0,
+            batch_count: 0,
             last_flush_sequence: 0,
             created_at: std::time::SystemTime::now(),
         }
     }
 
-    /// Append entry to this collection partition
-    fn append(&mut self, entry: WalEntry) -> Result<usize> {
-        let entry_size = entry.actual_size_bytes();
-        let local_index = self.entries.len();
+    /// Add WAL batch to this collection partition
+    fn add_batch(&mut self, batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<()> {
+        let batch_id = batch.batch_id.batch_uuid.clone();
+        let batch_size = batch.total_size_bytes;
+        let vector_count = batch.vector_records.len();
 
-        // Generate content key for search index
-        let content_key = entry
-            .content_key()
-            .map_err(|e| anyhow::anyhow!("Failed to generate content key: {}", e))?;
-
-        // Add to sequence-based storage
-        self.entries.push(entry);
-
-        // Add to content-based index
-        self.content_index.insert(content_key, local_index);
-
-        // Update statistics
-        self.total_size += entry_size;
-        self.entry_count += 1;
-
-        Ok(local_index)
-    }
-
-    /// Get entry by content key within this collection
-    fn get_by_content(&self, content_key: &str) -> Option<WalEntry> {
-        if let Some(&index) = self.content_index.get(content_key) {
-            self.entries.get(index).cloned()
-        } else {
-            None
-        }
-    }
-
-    /// Clear entries up to sequence number within this collection
-    fn clear_up_to(&mut self, up_to_seq: u64) -> usize {
-        let mut cleared_count = 0;
-        let mut removed_size = 0;
-        let mut new_entries = Vec::new();
-        let mut new_content_index = HashMap::new();
-
-        // Rebuild entries and index, excluding cleared entries
-        for (index, entry) in self.entries.iter().enumerate() {
-            if entry.sequence <= up_to_seq {
-                // Clear this entry
-                cleared_count += 1;
-                removed_size += entry.actual_size_bytes();
-            } else {
-                // Keep this entry with new index
-                let new_index = new_entries.len();
-                new_entries.push(entry.clone());
-
-                // Update content index with new index
-                if let Ok(content_key) = entry.content_key() {
-                    new_content_index.insert(content_key, new_index);
-                }
+        // Update vector ID index for fast lookups
+        for vector_record in &batch.vector_records {
+            if !vector_record.id.is_empty() {
+                self.vector_id_index.insert(vector_record.id.clone(), batch_id.clone());
             }
         }
 
-        // Replace data structures
-        self.entries = new_entries;
-        self.content_index = new_content_index;
+        // Store the batch
+        self.wal_batches.insert(batch_id, batch);
 
         // Update statistics
+        self.total_size += batch_size;
+        self.vector_count += vector_count;
+        self.batch_count += 1;
+
+        Ok(())
+    }
+
+    /// Get vector by ID within this collection with MVCC + logical delete support
+    fn get_vector_by_id(&self, vector_id: &str) -> Option<VectorRecord> {
+        // 🔧 FLEXIBLE: Skip immutable vectors (those without client-provided IDs)
+        if vector_id.is_empty() {
+            return None;
+        }
+        
+        let current_time = chrono::Utc::now().timestamp_micros();
+        let mut latest_record: Option<(VectorRecord, u64, i64)> = None; // (record, sequence, version)
+        
+        // Search through all batches to find the latest version
+        for batch in self.wal_batches.values() {
+            for vector_record in &batch.vector_records {
+                if !vector_record.id.is_empty() && vector_record.id == vector_id {
+                    let sequence = batch.batch_id.sequence_range.0;
+                    let version = vector_record.version;
+                    
+                    // Check if this is a newer version
+                    let is_newer = match &latest_record {
+                        Some((_, existing_seq, existing_version)) => {
+                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
+                        }
+                        None => true, // First occurrence
+                    };
+                    
+                    if is_newer {
+                        latest_record = Some((vector_record.clone(), sequence, version));
+                    }
+                }
+            }
+        }
+        
+        // Check the latest record we found
+        if let Some((record, _, _)) = latest_record {
+            // Check if it's expired (logical delete)
+            let is_expired = record.expires_at
+                .map(|expires| expires < current_time)
+                .unwrap_or(false);
+            
+            if is_expired {
+                tracing::debug!("🗑️ Vector {} found but expired (tombstone)", vector_id);
+                return None; // Logically deleted
+            }
+            
+            return Some(record);
+        }
+        
+        None
+    }
+
+    /// Clear batches up to sequence number within this collection
+    fn clear_up_to(&mut self, up_to_seq: u64) -> usize {
+        let mut cleared_count = 0;
+        let mut removed_size = 0;
+
+        // Find batches to remove based on sequence range
+        let batch_ids_to_remove: Vec<String> = self.wal_batches
+            .iter()
+            .filter(|(_, batch)| {
+                // Remove if batch is flushed or if all sequences are <= up_to_seq
+                batch.is_flushed || batch.batch_id.sequence_range.1 <= up_to_seq
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        
+        for batch_id in batch_ids_to_remove {
+            if let Some(batch) = self.wal_batches.remove(&batch_id) {
+                // Remove vector IDs from index
+                for vector_record in &batch.vector_records {
+                    if !vector_record.id.is_empty() {
+                        self.vector_id_index.remove(&vector_record.id);
+                    }
+                }
+                
+                cleared_count += batch.vector_records.len();
+                removed_size += batch.total_size_bytes;
+                self.batch_count = self.batch_count.saturating_sub(1);
+            }
+        }
+
+        self.vector_count = self.vector_count.saturating_sub(cleared_count);
         self.total_size = self.total_size.saturating_sub(removed_size);
-        self.entry_count = self.entry_count.saturating_sub(cleared_count);
         self.last_flush_sequence = up_to_seq;
 
         cleared_count
@@ -120,98 +165,127 @@ impl CollectionPartition {
 
     /// Check if this collection needs flushing
     fn needs_flush(&self, size_threshold: usize, count_threshold: usize) -> bool {
-        self.total_size >= size_threshold || self.entry_count >= count_threshold
+        self.total_size >= size_threshold || self.vector_count >= count_threshold
     }
 
-    /// Extract vector data from WAL entry (memtable stores deserialized data)
-    fn extract_vector_from_entry(entry: &WalEntry) -> Option<Vec<f32>> {
-        use crate::storage::persistence::wal::WalOperation;
-
-        match &entry.operation {
-            WalOperation::AvroPayload { avro_data, .. } => {
-                // Parse Avro payload to extract vector data - supports both single and batch
-                if let Ok(single_record) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
-                    Some(single_record.vector)
-                } else if let Ok(vectors) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
-                    vectors.first().map(|v| v.vector.clone())
+    /// Get all vectors for iteration or flush operations with MVCC + logical delete support
+    fn get_all_vectors(&self) -> Vec<VectorRecord> {
+        use std::collections::HashMap;
+        
+        let mut id_to_latest: HashMap<String, (VectorRecord, u64, i64)> = HashMap::new(); // (record, sequence, version)
+        let mut vectors_without_id = Vec::new();
+        let current_time = chrono::Utc::now().timestamp_micros();
+        
+        // Collect latest versions for each ID
+        for batch in self.wal_batches.values() {
+            for vector_record in &batch.vector_records {
+                let sequence = batch.batch_id.sequence_range.0;
+                let version = vector_record.version;
+                
+                if !vector_record.id.is_empty() {
+                    // Check if this is the latest version
+                    let is_newer = match id_to_latest.get(&vector_record.id) {
+                        Some((_, existing_seq, existing_version)) => {
+                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
+                        }
+                        None => true,
+                    };
+                    
+                    if is_newer {
+                        id_to_latest.insert(
+                            vector_record.id.clone(),
+                            (vector_record.clone(), sequence, version)
+                        );
+                    }
                 } else {
-                    tracing::warn!("Failed to parse Avro payload for vector extraction");
-                    None
+                    // No ID - include directly if not expired
+                    let is_expired = vector_record.expires_at
+                        .map(|expires| expires < current_time)
+                        .unwrap_or(false);
+                    
+                    if !is_expired {
+                        vectors_without_id.push(vector_record.clone());
+                    }
                 }
             }
-            _ => None,
         }
+        
+        // Collect final results, filtering out expired records
+        let mut vectors = Vec::new();
+        
+        for (_, (record, _, _)) in id_to_latest {
+            let is_expired = record.expires_at
+                .map(|expires| expires < current_time)
+                .unwrap_or(false);
+            
+            if !is_expired {
+                vectors.push(record);
+            }
+        }
+        
+        vectors.extend(vectors_without_id);
+        vectors
     }
 
-    /// Search for similar vectors with support for WAL entries and ID-based deduplication
-    fn search_vectors_unified(
+    /// Search for similar vectors using native batch processing with MVCC + logical deletes
+    fn search_vectors(
         &self,
         query_vector: &[f32],
         distance_metric: &CoreDistanceMetric,
         distance_compute: &UnifiedDistanceCompute,
-    ) -> Vec<(f32, WalEntry)> {
+    ) -> Vec<(f32, VectorRecord)> {
         use std::collections::HashMap;
         
-        let mut id_to_latest_entry: HashMap<String, (f32, WalEntry, u64)> = HashMap::new();
+        let mut id_to_latest: HashMap<String, (f32, VectorRecord, u64, i64)> = HashMap::new(); // Added version
         let mut results_without_id = Vec::new();
+        let current_time = chrono::Utc::now().timestamp_micros();
 
-        // Linear search through collection entries with deduplication
-        for entry in &self.entries {
-            // Handle different WAL operation types
-            match &entry.operation {
-                crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, .. } => {
-                    // Parse AVRO data for search - supports both single and batch formats
-                    if let Ok(single_record) = crate::core::VectorRecord::from_avro_bytes(avro_data) {
-                        let score = distance_compute.calculate_distance(query_vector, &single_record.vector, distance_metric);
-                        
-                        // ID-based deduplication: keep only latest version by sequence number
-                        if !single_record.id.is_empty() {
-                            match id_to_latest_entry.get(&single_record.id) {
-                                Some((_, _, existing_seq)) if entry.sequence <= *existing_seq => {
-                                    // Skip older entry
-                                    continue;
-                                }
-                                _ => {
-                                    // Keep this entry (newer or first occurrence)
-                                    id_to_latest_entry.insert(
-                                        single_record.id.clone(),
-                                        (score, entry.clone(), entry.sequence)
-                                    );
-                                }
-                            }
-                        } else {
-                            // No ID - include directly (no deduplication possible)
-                            results_without_id.push((score, entry.clone()));
-                        }
-                    } else if let Ok(vectors) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
-                        // Handle batch data - search each vector in batch with deduplication
-                        for vector_record in vectors {
-                            let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
-                            
-                            // ID-based deduplication within batch
-                            if !vector_record.id.is_empty() {
-                                match id_to_latest_entry.get(&vector_record.id) {
-                                    Some((_, _, existing_seq)) if entry.sequence <= *existing_seq => {
-                                        // Skip older entry
-                                        continue;
-                                    }
-                                    _ => {
-                                        // Keep this entry (newer or first occurrence)
-                                        id_to_latest_entry.insert(
-                                            vector_record.id.clone(),
-                                            (score, entry.clone(), entry.sequence)
-                                        );
-                                    }
-                                }
-                            } else {
-                                // No ID - include directly (no deduplication possible)
-                                results_without_id.push((score, entry.clone()));
-                            }
-                        }
+        // Search native WAL batches with MVCC logic
+        for (batch_id, wal_batch) in &self.wal_batches {
+            tracing::debug!("🔍 Searching native WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
+            
+            for vector_record in &wal_batch.vector_records {
+                // Skip expired records (logical deletes)
+                let is_expired = vector_record.expires_at
+                    .map(|expires| expires < current_time)
+                    .unwrap_or(false);
+                
+                if is_expired {
+                    // This is a tombstone/delete - mark ID as deleted
+                    if !vector_record.id.is_empty() {
+                        id_to_latest.remove(&vector_record.id);
+                        tracing::debug!("🗑️ Tombstone found for ID {}, removing from results", vector_record.id);
                     }
+                    continue;
                 }
-                _ => {
-                    // Skip non-vector operations
+                
+                let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
+                let sequence = wal_batch.batch_id.sequence_range.0;
+                let version = vector_record.version;
+                
+                // MVCC: Keep only latest version by (sequence, version) for same ID
+                if !vector_record.id.is_empty() {
+                    match id_to_latest.get(&vector_record.id) {
+                        Some((_, _, existing_seq, existing_version)) => {
+                            // Skip if we have a newer version already
+                            if sequence < *existing_seq || (sequence == *existing_seq && version <= *existing_version) {
+                                continue;
+                            }
+                        }
+                        None => {}
+                    }
+                    
+                    // Keep this entry (newer version or first occurrence)
+                    id_to_latest.insert(
+                        vector_record.id.clone(),
+                        (score, vector_record.clone(), sequence, version)
+                    );
+                    
+                    tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={}", 
+                                   vector_record.id, sequence, version);
+                } else {
+                    // No ID - include directly (no MVCC possible)
+                    results_without_id.push((score, vector_record.clone()));
                 }
             }
         }
@@ -220,20 +294,20 @@ impl CollectionPartition {
         let mut final_results = Vec::new();
         
         // Count results before moving
-        let unique_ids_count = id_to_latest_entry.len();
+        let unique_ids_count = id_to_latest.len();
         let results_without_id_count = results_without_id.len();
         
         // Add latest version of each ID
-        for (_, (score, entry, _)) in id_to_latest_entry {
-            final_results.push((score, entry));
+        for (_, (score, vector_record, _, _)) in id_to_latest {
+            final_results.push((score, vector_record));
         }
         
         // Add non-ID results
         final_results.extend(results_without_id);
 
         tracing::debug!(
-            "🔍 Search deduplication: {} total entries, {} unique IDs, {} without ID, {} final results",
-            self.entries.len(),
+            "🔍 Search results: {} batches searched, {} unique IDs, {} without ID, {} final results",
+            self.wal_batches.len(),
             unique_ids_count,
             results_without_id_count,
             final_results.len()
@@ -241,14 +315,15 @@ impl CollectionPartition {
 
         final_results
     }
+
+    // Legacy append method removed - use add_batch() directly with WalVectorBatch
 }
 
 /// Global partitioned memtable implementation for WAL operations
 ///
-/// This implements a three-tier index structure:
+/// This implements a two-tier index structure:
 /// 1. Global sequence ordering for flush coordination
-/// 2. Per-collection data partitions for efficient operations  
-/// 3. Content-based search within collections
+/// 2. Per-collection data partitions with batch-based storage
 #[derive(Debug)]
 pub struct GlobalPartitionedMemtable {
     /// Global sequence generator for cross-collection ordering
@@ -256,9 +331,6 @@ pub struct GlobalPartitionedMemtable {
 
     /// Per-collection data partitions (collection_id -> partition)
     collections: Arc<RwLock<HashMap<String, CollectionPartition>>>,
-
-    /// Global content index for cross-collection deduplication (content_key -> (collection_id, local_index))
-    global_content_index: Arc<RwLock<HashMap<String, (String, usize)>>>,
 
     /// Unified distance computation manager
     distance_compute: UnifiedDistanceCompute,
@@ -273,60 +345,91 @@ impl GlobalPartitionedMemtable {
         Self {
             global_sequence: AtomicU64::new(1),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            global_content_index: Arc::new(RwLock::new(HashMap::new())),
             distance_compute: UnifiedDistanceCompute::default(),
             metrics: Arc::new(RwLock::new(MemtableMetrics::default())),
         }
     }
 
-    /// Append entry to the appropriate collection partition
-    pub async fn append(&self, mut entry: WalEntry) -> Result<u64> {
-        // Assign global sequence
-        let global_seq = self.global_sequence.fetch_add(1, Ordering::SeqCst);
-        entry.sequence = global_seq;
+    /// Add native WAL batch to the appropriate collection partition (STREAMLINED ARCHITECTURE)
+    pub async fn add_wal_batch(&self, wal_batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<Vec<u64>> {
+        let collection_id = wal_batch.batch_id.collection_id.clone();
+        let batch_id = wal_batch.batch_id.batch_uuid.clone();
+        let vector_count = wal_batch.vector_records.len();
+        let batch_size = wal_batch.total_size_bytes;
+        
+        tracing::debug!(
+            "🚀 NATIVE_BATCH_ADD: Adding WAL batch {} to collection {} ({} vectors, {} bytes)",
+            batch_id,
+            collection_id,
+            vector_count,
+            batch_size
+        );
 
-        let collection_id = entry.collection_id.clone();
-        let entry_size = entry.actual_size_bytes();
+        // Generate global sequences for the batch
+        let start_seq = self.global_sequence.load(Ordering::SeqCst);
+        let sequences: Vec<u64> = (start_seq..start_seq + vector_count as u64).collect();
+        self.global_sequence.store(start_seq + vector_count as u64, Ordering::SeqCst);
 
         // Get or create collection partition
         let mut collections = self.collections.write().await;
+        let partition_exists = collections.contains_key(&collection_id);
         let partition = collections
             .entry(collection_id.clone())
             .or_insert_with(CollectionPartition::new);
 
-        // Append to collection partition
-        let local_index = partition.append(entry.clone())?;
-        drop(collections);
+        tracing::debug!(
+            "🚀 GLOBAL_PARTITIONED_DEBUG: Adding batch to partition for collection {}, partition existed: {}",
+            collection_id,
+            partition_exists
+        );
 
-        // Update global content index
-        let content_key = entry
-            .content_key()
-            .map_err(|e| anyhow::anyhow!("Failed to generate content key: {}", e))?;
-        let mut global_index = self.global_content_index.write().await;
-        global_index.insert(content_key.clone(), (collection_id.clone(), local_index));
-        drop(global_index);
+        // Store the batch natively in the partition
+        partition.add_batch(wal_batch)?;
+        
+        tracing::debug!(
+            "🚀 GLOBAL_PARTITIONED_DEBUG: Updated partition stats - vector_count: {}, total_size: {}",
+            partition.vector_count,
+            partition.total_size
+        );
+        
+        drop(collections);
 
         // Update global metrics
         let mut metrics = self.metrics.write().await;
-        metrics.insert_count += 1;
-        metrics.entry_count += 1;
-        metrics.size_bytes += entry_size;
+        metrics.insert_count += 1; // One batch insert
+        metrics.entry_count += vector_count; // Multiple vectors
+        metrics.size_bytes += batch_size;
 
-        tracing::info!("🌍 *** GLOBAL_PARTITIONED_MEMTABLE_INSERT_TRACE *** 🌍: collection={}, global_seq={}, local_index={}, size={}B, THIS_IS_THE_MODERN_IMPLEMENTATION", 
-                       collection_id, global_seq, local_index, entry_size);
+        tracing::info!(
+            "✅ NATIVE_BATCH_COMPLETE: Added batch {} with sequences {:?} (collection={}, vectors={}, bytes={})",
+            batch_id,
+            sequences,
+            collection_id,
+            vector_count,
+            batch_size
+        );
 
-        Ok(global_seq)
+        Ok(sequences)
     }
 
-    /// Get entry by global sequence number
-    pub async fn get_by_sequence(&self, sequence: u64) -> Result<Option<WalEntry>> {
+    // Legacy append() method removed - use add_wal_batch() with modern WalVectorBatch architecture
+
+    /// Get vector by global sequence number (MODERN - returns VectorRecord directly)
+    pub async fn get_vector_by_sequence(&self, sequence: u64) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
         // Linear search through all collections (could be optimized with sequence->collection mapping)
         for partition in collections.values() {
-            for entry in &partition.entries {
-                if entry.sequence == sequence {
-                    return Ok(Some(entry.clone()));
+            // Search through native WAL batches
+            for batch in partition.wal_batches.values() {
+                if batch.batch_id.sequence_range.0 <= sequence && sequence <= batch.batch_id.sequence_range.1 {
+                    // Find vector record at this sequence within the batch
+                    for (index, vector_record) in batch.vector_records.iter().enumerate() {
+                        let entry_sequence = batch.batch_id.sequence_range.0 + index as u64;
+                        if entry_sequence == sequence {
+                            return Ok(Some(vector_record.clone()));
+                        }
+                    }
                 }
             }
         }
@@ -334,21 +437,7 @@ impl GlobalPartitionedMemtable {
         Ok(None)
     }
 
-    /// Get entry by content key (across all collections)
-    pub async fn get_by_content(&self, content_key: &str) -> Result<Option<WalEntry>> {
-        let global_index = self.global_content_index.read().await;
-
-        if let Some((collection_id, local_index)) = global_index.get(content_key) {
-            let collections = self.collections.read().await;
-            if let Some(partition) = collections.get(collection_id) {
-                if let Some(entry) = partition.entries.get(*local_index) {
-                    return Ok(Some(entry.clone()));
-                }
-            }
-        }
-
-        Ok(None)
-    }
+    // Legacy get_by_content() removed - use vector search methods instead
 
     /// Search for similar vectors within a specific collection using configurable distance metric
     pub async fn search_vectors(
@@ -357,11 +446,16 @@ impl GlobalPartitionedMemtable {
         k: usize,
         collection_id: &str,
         distance_metric: CoreDistanceMetric,
-    ) -> Result<Vec<(f32, WalEntry)>> {
+    ) -> Result<Vec<(f32, VectorRecord)>> {
         let collections = self.collections.read().await;
+        
+        eprintln!("🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections", collection_id, collections.len());
+        for (id, partition) in collections.iter() {
+            eprintln!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
+        }
 
         if let Some(partition) = collections.get(collection_id) {
-            let mut results = partition.search_vectors_unified(
+            let mut results = partition.search_vectors(
                 query_vector,
                 &distance_metric,
                 &self.distance_compute,
@@ -375,8 +469,8 @@ impl GlobalPartitionedMemtable {
                 k,
             );
 
-            tracing::debug!("📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} entries) using {:?}", 
-                           results.len(), collection_id, partition.entry_count, distance_metric);
+            tracing::debug!("📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} vectors) using {:?}", 
+                           results.len(), collection_id, partition.vector_count, distance_metric);
             Ok(results)
         } else {
             tracing::debug!(
@@ -387,12 +481,31 @@ impl GlobalPartitionedMemtable {
         }
     }
 
-    /// Get all entries for a specific collection
-    pub async fn get_collection_entries(&self, collection_id: &str) -> Result<Vec<WalEntry>> {
+    /// Get vector by ID within a specific collection (MODERN - no deserialization)
+    pub async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
-            Ok(partition.entries.clone())
+            Ok(partition.get_vector_by_id(vector_id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get all vectors for a specific collection (MODERN - returns VectorRecord directly)
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+        let collections = self.collections.read().await;
+
+        if let Some(partition) = collections.get(collection_id) {
+            let vectors = partition.get_all_vectors();
+            
+            tracing::debug!(
+                "🚀 COLLECTION_VECTORS: Returning {} vectors from {} native batches",
+                vectors.len(),
+                partition.wal_batches.len()
+            );
+            
+            Ok(vectors)
         } else {
             Ok(Vec::new())
         }
@@ -403,7 +516,7 @@ impl GlobalPartitionedMemtable {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
-            (partition.entry_count, partition.total_size)
+            (partition.vector_count, partition.total_size)
         } else {
             (0, 0)
         }
@@ -453,7 +566,7 @@ impl GlobalPartitionedMemtable {
                 tracing::debug!(
                     "📊 GLOBAL_PARTITIONED: Collection {} needs flush - {} entries, {} bytes",
                     collection_id,
-                    partition.entry_count,
+                    partition.vector_count,
                     partition.total_size
                 );
             }
@@ -483,33 +596,36 @@ impl GlobalPartitionedMemtable {
         Ok(())
     }
 
-    /// Get entries from sequence number onwards (for recovery)
-    pub async fn get_from_sequence(
+    /// Get vectors from sequence number onwards (for recovery) - MODERN
+    pub async fn get_vectors_from_sequence(
         &self,
         from_seq: u64,
         limit: Option<usize>,
-    ) -> Result<Vec<WalEntry>> {
+    ) -> Result<Vec<(u64, VectorRecord)>> {
         let collections = self.collections.read().await;
-        let mut all_entries = Vec::new();
+        let mut all_vectors = Vec::new();
 
-        // Collect all entries from all collections
+        // Collect all vectors from all collections with their sequences
         for partition in collections.values() {
-            for entry in &partition.entries {
-                if entry.sequence >= from_seq {
-                    all_entries.push(entry.clone());
+            for batch in partition.wal_batches.values() {
+                for (index, vector_record) in batch.vector_records.iter().enumerate() {
+                    let vector_sequence = batch.batch_id.sequence_range.0 + index as u64;
+                    if vector_sequence >= from_seq {
+                        all_vectors.push((vector_sequence, vector_record.clone()));
+                    }
                 }
             }
         }
 
         // Sort by global sequence
-        all_entries.sort_by_key(|entry| entry.sequence);
+        all_vectors.sort_by_key(|(seq, _)| *seq);
 
         // Apply limit if specified
         if let Some(limit) = limit {
-            all_entries.truncate(limit);
+            all_vectors.truncate(limit);
         }
 
-        Ok(all_entries)
+        Ok(all_vectors)
     }
 
     /// Clear entries up to sequence number (global operation)
@@ -528,15 +644,11 @@ impl GlobalPartitionedMemtable {
         Ok(total_cleared)
     }
 
-    /// Clear all entries
+    /// Clear all vectors and batches
     pub async fn clear(&self) -> Result<()> {
         let mut collections = self.collections.write().await;
         collections.clear();
         drop(collections);
-
-        let mut global_index = self.global_content_index.write().await;
-        global_index.clear();
-        drop(global_index);
 
         let mut metrics = self.metrics.write().await;
         *metrics = MemtableMetrics::default();
@@ -550,7 +662,7 @@ impl GlobalPartitionedMemtable {
     /// Get current number of entries across all collections
     pub async fn len(&self) -> usize {
         let collections = self.collections.read().await;
-        collections.values().map(|p| p.entry_count).sum()
+        collections.values().map(|p| p.vector_count).sum()
     }
 
     /// Get current size in bytes across all collections
@@ -562,7 +674,7 @@ impl GlobalPartitionedMemtable {
     /// Check if empty
     pub async fn is_empty(&self) -> bool {
         let collections = self.collections.read().await;
-        collections.is_empty() || collections.values().all(|p| p.entry_count == 0)
+        collections.is_empty() || collections.values().all(|p| p.vector_count == 0)
     }
 
     /// Get statistics for all collections
@@ -570,66 +682,18 @@ impl GlobalPartitionedMemtable {
         let collections = self.collections.read().await;
         collections
             .iter()
-            .map(|(id, partition)| (id.clone(), (partition.entry_count, partition.total_size)))
+            .map(|(id, partition)| (id.clone(), (partition.vector_count, partition.total_size)))
             .collect()
     }
 }
 
-// Implement MemtableCore for backwards compatibility
-#[async_trait]
-impl MemtableCore<u64, WalEntry> for GlobalPartitionedMemtable {
-    async fn insert(&self, _key: u64, value: WalEntry) -> Result<u64> {
-        // For global partitioned implementation, we ignore the key and use collection-based partitioning
-        self.append(value).await
-    }
-
-    async fn get(&self, key: &u64) -> Result<Option<WalEntry>> {
-        self.get_by_sequence(*key).await
-    }
-
-    async fn range_scan(&self, from: u64, limit: Option<usize>) -> Result<Vec<(u64, WalEntry)>> {
-        let entries = self.get_from_sequence(from, limit).await?;
-        let mut result = Vec::new();
-
-        for entry in entries {
-            result.push((entry.sequence, entry));
-        }
-
-        Ok(result)
-    }
-
-    async fn size_bytes(&self) -> usize {
-        self.size_bytes().await
-    }
-
-    async fn len(&self) -> usize {
-        self.len().await
-    }
-
-    async fn clear_up_to(&self, threshold: u64) -> Result<usize> {
-        self.clear_up_to(threshold).await
-    }
-
-    async fn clear(&self) -> Result<()> {
-        self.clear().await
-    }
-
-    async fn get_all_ordered(&self) -> Result<Vec<(u64, WalEntry)>> {
-        let entries = self.get_from_sequence(0, None).await?;
-        let mut result = Vec::new();
-
-        for entry in entries {
-            result.push((entry.sequence, entry));
-        }
-
-        Ok(result)
-    }
-}
+// MemtableCore trait removed - GlobalPartitionedMemtable works directly with VectorRecord/WalVectorBatch
 
 impl GlobalPartitionedMemtable {
-    /// Get all entries (for flush operations)
-    pub async fn get_all(&self) -> Result<Vec<WalEntry>> {
-        self.get_from_sequence(0, None).await
+    /// Get all vectors (for flush operations) - MODERN
+    pub async fn get_all_vectors(&self) -> Result<Vec<VectorRecord>> {
+        let vectors_with_sequences = self.get_vectors_from_sequence(0, None).await?;
+        Ok(vectors_with_sequences.into_iter().map(|(_, vector)| vector).collect())
     }
 }
 
@@ -639,131 +703,7 @@ impl Default for GlobalPartitionedMemtable {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
-    use crate::storage::persistence::wal::{WalEntry, WalOperation};
-
-    #[tokio::test]
-    async fn test_global_partitioned_basic_operations() {
-        let memtable = GlobalPartitionedMemtable::new();
-
-        // Create test WAL entries for different collections
-        let now = chrono::Utc::now().timestamp_millis();
-        let vector_record1 = crate::core::VectorRecord {
-            id: "test_vector_1".to_string(),
-            collection_id: "collection_a".to_string(),
-            vector: vec![0.1, 0.2, 0.3],
-            metadata: std::collections::HashMap::new(),
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
-            expires_at: None,
-            version: 1,
-            rank: None,
-            score: None,
-            distance: None,
-        };
-
-        let vector_record2 = crate::core::VectorRecord {
-            id: "test_vector_2".to_string(),
-            collection_id: "collection_b".to_string(),
-            vector: vec![0.4, 0.5, 0.6],
-            metadata: std::collections::HashMap::new(),
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
-            expires_at: None,
-            version: 1,
-            rank: None,
-            score: None,
-            distance: None,
-        };
-
-        let avro_data1 = vector_record1.to_avro_bytes().unwrap();
-        let wal_entry1 = WalEntry {
-            entry_id: "test_vector_1".to_string(),
-            collection_id: "collection_a".to_string(),
-            sequence: 0, // Will be assigned by append
-            global_sequence: 0,
-            timestamp: chrono::Utc::now(),
-            expires_at: None,
-            version: 1,
-            batch_id: None,
-            operation: WalOperation::AvroPayload {
-                operation_type: "upsert".to_string(),
-                avro_data: avro_data1,
-            },
-        };
-
-        let avro_data2 = vector_record2.to_avro_bytes().unwrap();
-        let wal_entry2 = WalEntry {
-            entry_id: "test_vector_2".to_string(),
-            collection_id: "collection_b".to_string(),
-            sequence: 0, // Will be assigned by append
-            global_sequence: 0,
-            timestamp: chrono::Utc::now(),
-            expires_at: None,
-            version: 1,
-            batch_id: None,
-            operation: WalOperation::AvroPayload {
-                operation_type: "upsert".to_string(),
-                avro_data: avro_data2,
-            },
-        };
-
-        // Test append to different collections
-        let seq1 = memtable.append(wal_entry1.clone()).await.unwrap();
-        let seq2 = memtable.append(wal_entry2.clone()).await.unwrap();
-
-        assert_eq!(seq1, 1);
-        assert_eq!(seq2, 2);
-        assert_eq!(memtable.len().await, 2);
-
-        // Test collection-specific operations
-        let (entries_a, size_a) = memtable.get_collection_stats("collection_a").await;
-        let (entries_b, size_b) = memtable.get_collection_stats("collection_b").await;
-
-        assert_eq!(entries_a, 1);
-        assert_eq!(entries_b, 1);
-        assert!(size_a > 0);
-        assert!(size_b > 0);
-
-        // Test collection-specific search
-        let query_vector = vec![0.1, 0.2, 0.3];
-        let search_results_a = memtable
-            .search_vectors(&query_vector, 2, "collection_a", CoreDistanceMetric::Cosine)
-            .await
-            .unwrap();
-        let search_results_b = memtable
-            .search_vectors(&query_vector, 2, "collection_b", CoreDistanceMetric::Cosine)
-            .await
-            .unwrap();
-
-        assert_eq!(search_results_a.len(), 1);
-        assert_eq!(search_results_b.len(), 1);
-
-        // Test sequence-based retrieval
-        let retrieved1 = memtable.get_by_sequence(seq1).await.unwrap();
-        assert!(retrieved1.is_some());
-        assert_eq!(retrieved1.unwrap().entry_id, "test_vector_1");
-
-        // Test collection-specific cleanup
-        let cleared = memtable
-            .clear_collection_up_to("collection_a", seq1)
-            .await
-            .unwrap();
-        assert_eq!(cleared, 1);
-        assert_eq!(memtable.len().await, 1);
-
-        let (entries_a_after, _) = memtable.get_collection_stats("collection_a").await;
-        let (entries_b_after, _) = memtable.get_collection_stats("collection_b").await;
-
-        assert_eq!(entries_a_after, 0);
-        assert_eq!(entries_b_after, 1);
-    }
-}
+// Tests moved to src/storage/memtable/implementations/tests/global_partitioned_tests.rs
 
 impl DistanceComputeProvider for GlobalPartitionedMemtable {
     fn distance_compute(&self) -> &UnifiedDistanceCompute {

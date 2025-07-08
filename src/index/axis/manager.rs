@@ -20,7 +20,7 @@ use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, S
 
 /// Central manager for AXIS with adaptive capabilities
 #[derive(Debug)]
-pub struct AxisIndexManager {
+pub struct AxisManager {
     /// Core index components
     global_id_index: Arc<GlobalIdIndex>,
     metadata_index: Arc<MetadataIndex>,
@@ -42,6 +42,9 @@ pub struct AxisIndexManager {
     /// Configuration and metrics
     config: AxisConfig,
     metrics: Arc<RwLock<AxisMetrics>>,
+
+    /// Collection service for IndexConfig retrieval
+    collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
 }
 
 /// Status of ongoing migrations
@@ -64,9 +67,10 @@ pub struct AxisMetrics {
     pub average_migration_time_ms: u64,
     pub total_collections_managed: u64,
     pub total_vectors_indexed: u64,
+    pub total_rebuilds: u64,
 }
 
-impl AxisIndexManager {
+impl AxisManager {
     /// Create a new AXIS index manager
     pub async fn new(config: AxisConfig) -> Result<Self> {
         // Initialize core index components
@@ -94,7 +98,43 @@ impl AxisIndexManager {
             active_migrations: Arc::new(RwLock::new(HashMap::new())),
             config,
             metrics: Arc::new(RwLock::new(AxisMetrics::default())),
+            collection_service: None, // Will be set later via set_collection_service
         })
+    }
+
+    /// Set the collection service for IndexConfig retrieval
+    pub fn set_collection_service(
+        &mut self,
+        collection_service: Arc<crate::services::collection_service::CollectionService>,
+    ) {
+        self.collection_service = Some(collection_service);
+        tracing::info!("🔗 AXIS: Collection service set for IndexConfig retrieval");
+    }
+
+    /// Get collection's IndexConfig from collection service for index build decisions
+    pub async fn get_collection_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+        if let Some(collection_service) = &self.collection_service {
+            match collection_service.get_collection_index_config(collection_id).await {
+                Ok(Some(config)) => {
+                    tracing::debug!("📋 AXIS: Retrieved IndexConfig for collection: {}", collection_id);
+                    Ok(config)
+                }
+                Ok(None) => {
+                    tracing::warn!("⚠️ AXIS: Collection not found for IndexConfig: {}", collection_id);
+                    // Return default IndexConfig as fallback
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+                Err(e) => {
+                    tracing::error!("❌ AXIS: Failed to retrieve IndexConfig for collection {}: {}", collection_id, e);
+                    // Return default IndexConfig as fallback  
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+            }
+        } else {
+            tracing::warn!("⚠️ AXIS: Collection service not available, using default IndexConfig");
+            // Default implementation: return default IndexConfig
+            Ok(crate::index::config::IndexConfig::default())
+        }
     }
 
     /// Insert a vector with adaptive indexing
@@ -368,14 +408,24 @@ impl AxisIndexManager {
         Ok(())
     }
 
+
     /// Get current strategy for collection
-    async fn get_collection_strategy(&self, collection_id: &CollectionId) -> Result<IndexStrategy> {
+    pub async fn get_collection_strategy(&self, collection_id: &CollectionId) -> Result<IndexStrategy> {
         let strategies = self.collection_strategies.read().await;
         strategies
             .get(collection_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No strategy found for collection {}", collection_id))
     }
+
+    /// Update collection strategy
+    pub async fn update_collection_strategy(&self, collection_id: &CollectionId, strategy: IndexStrategy) -> Result<()> {
+        let mut strategies = self.collection_strategies.write().await;
+        strategies.insert(collection_id.clone(), strategy);
+        Ok(())
+    }
+
+
 
     /// Maybe evaluate if strategy should change
     async fn maybe_evaluate_strategy(&self, _collection_id: &CollectionId) -> Result<()> {

@@ -13,7 +13,7 @@ use crate::storage::atomicity::{
     TransactionContext,
 };
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use crate::storage::persistence::wal::{WalDiskManager, WalEntry};
+use crate::storage::persistence::wal::{WalEntry, WalBatchStrategy};
 
 /// Atomic WAL batch operation that ensures memtable and disk consistency
 #[derive(Debug)]
@@ -28,8 +28,8 @@ pub struct AtomicWalBatchOperation {
     pub immediate_sync: bool,
     /// Memtable reference for operations
     pub memtable: crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper,
-    /// Disk manager reference for operations
-    pub disk_manager: Option<std::sync::Arc<WalDiskManager>>,
+    /// Batch strategy for direct Avro payload writing
+    pub batch_strategy: Option<std::sync::Arc<dyn WalBatchStrategy>>,
     /// Rollback state tracking
     rollback_state: std::sync::Arc<tokio::sync::Mutex<Option<AtomicBatchRollbackState>>>,
 }
@@ -55,7 +55,7 @@ impl AtomicWalBatchOperation {
         collection_id: String,
         immediate_sync: bool,
         memtable: crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper,
-        disk_manager: Option<std::sync::Arc<WalDiskManager>>,
+        batch_strategy: Option<std::sync::Arc<dyn WalBatchStrategy>>,
     ) -> Self {
         Self {
             entries,
@@ -63,7 +63,7 @@ impl AtomicWalBatchOperation {
             collection_id,
             immediate_sync,
             memtable,
-            disk_manager,
+            batch_strategy,
             rollback_state: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -98,6 +98,8 @@ impl AtomicOperation for AtomicWalBatchOperation {
                 batch_id: self.vector_batch.batch_id.clone(),
                 vector_records: std::mem::take(&mut self.vector_batch.vector_records.clone()),
                 total_size_bytes: self.vector_batch.total_size_bytes,
+                created_at: chrono::Utc::now().into(),
+                is_flushed: false,
             })
             .await
             .context("Failed to write batch to memtable")?;
@@ -118,14 +120,12 @@ impl AtomicOperation for AtomicWalBatchOperation {
         // Phase 2: Write to disk (if immediate_sync is required)
         let mut disk_time = 0u128;
         if self.immediate_sync {
-            if let Some(disk_manager) = &self.disk_manager {
+            if let Some(batch_strategy) = &self.batch_strategy {
                 let disk_start = std::time::Instant::now();
 
-                // Serialize entries for disk storage
-                let serialized_data = self.serialize_entries_for_disk().await
-                    .context("Failed to serialize entries for disk")?;
-
-                match disk_manager.write_raw(&self.collection_id, serialized_data).await {
+                // Use modern batch strategy - zero copy for Avro, efficient conversion for Bincode
+                // The batch strategy handles its own optimal serialization strategy
+                match batch_strategy.write_vector_batch(self.vector_batch.clone()).await {
                     Ok(_flush_result) => {
                         disk_time = disk_start.elapsed().as_micros();
                         
@@ -253,10 +253,10 @@ impl AtomicOperation for AtomicWalBatchOperation {
             ));
         }
 
-        // Validate disk manager availability if immediate sync required
-        if self.immediate_sync && self.disk_manager.is_none() {
+        // Validate batch strategy availability if immediate sync required
+        if self.immediate_sync && self.batch_strategy.is_none() {
             return Err(anyhow::anyhow!(
-                "Immediate sync requested but no disk manager available"
+                "Immediate sync requested but no batch strategy available"
             ));
         }
 

@@ -185,62 +185,46 @@ impl CollectionStrategy for StandardStrategy {
         let mut bytes_written = 0u64;
         let mut entries_processed = 0usize;
 
-        // Process each WAL entry according to its operation type
+        // Process each WAL entry - extract VectorRecord and handle based on operation type
         for entry in entries {
-            match &entry.operation {
-                crate::storage::WalOperation::Insert {
-                    vector_id, record, ..
-                } => {
-                    // Write to LSM tree (persistent storage)
+            // Extract vector record from the operation
+            if let Ok(record) = entry.extract_vector_record() {
+                let current_time = chrono::Utc::now().timestamp_micros();
+                
+                // Check if this is a delete operation (expires_at in the past)
+                let is_delete = record.expires_at
+                    .map(|expires| expires < current_time)
+                    .unwrap_or(false);
+
+                if is_delete {
+                    // Handle deletion
                     lsm_tree
-                        .put(vector_id.clone(), record.clone())
-                        .await
-                        .context("Failed to write to LSM tree")?;
-
-                    // Add to HNSW index (for fast search)
-                    hnsw_index
-                        .add_vector(vector_id.clone(), &record.vector)
-                        .await
-                        .context("Failed to add to HNSW index")?;
-
-                    bytes_written += record.vector.len() as u64 * 4; // f32 = 4 bytes
-                    entries_processed += 1;
-                }
-                crate::storage::WalOperation::Update {
-                    vector_id, record, ..
-                } => {
-                    // Update in LSM tree
-                    lsm_tree
-                        .put(vector_id.clone(), record.clone())
-                        .await
-                        .context("Failed to update in LSM tree")?;
-
-                    // Update in HNSW index
-                    hnsw_index
-                        .update_vector(vector_id.clone(), &record.vector)
-                        .await
-                        .context("Failed to update in HNSW index")?;
-
-                    bytes_written += record.vector.len() as u64 * 4;
-                    entries_processed += 1;
-                }
-                crate::storage::WalOperation::Delete { vector_id, .. } => {
-                    // Mark as deleted in LSM tree (tombstone)
-                    lsm_tree
-                        .delete(vector_id.clone())
+                        .delete(record.id.clone())
                         .await
                         .context("Failed to delete from LSM tree")?;
 
                     // Remove from HNSW index
                     hnsw_index
-                        .remove_vector(vector_id.clone())
+                        .remove_vector(record.id.clone())
                         .await
                         .context("Failed to remove from HNSW index")?;
 
                     entries_processed += 1;
-                }
-                _ => {
-                    // Skip non-vector operations in standard strategy
+                } else {
+                    // Handle upsert (insert or update)
+                    lsm_tree
+                        .put(record.id.clone(), record.clone())
+                        .await
+                        .context("Failed to write to LSM tree")?;
+
+                    // Add/update in HNSW index
+                    hnsw_index
+                        .add_vector(record.id.clone(), &record.vector)
+                        .await
+                        .context("Failed to add to HNSW index")?;
+
+                    bytes_written += record.vector.len() as u64 * 4; // f32 = 4 bytes
+                    entries_processed += 1;
                 }
             }
         }

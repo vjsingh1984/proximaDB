@@ -420,54 +420,45 @@ impl SearchEngineFactory {
         filters: Option<&MetadataFilter>,
     ) -> Result<Vec<TieredSearchResult>> {
         let collection_id_typed = crate::core::CollectionId::from(collection_id.to_string());
-        let wal_entries = wal_manager.get_collection_entries(&collection_id_typed).await?;
+        let wal_entries = wal_manager.get_collection_vectors(&collection_id_typed).await?;
         let mut results = Vec::new();
 
-        for entry in wal_entries {
-            match &entry.operation {
-                crate::storage::persistence::wal::WalOperation::AvroPayload { avro_data, .. } => {
-                    if let Ok(batch_records) = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_data) {
-                        // Handle batch data (primary path for production)
-                        for vector_record in batch_records {
-                            // Apply metadata filters
-                            if let Some(filters) = filters {
-                                let mut matches = true;
-                                for (key, expected_value) in filters {
-                                    match vector_record.metadata.get(key) {
-                                        Some(actual_value) => {
-                                            if actual_value != expected_value {
-                                                matches = false;
-                                                break;
-                                            }
-                                        }
-                                        None => {
-                                            matches = false;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if !matches {
-                                    continue;
-                                }
+        for vector_record in wal_entries {
+            // wal_entries now returns Vec<VectorRecord> directly from WalManager.get_collection_vectors()
+            // No need to extract from WalEntry operations since we eliminated that dependency
+            
+            // Apply metadata filters
+            if let Some(filters) = filters {
+                let mut matches = true;
+                for (key, expected_value) in filters {
+                    match vector_record.metadata.get(key) {
+                        Some(actual_value) => {
+                            if actual_value != expected_value {
+                                matches = false;
+                                break;
                             }
-
-                            let score = self.calculate_similarity(query_vector, &vector_record.vector);
-                            results.push(TieredSearchResult {
-                                vector_record,
-                                score,
-                                tier: StorageTier::Unflushed,
-                                engine: DeduplicationStorageEngine::WAL,
-                                timestamp: entry.timestamp,
-                                sequence: entry.sequence,
-                                file_path: None,
-                            });
+                        }
+                        None => {
+                            matches = false;
+                            break;
                         }
                     }
                 }
-                _ => {
-                    // Skip non-AvroPayload operations
+                if !matches {
+                    continue;
                 }
             }
+
+            let score = self.calculate_similarity(query_vector, &vector_record.vector);
+            results.push(TieredSearchResult {
+                vector_record,
+                score,
+                tier: StorageTier::Unflushed,
+                engine: DeduplicationStorageEngine::WAL,
+                timestamp: chrono::Utc::now(), // Use current time since we don't have entry timestamp
+                sequence: 0, // No sequence available for direct vector records
+                file_path: None,
+            });
         }
 
         // Sort by score and take top results

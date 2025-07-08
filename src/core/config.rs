@@ -198,6 +198,30 @@ pub struct LsmConfig {
     pub level_count: u8,
     pub compaction_threshold: u32,
     pub block_size_kb: u32,
+    pub memory_flush_size_bytes: usize,
+    pub memtable_type: String,
+    pub compaction_strategy: String,
+    pub compression: String,
+    pub bloom_filter_config: Option<BloomFilterConfig>,
+    pub cache_size_mb: u64,
+    pub write_buffer_size_mb: u64,
+    pub max_files_per_level: u32,
+    pub level_size_multiplier: f64,
+    pub max_levels: u8,
+    pub background_thread_count: u32,
+    pub sync_mode: String,
+    pub enable_wal: bool,
+    pub wal_directory: String,
+    pub data_directory: String,
+    pub mmap_enabled: bool,
+    pub prefetch_enabled: bool,
+    pub prefetch_size_kb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BloomFilterConfig {
+    pub bits_per_key: u32,
+    pub enabled: bool,
 }
 
 impl Default for LsmConfig {
@@ -207,6 +231,27 @@ impl Default for LsmConfig {
             level_count: 7,
             compaction_threshold: 4,
             block_size_kb: 64,
+            memory_flush_size_bytes: 64 * 1024 * 1024, // 64MB
+            memtable_type: "skiplist".to_string(),
+            compaction_strategy: "leveled".to_string(),
+            compression: "snappy".to_string(),
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+            }),
+            cache_size_mb: 128,
+            write_buffer_size_mb: 64,
+            max_files_per_level: 10,
+            level_size_multiplier: 10.0,
+            max_levels: 7,
+            background_thread_count: 4,
+            sync_mode: "sync".to_string(),
+            enable_wal: true,
+            wal_directory: "./lsm_wal".to_string(),
+            data_directory: "./lsm_data".to_string(),
+            mmap_enabled: true,
+            prefetch_enabled: true,
+            prefetch_size_kb: 64,
         }
     }
 }

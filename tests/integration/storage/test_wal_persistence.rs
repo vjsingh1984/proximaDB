@@ -60,16 +60,16 @@ fn create_test_wal_entry(collection_id: &str, vector_id: &str, sequence: u64) ->
     WalEntry {
         entry_id: vector_id.to_string(),
         collection_id: collection_id.to_string(),
-        operation: WalOperation::Insert {
-            vector_id: vector_id.to_string(),
-            record,
-            expires_at: None,
+        operation: WalOperation::AvroPayload {
+            operation_type: "upsert".to_string(),
+            avro_data: record.to_avro_bytes().expect("Failed to serialize test vector"),
         },
         timestamp: Utc::now(),
         sequence,
         global_sequence: sequence,
         expires_at: None,
         version: 1,
+        batch_id: None,
     }
 }
 

@@ -28,9 +28,9 @@ mod tests {
             expires_at: None,
             version: 1,
             batch_id: None,
-            operation: WalOperation::Insert {
-                vector_id: vector_id.to_string(),
-                record: VectorRecord {
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert".to_string(),
+                avro_data: VectorRecord {
                     id: vector_id.to_string(),
                     collection_id: collection_id.to_string(),
                     vector,
@@ -40,12 +40,10 @@ mod tests {
                     updated_at: now.timestamp_millis(),
                     expires_at: None,
                     version: 1,
-            batch_id: None,
                     rank: None,
                     score: None,
                     distance: None,
-                },
-                expires_at: None,
+                }.to_avro_bytes().expect("Failed to serialize test vector"),
             },
         }
     }
@@ -108,7 +106,13 @@ mod tests {
         let cosine_ids: Vec<String> = cosine_results
             .iter()
             .map(|(_, entry)| match &entry.operation {
-                WalOperation::Insert { vector_id, .. } => vector_id.clone(),
+                WalOperation::AvroPayload { avro_data, .. } => {
+                    if let Ok(record) = VectorRecord::from_avro_bytes(avro_data) {
+                        record.id
+                    } else {
+                        String::new()
+                    }
+                },
                 _ => String::new(),
             })
             .collect();
@@ -138,7 +142,13 @@ mod tests {
         let euclidean_ids: Vec<String> = euclidean_results
             .iter()
             .map(|(_, entry)| match &entry.operation {
-                WalOperation::Insert { vector_id, .. } => vector_id.clone(),
+                WalOperation::AvroPayload { avro_data, .. } => {
+                    if let Ok(record) = VectorRecord::from_avro_bytes(avro_data) {
+                        record.id
+                    } else {
+                        String::new()
+                    }
+                },
                 _ => String::new(),
             })
             .collect();
@@ -249,14 +259,18 @@ mod tests {
 
             // Verify first result is always v1 (identical to query)
             match &results[0].1.operation {
-                WalOperation::Insert { vector_id, .. } => {
-                    assert_eq!(
-                        vector_id, "v1",
-                        "Best match should be v1 for collection {}",
-                        collection_id
-                    );
+                WalOperation::AvroPayload { avro_data, .. } => {
+                    if let Ok(record) = VectorRecord::from_avro_bytes(avro_data) {
+                        assert_eq!(
+                            record.id, "v1",
+                            "Best match should be v1 for collection {}",
+                            collection_id
+                        );
+                    } else {
+                        panic!("Failed to deserialize vector record");
+                    }
                 }
-                _ => panic!("Expected Insert operation"),
+                _ => panic!("Expected AvroPayload operation"),
             }
 
             // Verify distance values match the metric
@@ -437,10 +451,14 @@ mod tests {
 
             // First result should always be v1
             match &results[0].1.operation {
-                WalOperation::Insert { vector_id, .. } => {
-                    assert_eq!(vector_id, "v1", "Best match should consistently be v1");
+                WalOperation::AvroPayload { avro_data, .. } => {
+                    if let Ok(record) = VectorRecord::from_avro_bytes(avro_data) {
+                        assert_eq!(record.id, "v1", "Best match should consistently be v1");
+                    } else {
+                        panic!("Failed to deserialize vector record");
+                    }
                 }
-                _ => panic!("Expected Insert operation"),
+                _ => panic!("Expected AvroPayload operation"),
             }
 
             // Score should be consistent
@@ -490,10 +508,9 @@ mod tests {
             expires_at: None,
             version: 1,
             batch_id: None,
-            operation: WalOperation::Insert {
-                vector_id: "bincode_vector".to_string(),
-                record: vector_record,
-                expires_at: None,
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert".to_string(),
+                avro_data: vector_record.to_avro_bytes().expect("Failed to serialize test vector"),
             },
         };
 
@@ -565,10 +582,9 @@ mod tests {
             expires_at: None,
             version: 1,
             batch_id: None,
-            operation: WalOperation::Update {
-                vector_id: "updated_vector".to_string(),
-                record: updated_vector_record,
-                expires_at: None,
+            operation: WalOperation::AvroPayload {
+                operation_type: "upsert".to_string(),
+                avro_data: updated_vector_record.to_avro_bytes().expect("Failed to serialize test vector"),
             },
         };
 
@@ -620,7 +636,7 @@ mod tests {
         assert_eq!(
             results.len(),
             3,
-            "Should find all three vectors (Insert, Update, AvroPayload)"
+            "Should find all three vectors using AvroPayload format"
         );
 
         // All vectors should have reasonable similarity scores
@@ -632,20 +648,16 @@ mod tests {
             );
         }
 
-        // Verify we have all three operation types represented
+        // Verify all operations use modern AvroPayload format
         let operation_types: std::collections::HashSet<_> = results
             .iter()
             .map(|(_, entry)| match &entry.operation {
-                WalOperation::Insert { .. } => "Insert",
-                WalOperation::Update { .. } => "Update", 
                 WalOperation::AvroPayload { .. } => "AvroPayload",
                 _ => "Other",
             })
             .collect();
 
-        assert_eq!(operation_types.len(), 3, "Should have all three operation types");
-        assert!(operation_types.contains("Insert"));
-        assert!(operation_types.contains("Update"));
+        assert_eq!(operation_types.len(), 1, "Should have only AvroPayload operation types");
         assert!(operation_types.contains("AvroPayload"));
     }
 }

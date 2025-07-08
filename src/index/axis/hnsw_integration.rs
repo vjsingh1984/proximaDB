@@ -4,7 +4,7 @@
 //! for adaptive, high-performance vector search with metadata filtering.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as AsyncRwLock;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm, SearchResult as AlgoSearchResult};
 use crate::compute::DistanceMetric;
 use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
-use crate::index::axis::strategy::{IndexType, IndexStrategy};
+use crate::index::axis::strategy::IndexType;
 use super::manager::AxisManager;
 
 /// HNSW configuration for AXIS integration
@@ -117,15 +117,18 @@ impl PartitionedHnswIndex {
             vector_record.id.clone(),
             vector_record.vector.clone(),
             Some(vector_record.metadata.clone()),
-        ).context("Failed to add vector to HNSW partition")?;
+        ).map_err(|e| anyhow::anyhow!(e))?;
         
         // Update mappings
         self.vector_partitions.insert(vector_record.id.clone(), partition_id);
         
+        // Calculate memory usage before borrowing metadata
+        let memory_usage = self.estimate_vector_memory_usage(vector_record);
+        
         // Update partition metadata
         if let Some(metadata) = self.partition_metadata.get_mut(&partition_id) {
             metadata.vector_count += 1;
-            metadata.memory_usage_bytes += self.estimate_vector_memory_usage(vector_record);
+            metadata.memory_usage_bytes += memory_usage;
             metadata.last_accessed = std::time::Instant::now();
             
             // Update average dimension
@@ -204,7 +207,7 @@ impl PartitionedHnswIndex {
         if let Some(partition_id) = self.vector_partitions.remove(vector_id) {
             if let Some(partition) = self.partitions.get_mut(&partition_id) {
                 let removed = partition.remove_vector(vector_id)
-                    .context("Failed to remove vector from HNSW partition")?;
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 
                 // Update partition metadata
                 if removed {
@@ -248,7 +251,7 @@ impl PartitionedHnswIndex {
     pub fn optimize(&mut self) -> Result<()> {
         for (partition_id, partition) in &mut self.partitions {
             partition.optimize()
-                .with_context(|| format!("Failed to optimize partition {}", partition_id))?;
+                .map_err(|e| anyhow::anyhow!("Failed to optimize partition {}: {}", partition_id, e))?;
         }
         
         // TODO: Implement partition rebalancing if needed
@@ -283,7 +286,7 @@ impl PartitionedHnswIndex {
             let mut hnsw = HNSWIndex::new(
                 self.config.m,
                 self.config.ef_construction,
-                self.distance_metric,
+                self.distance_metric.clone(),
                 self.config.use_simd,
             );
             
@@ -470,10 +473,11 @@ impl AxisManager {
         tracing::info!("Enabling HNSW indexing for collection {}", collection_id);
         
         // Update collection strategy to include HNSW
-        if let Some(mut strategy) = self.get_collection_strategy(collection_id) {
+        let collection_id_str = collection_id.to_string();
+        if let Ok(mut strategy) = self.get_collection_strategy(&collection_id_str).await {
             if !strategy.secondary_indexes.contains(&IndexType::HNSW) {
                 strategy.secondary_indexes.push(IndexType::HNSW);
-                self.update_collection_strategy(collection_id, strategy).await?;
+                self.update_collection_strategy(&collection_id_str, strategy).await?;
             }
         }
         

@@ -32,49 +32,59 @@ use std::sync::Arc;
 use crate::core::VectorRecord;
 use crate::services::collection_service::CollectionService;
 use crate::services::vector_service::VectorService;
+// Use centralized schema module 
 use crate::storage::persistence::wal::schema::{
-    AvroVector, AvroVectorBatch, VECTOR_BATCH_SCHEMA_V1,
+    create_avro_vector_batch,
 };
+use crate::index::config::IndexConfig;
 
-/// Convert VectorRecord structs to Avro binary format (REST-to-Avro bridge)
-fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> anyhow::Result<Vec<u8>> {
-    use apache_avro::Schema;
+// Function removed - using centralized create_avro_vector_batch from schema module
 
-    // Parse the vector batch schema
-    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
-        .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
-
-    // Convert VectorRecord to AvroVector format
-    let avro_vectors: Vec<AvroVector> = vector_records
-        .iter()
-        .map(|record| AvroVector {
-            id: record.id.clone(),
-            vector: record.vector.clone(),
-            metadata: if record.metadata.is_empty() {
-                None
-            } else {
-                Some(
-                    record
-                        .metadata
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.to_string()))
-                        .collect(),
-                )
-            },
-            timestamp: Some(record.timestamp),
-        })
-        .collect();
-
-    let batch = AvroVectorBatch {
-        vectors: avro_vectors,
+/// Convert REST IndexConfig to internal IndexConfig
+fn convert_rest_to_internal_index_config(rest_config: RestIndexConfig) -> IndexConfig {
+    use crate::index::config::{IndexUpdateMode, HnswConfig, IvfConfig};
+    
+    let update_mode = match rest_config.update_mode.as_deref() {
+        Some("synchronous") => IndexUpdateMode::Synchronous,
+        Some("asynchronous") => IndexUpdateMode::Asynchronous,
+        Some("hybrid") => IndexUpdateMode::Hybrid,
+        _ => IndexUpdateMode::Synchronous, // Default
     };
 
-    // Convert to Avro Value first, then serialize to binary datum (schema-less)
-    let avro_value = apache_avro::to_value(batch)
-        .map_err(|e| anyhow::anyhow!("Failed to convert vector batch to Avro value: {}", e))?;
+    let hnsw_config = rest_config.hnsw_config.map(|hc| HnswConfig {
+        m: hc.m.unwrap_or(16),
+        ef_construction: hc.ef_construction.unwrap_or(200),
+        ef_search: hc.ef_search.unwrap_or(50),
+        max_partition_size: hc.max_partition_size.unwrap_or(100_000),
+        adaptive_parameters: hc.adaptive_parameters.unwrap_or(true),
+        use_simd: hc.use_simd.unwrap_or(true),
+        memory_limit_mb: hc.memory_limit_mb.unwrap_or(512),
+        lazy_loading: hc.lazy_loading.unwrap_or(true),
+        prune_connections: hc.prune_connections.unwrap_or(0),
+        level_multiplier: hc.level_multiplier.unwrap_or(1.0 / 2.0_f32.ln()),
+    });
 
-    apache_avro::to_avro_datum(&schema, avro_value)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize vector batch to Avro datum: {}", e))
+    let ivf_config = rest_config.ivf_config.map(|ic| IvfConfig {
+        n_lists: ic.n_lists.unwrap_or(1000),
+        n_probe: ic.n_probe.unwrap_or(1),
+        quantization_bits: ic.quantization_bits.unwrap_or(8),
+        use_pq: ic.use_pq.unwrap_or(false),
+        pq_subspaces: ic.pq_subspaces.unwrap_or(8),
+        train_on_insert: ic.train_on_insert.unwrap_or(false),
+        min_train_size: ic.min_train_size.unwrap_or(1000),
+    });
+
+    IndexConfig {
+        update_mode,
+        async_update_timeout_ms: rest_config.async_update_timeout_ms,
+        async_update_batch_size: rest_config.async_update_batch_size,
+        enable_background_optimization: rest_config.enable_background_optimization.unwrap_or(true),
+        hnsw_config,
+        ivf_config,
+        build_concurrency: rest_config.build_concurrency,
+        memory_limit_mb: rest_config.memory_limit_mb,
+        checkpoint_interval_ms: rest_config.checkpoint_interval_ms,
+    }
 }
 
 /// Shared application state for REST handlers
@@ -92,6 +102,59 @@ pub struct CreateCollectionRequest {
     pub distance_metric: Option<String>,
     pub indexing_algorithm: Option<String>,
     pub storage_engine: Option<String>,
+    pub filterable_columns: Option<Vec<RestFilterableColumn>>,
+    pub index_config: Option<RestIndexConfig>,
+}
+
+/// REST API representation of filterable column
+#[derive(Debug, Deserialize)]
+pub struct RestFilterableColumn {
+    pub name: String,
+    pub data_type: String, // "string", "integer", "float", "boolean", "datetime"
+    pub indexed: Option<bool>,
+    pub supports_range: Option<bool>,
+    pub estimated_cardinality: Option<i32>,
+}
+
+/// REST API representation of index configuration
+#[derive(Debug, Deserialize)]
+pub struct RestIndexConfig {
+    pub update_mode: Option<String>, // "synchronous", "asynchronous", "hybrid"
+    pub async_update_timeout_ms: Option<u64>,
+    pub async_update_batch_size: Option<usize>,
+    pub enable_background_optimization: Option<bool>,
+    pub hnsw_config: Option<RestHnswConfig>,
+    pub ivf_config: Option<RestIvfConfig>,
+    pub build_concurrency: Option<usize>,
+    pub memory_limit_mb: Option<u64>,
+    pub checkpoint_interval_ms: Option<u64>,
+}
+
+/// REST API representation of HNSW configuration
+#[derive(Debug, Deserialize)]
+pub struct RestHnswConfig {
+    pub m: Option<usize>,
+    pub ef_construction: Option<usize>,
+    pub ef_search: Option<usize>,
+    pub max_partition_size: Option<usize>,
+    pub adaptive_parameters: Option<bool>,
+    pub use_simd: Option<bool>,
+    pub memory_limit_mb: Option<usize>,
+    pub lazy_loading: Option<bool>,
+    pub prune_connections: Option<usize>,
+    pub level_multiplier: Option<f32>,
+}
+
+/// REST API representation of IVF configuration
+#[derive(Debug, Deserialize)]
+pub struct RestIvfConfig {
+    pub n_lists: Option<usize>,
+    pub n_probe: Option<usize>,
+    pub quantization_bits: Option<usize>,
+    pub use_pq: Option<bool>,
+    pub pq_subspaces: Option<usize>,
+    pub train_on_insert: Option<bool>,
+    pub min_train_size: Option<usize>,
 }
 
 /// Collection update request
@@ -101,6 +164,7 @@ pub struct UpdateCollectionRequest {
     pub tags: Option<Vec<String>>,
     pub owner: Option<String>,
     pub config: Option<serde_json::Value>,
+    pub index_config: Option<RestIndexConfig>,
 }
 
 /// Vector insertion request - supports both single and bulk vectors
@@ -266,15 +330,96 @@ pub async fn create_collection(
         }
     };
 
+    // Convert REST filterable columns to proto format
+    let filterable_columns = request.filterable_columns
+        .as_ref()
+        .map(|cols| {
+            cols.iter()
+                .map(|col| {
+                    let data_type = match col.data_type.as_str() {
+                        "string" => 1,
+                        "integer" => 2,
+                        "float" => 3,
+                        "boolean" => 4,
+                        "datetime" => 5,
+                        _ => 1, // Default to string
+                    };
+                    
+                    crate::proto::proximadb::FilterableColumnSpec {
+                        name: col.name.clone(),
+                        data_type,
+                        indexed: col.indexed.unwrap_or(false),
+                        supports_range: col.supports_range.unwrap_or(false),
+                        estimated_cardinality: col.estimated_cardinality,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Convert REST IndexConfig to proto format
+    let index_config = request.index_config
+        .as_ref()
+        .map(|ic| {
+            let update_mode = match ic.update_mode.as_deref() {
+                Some("synchronous") => 1,
+                Some("asynchronous") => 2,
+                Some("hybrid") => 3,
+                _ => 1, // Default to synchronous
+            };
+
+            // Convert HNSW config
+            let hnsw_config = ic.hnsw_config.as_ref().map(|hc| {
+                crate::proto::proximadb::HnswConfig {
+                    m: hc.m.unwrap_or(16) as i32,
+                    ef_construction: hc.ef_construction.unwrap_or(200) as i32,
+                    ef_search: hc.ef_search.unwrap_or(50) as i32,
+                    max_partition_size: hc.max_partition_size.unwrap_or(100_000) as i32,
+                    adaptive_parameters: hc.adaptive_parameters.unwrap_or(true),
+                    use_simd: hc.use_simd.unwrap_or(true),
+                    memory_limit_mb: hc.memory_limit_mb.unwrap_or(512) as i32,
+                    lazy_loading: hc.lazy_loading.unwrap_or(true),
+                    prune_connections: hc.prune_connections.unwrap_or(0) as i32,
+                    level_multiplier: hc.level_multiplier.unwrap_or(1.0 / 2.0_f32.ln()),
+                }
+            });
+
+            // Convert IVF config
+            let ivf_config = ic.ivf_config.as_ref().map(|ivc| {
+                crate::proto::proximadb::IvfConfig {
+                    n_lists: ivc.n_lists.unwrap_or(1000) as i32,
+                    n_probe: ivc.n_probe.unwrap_or(1) as i32,
+                    quantization_bits: ivc.quantization_bits.unwrap_or(8) as i32,
+                    use_pq: ivc.use_pq.unwrap_or(false),
+                    pq_subspaces: ivc.pq_subspaces.unwrap_or(8) as i32,
+                    train_on_insert: ivc.train_on_insert.unwrap_or(false),
+                    min_train_size: ivc.min_train_size.unwrap_or(1000) as i32,
+                }
+            });
+
+            crate::proto::proximadb::IndexConfig {
+                update_mode,
+                async_update_timeout_ms: ic.async_update_timeout_ms.map(|t| t as i64),
+                async_update_batch_size: ic.async_update_batch_size.map(|b| b as i32),
+                enable_background_optimization: ic.enable_background_optimization.unwrap_or(true),
+                hnsw_config,
+                ivf_config,
+                build_concurrency: ic.build_concurrency.map(|c| c as i32),
+                memory_limit_mb: ic.memory_limit_mb.map(|m| m as i64),
+                checkpoint_interval_ms: ic.checkpoint_interval_ms.map(|i| i as i32),
+            }
+        });
+
     let config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension.unwrap_or(384) as i32,
         distance_metric,
         storage_engine,
         indexing_algorithm,
-        filterable_metadata_fields: Vec::new(), // Default to no filterable fields
-        indexing_config: HashMap::new(),        // Default empty config
-        filterable_columns: Vec::new(),         // Empty by default for new filterable column API
+        filterable_metadata_fields: Vec::new(), // Legacy field
+        indexing_config: HashMap::new(),        // Legacy field
+        filterable_columns,
+        index_config,
     };
 
     match state
@@ -402,7 +547,24 @@ pub async fn update_collection(
         updates.insert("config".to_string(), config);
     }
 
-    if updates.is_empty() {
+    // Handle IndexConfig update separately using collection service
+    if let Some(rest_index_config) = request.index_config {
+        // Convert REST IndexConfig to internal IndexConfig
+        let internal_index_config = convert_rest_to_internal_index_config(rest_index_config);
+        
+        // Update IndexConfig using collection service
+        match state.collection_service.update_collection_index_config(&collection_id, &internal_index_config).await {
+            Ok(()) => {
+                tracing::info!("✅ Updated IndexConfig for collection: {}", collection_id);
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to update IndexConfig for collection {}: {}", collection_id, e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    if updates.is_empty() && request.index_config.is_none() {
         return Err(StatusCode::BAD_REQUEST);
     }
 

@@ -23,8 +23,17 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, span, warn, Level};
 
 use crate::storage::persistence::wal::config::WalConfig;
-use crate::storage::persistence::wal::factory::WalFactory;
-use crate::storage::persistence::wal::{WalManager, WalStrategyType};
+// Legacy WalFactory removed - using WalManager with modern batch strategies
+// use crate::storage::persistence::wal::factory::WalFactory;
+
+// Use centralized schema from wal module
+use crate::storage::persistence::wal::schema::{
+    VECTOR_BATCH_SCHEMA_V1, deserialize_vector_batch, create_avro_vector_batch, AvroVector, AvroVectorBatch
+};
+
+// Function removed - using centralized deserialize_vector_batch from schema module
+
+use crate::storage::persistence::wal::{WalManager, WalStrategyType, WalBatchFactory};
 use crate::storage::FilesystemFactory;
 use crate::storage::StorageEngine;
 // Note: storage::vector module has been restructured
@@ -38,8 +47,8 @@ use crate::core::{
     SearchStrategy, VectorInsertResponse,
     VectorOperationMetrics, VectorSearchResponse, WalMetrics,
 };
-use crate::index::axis::{AxisConfig, AxisIndexManager};
-use crate::services::collection_service::CollectionService;
+use crate::index::axis::{AxisConfig, AxisManager};
+// Collection service removed - indexing configuration handled by AXIS
 use crate::storage::engines::lsm::LsmTree;
 use crate::storage::engines::viper::core::ViperCoreEngine;
 
@@ -56,7 +65,7 @@ pub enum OperationMode {
 /// Enables horizontal scaling with one coordinator per collection
 pub struct CollectionStorageIndexCoordinator {
     collection_id: String,
-    axis_manager: Arc<AxisIndexManager>,
+    axis_manager: Arc<AxisManager>,
     viper_engine: Arc<ViperCoreEngine>,
     lsm_engine: Arc<LsmTree>,
     storage_engine_type: crate::proto::proximadb::StorageEngine,
@@ -74,13 +83,19 @@ pub struct CoordinatorMetrics {
     pub avg_indexing_time_us: f64,
     pub avg_flush_handling_time_us: f64,
     pub avg_compaction_handling_time_us: f64,
+    pub vectors_inserted: u64,
+    pub vectors_searched: u64,
+    pub average_insert_time_ms: f64,
+    pub average_search_time_ms: f64,
+    pub total_operations: u64,
+    pub failed_operations: u64,
 }
 
 impl CollectionStorageIndexCoordinator {
     pub async fn new(
         collection_id: String,
         storage_engine_type: crate::proto::proximadb::StorageEngine,
-        axis_manager: Arc<AxisIndexManager>,
+        axis_manager: Arc<AxisManager>,
         viper_engine: Arc<ViperCoreEngine>,
         lsm_engine: Arc<LsmTree>,
     ) -> Result<Self> {
@@ -222,7 +237,7 @@ impl CollectionStorageIndexCoordinator {
             let axis_manager = Arc::clone(&self.axis_manager);
             let vector_id = vector.id.clone();
             async move {
-                match axis_manager.insert(vector).await {
+                match axis_manager.insert(vector.clone()).await {
                     Ok(_) => Ok(()),
                     Err(e) => Err((vector_id, e)),
                 }
@@ -272,14 +287,7 @@ impl CollectionStorageIndexCoordinator {
     /// Get coordinator metrics (optimized to avoid clone)
     pub async fn get_metrics(&self) -> CoordinatorMetrics {
         let metrics = self.operation_metrics.read().await;
-        CoordinatorMetrics {
-            vectors_inserted: metrics.vectors_inserted,
-            vectors_searched: metrics.vectors_searched,
-            average_insert_time_ms: metrics.average_insert_time_ms,
-            average_search_time_ms: metrics.average_search_time_ms,
-            total_operations: metrics.total_operations,
-            failed_operations: metrics.failed_operations,
-        }
+        metrics.clone()
     }
 
     /// Get collection ID
@@ -293,7 +301,7 @@ impl CollectionStorageIndexCoordinator {
     }
 
     /// Get AXIS manager for advanced operations
-    pub fn axis_manager(&self) -> &Arc<AxisIndexManager> {
+    pub fn axis_manager(&self) -> &Arc<AxisManager> {
         &self.axis_manager
     }
 }
@@ -302,14 +310,14 @@ impl CollectionStorageIndexCoordinator {
 /// Manages per-collection coordinators for horizontal scaling
 pub struct StorageIndexCoordinatorManager {
     coordinators: Arc<tokio::sync::RwLock<HashMap<String, Arc<CollectionStorageIndexCoordinator>>>>,
-    axis_manager: Arc<AxisIndexManager>,
+    axis_manager: Arc<AxisManager>,
     viper_engine: Arc<ViperCoreEngine>,
     lsm_engine: Arc<LsmTree>,
 }
 
 impl StorageIndexCoordinatorManager {
     pub async fn new(
-        axis_manager: Arc<AxisIndexManager>,
+        axis_manager: Arc<AxisManager>,
         viper_engine: Arc<ViperCoreEngine>,
         lsm_engine: Arc<LsmTree>,
     ) -> Result<Self> {
@@ -441,7 +449,7 @@ pub struct VectorService {
     wal: Arc<WalManager>,
     viper_engine: Arc<ViperCoreEngine>,
     lsm_engine: Arc<LsmTree>,
-    collection_service: Arc<CollectionService>,
+    // collection_service removed - indexing configuration handled by AXIS
     coordinator_manager: Arc<StorageIndexCoordinatorManager>,
     performance_metrics: Arc<RwLock<LocalServiceMetrics>>,
     wal_strategy_type: WalStrategyType,
@@ -490,7 +498,7 @@ impl VectorService {
     pub async fn new(
         storage: Arc<RwLock<StorageEngine>>,
         wal: Arc<WalManager>,
-        collection_service: Arc<CollectionService>,
+        // collection_service removed - indexing configuration handled by AXIS
         config: UnifiedServiceConfig,
     ) -> anyhow::Result<Self> {
         info!("🚀 Initializing VectorService with binary Avro operations");
@@ -549,7 +557,7 @@ impl VectorService {
 
         // Initialize AXIS index manager
         let axis_manager = Arc::new(
-            AxisIndexManager::new(config.axis_config.clone())
+            AxisManager::new(config.axis_config.clone())
                 .await
                 .context("Failed to initialize AXIS index manager")?,
         );
@@ -571,7 +579,7 @@ impl VectorService {
             wal,
             viper_engine,
             lsm_engine,
-            collection_service,
+            // collection_service removed - indexing configuration handled by AXIS
             coordinator_manager,
             performance_metrics: Arc::new(RwLock::new(LocalServiceMetrics::default())),
             wal_strategy_type: config.wal_strategy,
@@ -582,7 +590,7 @@ impl VectorService {
     /// Create new service with WAL factory (recommended for production)
     pub async fn with_wal_factory(
         storage: Arc<RwLock<StorageEngine>>,
-        collection_service: Arc<CollectionService>,
+        // collection_service removed - indexing configuration handled by AXIS
         config: UnifiedServiceConfig,
         wal_config: WalConfig,
     ) -> Result<Self> {
@@ -599,24 +607,23 @@ impl VectorService {
                 .await
                 .context("Failed to create filesystem factory")?,
         );
-        let wal_strategy =
-            WalFactory::create_strategy(config.wal_strategy.clone(), &wal_config, filesystem)
-                .await
-                .context("Failed to create WAL strategy")?;
+        // Create WAL manager using modern batch factory pattern
+        let wal_manager = WalManager::create_with_batch_factory(
+            config.wal_strategy.clone(),
+            wal_config,
+            filesystem
+        )
+        .await
+        .context("Failed to create WAL manager with batch factory")?;
 
-        // Create WAL manager with strategy
-        let wal_manager = WalManager::new(wal_strategy, wal_config)
-            .await
-            .context("Failed to create WAL manager")?;
-
-        Self::new(storage, Arc::new(wal_manager), collection_service, config).await
+        Self::new(storage, Arc::new(wal_manager), config).await
     }
 
     /// Create new service with existing WAL manager (shares WAL with StorageEngine)
     pub async fn with_existing_wal(
         storage: Arc<RwLock<StorageEngine>>,
         wal_manager: Arc<WalManager>,
-        collection_service: Arc<CollectionService>,
+        // collection_service removed - indexing configuration handled by AXIS
         config: UnifiedServiceConfig,
     ) -> anyhow::Result<Self> {
         info!("🏗️ Creating VectorService with shared WAL manager");
@@ -625,7 +632,7 @@ impl VectorService {
             config.wal_strategy, config.memtable_type
         );
 
-        Self::new(storage, wal_manager, collection_service, config).await
+        Self::new(storage, wal_manager, config).await
     }
 
     /// Check if immediate sync should be used based on WAL configuration
@@ -905,11 +912,11 @@ impl VectorService {
         let processing_time = start_time.elapsed().as_micros() as i64;
         self.update_metrics(true, processing_time).await;
 
-        // Optimize: avoid cloning large result sets by moving ownership
-        let response_results = std::mem::take(&mut all_results);
+        // Clone results for response - we need them in both places
+        let response_results = all_results.clone();
 
         // Convert results to Avro format
-        let avro_results: Vec<JsonValue> = response_results
+        let avro_results: Vec<JsonValue> = all_results
             .into_iter()
             .map(|result| {
                 json!({
@@ -1595,7 +1602,7 @@ impl VectorService {
 
         // OPTIMIZED DESIGN: Strategy-specific handling for maximum performance
         let (vector_count, vector_ids) = match self.wal_strategy_type {
-            WalStrategyType::Avro => {
+            WalStrategyType::Avro | WalStrategyType::AvroBatch => {
                 // AVRO STRATEGY: True zero-copy path
                 info!("🔧 [DEBUG] AVRO STRATEGY: Using TRUE ZERO-COPY path");
 
@@ -1629,7 +1636,7 @@ impl VectorService {
                 }
             }
 
-            WalStrategyType::Bincode => {
+            WalStrategyType::Bincode | WalStrategyType::BincodeBatch => {
                 // BINCODE STRATEGY: Aligned with AVRO for consistent batch processing
                 info!("🔧 [DEBUG] BINCODE STRATEGY: Processing batch with unified pattern");
 
@@ -1683,8 +1690,8 @@ impl VectorService {
             processing_time,
             wal_write_time,
             match self.wal_strategy_type {
-                WalStrategyType::Avro => "ZERO-COPY AVRO",
-                WalStrategyType::Bincode => "BINCODE",
+                WalStrategyType::Avro | WalStrategyType::AvroBatch => "ZERO-COPY AVRO",
+                WalStrategyType::Bincode | WalStrategyType::BincodeBatch => "BINCODE",
             }
         );
 
@@ -1719,7 +1726,7 @@ impl VectorService {
 
         // Parse schema
         let schema =
-            Schema::parse_str(crate::storage::persistence::wal::schema::VECTOR_BATCH_SCHEMA_V1)
+            Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
                 .context("Failed to parse vector batch schema")?;
 
         // Just parse enough to validate structure and count vectors
@@ -1756,31 +1763,18 @@ impl VectorService {
             file_paths.len()
         );
 
-        // Get collection metadata to determine storage engine type
-        let collection_record = self
-            .collection_service
-            .get_collection_by_name_or_uuid(collection_id)
-            .await
-            .context("Failed to get collection metadata for flush completion")?;
+        // Use default VIPER engine for flush completion (collection metadata not needed)
+        let coordinator = self
+            .coordinator_manager
+            .get_or_create_coordinator(
+                collection_id,
+                crate::proto::proximadb::StorageEngine::Viper, // Default to VIPER
+            )
+            .await?;
 
-        if let Some(collection_record) = collection_record {
-            let coordinator = self
-                .coordinator_manager
-                .get_or_create_coordinator(
-                    collection_id,
-                    collection_record.get_storage_engine_enum(),
-                )
-                .await?;
-
-            coordinator
-                .handle_flush_completion(&flushed_vectors, &file_paths)
-                .await?;
-        } else {
-            tracing::warn!(
-                "⚠️ Collection {} not found for flush completion",
-                collection_id
-            );
-        }
+        coordinator
+            .handle_flush_completion(&flushed_vectors, &file_paths)
+            .await?;
 
         tracing::info!("✅ Flush completion handled successfully");
         Ok(())
@@ -1798,31 +1792,18 @@ impl VectorService {
             collection_id
         );
 
-        // Get collection metadata to determine storage engine type
-        let collection_record = self
-            .collection_service
-            .get_collection_by_name_or_uuid(collection_id)
-            .await
-            .context("Failed to get collection metadata for compaction completion")?;
+        // Use default VIPER engine for compaction completion (collection metadata not needed)
+        let coordinator = self
+            .coordinator_manager
+            .get_or_create_coordinator(
+                collection_id,
+                crate::proto::proximadb::StorageEngine::Viper, // Default to VIPER
+            )
+            .await?;
 
-        if let Some(collection_record) = collection_record {
-            let coordinator = self
-                .coordinator_manager
-                .get_or_create_coordinator(
-                    collection_id,
-                    collection_record.get_storage_engine_enum(),
-                )
-                .await?;
-
-            coordinator
-                .handle_compaction_completion(&old_files, &new_files)
-                .await?;
-        } else {
-            tracing::warn!(
-                "⚠️ Collection {} not found for compaction completion",
-                collection_id
-            );
-        }
+        coordinator
+            .handle_compaction_completion(&old_files, &new_files)
+            .await?;
 
         tracing::info!("✅ Compaction completion handled successfully");
         Ok(())
@@ -1892,20 +1873,8 @@ impl VectorService {
 
         // Step 1: Get collection metadata to determine storage type
         tracing::info!(
-            "🔍 UNIFIED POLYMORPHIC: Getting collection metadata for {}",
+            "🔍 UNIFIED POLYMORPHIC: Searching collection {} (using polymorphic routing)",
             collection_id
-        );
-        let collection_record = self
-            .collection_service
-            .get_collection_by_name_or_uuid(collection_id)
-            .await
-            .context("Failed to get collection metadata")?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection_id))?;
-
-        tracing::info!(
-            "🔍 UNIFIED POLYMORPHIC: Collection {} uses storage engine: {:?}",
-            collection_id,
-            collection_record.storage_engine
         );
 
         // Step 2: Extract search parameters
@@ -2284,44 +2253,12 @@ impl VectorService {
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
         tracing::warn!("⚠️ FORCE FLUSH COLLECTION {} - TESTING ONLY", collection_id);
 
-        // Look up collection's storage engine from metadata
-        let storage_engine = match self
-            .collection_service
-            .get_collection_by_name_or_uuid(collection_id)
-            .await
-        {
-            Ok(Some(collection_metadata)) => {
-                let engine_name = match collection_metadata.storage_engine.as_str() {
-                    "Viper" | "VIPER" => "VIPER",
-                    "Lsm" | "LSM" => "LSM",
-                    other => {
-                        tracing::warn!(
-                            "📋 Collection {} has unknown storage engine '{}', defaulting to VIPER",
-                            collection_id,
-                            other
-                        );
-                        "VIPER"
-                    }
-                };
-                tracing::info!(
-                    "📋 Collection {} uses storage engine: {}",
-                    collection_id,
-                    engine_name
-                );
-                Some(engine_name)
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    "⚠️ Collection {} not found, defaulting to VIPER engine",
-                    collection_id
-                );
-                Some("VIPER")
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ Could not retrieve collection metadata for {}: {}. Defaulting to VIPER engine", collection_id, e);
-                Some("VIPER")
-            }
-        };
+        // Use default VIPER engine for force flush (collection metadata not needed)
+        let storage_engine = Some("VIPER");
+        tracing::info!(
+            "📋 Collection {} force flush using default VIPER engine",
+            collection_id
+        );
 
         self.wal
             .force_flush_collection(collection_id, storage_engine)
@@ -2338,7 +2275,7 @@ impl VectorService {
     /// Convert Avro payload to Bincode batch for aligned storage
     fn convert_avro_to_bincode_batch(&self, avro_payload: &[u8]) -> Result<Vec<u8>> {
         // Deserialize Avro to get vector records
-        let vectors = crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_payload)
+        let vectors = deserialize_vector_batch(avro_payload)
             .context("Failed to deserialize Avro payload for Bincode conversion")?;
         
         // Serialize as Bincode batch (same structure, different format)

@@ -34,7 +34,7 @@ pub use hnsw_integration::{
     AxisHnswConfig, AxisHnswManager, HnswStats, PartitionedHnswIndex,
 };
 pub use manager::{
-    AxisIndexManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
+    AxisManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
     ScoredResult, VectorQuery,
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};

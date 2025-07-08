@@ -167,8 +167,39 @@ impl CollectionRecord {
         }
         .to_string();
 
-        // Convert indexing config to JSON
-        let config_json = serde_json::to_string(&config.indexing_config)?;
+        // Apply smart defaults for IndexConfig if not provided or incomplete
+        let smart_index_config = if let Some(provided_config) = &config.index_config {
+            use crate::index::config::IndexConfig;
+            // Use smart defaults with user overrides
+            IndexConfig::from_proto_with_smart_defaults(
+                provided_config,
+                &indexing_algorithm,
+                None // Collection size hint not available at creation time
+            ).unwrap_or_else(|_| {
+                // Fallback to basic smart defaults
+                IndexConfig::create_smart_default(&indexing_algorithm, config.dimension as usize, None)
+            })
+        } else {
+            // No IndexConfig provided, use full smart defaults
+            use crate::index::config::IndexConfig;
+            IndexConfig::create_smart_default(&indexing_algorithm, config.dimension as usize, None)
+        };
+
+        // Convert full config (including IndexConfig) to JSON
+        let full_config = serde_json::json!({
+            "indexing_config": config.indexing_config,
+            "filterable_columns": config.filterable_columns.iter().map(|col| {
+                serde_json::json!({
+                    "name": col.name,
+                    "data_type": col.data_type,
+                    "indexed": col.indexed,
+                    "supports_range": col.supports_range,
+                    "estimated_cardinality": col.estimated_cardinality
+                })
+            }).collect::<Vec<_>>(),
+            "index_config": smart_index_config.to_proto()
+        });
+        let config_json = serde_json::to_string(&full_config)?;
 
         Ok(Self {
             uuid,
@@ -216,9 +247,67 @@ impl CollectionRecord {
             _ => 1,
         };
 
-        // Parse indexing config from JSON
-        let indexing_config =
-            serde_json::from_str(&self.config).unwrap_or_else(|_| std::collections::HashMap::new());
+        // Parse full config from JSON
+        let full_config: serde_json::Value = serde_json::from_str(&self.config)
+            .unwrap_or_else(|_| serde_json::json!({}));
+
+        // Extract indexing config (legacy)
+        let indexing_config = full_config.get("indexing_config")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+
+        // Extract filterable columns
+        let filterable_columns = full_config.get("filterable_columns")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        if let Some(obj) = item.as_object() {
+                            Some(crate::proto::proximadb::FilterableColumnSpec {
+                                name: obj.get("name")?.as_str()?.to_string(),
+                                data_type: obj.get("data_type")?.as_i64()? as i32,
+                                indexed: obj.get("indexed")?.as_bool()?,
+                                supports_range: obj.get("supports_range")?.as_bool()?,
+                                estimated_cardinality: obj.get("estimated_cardinality")
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as i32),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Extract index config
+        let index_config = full_config.get("index_config")
+            .and_then(|v| {
+                if v.is_null() {
+                    None
+                } else {
+                    // Create default IndexConfig with algorithm-specific settings
+                    let mut index_config = crate::index::config::IndexConfig::default();
+                    
+                    // Set algorithm-specific config based on indexing algorithm
+                    match self.indexing_algorithm.as_str() {
+                        "HNSW" => {
+                            index_config.hnsw_config = Some(crate::index::config::HnswConfig::default());
+                        }
+                        "IVF" => {
+                            index_config.ivf_config = Some(crate::index::config::IvfConfig::default());
+                        }
+                        _ => {}
+                    }
+                    
+                    Some(index_config.to_proto())
+                }
+            });
 
         CollectionConfig {
             name: self.name.clone(),
@@ -228,7 +317,8 @@ impl CollectionRecord {
             storage_engine,
             filterable_metadata_fields: vec![],
             indexing_config,
-            filterable_columns: Vec::new(), // Empty by default for new filterable column API
+            filterable_columns,
+            index_config,
         }
     }
 

@@ -30,12 +30,19 @@ use tracing::info;
 /// Distance metrics supported by ProximaDB
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DistanceMetric {
+    #[serde(rename = "COSINE")]
     Cosine,
+    #[serde(rename = "EUCLIDEAN")]
     Euclidean,
+    #[serde(rename = "MANHATTAN")]
     Manhattan,
+    #[serde(rename = "DOT_PRODUCT")]
     DotProduct,
+    #[serde(rename = "HAMMING")]
     Hamming,
+    #[serde(rename = "JACCARD")]
     Jaccard,
+    #[serde(rename = "CUSTOM")]
     Custom(String),
 }
 
@@ -396,7 +403,7 @@ mod x86_implementations {
     #[target_feature(enable = "avx2,fma")]
     unsafe fn cosine_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
         let chunks = a.len() / 8;
-        let remainder = a.len() % 8;
+        let _remainder = a.len() % 8;
 
         let mut dot = _mm256_setzero_ps();
         let mut norm_a = _mm256_setzero_ps();

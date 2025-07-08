@@ -119,7 +119,7 @@ impl WalFlushCoordinator {
         collection_id: &CollectionId,
         flush_data: FlushDataSource,
         preferred_engine: Option<&str>,
-        wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalStrategy>>,
+        wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalBatchStrategy>>,
     ) -> Result<FlushResult> {
         info!(
             "🚀 Coordinator: Starting ATOMIC coordinated flush for collection {}",

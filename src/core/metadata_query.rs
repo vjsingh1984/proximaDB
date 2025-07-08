@@ -129,16 +129,16 @@ impl MetadataQueryEngine {
                 Ok(field_value != Some(&field_query.value))
             }
             ComparisonOperator::LessThan => {
-                self.compare_values(field_value, &field_query.value, |a, b| a < b)
+                self.compare_numeric_or_string(field_value, &field_query.value, |a, b| a < b)
             }
             ComparisonOperator::LessThanOrEqual => {
-                self.compare_values(field_value, &field_query.value, |a, b| a <= b)
+                self.compare_numeric_or_string(field_value, &field_query.value, |a, b| a <= b)
             }
             ComparisonOperator::GreaterThan => {
-                self.compare_values(field_value, &field_query.value, |a, b| a > b)
+                self.compare_numeric_or_string(field_value, &field_query.value, |a, b| a > b)
             }
             ComparisonOperator::GreaterThanOrEqual => {
-                self.compare_values(field_value, &field_query.value, |a, b| a >= b)
+                self.compare_numeric_or_string(field_value, &field_query.value, |a, b| a >= b)
             }
             ComparisonOperator::Contains => {
                 self.string_operation(field_value, &field_query.value, |text, pattern| {
@@ -174,25 +174,46 @@ impl MetadataQueryEngine {
     }
 
     /// Compare numeric or string values using a comparison function
-    fn compare_values<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
+    fn compare_numeric_or_string<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
     where
-        F: Fn(&JsonValue, &JsonValue) -> bool,
+        F: Fn(f64, f64) -> bool + Clone,
     {
         match field_value {
             Some(actual) => {
                 // Try numeric comparison first
                 if let (Some(a), Some(b)) = (actual.as_f64(), expected.as_f64()) {
-                    Ok(compare_fn(&JsonValue::from(a), &JsonValue::from(b)))
+                    Ok(compare_fn(a, b))
+                }
+                // Try integer comparison
+                else if let (Some(a), Some(b)) = (actual.as_i64(), expected.as_i64()) {
+                    Ok(compare_fn(a as f64, b as f64))
                 }
                 // Fall back to string comparison
                 else if let (Some(a), Some(b)) = (actual.as_str(), expected.as_str()) {
-                    Ok(compare_fn(&JsonValue::String(a.to_string()), &JsonValue::String(b.to_string())))
+                    // For strings, we compare lexicographically
+                    let result = match std::cmp::PartialOrd::partial_cmp(a, b) {
+                        Some(std::cmp::Ordering::Less) => compare_fn(0.0, 1.0),
+                        Some(std::cmp::Ordering::Equal) => compare_fn(0.0, 0.0),
+                        Some(std::cmp::Ordering::Greater) => compare_fn(1.0, 0.0),
+                        None => false,
+                    };
+                    Ok(result)
                 }
-                // Direct value comparison
                 else {
-                    Ok(compare_fn(actual, expected))
+                    Ok(false)
                 }
             }
+            None => Ok(false),
+        }
+    }
+    
+    /// Compare values that support PartialEq (used for Equal and NotEqual)
+    fn compare_values<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
+    where
+        F: Fn(&JsonValue, &JsonValue) -> bool,
+    {
+        match field_value {
+            Some(actual) => Ok(compare_fn(actual, expected)),
             None => Ok(false),
         }
     }

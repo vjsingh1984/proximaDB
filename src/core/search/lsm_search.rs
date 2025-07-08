@@ -95,7 +95,11 @@ impl LSMSearchEngine {
             predicate_pushdown: false, // LSM doesn't support predicate pushdown
             use_bloom_filters: true,   // Enable bloom filters
             quantization_level: QuantizationLevel::FP32, // LSM always uses full precision
-            ..*hints
+            clustering_hints: hints.clustering_hints.clone(),
+            engine_specific: hints.engine_specific.clone(),
+            timeout_ms: hints.timeout_ms,
+            include_debug_info: hints.include_debug_info,
+            enable_parallel_search: hints.enable_parallel_search,
         };
 
 
@@ -438,7 +442,7 @@ impl LSMSearchEngine {
             let vector_id = &result.id; // Use reference instead of clone
 
             // Keep the result with the highest score (most recent/relevant)
-            match result_map.get(&vector_id) {
+            match result_map.get(vector_id) {
                 Some(existing) if existing.score >= result.score => {
                     // Keep existing result (better score)
                 }

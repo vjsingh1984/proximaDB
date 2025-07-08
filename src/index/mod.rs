@@ -6,9 +6,11 @@
 //! Index module for ProximaDB
 
 pub mod axis;
+pub mod config;
 
 // Re-export main types for easier access
-pub use axis::{AxisConfig, AxisIndexManager};
+pub use axis::{AxisConfig, AxisManager};
+pub use config::{IndexConfig, IndexUpdateMode, HnswConfig, IvfConfig};
 
 // Placeholder index structures for compilation
 use anyhow::Result;

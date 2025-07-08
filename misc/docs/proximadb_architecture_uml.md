@@ -25,7 +25,7 @@ graph TB
     end
     
     subgraph "Index Layer"
-        AXIS[AXIS Manager]
+        AXIS[AXIS Manager<br/>IndexConfig Handler]
         HNSW[HNSW Index]
         IVF[IVF Index]
         FLAT[Flat Index]
@@ -37,6 +37,7 @@ graph TB
     UNIFIED --> VS
     CS --> VIPER
     CS --> META
+    CS --> AXIS
     VS --> VIPER
     VS --> SS
     SS --> AXIS
@@ -71,8 +72,27 @@ package "Core Types" {
         +distance_metric: DistanceMetric
         +storage_engine: StorageEngine
         +indexing_algorithm: IndexAlgorithm
+        +index_config: IndexConfig
         +created_at: DateTime<Utc>
         +metadata: HashMap<String, Value>
+    }
+    
+    class IndexConfig {
+        +update_mode: IndexUpdateMode
+        +async_update_timeout_ms: Option<u64>
+        +async_update_batch_size: Option<usize>
+        +enable_background_optimization: bool
+        +hnsw_config: Option<HnswConfig>
+        +ivf_config: Option<IvfConfig>
+        +build_concurrency: Option<usize>
+        +memory_limit_mb: Option<usize>
+        +checkpoint_interval_ms: Option<u64>
+    }
+    
+    enum IndexUpdateMode {
+        Synchronous
+        Asynchronous
+        Hybrid
     }
     
     enum DistanceMetric {
@@ -115,6 +135,37 @@ package "Storage VIPER" {
         +create_parquet_schema()
         +adapt_record_to_batch()
     }
+}
+
+package "AXIS Index System" {
+    class AxisManager {
+        -config: AxisConfig
+        -collection_service: Arc<CollectionService>
+        -adaptive_engine: Arc<AdaptiveIndexEngine>
+        -migration_engine: Arc<IndexMigrationEngine>
+        -collection_strategies: RwLock<HashMap<CollectionId, IndexStrategy>>
+        +set_collection_service(service: Arc<CollectionService>)
+        +get_collection_index_config(collection_id: &str)
+        +insert(vector: VectorRecord)
+        +search(query: VectorQuery)
+        +migrate_index(collection_id: &str, new_strategy: IndexStrategy)
+    }
+    
+    class AdaptiveIndexEngine {
+        -performance_monitor: Arc<PerformanceMonitor>
+        +analyze_collection_characteristics(collection_id: &str)
+        +recommend_index_strategy(characteristics: CollectionCharacteristics)
+        +optimize_index_config(collection_id: &str)
+    }
+    
+    class IndexMigrationEngine {
+        +create_migration_plan(from: IndexStrategy, to: IndexStrategy)
+        +execute_migration(plan: MigrationPlan)
+        +rollback_migration(migration_id: &str)
+    }
+    
+    AxisManager --> AdaptiveIndexEngine
+    AxisManager --> IndexMigrationEngine
 }
 
 package "WAL System" {
@@ -205,6 +256,8 @@ classDiagram
         -index_manager: Arc<AxisIndexManager>
         +create_collection(request) Result
         +get_collection(id) Result
+        +get_collection_index_config(id) Result
+        +update_collection_index_config(id, config) Result
         +list_collections() Result
         +delete_collection(id) Result
     }
@@ -237,11 +290,69 @@ classDiagram
     UnifiedServer --> CollectionService
     UnifiedServer --> VectorService
     CollectionService --> StorageEngine
+    CollectionService --> AxisManager
     VectorService --> StorageEngine
     StorageEngine <|.. ViperStorageEngine
+    Collection --> IndexConfig
+    AxisManager --> IndexConfig
+    IndexConfig --> IndexUpdateMode
 ```
 
-## 4. Index Architecture (PlantUML)
+## 4. IndexConfig Flow Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant REST
+    participant CS as CollectionService
+    participant AM as AxisManager
+    participant HNSW as HNSW Index
+    participant IVF as IVF Index
+    
+    Note over Client,IVF: Collection Creation with IndexConfig
+    Client->>REST: POST /collections (with IndexConfig)
+    REST->>CS: create_collection(config)
+    CS->>CS: apply_smart_defaults(IndexConfig)
+    CS->>CS: store_collection_metadata(with IndexConfig)
+    CS->>AM: set_collection_service(self)
+    REST-->>Client: Collection created
+    
+    Note over Client,IVF: Index Build Operation
+    Client->>REST: POST /vectors (insert vectors)
+    REST->>VectorService: insert_vectors()
+    VectorService->>StorageEngine: flush()
+    StorageEngine->>AM: notify_new_vectors(collection_id, vectors)
+    AM->>CS: get_collection_index_config(collection_id)
+    CS-->>AM: IndexConfig
+    
+    alt IndexConfig.update_mode == Synchronous
+        AM->>HNSW: build_index_sync(vectors, hnsw_config)
+        HNSW-->>AM: Index built
+        AM-->>VectorService: Index build complete
+    else IndexConfig.update_mode == Asynchronous
+        AM->>AM: spawn_async_task()
+        AM-->>VectorService: Index build scheduled
+        AM->>IVF: build_index_async(vectors, ivf_config)
+        IVF-->>AM: Index built
+    else IndexConfig.update_mode == Hybrid
+        AM->>AM: evaluate_batch_size()
+        alt Small batch
+            AM->>HNSW: build_index_sync(vectors, hnsw_config)
+        else Large batch
+            AM->>IVF: build_index_async(vectors, ivf_config)
+        end
+    end
+    
+    Note over Client,IVF: Index Config Update
+    Client->>REST: PUT /collections/{id}/index_config
+    REST->>CS: update_collection_index_config(id, new_config)
+    CS->>CS: validate_and_store(new_config)
+    CS->>CS: invalidate_cache(collection_id)
+    CS-->>REST: Config updated
+    REST-->>Client: Success
+```
+
+## 5. Index Architecture (PlantUML)
 
 ```plantuml
 @startuml

@@ -100,6 +100,60 @@ message CollectionConfig {
   repeated string filterable_metadata_fields = 6;  // Legacy - simple field names
   map<string, string> indexing_config = 7;         // Algorithm-specific parameters
   repeated FilterableColumnSpec filterable_columns = 8;  // Enhanced filterable column specs
+  IndexConfig index_config = 9;                    // Advanced index configuration
+}
+
+// Advanced index configuration with per-collection customization
+message IndexConfig {
+  // Index update behavior configuration
+  IndexUpdateMode update_mode = 1;                 // Sync/async index updates
+  optional int64 async_update_timeout_ms = 2;      // Timeout for async updates
+  optional int32 async_update_batch_size = 3;      // Batch size for async updates
+  bool enable_background_optimization = 4;         // Background index optimization
+  
+  // HNSW-specific configuration
+  optional HnswConfig hnsw_config = 5;
+  
+  // IVF-specific configuration  
+  optional IvfConfig ivf_config = 6;
+  
+  // Performance tuning
+  optional int32 build_concurrency = 7;            // Parallel index building
+  optional int64 memory_limit_mb = 8;              // Memory limit per index
+  optional int32 checkpoint_interval_ms = 9;       // Index checkpoint frequency
+}
+
+// Index update behavior modes
+enum IndexUpdateMode {
+  INDEX_UPDATE_MODE_UNSPECIFIED = 0;
+  SYNCHRONOUS = 1;                                 // Block flush until index updated (default)
+  ASYNCHRONOUS = 2;                                // Return from flush immediately
+  HYBRID = 3;                                      // Sync for small batches, async for large
+}
+
+// HNSW algorithm configuration
+message HnswConfig {
+  int32 m = 1;                                     // Number of bi-directional links (default: 16)
+  int32 ef_construction = 2;                       // Size of candidate set during construction (default: 200)
+  int32 ef_search = 3;                             // Search parameter for recall (default: 50)
+  int32 max_partition_size = 4;                    // Maximum vectors per partition (default: 100000)
+  bool adaptive_parameters = 5;                    // Dynamic parameter tuning (default: true)
+  bool use_simd = 6;                              // SIMD optimizations (default: true)
+  int32 memory_limit_mb = 7;                      // Memory limit per partition (default: 512)
+  bool lazy_loading = 8;                          // Lazy loading for large partitions (default: true)
+  int32 prune_connections = 9;                    // Connection pruning threshold (default: 0 = disabled)
+  float level_multiplier = 10;                    // Level generation multiplier (default: 1/ln(2))
+}
+
+// IVF algorithm configuration
+message IvfConfig {
+  int32 n_lists = 1;                              // Number of clusters (default: sqrt(N))
+  int32 n_probe = 2;                              // Number of clusters to search (default: 1)
+  int32 quantization_bits = 3;                    // Bits for quantization (default: 8)
+  bool use_pq = 4;                                // Use product quantization (default: false)
+  int32 pq_subspaces = 5;                         // PQ subspaces (default: 8)
+  bool train_on_insert = 6;                       // Retrain on every insert (default: false)
+  int32 min_train_size = 7;                       // Minimum size to trigger training (default: 1000)
 }
 
 message FilterableColumnSpec {

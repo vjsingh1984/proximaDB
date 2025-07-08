@@ -99,7 +99,13 @@ impl ViperSearchEngine {
     fn optimize_search_hints(&self, hints: &SearchHints) -> SearchHints {
         let mut optimized = SearchHints {
             predicate_pushdown: true, // Always enable for VIPER
-            ..*hints
+            use_bloom_filters: hints.use_bloom_filters,
+            quantization_level: hints.quantization_level,
+            clustering_hints: hints.clustering_hints.clone(),
+            engine_specific: hints.engine_specific.clone(),
+            timeout_ms: hints.timeout_ms,
+            include_debug_info: hints.include_debug_info,
+            enable_parallel_search: hints.enable_parallel_search,
         };
 
         // Enable predicate pushdown for any metadata filters

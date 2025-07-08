@@ -179,6 +179,36 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn get_filesystem_factory(&self)
         -> &crate::storage::persistence::filesystem::FilesystemFactory;
 
+    /// Get collection service for IndexConfig retrieval - to be implemented by each engine
+    /// NOTE: This is deprecated - IndexConfig should be handled by AXIS indexing service
+    fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService>;
+
+    /// Get collection's IndexConfig from collection service
+    async fn get_collection_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+        if let Some(collection_service) = self.get_collection_service() {
+            match collection_service.get_collection_index_config(collection_id).await {
+                Ok(Some(config)) => {
+                    tracing::debug!("📋 Retrieved IndexConfig for collection: {}", collection_id);
+                    Ok(config)
+                }
+                Ok(None) => {
+                    tracing::warn!("⚠️ Collection not found for IndexConfig: {}", collection_id);
+                    // Return default IndexConfig as fallback
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to retrieve IndexConfig for collection {}: {}", collection_id, e);
+                    // Return default IndexConfig as fallback
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+            }
+        } else {
+            tracing::warn!("⚠️ Collection service not available, using default IndexConfig");
+            // Default implementation: return default IndexConfig
+            Ok(crate::index::config::IndexConfig::default())
+        }
+    }
+
     /// Ensure staging directory exists for the given operation type
     /// operation_type: "__flush" for flush operations, "__compact" for compaction operations
     async fn ensure_staging_directory(
@@ -339,7 +369,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             let compact_params = CompactionParameters {
                 collection_id: params.collection_id.clone(),
                 force: false,
-                synchronous: false, // Background compaction
+                synchronous: true, // 🎯 SEQUENTIAL: Must be synchronous for atomic file replacement
                 priority: OperationPriority::Low,
                 ..Default::default()
             };
@@ -347,6 +377,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
             match self.compact(compact_params).await {
                 Ok(_) => result.compaction_triggered = true,
                 Err(e) => tracing::warn!("⚠️ Post-flush compaction failed: {}", e),
+            }
+        }
+
+        // 🚀 INDEX UPDATES: Delegate to AXIS indexing service for proper configuration handling
+        if result.success {
+            if let Some(collection_id) = &params.collection_id {
+                tracing::debug!("🔄 Flush successful for collection: {} - AXIS will handle index updates", collection_id);
+                // NOTE: Index updates are now handled by AXIS indexing service based on collection IndexConfig
+                // The flush coordinator will notify AXIS about new vectors to index
             }
         }
 

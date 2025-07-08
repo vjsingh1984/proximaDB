@@ -42,7 +42,7 @@ mod tests {
     #[tokio::test]
     async fn test_axis_manager_creation() {
         let config = AxisConfig::default();
-        let result = AxisIndexManager::new(config).await;
+        let result = AxisManager::new(config).await;
 
         assert!(
             result.is_ok(),
@@ -55,7 +55,7 @@ mod tests {
         let config = AxisConfig::default();
         println!("✅ Created AXIS config");
 
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
         println!("✅ Created AXIS manager");
 
         // Test just the strategy creation part
@@ -85,7 +85,7 @@ mod tests {
     #[tokio::test]
     async fn test_vector_insertion() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let test_vector = create_test_vector("test_collection", 128);
         let result = axis_manager.insert(test_vector).await;
@@ -96,7 +96,7 @@ mod tests {
     #[tokio::test]
     async fn test_expired_vector_insertion() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let mut expired_vector = create_test_vector("test_collection", 128);
         expired_vector.expires_at =
@@ -112,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn test_vector_deletion() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let vector_id = Uuid::new_v4();
         let collection_id = "test_collection".to_string();
@@ -126,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_analysis() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let collection_id = "analysis_test_collection".to_string();
         let result = axis_manager.analyze_and_optimize(&collection_id).await;
@@ -137,7 +137,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_collection() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let metrics = axis_manager.get_metrics().await;
 
@@ -149,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_stats() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let collection_id = "stats_test_collection".to_string();
         let result = axis_manager.get_collection_stats(&collection_id).await;
@@ -161,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn test_drop_collection() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let collection_id = "drop_test_collection".to_string();
         let result = axis_manager.drop_collection(&collection_id).await;
@@ -172,7 +172,7 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_query_execution() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let query = HybridQuery {
             collection_id: "test_collection".to_string(),
@@ -193,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn test_migration_status() {
         let config = AxisConfig::default();
-        let axis_manager = AxisIndexManager::new(config).await.unwrap();
+        let axis_manager = AxisManager::new(config).await.unwrap();
 
         let collection_id = "migration_test_collection".to_string();
         let status = axis_manager.get_migration_status(&collection_id).await;

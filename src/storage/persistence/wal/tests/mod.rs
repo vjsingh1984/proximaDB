@@ -7,6 +7,15 @@ pub mod config_tests;
 pub mod manager_tests;
 
 #[cfg(test)]
+pub mod wal_manager_tests;
+
+#[cfg(test)]
+pub mod batch_strategy_tests;
+
+#[cfg(test)]
+pub mod batch_factory_tests;
+
+#[cfg(test)]
 pub mod distance_tests;
 
 #[cfg(test)]

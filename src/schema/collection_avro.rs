@@ -36,9 +36,9 @@ pub const COLLECTION_AVRO_SCHEMA: &str = r#"
     {"name": "name", "type": "string", "doc": "User-provided collection name (unique)"},
     {"name": "display_name", "type": "string", "doc": "User-friendly display name"},
     {"name": "dimension", "type": "int", "doc": "Vector dimension"},
-    {"name": "distance_metric", "type": {"type": "enum", "name": "DistanceMetric", "symbols": ["COSINE", "EUCLIDEAN", "DOT_PRODUCT", "HAMMING"]}, "default": "COSINE"},
+    {"name": "distance_metric", "type": {"type": "enum", "name": "DistanceMetric", "symbols": ["COSINE", "EUCLIDEAN", "MANHATTAN", "DOT_PRODUCT", "HAMMING", "JACCARD", "CUSTOM"]}, "default": "COSINE"},
     {"name": "indexing_algorithm", "type": {"type": "enum", "name": "IndexingAlgorithm", "symbols": ["HNSW", "IVF", "PQ", "FLAT", "ANNOY"]}, "default": "HNSW"},
-    {"name": "storage_engine", "type": {"type": "enum", "name": "StorageEngine", "symbols": ["VIPER", "LSM", "MMAP", "HYBRID"]}, "default": "VIPER"},
+    {"name": "storage_engine", "type": {"type": "enum", "name": "StorageEngine", "symbols": ["VIPER", "LSM", "MMAP", "HYBRID", "CUSTOM"]}, "default": "VIPER"},
     {"name": "created_at", "type": "long", "doc": "Creation timestamp (epoch millis)"},
     {"name": "updated_at", "type": "long", "doc": "Last update timestamp (epoch millis)"},
     {"name": "version", "type": "long", "doc": "Metadata version for optimistic locking", "default": 1},
@@ -370,7 +370,10 @@ mod tests {
         let record = CollectionRecord::new("test".to_string(), 64);
 
         let serialized = CollectionAvroSchema::serialize_record(&record);
-        assert!(serialized.is_ok());
+        if let Err(e) = &serialized {
+            println!("Serialization error: {:?}", e);
+        }
+        assert!(serialized.is_ok(), "Serialization failed: {:?}", serialized.err());
 
         let deserialized = CollectionAvroSchema::deserialize_record(&serialized.unwrap());
         assert!(deserialized.is_ok());

@@ -73,10 +73,13 @@ pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 // SearchIndexManager removed - use indexing/ instead
 
 // VIPER exports removed - use engines/viper/ instead
-pub use persistence::wal::avro::AvroWalStrategy;
-pub use persistence::wal::bincode::BincodeWalStrategy;
+// Legacy strategies removed - use modern batch strategies:
+// pub use persistence::wal::avro_batch::AvroWalBatchStrategy;
+// pub use persistence::wal::bincode_batch::BincodeWalBatchStrategy;
 pub use persistence::wal::{
-    WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy,
+    BatchId, WalConfig, WalEntry, WalManager, WalOperation,
+    // WalStrategy removed - use WalBatchStrategy with single-entry batches for individual operations
+    // WalFactory removed - use WalBatchFactory for modern implementations
 };
 
 // Vector storage system removed - functionality integrated into engines/

@@ -104,10 +104,14 @@ pub enum SyncMode {
 /// WAL strategy type selection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalStrategyType {
-    /// Avro with schema evolution support
+    /// Legacy Avro with schema evolution support (deprecated)
     Avro,
-    /// Bincode for maximum native Rust performance
+    /// Legacy Bincode for maximum native Rust performance (deprecated)
     Bincode,
+    /// Modern Avro batch strategy with zero-copy optimization
+    AvroBatch,
+    /// Modern Bincode batch strategy with optimal Rust performance
+    BincodeBatch,
 }
 
 impl Default for WalStrategyType {
@@ -293,6 +297,8 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
             wal_config.strategy_type = match strategy_type.as_str() {
                 "Avro" => WalStrategyType::Avro,
                 "Bincode" => WalStrategyType::Bincode,
+                "AvroBatch" => WalStrategyType::AvroBatch,
+                "BincodeBatch" => WalStrategyType::BincodeBatch,
                 _ => WalStrategyType::default(),
             };
         }

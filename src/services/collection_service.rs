@@ -21,6 +21,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::core::CollectionId;
@@ -38,6 +40,8 @@ pub struct CollectionService {
     metadata_backend: Arc<FilestoreMetadataBackend>,
     assignment_service: Arc<dyn AssignmentService>,
     filesystem_factory: Arc<FilesystemFactory>,
+    /// Cache for IndexConfig to avoid repeated deserialization
+    index_config_cache: Arc<RwLock<HashMap<String, crate::index::config::IndexConfig>>>,
 }
 
 impl CollectionService {
@@ -55,6 +59,7 @@ impl CollectionService {
             metadata_backend,
             assignment_service,
             filesystem_factory,
+            index_config_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -89,13 +94,13 @@ impl CollectionService {
         let record = CollectionRecord::from_grpc_config(config.name.clone(), config)
             .context("Failed to convert gRPC config to Avro record")?;
 
-        // Optimize: use reference instead of clone for UUID
-        let collection_uuid = &record.uuid;
+        // Optimize: use clone for UUID to avoid borrow conflict
+        let collection_uuid = record.uuid.clone();
         let storage_path = record.storage_path("${base_path}"); // Template - will be filled by storage engine
 
         // Create storage directories using assignment service
         let storage_assignments = self
-            .create_storage_directories(&config.name, collection_uuid)
+            .create_storage_directories(&config.name, &collection_uuid)
             .await
             .context("Failed to create storage directories")?;
 
@@ -115,7 +120,7 @@ impl CollectionService {
 
         Ok(CollectionServiceResponse {
             success: true,
-            collection_uuid: Some(collection_uuid),
+            collection_uuid: Some(collection_uuid.to_string()),
             storage_path: Some(storage_path),
             error_message: None,
             error_code: None,
@@ -154,6 +159,114 @@ impl CollectionService {
         self.metadata_backend
             .get_collection_uuid_string(collection_name)
             .await
+    }
+
+    /// Get IndexConfig for a collection by name or UUID with caching
+    pub async fn get_collection_index_config(&self, identifier: &str) -> Result<Option<crate::index::config::IndexConfig>> {
+        debug!("🔍 Getting IndexConfig for collection: {}", identifier);
+
+        // Check cache first
+        {
+            let cache = self.index_config_cache.read().await;
+            if let Some(cached_config) = cache.get(identifier) {
+                debug!("📋 Retrieved IndexConfig from cache for collection: {}", identifier);
+                return Ok(Some(cached_config.clone()));
+            }
+        }
+
+        if let Some(record) = self.get_collection_by_name_or_uuid(identifier).await? {
+            let index_config = self.parse_index_config_from_record(&record)?;
+            
+            // Cache the result
+            {
+                let mut cache = self.index_config_cache.write().await;
+                cache.insert(identifier.to_string(), index_config.clone());
+                cache.insert(record.uuid.clone(), index_config.clone()); // Cache by UUID too
+            }
+            
+            debug!("📋 Cached IndexConfig for collection: {}", identifier);
+            Ok(Some(index_config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Parse IndexConfig from CollectionRecord
+    fn parse_index_config_from_record(&self, record: &CollectionRecord) -> Result<crate::index::config::IndexConfig> {
+        // Parse full config from JSON
+        let full_config: serde_json::Value = serde_json::from_str(&record.config)
+            .unwrap_or_else(|_| serde_json::json!({}));
+
+        // Extract index config
+        if let Some(index_config_value) = full_config.get("index_config") {
+            if !index_config_value.is_null() {
+                // Deserialize the stored proto IndexConfig
+                let stored_proto: crate::proto::proximadb::IndexConfig = 
+                    serde_json::from_value(index_config_value.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize IndexConfig: {}", e))?;
+                
+                // Convert to internal IndexConfig with smart defaults
+                let index_config = crate::index::config::IndexConfig::from_proto_with_smart_defaults(
+                    &stored_proto,
+                    &record.indexing_algorithm,
+                    None, // Collection size hint not available here
+                )?;
+                
+                return Ok(index_config);
+            }
+        }
+        
+        // No IndexConfig found, create smart defaults based on algorithm
+        let smart_config = crate::index::config::IndexConfig::create_smart_default(
+            &record.indexing_algorithm,
+            record.dimension as usize,
+            None, // Collection size hint not available
+        );
+        
+        debug!("📋 Created smart default IndexConfig for collection: {}", record.name);
+        Ok(smart_config)
+    }
+
+    /// Update IndexConfig for a collection
+    pub async fn update_collection_index_config(
+        &self,
+        identifier: &str,
+        index_config: &crate::index::config::IndexConfig,
+    ) -> Result<()> {
+        debug!("🔧 Updating IndexConfig for collection: {}", identifier);
+
+        if let Some(mut record) = self.get_collection_by_name_or_uuid(identifier).await? {
+            // Parse existing config
+            let mut full_config: serde_json::Value = serde_json::from_str(&record.config)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+            // Update the index_config section
+            full_config["index_config"] = serde_json::to_value(index_config.to_proto())?;
+
+            // Update the record
+            record.config = serde_json::to_string(&full_config)?;
+            record.updated_at = chrono::Utc::now().timestamp_millis();
+            record.version += 1;
+
+            // Store updated record
+            self.metadata_backend
+                .upsert_collection_record(record.clone())
+                .await
+                .context("Failed to update collection IndexConfig")?;
+
+            // Invalidate cache for this collection
+            {
+                let mut cache = self.index_config_cache.write().await;
+                cache.remove(identifier);
+                cache.remove(&record.uuid);
+                cache.remove(&record.name);
+            }
+
+            info!("✅ Updated IndexConfig for collection: {} (cache invalidated)", identifier);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Collection not found: {}", identifier))
+        }
     }
 
     /// List all collections
@@ -240,7 +353,7 @@ impl CollectionService {
 
                 Ok(CollectionServiceResponse {
                     success: true,
-                    collection_uuid: Some(collection_uuid),
+                    collection_uuid: Some(collection_uuid.to_string()),
                     storage_path: None,
                     error_message: None,
                     error_code: None,
@@ -249,7 +362,7 @@ impl CollectionService {
             } else {
                 Ok(CollectionServiceResponse {
                     success: false,
-                    collection_uuid: Some(collection_uuid),
+                    collection_uuid: Some(collection_uuid.to_string()),
                     storage_path: None,
                     error_message: Some(format!(
                         "Failed to delete collection metadata for '{}'",
@@ -447,7 +560,7 @@ impl CollectionService {
 
         Ok(CollectionServiceResponse {
             success: true,
-            collection_uuid: Some(collection_uuid),
+            collection_uuid: Some(collection_uuid.to_string()),
             storage_path: Some(storage_path),
             error_message: None,
             error_code: None,
@@ -769,7 +882,7 @@ impl CollectionServiceResponse {
     pub fn success(collection_uuid: String, storage_path: String, processing_time_us: i64) -> Self {
         Self {
             success: true,
-            collection_uuid: Some(collection_uuid),
+            collection_uuid: Some(collection_uuid.to_string()),
             storage_path: Some(storage_path),
             error_message: None,
             error_code: None,

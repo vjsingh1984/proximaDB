@@ -33,7 +33,7 @@ use tracing::debug;
 
 use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability, detect_platform_capability};
 use crate::services::collection_service::CollectionService;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 /// Global hardware capability cache - detected once at startup
 static UNIFIED_PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();

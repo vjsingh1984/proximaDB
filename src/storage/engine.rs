@@ -1,6 +1,6 @@
 use crate::compute::algorithms::SearchResult;
 use crate::core::{BatchSearchRequest, CollectionId, StorageConfig, VectorId, VectorRecord};
-use crate::index::{AxisConfig, AxisIndexManager};
+use crate::index::{AxisConfig, AxisManager};
 use crate::services::collection_service::CollectionService;
 use crate::storage::persistence::wal::{WalConfig, WalManager};
 use crate::storage::{
@@ -66,7 +66,7 @@ pub struct StorageEngine {
     mmap_readers: Arc<RwLock<HashMap<CollectionId, MmapReader>>>,
     disk_manager: Arc<DiskManager>,
     wal_manager: Arc<WalManager>,
-    axis_index_manager: Arc<AxisIndexManager>,
+    axis_index_manager: Arc<AxisManager>,
     compaction_manager: Arc<CompactionManager>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
@@ -107,17 +107,15 @@ impl StorageEngine {
             })?,
         );
 
-        // Create WAL strategy and manager using factory pattern
-        let wal_strategy = crate::storage::persistence::wal::WalFactory::create_from_config(
-            &wal_config,
-            filesystem.clone(),
-        )
-        .await
-        .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
+        // Create WAL manager using modern batch factory pattern
         let wal_manager = Arc::new(
-            WalManager::new(wal_strategy, wal_config)
-                .await
-                .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?,
+            WalManager::create_with_batch_factory(
+                wal_config.strategy_type.clone(),
+                wal_config,
+                filesystem.clone(),
+            )
+            .await
+            .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?,
         );
 
         // Metadata store removed - now handled by SharedServices as per user's architectural guidance
@@ -132,7 +130,7 @@ impl StorageEngine {
             .unwrap_or_else(|| PathBuf::from("./data"));
         // Initialize AXIS index manager with default configuration
         let axis_config = AxisConfig::default();
-        let axis_index_manager = Arc::new(AxisIndexManager::new(axis_config).await?);
+        let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Initialize compaction manager
         let compaction_manager = Arc::new(CompactionManager::new(config.lsm_config.clone()));
@@ -564,21 +562,19 @@ impl StorageEngine {
                                 );
 
                                 // Extract metadata from the first vector entry
-                                if let Some(entry) = entries.first() {
-                                    if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } = &entry.operation {
-                                        let mut metadata = CollectionMetadata::default();
-                                        metadata.id = collection_id.to_string();
-                                        metadata.name = collection_id.to_string();
-                                        metadata.dimension = record.vector.len();
-                                        metadata.distance_metric = "cosine".to_string();
-                                        metadata.indexing_algorithm = "hnsw".to_string();
-                                        metadata.vector_count = entries.len() as u64;
-                                        metadata.total_size_bytes = entries.len() as u64 * record.vector.len() as u64 * 4;
+                                if let Some(record) = entries.first() {
+                                    let mut metadata = CollectionMetadata::default();
+                                    metadata.id = collection_id.to_string();
+                                    metadata.name = collection_id.to_string();
+                                    metadata.dimension = record.vector.len();
+                                    metadata.distance_metric = "cosine".to_string();
+                                    metadata.indexing_algorithm = "hnsw".to_string();
+                                    metadata.vector_count = entries.len() as u64;
+                                    metadata.total_size_bytes = entries.len() as u64 * record.vector.len() as u64 * 4;
                                         metadata.created_at = chrono::Utc::now();
                                         metadata.updated_at = chrono::Utc::now();
                                         
                                         collections_metadata.push((collection_id.to_string(), metadata));
-                                    }
                                 }
                             }
                         }
@@ -875,21 +871,18 @@ impl StorageEngine {
 
         let mut candidates = Vec::new();
 
-        // Brute-force search through memtable entries
-        for entry in entries {
-            if let crate::storage::persistence::wal::WalOperation::Insert { record, .. } =
-                &entry.operation
-            {
-                // Skip if vector dimensions don't match (should not happen due to validation above)
-                if record.vector.len() != query.len() {
-                    tracing::warn!(
-                        "🔍 Dimension mismatch in memtable: expected {}, got {} - skipping vector {}",
-                        query.len(), record.vector.len(), record.id
-                    );
-                    continue;
-                }
+        // Brute-force search through memtable entries (now VectorRecord objects directly)
+        for record in entries {
+            // Skip if vector dimensions don't match (should not happen due to validation above)
+            if record.vector.len() != query.len() {
+                tracing::warn!(
+                    "🔍 Dimension mismatch in memtable: expected {}, got {} - skipping vector {}",
+                    query.len(), record.vector.len(), record.id
+                );
+                continue;
+            }
 
-                // Calculate similarity using collection-specific distance metric
+            // Calculate similarity using collection-specific distance metric
                 let similarity = self.calculate_distance_metric(
                     query,
                     &record.vector,
@@ -898,14 +891,13 @@ impl StorageEngine {
 
                 candidates.push(SearchResult {
                     vector_id: if record.id.is_empty() {
-                        format!("mem_{}", entry.sequence)
+                        format!("mem_{}", record.timestamp)
                     } else {
                         record.id.clone()
                     },
                     score: similarity,
                     metadata: Some(record.metadata.clone()),
                 });
-            }
         }
 
         // Sort by similarity score (descending) and take top k

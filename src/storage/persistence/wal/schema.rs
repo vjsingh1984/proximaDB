@@ -3,67 +3,41 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Common Avro schema and conversion functions for WAL operations
-//! This module consolidates all schema definitions to avoid inconsistency issues
+//! Modern WAL Schema Module - Batch-Oriented Operations Only
+//!
+//! This module provides schema definitions and serialization functions for
+//! modern batch-oriented WAL operations. Legacy individual-entry functions
+//! have been removed in favor of batch operations for better performance.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
-use super::avro::{AvroOpType, AvroWalEntry, AvroWalOperation};
-use super::{WalEntry, WalOperation};
 use crate::core::{CollectionId, VectorId, VectorRecord};
 
-/// Canonical Avro schema for WAL entries (Version 1)
-/// This schema MUST be kept in sync with the AvroWalEntry struct definition
-pub const AVRO_SCHEMA_V1: &str = r#"
-{
-  "type": "record",
-  "name": "WalEntry",
-  "namespace": "ai.proximadb.wal",
-  "fields": [
-    {"name": "entry_id", "type": "string"},
-    {"name": "collection_id", "type": "string"},
-    {"name": "operation", "type": {
-      "type": "record",
-      "name": "WalOperation",
-      "fields": [
-        {"name": "op_type", "type": {"type": "enum", "name": "OpType", "symbols": ["INSERT", "UPDATE", "DELETE", "CREATE_COLLECTION", "DROP_COLLECTION"]}},
-        {"name": "vector_id", "type": ["null", "string"], "default": null},
-        {"name": "vector_data", "type": ["null", "bytes"], "default": null},
-        {"name": "metadata", "type": ["null", "string"], "default": null},
-        {"name": "config", "type": ["null", "string"], "default": null},
-        {"name": "expires_at", "type": ["null", "long"], "default": null}
-      ]
-    }},
-    {"name": "timestamp", "type": "long"},
-    {"name": "sequence", "type": "long"},
-    {"name": "global_sequence", "type": "long"},
-    {"name": "expires_at", "type": ["null", "long"], "default": null},
-    {"name": "version", "type": "long", "default": 1}
-  ]
-}
-"#;
-
-/// Avro schema for vector batch insert payload (gRPC zero-copy)
-/// This schema defines the structure of vectors_avro_payload in VectorInsertRequest
+/// ULTRA-FRUGAL vector batch schema - optimized for minimal memory/disk footprint
+/// Uses smaller data types and optional fields to reduce serialization overhead
 pub const VECTOR_BATCH_SCHEMA_V1: &str = r#"
 {
   "type": "record",
-  "name": "VectorBatch",
-  "namespace": "ai.proximadb.vectors",
+  "name": "WalVectorBatch",
+  "namespace": "ai.proximadb.wal",
   "fields": [
     {"name": "vectors", "type": {
-      "type": "array",
+      "type": "array", 
       "items": {
         "type": "record",
-        "name": "Vector",
+        "name": "VectorRecord", 
         "fields": [
-          {"name": "id", "type": "string"},
+          {"name": "id", "type": ["null", "string"], "default": null},
+          {"name": "collection_id", "type": "string"},
           {"name": "vector", "type": {"type": "array", "items": "float"}},
           {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null},
-          {"name": "timestamp", "type": ["null", "long"], "default": null}
+          {"name": "timestamp", "type": "int"},
+          {"name": "expires_at", "type": ["null", "int"], "default": null},
+          {"name": "version", "type": "int"}
         ]
       }
     }}
@@ -71,102 +45,310 @@ pub const VECTOR_BATCH_SCHEMA_V1: &str = r#"
 }
 "#;
 
-/// Avro structures for zero-copy vector batch deserialization
+/// Avro representation of a single vector - ULTRA-FRUGAL design for minimal footprint
+/// Optimized for memory and disk efficiency with optional fields and smaller data types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvroVector {
+    /// Optional ID - vectors without ID are immutable and similarity-search only
+    /// Client/SDK has ownership to populate ID for vectors that need get/delete/upsert operations
+    pub id: Option<String>,
+    pub collection_id: String,
+    pub vector: Vec<f32>,
+    /// Optional metadata - no cost when None, but likely present most times
+    pub metadata: Option<HashMap<String, String>>,
+    /// Coarse timestamp precision (seconds since epoch) - much smaller than microseconds
+    pub timestamp: i32,
+    /// ESSENTIAL but OPTIONAL: Only serialize when record has TTL/delete - no cost when None
+    pub expires_at: Option<i32>,
+    /// ESSENTIAL but SMALL: Use i32 for version (Avro int type) - still much smaller than i64
+    pub version: i32,
+}
+
+/// Avro representation of a vector batch for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvroVectorBatch {
     pub vectors: Vec<AvroVector>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AvroVector {
-    pub id: String,
-    pub vector: Vec<f32>,
-    pub metadata: Option<HashMap<String, String>>,
-    pub timestamp: Option<i64>,
+/// Convert VectorRecord to AvroVector
+impl From<&VectorRecord> for AvroVector {
+    fn from(record: &VectorRecord) -> Self {
+        // Convert metadata from HashMap<String, serde_json::Value> to HashMap<String, String>
+        let metadata = if record.metadata.is_empty() {
+            None
+        } else {
+            Some(
+                record
+                    .metadata
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .collect(),
+            )
+        };
+
+        Self {
+            id: if record.id.is_empty() { None } else { Some(record.id.clone()) },
+            collection_id: record.collection_id.clone(),
+            vector: record.vector.clone(),
+            metadata,
+            // Convert microsecond timestamp to seconds (much smaller)
+            timestamp: (record.timestamp / 1_000_000) as i32,
+            // Convert microsecond expires_at to seconds if present
+            expires_at: record.expires_at.map(|exp| (exp / 1_000_000) as i32),
+            version: record.version as i32,
+        }
+    }
 }
 
-/// Serialize vector records to Avro binary format
-pub fn serialize_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>> {
-    use apache_avro::Schema;
+/// Convert AvroVector back to VectorRecord
+impl TryFrom<&AvroVector> for VectorRecord {
+    type Error = anyhow::Error;
+    
+    fn try_from(avro: &AvroVector) -> Result<Self> {
+        // Convert metadata from HashMap<String, String> to HashMap<String, serde_json::Value>
+        let metadata = avro
+            .metadata
+            .as_ref()
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-    // Parse the vector batch schema
-    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
-        .context("Failed to parse vector batch Avro schema")?;
-
-    // Convert VectorRecord to AvroVector format
-    let avro_vectors: Vec<AvroVector> = vector_records
-        .iter()
-        .map(|record| AvroVector {
-            id: record.id.clone(),
-            vector: record.vector.clone(),
-            metadata: if record.metadata.is_empty() {
-                None
-            } else {
-                Some(
-                    record
-                        .metadata
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.to_string()))
-                        .collect(),
-                )
-            },
-            timestamp: Some(record.timestamp),
+        let timestamp_micros = (avro.timestamp as i64) * 1_000_000;
+        
+        // 🔧 FLEXIBLE: ID is optional - vectors without ID are immutable and similarity-search only
+        // Client/SDK has ownership to populate ID for vectors that need get/delete/upsert operations
+        let id = avro.id.as_ref()
+            .cloned()
+            .unwrap_or_default(); // Empty string for immutable vectors
+        
+        Ok(Self {
+            id,
+            collection_id: avro.collection_id.clone(),
+            vector: avro.vector.clone(),
+            metadata,
+            // Convert seconds back to microseconds
+            timestamp: timestamp_micros,
+            created_at: timestamp_micros,
+            updated_at: timestamp_micros,
+            // Convert seconds back to microseconds if present
+            expires_at: avro.expires_at.map(|exp| (exp as i64) * 1_000_000),
+            version: avro.version as i64,
+            rank: None,
+            score: None,
+            distance: None,
         })
-        .collect();
+    }
+}
+
+/// Create Avro vector batch from VectorRecord list (used by REST/gRPC handlers)
+pub fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>> {
+    use apache_avro::{to_avro_datum, Schema};
+
+    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
+        .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
+
+    // Convert VectorRecord to AvroVector
+    let avro_vectors: Vec<AvroVector> = vector_records.iter().map(AvroVector::from).collect();
 
     let batch = AvroVectorBatch {
         vectors: avro_vectors,
     };
 
-    // Convert to Avro Value first, then serialize to binary datum
-    let avro_value = apache_avro::to_value(batch)
-        .context("Failed to convert vector batch to Avro value")?;
+    // Convert to Avro Value and serialize to binary format
+    use apache_avro::types::Value;
+    
+    let batch_value = Value::Record(vec![
+        ("vectors".to_string(), Value::Array(
+            batch.vectors.into_iter().map(|v| Value::Record(vec![
+                ("id".to_string(), match v.id {
+                    Some(id) => Value::String(id),
+                    None => Value::Null,
+                }),
+                ("collection_id".to_string(), Value::String(v.collection_id)),
+                ("vector".to_string(), Value::Array(v.vector.into_iter().map(Value::Float).collect())),
+                ("metadata".to_string(), match v.metadata {
+                    Some(meta) => Value::Map(meta.into_iter().map(|(k, v)| (k, Value::String(v))).collect()),
+                    None => Value::Null,
+                }),
+                ("timestamp".to_string(), Value::Int(v.timestamp)),
+                ("expires_at".to_string(), match v.expires_at {
+                    Some(exp) => Value::Int(exp),
+                    None => Value::Null,
+                }),
+                ("version".to_string(), Value::Int(v.version)),
+            ])).collect()
+        ))
+    ]);
+    
+    let avro_bytes = to_avro_datum(&schema, batch_value)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize vector batch: {}", e))?;
 
-    apache_avro::to_avro_datum(&schema, avro_value)
-        .context("Failed to serialize vector batch to Avro datum")
+    Ok(avro_bytes)
 }
 
-/// Deserialize Avro binary vector batch payload from gRPC (zero-copy)
+/// Deserialize Avro vector batch to VectorRecord list (used by WAL strategies)
 pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>> {
-    use apache_avro::Schema;
+    use apache_avro::{from_avro_datum, Schema};
 
-    // Parse the vector batch schema
     let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
-        .context("Failed to parse vector batch Avro schema")?;
+        .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
 
-    // Deserialize from Avro binary datum (schema-less, matches to_avro_datum)
     let mut reader = std::io::Cursor::new(avro_payload);
-    let avro_value = apache_avro::from_avro_datum(&schema, &mut reader, None)
-        .context("Failed to deserialize Avro vector batch datum")?;
+    let avro_value = from_avro_datum(&schema, &mut reader, None)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize Avro payload: {}", e))?;
 
-    // Convert Avro Value to our struct
-    let avro_batch: AvroVectorBatch = apache_avro::from_value::<AvroVectorBatch>(&avro_value)
-        .context("Failed to convert Avro value to AvroVectorBatch")?;
+    // Parse the Avro value into VectorRecord structs
+    if let apache_avro::types::Value::Record(record) = avro_value {
+        if let Some((_, apache_avro::types::Value::Array(vectors))) = record.iter().find(|(key, _)| *key == "vectors") {
+            let mut result = Vec::new();
+            for vector_value in vectors {
+                if let apache_avro::types::Value::Record(vector_record) = vector_value {
+                    let id = vector_record
+                        .iter()
+                        .find(|(key, _)| key == "id")
+                        .and_then(|(_, v)| {
+                            if let apache_avro::types::Value::String(s) = v {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
 
-    let mut vector_records = Vec::new();
+                    let vector = vector_record
+                        .iter()
+                        .find(|(key, _)| key == "vector")
+                        .and_then(|(_, v)| {
+                            if let apache_avro::types::Value::Array(arr) = v {
+                                Some(
+                                    arr.iter()
+                                        .filter_map(|f| {
+                                            if let apache_avro::types::Value::Float(f) = f {
+                                                Some(*f)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
 
-    // Process each vector in the batch
-    for avro_vector in avro_batch.vectors {
-        let timestamp_ms = avro_vector
-            .timestamp
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                    let metadata = vector_record
+                        .iter()
+                        .find(|(key, _)| key == "metadata")
+                        .and_then(|(_, v)| {
+                            if let apache_avro::types::Value::Map(map) = v {
+                                Some(
+                                    map.iter()
+                                        .map(|(k, v)| {
+                                            let value = match v {
+                                                apache_avro::types::Value::String(s) => {
+                                                    serde_json::Value::String(s.clone())
+                                                }
+                                                _ => serde_json::Value::String(format!("{:?}", v)),
+                                            };
+                                            (k.clone(), value)
+                                        })
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
 
-        // Convert metadata from Option<HashMap<String, String>> to HashMap<String, serde_json::Value>
-        let metadata: HashMap<String, serde_json::Value> = avro_vector
-            .metadata
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect();
+                    let timestamp = vector_record
+                        .iter()
+                        .find(|(key, _)| key == "timestamp")
+                        .and_then(|(_, v)| {
+                            if let apache_avro::types::Value::Long(ts) = v {
+                                Some(*ts)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
+
+                    result.push(VectorRecord {
+                        id,
+                        collection_id: String::new(), // Will be set by caller
+                        vector,
+                        metadata,
+                        timestamp,
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                        expires_at: None,
+                        version: 1,
+                        rank: None,
+                        score: None,
+                        distance: None,
+                    });
+                }
+            }
+            return Ok(result);
+        }
+    }
+
+    anyhow::bail!("Invalid Avro payload structure")
+}
+
+/// Serialize vector batch to Avro binary (convenience function)
+pub fn serialize_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>> {
+    create_avro_vector_batch(vector_records)
+}
+
+/// Convert WalEntry to AvroVector for disk writing (compatibility function)
+/// This is a temporary function to support legacy disk.rs until we implement direct payload writing
+pub fn convert_to_avro_entry(entry: &crate::storage::persistence::wal::WalEntry) -> Result<AvroVector> {
+    // Handle different payload formats
+    let vectors = match entry.operation.payload_format.as_str() {
+        "avro" => {
+            // Deserialize Avro payload
+            deserialize_vector_batch(&entry.operation.payload_data)?
+        }
+        "bincode" => {
+            // For bincode, we'd need a bincode deserializer
+            // For now, return error as disk.rs should use direct payload writing for bincode
+            anyhow::bail!("Bincode payload format not supported in legacy conversion function - use direct payload writing")
+        }
+        format => {
+            anyhow::bail!("Unknown payload format: {}", format)
+        }
+    };
+    
+    if vectors.is_empty() {
+        anyhow::bail!("WalOperation contains empty vector batch")
+    }
+    
+    // Return first vector in the batch (for disk.rs compatibility)
+    Ok(AvroVector::from(&vectors[0]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vector_record_avro_conversion() {
+        let mut metadata = HashMap::new();
+        metadata.insert("key1".to_string(), serde_json::Value::String("value1".to_string()));
+        metadata.insert("key2".to_string(), serde_json::Value::Number(serde_json::Number::from(42)));
 
         let record = VectorRecord {
-            id: avro_vector.id.clone(),
-            collection_id: String::new(), // Will be set by caller
-            vector: avro_vector.vector,
+            id: "test_vector".to_string(),
+            collection_id: "test_collection".to_string(),
+            vector: vec![1.0, 2.0, 3.0],
             metadata,
-            timestamp: timestamp_ms,
-            created_at: timestamp_ms,
-            updated_at: timestamp_ms,
+            timestamp: 1234567890,
+            created_at: 1234567890,
+            updated_at: 1234567890,
             expires_at: None,
             version: 1,
             rank: None,
@@ -174,184 +356,59 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
             distance: None,
         };
 
-        vector_records.push(record);
+        // Test VectorRecord -> AvroVector -> VectorRecord
+        let avro_vector = AvroVector::from(&record);
+        let restored_record = VectorRecord::try_from(&avro_vector).expect("Failed to convert back to VectorRecord");
+
+        assert_eq!(record.id, restored_record.id);
+        assert_eq!(record.vector, restored_record.vector);
+        assert_eq!(record.timestamp, restored_record.timestamp);
+        // Metadata comparison (string conversion expected)
+        assert!(restored_record.metadata.contains_key("key1"));
+        assert!(restored_record.metadata.contains_key("key2"));
     }
 
-    Ok(vector_records)
-}
+    #[test]
+    fn test_vector_batch_serialization() {
+        let records = vec![
+            VectorRecord {
+                id: "vector1".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![1.0, 2.0],
+                metadata: HashMap::new(),
+                timestamp: 1234567890,
+                created_at: 1234567890,
+                updated_at: 1234567890,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            VectorRecord {
+                id: "vector2".to_string(),
+                collection_id: "test".to_string(),
+                vector: vec![3.0, 4.0],
+                metadata: HashMap::new(),
+                timestamp: 1234567891,
+                created_at: 1234567891,
+                updated_at: 1234567891,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+        ];
 
-/// Convert WAL entry to Avro format using the canonical schema
-/// This is the single source of truth for WAL entry conversion
-pub fn convert_to_avro_entry(entry: &WalEntry) -> Result<AvroWalEntry> {
-    let operation = match &entry.operation {
-        WalOperation::Insert {
-            vector_id,
-            record,
-            expires_at,
-        } => AvroWalOperation {
-            op_type: AvroOpType::Insert,
-            vector_id: Some(vector_id.to_string()),
-            vector_data: Some(serialize_vector_record(record)?),
-            metadata: None,
-            config: None,
-            expires_at: expires_at.map(|dt| dt.timestamp_millis()),
-        },
-        WalOperation::Update {
-            vector_id,
-            record,
-            expires_at,
-        } => AvroWalOperation {
-            op_type: AvroOpType::Update,
-            vector_id: Some(vector_id.to_string()),
-            vector_data: Some(serialize_vector_record(record)?),
-            metadata: None,
-            config: None,
-            expires_at: expires_at.map(|dt| dt.timestamp_millis()),
-        },
-        WalOperation::Delete {
-            vector_id,
-            expires_at,
-        } => AvroWalOperation {
-            op_type: AvroOpType::Delete,
-            vector_id: Some(vector_id.to_string()),
-            vector_data: None,
-            metadata: None,
-            config: None,
-            expires_at: expires_at.map(|dt| dt.timestamp_millis()),
-        },
-        WalOperation::AvroPayload {
-            operation_type: _,
-            avro_data,
-        } => AvroWalOperation {
-            op_type: AvroOpType::Insert, // Use Insert as default for binary Avro data
-            vector_id: None,
-            vector_data: Some(avro_data.clone()),
-            metadata: None,
-            config: None,
-            expires_at: None,
-        },
-        WalOperation::Flush => AvroWalOperation {
-            op_type: AvroOpType::Insert, // Use Insert as default for system operations
-            vector_id: None,
-            vector_data: None,
-            metadata: Some("FLUSH".to_string()),
-            config: None,
-            expires_at: None,
-        },
-        WalOperation::Checkpoint => AvroWalOperation {
-            op_type: AvroOpType::Insert, // Use Insert as default for system operations
-            vector_id: None,
-            vector_data: None,
-            metadata: Some("CHECKPOINT".to_string()),
-            config: None,
-            expires_at: None,
-        },
-    };
+        // Test serialization and deserialization
+        let serialized = serialize_vector_batch(&records).expect("Failed to serialize");
+        let deserialized = deserialize_vector_batch(&serialized).expect("Failed to deserialize");
 
-    Ok(AvroWalEntry {
-        entry_id: entry.entry_id.to_string(),
-        collection_id: entry.collection_id.to_string(),
-        operation,
-        timestamp: entry.timestamp.timestamp_millis(),
-        sequence: entry.sequence as i64,
-        global_sequence: entry.global_sequence as i64,
-        expires_at: entry.expires_at.map(|dt| dt.timestamp_millis()),
-        version: entry.version as i64,
-    })
-}
-
-/// Convert from Avro format to WAL entry using the canonical schema
-pub fn convert_from_avro_entry(avro_entry: AvroWalEntry) -> Result<WalEntry> {
-    let operation = match avro_entry.operation.op_type {
-        AvroOpType::Insert => {
-            let vector_id = VectorId::from(
-                avro_entry
-                    .operation
-                    .vector_id
-                    .context("Missing vector_id for Insert")?,
-            );
-            let record = deserialize_vector_record(
-                avro_entry
-                    .operation
-                    .vector_data
-                    .context("Missing vector_data for Insert")?,
-            )?;
-            let expires_at = avro_entry
-                .operation
-                .expires_at
-                .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now()));
-
-            WalOperation::Insert {
-                vector_id,
-                record,
-                expires_at,
-            }
-        }
-        AvroOpType::Update => {
-            let vector_id = VectorId::from(
-                avro_entry
-                    .operation
-                    .vector_id
-                    .context("Missing vector_id for Update")?,
-            );
-            let record = deserialize_vector_record(
-                avro_entry
-                    .operation
-                    .vector_data
-                    .context("Missing vector_data for Update")?,
-            )?;
-            let expires_at = avro_entry
-                .operation
-                .expires_at
-                .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now()));
-
-            WalOperation::Update {
-                vector_id,
-                record,
-                expires_at,
-            }
-        }
-        AvroOpType::Delete => {
-            let vector_id = VectorId::from(
-                avro_entry
-                    .operation
-                    .vector_id
-                    .context("Missing vector_id for Delete")?,
-            );
-            let expires_at = avro_entry
-                .operation
-                .expires_at
-                .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now()));
-
-            WalOperation::Delete {
-                vector_id,
-                expires_at,
-            }
-        }
-    };
-
-    Ok(WalEntry {
-        entry_id: avro_entry.entry_id,
-        collection_id: CollectionId::from(avro_entry.collection_id),
-        operation,
-        timestamp: DateTime::from_timestamp_millis(avro_entry.timestamp)
-            .unwrap_or_else(|| Utc::now()),
-        sequence: avro_entry.sequence as u64,
-        global_sequence: avro_entry.global_sequence as u64,
-        expires_at: avro_entry
-            .expires_at
-            .map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or_else(|| Utc::now())),
-        version: avro_entry.version as u64,
-        batch_id: None, // BatchId not stored in Avro format - will be assigned later
-    })
-}
-
-/// Serialize vector record to bytes using bincode
-pub fn serialize_vector_record(record: &VectorRecord) -> Result<Vec<u8>> {
-    bincode::serialize(record).context("Failed to serialize VectorRecord")
-}
-
-/// Deserialize vector record from bytes using bincode
-pub fn deserialize_vector_record(data: Vec<u8>) -> Result<VectorRecord> {
-    bincode::deserialize(&data).context("Failed to deserialize VectorRecord")
+        assert_eq!(records.len(), deserialized.len());
+        assert_eq!(records[0].id, deserialized[0].id);
+        assert_eq!(records[0].vector, deserialized[0].vector);
+        assert_eq!(records[1].id, deserialized[1].id);
+        assert_eq!(records[1].vector, deserialized[1].vector);
+    }
 }

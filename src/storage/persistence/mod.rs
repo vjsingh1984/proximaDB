@@ -10,4 +10,5 @@ pub mod wal;
 // Re-export main persistence types
 pub use disk_manager::DiskManager;
 pub use filesystem::{FilesystemConfig, FilesystemFactory};
-pub use wal::{WalConfig, WalFactory, WalManager, WalStrategyType};
+pub use wal::{WalConfig, WalManager, WalStrategyType};
+// WalFactory removed - use WalBatchFactory for modern implementations

@@ -96,6 +96,9 @@ impl CompactionManager {
             let active_compactions = Arc::clone(&self.active_compactions);
             let config = LsmConfig {
                 memtable_size_mb: self.config.memtable_size_mb,
+                level_count: self.config.level_count,
+                compaction_threshold: self.config.compaction_threshold,
+                block_size_kb: self.config.block_size_kb,
                 memory_flush_size_bytes: self.config.memory_flush_size_bytes,
                 memtable_type: self.config.memtable_type.clone(),
                 compaction_strategy: self.config.compaction_strategy.clone(),
@@ -631,12 +634,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_manager_basic() {
-        let config = LsmConfig {
-            memtable_size_mb: 1,
-            level_count: 3,
-            compaction_threshold: 2,
-            block_size_kb: 4,
-        };
+        let mut config = LsmConfig::default();
+        config.memtable_size_mb = 1;
+        config.level_count = 3;
+        config.compaction_threshold = 2;
+        config.block_size_kb = 4;
 
         let mut manager = CompactionManager::new(config);
         assert!(manager.start_workers(1).await.is_ok());
@@ -645,12 +647,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_task_scheduling() {
-        let config = LsmConfig {
-            memtable_size_mb: 1,
-            level_count: 3,
-            compaction_threshold: 2,
-            block_size_kb: 4,
-        };
+        let mut config = LsmConfig::default();
+        config.memtable_size_mb = 1;
+        config.level_count = 3;
+        config.compaction_threshold = 2;
+        config.block_size_kb = 4;
 
         let manager = CompactionManager::new(config);
 

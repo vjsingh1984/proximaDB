@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 
 // Remove dummy filesystem factory - LSM will use fallback methods
@@ -52,6 +51,7 @@ pub struct LsmTree {
     data_dir: PathBuf,
     compaction_manager: Option<Arc<CompactionManager>>,
     filesystem: Arc<FilesystemFactory>,
+    // Collection service removed - indexing configuration handled by AXIS
 }
 
 impl LsmTree {
@@ -75,6 +75,7 @@ impl LsmTree {
             data_dir,
             compaction_manager,
             filesystem,
+            // Collection service removed - indexing configuration handled by AXIS
         }
     }
 
@@ -82,6 +83,8 @@ impl LsmTree {
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
     }
+
+    // Collection service setter removed - indexing configuration handled by AXIS
 
     pub async fn put(&self, id: VectorId, record: VectorRecord) -> Result<()> {
         // Write to WAL first for durability using new WAL system
@@ -290,6 +293,11 @@ impl UnifiedStorageEngine for LsmTree {
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
         &self.filesystem
+    }
+
+    fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService> {
+        // Collection service removed - indexing configuration handled by AXIS
+        None
     }
 
     /// LSM-specific flush implementation - TEMPORARILY DISABLED FOR VIPER TESTING
