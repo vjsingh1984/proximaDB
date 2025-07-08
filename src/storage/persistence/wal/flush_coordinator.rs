@@ -75,6 +75,8 @@ pub struct WalFlushCoordinator {
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    /// AXIS manager for IndexConfig-based indexing after flush
+    axis_manager: Option<Arc<crate::index::axis::manager::AxisManager>>,
 }
 
 impl WalFlushCoordinator {
@@ -84,7 +86,14 @@ impl WalFlushCoordinator {
             flush_states: Arc::new(RwLock::new(HashMap::new())),
             next_flush_id: Arc::new(tokio::sync::Mutex::new(1)),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
+            axis_manager: None,
         }
+    }
+
+    /// Set the AXIS manager for IndexConfig-based indexing
+    pub fn set_axis_manager(&mut self, axis_manager: Arc<crate::index::axis::manager::AxisManager>) {
+        self.axis_manager = Some(axis_manager);
+        info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
 
     /// Initialize flush state for a collection
@@ -286,6 +295,15 @@ impl WalFlushCoordinator {
         } else {
             info!("📋 Coordinator: Skipping cleanup (no entries flushed or storage failed)");
         }
+
+        // NOTE: AXIS indexing notification is handled by BackgroundManager 
+        // after the complete flush-compaction cycle to ensure proper sequential execution:
+        // 1. FLUSH (materialized data)
+        // 2. COMPACTION (if needed) 
+        // 3. INDEXING (final optimized layout)
+        info!(
+            "📋 Coordinator: Flush completed - indexing will be handled by BackgroundManager after compaction cycle"
+        );
 
         info!(
             "🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}",

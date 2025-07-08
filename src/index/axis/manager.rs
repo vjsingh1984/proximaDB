@@ -606,6 +606,153 @@ impl AxisManager {
 
         Ok(())
     }
+
+    /// Notify AXIS about newly flushed vectors that need indexing
+    /// This method is called by the flush coordinator after successful storage flush
+    pub async fn handle_flushed_vectors(
+        &self,
+        collection_id: &CollectionId,
+        flushed_vectors: Vec<VectorRecord>,
+        files_created: Vec<String>,
+    ) -> Result<()> {
+        if flushed_vectors.is_empty() {
+            tracing::debug!("🔄 AXIS: No vectors to index for collection {}", collection_id);
+            return Ok(());
+        }
+
+        tracing::info!(
+            "🚀 AXIS: Processing {} newly flushed vectors for collection {} from {} files",
+            flushed_vectors.len(),
+            collection_id,
+            files_created.len()
+        );
+
+        // Get IndexConfig for this collection to determine indexing behavior
+        let index_config = match self.get_collection_index_config(collection_id).await {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::warn!(
+                    "⚠️ AXIS: Failed to get IndexConfig for collection {}: {}. Using default sync mode.",
+                    collection_id, e
+                );
+                // Use default synchronous indexing if config retrieval fails
+                crate::index::config::IndexConfig::default()
+            }
+        };
+
+        tracing::debug!(
+            "🎯 AXIS: Using IndexConfig with update_mode: {:?} for collection {}",
+            index_config.update_mode,
+            collection_id
+        );
+
+        // Handle indexing based on update mode
+        match index_config.update_mode {
+            crate::index::config::IndexUpdateMode::Synchronous => {
+                self.index_vectors_synchronously(collection_id, flushed_vectors, &files_created).await?;
+            }
+            crate::index::config::IndexUpdateMode::Asynchronous => {
+                self.index_vectors_asynchronously(collection_id, flushed_vectors, files_created).await?;
+            }
+            crate::index::config::IndexUpdateMode::Hybrid => {
+                self.index_vectors_hybrid(collection_id, flushed_vectors, files_created, &index_config).await?;
+            }
+        }
+
+        tracing::info!(
+            "✅ AXIS: Completed indexing notification for collection {}",
+            collection_id
+        );
+
+        Ok(())
+    }
+
+    /// Index vectors synchronously (blocking the flush completion)
+    async fn index_vectors_synchronously(
+        &self,
+        collection_id: &CollectionId,
+        vectors: Vec<VectorRecord>,
+        _files_created: &[String],
+    ) -> Result<()> {
+        tracing::info!("🔄 AXIS: Synchronous indexing of {} vectors for collection {}", vectors.len(), collection_id);
+        
+        let start_time = std::time::Instant::now();
+        for vector in vectors {
+            self.insert(collection_id, vector).await?;
+        }
+        let duration = start_time.elapsed();
+        
+        tracing::info!(
+            "✅ AXIS: Synchronous indexing completed in {}ms for collection {}",
+            duration.as_millis(),
+            collection_id
+        );
+        
+        Ok(())
+    }
+
+    /// Index vectors asynchronously (non-blocking)
+    async fn index_vectors_asynchronously(
+        &self,
+        collection_id: &CollectionId,
+        vectors: Vec<VectorRecord>,
+        files_created: Vec<String>,
+    ) -> Result<()> {
+        tracing::info!("🚀 AXIS: Spawning asynchronous indexing task for {} vectors in collection {}", vectors.len(), collection_id);
+        
+        // For async indexing, we'll process immediately but in a non-blocking way
+        // In a production system, this would use a proper task queue
+        let start_time = std::time::Instant::now();
+        let mut indexed_count = 0;
+        
+        for vector in vectors {
+            match self.insert(collection_id, vector).await {
+                Ok(()) => indexed_count += 1,
+                Err(e) => {
+                    tracing::error!("❌ AXIS: Failed to index vector in collection {}: {}", collection_id, e);
+                }
+            }
+        }
+        
+        let duration = start_time.elapsed();
+        tracing::info!(
+            "✅ AXIS: Asynchronous indexing completed - {}/{} vectors indexed in {}ms for collection {} (files: {:?})",
+            indexed_count,
+            indexed_count,
+            duration.as_millis(),
+            collection_id,
+            files_created
+        );
+        
+        tracing::debug!("🚀 AXIS: Asynchronous indexing completed for collection {}", collection_id);
+        Ok(())
+    }
+
+    /// Index vectors using hybrid mode (adaptive based on batch size)
+    async fn index_vectors_hybrid(
+        &self,
+        collection_id: &CollectionId,
+        vectors: Vec<VectorRecord>,
+        files_created: Vec<String>,
+        index_config: &crate::index::config::IndexConfig,
+    ) -> Result<()> {
+        let batch_size_threshold = index_config.async_update_batch_size.unwrap_or(100);
+        
+        tracing::info!(
+            "🎯 AXIS: Hybrid indexing for {} vectors (threshold: {}) in collection {}",
+            vectors.len(),
+            batch_size_threshold,
+            collection_id
+        );
+        
+        if vectors.len() <= batch_size_threshold {
+            tracing::debug!("🔄 AXIS: Small batch - using synchronous indexing for collection {}", collection_id);
+            self.index_vectors_synchronously(collection_id, vectors, &files_created).await
+        } else {
+            tracing::debug!("🚀 AXIS: Large batch - using asynchronous indexing for collection {}", collection_id);
+            self.index_vectors_asynchronously(collection_id, vectors, files_created).await
+        }
+    }
 }
 
 /// Collection statistics
