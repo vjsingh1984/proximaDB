@@ -2,6 +2,10 @@
 
 ## 1. High-Level Package Diagram (Mermaid)
 
+![Architecture Overview](../../docs/diagrams/images/architecture-overview.png)
+
+### Updated Architecture Diagram
+
 ```mermaid
 graph TB
     subgraph "API Layer"
@@ -50,6 +54,10 @@ graph TB
 ```
 
 ## 2. Core Classes Diagram (PlantUML)
+
+![Core Classes](../../docs/diagrams/images/core-classes-simple.png)
+
+### Core Classes Implementation
 
 ```plantuml
 @startuml
@@ -299,6 +307,10 @@ classDiagram
 ```
 
 ## 4. IndexConfig Flow Diagram (Mermaid)
+
+![IndexConfig Flow](../../docs/diagrams/images/indexconfig-flow.png)
+
+### IndexConfig Flow Implementation
 
 ```mermaid
 sequenceDiagram

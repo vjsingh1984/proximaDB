@@ -1,0 +1,44 @@
+graph TB
+    subgraph "API Layer"
+        REST[REST API<br/>port: 5678]
+        GRPC[gRPC API<br/>port: 5679]
+        UNIFIED[UnifiedServer]
+    end
+    
+    subgraph "Service Layer"
+        CS[CollectionService]
+        VS[VectorService]
+        SS[SearchService]
+        MS[MetricsService]
+    end
+    
+    subgraph "Storage Layer"
+        VIPER[VIPER Engine<br/>Parquet Storage]
+        WAL[WAL System<br/>Avro/Bincode]
+        META[Metadata Store]
+        FS[FileSystem<br/>S3/Azure/GCS]
+    end
+    
+    subgraph "Index Layer"
+        AXIS[AXIS Manager<br/>IndexConfig Handler]
+        HNSW[HNSW Index]
+        IVF[IVF Index]
+        FLAT[Flat Index]
+    end
+    
+    REST --> UNIFIED
+    GRPC --> UNIFIED
+    UNIFIED --> CS
+    UNIFIED --> VS
+    CS --> VIPER
+    CS --> META
+    CS --> AXIS
+    VS --> VIPER
+    VS --> SS
+    SS --> AXIS
+    AXIS --> HNSW
+    AXIS --> IVF
+    AXIS --> FLAT
+    VIPER --> WAL
+    VIPER --> FS
+    META --> FS

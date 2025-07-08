@@ -41,6 +41,10 @@ endif::[]
 
 image::ProximaDB_Main_Architecture.png[ProximaDB Architecture Overview,800,align=center]
 
+==== 🎯 Core Architecture with IndexConfig Integration
+
+image::core-classes-simple.png[Core Classes Architecture,800,align=center]
+
 [.lead]
 **Proximity at Scale** +
 _Enterprise-grade vector database engineered for AI workloads with unified memtable architecture and intelligent storage-aware search_
@@ -242,6 +246,12 @@ ProximaDB implements a sophisticated layered architecture designed for enterpris
 
 image::Assignment Service Flow.png[Assignment Service Flow,600,align=center]
 
+==== 🔧 Updated Architecture: AXIS IndexConfig Integration
+
+Following the architectural correction described in link:PHASE3_DEDUPLICATION_PLAN.md[Phase 3 Plan], IndexConfig handling has been moved from storage engines to the AXIS indexing service where it belongs:
+
+image::ProximaDB_Storage_Architecture.png[Storage Architecture,800,align=center]
+
 === ⚡ Core Innovation: Unified Memtable System
 
 image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,800,align=center]
@@ -278,6 +288,19 @@ ProximaDB pioneered the **unified memtable architecture** - a paradigm shift fro
 
 image::WAL_Strategy_Pattern.png[WAL Strategy Pattern,800,align=center]
 
+==== 🎯 IndexConfig Flow: Per-Collection Index Management
+
+The architectural correction moved IndexConfig handling from storage engines to AXIS where it belongs, providing proper separation of concerns:
+
+image::indexconfig-flow.png[IndexConfig Flow,800,align=center]
+
+**Key Features**:
+- **Per-Collection Configuration**: Each collection can have its own IndexConfig with algorithm-specific parameters
+- **Smart Defaults**: Automatic parameter optimization based on collection size and vector dimension
+- **Flexible Update Modes**: Synchronous (immediate), Asynchronous (background), or Hybrid (adaptive) index builds
+- **AXIS Integration**: Proper architectural placement with collection service integration
+- **Durable Storage**: IndexConfig persisted with collection metadata for consistency
+
 === 🔄 Advanced Search Features Roadmap
 
 ==== Current Implementation Status (Q4 2024 - Q1 2025)
@@ -292,6 +315,8 @@ image::WAL_Strategy_Pattern.png[WAL Strategy Pattern,800,align=center]
 - **Vector Quantization Support**: Product Quantization, Scalar, and Binary quantization
 - **Logical Operators**: AND/OR/NOT metadata filtering with comparison operators
 - **Multi-Distance Metrics**: Cosine, Euclidean, Manhattan, Dot Product support
+- **Configurable IndexConfig**: Per-collection index build modes (Synchronous/Asynchronous/Hybrid) with algorithm-specific parameters
+- **Smart Defaults**: Automatic IndexConfig optimization based on collection size, vector dimension, and algorithm selection
 
 **✅ Demo & Documentation Suite**:
 - **Comprehensive Demo Guide**: Platform-specific setup (Windows/macOS/Ubuntu) with real server integration
