@@ -1,0 +1,415 @@
+= ProximaDB Architecture UML Diagrams
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectlinks:
+:sectanchors:
+:sectnums:
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:imagesdir: diagrams/images
+:experimental:
+
+== High-Level Package Diagram (Mermaid)
+
+image::architecture-overview.png[Architecture Overview,800,align=center]
+
+=== Updated Architecture Diagram
+
+The architecture shows the clean separation of concerns with AXIS handling IndexConfig:
+
+[source,mermaid]
+----
+graph TB
+    subgraph "API Layer"
+        REST[REST API<br/>port: 5678]
+        GRPC[gRPC API<br/>port: 5679]
+        UNIFIED[UnifiedServer]
+    end
+    
+    subgraph "Service Layer"
+        CS[CollectionService]
+        VS[VectorService]
+        SS[SearchService]
+        MS[MetricsService]
+    end
+    
+    subgraph "Storage Layer"
+        VIPER[VIPER Engine<br/>Parquet Storage]
+        WAL[WAL System<br/>Avro/Bincode]
+        META[Metadata Store]
+        FS[FileSystem<br/>S3/Azure/GCS]
+    end
+    
+    subgraph "Index Layer"
+        AXIS[AXIS Manager<br/>IndexConfig Handler]
+        HNSW[HNSW Index]
+        IVF[IVF Index]
+        FLAT[Flat Index]
+    end
+    
+    REST --> UNIFIED
+    GRPC --> UNIFIED
+    UNIFIED --> CS
+    UNIFIED --> VS
+    CS --> VIPER
+    CS --> META
+    CS --> AXIS
+    VS --> VIPER
+    VS --> SS
+    SS --> AXIS
+    AXIS --> HNSW
+    AXIS --> IVF
+    AXIS --> FLAT
+    VIPER --> WAL
+    VIPER --> FS
+    META --> FS
+----
+
+== Core Classes Diagram (PlantUML)
+
+image::core-classes-simple.png[Core Classes,800,align=center]
+
+=== Core Classes Implementation
+
+The core classes show the IndexConfig integration with AXIS manager:
+
+[source,plantuml]
+----
+@startuml
+!theme blueprint
+
+package "Core Types" {
+    class VectorRecord {
+        +id: String
+        +collection_id: String
+        +vector: Vector
+        +metadata: Map
+        +timestamp: DateTime
+        +expires_at: OptionalDateTime
+    }
+    
+    class Collection {
+        +id: String
+        +name: String
+        +dimension: usize
+        +distance_metric: DistanceMetric
+        +storage_engine: StorageEngine
+        +indexing_algorithm: IndexAlgorithm
+        +index_config: IndexConfig
+        +created_at: DateTime
+        +metadata: Map
+    }
+    
+    class IndexConfig {
+        +update_mode: IndexUpdateMode
+        +async_update_timeout_ms: OptionalU64
+        +async_update_batch_size: OptionalUsize
+        +enable_background_optimization: bool
+        +hnsw_config: OptionalHnswConfig
+        +ivf_config: OptionalIvfConfig
+        +build_concurrency: OptionalUsize
+        +memory_limit_mb: OptionalUsize
+        +checkpoint_interval_ms: OptionalU64
+    }
+    
+    enum IndexUpdateMode {
+        Synchronous
+        Asynchronous
+        Hybrid
+    }
+}
+
+package "AXIS Index System" {
+    class AxisManager {
+        -config: AxisConfig
+        -collection_service: CollectionService
+        -adaptive_engine: AdaptiveIndexEngine
+        -migration_engine: IndexMigrationEngine
+        -collection_strategies: Map
+        +set_collection_service(service)
+        +get_collection_index_config(collection_id)
+        +insert(vector)
+        +search(query)
+        +migrate_index(collection_id, new_strategy)
+    }
+    
+    class AdaptiveIndexEngine {
+        -performance_monitor: PerformanceMonitor
+        +analyze_collection_characteristics(collection_id)
+        +recommend_index_strategy(characteristics)
+        +optimize_index_config(collection_id)
+    }
+    
+    class IndexMigrationEngine {
+        +create_migration_plan(from, to)
+        +execute_migration(plan)
+        +rollback_migration(migration_id)
+    }
+    
+    AxisManager --> AdaptiveIndexEngine
+    AxisManager --> IndexMigrationEngine
+}
+
+package "Service Layer" {
+    class CollectionService {
+        -storage_engine: StorageEngine
+        -metadata_store: MetadataStore
+        -index_manager: AxisIndexManager
+        +create_collection(request)
+        +get_collection(id)
+        +get_collection_index_config(id)
+        +update_collection_index_config(id, config)
+        +list_collections()
+        +delete_collection(id)
+    }
+    
+    class VectorService {
+        -storage_engine: StorageEngine
+        -search_engine: SearchEngine
+        +insert_vectors(collection_id, vectors)
+        +get_vectors(collection_id, ids)
+        +search_vectors(collection_id, query)
+        +delete_vectors(collection_id, ids)
+    }
+}
+
+CollectionService --> AxisManager
+VectorService --> StorageEngine
+Collection --> IndexConfig
+AxisManager --> IndexConfig
+IndexConfig --> IndexUpdateMode
+
+@enduml
+----
+
+== Service Architecture (Mermaid)
+
+The service architecture shows the separation of concerns between services:
+
+[source,mermaid]
+----
+classDiagram
+    class UnifiedServer {
+        +rest_port: u16
+        +grpc_port: u16
+        +bind_address: SocketAddr
+        +services: ServiceRegistry
+        +start() Result
+        +shutdown() Result
+    }
+    
+    class CollectionService {
+        -storage_engine: StorageEngine
+        -metadata_store: MetadataStore
+        -index_manager: AxisIndexManager
+        +create_collection(request) Result
+        +get_collection(id) Result
+        +get_collection_index_config(id) Result
+        +update_collection_index_config(id, config) Result
+        +list_collections() Result
+        +delete_collection(id) Result
+    }
+    
+    class VectorService {
+        -storage_engine: StorageEngine
+        -search_engine: SearchEngine
+        +insert_vectors(collection_id, vectors) Result
+        +get_vectors(collection_id, ids) Result
+        +search_vectors(collection_id, query) Result
+        +delete_vectors(collection_id, ids) Result
+    }
+    
+    class StorageEngine {
+        <<interface>>
+        +insert(collection_id, records) Result
+        +get(collection_id, ids) Result
+        +delete(collection_id, ids) Result
+        +flush() Result
+    }
+    
+    class ViperStorageEngine {
+        -engine: ViperCoreEngine
+        -wal: WalManager
+        +insert(collection_id, records) Result
+        +search(query) Result
+        +compact() Result
+    }
+    
+    UnifiedServer --> CollectionService
+    UnifiedServer --> VectorService
+    CollectionService --> StorageEngine
+    CollectionService --> AxisManager
+    VectorService --> StorageEngine
+    StorageEngine <|.. ViperStorageEngine
+    Collection --> IndexConfig
+    AxisManager --> IndexConfig
+    IndexConfig --> IndexUpdateMode
+----
+
+== IndexConfig Flow Diagram (Mermaid)
+
+image::indexconfig-flow.png[IndexConfig Flow,800,align=center]
+
+=== IndexConfig Flow Implementation
+
+The sequence diagram shows how IndexConfig flows through the system:
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Client
+    participant REST
+    participant CS as CollectionService
+    participant AM as AxisManager
+    participant HNSW as HNSW Index
+    participant IVF as IVF Index
+    
+    Note over Client,IVF: Collection Creation with IndexConfig
+    Client->>REST: POST /collections (with IndexConfig)
+    REST->>CS: create_collection(config)
+    CS->>CS: apply_smart_defaults(IndexConfig)
+    CS->>CS: store_collection_metadata(with IndexConfig)
+    CS->>AM: set_collection_service(self)
+    REST-->>Client: Collection created
+    
+    Note over Client,IVF: Index Build Operation
+    Client->>REST: POST /vectors (insert vectors)
+    REST->>VectorService: insert_vectors()
+    VectorService->>StorageEngine: flush()
+    StorageEngine->>AM: notify_new_vectors(collection_id, vectors)
+    AM->>CS: get_collection_index_config(collection_id)
+    CS-->>AM: IndexConfig
+    
+    alt IndexConfig.update_mode == Synchronous
+        AM->>HNSW: build_index_sync(vectors, hnsw_config)
+        HNSW-->>AM: Index built
+        AM-->>VectorService: Index build complete
+    else IndexConfig.update_mode == Asynchronous
+        AM->>AM: spawn_async_task()
+        AM-->>VectorService: Index build scheduled
+        AM->>IVF: build_index_async(vectors, ivf_config)
+        IVF-->>AM: Index built
+    else IndexConfig.update_mode == Hybrid
+        AM->>AM: evaluate_batch_size()
+        alt Small batch
+            AM->>HNSW: build_index_sync(vectors, hnsw_config)
+        else Large batch
+            AM->>IVF: build_index_async(vectors, ivf_config)
+        end
+    end
+    
+    Note over Client,IVF: Index Config Update
+    Client->>REST: PUT /collections/{id}/index_config
+    REST->>CS: update_collection_index_config(id, new_config)
+    CS->>CS: validate_and_store(new_config)
+    CS->>CS: invalidate_cache(collection_id)
+    CS-->>REST: Config updated
+    REST-->>Client: Success
+----
+
+== Index Architecture (PlantUML)
+
+The index architecture shows AXIS integration with various index types:
+
+[source,plantuml]
+----
+@startuml
+!theme blueprint
+
+package "AXIS Index System" {
+    class AxisIndexManager {
+        -indexes: Map
+        -analyzer: CollectionAnalyzer
+        -optimizer: IndexOptimizer
+        -migration_engine: MigrationEngine
+        +create_index(collection_id, config) Result
+        +search(collection_id, query) Result
+        +optimize_index(collection_id) Result
+        +migrate_index(collection_id, new_config) Result
+    }
+    
+    interface Index {
+        +insert(id: String, vector: Vector)
+        +search(query: Vector, k: usize) Results
+        +delete(id: String) bool
+        +optimize() Result
+        +get_stats() IndexStats
+    }
+    
+    class HNSWIndex {
+        -graph: HnswGraph
+        -config: HnswConfig
+        -distance_metric: DistanceMetric
+        +build_graph(vectors) Result
+        +add_node(id, vector) Result
+        +search_knn(query, k, ef) Result
+    }
+    
+    class IVFIndex {
+        -centroids: Centroids
+        -inverted_lists: InvertedLists
+        -config: IvfConfig
+        +train_centroids(vectors) Result
+        +assign_to_cluster(vector) usize
+        +search_clusters(query, nprobe) Result
+    }
+    
+    class FlatIndex {
+        -vectors: VectorStorage
+        -distance_metric: DistanceMetric
+        +brute_force_search(query, k) Result
+    }
+    
+    AxisIndexManager --> Index
+    Index <|.. HNSWIndex
+    Index <|.. IVFIndex
+    Index <|.. FlatIndex
+}
+
+package "Performance Optimization" {
+    class IndexOptimizer {
+        -performance_monitor: PerformanceMonitor
+        -query_analyzer: QueryAnalyzer
+        +analyze_workload(collection_id) WorkloadPattern
+        +recommend_index_type(pattern) IndexType
+        +auto_tune_parameters(index) Result
+    }
+    
+    class CollectionAnalyzer {
+        -vector_stats: VectorStats
+        -query_patterns: QueryPatterns
+        +analyze_distribution(vectors) Distribution
+        +detect_clustering(vectors) ClusterInfo
+        +recommend_strategy() IndexStrategy
+    }
+}
+
+AxisIndexManager --> IndexOptimizer
+AxisIndexManager --> CollectionAnalyzer
+
+@enduml
+----
+
+== Architecture Summary
+
+The ProximaDB architecture demonstrates several key innovations:
+
+=== Key Architectural Principles
+
+. **Separation of Concerns**: IndexConfig handling moved from storage engines to AXIS where it belongs
+. **Unified Interfaces**: Consistent APIs across different storage and index engines
+. **Pluggable Components**: Modular design allowing different backends and algorithms
+. **Smart Defaults**: Automatic configuration based on collection characteristics
+. **Flexible Configuration**: Per-collection settings with algorithm-specific parameters
+
+=== IndexConfig Integration Benefits
+
+. **Proper Architecture**: Storage engines focus on storage, AXIS handles indexing
+. **Consistent Configuration**: Single source of truth for index settings
+. **Dynamic Adaptation**: Index builds can be synchronous, asynchronous, or hybrid
+. **Performance Optimization**: Smart defaults based on collection size and vector dimension
+. **Maintainable Code**: Clear separation of responsibilities
+
+This architecture provides a solid foundation for the next phases of ProximaDB development while maintaining clean separation of concerns and extensibility.
