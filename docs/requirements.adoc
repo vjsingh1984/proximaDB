@@ -707,30 +707,37 @@ sync_mode = "PerBatch"
 |DA-001
 |Raft consensus for strongly consistent metadata operations
 |Critical
+|❌ REMOVED (Single-node focus)
 
 |DA-002
 |Horizontal scaling across nodes with automatic sharding
 |Critical
+|❌ REMOVED (Single-node focus)
 
 |DA-003
 |Multi-region deployment with data residency compliance
 |High
+|❌ REMOVED (Single-node focus)
 
 |DA-004
 |Automatic failover with zero data loss
 |Critical
+|❌ REMOVED (Single-node focus)
 
 |DA-005
 |Configurable consistency levels (strong, eventual, session)
 |High
+|❌ REMOVED (Single-node focus)
 
 |DA-006
 |Global coordination service for multi-region operations
 |High
+|❌ REMOVED (Single-node focus)
 
 |DA-007
 |Intelligent request routing based on data locality
 |High
+|❌ REMOVED (Single-node focus)
 
 |DA-008
 |Automatic data rebalancing during scale operations
@@ -812,6 +819,7 @@ sync_mode = "PerBatch"
 |Transaction management (begin, commit, rollback)
 |Low
 |✅ CLIENT IMPLEMENTED, ❌ SERVER MISSING
+|===
 
 ==== Performance and Hardware Acceleration
 [cols="1,3,1,1"]

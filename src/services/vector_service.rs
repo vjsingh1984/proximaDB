@@ -889,7 +889,7 @@ impl VectorService {
                 threshold: None,
                 timeout_ms: Some(5000),
                 include_debug_info: false,
-                include_vectors: include_vectors,
+                include_vectors,
             };
 
             // Execute search directly through VIPER engine
@@ -1409,10 +1409,8 @@ impl VectorService {
     // ============================================================================
 
     /// Handle unified collection operations (CREATE, GET, LIST, DELETE, MIGRATE)
-
     /// Handle vector insert with ultra-fast zero-copy (ONLY PATH)
     /// All vector operations use trust-but-verify zero-copy for maximum performance
-
     /// Handle vector mutation (UPDATE/DELETE)
     /// Handle vector mutation (UPDATE/DELETE) - converts UPDATE to UPSERT
     pub async fn handle_vector_mutation(&self, avro_bytes: &[u8]) -> Result<Vec<u8>> {

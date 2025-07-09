@@ -361,7 +361,6 @@ impl UnifiedDistanceCompute {
 }
 
 /// Create a new unified distance manager
-
 /// Trait for components that need distance computation
 #[async_trait]
 pub trait DistanceComputeProvider {

@@ -13,12 +13,12 @@ use tokio;
 
 use crate::core::{CollectionId, VectorRecord};
 use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
-use crate::storage::engines::viper::{core::ViperCoreConfig, ViperCoreEngine};
+use crate::storage::engines::viper::{ViperEngine, types::ViperConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
 
 /// Create test filesystem and VIPER engine
-async fn create_test_viper_engine() -> Result<(ViperCoreEngine, TempDir)> {
+async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_string_lossy().to_string();
 
@@ -28,8 +28,8 @@ async fn create_test_viper_engine() -> Result<(ViperCoreEngine, TempDir)> {
     };
 
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let config = ViperCoreConfig::default();
-    let viper_engine = ViperCoreEngine::new(config, filesystem).await?;
+    let config = ViperConfig::default();
+    let viper_engine = ViperEngine::new(config, filesystem).await?;
 
     Ok((viper_engine, temp_dir))
 }

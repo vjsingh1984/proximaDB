@@ -284,7 +284,7 @@ impl BloomFilterCollection {
         BloomFilterCollectionStats {
             filter_count: self.filters.len(),
             total_memory_bytes: total_memory,
-            total_elements: total_elements,
+            total_elements,
             average_false_positive_rate: avg_false_positive_rate,
         }
     }
