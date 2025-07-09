@@ -40,7 +40,7 @@ endif::[]
 |2 hours
 
 |🔴 **Architects**
-|link:requirements.adoc[Requirements] → link:optimization_plan.adoc[Optimization Plan] → link:quantization_support.adoc[Advanced Features]
+|link:requirements.adoc[Requirements] → link:hld.adoc[High-Level Design] → link:quantization_support.adoc[Advanced Features]
 |4+ hours
 |===
 
@@ -131,7 +131,7 @@ endif::[]
 
 === ⚡ "I want to optimize performance"
 1. link:quantization_support.adoc[Vector quantization guide]
-2. link:optimization_plan.adoc[Performance optimization roadmap]
+2. link:requirements.adoc[Performance requirements and roadmap]
 3. link:../demo/demo.adoc#reproducing-benchmarks[Benchmark reproduction]
 
 === 🏢 "I want to deploy ProximaDB in production"
