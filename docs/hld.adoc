@@ -144,7 +144,7 @@ image::Production_Readiness_Status.png[Production Readiness,width=100%]
 
 ProximaDB implements a sophisticated WAL (Write-Ahead Log) system with configurable durability strategies and flush coordination:
 
-image::diagrams/plantuml/WAL_Flush_Coordination_Simple.png[WAL Flush Coordination,width=100%]
+image::WAL_Flush_Coordination_Simple.png[WAL Flush Coordination,width=100%]
 
 ==== WAL Strategy Pattern
 
@@ -165,7 +165,7 @@ memtable_type = "BTree"  # Options: BTree, HashMap, SkipList, Art
 
 ProximaDB implements a **unified memtable system** with behavior wrappers that provide storage-specific functionality while maintaining a consistent interface:
 
-image::diagrams/plantuml/Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100%]
+image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100%]
 
 **Key Components**:
 - **MemtableCore Interface**: Polymorphic base interface for all memtable implementations
@@ -186,7 +186,7 @@ image::diagrams/plantuml/Memtable_Overview.png[Memtable Overview,width=100%]
 
 ===== Optimal Storage Pairings
 
-image::diagrams/plantuml/Storage_Pairing_Strategy.png[Storage Pairing Strategy,width=100%]
+image::Storage_Pairing_Strategy.png[Storage Pairing Strategy,width=100%]
 
 **Recommended Memtable Configurations**:
 - **LSM Collections**: BTree memtable for ordered SSTable generation
@@ -247,7 +247,7 @@ let search_engine = SearchEngineFactory::create_for_collection(
 
 **ML-Driven Clustering (Fully Implemented)**:
 
-image::diagrams/images/ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
+image::ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
 
 - **K-means++ Initialization**: Optimal initial centroid selection for better convergence
 - **Smart Retraining**: 20% growth threshold triggers automatic model updates
@@ -259,15 +259,15 @@ image::diagrams/images/ML_Clustering_Architecture.png[ML Clustering Architecture
 
 **Clustering Search Flow**:
 
-image::diagrams/images/Clustering_Search_Flow.png[Clustering Search Flow,width=100%]
+image::Clustering_Search_Flow.png[Clustering Search Flow,width=100%]
 
 **Algorithm Implementation**:
 
-image::diagrams/images/KMeans_Plus_Plus_Algorithm.png[K-means++ Algorithm,width=100%]
+image::KMeans_Plus_Plus_Algorithm.png[K-means++ Algorithm,width=100%]
 
 **Model Lifecycle**:
 
-image::diagrams/images/Clustering_Model_Lifecycle.png[Model Lifecycle,width=100%]
+image::Clustering_Model_Lifecycle.png[Model Lifecycle,width=100%]
 
 **Multi-Precision Quantization**:
 - **PQ4**: 4-bit quantization for small queries (k≤10, D≤384)
@@ -2133,7 +2133,7 @@ The next phase involves detailed implementation of core components, starting wit
 
 == Current Implementation Status
 
-=== Completed Components (~85%)
+=== Completed Components (~90%)
 
 - **Core Storage Engine**: VIPER with Parquet format ✅
 - **Collection Management**: Full CRUD operations ✅
@@ -2143,7 +2143,7 @@ The next phase involves detailed implementation of core components, starting wit
 - **Python SDK**: Async client implementation ✅
 - **ML Clustering**: K-means++ with 20% growth threshold, model persistence ✅
 - **Storage-Aware Search**: Polymorphic search with real clustered implementation ✅
-- **Logical Operators**: AND/OR/NOT metadata filtering with all comparison operators ✅
+- **Logical Operators**: AND/OR/NOT metadata filtering ✅
 
 === In Progress Components
 
@@ -2151,19 +2151,12 @@ The next phase involves detailed implementation of core components, starting wit
 - **AXIS Indexing**: 95% complete, per-collection coordinators implemented ✅
 - **Metadata Filtering**: Schema ready, execution optimization pending 🚧
 
-=== Not Implemented
-
-- **GPU Acceleration**: Removed in cleanup (was placeholder) ❌
-- **Distributed Consensus**: Raft preparation only ❌
-- **Advanced Query Features**: SQL interface planned ❌
-- **Horizontal Scaling**: Single-node only currently ❌
-
 === Performance Characteristics
 
 **Current Performance**:
 - Collection Create: ~5ms
 - Collection Get: ~1ms (O(1) lookup)
-- Vector Search: Linear scan only (no index acceleration)
+- Vector Search: Linear scan with storage-aware optimization
 - Storage: Memory-mapped files for fast access
 
-**Note**: Early documentation claims of "100K+ QPS" and "sub-millisecond search" refer to planned capabilities with full indexing. Current implementation provides solid foundation but requires index integration for advertised performance.
+**Note**: Performance targets of "100K+ QPS" and "sub-millisecond search" require full indexing integration. Current implementation provides solid foundation with significant optimization potential.

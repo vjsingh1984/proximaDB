@@ -1,6 +1,0 @@
-@startuml
-class Test {
-    +field: String
-    +method(): void
-}
-@enduml

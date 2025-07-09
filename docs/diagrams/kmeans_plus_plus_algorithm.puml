@@ -1,7 +1,6 @@
 @startuml KMeans_Plus_Plus_Algorithm
 !theme plain
 title K-means++ Algorithm Implementation
-subtitle Optimal Centroid Initialization for Vector Clustering
 
 start
 
@@ -66,15 +65,15 @@ partition "**Phase 4: Search Integration**" {
 
 stop
 
-note bottom
-    **Performance Characteristics:**
+floating note 
+    Performance Characteristics:
     - Initialization: O(n * k * d) where n=vectors, k=clusters, d=dimensions
-    - Iteration: O(n * k * d * iterations) typically 10-20 iterations
+    - Iteration: O(n * k * d * iterations) typically 10-20 iterations  
     - Memory: O(n * k + k * d) for assignments and centroids
     - Parallel processing: Each iteration can be parallelized
     - SIMD optimization: Distance calculations use AVX-512 when available
     
-    **Retraining Trigger:**
+    Retraining Trigger:
     - 20% growth in vector count since last training
     - Coordinated with flush/compaction cycles
     - Background training to avoid search disruption

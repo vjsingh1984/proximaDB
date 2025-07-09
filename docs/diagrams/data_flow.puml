@@ -1,5 +1,5 @@
 @startuml ProximaDB_Data_Flow
-!theme aws-orange
+!theme plain
 title ProximaDB Data Flow Architecture
 
 skinparam sequence {
@@ -15,7 +15,7 @@ skinparam sequence {
 actor "Client" as client
 participant "REST/gRPC API" as api
 participant "UnifiedAvroService" as service
-participant "VectorStorageCoordinator" as coordinator
+participant "VectorService" as coordinator
 participant "VIPER Engine" as viper
 participant "WAL System" as wal
 participant "AXIS Indexing" as axis

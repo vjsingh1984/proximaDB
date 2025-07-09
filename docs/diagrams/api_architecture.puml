@@ -1,5 +1,5 @@
 @startuml ProximaDB_API_Architecture
-!theme aws-orange
+!theme plain
 title ProximaDB API Layer Architecture
 
 skinparam interface {
@@ -28,13 +28,13 @@ package "Client SDKs" {
 }
 
 package "ProximaDB Server" {
-    interface "REST API (5678)" as rest_api {
+    component "REST API (5678)" as rest_api {
         component "Axum Framework" as axum
         component "JSON Serialization" as json
         component "OpenAPI Spec" as openapi
     }
     
-    interface "gRPC API (5679)" as grpc_api {
+    component "gRPC API (5679)" as grpc_api {
         component "Tonic Framework" as tonic
         component "Protocol Buffers" as protobuf
         component "Binary Serialization" as binary
@@ -48,26 +48,32 @@ package "ProximaDB Server" {
 }
 
 package "API Endpoints" {
-    interface "Collection Operations" as coll_ops {
-        usecase "POST /collections" as create_coll
-        usecase "GET /collections" as list_coll
-        usecase "GET /collections/{id}" as get_coll
-        usecase "PUT /collections/{id}" as update_coll
-        usecase "DELETE /collections/{id}" as delete_coll
+    component "Collection Operations" as coll_ops {
+        note as coll_note
+        POST /collections
+        GET /collections
+        GET /collections/{id}
+        PUT /collections/{id}
+        DELETE /collections/{id}
+        end note
     }
     
-    interface "Vector Operations" as vec_ops {
-        usecase "POST /collections/{id}/vectors" as insert_vec
-        usecase "GET /collections/{id}/vectors/{vid}" as get_vec
-        usecase "POST /collections/{id}/search" as search_vec
-        usecase "DELETE /collections/{id}/vectors/{vid}" as delete_vec
-        usecase "POST /collections/{id}/vectors/batch" as batch_vec
+    component "Vector Operations" as vec_ops {
+        note as vec_note
+        POST /collections/{id}/vectors
+        GET /collections/{id}/vectors/{vid}
+        POST /collections/{id}/search
+        DELETE /collections/{id}/vectors/{vid}
+        POST /collections/{id}/vectors/batch
+        end note
     }
     
-    interface "System Operations" as sys_ops {
-        usecase "GET /health" as health
-        usecase "GET /metrics" as metrics
-        usecase "GET /version" as version
+    component "System Operations" as sys_ops {
+        note as sys_note
+        GET /health
+        GET /metrics
+        GET /version
+        end note
     }
 }
 

@@ -1,4 +1,4 @@
-= ProximaDB Developer Guide: Complete Development Reference
+= ProximaDB Developer Guide
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -27,7 +27,7 @@ endif::[]
 
 [NOTE]
 ====
-🔗 **Related Documents**: This guide connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:../demo/demo.adoc[Demo Guide]
+🔗 **Related Documents**: This guide connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:../demo/README.adoc[Demo Guide]
 ====
 
 === Development Status Dashboard

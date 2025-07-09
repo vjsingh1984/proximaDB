@@ -1,7 +1,6 @@
 @startuml ML_Clustering_Architecture
 !theme plain
 title ML Clustering Architecture for ProximaDB
-subtitle K-means++ Implementation with Storage-Aware Search
 
 package "ML Clustering System" {
     

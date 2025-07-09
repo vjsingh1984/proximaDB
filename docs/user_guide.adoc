@@ -1,4 +1,4 @@
-= ProximaDB User Guide: Complete Usage Reference
+= ProximaDB User Guide
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -48,6 +48,10 @@ ProximaDB is a cloud-native vector database built specifically for AI and machin
 - Note: Vector search uses linear search (indexing 60% complete)
 
 **🎯 AI-Optimized**
+- Native BERT embedding support (384, 768, 1024 dimensions)
+- Efficient vector similarity search
+- Metadata filtering and collection organization
+- Multi-cloud deployment options
 - Native BERT embedding support (384, 768, 1024 dimensions)
 - Collection persistence across server restarts
 - Tested with real BERT embeddings

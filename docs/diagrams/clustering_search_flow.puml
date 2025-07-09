@@ -1,7 +1,6 @@
 @startuml Clustering_Search_Flow
 !theme plain
 title ML Clustering Search Flow
-subtitle Storage-Aware Polymorphic Search with Parallel Cluster Processing
 
 actor Client
 participant "gRPC Handler" as gRPC

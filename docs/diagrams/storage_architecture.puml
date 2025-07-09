@@ -1,5 +1,5 @@
 @startuml ProximaDB_Storage_Architecture
-!theme aws-orange
+!theme plain
 title ProximaDB Storage Layer Architecture
 
 skinparam component {
@@ -25,9 +25,11 @@ package "Storage Engines" {
         component "Memory Mapping" as mmap
     }
     
-    component "Standard Engine" as standard {
-        component "B+Tree Index" as btree
-        component "Metadata Storage" as meta_store
+    component "LSM Engine" as lsm {
+        component "SkipList Memtable" as skiplist
+        component "SSTable Storage" as sst
+        component "Bloom Filters" as bloom
+        component "Compaction Manager" as compaction
     }
 }
 
@@ -73,7 +75,7 @@ package "Collection Storage Layout" {
 
 ' Connections
 viper --> fs_api : "store vectors"
-standard --> fs_api : "store metadata"
+lsm --> fs_api : "store LSM data"
 wal_mgr --> fs_api : "write logs"
 
 fs_api --> backends
@@ -83,8 +85,10 @@ simd --> compression
 mmap --> parquet
 parquet --> vectors_dir
 
-btree --> meta_store
-meta_store --> metadata
+skiplist --> sst
+bloom --> sst
+compaction --> sst
+sst --> vectors_dir
 
 avro --> wal_files
 bincode --> wal_files
@@ -103,6 +107,14 @@ note right of viper
   - LZ4/Snappy compression
   - SIMD acceleration
   - Memory-mapped access
+end note
+
+note right of lsm
+  LSM = Log-Structured Merge
+  - SkipList memtable
+  - SSTable storage
+  - Bloom filter optimization
+  - Background compaction
 end note
 
 note right of wal_mgr

@@ -1,5 +1,5 @@
 @startuml ProximaDB_Complete_System_Architecture
-!theme aws-orange
+!theme plain
 title ProximaDB - Complete System Architecture
 
 skinparam packageStyle rectangle
@@ -53,7 +53,7 @@ package "Storage Layer" <<Rectangle>> {
     database "WAL System\n(Write-Ahead Logging)" as wal {
         component [Avro Strategy] as avro_wal
         component [Bincode Strategy] as bincode_wal
-        component [Memtable (ART)] as memtable
+        component [Unified Memtable] as memtable
     }
     
     database "VIPER Engine\n(Vector Storage)" as viper {
@@ -68,8 +68,8 @@ package "Storage Layer" <<Rectangle>> {
 
 ' Indexing System
 package "AXIS Indexing" <<Rectangle>> {
-    component [HNSW Index\n(85% Complete)] as hnsw
-    component [IVF Index\n(Planned)] as ivf
+    component [HNSW Index\n(Complete)] as hnsw
+    component [IVF Index\n(Complete)] as ivf
     component [Flat Index\n(Complete)] as flat
     component [Adaptive Selection] as adaptive
 }
@@ -115,7 +115,7 @@ assignment_service --> viper
 wal --> memtable
 wal --> avro_wal
 wal --> bincode_wal
-wal ..> viper : "Direct Flush\n(Optimized 2025)"
+wal ..> viper : "Direct Flush\n(Production Ready)"
 
 viper --> parquet
 viper --> compression
@@ -147,7 +147,7 @@ viper --> metrics
 note right of wal
   **WAL → VIPER Optimization**
   Direct flush eliminates coordinator
-  bottleneck for 85% performance gain
+  bottleneck for 6.10x performance gain
 end note
 
 note right of viper

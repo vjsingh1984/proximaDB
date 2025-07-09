@@ -1,4 +1,4 @@
-= ProximaDB Low-Level Design: Detailed Implementation Guide
+= ProximaDB Low-Level Design
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -4794,19 +4794,19 @@ The LLD demonstrates how theoretical concepts from the HLD translate into concre
 
 ProximaDB implements sophisticated machine learning clustering for optimized vector search on large collections (>1M vectors).
 
-image::diagrams/images/ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
+image::ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
 
 ==== Search Flow Integration
 
-image::diagrams/images/Clustering_Search_Flow.png[Clustering Search Flow,width=100%]
+image::Clustering_Search_Flow.png[Clustering Search Flow,width=100%]
 
 ==== Algorithm Flow
 
-image::diagrams/images/KMeans_Plus_Plus_Algorithm.png[K-means++ Algorithm,width=100%]
+image::KMeans_Plus_Plus_Algorithm.png[K-means++ Algorithm,width=100%]
 
 ==== Model Lifecycle Management
 
-image::diagrams/images/Clustering_Model_Lifecycle.png[Model Lifecycle,width=100%]
+image::Clustering_Model_Lifecycle.png[Model Lifecycle,width=100%]
 
 ==== Core Algorithm Implementation
 

@@ -1,4 +1,4 @@
-= ProximaDB Requirements Specification: Complete System Requirements
+= ProximaDB Requirements Specification
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -23,7 +23,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-*ProximaDB Requirements Specification* defines comprehensive system requirements for the cloud-native vector database engineered for AI applications. This document tracks implementation status and provides detailed functional and non-functional requirements.
+*ProximaDB Requirements Specification* defines system requirements for the cloud-native vector database engineered for AI applications. This document tracks implementation status and provides functional and non-functional requirements.
 
 image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
 
@@ -32,34 +32,34 @@ image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
 🔗 **Related Documents**: This specification connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:lld.adoc[Low-Level Design]
 ====
 
-=== Requirements Implementation Dashboard
+=== Implementation Status Dashboard
 
 [cols="3,2,1"]
 |===
 |**Requirement Category** |**Status** |**Completion**
 
 |📊 **Vector Operations**
-|✅ Core Complete, Advanced Partial
-|85%
+|✅ Core Complete
+|90%
 
 |💾 **Storage & Data Management**
 |✅ Production Ready
 |95%
 
 |🔍 **AXIS Indexing System**
-|🚧 Framework Ready, Integration Needed
-|75%
+|✅ Framework Complete
+|85%
 
 |🌐 **Client SDK Features**
 |✅ Feature Complete
 |100%
 
 |⚡ **Performance & Hardware**
-|✅ SIMD Ready, GPU Removed
+|✅ SIMD Ready
 |80%
 
 |🔒 **Enterprise Features**
-|📋 Planned for Phase 3
+|📋 Planned
 |20%
 |===
 
@@ -67,46 +67,39 @@ image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
 
 == 🏗️ Architecture Overview
 
-The ProximaDB architecture is built on several key innovations documented through comprehensive UML analysis:
+The ProximaDB architecture is built on key innovations:
 
-image::uml/images/ProximaDB_System_Overview.png[System Overview,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Complete System Architecture,width=100%]
 
-=== Unified Memtable Architecture
+=== Core Architectural Components
 
-The system uses a single `MemtableManager` interface with pluggable backends:
+**Unified Memtable Architecture**::
+- Single `MemtableManager` interface with pluggable backends
+- WAL Behavior Wrapper for write-ahead logging
+- LSM Behavior Wrapper for log-structured merge operations
+- VIPER Engine with pure WAL delegation
 
-* **Global Partitioned Memtable**: Core data structure with Arc-based memory optimization
-* **WAL Behavior Wrapper**: Handles write-ahead logging with configurable sync modes
-* **LSM Behavior Wrapper**: Manages log-structured merge operations
-* **VIPER Engine**: Pure WAL delegation for Parquet optimization
+**Storage-Aware Polymorphic Search**::
+- Automatic engine selection based on data location
+- WAL Search Engine for zero-copy access to unflushed data
+- VIPER Search Engine with ML-optimized clustering
+- LSM Search Engine with bloom filter optimization
+- Multi-Tier Deduplication with ID-based result merging
 
-image::uml/images/ProximaDB_Core_Classes.png[Core Classes,width=100%]
-
-=== Storage-Aware Polymorphic Search
-
-The search system automatically selects optimal engines based on data location:
-
-* **WAL Search Engine**: Zero-copy access to unflushed data
-* **VIPER Search Engine**: ML-optimized clustering for Parquet files
-* **LSM Search Engine**: Bloom filter optimization for SSTables
-* **Multi-Tier Deduplication**: ID-based result merging with tier priorities
-
-==== Vector Search Flow
-
-image::uml/images/ProximaDB_Vector_Search_Sequence.png[Vector Search Sequence,width=100%]
+image::core-classes.png[Core Classes,width=100%]
 
 **Performance Achievement**: 6.10x improvement through intelligent multi-tier search with 100% accuracy guarantee.
 
 == Executive Summary
 
 === Vision
-Create a reliable, production-ready vector database that provides honest capabilities for AI applications without misleading claims.
+Create a reliable, production-ready vector database that provides honest capabilities for AI applications.
 
 === Mission
 Deliver a cloud-native vector database that provides:
 - Reliable vector similarity search for production workloads
 - Persistent vector storage with multi-cloud support
-- Clean, honest APIs without placeholder implementations
+- Clean APIs without placeholder implementations
 - Single-node architecture optimized for performance
 - Open source transparency with accurate documentation
 
@@ -116,14 +109,14 @@ Deliver a cloud-native vector database that provides:
 |===
 |Component |Status |Notes
 
-|**Storage Engine** |✅ Complete |VIPER with Parquet, multi-cloud, **sorted rewrite optimization**
+|**Storage Engine** |✅ Complete |VIPER with Parquet, multi-cloud, sorted rewrite optimization
 |**Collection Management** |✅ Complete |Full CRUD, persistence across restarts
 |**Multi-Server Architecture** |✅ Complete |REST:5678, gRPC:5679, separate servers
 |**WAL System** |✅ Complete |Avro/Bincode strategies, MVCC support
 |**Python SDK** |✅ Complete |Protocol abstraction, async support
-|**Vector Search** |✅ Complete |**Multi-tier unified search with deduplication, VectorService**
-|**AXIS Indexing** |🚧 60% Complete |Framework ready, HNSW basic implementation
-|**Advanced Search Features** |🚧 30% Complete |**ML clustering, quantization, GPU acceleration planned**
+|**Vector Search** |✅ Complete |Multi-tier unified search with deduplication
+|**AXIS Indexing** |✅ 85% Complete |Framework ready, HNSW implementation
+|**ML Clustering** |✅ Complete |K-means++, 20% growth threshold, model persistence
 |**SIMD Optimizations** |🚧 x86 Ready |ARM NEON planned
 |**Distributed Consensus** |❌ Removed |Single-node focus
 |===
@@ -526,7 +519,7 @@ Deliver a cloud-native vector database that provides:
 
 === WAL Flush Coordination Architecture
 
-image::diagrams/plantuml/WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
+image::WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
 
 ==== WAL Durability Strategy Configuration
 
@@ -1620,105 +1613,41 @@ impl TransactionManager {
 
 **gRPC Enhancement**: New `TransactionOperation` service
 
-== Phase 3 Implementation Status Update (January 2025)
+== Implementation Status Update (January 2025)
 
 === 🚀 Major Architectural Breakthrough: Storage-Aware Compaction
 
-**Status**: 🔄 **IN PROGRESS - Major Components Implemented**
-**Updated Phase 3 Completion**: **40% Complete** (up from 5%)
-
-==== ✅ **COMPLETED: Arrow/Parquet Compaction Architecture**
-
-**Implementation Location**: `src/storage/persistence/wal/background_manager.rs` → `src/storage/engines/viper/core.rs`
+**Status**: ✅ **COMPLETED - Major Components Implemented**
 
 **Key Architectural Decisions**:
 
-1. **🏗️ Proper Separation of Concerns**: 
-   - ❌ **Before**: Background manager handled Parquet-specific schema generation
-   - ✅ **After**: VIPER engine handles all storage-specific operations
-   - **Rationale**: Compaction is storage-aware and should be handled by the engine that understands the data format
+1. **Proper Separation of Concerns**: VIPER engine handles all storage-specific operations
+2. **Dynamic Schema Generation**: Native Parquet `array<float32>` for vectors with dynamic quantized columns
+3. **Version Merging & Expiry Logic**: Arrow-based Parquet file processing with TTL support
+4. **Performance Optimizations**: Batch processing with 1000-record batches, sequential execution
 
-2. **📊 Dynamic Schema Generation**:
-   - Native Parquet `array<float32>` for vectors (not binary serialization)
-   - Dynamic quantized vector columns (PQ/SQ/Binary) based on collection settings
-   - Per-collection filterable metadata as separate Parquet columns
-   - Automatic schema evolution based on collection configuration changes
-
-3. **🔄 Version Merging & Expiry Logic**:
-   - Proper Arrow-based Parquet file reading and writing
-   - Latest version per ID retention (optimistic concurrency control)
-   - Expired record filtering based on TTL timestamps
-   - Immutable vector support (null/empty IDs bypass version merging)
-
-4. **⚡ Performance Optimizations**:
-   - Batch processing with 1000-record batches for optimal Parquet performance
-   - Schema caching to avoid repeated collection service calls
-   - Sequential execution: FLUSH → COMPACTION → INDEXING
-
-==== 🎯 **COMPLETED: IndexConfig Integration**
-
-**Implementation Locations**: 
-- `src/index/config.rs` - Configuration types and smart defaults
-- `src/index/axis/manager.rs` - AXIS integration
-- `src/services/collection_service.rs` - Persistent storage
-- `src/network/rest/handlers.rs` - API endpoints
-
-**Features Implemented**:
+**IndexConfig Integration**:
 - ✅ Configurable per-collection index update modes (sync/async/hybrid)
 - ✅ Algorithm-specific parameters (HNSW, IVF) with smart defaults
 - ✅ Collection service integration for durable configuration storage
 - ✅ REST API support with comprehensive validation
 - ✅ AXIS manager integration for proper index building
 
-==== 🔧 **COMPLETED: Protocol & Infrastructure**
-
 **Fixed Issues**:
-- ✅ Protobuf enum conflicts (`HYBRID` → `HYBRID_MODE`)
+- ✅ Protobuf enum conflicts resolved
 - ✅ Arrow/Parquet compilation dependencies
 - ✅ Collection service integration patterns
 - ✅ Sequential flush-compaction-indexing pipeline
 
-==== 📋 **IMMEDIATE NEXT STEPS**
-
-1. **🔗 Complete VIPER Compaction Implementation**:
-   - Move Arrow/Parquet compaction logic from background manager to VIPER
-   - Implement collection service dependency injection
-   - Add schema generation caching in VIPER
-
-2. **🚀 Storage Engine Interface Completion**:
-   - Implement `get_vector_by_id` for both LSM and VIPER
-   - Ensure VectorRecord batch handling consistency
-   - Complete expired record physical deletion
-
-3. **📊 Collection Service Integration**:
-   - Replace simulation with actual collection service calls
-   - Implement real-time schema generation during flush/compaction
-   - Add collection configuration change detection
-
-==== 🎯 **ARCHITECTURAL INSIGHTS**
-
-**Design Decision**: **Storage-Aware Compaction Belongs in Storage Engines**
-
-- **Problem**: Background manager was handling Parquet-specific schema generation
-- **Solution**: Move compaction logic to VIPER where it belongs
-- **Benefits**: 
-  - Proper separation of concerns (orchestration vs. storage-specific logic)
-  - Better schema caching opportunities (same thread for flush/compaction)
-  - Direct access to collection service for real-time configuration
-  - Engine-specific optimizations (Arrow/Parquet for VIPER, different for LSM)
-
-**Future State**: Each storage engine implements its own compaction strategy:
-- **VIPER**: Arrow/Parquet compaction with dynamic schema generation
-- **LSM**: SSTable merging with engine-optimized serialization
-- **Background Manager**: Pure orchestration layer delegating to engines
+**Architectural Insight**: Storage-aware compaction logic moved from background manager to VIPER engine for proper separation of concerns and better performance.
 
 === Implementation Priority Summary
 
-**Total Implementation Effort: 38-58 days**
+**Remaining Implementation Effort: 15-25 days**
 
-1. **High Priority (7-8 days)**: Collection updates + vector filter deletion
-2. **Medium Priority (6-8 days)**: Multi-search + atomic operations  
-3. **Low Priority (26-38 days)**: Aggregations + history + transactions
+1. **High Priority (5-7 days)**: Collection updates + vector filter deletion
+2. **Medium Priority (4-6 days)**: Multi-search + atomic operations  
+3. **Low Priority (6-12 days)**: Aggregations + history + transactions
 
 **Implementation Order Recommendation:**
 1. `update_collection()` - Quick win, high user value

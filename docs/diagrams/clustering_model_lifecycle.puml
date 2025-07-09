@@ -1,7 +1,6 @@
 @startuml Clustering_Model_Lifecycle
 !theme plain
 title Clustering Model Lifecycle Management
-subtitle Training, Persistence, and Retraining Strategy
 
 state "Model Not Exists" as NotExists
 state "Model Training" as Training
