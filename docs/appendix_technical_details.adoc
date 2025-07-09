@@ -204,22 +204,9 @@ pub struct CollectionAnalyzer {
 
 ===== Migration Flow Diagram
 
-[source,mermaid]
-----
-graph LR
-    A[Collection Created] --> B[Initial Analysis]
-    B --> C[Default Strategy]
-    C --> D[Monitor Performance]
-    D --> E{Migration Needed?}
-    E -->|No| D
-    E -->|Yes| F[Plan Migration]
-    F --> G[Execute Migration]
-    G --> H[Monitor New Index]
-    H --> I{Performance OK?}
-    I -->|Yes| D
-    I -->|No| J[Rollback]
-    J --> D
-----
+image::Index_Migration_Flow.png[Index Migration Flow,width=100%]
+
+The migration engine continuously monitors collection performance and automatically adapts indexing strategies based on changing data characteristics and query patterns.
 
 ==== Strategy Selection Matrix
 
@@ -423,18 +410,9 @@ image::ProximaDB_Complete_System_Architecture.png[Multi-Tenant Architecture,widt
 
 ===== Routing Architecture Diagram
 
-[source,mermaid]
-----
-graph TB
-    A[Client Request] --> B[Load Balancer]
-    B --> C{Tenant Router}
-    C -->|Logical| D[Shared Pool]
-    C -->|Container| E[Tenant Container]
-    C -->|Cluster| F[Dedicated Cluster]
-    D --> G[Resource Quotas]
-    E --> H[Resource Guarantees]
-    F --> I[Custom Config]
-----
+image::Tenant_Routing_Architecture.png[Tenant Routing Architecture,width=100%]
+
+The tenant router intelligently directs requests based on isolation requirements, ensuring proper resource allocation and security boundaries.
 
 ==== Consistent Hashing
 - **Algorithm**: SHA-256 hash of tenant ID

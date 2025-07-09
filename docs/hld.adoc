@@ -1126,87 +1126,9 @@ async fn flush_with_compaction_check(collection_id: &str) -> Result<()> {
 
 ==== Unified Architecture Class Diagram
 
-[source,mermaid]
-----
-classDiagram
-    class VectorService {
-        +storage: Arc~RwLock~StorageEngine~~
-        +wal_manager: Arc~WalManager~
-        +collection_service: Arc~CollectionService~
-        +handle_vector_insert(vectors: Vec~VectorRecord~) Future~Result~
-        +search_vectors_polymorphic(query: SearchQuery) Future~Vec~SearchResult~~
-        +delete_vector(id: VectorId) Future~Result~
-    }
+image::Unified_Architecture_Classes.png[Unified Architecture Classes,width=100%]
 
-    class SearchEngineFactory {
-        +search_with_deduplication(collection, query, k) Future~Vec~SearchResult~~
-        +create_for_collection(collection_record) Future~Box~dyn StorageSearchEngine~~
-        +create_optimized_hints(collection) SearchHints
-    }
-
-    class MultiTierDeduplicator {
-        +add_tier_results(results: Vec~SearchResult~, tier: u8)
-        +get_final_results(k: usize) Future~Vec~SearchResult~~
-        +deduplicate_by_id() Future~()~
-    }
-
-    class ViperCoreEngine {
-        +search_vectors(query: Vec~f32~, k: usize) Future~Vec~SearchResult~~
-        +get_statistics() Future~EngineStatistics~
-    }
-        +config: ViperConfig
-        +pipeline: Arc~ViperPipeline~
-        +compactor: Arc~CompactionEngine~
-        +storage_handler: Arc~StorageLayoutHandler~
-        +ml_optimizer: Arc~MLGuidedOptimizer~
-    }
-
-    class UnifiedIndexManager {
-        +collection_indexes: HashMap~CollectionId, MultiIndex~
-        +index_builders: IndexBuilderRegistry
-        +optimizer: Arc~IndexOptimizer~
-        +create_index(collection: CollectionId, spec: IndexSpec) Future~Result~
-        +search(collection: &CollectionId, context: &SearchContext) Future~Vec~SearchResult~~
-        +optimize_indexes() Future~Result~
-    }
-
-    class StoragePolicy {
-        +collection_name: String
-        +primary_storage: String
-        +secondary_storage: Option~String~
-        +archive_storage: Option~String~
-        +wal_storage: String
-        +metadata_storage: String
-        +index_storage: String
-        +lifecycle: StorageLifecycle
-    }
-
-    class WalManager {
-        +strategy: Box~dyn WalStrategy~
-        +age_monitor: Arc~WalAgeMonitor~
-        +config: WalConfig
-        +insert(collection_id, vector_id, record) Future~u64~
-        +flush(collection_id: Option~&CollectionId~) Future~FlushResult~
-        +check_immediate_flush_triggers(collection_id) Future~bool~
-    }
-
-    class CollectionService {
-        +metadata_backend: Arc~dyn MetadataBackend~
-        +schema_service: Arc~SchemaService~
-        +create_collection(config: CollectionConfig) Future~Result~
-        +get_collection(id: &CollectionId) Future~Option~Collection~~
-        +update_collection(id: &CollectionId, config: CollectionConfig) Future~Result~
-        +drop_collection(id: &CollectionId) Future~Result~
-    }
-
-    VectorService --> SearchEngineFactory
-    VectorService --> WalManager
-    VectorService --> CollectionService
-    SearchEngineFactory --> MultiTierDeduplicator
-    SearchEngineFactory --> ViperCoreEngine
-    SearchEngineFactory --> WalManager
-    WalManager --> WalStrategy
-----
+This class diagram illustrates the unified architecture where VectorService coordinates with SearchEngineFactory for storage-aware search, WalManager for durability, and CollectionService for metadata management.
 
 ==== Recovery Performance Characteristics
 

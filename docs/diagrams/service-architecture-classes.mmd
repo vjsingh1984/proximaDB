@@ -1,0 +1,56 @@
+classDiagram
+    class UnifiedServer {
+        +rest_port: u16
+        +grpc_port: u16
+        +bind_address: SocketAddr
+        +services: ServiceRegistry
+        +start() Result
+        +shutdown() Result
+    }
+    
+    class CollectionService {
+        -storage_engine: StorageEngine
+        -metadata_store: MetadataStore
+        -index_manager: AxisIndexManager
+        +create_collection(request) Result
+        +get_collection(id) Result
+        +get_collection_index_config(id) Result
+        +update_collection_index_config(id, config) Result
+        +list_collections() Result
+        +delete_collection(id) Result
+    }
+    
+    class VectorService {
+        -storage_engine: StorageEngine
+        -search_engine: SearchEngine
+        +insert_vectors(collection_id, vectors) Result
+        +get_vectors(collection_id, ids) Result
+        +search_vectors(collection_id, query) Result
+        +delete_vectors(collection_id, ids) Result
+    }
+    
+    class StorageEngine {
+        <<interface>>
+        +insert(collection_id, records) Result
+        +get(collection_id, ids) Result
+        +delete(collection_id, ids) Result
+        +flush() Result
+    }
+    
+    class ViperStorageEngine {
+        -engine: ViperCoreEngine
+        -wal: WalManager
+        +insert(collection_id, records) Result
+        +search(query) Result
+        +compact() Result
+    }
+    
+    UnifiedServer --> CollectionService
+    UnifiedServer --> VectorService
+    CollectionService --> StorageEngine
+    CollectionService --> AxisManager
+    VectorService --> StorageEngine
+    StorageEngine <|.. ViperStorageEngine
+    Collection --> IndexConfig
+    AxisManager --> IndexConfig
+    IndexConfig --> IndexUpdateMode

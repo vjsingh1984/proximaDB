@@ -1,0 +1,13 @@
+graph LR
+    A[Collection Created] --> B[Initial Analysis]
+    B --> C[Default Strategy]
+    C --> D[Monitor Performance]
+    D --> E{Migration Needed?}
+    E -->|No| D
+    E -->|Yes| F[Plan Migration]
+    F --> G[Execute Migration]
+    G --> H[Monitor New Index]
+    H --> I{Performance OK?}
+    I -->|Yes| D
+    I -->|No| J[Rollback]
+    J --> D

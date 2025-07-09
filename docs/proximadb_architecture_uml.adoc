@@ -19,53 +19,7 @@ image::architecture-overview.png[Architecture Overview,800,align=center]
 
 The architecture shows the clean separation of concerns with AXIS handling IndexConfig:
 
-[source,mermaid]
-----
-graph TB
-    subgraph "API Layer"
-        REST[REST API<br/>port: 5678]
-        GRPC[gRPC API<br/>port: 5679]
-        UNIFIED[UnifiedServer]
-    end
-    
-    subgraph "Service Layer"
-        CS[CollectionService]
-        VS[VectorService]
-        SS[SearchService]
-        MS[MetricsService]
-    end
-    
-    subgraph "Storage Layer"
-        VIPER[VIPER Engine<br/>Parquet Storage]
-        WAL[WAL System<br/>Avro/Bincode]
-        META[Metadata Store]
-        FS[FileSystem<br/>S3/Azure/GCS]
-    end
-    
-    subgraph "Index Layer"
-        AXIS[AXIS Manager<br/>IndexConfig Handler]
-        HNSW[HNSW Index]
-        IVF[IVF Index]
-        FLAT[Flat Index]
-    end
-    
-    REST --> UNIFIED
-    GRPC --> UNIFIED
-    UNIFIED --> CS
-    UNIFIED --> VS
-    CS --> VIPER
-    CS --> META
-    CS --> AXIS
-    VS --> VIPER
-    VS --> SS
-    SS --> AXIS
-    AXIS --> HNSW
-    AXIS --> IVF
-    AXIS --> FLAT
-    VIPER --> WAL
-    VIPER --> FS
-    META --> FS
-----
+image::Architecture_Overview.png[Architecture Overview,width=100%]
 
 == Core Classes Diagram (PlantUML)
 
@@ -188,65 +142,9 @@ IndexConfig --> IndexUpdateMode
 
 The service architecture shows the separation of concerns between services:
 
-[source,mermaid]
-----
-classDiagram
-    class UnifiedServer {
-        +rest_port: u16
-        +grpc_port: u16
-        +bind_address: SocketAddr
-        +services: ServiceRegistry
-        +start() Result
-        +shutdown() Result
-    }
-    
-    class CollectionService {
-        -storage_engine: StorageEngine
-        -metadata_store: MetadataStore
-        -index_manager: AxisIndexManager
-        +create_collection(request) Result
-        +get_collection(id) Result
-        +get_collection_index_config(id) Result
-        +update_collection_index_config(id, config) Result
-        +list_collections() Result
-        +delete_collection(id) Result
-    }
-    
-    class VectorService {
-        -storage_engine: StorageEngine
-        -search_engine: SearchEngine
-        +insert_vectors(collection_id, vectors) Result
-        +get_vectors(collection_id, ids) Result
-        +search_vectors(collection_id, query) Result
-        +delete_vectors(collection_id, ids) Result
-    }
-    
-    class StorageEngine {
-        <<interface>>
-        +insert(collection_id, records) Result
-        +get(collection_id, ids) Result
-        +delete(collection_id, ids) Result
-        +flush() Result
-    }
-    
-    class ViperStorageEngine {
-        -engine: ViperCoreEngine
-        -wal: WalManager
-        +insert(collection_id, records) Result
-        +search(query) Result
-        +compact() Result
-    }
-    
-    UnifiedServer --> CollectionService
-    UnifiedServer --> VectorService
-    CollectionService --> StorageEngine
-    CollectionService --> AxisManager
-    VectorService --> StorageEngine
-    StorageEngine <|.. ViperStorageEngine
-    Collection --> IndexConfig
-    AxisManager --> IndexConfig
-    IndexConfig --> IndexUpdateMode
-----
+image::Service_Architecture_Classes.png[Service Architecture Classes,width=100%]
+
+The UnifiedServer coordinates both REST and gRPC services, with CollectionService managing metadata and VectorService handling vector operations through a unified storage engine interface.
 
 == IndexConfig Flow Diagram (Mermaid)
 

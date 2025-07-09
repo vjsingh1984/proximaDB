@@ -1,0 +1,9 @@
+graph TB
+    A[Client Request] --> B[Load Balancer]
+    B --> C{Tenant Router}
+    C -->|Logical| D[Shared Pool]
+    C -->|Container| E[Tenant Container]
+    C -->|Cluster| F[Dedicated Cluster]
+    D --> G[Resource Quotas]
+    E --> H[Resource Guarantees]
+    F --> I[Custom Config]
