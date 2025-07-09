@@ -1560,6 +1560,202 @@ cargo build --release --all-targets
 cargo publish
 ----
 
+== WAL Cloud Integration
+
+=== Overview
+
+ProximaDB's WAL (Write-Ahead Log) system features comprehensive cloud integration through the enhanced `WalBatchStrategy` interface, enabling seamless operations across multiple cloud storage providers with URL-based routing and atomic operations.
+
+=== Enhanced Multi-Cloud URL Routing
+
+**Supported URL Formats:**
+
+- `file://` - Local filesystem operations with absolute path validation
+- `s3://` - Amazon S3 object storage with bucket validation  
+- `gcs://` - Google Cloud Storage with bucket validation
+- `adls://` - Azure Data Lake Storage with account/container validation
+- `abfs://` - Azure Blob File System with container@account format validation
+- `hdfs://` - Hadoop Distributed File System with namenode validation
+
+**URL Validation Examples:**
+[source,rust]
+----
+// Valid URLs
+file:///tmp/test.txt                    // Local filesystem
+s3://bucket-name/path/to/file           // Amazon S3
+gcs://bucket-name/path/to/object        // Google Cloud Storage
+adls://account/container/path/to/file   // Azure Data Lake Storage
+abfs://container@account/path/to/file   // Azure Blob FileSystem
+hdfs://namenode:9000/path/to/file       // Hadoop HDFS
+
+// Invalid URLs (missing required components)
+file://relative/path                    // Must be absolute
+s3:///missing-bucket/file.bin           // Bucket required
+abfs://invalid-format/file.bin          // @ format required
+----
+
+=== Enhanced WalBatchStrategy Interface
+
+**Core Cloud Methods:**
+[source,rust]
+----
+/// Write WAL batch to cloud storage with URL-based routing
+async fn write_batch_to_cloud(
+    &self,
+    collection_id: &CollectionId,
+    batch: &WalVectorBatch,
+    cloud_url: &str,
+) -> Result<String>;
+
+/// Read WAL batch from cloud storage with URL-based routing
+async fn read_batch_from_cloud(
+    &self,
+    cloud_url: &str,
+) -> Result<WalVectorBatch>;
+
+/// Migrate WAL batch from local to cloud storage
+async fn migrate_batch_to_cloud(
+    &self,
+    collection_id: &CollectionId,
+    batch: &WalVectorBatch,
+    local_path: &str,
+    cloud_url: &str,
+) -> Result<String>;
+
+/// List WAL batches from cloud storage
+async fn list_cloud_batches(
+    &self,
+    collection_id: &CollectionId,
+    cloud_base_url: &str,
+) -> Result<Vec<String>>;
+
+/// Delete WAL batch from cloud storage
+async fn delete_cloud_batch(&self, cloud_url: &str) -> Result<()>;
+
+/// Check if cloud storage is available and accessible
+async fn check_cloud_health(&self, cloud_base_url: &str) -> Result<bool>;
+----
+
+=== Cloud Backup Configuration
+
+**TOML Configuration Example:**
+[source,toml]
+----
+[storage.wal_config.performance.cloud_backup]
+enabled = true
+backup_url = "s3://my-bucket/proximadb-wal/"
+strategy = "OnFlush"
+verify_integrity = true
+
+[storage.wal_config.performance.cloud_backup.frequency]
+operations_threshold = 1000
+time_threshold_secs = 300
+size_threshold_bytes = 104857600  # 100MB
+
+[storage.wal_config.performance.cloud_backup.cleanup_policy]
+retention_days = 7
+max_backups = 100
+cleanup_frequency_hours = 24
+
+[storage.wal_config.performance.cloud_backup.retry_config]
+max_retries = 3
+initial_delay_ms = 100
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+----
+
+**Backup Strategies:**
+
+- **`RealTime`** - Immediate cloud backup on every write operation
+- **`Periodic`** - Scheduled batch backup at fixed intervals
+- **`OnFlush`** - Backup triggered during flush operations (recommended)
+- **`OnDemand`** - Manual backup control via API
+
+=== Usage Examples
+
+**Basic Cloud Backup:**
+[source,rust]
+----
+// Configure cloud backup
+let mut config = WalConfig::default();
+config.performance.cloud_backup = Some(CloudBackupConfig {
+    enabled: true,
+    backup_url: "s3://my-bucket/wal/".to_string(),
+    strategy: CloudBackupStrategy::OnFlush,
+    ..Default::default()
+});
+
+// Insert vectors with automatic cloud backup
+let sequences = strategy.insert_vectors_with_cloud_backup(
+    collection_id,
+    vectors,
+    Some("s3://my-bucket/wal/"),
+).await?;
+----
+
+**Manual Migration:**
+[source,rust]
+----
+// Migrate specific batch to cloud
+let cloud_url = strategy.migrate_batch_to_cloud(
+    &collection_id,
+    &batch,
+    "/local/path/wal_batch.bin",
+    "gcs://my-bucket/wal/",
+).await?;
+
+println!("Migrated batch to: {}", cloud_url);
+----
+
+**Cloud Health Check:**
+[source,rust]
+----
+// Verify cloud accessibility
+let is_healthy = strategy.check_cloud_health(
+    "adls://account.dfs.core.windows.net/container/wal/"
+).await?;
+
+if !is_healthy {
+    eprintln!("Cloud storage is not accessible");
+}
+----
+
+=== Performance Considerations
+
+**Optimized for Large-Scale Operations:**
+
+- **Batch Serialization**: Uses `bincode` for optimal Rust performance
+- **Atomic Operations**: Prevents partial writes during failures
+- **Concurrent Operations**: Multiple cloud writes can execute in parallel
+- **Verification**: Optional read-back verification for mission-critical data
+
+**Network Optimization:**
+
+- **Compression**: Automatic compression for network transfers
+- **Connection Pooling**: Reuses connections across operations
+- **Retry Logic**: Exponential backoff for transient failures
+- **Parallel Uploads**: Multiple batches can upload simultaneously
+
+=== Security Best Practices
+
+**Authentication:**
+- Use IAM roles and managed identities when possible
+- Rotate credentials regularly
+- Implement least-privilege access policies
+- Enable audit logging for all cloud operations
+
+**Data Protection:**
+- Enable encryption at rest in cloud storage
+- Use TLS for all network communications
+- Implement client-side encryption for sensitive data
+- Regular security audits and penetration testing
+
+**Access Control:**
+- Implement collection-level access controls
+- Use signed URLs for time-limited access
+- Enable versioning for audit trails
+- Regular access reviews and cleanup
+
 ---
 
 **Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>  
