@@ -7,16 +7,14 @@
 //! - Multi-precision quantization support (FP32, PQ4, PQ8, Binary)
 //! - Storage-aware search strategies
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use futures::future;
 use chrono;
 
-use crate::core::{CollectionId, SearchResult, VectorRecord};
+use crate::core::{CollectionId, SearchResult};
 use crate::storage::engines::viper::ViperEngine;
-use crate::storage::engines::viper::types::*;
 use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, EfficientClusteringModel};
 
 /// VIPER Storage-Aware Search Engine

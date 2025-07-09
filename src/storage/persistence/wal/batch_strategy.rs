@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
-use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
+use crate::compute::unified_distance::DistanceComputeProvider;
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;

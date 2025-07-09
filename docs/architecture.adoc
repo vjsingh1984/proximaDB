@@ -26,6 +26,8 @@ image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=1
 
 === Key Innovations
 
+image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100%]
+
 **Unified Memtable Architecture**:: 
 - Single interface with pluggable backends (SkipList, BTree, HashMap, DashMap)
 - Behavior wrappers eliminate 40% code duplication
@@ -57,6 +59,8 @@ image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=1
 
 === Storage Layer
 
+image::ProximaDB_Storage_Architecture.png[Storage Architecture,width=100%]
+
 **Write-Ahead Log (WAL)**::
 - Pluggable serialization strategies (Avro, Bincode)
 - Atomic operations with MVCC support
@@ -74,6 +78,8 @@ image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=1
 
 === Indexing System
 
+image::ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
+
 **AXIS Framework**::
 - Adaptive index selection based on data characteristics
 - HNSW integration for approximate nearest neighbor search
@@ -85,6 +91,8 @@ image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=1
 - Intelligent query planning
 
 == Data Flow
+
+image::ProximaDB_Data_Flow.png[Data Flow Architecture,width=100%]
 
 === Write Path
 

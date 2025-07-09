@@ -1,0 +1,32 @@
+graph TD
+    A[Search Request] --> B{Query Analysis}
+    
+    B --> C[Filter Selectivity<br/>Estimation]
+    B --> D[Vector Search<br/>Cost Model]
+    B --> E[Result Size<br/>Prediction]
+    
+    C --> F{Optimization<br/>Decision}
+    D --> F
+    E --> F
+    
+    F -->|Selective Filter| G[Filter First<br/>Then Search]
+    F -->|Non-Selective| H[Search First<br/>Then Filter]
+    F -->|Mixed| I[Hybrid<br/>Approach]
+    
+    G --> J[Apply Metadata<br/>Filters]
+    J --> K[Search Filtered<br/>Vectors]
+    
+    H --> L[Vector<br/>Search]
+    L --> M[Filter<br/>Results]
+    
+    I --> N[Partial<br/>Filtering]
+    N --> O[Bounded<br/>Search]
+    O --> P[Final<br/>Filtering]
+    
+    K --> Q[Return Results]
+    M --> Q
+    P --> Q
+    
+    style B fill:#ffcc99
+    style F fill:#99ccff
+    style Q fill:#99ff99

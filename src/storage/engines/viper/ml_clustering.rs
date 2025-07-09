@@ -4,7 +4,7 @@
 //! for optimal vector organization in VIPER storage, delivering 3-5x storage
 //! efficiency improvements through intelligent data organization.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};

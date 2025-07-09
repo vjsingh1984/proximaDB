@@ -49,8 +49,6 @@ pub use implementations::{
 // Re-export specialized wrappers (using proper OOP composition)
 pub use specialized::SpecializedMemtableFactory;
 
-use anyhow::Result;
-use std::sync::Arc;
 
 /// Available memtable implementation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

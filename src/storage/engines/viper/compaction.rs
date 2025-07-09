@@ -18,8 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::core::{CollectionId, VectorRecord};
-use super::types::*;
+use crate::core::CollectionId;
 use super::schema::SchemaManager;
 
 /// Compaction manager for VIPER storage engine
@@ -393,9 +392,8 @@ impl CompactionManager {
             return Err(anyhow::anyhow!("Cannot combine empty batches"));
         }
         
-        use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, 
-                         Int64Array, StringArray, TimestampMillisecondArray};
-        use arrow_schema::DataType;
+        use arrow_array::{Array, ArrayRef};
+        
         
         let mut combined_columns = Vec::new();
         
@@ -440,7 +438,7 @@ impl CompactionManager {
     fn create_null_array(&self, data_type: &arrow_schema::DataType, length: usize) -> Result<arrow_array::ArrayRef> {
         use arrow_array::{ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, 
                          Int64Array, StringArray, TimestampMillisecondArray};
-        use arrow_schema::{DataType, Field, TimeUnit};
+        use arrow_schema::{DataType, TimeUnit};
         use std::sync::Arc;
         
         let null_array: ArrayRef = match data_type {
@@ -493,8 +491,8 @@ impl CompactionManager {
             return Ok(arrays[0].clone());
         }
         
-        use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, 
-                         Int64Array, StringArray, TimestampMillisecondArray};
+        use arrow_array::{Array, 
+                         Int64Array, StringArray};
         use arrow_schema::DataType;
         use std::sync::Arc;
         

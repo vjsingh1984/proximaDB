@@ -49,10 +49,10 @@ _Enterprise-grade vector database engineered for AI workloads with unified memta
 
 Modern AI applications need vector databases that don't compromise on performance, scalability, or operational simplicity. ProximaDB delivers:
 
-**⚡ 6.10x Performance Breakthrough**:: Storage-aware search adapts to data location (317ms → 52ms latency)
-**🧠 Unified Architecture**:: Single memtable system eliminates 40% code duplication  
-**☁️ Multi-Cloud Freedom**:: URL-based abstraction enables zero-downtime cloud migration
-**🤖 ML-Driven Storage**:: K-means++ clustering provides 3-5x storage efficiency
+**⚡ 6.10x Performance Breakthrough**:: Storage-aware search adapts to data location (317ms → 52ms latency) → link:docs/architecture.adoc#performance-characteristics[See benchmarks]
+**🧠 Unified Architecture**:: Single memtable system eliminates 40% code duplication → link:docs/technical_reference.adoc#unified-memtable-system[Learn more]  
+**☁️ Multi-Cloud Freedom**:: URL-based abstraction enables zero-downtime cloud migration → link:docs/architecture.adoc#multi-cloud-deployment[Details]
+**🤖 ML-Driven Storage**:: K-means++ clustering provides 3-5x storage efficiency → link:docs/technical_reference.adoc#ml-clustering-implementation[How it works]
 
 == 🚀 What is ProximaDB?
 
@@ -60,9 +60,9 @@ Production-ready, cloud-native vector database built in Rust with three core inn
 
 image::core-classes.png[Core Classes Architecture,700,align=center]
 
-**Unified Memtable System**:: Single interface with pluggable backends and behavior wrappers
-**Storage-Aware Search**:: Automatic engine selection with three-tier aggregation  
-**Dual Storage Strategy**:: VIPER (Parquet+ML) and LSM (SSTable+bloom filters)
+**Unified Memtable System**:: Single interface with pluggable backends and behavior wrappers → link:docs/technical_reference.adoc#unified-memtable-system[Architecture details]
+**Storage-Aware Search**:: Automatic engine selection with three-tier aggregation → link:docs/architecture.adoc#polymorphic-search[Implementation]  
+**Dual Storage Strategy**:: VIPER (Parquet+ML) and LSM (SSTable+bloom filters) → link:docs/technical_reference.adoc#storage-engines[Engine comparison]
 
 == 🛠️ Getting Started
 
@@ -78,6 +78,8 @@ cd proximadb/demo && docker compose up -d
 cargo run --bin proximadb-server
 ----
 
+→ link:docs/getting_started.adoc[Full installation guide] | link:docs/user_guide.adoc#docker-deployment[Docker configuration]
+
 === Python Example
 
 [source,python]
@@ -90,12 +92,14 @@ client.insert_vectors("docs", embeddings, metadata=[{"type": "doc"}])
 results = client.search("docs", query_vector, k=10)
 ----
 
+→ link:docs/developer_guide.adoc#python-sdk[Python SDK reference] | link:docs/user_guide.adoc#ai-integration-examples[More examples]
+
 == 🏆 Key Benefits
 
-**Performance**: 6.10x faster search (317ms → 52ms) with 100% accuracy  
-**Storage**: 3-5x compression via ML clustering (>1M vectors)  
-**Deployment**: Multi-cloud freedom with URL-based configuration  
-**Cost**: Zero licensing fees with enterprise-grade features
+**Performance**: 6.10x faster search (317ms → 52ms) with 100% accuracy → link:docs/architecture.adoc#performance-characteristics[Benchmarks]  
+**Storage**: 3-5x compression via ML clustering (>1M vectors) → link:docs/quantization_support.adoc[Quantization guide]  
+**Deployment**: Multi-cloud freedom with URL-based configuration → link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Configuration guide]  
+**Cost**: Zero licensing fees with enterprise-grade features → link:docs/requirements.adoc#licensing[License details]
 
 == 📚 Documentation Guide
 
@@ -199,6 +203,8 @@ cd proximadb && cargo build --release
 # Run test suite
 make test
 ----
+
+→ link:docs/developer_guide.adoc#development-setup[Development environment] | link:docs/developer_guide.adoc#testing-guidelines[Testing guide]
 
 == 📄 License & Contact
 

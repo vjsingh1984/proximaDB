@@ -24,14 +24,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::core::CollectionId;
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::{
     config::{MemTableType, WalStrategyType},
-    WalConfig, WalOperation,
+    WalConfig,
     // Using modern batch architecture - no more WalEntry
 };
 

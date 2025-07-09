@@ -66,7 +66,7 @@ impl SchemaManager {
         collection_id: &CollectionId, 
         collection_config: &Option<crate::core::Collection>
     ) -> Result<Arc<arrow_schema::Schema>> {
-        use arrow_schema::{DataType, Field, Schema, TimeUnit};
+        use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc;
         
         info!("🔧 Generating dynamic Parquet schema for collection {} with pre-fetched config", collection_id);

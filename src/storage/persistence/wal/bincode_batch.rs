@@ -14,7 +14,7 @@ use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
-use crate::storage::atomicity::{AtomicityManager, TransactionId};
+use crate::storage::atomicity::AtomicityManager;
 use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::WalFlushCoordinator;

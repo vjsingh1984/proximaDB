@@ -24,8 +24,8 @@ use super::compaction::CompactionManager;
 use super::flush::FlushManager;
 use super::ml_clustering::MLClusteringEngine;
 use super::utilities::ViperUtilities;
-use super::search::{ViperSearchEngine, ViperSearchConfig, SearchHints, ClusterId};
-use super::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
+use super::search::{ViperSearchEngine, ViperSearchConfig};
+use super::types::CollectionMetadata;
 
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
 #[derive(Debug)]

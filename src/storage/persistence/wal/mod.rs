@@ -13,18 +13,14 @@
 //! - Configurable compression and smart defaults
 //! - Batch operations for optimal performance
 
-use anyhow::{Context, Result};
-use async_trait::async_trait;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::services::collection_service::CollectionService;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{UnifiedStorageEngine, FlushResult};
 
 // Sub-modules

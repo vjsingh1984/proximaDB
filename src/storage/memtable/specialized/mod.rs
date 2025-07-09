@@ -33,7 +33,6 @@ pub type FastLookupMap<K, V> =
     crate::storage::memtable::implementations::hashmap::HashMapMemtable<K, V>;
 
 use crate::storage::memtable::core::MemtableConfig;
-use anyhow::Result;
 
 /// Factory methods that use actual data structure names
 pub struct SpecializedMemtableFactory;

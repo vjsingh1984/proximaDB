@@ -1,0 +1,38 @@
+graph LR
+    subgraph "Flush Triggers"
+        A[Size-Based<br/>75K entries]
+        B[Memory-Based<br/>1GB per collection]
+        C[Time-Based<br/>1 hour max age]
+        D[Manual<br/>API call]
+    end
+    
+    subgraph "Trigger Mechanism"
+        E[Immediate<br/>Synchronous check]
+        F[Background<br/>5min intervals]
+        G[On-Demand<br/>User initiated]
+    end
+    
+    subgraph "Flush Process"
+        H[Check Triggers]
+        I[Initiate Flush]
+        J[Atomic Operation]
+        K[Compaction Check]
+    end
+    
+    A --> E
+    B --> E
+    C --> F
+    D --> G
+    
+    E --> H
+    F --> H
+    G --> H
+    
+    H --> I
+    I --> J
+    J --> K
+    
+    style A fill:#ff9999
+    style B fill:#ff9999
+    style C fill:#99ccff
+    style D fill:#99ff99

@@ -10,12 +10,10 @@
 //! have been removed in favor of batch operations for better performance.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::VectorRecord;
 
 /// ULTRA-FRUGAL vector batch schema - optimized for minimal memory/disk footprint
 /// Uses smaller data types and optional fields to reduce serialization overhead

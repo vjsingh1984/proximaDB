@@ -2130,7 +2130,7 @@ impl ParquetFlusher {
         quantized_vectors: &[super::quantization::QuantizedVector],
     ) -> Result<RecordBatch> {
         use super::quantization::{QuantizationLevel, QuantizedData};
-        use arrow_array::{BinaryArray, Int8Array, UInt8Array};
+        use arrow_array::{BinaryArray, UInt8Array};
         use arrow_schema::{DataType, Field};
 
         if quantized_vectors.is_empty() {

@@ -959,9 +959,8 @@ impl BackgroundMaintenanceManager {
             return Err(anyhow::anyhow!("Cannot combine empty batches"));
         }
         
-        use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, 
-                         Int64Array, StringArray, TimestampMillisecondArray};
-        use arrow_schema::DataType;
+        use arrow_array::{Array, ArrayRef};
+        
         
         let mut combined_columns = Vec::new();
         
@@ -1035,8 +1034,8 @@ impl BackgroundMaintenanceManager {
             return Ok(arrays[0].clone());
         }
         
-        use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, 
-                         Int64Array, StringArray, TimestampMillisecondArray};
+        use arrow_array::{Array, 
+                         Int64Array, StringArray};
         use arrow_schema::DataType;
         use std::sync::Arc;
         

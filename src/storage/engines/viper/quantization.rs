@@ -4,10 +4,9 @@
 //! significant storage reduction while maintaining search quality. Supports
 //! Product Quantization (PQ4/PQ8), Binary Quantization, and INT8 quantization.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;

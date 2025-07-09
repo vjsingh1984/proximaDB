@@ -17,7 +17,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use rand::Rng;
 
-use crate::core::CollectionId;
 
 /// Minimum vector count to trigger ML clustering model training
 pub const MIN_VECTORS_FOR_CLUSTERING: usize = 1_000_000;

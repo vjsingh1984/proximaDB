@@ -94,7 +94,7 @@ where
     }
 
     /// Estimate memory size of a key-value pair
-    fn estimate_entry_size(key: &K, value: &V) -> usize {
+    fn estimate_entry_size(_key: &K, value: &V) -> usize {
         // B+Tree overhead: ~16 bytes per entry in leaf nodes + internal node overhead
         // More efficient than BTree since data is only in leaves
         std::mem::size_of::<K>() + std::mem::size_of::<V>() + 16
