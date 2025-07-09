@@ -69,7 +69,7 @@ graph TB
 
 == Core Classes Diagram (PlantUML)
 
-image::core-classes-simple.png[Core Classes,800,align=center]
+image::core-classes.png[Core Classes,800,align=center]
 
 === Core Classes Implementation
 

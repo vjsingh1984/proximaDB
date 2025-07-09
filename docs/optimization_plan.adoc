@@ -9,7 +9,7 @@
 :rouge-style: github
 :icons: font
 :experimental:
-:imagesdir: uml/images
+:imagesdir: diagrams/images
 :version: 1.0.0
 :revdate: {docdate}
 :author: ProximaDB Team
@@ -61,7 +61,7 @@ endif::[]
 
 === Strengths Identified
 
-image::ProximaDB_System_Overview.png[Current System Overview,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Current System Overview,width=100%]
 
 ==== 1. Unified Memtable Architecture ✅
 * **Innovation**: Single `MemtableManager` interface eliminates code duplication
@@ -135,7 +135,7 @@ impl DistributedCoordinator {
 
 ==== 1.2 Distributed Query Coordination
 
-image::ProximaDB_Vector_Search_Sequence.png[Current Search Flow,width=100%]
+image::ProximaDB_Data_Flow.png[Current Search Flow,width=100%]
 
 Enhanced flow for distributed search:
 

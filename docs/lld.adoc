@@ -68,7 +68,7 @@ endif::[]
 
 ProximaDB implements a comprehensive client-server architecture with protocol abstraction and thin client wrappers:
 
-image::ProximaDB_Client_Server_Architecture.png[Client-Server Architecture,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Client-Server Architecture,width=100%]
 
 The system follows a 4-layer architecture:
 1. **Client SDK Layer**: Unified Python client with protocol abstraction
@@ -78,7 +78,7 @@ The system follows a 4-layer architecture:
 
 === 1.2 System Component Architecture
 
-image::ProximaDB_Component_Diagram.png[Component Architecture,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Component Architecture,width=100%]
 
 Key components and their implementation status:
 - **Client Components**: ✅ Fully implemented with protocol auto-selection
@@ -88,7 +88,7 @@ Key components and their implementation status:
 
 === 1.3 Server Internal Architecture
 
-image::ProximaDB_Server_Internal_Architecture.png[Server Internal Architecture,width=100%]
+image::ProximaDB_API_Architecture.png[Server Internal Architecture,width=100%]
 
 The server uses a sophisticated multi-layer design:
 - **Protocol Layer**: Handles REST and gRPC with unified business logic
@@ -100,7 +100,7 @@ The server uses a sophisticated multi-layer design:
 
 The comprehensive analysis reveals the current implementation status across all system layers:
 
-image::Implementation_Status_Matrix.png[Implementation Status Matrix,width=100%]
+image::Production_Readiness_Status.png[Implementation Status Matrix,width=100%]
 
 **Key Findings:**
 - ✅ **Production Ready (9 methods)**: All collection operations, vector insert, basic search, health monitoring
@@ -109,7 +109,7 @@ image::Implementation_Status_Matrix.png[Implementation Status Matrix,width=100%]
 
 === 1.5 Use Case Coverage
 
-image::ProximaDB_Use_Case_Diagram.png[Use Case Diagram,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Use Case Diagram,width=100%]
 
 The system supports multiple user personas:
 - **Application Developers**: Basic collection and vector operations
@@ -122,7 +122,7 @@ The system supports multiple user personas:
 
 === 2.1 End-to-End Data Flow
 
-image::ProximaDB_Data_Flow_Diagram.png[Data Flow Diagram,width=100%]
+image::ProximaDB_Data_Flow.png[Data Flow Diagram,width=100%]
 
 The data flow demonstrates:
 - **Client Input Processing**: Validation and normalization
@@ -133,7 +133,7 @@ The data flow demonstrates:
 
 === 2.2 Protocol Flow Analysis
 
-image::Protocol_Flow_Diagram.png[Protocol Flow Diagram,width=100%]
+image::ProximaDB_API_Architecture.png[Protocol Flow Diagram,width=100%]
 
 **Implementation Coverage:**
 - ✅ **Collection Operations**: Complete end-to-end flow
@@ -147,7 +147,7 @@ image::Protocol_Flow_Diagram.png[Protocol Flow Diagram,width=100%]
 
 ProximaDB implements a comprehensive WAL system using the Strategy Pattern for flexible durability and performance configurations:
 
-image::diagrams/plantuml/WAL_Flush_Coordination_LLD.png[WAL LLD,width=100%]
+image::WAL_Flush_Coordination_LLD.png[WAL LLD,width=100%]
 
 **Core Components:**
 
@@ -182,7 +182,7 @@ pub struct FlushCycle {
 
 The three-phase atomic flush process prevents data loss and gaps:
 
-image::diagrams/plantuml/WAL_Flush_Sequence.png[Flush Sequence,width=100%]
+image::WAL_Flush_Sequence.png[Flush Sequence,width=100%]
 
 .Phase 1: Atomic Retrieval
 ```rust
@@ -231,7 +231,7 @@ ProximaDB implements a unified memtable architecture with storage-specific behav
 
 ===== LSM Storage Memtable Architecture
 
-image::diagrams/plantuml/LSM_Memtable_Architecture.png[LSM Memtable Architecture,width=100%]
+image::Unified_Memtable_Architecture.png[LSM Memtable Architecture,width=100%]
 
 LSM storage uses SkipList memtables with LsmBehaviorWrapper for concurrent writes and ordered operations:
 
@@ -242,7 +242,7 @@ LSM storage uses SkipList memtables with LsmBehaviorWrapper for concurrent write
 
 ===== VIPER Storage Integration Pattern
 
-image::diagrams/plantuml/VIPER_Memtable_Architecture.png[VIPER Storage Integration,width=100%]
+image::ProximaDB_Storage_Architecture.png[VIPER Storage Integration,width=100%]
 
 VIPER storage does NOT have its own memtable. Instead, it uses WAL delegation:
 
@@ -358,7 +358,7 @@ impl HybridSearchCoordinator {
 
 === 2.4 Vector Operations Sequence
 
-image::Vector_Operations_Sequence.png[Vector Operations Sequence,width=100%]
+image::ProximaDB_Data_Flow.png[Vector Operations Sequence,width=100%]
 
 **Key Sequence Patterns:**
 1. **Insert Operations**: Client → Protocol → Service → WAL → Storage
@@ -369,7 +369,7 @@ image::Vector_Operations_Sequence.png[Vector Operations Sequence,width=100%]
 
 === 3.1 State Transition Analysis
 
-image::ProximaDB_State_Diagram.png[State Diagram,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[State Diagram,width=100%]
 
 **State Categories:**
 - ✅ **Collection States**: Fully implemented lifecycle management
@@ -379,7 +379,7 @@ image::ProximaDB_State_Diagram.png[State Diagram,width=100%]
 
 === 3.2 Vector Lifecycle Management
 
-image::Vector_Lifecycle_Activity_Diagram.png[Vector Lifecycle Activity,width=100%]
+image::ProximaDB_Data_Flow.png[Vector Lifecycle Activity,width=100%]
 
 **Lifecycle Phases:**
 1. **Collection Creation**: Full validation and persistence
@@ -391,7 +391,7 @@ image::Vector_Lifecycle_Activity_Diagram.png[Vector Lifecycle Activity,width=100
 
 === 4.1 Deployment Architecture
 
-image::ProximaDB_Deployment_Diagram.png[Deployment Architecture,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[Deployment Architecture,width=100%]
 
 **Deployment Options:**
 - **Single Node**: Local development and small deployments
@@ -1066,7 +1066,7 @@ pub struct CompactionConfig {
 
 ==== MMAP Storage Layer
 
-image::Storage Architecture.png[Storage Architecture,width=100%]
+image::ProximaDB_Storage_Architecture.png[Storage Architecture,width=100%]
 
 [source,rust]
 ----
@@ -1324,7 +1324,7 @@ impl SSTableReader {
 
 === 2.1 HNSW Index Architecture
 
-image::AXIS Indexing System.png[AXIS Indexing System,width=100%]
+image::ProximaDB_Complete_System_Architecture.png[AXIS Indexing System,width=100%]
 
 ==== Graph Structure and Navigation
 

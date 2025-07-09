@@ -125,7 +125,7 @@ ProximaDB has achieved significant milestones in production readiness with compr
 
 ==== 🚧 Search System Status
 
-image::Search_Result_Debugging.png[Search Debugging,width=100%]
+image::ProximaDB_API_Architecture.png[API Architecture,width=100%]
 
 Current search system status (requires immediate attention):
 
@@ -174,7 +174,7 @@ image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100
 
 ===== Memtable Component Overview
 
-image::diagrams/plantuml/Memtable_Overview.png[Memtable Overview,width=100%]
+image::Unified_Memtable_Architecture.png[Memtable Overview,width=100%]
 
 **Components WITH Memtables**:
 - **WAL System**: Uses WalBehaviorWrapper with BTree (Bincode) or HashMap (Avro)
@@ -195,7 +195,7 @@ image::Storage_Pairing_Strategy.png[Storage Pairing Strategy,width=100%]
 
 ==== Flush Coordination Flow
 
-image::diagrams/plantuml/WAL_Flush_Sequence.png[WAL Flush Sequence,width=100%]
+image::WAL_Flush_Sequence.png[WAL Flush Sequence,width=100%]
 
 **Three-Phase Atomic Flush Process**:
 
@@ -225,7 +225,7 @@ ProximaDB implements a sophisticated **storage-aware search system** that provid
 
 ==== Polymorphic Search Design
 
-image::diagrams/plantuml/Storage_Aware_Search_Architecture.png[Storage-Aware Search,width=100%]
+image::ProximaDB_Storage_Architecture.png[Storage-Aware Search,width=100%]
 
 **Core Components**:
 
@@ -394,7 +394,7 @@ ProximaDB employs a **multi-server architecture** that separates protocol handli
 
 **Primary Responsibility**: Route search requests to storage-optimized search engines based on collection storage type
 
-image::images/search-architecture-simple.png[Storage-Aware Search Architecture,width=80%,align=center]
+image::ProximaDB_Storage_Architecture.png[Storage-Aware Search Architecture,width=80%,align=center]
 
 **Architecture Design**:
 - **Polymorphic Dispatch**: Automatic routing based on collection storage engine type
@@ -777,7 +777,7 @@ impl QueryPlanner {
 
 === URL-Based Storage Policies
 
-image::images/storage-policy.png[Storage Policy Architecture, 800, align="center"]
+image::ProximaDB_Storage_Architecture.png[Storage Policy Architecture, 800, align="center"]
 
 ProximaDB implements a **flexible storage policy system** with direct filesystem URL configuration optimized for different access patterns and cost requirements:
 
@@ -902,11 +902,11 @@ pub enum OperationType {
 
 === VIPER Sorted Rewrite Optimization
 
-image::viper-sorted-rewrite-pipeline.png[VIPER Sorted Rewrite Pipeline,width=100%]
+image::ProximaDB_Data_Flow.png[VIPER Sorted Rewrite Pipeline,width=100%]
 
 ProximaDB implements advanced **sorted rewrite optimization** in the VIPER storage engine for superior compression and query performance. This system provides intelligent data layout optimization during compaction operations.
 
-image::viper-sorted-rewrite-architecture.png[VIPER Sorted Rewrite Architecture,width=100%]
+image::ProximaDB_Storage_Architecture.png[VIPER Sorted Rewrite Architecture,width=100%]
 
 ==== Architecture Overview
 
@@ -1332,7 +1332,7 @@ ProximaDB implements a sophisticated hybrid indexing system that seamlessly hand
 
 ==== AXIS Architecture Overview
 
-image::images/axis-architecture.png[AXIS Architecture, 800, align="center"]
+image::ProximaDB_Complete_System_Architecture.png[AXIS Architecture, 800, align="center"]
 
 The AXIS (Adaptive eXtensible Indexing System) consists of five core components with adaptive intelligence:
 
@@ -1757,7 +1757,7 @@ ProximaDB implements a sophisticated per-collection coordinator pattern that ena
 
 ==== Architecture Overview
 
-image::diagrams/plantuml/per-collection-coordinator-scaling.png[Per-Collection Coordinator Architecture, 900, align="center"]
+image::ProximaDB_Complete_System_Architecture.png[Per-Collection Coordinator Architecture, 900, align="center"]
 
 **Key Components:**
 
@@ -1776,7 +1776,7 @@ image::diagrams/plantuml/per-collection-coordinator-scaling.png[Per-Collection C
 
 ==== Coordinator Operation Flow
 
-image::diagrams/plantuml/coordinator-operation-flow.png[Coordinator Operation Flow, 900, align="center"]
+image::ProximaDB_Data_Flow.png[Coordinator Operation Flow, 900, align="center"]
 
 **Operation Types:**
 
@@ -1802,7 +1802,7 @@ image::diagrams/plantuml/coordinator-operation-flow.png[Coordinator Operation Fl
 
 The per-collection coordinator design enables seamless transition to distributed mode:
 
-image::diagrams/plantuml/distributed-scaling-architecture.png[Distributed Scaling Architecture, 900, align="center"]
+image::ProximaDB_Complete_System_Architecture.png[Distributed Scaling Architecture, 900, align="center"]
 
 **Distribution Strategy:**
 
@@ -1848,7 +1848,7 @@ image::diagrams/plantuml/distributed-scaling-architecture.png[Distributed Scalin
 
 === Multi-Tenant Architecture
 
-image::images/tenant-isolation.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
+image::ProximaDB_Complete_System_Architecture.png[Tenant Routing & Multi-Tenancy, 800, align="center"]
 
 ==== Tenant Identification
 - **HTTP Headers**: `x-tenant-id`, `x-organization-id`
@@ -1916,7 +1916,7 @@ image::images/tenant-isolation.png[Tenant Routing & Multi-Tenancy, 800, align="c
 
 === Homelab Development
 
-image::images/deployment-models.png[Deployment Models, 800, align="center"]
+image::ProximaDB_Complete_System_Architecture.png[Deployment Models, 800, align="center"]
 
 **Target**: Local development and proof-of-concept
 

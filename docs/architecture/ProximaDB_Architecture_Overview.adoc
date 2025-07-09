@@ -73,7 +73,7 @@ The Assignment Service provides intelligent collection-to-disk mapping:
 
 === WAL (Write-Ahead Log) Layer
 
-image::WAL Strategy Pattern.png[WAL Strategy Pattern, align="center"]
+image::WAL_Strategy_Pattern.png[WAL Strategy Pattern, align="center"]
 
 ==== WAL Strategy Pattern
 The WAL layer implements a strategy pattern for different serialization formats:
