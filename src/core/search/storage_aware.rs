@@ -264,7 +264,7 @@ impl SearchEngineFactory {
         query_vector: &[f32],
         k: usize,
         filters: Option<&MetadataFilter>,
-        viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::core::ViperCoreEngine>>,
+        viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::ViperEngine>>,
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Vec<SearchResult>> {
         let mut deduplicator = if let Some(filters) = filters {
@@ -578,7 +578,7 @@ impl SearchEngineFactory {
     pub async fn create_for_collection(
         collection_record: &crate::storage::metadata::backends::filestore_backend::CollectionRecord,
         // Dependencies will be injected here based on storage type
-        viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::core::ViperCoreEngine>>,
+        viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::ViperEngine>>,
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Box<dyn StorageSearchEngine>> {
         match collection_record.get_storage_engine_enum() {

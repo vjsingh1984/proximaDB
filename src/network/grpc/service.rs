@@ -67,7 +67,6 @@ impl ProximaDbGrpcService {
             crate::services::vector_service::VectorService::with_existing_wal(
                 storage,
                 wal_manager,
-                collection_service.clone(),
                 avro_config,
             )
             .await

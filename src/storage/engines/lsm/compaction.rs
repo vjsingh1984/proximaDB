@@ -19,7 +19,7 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use super::LsmStorageEntry;
+use super::LsmRecord;
 use crate::core::{CollectionId, LsmConfig, VectorId};
 use crate::storage::Result;
 use chrono::Utc;
@@ -59,6 +59,8 @@ pub struct CompactionStats {
     pub files_merged: u64,
     pub avg_compaction_time_ms: u64,
     pub last_compaction_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub expired_records_deleted: u64,
+    pub tombstones_removed: u64,
 }
 
 /// Manages background compaction of SST files
@@ -343,7 +345,7 @@ impl CompactionManager {
         _config: &LsmConfig,
     ) -> Result<CompactionStats> {
         let start_time = std::time::Instant::now();
-        let mut merged_data = BTreeMap::<VectorId, LsmStorageEntry>::new();
+        let mut merged_data = BTreeMap::<VectorId, LsmRecord>::new();
         let mut bytes_read = 0u64;
 
         debug!(
@@ -382,25 +384,27 @@ impl CompactionManager {
 
                 let entry_data = &file_data[offset..offset + entry_len];
 
-                match bincode::deserialize::<(VectorId, LsmStorageEntry)>(entry_data) {
-                    Ok((id, entry)) => {
-                        // Handle merge logic for LSM entries
-                        match (&entry, merged_data.get(&id)) {
-                            // If we have a newer entry, use it
-                            (new_entry, Some(existing_entry)) => {
-                                if should_replace_entry(existing_entry, new_entry) {
-                                    merged_data.insert(id, entry);
+                match bincode::deserialize::<LsmRecord>(entry_data) {
+                    Ok(record) => {
+                        let id = VectorId::from(record.id.clone());
+                        
+                        // Handle merge logic for LSM records
+                        match merged_data.get(&id) {
+                            // If we have an existing record, check if we should replace it
+                            Some(existing_record) => {
+                                if should_replace_record(existing_record, &record) {
+                                    merged_data.insert(id, record);
                                 }
                             }
-                            // If no existing entry, insert the new one
-                            (_, None) => {
-                                merged_data.insert(id, entry);
+                            // If no existing record, insert the new one
+                            None => {
+                                merged_data.insert(id, record);
                             }
                         }
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to deserialize entry in {}: {}",
+                            "Failed to deserialize record in {}: {}",
                             input_file.display(),
                             e
                         );
@@ -413,26 +417,57 @@ impl CompactionManager {
 
         debug!("Merged {} unique records", merged_data.len());
 
-        // Write merged data to output file, filtering out old tombstones
+        // Write merged data to output file, filtering out old tombstones and expired records
         let mut output_data = Vec::new();
-        for (id, lsm_entry) in merged_data.iter() {
-            // Skip old tombstones (they can be garbage collected during compaction)
-            // Keep only records and recent tombstones (within a certain time window)
-            let should_keep = match lsm_entry {
-                LsmStorageEntry::Record(_) => true,
-                LsmStorageEntry::Tombstone { timestamp, .. } => {
-                    // Keep tombstones that are less than 1 hour old
-                    let age = chrono::Utc::now().signed_duration_since(*timestamp);
-                    age.num_hours() < 1
+        let current_time = chrono::Utc::now().timestamp_millis();
+        let mut expired_records_count = 0;
+        let mut tombstones_removed_count = 0;
+        
+        for (id, lsm_record) in merged_data.iter() {
+            // Check if record is expired (TTL-based expiry)
+            let is_expired = if let Some(expires_at) = lsm_record.expires_at {
+                expires_at < current_time
+            } else {
+                false
+            };
+            
+            // Skip expired records completely - they are physically deleted
+            if is_expired {
+                expired_records_count += 1;
+                debug!("⏰ LSM COMPACTION: Physically deleting expired record {} (expired at {})", 
+                      id, lsm_record.expires_at.unwrap());
+                continue;
+            }
+            
+            // Handle tombstone cleanup
+            let should_keep = if lsm_record.is_tombstone {
+                // Keep tombstones that are less than 1 hour old
+                let age = current_time - lsm_record.timestamp;
+                let keep_tombstone = age < (60 * 60 * 1000); // 1 hour in milliseconds
+                
+                if !keep_tombstone {
+                    tombstones_removed_count += 1;
+                    debug!("🗑️ LSM COMPACTION: Removing old tombstone {} (age: {}ms)", 
+                          id, age);
                 }
+                
+                keep_tombstone
+            } else {
+                true // Keep all active, non-expired records
             };
 
             if should_keep {
-                let entry = bincode::serialize(&(id.clone(), lsm_entry))
+                let entry = bincode::serialize(lsm_record)
                     .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
                 output_data.extend_from_slice(&(entry.len() as u32).to_le_bytes());
                 output_data.extend_from_slice(&entry);
             }
+        }
+        
+        // Log cleanup statistics
+        if expired_records_count > 0 || tombstones_removed_count > 0 {
+            info!("🧹 LSM COMPACTION CLEANUP: {} expired records deleted, {} old tombstones removed", 
+                  expired_records_count, tombstones_removed_count);
         }
 
         // Ensure output directory exists
@@ -532,8 +567,8 @@ impl CompactionManager {
         }
 
         debug!(
-            "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged",
-            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len()
+            "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged, {} expired deleted, {} tombstones removed",
+            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len(), expired_records_count, tombstones_removed_count
         );
 
         Ok(CompactionStats {
@@ -543,6 +578,8 @@ impl CompactionManager {
             files_merged: task.input_files.len() as u64,
             avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
             last_compaction_time: Some(Utc::now()),
+            expired_records_deleted: expired_records_count,
+            tombstones_removed: tombstones_removed_count,
         })
     }
 
@@ -587,32 +624,14 @@ impl CompactionManager {
     }
 }
 
-/// Determine if a new entry should replace an existing entry during compaction
-fn should_replace_entry(existing: &LsmStorageEntry, new: &LsmStorageEntry) -> bool {
-    match (existing, new) {
-        // Always prefer newer timestamps
-        (LsmStorageEntry::Record(existing_record), LsmStorageEntry::Record(new_record)) => {
-            new_record.timestamp > existing_record.timestamp
-        }
-        (LsmStorageEntry::Record(record), LsmStorageEntry::Tombstone { timestamp, .. }) => {
-            timestamp.timestamp_millis() > record.timestamp
-        }
-        (
-            LsmStorageEntry::Tombstone {
-                timestamp: existing_ts,
-                ..
-            },
-            LsmStorageEntry::Record(record),
-        ) => record.timestamp > existing_ts.timestamp_millis(),
-        (
-            LsmStorageEntry::Tombstone {
-                timestamp: existing_ts,
-                ..
-            },
-            LsmStorageEntry::Tombstone {
-                timestamp: new_ts, ..
-            },
-        ) => *new_ts > *existing_ts,
+/// Determine if a new record should replace an existing record during compaction
+fn should_replace_record(existing: &LsmRecord, new: &LsmRecord) -> bool {
+    // LSM compaction rule: newer records (higher sequence number) replace older ones
+    // For records with same sequence number, prefer by timestamp
+    if new.sequence_number != existing.sequence_number {
+        new.sequence_number > existing.sequence_number
+    } else {
+        new.timestamp > existing.timestamp
     }
 }
 

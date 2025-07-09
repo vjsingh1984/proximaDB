@@ -25,8 +25,9 @@ wal_urls = [
 ]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 1048576  # 1MB flush trigger - ensures flush for all test sizes (1K=3MB, 5K=15MB, 25K=76MB)
-global_flush_threshold = 2097152  # 2MB global trigger for background flush coordination (2x individual threshold)
+memory_flush_size_bytes = 10485760  # 10MB flush trigger - recommended for collection-level flush
+global_flush_threshold = 4294967296  # 4GB global trigger - recommended for global memory threshold
+global_shrink_factor = 0.4  # 40% shrink factor - recommended for global threshold management
 
 # WAL durability and performance configuration
 strategy_type = "Bincode"  # Options: "Avro" (schema evolution), "Bincode" (performance)

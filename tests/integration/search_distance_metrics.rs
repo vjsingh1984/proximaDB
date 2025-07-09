@@ -14,7 +14,7 @@ use proximadb::core::{CollectionId, VectorId, VectorRecord};
 use proximadb::compute::distance::DistanceMetric;
 use proximadb::services::vector_service::VectorService;
 use proximadb::storage::memtable::core::MemtableManager;
-use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory};
+use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalBatchFactory, WalStrategyType};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 /// Integration test fixture for search testing
@@ -38,8 +38,11 @@ impl SearchIntegrationTest {
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
         
         // Create WAL manager
-        let wal_strategy = WalFactory::create_from_config(&wal_config, filesystem).await?;
-        let wal_manager = Arc::new(WalManager::new(wal_strategy, wal_config).await?);
+        let wal_manager = Arc::new(WalManager::create_with_batch_factory(
+            WalStrategyType::Avro,
+            wal_config,
+            filesystem
+        ).await?);
         
         // Create memtable manager
         let memtable_manager = Arc::new(MemtableManager::new_unified_for_wal());

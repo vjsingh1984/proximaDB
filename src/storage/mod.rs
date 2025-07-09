@@ -45,7 +45,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::{lsm::LsmTree, viper::ViperCoreEngine};
+pub use engines::{lsm::LsmTree, viper::ViperEngine};
 
 // Persistence exports
 pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};

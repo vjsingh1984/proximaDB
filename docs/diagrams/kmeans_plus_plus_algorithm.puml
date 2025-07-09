@@ -1,0 +1,83 @@
+@startuml KMeans_Plus_Plus_Algorithm
+!theme plain
+title K-means++ Algorithm Implementation
+subtitle Optimal Centroid Initialization for Vector Clustering
+
+start
+
+:Load vector collection\nfrom storage;
+note right: Only for collections\nwith >1M vectors
+
+:Initialize K-means++ parameters\nk = optimal_cluster_count\nmax_iterations = 300\nconvergence_threshold = 1e-4;
+
+partition "**Phase 1: K-means++ Initialization**" {
+    :Choose first centroid randomly\nfrom vector collection;
+    
+    :Initialize distance array\nfor all vectors;
+    
+    repeat :Calculate distances from each vector\nto nearest existing centroid;
+        :Compute weighted probability\nbased on squared distances;
+        :Select next centroid using\nweighted random selection;
+        :Add new centroid to list;
+    repeat while (centroids.len() < k)
+}
+
+partition "**Phase 2: Iterative Refinement**" {
+    :iteration = 0\nconverged = false;
+    
+    repeat
+        :Assign each vector to\nnearest centroid cluster;
+        note right: Uses SIMD-optimized\ndistance computation
+        
+        :Calculate new centroids as\nmean of assigned vectors;
+        
+        :Compute centroid movement\n(convergence check);
+        
+        :Update model statistics\n(inertia, silhouette score);
+        
+        :iteration += 1;
+        
+        if (centroid_movement < threshold\nOR iteration >= max_iterations) then (yes)
+            :converged = true;
+        else (no)
+            :Continue iteration;
+        endif
+        
+    repeat while (not converged)
+}
+
+partition "**Phase 3: Model Persistence**" {
+    :Create ClusteringModel with\nfinal centroids and assignments;
+    
+    :Calculate model statistics\n- vector_count\n- cluster_count\n- training_duration\n- inertia\n- silhouette_score;
+    
+    :Save model to __models/{collection_id}/\n- model.json (centroids + assignments)\n- stats.json (training metadata);
+    
+    :Update last_training_counts\nfor retraining threshold;
+}
+
+partition "**Phase 4: Search Integration**" {
+    :Register model with\nViperSearchEngine;
+    
+    :Enable cluster_optimized_search\nfor this collection;
+    
+    :Update search strategy\nselection logic;
+}
+
+stop
+
+note bottom
+    **Performance Characteristics:**
+    - Initialization: O(n * k * d) where n=vectors, k=clusters, d=dimensions
+    - Iteration: O(n * k * d * iterations) typically 10-20 iterations
+    - Memory: O(n * k + k * d) for assignments and centroids
+    - Parallel processing: Each iteration can be parallelized
+    - SIMD optimization: Distance calculations use AVX-512 when available
+    
+    **Retraining Trigger:**
+    - 20% growth in vector count since last training
+    - Coordinated with flush/compaction cycles
+    - Background training to avoid search disruption
+end note
+
+@enduml

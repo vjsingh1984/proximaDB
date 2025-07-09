@@ -17,6 +17,21 @@ mmap_enabled = true
 cache_size_mb = 1024
 bloom_filter_bits = 10
 
+# Modern WAL configuration
+[storage.wal_config]
+wal_urls = ["file://./data/wal"]
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+memory_flush_size_bytes = 10485760  # 10MB flush trigger - recommended for collection-level flush
+global_flush_threshold = 4294967296  # 4GB global trigger - recommended for global memory threshold
+global_shrink_factor = 0.4  # 40% shrink factor - recommended for global threshold management
+strategy_type = "Avro"
+memtable_type = "BTree"
+sync_mode = "PerBatch"
+batch_threshold = 250
+write_buffer_size_mb = 8
+concurrent_flushes = 2
+
 [storage.lsm_config]
 memtable_size_mb = 32
 level_count = 7

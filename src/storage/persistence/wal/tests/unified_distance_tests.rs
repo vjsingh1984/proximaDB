@@ -10,7 +10,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::wal::{
-        WalConfig, WalEntry, WalFactory, WalManager, WalOperation,
+        WalConfig, WalBatchFactory, WalManager, WalStrategyType,
     };
     use anyhow::Result;
     use chrono::Utc;

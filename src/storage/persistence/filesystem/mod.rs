@@ -577,8 +577,130 @@ impl FilesystemFactory {
         Ok(())
     }
 
+    /// Validate URL format for supported cloud providers
+    pub fn validate_url(&self, url: &str) -> FsResult<()> {
+        let parsed_url = Url::parse(url)?;
+        
+        match parsed_url.scheme() {
+            "file" => {
+                // File URLs must have absolute paths
+                if !parsed_url.path().starts_with('/') {
+                    return Err(FilesystemError::InvalidPath(
+                        "File URLs must have absolute paths".to_string()
+                    ));
+                }
+            }
+            "s3" => {
+                // S3 URLs must have bucket name
+                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                    return Err(FilesystemError::InvalidPath(
+                        "S3 URLs must specify bucket name".to_string()
+                    ));
+                }
+            }
+            "gcs" => {
+                // GCS URLs must have bucket name
+                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                    return Err(FilesystemError::InvalidPath(
+                        "GCS URLs must specify bucket name".to_string()
+                    ));
+                }
+            }
+            "adls" => {
+                // ADLS URLs must have account and container
+                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                if path_parts.len() < 2 || path_parts[0].is_empty() || path_parts[1].is_empty() {
+                    return Err(FilesystemError::InvalidPath(
+                        "ADLS URLs must specify account and container".to_string()
+                    ));
+                }
+            }
+            "abfs" => {
+                // ABFS URLs must have container@account format
+                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@') {
+                    return Err(FilesystemError::InvalidPath(
+                        "ABFS URLs must use container@account format".to_string()
+                    ));
+                }
+            }
+            "hdfs" => {
+                // HDFS URLs must have namenode host
+                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                    return Err(FilesystemError::InvalidPath(
+                        "HDFS URLs must specify namenode host".to_string()
+                    ));
+                }
+            }
+            _ => {
+                return Err(FilesystemError::UnsupportedScheme(
+                    parsed_url.scheme().to_string()
+                ));
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Extract bucket/container name from URL
+    pub fn extract_bucket_from_url(&self, url: &str) -> FsResult<Option<String>> {
+        let parsed_url = Url::parse(url)?;
+        
+        match parsed_url.scheme() {
+            "s3" | "gcs" => {
+                // Bucket is the hostname
+                Ok(parsed_url.host_str().map(|s| s.to_string()))
+            }
+            "adls" => {
+                // Container is the second path segment
+                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                if path_parts.len() >= 2 {
+                    Ok(Some(path_parts[1].to_string()))
+                } else {
+                    Ok(None)
+                }
+            }
+            "abfs" => {
+                // Container is before @ in hostname
+                if let Some(host) = parsed_url.host_str() {
+                    if let Some(at_pos) = host.find('@') {
+                        return Ok(Some(host[..at_pos].to_string()));
+                    }
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Extract account name from URL (for Azure)
+    pub fn extract_account_from_url(&self, url: &str) -> FsResult<Option<String>> {
+        let parsed_url = Url::parse(url)?;
+        
+        match parsed_url.scheme() {
+            "adls" => {
+                // Account is the first path segment
+                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                if !path_parts.is_empty() && !path_parts[0].is_empty() {
+                    Ok(Some(path_parts[0].to_string()))
+                } else {
+                    Ok(None)
+                }
+            }
+            "abfs" => {
+                // Account is after @ in hostname
+                if let Some(host) = parsed_url.host_str() {
+                    if let Some(at_pos) = host.find('@') {
+                        return Ok(Some(host[at_pos + 1..].to_string()));
+                    }
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Extract relative path from URL (removes base path configured for the storage)
-    fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
+    pub fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
         let parsed_url = Url::parse(url)?;
         let path = parsed_url.path();
 
@@ -589,9 +711,17 @@ impl FilesystemFactory {
             }
             "s3" | "gcs" => {
                 // For object stores, remove the bucket from path
-                Ok(path.trim_start_matches('/').to_string())
+                let path_without_bucket = path.trim_start_matches('/');
+                
+                // Skip the bucket name (first path segment)
+                if let Some(slash_pos) = path_without_bucket.find('/') {
+                    Ok(path_without_bucket[slash_pos + 1..].to_string())
+                } else {
+                    // No path after bucket, return empty string
+                    Ok(String::new())
+                }
             }
-            "adls" => {
+            "adls" | "abfs" => {
                 // For Azure, remove account/container from path
                 let path_parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
                 if path_parts.len() > 1 {
@@ -600,7 +730,14 @@ impl FilesystemFactory {
                     Ok(String::new())
                 }
             }
-            _ => Ok(path.to_string()),
+            "hdfs" => {
+                // For HDFS, return the full path
+                Ok(path.to_string())
+            }
+            _ => {
+                // For unknown schemes, return path as-is
+                Ok(path.to_string())
+            }
         }
     }
 

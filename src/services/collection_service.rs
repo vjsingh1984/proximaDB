@@ -161,6 +161,57 @@ impl CollectionService {
             .await
     }
 
+    /// Get collection as unified core::Collection (masks metadata backend details)
+    /// This is the preferred method for engines and other components
+    pub async fn get_collection_unified(&self, identifier: &str) -> Result<Option<crate::core::Collection>> {
+        let collection_record = self.get_collection_by_name_or_uuid(identifier).await?;
+        Ok(collection_record.map(Self::convert_collection_record_to_collection))
+    }
+    
+    /// Convert metadata backend CollectionRecord to core Collection
+    /// This bridges different metadata backends (filestore, database, etc.)
+    fn convert_collection_record_to_collection(
+        record: CollectionRecord
+    ) -> crate::core::Collection {
+        use crate::core::{DistanceMetric, StorageEngine, IndexingAlgorithm};
+        
+        // Convert string enums to proper enum types
+        let distance_metric = match record.distance_metric.as_str() {
+            "cosine" => DistanceMetric::Cosine,
+            "euclidean" => DistanceMetric::Euclidean,
+            "dot_product" => DistanceMetric::DotProduct,
+            _ => DistanceMetric::Cosine, // Default fallback
+        };
+        
+        let storage_engine = match record.storage_engine.as_str() {
+            "viper" => StorageEngine::Viper,
+            "lsm" => StorageEngine::Lsm,
+            _ => StorageEngine::Viper, // Default fallback
+        };
+        
+        let indexing_algorithm = match record.indexing_algorithm.as_str() {
+            "hnsw" => IndexingAlgorithm::Hnsw,
+            "ivf" => IndexingAlgorithm::Ivf,
+            "flat" => IndexingAlgorithm::Flat,
+            _ => IndexingAlgorithm::Hnsw, // Default fallback
+        };
+        
+        crate::core::Collection {
+            id: record.uuid,
+            name: record.name,
+            dimension: record.dimension,
+            distance_metric,
+            storage_engine,
+            indexing_algorithm,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            vector_count: record.vector_count,
+            total_size_bytes: record.total_size_bytes,
+            config: serde_json::from_str(&record.config).unwrap_or_default(),
+            filterable_metadata_fields: Vec::new(), // Default empty - will be populated from config
+        }
+    }
+
     /// Get IndexConfig for a collection by name or UUID with caching
     pub async fn get_collection_index_config(&self, identifier: &str) -> Result<Option<crate::index::config::IndexConfig>> {
         debug!("🔍 Getting IndexConfig for collection: {}", identifier);
@@ -200,18 +251,12 @@ impl CollectionService {
         // Extract index config
         if let Some(index_config_value) = full_config.get("index_config") {
             if !index_config_value.is_null() {
-                // Deserialize the stored proto IndexConfig
-                let stored_proto: crate::proto::proximadb::IndexConfig = 
+                // Deserialize the stored internal IndexConfig directly
+                let index_config: crate::index::config::IndexConfig = 
                     serde_json::from_value(index_config_value.clone())
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize IndexConfig: {}", e))?;
                 
-                // Convert to internal IndexConfig with smart defaults
-                let index_config = crate::index::config::IndexConfig::from_proto_with_smart_defaults(
-                    &stored_proto,
-                    &record.indexing_algorithm,
-                    None, // Collection size hint not available here
-                )?;
-                
+                // Return the deserialized IndexConfig directly (no conversion needed)
                 return Ok(index_config);
             }
         }
@@ -241,7 +286,7 @@ impl CollectionService {
                 .unwrap_or_else(|_| serde_json::json!({}));
 
             // Update the index_config section
-            full_config["index_config"] = serde_json::to_value(index_config.to_proto())?;
+            full_config["index_config"] = serde_json::to_value(index_config)?;
 
             // Update the record
             record.config = serde_json::to_string(&full_config)?;
@@ -847,6 +892,17 @@ impl CollectionService {
             component_type: StorageComponentType::Index,
             collection_affinity: true,
         })
+    }
+}
+
+impl std::fmt::Debug for CollectionService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollectionService")
+            .field("metadata_backend", &"FilestoreMetadataBackend")
+            .field("assignment_service", &"AssignmentService")
+            .field("filesystem_factory", &"FilesystemFactory")
+            .field("index_config_cache", &"HashMap<String, IndexConfig>")
+            .finish()
     }
 }
 

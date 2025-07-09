@@ -19,7 +19,6 @@ use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 
 /// Central manager for AXIS with adaptive capabilities
-#[derive(Debug)]
 pub struct AxisManager {
     /// Core index components
     global_id_index: Arc<GlobalIdIndex>,
@@ -678,7 +677,7 @@ impl AxisManager {
         
         let start_time = std::time::Instant::now();
         for vector in vectors {
-            self.insert(collection_id, vector).await?;
+            self.insert(vector).await?;
         }
         let duration = start_time.elapsed();
         
@@ -706,7 +705,7 @@ impl AxisManager {
         let mut indexed_count = 0;
         
         for vector in vectors {
-            match self.insert(collection_id, vector).await {
+            match self.insert(vector).await {
                 Ok(()) => indexed_count += 1,
                 Err(e) => {
                     tracing::error!("❌ AXIS: Failed to index vector in collection {}: {}", collection_id, e);

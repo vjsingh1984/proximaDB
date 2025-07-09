@@ -67,21 +67,30 @@ pub struct PerformanceConfig {
 
     /// Sync mode for disk writes
     pub sync_mode: SyncMode,
+
+    /// Shrink factor for global threshold management (percentage)
+    /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
+    pub global_shrink_factor: f64,
+
+    /// Cloud backup configuration
+    pub cloud_backup: Option<CloudBackupConfig>,
 }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
             // Optimized for write-triggered size-based flush only
-            memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB memory limit for testing metadata filtering performance
+            memory_flush_size_bytes: 10 * 1024 * 1024, // 10MB memory limit - recommended for collection-level flush
             disk_segment_size: 512 * 1024 * 1024,     // 512MB segments optimized for large vectors
-            global_flush_threshold: 512 * 1024 * 1024, // 512MB global limit for write-triggered flush
+            global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB global limit - recommended for global memory threshold
             write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput
             concurrent_flushes: num_cpus::get().min(4), // Max 4 concurrent flushes to avoid I/O contention
             batch_threshold: 500, // Larger batches for bulk insert optimization
             mvcc_cleanup_interval_secs: 3600, // Clean up old versions every hour
             ttl_cleanup_interval_secs: 300, // Check TTL every 5 minutes
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
+            global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
+            cloud_backup: None, // Cloud backup disabled by default
         }
     }
 }
@@ -200,7 +209,7 @@ impl Default for MemTableConfig {
     fn default() -> Self {
         Self {
             memtable_type: MemTableType::default(),
-            global_memory_limit: 512 * 1024 * 1024, // 512MB for write-triggered flush
+            global_memory_limit: 4 * 1024 * 1024 * 1024, // 4GB for write-triggered flush
             mvcc_versions_retained: 3,              // Keep last 3 versions for MVCC
             enable_concurrency: true,               // Enable concurrent operations
         }
@@ -337,6 +346,10 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
             wal_config.performance.concurrent_flushes = concurrent_flushes;
         }
 
+        if let Some(global_shrink_factor) = core_config.global_shrink_factor {
+            wal_config.performance.global_shrink_factor = global_shrink_factor;
+        }
+
         wal_config
     }
 }
@@ -426,4 +439,128 @@ pub struct CollectionEffectiveConfig {
     pub default_ttl_days: Option<u32>,
     /// Size-based flush threshold (bytes) - derived from memory_flush_size_bytes
     pub memory_flush_size_bytes: usize,
+}
+
+/// Cloud backup configuration for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudBackupConfig {
+    /// Enable cloud backup for WAL batches
+    pub enabled: bool,
+
+    /// Cloud storage URL for backup (e.g., s3://bucket/wal/, gcs://bucket/wal/)
+    pub backup_url: String,
+
+    /// Backup strategy
+    pub strategy: CloudBackupStrategy,
+
+    /// Backup frequency configuration
+    pub frequency: BackupFrequency,
+
+    /// Automatic cleanup of old cloud backups
+    pub cleanup_policy: Option<CloudCleanupPolicy>,
+
+    /// Verify backup integrity
+    pub verify_integrity: bool,
+
+    /// Retry configuration for cloud operations
+    pub retry_config: CloudRetryConfig,
+}
+
+impl Default for CloudBackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backup_url: "file:///workspace/data/wal_backup".to_string(),
+            strategy: CloudBackupStrategy::OnFlush,
+            frequency: BackupFrequency::default(),
+            cleanup_policy: Some(CloudCleanupPolicy::default()),
+            verify_integrity: true,
+            retry_config: CloudRetryConfig::default(),
+        }
+    }
+}
+
+/// Cloud backup strategy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CloudBackupStrategy {
+    /// Real-time backup on every write
+    RealTime,
+    /// Periodic batch backup
+    Periodic { interval_secs: u64 },
+    /// Backup on flush events
+    OnFlush,
+    /// Backup on demand only
+    OnDemand,
+}
+
+impl Default for CloudBackupStrategy {
+    fn default() -> Self {
+        Self::OnFlush
+    }
+}
+
+/// Backup frequency configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupFrequency {
+    /// Backup every N operations
+    pub operations_threshold: Option<u64>,
+    /// Backup every N seconds
+    pub time_threshold_secs: Option<u64>,
+    /// Backup when size exceeds threshold
+    pub size_threshold_bytes: Option<usize>,
+}
+
+impl Default for BackupFrequency {
+    fn default() -> Self {
+        Self {
+            operations_threshold: Some(1000),
+            time_threshold_secs: Some(300), // 5 minutes
+            size_threshold_bytes: Some(100 * 1024 * 1024), // 100MB
+        }
+    }
+}
+
+/// Cloud cleanup policy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudCleanupPolicy {
+    /// Retain backups for N days
+    pub retention_days: u32,
+    /// Maximum number of backups to keep
+    pub max_backups: Option<u32>,
+    /// Cleanup frequency in hours
+    pub cleanup_frequency_hours: u32,
+}
+
+impl Default for CloudCleanupPolicy {
+    fn default() -> Self {
+        Self {
+            retention_days: 7,
+            max_backups: Some(100),
+            cleanup_frequency_hours: 24,
+        }
+    }
+}
+
+/// Cloud retry configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudRetryConfig {
+    /// Maximum retry attempts
+    pub max_retries: u32,
+    /// Initial delay in milliseconds
+    pub initial_delay_ms: u64,
+    /// Maximum delay in milliseconds
+    pub max_delay_ms: u64,
+    /// Backoff multiplier
+    pub backoff_multiplier: f64,
+}
+
+impl Default for CloudRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay_ms: 100,
+            max_delay_ms: 5000,
+            backoff_multiplier: 2.0,
+        }
+    }
 }

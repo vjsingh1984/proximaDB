@@ -1,0 +1,114 @@
+@startuml Clustering_Search_Flow
+!theme plain
+title ML Clustering Search Flow
+subtitle Storage-Aware Polymorphic Search with Parallel Cluster Processing
+
+actor Client
+participant "gRPC Handler" as gRPC
+participant "VectorService" as Service
+participant "ViperSearchEngine" as Search
+participant "ClusteringModelManager" as Models
+participant "ClusteringModel" as Model
+participant "ViperEngine" as Engine
+participant "ParquetStorage" as Storage
+
+== Search Request Processing ==
+
+Client -> gRPC: search_vectors(query, k, filters)
+gRPC -> Service: search_vectors_request
+Service -> Search: search_with_clustering(query, k, filters)
+
+== Strategy Determination ==
+
+Search -> Search: determine_search_strategy()
+note right: Checks collection size,\nmodel availability,\nquery characteristics
+
+alt Collection < 1M vectors
+    Search -> Search: direct_search(query, k)
+    Search -> Engine: get_parquet_files_for_collection()
+    Engine -> Storage: list_parquet_files()
+    Storage --> Engine: parquet_files[]
+    Engine --> Search: parquet_files[]
+    
+    loop for each parquet_file
+        Search -> Search: search_parquet_file(file, query, k)
+        Search -> Storage: predicate_pushdown_search()
+        Storage --> Search: file_results
+    end
+    
+    Search -> Search: aggregate_and_rank_results()
+    Search --> Service: final_results
+    
+else Collection >= 1M vectors AND model_available
+    Search -> Search: cluster_optimized_search(query, k)
+    
+    == Model Loading ==
+    Search -> Models: get_model(collection_id)
+    Models -> Model: load_from_disk()
+    Model --> Models: clustering_model
+    Models --> Search: clustering_model
+    
+    == Cluster Assignment ==
+    Search -> Model: predict_cluster(query_vector)
+    Model -> Model: compute_distances_to_centroids()
+    Model --> Search: target_cluster_id
+    
+    == Parallel Cluster Search ==
+    Search -> Search: get_nearby_clusters(target_cluster, radius=2)
+    note right: Search target cluster\nplus 2 nearest clusters\nfor better recall
+    
+    par Search Target Cluster
+        Search -> Search: search_cluster(target_cluster_id, query, k)
+        Search -> Model: get_cluster_vectors(target_cluster_id)
+        Model --> Search: cluster_vector_ids[]
+        Search -> Engine: search_vectors_in_cluster(cluster_vector_ids, query, k)
+        Engine -> Storage: search_by_vector_ids(vector_ids, query, k)
+        Storage --> Engine: cluster_results_1
+        Engine --> Search: cluster_results_1
+    also Search Nearby Cluster 1
+        Search -> Search: search_cluster(nearby_cluster_1, query, k/2)
+        Search -> Engine: search_vectors_in_cluster(cluster_1_ids, query, k/2)
+        Engine -> Storage: search_by_vector_ids(vector_ids, query, k/2)
+        Storage --> Engine: cluster_results_2
+        Engine --> Search: cluster_results_2
+    also Search Nearby Cluster 2  
+        Search -> Search: search_cluster(nearby_cluster_2, query, k/2)
+        Search -> Engine: search_vectors_in_cluster(cluster_2_ids, query, k/2)
+        Engine -> Storage: search_by_vector_ids(vector_ids, query, k/2)
+        Storage --> Engine: cluster_results_3
+        Engine --> Search: cluster_results_3
+    end
+    
+    == Result Aggregation ==
+    Search -> Search: aggregate_cluster_results()
+    Search -> Search: deduplicate_by_vector_id()
+    Search -> Search: rank_by_score()
+    Search -> Search: apply_metadata_filters()
+    Search -> Search: truncate_to_k_results()
+    Search --> Service: final_results
+    
+else Model training in progress
+    Search -> Search: hybrid_search(query, k)
+    note right: Fallback to direct search\nwhile model is training
+    Search -> Search: direct_search(query, k)
+    Search --> Service: direct_results
+end
+
+== Response Assembly ==
+
+Service -> Service: build_search_response()
+Service --> gRPC: SearchVectorResponse
+gRPC --> Client: search_results
+
+== Background Model Training ==
+
+note over Models, Storage
+    **Parallel Training Process:**
+    - BackgroundManager monitors vector count
+    - Triggers retraining at 20% growth threshold
+    - K-means++ initialization for optimal centroids
+    - Model persistence in __models/ directory
+    - Statistics tracking for performance monitoring
+end note
+
+@enduml

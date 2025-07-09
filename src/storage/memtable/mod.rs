@@ -124,7 +124,7 @@ impl MemtableFactory {
     /// Create LSM-optimized memtable (SkipList for concurrent access)
     pub fn create_for_lsm(
         config: MemtableConfig,
-    ) -> specialized::LsmMemtable<String, specialized::lsm_behavior::LsmEntry> {
+    ) -> specialized::LsmMemtable<String, crate::storage::engines::lsm::LsmRecord> {
         specialized::SpecializedMemtableFactory::create_skiplist_for_lsm(config)
     }
 

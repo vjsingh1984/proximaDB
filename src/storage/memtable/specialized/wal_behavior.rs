@@ -21,7 +21,7 @@ use crate::storage::memtable::implementations::global_partitioned::GlobalPartiti
 use crate::storage::persistence::wal::{BatchId, WalEntry, WalOperation, WalStats};
 
 /// WAL-specific vector batch for tracking deserialized data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WalVectorBatch {
     /// Batch coordination ID
     pub batch_id: BatchId,

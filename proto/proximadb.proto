@@ -128,7 +128,7 @@ enum IndexUpdateMode {
   INDEX_UPDATE_MODE_UNSPECIFIED = 0;
   SYNCHRONOUS = 1;                                 // Block flush until index updated (default)
   ASYNCHRONOUS = 2;                                // Return from flush immediately
-  HYBRID = 3;                                      // Sync for small batches, async for large
+  HYBRID_MODE = 3;                                 // Sync for small batches, async for large
 }
 
 // HNSW algorithm configuration

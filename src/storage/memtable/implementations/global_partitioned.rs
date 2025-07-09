@@ -581,6 +581,164 @@ impl GlobalPartitionedMemtable {
         Ok(collections_to_flush)
     }
 
+    /// Get collections intelligently selected for global flush based on strategy
+    pub async fn get_intelligent_flush_collections(
+        &self,
+        global_threshold: usize,
+        shrink_factor: f64,
+        max_collections: Option<usize>,
+    ) -> Result<Vec<CollectionFlushInfo>> {
+        let collections = self.collections.read().await;
+        let current_total_size = collections.values().map(|p| p.total_size).sum::<usize>();
+        
+        // If we're under global threshold, no flush needed
+        if current_total_size <= global_threshold {
+            return Ok(Vec::new());
+        }
+
+        // Calculate target size after shrinking
+        let target_size = (global_threshold as f64 * shrink_factor) as usize;
+        let reduction_needed = current_total_size.saturating_sub(target_size);
+        
+        tracing::info!(
+            "🧠 INTELLIGENT_FLUSH: Current={} bytes, Global threshold={} bytes, Target={} bytes, Reduction needed={} bytes",
+            current_total_size, global_threshold, target_size, reduction_needed
+        );
+
+        // Create collection info with flush priority
+        let mut collection_infos: Vec<CollectionFlushInfo> = collections
+            .iter()
+            .map(|(collection_id, partition)| {
+                let efficiency_score = calculate_flush_efficiency_score(
+                    partition.total_size,
+                    partition.vector_count,
+                    partition.batch_count,
+                );
+                
+                CollectionFlushInfo {
+                    collection_id: collection_id.clone(),
+                    total_size: partition.total_size,
+                    vector_count: partition.vector_count,
+                    batch_count: partition.batch_count,
+                    efficiency_score,
+                    age_score: calculate_age_score(partition.created_at),
+                }
+            })
+            .collect();
+
+        // Sort by intelligent selection criteria (largest collections first, then by efficiency)
+        collection_infos.sort_by(|a, b| {
+            // Primary: Size (largest first)
+            let size_cmp = b.total_size.cmp(&a.total_size);
+            if size_cmp != std::cmp::Ordering::Equal {
+                return size_cmp;
+            }
+            
+            // Secondary: Efficiency score (highest first)
+            let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score)
+                .unwrap_or(std::cmp::Ordering::Equal);
+            if efficiency_cmp != std::cmp::Ordering::Equal {
+                return efficiency_cmp;
+            }
+            
+            // Tertiary: Age score (oldest first)
+            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Select collections until we meet reduction target or max_collections limit
+        let mut selected_collections = Vec::new();
+        let mut total_reduction = 0;
+        let max_to_select = max_collections.unwrap_or(collection_infos.len());
+
+        for collection_info in collection_infos.into_iter().take(max_to_select) {
+            selected_collections.push(collection_info.clone());
+            total_reduction += collection_info.total_size;
+            
+            tracing::debug!(
+                "🎯 INTELLIGENT_FLUSH: Selected collection {} ({} bytes, efficiency={:.2})",
+                collection_info.collection_id,
+                collection_info.total_size,
+                collection_info.efficiency_score
+            );
+            
+            // Stop if we've achieved sufficient reduction
+            if total_reduction >= reduction_needed {
+                break;
+            }
+        }
+
+        tracing::info!(
+            "🎯 INTELLIGENT_FLUSH: Selected {} collections for flush, total reduction={} bytes ({:.1}% of target)",
+            selected_collections.len(),
+            total_reduction,
+            (total_reduction as f64 / reduction_needed as f64) * 100.0
+        );
+
+        Ok(selected_collections)
+    }
+
+    /// Get collections for emergency flush (when many small collections cause global explosion)
+    pub async fn get_emergency_flush_collections(
+        &self,
+        global_threshold: usize,
+        small_collection_threshold: usize,
+    ) -> Result<Vec<CollectionFlushInfo>> {
+        let collections = self.collections.read().await;
+        let current_total_size = collections.values().map(|p| p.total_size).sum::<usize>();
+        
+        // Only handle emergency case when global threshold is exceeded
+        if current_total_size <= global_threshold {
+            return Ok(Vec::new());
+        }
+
+        // Identify small collections (under threshold but collectively causing issues)
+        let mut small_collections: Vec<CollectionFlushInfo> = collections
+            .iter()
+            .filter(|(_, partition)| {
+                partition.total_size < small_collection_threshold && partition.total_size > 0
+            })
+            .map(|(collection_id, partition)| {
+                CollectionFlushInfo {
+                    collection_id: collection_id.clone(),
+                    total_size: partition.total_size,
+                    vector_count: partition.vector_count,
+                    batch_count: partition.batch_count,
+                    efficiency_score: calculate_flush_efficiency_score(
+                        partition.total_size,
+                        partition.vector_count,
+                        partition.batch_count,
+                    ),
+                    age_score: calculate_age_score(partition.created_at),
+                }
+            })
+            .collect();
+
+        // Sort small collections by age (oldest first) to handle long-lived small collections
+        small_collections.sort_by(|a, b| {
+            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let small_collections_count = small_collections.len();
+        let small_collections_total_size: usize = small_collections.iter().map(|c| c.total_size).sum();
+
+        tracing::warn!(
+            "🚨 EMERGENCY_FLUSH: {} small collections ({} bytes total) contributing to global threshold exceeded",
+            small_collections_count,
+            small_collections_total_size
+        );
+
+        // In emergency case, select up to 25% of small collections for flush
+        let max_emergency_flush = (small_collections_count / 4).max(1);
+        let selected_emergency: Vec<CollectionFlushInfo> = small_collections.into_iter().take(max_emergency_flush).collect();
+
+        tracing::info!(
+            "🚨 EMERGENCY_FLUSH: Selected {} small collections for emergency flush",
+            selected_emergency.len()
+        );
+
+        Ok(selected_emergency)
+    }
+
     /// Get metrics for external access
     pub async fn get_metrics(&self) -> MemtableMetrics {
         self.metrics.read().await.clone()
@@ -701,6 +859,50 @@ impl Default for GlobalPartitionedMemtable {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Collection flush information for intelligent flush selection
+#[derive(Debug, Clone)]
+pub struct CollectionFlushInfo {
+    pub collection_id: String,
+    pub total_size: usize,
+    pub vector_count: usize,
+    pub batch_count: usize,
+    pub efficiency_score: f64,
+    pub age_score: f64,
+}
+
+/// Calculate flush efficiency score based on collection characteristics
+/// Higher score = more efficient to flush (larger size, fewer batches)
+fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batch_count: usize) -> f64 {
+    // Efficiency factors:
+    // 1. Size factor (larger is better for flush efficiency)
+    // 2. Batch consolidation factor (fewer batches = more efficient)
+    // 3. Vector density factor (more vectors per batch = better)
+    
+    let size_factor = (size_bytes as f64) / (1024.0 * 1024.0); // Convert to MB
+    let batch_factor = if batch_count > 0 {
+        (vector_count as f64) / (batch_count as f64)
+    } else {
+        0.0
+    };
+    
+    // Weighted score: size matters more than batch consolidation
+    let efficiency_score = (size_factor * 0.7) + (batch_factor * 0.3);
+    efficiency_score.max(0.1) // Minimum score to avoid division by zero
+}
+
+/// Calculate age score based on collection creation time
+/// Higher score = older collection (should be flushed sooner)
+fn calculate_age_score(created_at: std::time::SystemTime) -> f64 {
+    let now = std::time::SystemTime::now();
+    let age_duration = now.duration_since(created_at).unwrap_or(std::time::Duration::from_secs(0));
+    
+    // Age in minutes (higher = older)
+    let age_minutes = age_duration.as_secs() as f64 / 60.0;
+    
+    // Score increases with age, but caps at reasonable limit
+    age_minutes.min(1440.0) // Cap at 24 hours
 }
 
 // Tests moved to src/storage/memtable/implementations/tests/global_partitioned_tests.rs

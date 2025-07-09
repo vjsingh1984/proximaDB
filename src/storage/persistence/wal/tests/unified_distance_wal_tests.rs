@@ -6,7 +6,7 @@ mod tests {
     use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
     use crate::core::{CollectionId, VectorId, VectorRecord};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::storage::persistence::wal::{WalConfig, WalFactory, WalManager};
+    use crate::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;

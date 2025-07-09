@@ -473,6 +473,10 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
     fn get_wal_behavior(&self) -> Option<&WalBehaviorWrapper> {
         self.memtable.as_ref()
     }
+    
+    fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>> {
+        self.filesystem.clone()
+    }
 }
 
 impl DistanceComputeProvider for AvroWalBatchStrategy {

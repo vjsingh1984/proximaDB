@@ -6,7 +6,7 @@ mod tests {
     use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
     use crate::core::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::persistence::wal::{WalConfig, WalFactory, WalManager};
+    use crate::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -17,6 +17,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
+        config.strategy_type = WalStrategyType::Avro;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config =
@@ -26,13 +27,12 @@ mod tests {
                 .await
                 .expect("Failed to create filesystem factory"),
         );
-        let strategy = WalFactory::create_from_config(&config, filesystem)
-            .await
-            .expect("Failed to create WAL strategy");
 
-        let manager = WalManager::new(strategy, config)
-            .await
-            .expect("Failed to create WAL manager");
+        let manager = WalManager::create_with_batch_factory(
+            WalStrategyType::Avro,
+            config,
+            filesystem
+        ).await.expect("Failed to create WAL manager");
 
         (manager, temp_dir)
     }

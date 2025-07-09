@@ -53,6 +53,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Engine-specific statistics collection (required)
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
 
+    /// Retrieve a specific vector by ID from storage (required)
+    /// This method should search across all storage layers (memtable, SSTables, Parquet files)
+    async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
+
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided
     // =============================================================================

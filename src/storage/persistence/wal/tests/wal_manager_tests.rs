@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
     use crate::storage::BatchId;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::{WalManager, WalConfig, WalFactory};
+    use crate::storage::{WalManager, WalConfig};
     use crate::storage::persistence::wal::{WalStrategyType, WalBatchFactory};
     use crate::compute::distance::DistanceMetric;
     use chrono::Utc;
@@ -30,7 +30,7 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WalManager::create_with_factory(
+        let manager = WalManager::create_with_batch_factory(
             WalStrategyType::Bincode,
             config,
             filesystem
@@ -39,8 +39,14 @@ mod tests {
         (manager, temp_dir)
     }
 
+    /// Create a test WAL manager with modern batch strategy (Avro) - LEGACY SUPPORT
+    async fn create_test_legacy_wal_manager() -> (WalManager, TempDir) {
+        // Legacy support - redirects to modern batch strategy
+        create_test_batch_wal_manager_avro().await
+    }
+
     /// Create a test WAL manager with modern batch strategy (Avro)
-    async fn create_test_wal_manager_avro() -> (WalManager, TempDir) {
+    async fn create_test_batch_wal_manager_avro() -> (WalManager, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
@@ -54,7 +60,7 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WalManager::create_with_factory(
+        let manager = WalManager::create_with_batch_factory(
             WalStrategyType::Avro,
             config,
             filesystem
@@ -62,6 +68,7 @@ mod tests {
 
         (manager, temp_dir)
     }
+
 
     /// Create a test WAL manager with modern batch strategy (Bincode)
     async fn create_test_batch_wal_manager_bincode() -> (WalManager, TempDir) {

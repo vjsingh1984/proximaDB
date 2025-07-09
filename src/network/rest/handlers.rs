@@ -47,7 +47,7 @@ fn convert_rest_to_internal_index_config(rest_config: RestIndexConfig) -> IndexC
     let update_mode = match rest_config.update_mode.as_deref() {
         Some("synchronous") => IndexUpdateMode::Synchronous,
         Some("asynchronous") => IndexUpdateMode::Asynchronous,
-        Some("hybrid") => IndexUpdateMode::Hybrid,
+        Some("hybrid_mode") => IndexUpdateMode::Hybrid,
         _ => IndexUpdateMode::Synchronous, // Default
     };
 
@@ -119,7 +119,7 @@ pub struct RestFilterableColumn {
 /// REST API representation of index configuration
 #[derive(Debug, Deserialize)]
 pub struct RestIndexConfig {
-    pub update_mode: Option<String>, // "synchronous", "asynchronous", "hybrid"
+    pub update_mode: Option<String>, // "synchronous", "asynchronous", "hybrid_mode"
     pub async_update_timeout_ms: Option<u64>,
     pub async_update_batch_size: Option<usize>,
     pub enable_background_optimization: Option<bool>,
@@ -364,7 +364,7 @@ pub async fn create_collection(
             let update_mode = match ic.update_mode.as_deref() {
                 Some("synchronous") => 1,
                 Some("asynchronous") => 2,
-                Some("hybrid") => 3,
+                Some("hybrid_mode") => 3,
                 _ => 1, // Default to synchronous
             };
 
@@ -547,8 +547,8 @@ pub async fn update_collection(
         updates.insert("config".to_string(), config);
     }
 
-    // Handle IndexConfig update separately using collection service
-    if let Some(rest_index_config) = request.index_config {
+    // Track if IndexConfig was updated
+    let index_config_updated = if let Some(rest_index_config) = request.index_config {
         // Convert REST IndexConfig to internal IndexConfig
         let internal_index_config = convert_rest_to_internal_index_config(rest_index_config);
         
@@ -556,15 +556,18 @@ pub async fn update_collection(
         match state.collection_service.update_collection_index_config(&collection_id, &internal_index_config).await {
             Ok(()) => {
                 tracing::info!("✅ Updated IndexConfig for collection: {}", collection_id);
+                true
             }
             Err(e) => {
                 tracing::error!("❌ Failed to update IndexConfig for collection {}: {}", collection_id, e);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         }
-    }
+    } else {
+        false
+    };
 
-    if updates.is_empty() && request.index_config.is_none() {
+    if updates.is_empty() && !index_config_updated {
         return Err(StatusCode::BAD_REQUEST);
     }
 

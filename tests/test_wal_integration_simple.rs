@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::persistence::wal::{WalConfig, WalFactory, WalManager, WalStrategyType};
+use proximadb::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
 
 /// Test the WAL testing helper integration
 #[tokio::test]
@@ -23,8 +23,11 @@ async fn test_wal_testing_helper_integration() -> Result<()> {
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let strategy = WalFactory::create_from_config(&config, filesystem).await?;
-    let wal_manager = WalManager::new(strategy, config).await?;
+    let wal_manager = WalManager::create_with_batch_factory(
+        WalStrategyType::Avro,
+        config,
+        filesystem
+    ).await?;
 
     // Test basic WAL functionality
     let collection_id = "test_collection".to_string();
@@ -59,8 +62,11 @@ async fn test_basic_wal_operations() -> Result<()> {
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let strategy = WalFactory::create_from_config(&config, filesystem).await?;
-    let wal_manager = WalManager::new(strategy, config).await?;
+    let wal_manager = WalManager::create_with_batch_factory(
+        WalStrategyType::Avro,
+        config,
+        filesystem
+    ).await?;
 
     let collection_id = "test_collection".to_string();
     let vector_id = "test_vector_1".to_string();

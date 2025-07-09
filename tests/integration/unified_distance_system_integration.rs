@@ -14,7 +14,7 @@ use proximadb::compute::distance::DistanceMetric;
 use proximadb::compute::unified_distance::{UnifiedDistanceCompute, DistanceComputeProvider};
 use proximadb::services::vector_service::VectorService;
 use proximadb::storage::memtable::core::MemtableManager;
-use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory};
+use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalBatchFactory, WalStrategyType};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 /// Comprehensive integration test fixture
@@ -36,8 +36,11 @@ impl UnifiedDistanceIntegrationTest {
         let filesystem_config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
         
-        let wal_strategy = WalFactory::create_from_config(&wal_config, filesystem).await?;
-        let wal_manager = Arc::new(WalManager::new(wal_strategy, wal_config).await?);
+        let wal_manager = Arc::new(WalManager::create_with_batch_factory(
+            WalStrategyType::Avro,
+            wal_config,
+            filesystem
+        ).await?);
         
         // Create memtable with unified distance support
         let memtable_manager = Arc::new(MemtableManager::new_unified_for_wal());

@@ -34,6 +34,7 @@ pub mod background_manager;
 pub mod batch_strategy;  // Modern batch-oriented strategy trait
 pub mod batch_factory;  // Modern factory for batch strategies
 pub mod bincode_batch;  // Modern Bincode batch strategy implementation
+pub mod atomicity_manager;  // Unified atomicity manager for all atomic operations
 pub mod config;
 // Legacy modules with limited functionality due to removed avro.rs dependencies:
 // pub mod disk;       // DISABLED - batch strategies handle their own disk operations
@@ -56,6 +57,7 @@ pub use bincode_batch::BincodeWalBatchStrategy;
 pub use batch_strategy::{WalBatchStrategy, WalBatchStrategyExt};
 // LegacyWalStrategyAdapter removed - no longer needed with pure WalBatchStrategy architecture
 pub use batch_factory::{WalBatchFactory, StrategyInfo, StrategyComparison};
+pub use atomicity_manager::{UnifiedAtomicityManager, UnifiedAtomicityConfig, UnifiedAtomicityStats};
 pub use config::WalStrategyType;
 pub use config::{CompressionConfig, PerformanceConfig, WalConfig};
 // Legacy exports disabled:
@@ -96,6 +98,12 @@ pub struct BatchId {
     pub batch_uuid: String,
     /// Timestamp when batch was created
     pub created_at: DateTime<Utc>,
+}
+
+impl std::fmt::Display for BatchId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}-{}", self.collection_id, self.sequence_range.0, self.sequence_range.1)
+    }
 }
 
 impl BatchId {

@@ -19,7 +19,7 @@ use crate::core::search::storage_aware::{
 };
 use crate::core::{SearchResult, StorageEngine as StorageEngineType};
 use super::multi_tier_deduplication::MetadataFilter;
-use crate::storage::engines::viper::core::ViperCoreEngine;
+use crate::storage::engines::viper::ViperEngine;
 use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
 
 /// VIPER-specific search engine with Parquet optimizations
@@ -31,7 +31,7 @@ use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
 /// - SIMD-optimized vector operations
 pub struct ViperSearchEngine {
     /// Core VIPER engine for storage operations
-    viper_engine: Arc<ViperCoreEngine>,
+    viper_engine: Arc<ViperEngine>,
 
     /// Collection metadata for optimization decisions
     collection_record: CollectionRecord,
@@ -52,7 +52,7 @@ pub struct ViperSearchEngine {
 impl ViperSearchEngine {
     /// Create a new VIPER search engine
     pub fn new(
-        viper_engine: Arc<ViperCoreEngine>,
+        viper_engine: Arc<ViperEngine>,
         collection_record: CollectionRecord,
     ) -> Result<Self> {
         let capabilities = SearchCapabilities {
@@ -327,7 +327,7 @@ impl ViperSearchEngine {
             for cluster_id in cluster_ids {
                 match self
                     .viper_engine
-                    .search_vectors_in_cluster(collection_id, query_vector, k * 2, cluster_id.0)
+                    .search_vectors_in_cluster(collection_id, query_vector, k * 2, &cluster_id.0.to_string())
                     .await
                 {
                     Ok(cluster_results) => {
@@ -729,20 +729,4 @@ impl ViperSearchMetrics {
     }
 }
 
-// Extension trait for VIPER engine (would be implemented in viper/core.rs)
-impl ViperCoreEngine {
-    /// Search vectors within a specific cluster (placeholder implementation)
-    pub async fn search_vectors_in_cluster(
-        &self,
-        _collection_id: &str,
-        _query_vector: &[f32],
-        _k: usize,
-        _cluster_id: usize,
-    ) -> Result<Vec<SearchResult>> {
-        // For now, delegate to the regular search method
-        // In production, this would use cluster-specific optimization
-        // For now, return empty results as this is a placeholder
-        // TODO: Implement cluster-specific search optimization
-        Ok(Vec::new())
-    }
-}
+// Note: search_vectors_in_cluster is implemented in the VIPER engine module

@@ -330,8 +330,23 @@ pub struct WriterPool {
     writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
-// Use ParquetWriter and ParquetWriterFactory from viper_core module
-use super::core::{DefaultParquetWriter, DefaultParquetWriterFactory};
+// TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
+// These were referenced from the deprecated core module
+// For now, providing placeholder types to fix compilation
+
+/// Placeholder for ParquetWriter implementation
+#[derive(Debug, Clone)]
+pub struct DefaultParquetWriter;
+
+/// Placeholder for ParquetWriterFactory implementation
+#[derive(Debug, Clone)]
+pub struct DefaultParquetWriterFactory;
+
+impl DefaultParquetWriterFactory {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 /// Flush result information
 #[derive(Debug, Clone)]

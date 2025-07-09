@@ -11,7 +11,7 @@ use chrono::Utc;
 use proximadb::core::{LsmConfig, VectorRecord};
 use proximadb::storage::engines::lsm::LsmTree;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::persistence::wal::{WalConfig, WalFactory, WalManager, WalStrategyType};
+use proximadb::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
 use proximadb::storage::traits::{CompactionParameters, UnifiedStorageEngine};
 
 /// Helper function to create LSM tree with WAL manager
@@ -25,8 +25,11 @@ async fn create_lsm_tree_with_wal(temp_dir: &TempDir) -> Result<LsmTree> {
     wal_config.strategy_type = WalStrategyType::Avro;
     wal_config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
-    let strategy = WalFactory::create_from_config(&wal_config, filesystem).await?;
-    let wal_manager = Arc::new(WalManager::new(strategy, wal_config).await?);
+    let wal_manager = Arc::new(WalManager::create_with_batch_factory(
+        WalStrategyType::Avro,
+        wal_config,
+        filesystem
+    ).await?);
 
     // Create LSM config
     let lsm_config = LsmConfig {

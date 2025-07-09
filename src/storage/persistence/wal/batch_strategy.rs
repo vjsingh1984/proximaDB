@@ -7,7 +7,7 @@
 //! - Native batch storage in memtables
 //! - Simplified consistency guarantees
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -40,8 +40,123 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<()>;
 
+    /// Get filesystem factory for cloud operations
+    fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>>;
+
     /// Set storage engine for delegated flush/compaction operations
     fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>);
+
+    /// Write WAL batch to cloud storage with URL-based routing
+    async fn write_batch_to_cloud(
+        &self,
+        collection_id: &CollectionId,
+        batch: &WalVectorBatch,
+        cloud_url: &str,
+    ) -> Result<String> {
+        if let Some(fs) = self.get_filesystem() {
+            // Validate URL format before proceeding
+            fs.validate_url(cloud_url)
+                .context("Invalid cloud URL format")?;
+            
+            // Serialize batch to bytes
+            let batch_bytes = bincode::serialize(batch)
+                .context("Failed to serialize batch for cloud storage")?;
+            
+            // Generate unique filename for the batch with timestamp
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let batch_filename = format!(
+                "wal_batch_{}_{}_{}.bin",
+                collection_id,
+                timestamp,
+                batch.batch_id.batch_uuid
+            );
+            
+            // Construct full cloud URL
+            let full_url = if cloud_url.ends_with('/') {
+                format!("{}{}", cloud_url, batch_filename)
+            } else {
+                format!("{}/{}", cloud_url, batch_filename)
+            };
+            
+            // Validate the constructed URL
+            fs.validate_url(&full_url)
+                .context("Invalid constructed cloud URL")?;
+            
+            // Get filesystem for URL and write atomically
+            let filesystem = fs.get_filesystem(&full_url)
+                .context("Failed to get filesystem for cloud URL")?;
+            
+            let path = fs.extract_path_from_url(&full_url)
+                .context("Failed to extract path from cloud URL")?;
+            
+            let options = Some(crate::storage::persistence::filesystem::FileOptions {
+                create_dirs: true,
+                overwrite: true,
+                ..Default::default()
+            });
+            
+            filesystem.write_atomic(&path, &batch_bytes, options).await
+                .context("Failed to write batch to cloud storage")?;
+            
+            // Log detailed information for monitoring
+            let bucket = fs.extract_bucket_from_url(&full_url)
+                .unwrap_or_default()
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            tracing::info!(
+                "☁️ CLOUD_WRITE: Wrote batch {} ({} bytes) to {} [bucket: {}]",
+                batch.batch_id.batch_uuid,
+                batch_bytes.len(),
+                full_url,
+                bucket
+            );
+            
+            Ok(full_url)
+        } else {
+            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+        }
+    }
+
+    /// Read WAL batch from cloud storage with URL-based routing
+    async fn read_batch_from_cloud(
+        &self,
+        cloud_url: &str,
+    ) -> Result<WalVectorBatch> {
+        if let Some(fs) = self.get_filesystem() {
+            // Validate URL format before proceeding
+            fs.validate_url(cloud_url)
+                .context("Invalid cloud URL format")?;
+            
+            let filesystem = fs.get_filesystem(cloud_url)
+                .context("Failed to get filesystem for cloud URL")?;
+            
+            let path = fs.extract_path_from_url(cloud_url)
+                .context("Failed to extract path from cloud URL")?;
+            
+            let batch_bytes = filesystem.read(&path).await
+                .context("Failed to read batch from cloud storage")?;
+            
+            let batch: WalVectorBatch = bincode::deserialize(&batch_bytes)
+                .context("Failed to deserialize batch from cloud storage")?;
+            
+            // Log detailed information for monitoring
+            let bucket = fs.extract_bucket_from_url(cloud_url)
+                .unwrap_or_default()
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            tracing::info!(
+                "☁️ CLOUD_READ: Read batch {} ({} bytes) from {} [bucket: {}]",
+                batch.batch_id.batch_uuid,
+                batch_bytes.len(),
+                cloud_url,
+                bucket
+            );
+            
+            Ok(batch)
+        } else {
+            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+        }
+    }
 
     // 🎯 CORE BATCH OPERATIONS (Modern Architecture)
 
@@ -126,6 +241,174 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// Get WAL behavior wrapper for specialized operations
     fn get_wal_behavior(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
         None // Default implementation - concrete strategies can override
+    }
+
+    /// Migrate WAL batch from local to cloud storage
+    async fn migrate_batch_to_cloud(
+        &self,
+        collection_id: &CollectionId,
+        batch: &WalVectorBatch,
+        local_path: &str,
+        cloud_url: &str,
+    ) -> Result<String> {
+        if let Some(fs) = self.get_filesystem() {
+            // Write to cloud first
+            let cloud_batch_url = self.write_batch_to_cloud(collection_id, batch, cloud_url).await?;
+            
+            // Verify cloud write by reading back
+            let _verified_batch = self.read_batch_from_cloud(&cloud_batch_url).await
+                .context("Failed to verify cloud write during migration")?;
+            
+            // Remove local file after successful cloud write
+            let local_fs = fs.get_filesystem(&format!("file://{}", local_path))
+                .context("Failed to get local filesystem")?;
+            
+            local_fs.delete(local_path).await
+                .context("Failed to delete local file after migration")?;
+            
+            tracing::info!(
+                "🔄 MIGRATION: Migrated batch {} from {} to {}",
+                batch.batch_id.batch_uuid,
+                local_path,
+                cloud_batch_url
+            );
+            
+            Ok(cloud_batch_url)
+        } else {
+            Err(anyhow::anyhow!("Filesystem not initialized for migration"))
+        }
+    }
+
+    /// List WAL batches from cloud storage with URL-based routing
+    async fn list_cloud_batches(
+        &self,
+        collection_id: &CollectionId,
+        cloud_base_url: &str,
+    ) -> Result<Vec<String>> {
+        if let Some(fs) = self.get_filesystem() {
+            // Validate URL format before proceeding
+            fs.validate_url(cloud_base_url)
+                .context("Invalid cloud base URL format")?;
+            
+            let filesystem = fs.get_filesystem(cloud_base_url)
+                .context("Failed to get filesystem for cloud URL")?;
+            
+            let base_path = fs.extract_path_from_url(cloud_base_url)
+                .context("Failed to extract path from cloud URL")?;
+            
+            let entries = filesystem.list(&base_path).await
+                .context("Failed to list cloud directory")?;
+            
+            // Filter for WAL batch files for this collection with multiple patterns
+            let batch_prefix = format!("wal_batch_{}_", collection_id);
+            let batch_urls: Vec<String> = entries
+                .iter()
+                .filter(|entry| {
+                    !entry.metadata.is_directory && 
+                    entry.name.starts_with(&batch_prefix) &&
+                    entry.name.ends_with(".bin")
+                })
+                .map(|entry| {
+                    if cloud_base_url.ends_with('/') {
+                        format!("{}{}", cloud_base_url, entry.name)
+                    } else {
+                        format!("{}/{}", cloud_base_url, entry.name)
+                    }
+                })
+                .collect();
+            
+            // Log detailed information for monitoring
+            let bucket = fs.extract_bucket_from_url(cloud_base_url)
+                .unwrap_or_default()
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            tracing::debug!(
+                "☁️ CLOUD_LIST: Found {} WAL batches for collection {} in {} [bucket: {}]",
+                batch_urls.len(),
+                collection_id,
+                cloud_base_url,
+                bucket
+            );
+            
+            Ok(batch_urls)
+        } else {
+            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+        }
+    }
+
+    /// Delete WAL batch from cloud storage
+    async fn delete_cloud_batch(
+        &self,
+        cloud_url: &str,
+    ) -> Result<()> {
+        if let Some(fs) = self.get_filesystem() {
+            // Validate URL format before proceeding
+            fs.validate_url(cloud_url)
+                .context("Invalid cloud URL format")?;
+            
+            let filesystem = fs.get_filesystem(cloud_url)
+                .context("Failed to get filesystem for cloud URL")?;
+            
+            let path = fs.extract_path_from_url(cloud_url)
+                .context("Failed to extract path from cloud URL")?;
+            
+            filesystem.delete(&path).await
+                .context("Failed to delete batch from cloud storage")?;
+            
+            // Log detailed information for monitoring
+            let bucket = fs.extract_bucket_from_url(cloud_url)
+                .unwrap_or_default()
+                .unwrap_or_else(|| "unknown".to_string());
+            
+            tracing::info!("🗑️ CLOUD_DELETE: Deleted batch from {} [bucket: {}]", cloud_url, bucket);
+            
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+        }
+    }
+
+    /// Check if cloud storage is available and accessible
+    async fn check_cloud_health(
+        &self,
+        cloud_base_url: &str,
+    ) -> Result<bool> {
+        if let Some(fs) = self.get_filesystem() {
+            // Validate URL format before proceeding
+            match fs.validate_url(cloud_base_url) {
+                Ok(_) => {},
+                Err(e) => {
+                    tracing::warn!("❌ CLOUD_HEALTH: Invalid URL format {}: {}", cloud_base_url, e);
+                    return Ok(false);
+                }
+            }
+            
+            let filesystem = fs.get_filesystem(cloud_base_url)
+                .context("Failed to get filesystem for cloud URL")?;
+            
+            let base_path = fs.extract_path_from_url(cloud_base_url)
+                .context("Failed to extract path from cloud URL")?;
+            
+            // Try to list the directory to check accessibility
+            match filesystem.list(&base_path).await {
+                Ok(_) => {
+                    // Log detailed information for monitoring
+                    let bucket = fs.extract_bucket_from_url(cloud_base_url)
+                        .unwrap_or_default()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    
+                    tracing::debug!("✅ CLOUD_HEALTH: Cloud storage accessible at {} [bucket: {}]", cloud_base_url, bucket);
+                    Ok(true)
+                }
+                Err(e) => {
+                    tracing::warn!("❌ CLOUD_HEALTH: Cloud storage not accessible at {}: {}", cloud_base_url, e);
+                    Ok(false)
+                }
+            }
+        } else {
+            tracing::warn!("❌ CLOUD_HEALTH: Filesystem not initialized");
+            Ok(false)
+        }
     }
 
     // 🎯 ADDITIONAL BATCH OPERATIONS
@@ -256,8 +539,18 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             // Atomically clear flushed batches from GlobalPartitionedMemtable
             let cleared_count = wal_behavior.clear_flushed(&flush_cycle.collection_id, u64::MAX).await?;
             
-            // TODO: Cleanup disk WAL files for the flushed batches
-            // This would delete the corresponding WAL segment files on disk
+            // Cleanup disk WAL files for the flushed batches
+            if let Some(fs) = self.get_filesystem() {
+                for batch_id in &flush_cycle.batch_ids {
+                    // Try to clean up local WAL files if they exist
+                    let local_wal_path = format!("wal_batch_{}_{}.bin", 
+                        flush_cycle.collection_id, batch_id.batch_uuid);
+                    
+                    if let Ok(local_fs) = fs.get_filesystem(&format!("file://{}", local_wal_path)) {
+                        let _ = local_fs.delete(&local_wal_path).await; // Ignore errors - file might not exist
+                    }
+                }
+            }
             
             tracing::info!(
                 "✅ Flush completion: {} batches cleared from memtable for collection {} (flush_id: {})",
@@ -374,6 +667,46 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         };
 
         self.write_vector_batch(batch).await
+    }
+
+    /// Insert vectors with cloud backup option
+    async fn insert_vectors_with_cloud_backup(
+        &self,
+        collection_id: CollectionId,
+        vector_records: Vec<VectorRecord>,
+        cloud_backup_url: Option<&str>,
+    ) -> Result<Vec<u64>> {
+        // Insert vectors normally
+        let sequences = self.insert_vectors(collection_id.clone(), vector_records.clone()).await?;
+        
+        // If cloud backup is enabled, also write to cloud
+        if let Some(cloud_url) = cloud_backup_url {
+            let batch_id = super::BatchId::new(
+                collection_id.clone(), 
+                1, 
+                vector_records.len() as u64
+            );
+            
+            let total_size_bytes: usize = vector_records.iter()
+                .map(|r| r.actual_size_bytes())
+                .sum();
+            
+            let batch = WalVectorBatch {
+                batch_id,
+                vector_records,
+                created_at: std::time::SystemTime::now(),
+                total_size_bytes,
+                is_flushed: false,
+            };
+            
+            // Write to cloud as backup (fire and forget)
+            let cloud_result = self.write_batch_to_cloud(&collection_id, &batch, cloud_url).await;
+            if let Err(e) = cloud_result {
+                tracing::warn!("Failed to write batch to cloud backup: {}", e);
+            }
+        }
+        
+        Ok(sequences)
     }
 }
 

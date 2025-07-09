@@ -320,6 +320,11 @@ pub struct WalStorageConfig {
     /// Maximum concurrent flush operations
     #[serde(default = "default_concurrent_flushes")]
     pub concurrent_flushes: Option<usize>,
+
+    /// Shrink factor for global threshold management (percentage)
+    /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
+    #[serde(default = "default_global_shrink_factor")]
+    pub global_shrink_factor: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,14 +349,15 @@ impl Default for WalStorageConfig {
             wal_urls: vec!["file:///workspace/data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
-            memory_flush_size_bytes: 1 * 1024 * 1024,  // 1MB
-            global_flush_threshold: 512 * 1024 * 1024, // 512MB
+            memory_flush_size_bytes: 10 * 1024 * 1024,  // 10MB - recommended for collection-level flush
+            global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB - recommended for global memory threshold
             strategy_type: None,                       // Use WAL defaults
             memtable_type: None,                       // Use WAL defaults
             sync_mode: None,                           // Use WAL defaults
             batch_threshold: None,                     // Use WAL defaults
             write_buffer_size_mb: None,                // Use WAL defaults
             concurrent_flushes: None,                  // Use WAL defaults
+            global_shrink_factor: Some(0.4),           // 40% shrink factor - recommended
         }
     }
 }
@@ -361,10 +367,10 @@ fn default_collection_affinity() -> bool {
     true
 }
 fn default_memory_flush_size() -> usize {
-    1 * 1024 * 1024
+    10 * 1024 * 1024 // 10MB - recommended for collection-level flush
 }
 fn default_global_flush_threshold() -> usize {
-    512 * 1024 * 1024
+    4 * 1024 * 1024 * 1024 // 4GB - recommended for global memory threshold
 }
 fn default_strategy_type() -> Option<String> {
     None
@@ -383,6 +389,9 @@ fn default_write_buffer_size_mb() -> Option<usize> {
 }
 fn default_concurrent_flushes() -> Option<usize> {
     None
+}
+fn default_global_shrink_factor() -> Option<f64> {
+    Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

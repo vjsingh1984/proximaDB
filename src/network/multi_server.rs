@@ -380,11 +380,14 @@ impl SharedServices {
             VectorService::with_existing_wal(
                 storage.clone(),
                 wal_manager,
-                collection_service.clone(),
                 avro_config,
             )
             .await?,
         );
+
+        // 🔗 DEPENDENCY INJECTION: Inject collection service into VIPER for real-time schema generation
+        vector_service.set_collection_service(collection_service.clone()).await;
+        info!("✅ SharedServices: Collection service injected into VIPER engine for dynamic schema generation");
 
         // CRITICAL: Restore collection metadata from WAL during startup
         // This ensures collections are visible to gRPC service after server restart

@@ -51,6 +51,106 @@ pub struct CollectionConfig {
     /// Enhanced filterable column specs
     #[prost(message, repeated, tag = "8")]
     pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
+    /// Advanced index configuration
+    #[prost(message, optional, tag = "9")]
+    pub index_config: ::core::option::Option<IndexConfig>,
+}
+/// Advanced index configuration with per-collection customization
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IndexConfig {
+    /// Index update behavior configuration
+    ///
+    /// Sync/async index updates
+    #[prost(enumeration = "IndexUpdateMode", tag = "1")]
+    pub update_mode: i32,
+    /// Timeout for async updates
+    #[prost(int64, optional, tag = "2")]
+    pub async_update_timeout_ms: ::core::option::Option<i64>,
+    /// Batch size for async updates
+    #[prost(int32, optional, tag = "3")]
+    pub async_update_batch_size: ::core::option::Option<i32>,
+    /// Background index optimization
+    #[prost(bool, tag = "4")]
+    pub enable_background_optimization: bool,
+    /// HNSW-specific configuration
+    #[prost(message, optional, tag = "5")]
+    pub hnsw_config: ::core::option::Option<HnswConfig>,
+    /// IVF-specific configuration
+    #[prost(message, optional, tag = "6")]
+    pub ivf_config: ::core::option::Option<IvfConfig>,
+    /// Performance tuning
+    ///
+    /// Parallel index building
+    #[prost(int32, optional, tag = "7")]
+    pub build_concurrency: ::core::option::Option<i32>,
+    /// Memory limit per index
+    #[prost(int64, optional, tag = "8")]
+    pub memory_limit_mb: ::core::option::Option<i64>,
+    /// Index checkpoint frequency
+    #[prost(int32, optional, tag = "9")]
+    pub checkpoint_interval_ms: ::core::option::Option<i32>,
+}
+/// HNSW algorithm configuration
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HnswConfig {
+    /// Number of bi-directional links (default: 16)
+    #[prost(int32, tag = "1")]
+    pub m: i32,
+    /// Size of candidate set during construction (default: 200)
+    #[prost(int32, tag = "2")]
+    pub ef_construction: i32,
+    /// Search parameter for recall (default: 50)
+    #[prost(int32, tag = "3")]
+    pub ef_search: i32,
+    /// Maximum vectors per partition (default: 100000)
+    #[prost(int32, tag = "4")]
+    pub max_partition_size: i32,
+    /// Dynamic parameter tuning (default: true)
+    #[prost(bool, tag = "5")]
+    pub adaptive_parameters: bool,
+    /// SIMD optimizations (default: true)
+    #[prost(bool, tag = "6")]
+    pub use_simd: bool,
+    /// Memory limit per partition (default: 512)
+    #[prost(int32, tag = "7")]
+    pub memory_limit_mb: i32,
+    /// Lazy loading for large partitions (default: true)
+    #[prost(bool, tag = "8")]
+    pub lazy_loading: bool,
+    /// Connection pruning threshold (default: 0 = disabled)
+    #[prost(int32, tag = "9")]
+    pub prune_connections: i32,
+    /// Level generation multiplier (default: 1/ln(2))
+    #[prost(float, tag = "10")]
+    pub level_multiplier: f32,
+}
+/// IVF algorithm configuration
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IvfConfig {
+    /// Number of clusters (default: sqrt(N))
+    #[prost(int32, tag = "1")]
+    pub n_lists: i32,
+    /// Number of clusters to search (default: 1)
+    #[prost(int32, tag = "2")]
+    pub n_probe: i32,
+    /// Bits for quantization (default: 8)
+    #[prost(int32, tag = "3")]
+    pub quantization_bits: i32,
+    /// Use product quantization (default: false)
+    #[prost(bool, tag = "4")]
+    pub use_pq: bool,
+    /// PQ subspaces (default: 8)
+    #[prost(int32, tag = "5")]
+    pub pq_subspaces: i32,
+    /// Retrain on every insert (default: false)
+    #[prost(bool, tag = "6")]
+    pub train_on_insert: bool,
+    /// Minimum size to trigger training (default: 1000)
+    #[prost(int32, tag = "7")]
+    pub min_train_size: i32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -631,6 +731,42 @@ impl MutationType {
             "MUTATION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
             "MUTATION_UPDATE" => Some(Self::MutationUpdate),
             "MUTATION_DELETE" => Some(Self::MutationDelete),
+            _ => None,
+        }
+    }
+}
+/// Index update behavior modes
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IndexUpdateMode {
+    Unspecified = 0,
+    /// Block flush until index updated (default)
+    Synchronous = 1,
+    /// Return from flush immediately
+    Asynchronous = 2,
+    /// Sync for small batches, async for large
+    HybridMode = 3,
+}
+impl IndexUpdateMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            IndexUpdateMode::Unspecified => "INDEX_UPDATE_MODE_UNSPECIFIED",
+            IndexUpdateMode::Synchronous => "SYNCHRONOUS",
+            IndexUpdateMode::Asynchronous => "ASYNCHRONOUS",
+            IndexUpdateMode::HybridMode => "HYBRID_MODE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "INDEX_UPDATE_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "SYNCHRONOUS" => Some(Self::Synchronous),
+            "ASYNCHRONOUS" => Some(Self::Asynchronous),
+            "HYBRID_MODE" => Some(Self::HybridMode),
             _ => None,
         }
     }

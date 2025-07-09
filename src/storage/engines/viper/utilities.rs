@@ -988,3 +988,16 @@ impl Default for CompressionConfig {
         }
     }
 }
+
+impl std::fmt::Debug for ViperUtilities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ViperUtilities")
+            .field("stats_collector", &"PerformanceStatsCollector")
+            .field("ttl_service", &"TTLCleanupService")
+            .field("staging_coordinator", &"StagingOperationsCoordinator")
+            .field("partitioner", &"DataPartitioner")
+            .field("compression_optimizer", &"CompressionOptimizer")
+            .field("config", &self.config)
+            .finish()
+    }
+}

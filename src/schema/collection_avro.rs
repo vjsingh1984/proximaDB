@@ -269,6 +269,7 @@ impl CollectionRecord {
             filterable_metadata_fields: self.filterable_fields.clone(),
             indexing_config: serde_json::from_str(&self.indexing_config).unwrap_or_default(),
             filterable_columns: Vec::new(), // Empty by default for new filterable column API
+            index_config: None, // Use default IndexConfig - collection service will provide this
         }
     }
 }

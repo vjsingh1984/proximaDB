@@ -187,7 +187,7 @@ impl CollectionRecord {
 
         // Convert full config (including IndexConfig) to JSON
         let full_config = serde_json::json!({
-            "indexing_config": config.indexing_config,
+            "indexing_config": serde_json::to_value(&config.indexing_config)?,
             "filterable_columns": config.filterable_columns.iter().map(|col| {
                 serde_json::json!({
                     "name": col.name,
@@ -197,7 +197,7 @@ impl CollectionRecord {
                     "estimated_cardinality": col.estimated_cardinality
                 })
             }).collect::<Vec<_>>(),
-            "index_config": smart_index_config.to_proto()
+            "index_config": serde_json::to_value(&smart_index_config)?
         });
         let config_json = serde_json::to_string(&full_config)?;
 

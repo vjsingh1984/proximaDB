@@ -28,12 +28,12 @@ use crate::storage::persistence::wal::config::WalConfig;
 
 // Use centralized schema from wal module
 use crate::storage::persistence::wal::schema::{
-    VECTOR_BATCH_SCHEMA_V1, deserialize_vector_batch, create_avro_vector_batch, AvroVector, AvroVectorBatch
+    VECTOR_BATCH_SCHEMA_V1, deserialize_vector_batch
 };
 
 // Function removed - using centralized deserialize_vector_batch from schema module
 
-use crate::storage::persistence::wal::{WalManager, WalStrategyType, WalBatchFactory};
+use crate::storage::persistence::wal::{WalManager, WalStrategyType};
 use crate::storage::FilesystemFactory;
 use crate::storage::StorageEngine;
 // Note: storage::vector module has been restructured
@@ -50,7 +50,7 @@ use crate::core::{
 use crate::index::axis::{AxisConfig, AxisManager};
 // Collection service removed - indexing configuration handled by AXIS
 use crate::storage::engines::lsm::LsmTree;
-use crate::storage::engines::viper::core::ViperCoreEngine;
+use crate::storage::engines::viper::ViperEngine;
 
 /// OPTIMIZATION: Smart operation routing modes for hybrid serialization
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ pub enum OperationMode {
 pub struct CollectionStorageIndexCoordinator {
     collection_id: String,
     axis_manager: Arc<AxisManager>,
-    viper_engine: Arc<ViperCoreEngine>,
+    viper_engine: Arc<ViperEngine>,
     lsm_engine: Arc<LsmTree>,
     storage_engine_type: crate::proto::proximadb::StorageEngine,
     creation_time: chrono::DateTime<chrono::Utc>,
@@ -96,7 +96,7 @@ impl CollectionStorageIndexCoordinator {
         collection_id: String,
         storage_engine_type: crate::proto::proximadb::StorageEngine,
         axis_manager: Arc<AxisManager>,
-        viper_engine: Arc<ViperCoreEngine>,
+        viper_engine: Arc<ViperEngine>,
         lsm_engine: Arc<LsmTree>,
     ) -> Result<Self> {
         tracing::info!(
@@ -311,14 +311,14 @@ impl CollectionStorageIndexCoordinator {
 pub struct StorageIndexCoordinatorManager {
     coordinators: Arc<tokio::sync::RwLock<HashMap<String, Arc<CollectionStorageIndexCoordinator>>>>,
     axis_manager: Arc<AxisManager>,
-    viper_engine: Arc<ViperCoreEngine>,
+    viper_engine: Arc<ViperEngine>,
     lsm_engine: Arc<LsmTree>,
 }
 
 impl StorageIndexCoordinatorManager {
     pub async fn new(
         axis_manager: Arc<AxisManager>,
-        viper_engine: Arc<ViperCoreEngine>,
+        viper_engine: Arc<ViperEngine>,
         lsm_engine: Arc<LsmTree>,
     ) -> Result<Self> {
         Ok(Self {
@@ -447,7 +447,7 @@ impl StorageIndexCoordinatorManager {
 pub struct VectorService {
     storage: Arc<RwLock<StorageEngine>>,
     wal: Arc<WalManager>,
-    viper_engine: Arc<ViperCoreEngine>,
+    viper_engine: Arc<ViperEngine>,
     lsm_engine: Arc<LsmTree>,
     // collection_service removed - indexing configuration handled by AXIS
     coordinator_manager: Arc<StorageIndexCoordinatorManager>,
@@ -656,7 +656,7 @@ impl VectorService {
     }
 
     /// Create and register VIPER engine with the vector coordinator
-    async fn create_viper_engine() -> Result<ViperCoreEngine> {
+    async fn create_viper_engine() -> Result<ViperEngine> {
         info!("🔧 Creating VIPER engine for direct vector storage");
 
         // Create filesystem factory for VIPER
@@ -669,19 +669,23 @@ impl VectorService {
         );
 
         // Create VIPER configuration with production settings
-        let viper_config = crate::storage::engines::viper::core::ViperCoreConfig {
+        let viper_config = crate::storage::engines::viper::ViperConfig {
             enable_ml_clustering: true,
             enable_background_compaction: true,
-            compression_config: crate::storage::engines::viper::core::CompressionConfig::default(),
-            schema_config: crate::storage::engines::viper::core::SchemaConfig::default(),
-            atomic_config: crate::storage::engines::viper::core::AtomicOperationsConfig::default(),
-            writer_pool_size: 4,
-            stats_interval_secs: 60,
+            initial_cluster_count: 10,
+            enable_quantization: true,
+            parquet_compression: crate::storage::engines::viper::ParquetCompression::Snappy,
+            row_group_size: 100000,
+            flush_size_bytes: Some(64 * 1024 * 1024), // 64 MB
+            quantization_config: Some(crate::storage::engines::viper::types::QuantizationConfig::default()),
+            cluster_quantization_map: std::collections::HashMap::new(),
+            vector_quality_metrics: crate::storage::engines::viper::VectorQualityMetrics::default(),
+            search_performance_stats: crate::storage::engines::viper::SearchPerformanceStats::default(),
         };
 
-        // Create VIPER core engine (uses base trait for assignment service access)
+        // Create VIPER engine (uses base trait for assignment service access)
         let viper_engine =
-            crate::storage::engines::viper::core::ViperCoreEngine::new(viper_config, filesystem)
+            crate::storage::engines::viper::ViperEngine::new(viper_config, filesystem)
                 .await
                 .context("Failed to create VIPER core engine")?;
 
@@ -1936,7 +1940,28 @@ impl VectorService {
                     .collect::<std::collections::HashMap<String, serde_json::Value>>()
             });
 
-        // Step 4: **USE UNIFIED SEARCH WITH DEDUPLICATION**
+        // Step 4: Get collection record from collection service
+        // TODO: Inject collection service properly - for now simulate
+        let collection_record = crate::storage::metadata::backends::filestore_backend::CollectionRecord {
+            uuid: collection_id.to_string(),
+            name: collection_id.to_string(),
+            dimension: query_vector.len() as i32,
+            distance_metric: "cosine".to_string(),
+            storage_engine: "viper".to_string(),
+            indexing_algorithm: "hnsw".to_string(),
+            config: "{}".to_string(),
+            vector_count: 0,
+            total_size_bytes: 0,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            version: 1,
+            description: None,
+            owner: None,
+            tags: vec![],
+            // filterable fields are stored in config JSON, not as direct fields
+        };
+
+        // Step 5: **USE UNIFIED SEARCH WITH DEDUPLICATION**
         use crate::core::search::SearchEngineFactory;
         
         tracing::info!("🔍 UNIFIED POLYMORPHIC: Using unified search with deduplication");
@@ -2270,6 +2295,13 @@ impl VectorService {
             storage_engine
         );
         Ok(())
+    }
+
+    /// Inject collection service into VIPER engine for schema generation during flush/compaction
+    /// This enables real-time schema generation based on collection configuration
+    pub async fn set_collection_service(&self, collection_service: Arc<crate::services::collection_service::CollectionService>) {
+        self.viper_engine.set_collection_service(collection_service).await;
+        tracing::info!("🔗 VectorService: Collection service injected into VIPER engine for schema generation");
     }
 
     /// Convert Avro payload to Bincode batch for aligned storage

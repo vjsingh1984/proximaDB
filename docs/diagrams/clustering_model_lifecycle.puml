@@ -1,0 +1,120 @@
+@startuml Clustering_Model_Lifecycle
+!theme plain
+title Clustering Model Lifecycle Management
+subtitle Training, Persistence, and Retraining Strategy
+
+state "Model Not Exists" as NotExists
+state "Model Training" as Training
+state "Model Active" as Active
+state "Model Retraining" as Retraining
+state "Model Expired" as Expired
+
+state Training {
+    state "Load Vectors" as LoadVectors
+    state "K-means++ Init" as KMeansInit
+    state "Iterative Refinement" as Refinement
+    state "Model Persistence" as Persistence
+    state "Statistics Calculation" as StatsCalc
+    
+    LoadVectors --> KMeansInit
+    KMeansInit --> Refinement
+    Refinement --> StatsCalc
+    StatsCalc --> Persistence
+}
+
+state Active {
+    state "Serving Searches" as ServingSearches
+    state "Monitoring Growth" as MonitoringGrowth
+    state "Model Validation" as ModelValidation
+    
+    ServingSearches --> MonitoringGrowth
+    MonitoringGrowth --> ModelValidation
+    ModelValidation --> ServingSearches
+}
+
+state Retraining {
+    state "Background Training" as BackgroundTraining
+    state "Model Comparison" as ModelComparison
+    state "Atomic Replacement" as AtomicReplacement
+    
+    BackgroundTraining --> ModelComparison
+    ModelComparison --> AtomicReplacement
+}
+
+' Transitions
+NotExists --> Training : Collection reaches\n1M vectors
+Training --> Active : Training completes\nsuccessfully
+Active --> Retraining : 20% growth threshold\nreached
+Retraining --> Active : New model deployed
+Active --> Expired : Collection deleted\nor size < 1M
+Expired --> NotExists : Cleanup complete
+
+Training --> NotExists : Training fails
+Retraining --> Active : Retraining fails\n(keep old model)
+
+' Transition conditions and actions
+NotExists : **Condition**: Collection vector count < 1M
+NotExists : **Action**: Use direct search only
+
+Training : **Trigger**: BackgroundManager detects 1M+ vectors
+Training : **Process**: 
+Training : - Load all vectors from storage
+Training : - Apply K-means++ initialization
+Training : - Iterative centroid refinement
+Training : - Calculate model statistics
+Training : - Persist to __models/ directory
+Training : **Duration**: 30-300 seconds depending on collection size
+
+Active : **Condition**: Valid model exists and collection > 1M vectors
+Active : **Capabilities**:
+Active : - Cluster-optimized search available
+Active : - Parallel cluster processing
+Active : - 3-5x storage efficiency
+Active : - Continuous growth monitoring
+Active : **Monitoring**: Track vector count growth for retraining threshold
+
+Retraining : **Trigger**: Current vector count >= 1.20 * last_training_count
+Retraining : **Strategy**: 
+Retraining : - Train new model in background
+Retraining : - Compare performance with current model
+Retraining : - Atomic replacement if improvement detected
+Retraining : - Fallback to old model if training fails
+Retraining : **Coordination**: Scheduled with flush/compaction cycles
+
+Expired : **Triggers**:
+Expired : - Collection deleted
+Expired : - Vector count drops below 1M
+Expired : - Model corruption detected
+Expired : **Cleanup**:
+Expired : - Remove model files from __models/
+Expired : - Clear statistics
+Expired : - Revert to direct search
+
+note top of Training
+    **Training Performance:**
+    - 1M vectors: ~30-60 seconds
+    - 10M vectors: ~2-5 minutes
+    - 100M vectors: ~10-30 minutes
+    - Parallel processing available
+    - SIMD optimizations enabled
+end note
+
+note top of Active
+    **Model Statistics Tracked:**
+    - Vector count at training time
+    - Cluster count and distribution
+    - Training duration and timestamp
+    - Inertia and silhouette scores
+    - Search performance metrics
+end note
+
+note top of Retraining
+    **Retraining Optimization:**
+    - Only triggered at 20% growth
+    - Background training prevents disruption
+    - Atomic model replacement
+    - Performance comparison validation
+    - Graceful degradation on failure
+end note
+
+@enduml
