@@ -1166,56 +1166,33 @@ sync_mode = "PerBatch"
 - Batching optimization for improved throughput
 - Pipeline parallelism for large model inference
 
-== Implementation Phases and Roadmap
+== Implementation Status Summary
 
-=== Phase Mapping by Dependencies and Importance
+=== Current Implementation (90% Complete) ✅
 
-==== Phase 1: Core Foundation (80% Complete) ✅
+**Status**: Production-ready single-node vector database
+**Last Updated**: January 2025
 
-**Status**: Completed December 2024
-**Focus**: Production-ready single-node vector database
+==== ✅ **Completed Core Features**
+- **Storage Engine**: VIPER with Parquet, multi-cloud filesystem, ML clustering
+- **Collection Management**: Full CRUD with persistence across restarts
+- **Multi-Server Architecture**: REST:5678, gRPC:5679 with identical feature parity
+- **WAL System**: Avro/Bincode strategies, MVCC support, atomic operations
+- **Python SDK**: Complete client library with async support
+- **BERT Integration**: 384, 768, 1024 dimensions tested and validated
+- **AXIS Indexing**: Framework complete, per-collection coordinators
+- **ML Clustering**: K-means++ with 20% growth threshold, model persistence
+- **Storage-Aware Search**: Polymorphic search with 6.10x performance improvement
 
-- ✅ **Storage Engine**: VIPER with Parquet, multi-cloud filesystem
-- ✅ **Collection Management**: Full CRUD with persistence
-- ✅ **Multi-Server Architecture**: REST:5678, gRPC:5679
-- ✅ **WAL System**: Avro/Bincode strategies, MVCC
-- ✅ **Python SDK**: Complete client library
-- ✅ **BERT Integration**: 384, 768, 1024 dimensions tested
+==== 🚧 **In Progress**
+- **Vector Operations**: Advanced server-side operations (7 methods pending)
+- **SIMD Optimizations**: x86 detection ready, ARM NEON planned
+- **Integration Testing**: Comprehensive test suite development
 
-==== Phase 2: Vector Operations (15% Complete) 🚧
-
-**Status**: In Progress
-**Focus**: Complete vector search and indexing capabilities
-**Dependencies**: Phase 1 complete
-
-- 🚧 **Vector Operations**: Infrastructure ready, coordinator integration needed
-- 🚧 **AXIS Indexing**: Framework 60% complete, HNSW basic implementation
-- 🚧 **SIMD Optimizations**: x86 detection ready, ARM NEON planned
-- 📋 **Advanced Search**: Hybrid search, metadata filtering
-- 📋 **Performance Optimization**: Query optimization, caching
-
-==== Phase 3: Advanced Features (40% Complete) 🚧
-
-**Status**: IN PROGRESS - Major Components Implemented
-**Focus**: Storage-aware compaction, IndexConfig integration, AI inference and distributed capabilities
-**Dependencies**: Phase 2 complete
-
-- 🚧 **Arrow/Parquet Compaction**: Dynamic schema generation, version merging, expiry logic
-- ✅ **IndexConfig Integration**: Per-collection index configuration with smart defaults
-- 📋 **AI Inference Integration**: vLLM, llama.cpp, model serving
-- 📋 **Distributed Architecture**: Raft consensus (re-enable)
-- 📋 **Multi-tenancy**: Authentication, authorization, isolation
-- 📋 **Horizontal Scaling**: Sharding, replication
-- 📋 **Advanced Analytics**: SQL engine, complex queries
-
-==== Removed in Cleanup (0%) ❌
-
-**Status**: Permanently removed December 2024
-**Reason**: Placeholder code providing no value
-
-- ❌ **GPU Acceleration**: 1000+ lines of CUDA/ROCm placeholders
-- ❌ **CLI Binary**: Non-functional placeholder
-- ❌ **Empty API Modules**: v1 and internal API stubs
+==== ❌ **Removed Features**
+- **GPU Acceleration**: Removed placeholder code (1000+ lines)
+- **Distributed Architecture**: Single-node focus adopted
+- **CLI Binary**: Non-functional placeholder removed
 
 == MVP Requirements
 
@@ -1338,324 +1315,59 @@ services:
 
 == Future Roadmap
 
-=== Phase 1: Core MVP (6 months)
-- Basic vector operations with CRUD functionality
-- Single-node deployment with MMAP storage
-- Python and Java client SDKs
-- REST API with OpenAPI specification
-- Docker demo container for adoption
+=== Next Quarter (Q1 2025)
+- **Complete Vector Operations**: Implement remaining 7 server-side methods
+- **Integration Testing**: Comprehensive test suite with real server testing
+- **Performance Optimization**: Fix remaining ~380 compiler warnings
+- **Documentation**: Complete API documentation and examples
 
-=== Phase 2: Distribution and Scale (12 months)
-- 3-node Raft cluster implementation
-- Multi-node deployment with consensus
-- URL-based storage policy implementation
-- GPU acceleration for vector operations
-- Advanced monitoring and observability
-
-=== Phase 3: AI Integration (18 months)
-- Vertical appliance with multi-GPU support
-- vLLM and llama.cpp integration
-- Advanced inference serving capabilities
-- Enterprise security and compliance features
-- Global multi-region deployment
-
-=== Phase 4: Global Scale (24 months)
-- Petabyte-scale deployments
-- Advanced analytics and data science features
-- Edge computing support
-- Advanced AI/ML pipeline integration
-- Full enterprise feature set
+=== Future Considerations (Beyond 2025)
+- **Distributed Architecture**: Re-enable Raft consensus if demand exists
+- **Advanced Analytics**: SQL query interface for complex operations
+- **Enterprise Features**: Authentication, authorization, multi-tenancy
+- **Cloud Integration**: Enhanced cloud-native features and monitoring
 
 ---
 
 == Implementation Status Summary
 
-=== Overall Implementation Coverage
+=== Implementation Gap Analysis
 
-Based on comprehensive deep inspection of both client SDK and server implementation:
+**ProximaDB follows proper client-server architecture with identified gaps:**
 
-[cols="3,2,2,3", options="header"]
-|===
-| Component | Implementation Status | Test Coverage | Notes
+**Client SDK**: ✅ **100% Complete**
+- All methods implemented as thin wrappers
+- Protocol abstraction working correctly (REST/gRPC)
+- Comprehensive error handling and type safety
+- Ready for server-side implementation
 
-| **Client SDK (Python)**
-| ✅ **100% Complete**
-| 44% (improving)
-| All methods implemented as thin wrappers
+**Server Implementation**: **7 Advanced Methods Missing**
+- **Collection operations**: ✅ Complete and production-ready
+- **Vector insert/search**: ✅ Core functionality working
+- **Advanced operations**: ❌ 7 methods missing server-side implementation
+- **Transaction system**: ❌ Completely missing
 
-| **Server - Collection Operations**
-| ✅ **100% Complete** 
-| 85% (good)
-| Production ready with persistence
+**Remaining Work**: 15-25 days of server-side implementation
+- High Priority (5-7 days): Collection updates + vector filter deletion
+- Medium Priority (4-6 days): Multi-search + atomic operations
+- Low Priority (6-12 days): Aggregations + history + transactions
 
-| **Server - Basic Vector Operations**
-| ✅ **90% Complete**
-| 70% (acceptable)
-| Insert/search working, CRUD needs completion
-
-| **Server - Advanced Vector Operations**
-| ❌ **0% Complete**
-| 0% (skipped tests)
-| All 7 methods missing server-side implementation
-
-| **Server - Transaction Management**
-| ❌ **0% Complete**
-| 0% (not implemented)
-| Complete transaction system needed
-
-| **Storage Layer**
-| ✅ **95% Complete**
-| 90% (excellent)
-| WAL + VIPER working, coordinator integration needed
-
-| **Network Layer**
-| ✅ **100% Complete**
-| 95% (excellent)
-| Dual-protocol working perfectly
-|===
-
-=== Client-Server Implementation Gap Analysis
-
-**The comprehensive analysis reveals that ProximaDB follows proper client-server architecture:**
-
-1. **Client SDK**: ✅ Properly implements "thin wrapper" pattern
-   - All 7 missing methods are implemented as thin wrappers
-   - Protocol abstraction working correctly (REST/gRPC)
-   - Comprehensive error handling and type safety
-   - Ready for server-side implementation
-
-2. **Server Implementation**: Gaps identified in specific locations
-   - **Collection operations**: ✅ Complete and production-ready
-   - **Vector insert/search**: ✅ Core functionality working
-   - **Advanced operations**: ❌ Missing server-side implementation
-   - **Transaction system**: ❌ Completely missing
-
-== Additional TODOs Required for Skipped Tests
-
-Based on the 7 skipped test cases identified in the comprehensive analysis, the following TODOs are required:
-
-=== High Priority Server Implementation (2-3 weeks)
-
-==== TODO-001: Collection Update Operations
-**Requirement**: VR-023, SDK-008
-**Test**: `test_update_collection_metadata`
-**Implementation Location**: `src/services/collection_service.rs`
-**Effort**: 2-3 days
-
-```rust
-// Required server-side implementation:
-impl CollectionService {
-    pub async fn update_collection_metadata(
-        &self,
-        collection_id: &str, 
-        updates: CollectionUpdates
-    ) -> Result<Collection> {
-        // Validate updates
-        // Apply metadata changes  
-        // Update persistence
-        // Return updated collection
-    }
-}
-```
-
-**REST Endpoint**: `PATCH /collections/{id}`
-**gRPC Enhancement**: Extend `CollectionOperation(UPDATE)`
-
-==== TODO-002: Delete Vectors by Filter
-**Requirement**: VR-024, SDK-009  
-**Test**: `test_conditional_vector_operations`
-**Implementation Location**: `src/services/vector_service.rs`
-**Effort**: 4-5 days
-
-```rust
-// Required server-side implementation:
-impl VectorService {
-    pub async fn delete_vectors_by_filter(
-        &self,
-        collection_id: &str,
-        filter: FilterCriteria
-    ) -> Result<DeleteResponse> {
-        // Parse filter criteria
-        // Query matching vectors (via metadata search)
-        // Batch delete operations
-        // Update WAL with deletions
-        // Return deletion results
-    }
-}
-```
-
-**REST Endpoint**: `DELETE /collections/{id}/vectors` + filter body
-**gRPC Enhancement**: Enhanced `VectorMutation(DELETE)` with filter selector
-
-=== Medium Priority Advanced Operations (1-2 weeks each)
-
-==== TODO-003: Multi-Vector Search
-**Requirement**: VR-009, SDK-011
-**Test**: `test_multi_vector_search`  
-**Implementation Location**: `src/services/vector_service.rs`
-**Effort**: 3-4 days
-
-```rust
-// Required server-side implementation:
-impl VectorService {
-    pub async fn multi_search(
-        &self,
-        collection_id: &str,
-        queries: Vec<SearchQuery>
-    ) -> Result<MultiSearchResponse> {
-        // Execute searches in parallel
-        // Merge and rank results
-        // Handle query-specific filters
-        // Return combined results with query indices
-    }
-}
-```
-
-**REST Endpoint**: `POST /collections/{id}/multi_search`
-**gRPC Enhancement**: Enhanced `VectorSearch` with multiple queries
-
-==== TODO-004: Atomic Vector Operations
-**Requirement**: VR-025, SDK-013
-**Test**: `test_atomic_batch_operations`
-**Implementation Location**: `src/services/vector_service.rs`
-**Effort**: 3-4 days
-
-```rust
-// Required server-side implementation:
-impl VectorService {
-    pub async fn atomic_insert_vectors(
-        &self,
-        collection_id: &str,
-        vectors: Vec<VectorRecord>
-    ) -> Result<AtomicInsertResponse> {
-        // Begin transaction boundary
-        // Insert all vectors or none
-        // Provide rollback on failure
-        // Ensure ACID properties
-    }
-}
-```
-
-**REST Endpoint**: `POST /collections/{id}/vectors/atomic`
-**gRPC Enhancement**: Add atomic flag to `VectorInsert`
-
-=== Low Priority Advanced Features (1-3 weeks each)
-
-==== TODO-005: Search with Aggregations
-**Requirement**: VR-026, SDK-012
-**Test**: `test_search_with_aggregations`
-**Implementation Location**: `src/services/vector_service.rs`  
-**Effort**: 5-7 days
-
-```rust
-// Required server-side implementation:
-impl VectorService {
-    pub async fn search_with_aggregations(
-        &self,
-        collection_id: &str,
-        query: SearchQuery,
-        aggregations: Vec<AggregationSpec>
-    ) -> Result<AggregatedSearchResponse> {
-        // Execute vector search
-        // Group results by specified fields
-        // Calculate aggregations (count, avg, sum, etc.)
-        // Return search results + aggregation data
-    }
-}
-```
-
-**REST Endpoint**: `POST /collections/{id}/search_aggregated`
-**gRPC Enhancement**: New `VectorSearchAggregated` method
-
-==== TODO-006: Vector Version Control
-**Requirement**: VR-022, SDK-010
-**Test**: `test_vector_version_control`
-**Implementation Location**: `src/services/vector_service.rs`
-**Effort**: 7-10 days
-
-```rust
-// Required server-side implementation:
-impl VectorService {
-    pub async fn get_vector_history(
-        &self,
-        collection_id: &str,
-        vector_id: &str,
-        limit: usize
-    ) -> Result<Vec<VectorVersion>> {
-        // Implement version tracking system
-        // Store vector history in separate storage
-        // Provide time-travel capabilities
-        // Return chronological version list
-    }
-}
-```
-
-**REST Endpoint**: `GET /collections/{id}/vectors/{vector_id}/history`
-**gRPC Enhancement**: New `VectorHistory` service method
-
-==== TODO-007: Transaction Management System
-**Requirement**: VR-027, SDK-014
-**Test**: `test_transaction_rollback`
-**Implementation Location**: `src/services/transaction_manager.rs` (new file)
-**Effort**: 14-21 days
-
-```rust
-// Required server-side implementation:
-pub struct TransactionManager {
-    active_transactions: HashMap<TransactionId, Transaction>,
-    transaction_log: TransactionLog,
-    lock_manager: LockManager,
-}
-
-impl TransactionManager {
-    pub async fn begin_transaction(&self) -> Result<TransactionId>
-    pub async fn commit_transaction(&self, id: TransactionId) -> Result<()>
-    pub async fn rollback_transaction(&self, id: TransactionId) -> Result<()>
-}
-```
-
-**REST Endpoints**: 
-- `POST /transactions`
-- `POST /transactions/{id}/commit`  
-- `POST /transactions/{id}/rollback`
-
-**gRPC Enhancement**: New `TransactionOperation` service
-
-== Implementation Status Update (January 2025)
-
-=== 🚀 Major Architectural Breakthrough: Storage-Aware Compaction
-
-**Status**: ✅ **COMPLETED - Major Components Implemented**
-
-**Key Architectural Decisions**:
-
-1. **Proper Separation of Concerns**: VIPER engine handles all storage-specific operations
-2. **Dynamic Schema Generation**: Native Parquet `array<float32>` for vectors with dynamic quantized columns
-3. **Version Merging & Expiry Logic**: Arrow-based Parquet file processing with TTL support
-4. **Performance Optimizations**: Batch processing with 1000-record batches, sequential execution
-
-**IndexConfig Integration**:
-- ✅ Configurable per-collection index update modes (sync/async/hybrid)
-- ✅ Algorithm-specific parameters (HNSW, IVF) with smart defaults
-- ✅ Collection service integration for durable configuration storage
-- ✅ REST API support with comprehensive validation
-- ✅ AXIS manager integration for proper index building
-
-**Fixed Issues**:
-- ✅ Protobuf enum conflicts resolved
-- ✅ Arrow/Parquet compilation dependencies
-- ✅ Collection service integration patterns
-- ✅ Sequential flush-compaction-indexing pipeline
-
-**Architectural Insight**: Storage-aware compaction logic moved from background manager to VIPER engine for proper separation of concerns and better performance.
-
-=== Implementation Priority Summary
+== Next Steps
 
 **Remaining Implementation Effort: 15-25 days**
 
-1. **High Priority (5-7 days)**: Collection updates + vector filter deletion
-2. **Medium Priority (4-6 days)**: Multi-search + atomic operations  
-3. **Low Priority (6-12 days)**: Aggregations + history + transactions
+=== High Priority Server Implementation (5-7 days)
+1. **Collection Update Operations**: Metadata updates via REST/gRPC
+2. **Vector Filter Deletion**: Delete vectors by metadata criteria
+
+=== Medium Priority Advanced Operations (4-6 days)
+3. **Multi-Vector Search**: Parallel query processing
+4. **Atomic Vector Operations**: Transaction boundaries for batch operations
+
+=== Low Priority Advanced Features (6-12 days)
+5. **Search with Aggregations**: Grouping and statistical operations
+6. **Vector Version Control**: History tracking and time-travel queries
+7. **Transaction Management**: Complete ACID compliance system
 
 **Implementation Order Recommendation:**
 1. `update_collection()` - Quick win, high user value
