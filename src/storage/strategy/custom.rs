@@ -16,7 +16,8 @@ use super::{
     OptimizationResult, SearchFilter, SearchResult, StrategyStats, StrategyType,
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::storage::{CollectionMetadata, WalEntry};
+use crate::storage::CollectionMetadata;
+use crate::storage::persistence::wal::WalEntry;
 
 /// Custom strategy implementation
 pub struct CustomStrategy {

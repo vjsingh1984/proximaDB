@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::{CollectionId, VectorId, VectorRecord};
-use crate::storage::{CollectionMetadata, WalEntry};
+use crate::storage::CollectionMetadata;
+use crate::storage::persistence::wal::WalEntry;
 
 pub mod custom;
 pub mod standard;

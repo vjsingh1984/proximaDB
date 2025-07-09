@@ -563,7 +563,6 @@ impl FileSystem for AzureFileSystem {
 }
 
 /// Simple credential providers for Azure
-
 /// Account key credential provider
 pub struct AccountKeyProvider {
     account_key: String,

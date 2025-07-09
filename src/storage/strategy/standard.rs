@@ -19,7 +19,8 @@ use super::{
 };
 use crate::core::{CollectionId, VectorId, VectorRecord};
 use crate::storage::engines::lsm::LsmTree;
-use crate::storage::{CollectionMetadata, WalEntry};
+use crate::storage::CollectionMetadata;
+use crate::storage::persistence::wal::WalEntry;
 
 /// Standard strategy implementation
 pub struct StandardStrategy {

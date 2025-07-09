@@ -19,17 +19,15 @@ pub mod atomic;
 // Legacy modules removed - use organized structure instead
 
 // Other legacy modules
-pub mod atomicity;
+// atomicity module moved to obsolete - use atomic module instead
 pub mod encoding;
 pub mod engine;
 pub mod mmap;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
-#[deprecated(note = "Use query/ instead")]
-pub mod search;
-#[deprecated(note = "Use indexing/ instead")]
-pub mod search_index;
+// search and search_index modules moved to obsolete
+// Use query/ and indexing/ instead
 pub mod strategy;
 
 // Vector storage system removed - functionality integrated into engines/
@@ -61,11 +59,7 @@ pub use atomic::{
 pub use engine::StorageEngine;
 // WAL system exports
 use crate::core::StorageError;
-pub use atomicity::{
-    AtomicOperation, AtomicityConfig, AtomicityManager, BulkOperation, BulkVectorOperation,
-    OperationResult, TransactionContext, TransactionId, VectorDeleteOperation,
-    VectorInsertOperation, VectorUpdateOperation,
-};
+// atomicity exports removed - use atomic module instead
 // pub use engines::lsm::memtable::{Memtable, MemtableCollectionStats, MemtableEntry, MemtableOperation}; // Moved to obsolete - using unified memtable system
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 // 🚨 DEPRECATED EXPORTS - Use unified vector storage system instead
@@ -77,7 +71,8 @@ pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 // pub use persistence::wal::avro_batch::AvroWalBatchStrategy;
 // pub use persistence::wal::bincode_batch::BincodeWalBatchStrategy;
 pub use persistence::wal::{
-    BatchId, WalConfig, WalEntry, WalManager, WalOperation,
+    BatchId, WalConfig, WalManager, WalOperation,
+    // WalEntry removed - use WalVectorBatch for batch-oriented operations instead
     // WalStrategy removed - use WalBatchStrategy with single-entry batches for individual operations
     // WalFactory removed - use WalBatchFactory for modern implementations
 };

@@ -801,7 +801,6 @@ impl FilesystemFactory {
     }
 
     /// Unified filesystem operations - automatically route to correct backend
-
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("🔍 FilesystemFactory::read() - URL: {}", url);
         let fs = self.get_filesystem(url)?;

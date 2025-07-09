@@ -599,7 +599,7 @@ impl StorageEngine {
         Ok(collections_metadata)
     }
 
-    /// Get collection metadata
+    // Get collection metadata
     // NOTE: Collection metadata operations removed from storage layer.
     // These operations should be performed directly through CollectionService.
     // Storage layer focuses only on data persistence, not metadata management.

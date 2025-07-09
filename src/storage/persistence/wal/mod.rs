@@ -328,8 +328,8 @@ pub struct FlushCompletionResult {
 // Distance computation functions moved to unified distance system
 // These functions are now available through UnifiedDistanceCompute
 
-/// 🚫 DEPRECATED: Legacy WalStrategy trait removed - use WalBatchStrategy instead
-/// All operations now use batch-oriented architecture with single-entry batches for individual operations
+// 🚫 DEPRECATED: Legacy WalStrategy trait removed - use WalBatchStrategy instead
+// All operations now use batch-oriented architecture with single-entry batches for individual operations
 /*
 pub trait WalStrategy: Send + Sync + DistanceComputeProvider {
     /// Strategy name for identification
@@ -907,7 +907,7 @@ pub struct WalManager {
     /// Statistics tracking
     stats: Arc<tokio::sync::RwLock<WalStats>>,
     /// Atomicity manager for transaction support
-    atomicity_manager: Option<Arc<crate::storage::atomicity::AtomicityManager>>,
+    // atomicity_manager removed - use UnifiedAtomicCoordinator from atomic module instead
     /// Distance computation for similarity operations
     distance_compute: UnifiedDistanceCompute,
     /// **Collections assigned to this WalManager** - Each WalManager handles specific collections
@@ -1623,14 +1623,7 @@ impl WalManager {
         Self::create_with_factory(strategy_type, config, filesystem).await
     }
 
-    /// Set atomicity manager for transaction support
-    pub fn set_atomicity_manager(
-        &mut self,
-        atomicity_manager: Arc<crate::storage::atomicity::AtomicityManager>,
-    ) {
-        self.atomicity_manager = Some(atomicity_manager);
-        tracing::info!("🔒 Atomicity manager attached to WAL manager");
-    }
+    // Atomicity manager methods removed - use UnifiedAtomicCoordinator from atomic module instead
 
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
@@ -1643,102 +1636,15 @@ impl WalManager {
         &self.config
     }
 
-    /// Execute atomic operation with transaction support
-    pub async fn execute_atomic_operation(
-        &self,
-        operation: Box<dyn crate::storage::atomicity::AtomicOperation>,
-    ) -> Result<crate::storage::atomicity::OperationResult> {
-        if let Some(atomicity_manager) = &self.atomicity_manager {
-            // Begin transaction
-            let transaction_id = atomicity_manager
-                .begin_transaction(None, None)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
+    // Execute atomic operation method removed - use UnifiedAtomicCoordinator instead
 
-            // Execute operation
-            match atomicity_manager
-                .execute_operation(transaction_id, operation)
-                .await
-            {
-                Ok(result) => {
-                    // Commit transaction
-                    atomicity_manager
-                        .commit_transaction(transaction_id)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
-                    Ok(result)
-                }
-                Err(e) => {
-                    // Rollback transaction
-                    let _ = atomicity_manager
-                        .rollback_transaction(transaction_id, format!("Operation failed: {}", e))
-                        .await;
-                    Err(e)
-                }
-            }
-        } else {
-            Err(anyhow::anyhow!("Atomicity manager not configured"))
-        }
-    }
+    // Execute in transaction method removed - use UnifiedAtomicCoordinator instead
 
-    /// Execute atomic operation within existing transaction
-    pub async fn execute_in_transaction(
-        &self,
-        transaction_id: crate::storage::atomicity::TransactionId,
-        operation: Box<dyn crate::storage::atomicity::AtomicOperation>,
-    ) -> Result<crate::storage::atomicity::OperationResult> {
-        if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager
-                .execute_operation(transaction_id, operation)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to execute operation in transaction: {}", e))
-        } else {
-            Err(anyhow::anyhow!("Atomicity manager not configured"))
-        }
-    }
+    // Begin transaction method removed - use UnifiedAtomicCoordinator instead
 
-    /// Begin a new transaction
-    pub async fn begin_transaction(&self) -> Result<crate::storage::atomicity::TransactionId> {
-        if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager
-                .begin_transaction(None, None)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))
-        } else {
-            Err(anyhow::anyhow!("Atomicity manager not configured"))
-        }
-    }
+    // Commit transaction method removed - use UnifiedAtomicCoordinator instead
 
-    /// Commit a transaction
-    pub async fn commit_transaction(
-        &self,
-        transaction_id: crate::storage::atomicity::TransactionId,
-    ) -> Result<()> {
-        if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager
-                .commit_transaction(transaction_id)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))
-        } else {
-            Err(anyhow::anyhow!("Atomicity manager not configured"))
-        }
-    }
-
-    /// Rollback a transaction
-    pub async fn rollback_transaction(
-        &self,
-        transaction_id: crate::storage::atomicity::TransactionId,
-        reason: String,
-    ) -> Result<()> {
-        if let Some(atomicity_manager) = &self.atomicity_manager {
-            atomicity_manager
-                .rollback_transaction(transaction_id, reason)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to rollback transaction: {}", e))
-        } else {
-            Err(anyhow::anyhow!("Atomicity manager not configured"))
-        }
-    }
+    // Rollback transaction method removed - use UnifiedAtomicCoordinator instead
 
     /// Insert single vector record (converted to batch of 1 via WalVectorBatch)
     pub async fn insert(
