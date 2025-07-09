@@ -84,30 +84,17 @@ image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
 - gRPC Insert: ~2ms P95 (Target: <5ms) ✅
 - REST Insert: ~3ms P95 (Target: <10ms) ✅
 
-== 🏗️ Architecture Overview
+== 🏗️ Architecture Requirements
 
-The ProximaDB architecture is built on key innovations:
+The ProximaDB architecture must deliver:
 
 image::ProximaDB_Complete_System_Architecture.png[Complete System Architecture,width=100%]
 
-=== Core Architectural Components
+**Unified Storage Interface**:: Single memtable interface supporting multiple backends (SkipList, BTree, HashMap, DashMap)
 
-**Unified Memtable Architecture**::
-- Single `MemtableManager` interface with pluggable backends
-- WAL Behavior Wrapper for write-ahead logging
-- LSM Behavior Wrapper for log-structured merge operations
-- VIPER Engine with pure WAL delegation
+**Storage-Aware Search**:: Automatic engine selection with >6x performance improvement and 100% accuracy guarantee
 
-**Storage-Aware Polymorphic Search**::
-- Automatic engine selection based on data location
-- WAL Search Engine for zero-copy access to unflushed data
-- VIPER Search Engine with ML-optimized clustering
-- LSM Search Engine with bloom filter optimization
-- Multi-Tier Deduplication with ID-based result merging
-
-image::core-classes.png[Core Classes,width=100%]
-
-**Performance Achievement**: 6.10x improvement through intelligent multi-tier search with 100% accuracy guarantee.
+**Multi-Cloud Support**:: URL-based abstraction enabling zero-downtime cloud migration
 
 == Executive Summary
 
@@ -122,23 +109,6 @@ Deliver a cloud-native vector database that provides:
 - Single-node architecture optimized for performance
 - Open source transparency with accurate documentation
 
-=== Current Implementation Status (90% Complete)
-
-[cols="2,1,2"]
-|===
-|Component |Status |Notes
-
-|**Storage Engine** |✅ Complete |VIPER with Parquet, multi-cloud, sorted rewrite optimization
-|**Collection Management** |✅ Complete |Full CRUD, persistence across restarts
-|**Multi-Server Architecture** |✅ Complete |REST:5678, gRPC:5679, separate servers
-|**WAL System** |✅ Complete |Avro/Bincode strategies, MVCC support
-|**Python SDK** |✅ Complete |Protocol abstraction, async support
-|**Vector Search** |✅ Complete |Multi-tier unified search with deduplication
-|**AXIS Indexing** |✅ 85% Complete |Framework ready, HNSW implementation
-|**ML Clustering** |✅ Complete |K-means++, 20% growth threshold, model persistence
-|**SIMD Optimizations** |🚧 x86 Ready |ARM NEON planned
-|**Distributed Consensus** |❌ Removed |Single-node focus
-|===
 
 == Product Requirements
 

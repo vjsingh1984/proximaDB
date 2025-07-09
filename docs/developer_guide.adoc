@@ -1756,6 +1756,79 @@ if !is_healthy {
 - Enable versioning for audit trails
 - Regular access reviews and cleanup
 
+== Python SDK Testing
+
+=== Test Suite Organization
+
+The ProximaDB Python SDK includes a comprehensive test suite in `/clients/python/tests/`:
+
+**Core Test Modules:**
+- `test_client_sdk.py` - Client creation, configuration, and SDK features
+- `test_collection_operations.py` - Collection CRUD operations and configuration  
+- `test_vector_operations.py` - Vector CRUD operations and batch processing
+- `test_search_operations.py` - Search functionality and similarity operations
+- `test_persistence_wal.py` - Data persistence and WAL operations
+- `test_storage_layouts.py` - Storage engine testing with flush and compaction
+
+=== Running Tests
+
+**Prerequisites:**
+[source,bash]
+----
+# Start ProximaDB server
+cargo run --bin proximadb-server
+
+# Install test dependencies
+cd clients/python
+pip install -r requirements.txt
+pip install pytest pytest-cov sentence-transformers
+----
+
+**Basic Test Execution:**
+[source,bash]
+----
+# Run all tests
+pytest tests/
+
+# Run specific test module
+pytest tests/test_collection_operations.py
+
+# Run with verbose output and coverage
+pytest tests/ -v --cov=proximadb --cov-report=html
+----
+
+**Test Filtering:**
+[source,bash]
+----
+# Skip slow tests (>10 seconds)
+pytest tests/ -m "not slow"
+
+# Run only specific test types
+pytest tests/ -m "search"             # Only search tests
+pytest tests/ -m "storage"            # Only storage tests
+pytest tests/ -k "collection"         # Tests with 'collection' in name
+----
+
+=== Performance Testing
+
+The test suite includes comprehensive performance testing with large datasets:
+
+[source,bash]
+----
+# Storage layout performance (15,000-20,000 vectors, 20MB+ data)
+pytest tests/test_storage_layouts.py::TestVIPERStorageLayout -v -s
+pytest tests/test_storage_layouts.py::TestLSMStorageLayout -v -s
+
+# Cross-storage search performance
+pytest tests/test_storage_layouts.py::TestCrossStorageSearch -v -s
+----
+
+**Performance Characteristics:**
+- Tests trigger multiple flushes and compaction operations
+- Verifies search across WAL, flushed, and compacted data layers
+- Measures insert rate (typically >1,758 vectors/second)
+- Validates ranking consistency across storage layers
+
 ---
 
 **Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>  
