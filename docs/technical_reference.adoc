@@ -1,0 +1,381 @@
+= ProximaDB Technical Reference
+:doctype: book
+:toc: left
+:toclevels: 3
+:sectlinks:
+:sectanchors:
+:sectnums:
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:experimental:
+:imagesdir: diagrams/images
+
+[.lead]
+Comprehensive technical implementation details for ProximaDB's core systems and algorithms.
+
+== Storage Engine Implementation
+
+=== Unified Memtable Architecture
+
+**Interface Design**:
+[source,rust]
+----
+pub trait MemtableManager {
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
+    fn scan(&self, start: &[u8], end: &[u8]) -> Result<Iterator<(Vec<u8>, Vec<u8>)>>;
+    fn flush(&mut self) -> Result<()>;
+}
+----
+
+**Backend Implementations**:
+- **SkipList**: Concurrent lock-free implementation, optimal for high-write workloads
+- **BTree**: Ordered traversal, efficient range queries
+- **HashMap**: O(1) lookups, best for point queries
+- **DashMap**: Lock-free concurrent HashMap
+
+**Behavior Wrappers**:
+- **WAL Wrapper**: Adds write-ahead logging to any backend
+- **LSM Wrapper**: Adds compaction and merge capabilities
+- **Metrics Wrapper**: Transparent performance monitoring
+
+=== VIPER Storage Engine
+
+**Parquet Integration**:
+[source,rust]
+----
+struct ViperEngine {
+    parquet_writer: ParquetWriter<VectorRecord>,
+    ml_clustering: Option<KMeansCluster>,
+    quantization: Option<QuantizationModel>,
+}
+----
+
+**Vector Storage Format**:
+- **Schema**: Dynamic Parquet schema with List<Float32> for vectors
+- **Metadata**: Separate column for JSON metadata
+- **Compression**: ZSTD compression for optimal storage density
+
+**ML Clustering Implementation**:
+- **Algorithm**: K-means++ with intelligent centroid initialization
+- **Trigger**: Activated for collections >1M vectors
+- **Retraining**: 20% growth threshold for model updates
+- **Persistence**: Models stored in `__models/` directory
+
+=== LSM Storage Engine
+
+**SSTable Format**:
+[source,rust]
+----
+struct LsmRecord {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    timestamp: u64,
+    sequence_number: u64,
+    record_type: RecordType,
+}
+----
+
+**Compaction Strategy**:
+- **Levels**: Size-tiered compaction with exponential growth
+- **Bloom Filters**: 0.1% false positive rate for efficient lookups
+- **Merge Policy**: Timestamp-based conflict resolution
+
+== Search Engine Implementation
+
+=== Storage-Aware Polymorphic Search
+
+**Engine Selection Logic**:
+[source,rust]
+----
+async fn select_search_engine(&self, query: &SearchQuery) -> Vec<Box<dyn SearchEngine>> {
+    let mut engines = Vec::new();
+    
+    // WAL search for unflushed data
+    if self.wal_has_unflushed_data(query.collection_id) {
+        engines.push(Box::new(WalSearchEngine::new(self.wal.clone())));
+    }
+    
+    // VIPER search for clustered data
+    if self.viper_has_data(query.collection_id) {
+        engines.push(Box::new(ViperSearchEngine::new(self.viper.clone())));
+    }
+    
+    // LSM search for compacted data
+    if self.lsm_has_data(query.collection_id) {
+        engines.push(Box::new(LsmSearchEngine::new(self.lsm.clone())));
+    }
+    
+    engines
+}
+----
+
+**Result Aggregation**:
+- **Deduplication**: ID-based merging with timestamp precedence
+- **Ranking**: Unified distance scoring across all engines
+- **Limit**: Top-k selection with exact tie-breaking
+
+=== AXIS Indexing System
+
+**Index Types**:
+[source,rust]
+----
+pub enum IndexType {
+    HNSW {
+        m: usize,
+        ef_construction: usize,
+        ef_search: usize,
+    },
+    IVF {
+        nlist: usize,
+        nprobe: usize,
+    },
+    Flat,
+}
+----
+
+**HNSW Implementation**:
+- **Graph Construction**: Probabilistic layer assignment
+- **Search**: Beam search with configurable ef parameter
+- **Updates**: Incremental updates with rebuild thresholds
+
+== Serialization Systems
+
+=== WAL Serialization Strategies
+
+**Avro Strategy**:
+[source,rust]
+----
+pub struct AvroWalStrategy {
+    schema: Schema,
+    writer: Writer<Vec<u8>>,
+}
+----
+
+**Performance Characteristics**:
+- **Compression**: 35-50% payload reduction vs JSON
+- **Cross-language**: Schema evolution support
+- **Latency**: 2-3ms serialization overhead
+
+**Bincode Strategy**:
+[source,rust]
+----
+pub struct BincodeWalStrategy {
+    config: Config,
+}
+----
+
+**Performance Characteristics**:
+- **Speed**: 8-21% faster than Avro
+- **Size**: More compact than Avro
+- **Compatibility**: Rust-native only
+
+=== Protocol Buffer Schemas
+
+**Core Message Types**:
+[source,protobuf]
+----
+message VectorRecord {
+    string id = 1;
+    string collection_id = 2;
+    repeated float vector = 3;
+    google.protobuf.Struct metadata = 4;
+    int64 timestamp = 5;
+}
+
+message SearchRequest {
+    string collection_id = 1;
+    repeated float query_vector = 2;
+    int32 k = 3;
+    google.protobuf.Struct metadata_filter = 4;
+}
+----
+
+== Distance Computation
+
+=== Unified Distance System
+
+**Supported Metrics**:
+[source,rust]
+----
+pub enum DistanceMetric {
+    Euclidean,
+    Cosine,
+    Manhattan,
+    DotProduct,
+    Hamming,
+    Jaccard,
+}
+----
+
+**SIMD Optimization**:
+- **x86**: AVX2 and AVX-512 support
+- **ARM**: NEON optimization
+- **Fallback**: Portable implementation
+
+**Batch Processing**:
+[source,rust]
+----
+pub fn distance_batch(
+    query: &[f32],
+    vectors: &[&[f32]],
+    metric: DistanceMetric,
+) -> Vec<f32> {
+    match metric {
+        DistanceMetric::Cosine => cosine_distance_batch_simd(query, vectors),
+        DistanceMetric::Euclidean => euclidean_distance_batch_simd(query, vectors),
+        _ => generic_distance_batch(query, vectors, metric),
+    }
+}
+----
+
+=== Quantization Implementation
+
+**Product Quantization**:
+[source,rust]
+----
+pub struct ProductQuantization {
+    codebooks: Vec<Vec<Vec<f32>>>,
+    subvector_size: usize,
+    num_clusters: usize,
+}
+----
+
+**Quantization Levels**:
+- **1-bit**: Binary quantization with 32x compression
+- **4-bit**: 8x compression with 72% quality retention
+- **8-bit**: 4x compression with 90% quality retention
+
+== Configuration Management
+
+=== Configuration Schema
+
+**Storage Configuration**:
+[source,toml]
+----
+[storage]
+data_directory = "/data/proximadb"
+wal_flush_threshold_mb = 64
+compaction_enabled = true
+
+[storage.viper]
+enable_clustering = true
+clustering_threshold = 1000000
+quantization_enabled = true
+
+[storage.lsm]
+bloom_filter_fp_rate = 0.001
+compaction_style = "leveled"
+----
+
+**Performance Tuning**:
+- **Memory**: Configure memtable sizes based on available RAM
+- **Disk**: Adjust flush thresholds for SSD vs HDD
+- **Network**: Tune batch sizes for network latency
+
+=== Monitoring Configuration
+
+**Metrics Collection**:
+[source,toml]
+----
+[monitoring]
+enabled = true
+metrics_endpoint = "/metrics"
+sampling_rate = 1.0
+
+[monitoring.prometheus]
+enabled = true
+port = 9090
+----
+
+**Alerting Rules**:
+- **High Latency**: P95 > 100ms
+- **Error Rate**: >1% of requests failing
+- **Memory Usage**: >80% of available memory
+
+== Error Handling
+
+=== Error Types
+
+**System Errors**:
+[source,rust]
+----
+pub enum ProximaDBError {
+    StorageError(String),
+    IndexError(String),
+    SerializationError(String),
+    NetworkError(String),
+    ValidationError(String),
+}
+----
+
+**Recovery Strategies**:
+- **Transient Errors**: Exponential backoff retry
+- **Permanent Errors**: Fail fast with detailed error messages
+- **Corruption**: Automatic recovery from WAL
+
+=== Logging
+
+**Structured Logging**:
+[source,rust]
+----
+tracing::info!(
+    collection_id = %collection_id,
+    vector_count = vectors.len(),
+    duration_ms = duration.as_millis(),
+    "Batch insert completed"
+);
+----
+
+**Log Levels**:
+- **ERROR**: System failures requiring immediate attention
+- **WARN**: Recoverable errors and degraded performance
+- **INFO**: Normal operational events
+- **DEBUG**: Detailed debugging information
+
+== Performance Optimization
+
+=== Memory Management
+
+**Allocation Strategies**:
+- **Arena Allocation**: For temporary objects during search
+- **Object Pooling**: Reuse expensive objects like buffers
+- **Lazy Initialization**: Defer expensive operations
+
+**Garbage Collection**:
+- **Periodic Cleanup**: Background threads for expired data
+- **Memory Pressure**: Automatic cleanup under memory pressure
+- **Manual Triggers**: API endpoints for forced cleanup
+
+=== Concurrency
+
+**Thread Pool Configuration**:
+[source,rust]
+----
+[runtime]
+worker_threads = 8
+max_blocking_threads = 16
+thread_stack_size = 2097152  # 2MB
+----
+
+**Lock-Free Algorithms**:
+- **Atomic Operations**: For counters and flags
+- **Lock-Free Queues**: For inter-thread communication
+- **Wait-Free Reads**: For hot path operations
+
+=== Caching
+
+**Multi-Level Cache**:
+- **L1**: In-memory result cache
+- **L2**: Compressed vector cache
+- **L3**: Disk-based index cache
+
+**Cache Policies**:
+- **LRU**: Least recently used eviction
+- **TTL**: Time-based expiration
+- **Size-based**: Memory pressure eviction
+
+---
+
+**Implementation Notes**: This reference covers the core algorithms and data structures. For complete implementation details, see the source code and inline documentation.

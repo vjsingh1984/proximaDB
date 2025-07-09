@@ -25,48 +25,22 @@ endif::[]
 [abstract]
 == Abstract
 
-Learn how to use ProximaDB to create collections, manage vector data, perform similarity searches, and integrate with AI frameworks like BERT, OpenAI, and Cohere.
+Comprehensive workflows for using ProximaDB in production environments, from basic vector operations to advanced AI integration patterns.
 
-== Overview
+[NOTE]
+====
+🚀 **New to ProximaDB?** Start with the link:getting_started.adoc[Getting Started Guide] for a 5-minute introduction.
+====
 
-ProximaDB is a production-ready vector database with REST (port 5678) and gRPC (port 5679) APIs, supporting:
+== Core Concepts
 
-- **Vector Operations**: Insert, search, update, delete with metadata
-- **AI Integration**: Native BERT support (384, 768, 1024 dimensions)  
-- **Storage**: Multi-cloud with automatic flushing and compression
-- **Performance**: 6.10x faster search with ML-driven clustering
+**Collections**:: Logical containers for vectors with consistent dimensions and distance metrics
 
-== Quick Start
+**Vector Operations**:: Insert, search, update, delete with rich metadata support
 
-=== Installation
+**Search Strategies**:: Exact search, approximate search, and hybrid approaches
 
-**Docker (Recommended)**:
-[source,bash]
-----
-# Run ProximaDB with demo setup
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb/demo && docker compose up -d
-----
-
-**From Source**:
-[source,bash]
-----
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb && cargo run --bin proximadb-server
-----
-
-**Python Client**:
-[source,bash]
-----
-pip install proximadb-python
-----
-
-**Verify Installation**:
-[source,bash]
-----
-curl http://localhost:5678/health
-# Response: {"status": "healthy", "version": "0.1.0"}
-----
+**AI Integration**:: Native support for popular embedding models and frameworks
 
 == Getting Started Tutorial
 

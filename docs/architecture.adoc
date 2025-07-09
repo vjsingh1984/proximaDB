@@ -1,0 +1,255 @@
+= ProximaDB Architecture
+:doctype: book
+:toc: left
+:toclevels: 2
+:sectlinks:
+:sectanchors:
+:sectnums:
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:experimental:
+:imagesdir: diagrams/images
+
+[.lead]
+ProximaDB's architecture delivers 6.10x performance improvement through three core innovations: unified storage, intelligent search, and multi-cloud abstraction.
+
+== Core Architecture Principles
+
+image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=100%]
+
+=== Design Philosophy
+
+**Cloud-Native First**:: URL-based storage abstraction enables seamless multi-cloud deployment
+**Performance-Driven**:: Every component optimized for sub-millisecond latency
+**Production-Ready**:: Built for reliability with comprehensive monitoring and observability
+
+=== Key Innovations
+
+**Unified Memtable Architecture**:: 
+- Single interface with pluggable backends (SkipList, BTree, HashMap, DashMap)
+- Behavior wrappers eliminate 40% code duplication
+- Automatic selection based on workload patterns
+
+**Storage-Aware Polymorphic Search**::
+- Automatic engine selection based on data location
+- Three-tier search: WAL → VIPER → LSM
+- 6.10x performance improvement with 100% accuracy
+
+**Dual Storage Strategy**::
+- VIPER: Vector-optimized Parquet with ML clustering
+- LSM: Row-based SSTable with bloom filters
+- Both engines support granular ID-based retrieval
+
+== System Components
+
+=== API Layer
+
+**Multi-Protocol Support**::
+- REST API (port 5678): HTTP/JSON for web integration
+- gRPC API (port 5679): Binary protocol for high performance
+- Identical feature parity across both protocols
+
+**Protocol Detection**::
+- Content-type based routing with zero overhead
+- Automatic client protocol selection
+- Transparent failover between protocols
+
+=== Storage Layer
+
+**Write-Ahead Log (WAL)**::
+- Pluggable serialization strategies (Avro, Bincode)
+- Atomic operations with MVCC support
+- Configurable flush policies (size, time, count)
+
+**VIPER Engine**::
+- Parquet-based columnar storage
+- ML-driven clustering for >1M vectors
+- Predicate pushdown for filtered queries
+
+**LSM Engine**::
+- Row-based SSTable storage
+- Bloom filters for efficient lookups
+- Automatic compaction with garbage collection
+
+=== Indexing System
+
+**AXIS Framework**::
+- Adaptive index selection based on data characteristics
+- HNSW integration for approximate nearest neighbor search
+- Configurable update modes (sync, async, hybrid)
+
+**Search Optimization**::
+- Parallel cluster search with nearby cluster inclusion
+- Multi-tier result deduplication
+- Intelligent query planning
+
+== Data Flow
+
+=== Write Path
+
+[source,text]
+----
+Client → API Layer → Collection Service → WAL → Storage Engine
+                                      ↓
+                                   Indexing
+----
+
+**Write Process**:
+1. Client sends vector via REST/gRPC
+2. API layer validates and routes request
+3. Collection service manages metadata
+4. WAL ensures durability before acknowledgment
+5. Background processes handle flush and indexing
+
+=== Read Path
+
+[source,text]
+----
+Client → API Layer → Search Service → Storage-Aware Router
+                                            ↓
+                                    WAL + VIPER + LSM
+                                            ↓
+                                    Result Aggregation
+----
+
+**Search Process**:
+1. Client sends query vector
+2. Search service determines optimal strategy
+3. Storage-aware router queries appropriate engines
+4. Results aggregated and deduplicated
+5. Top-k results returned to client
+
+== Deployment Architecture
+
+=== Single-Node Deployment
+
+**Optimal For**:
+- Development and testing
+- Small to medium workloads (<10M vectors)
+- Simplified operations
+
+**Configuration**:
+- All components co-located
+- Local storage with optional cloud backup
+- Vertical scaling through resource allocation
+
+=== Multi-Cloud Deployment
+
+**URL-Based Storage**:
+[source,toml]
+----
+[storage]
+wal_urls = [
+    "file:///local/fast/storage",
+    "s3://backup-bucket/wal",
+    "adls://account.dfs.core.windows.net/container"
+]
+----
+
+**Benefits**:
+- Zero-downtime cloud migration
+- Automatic failover between providers
+- Cost optimization through storage tiering
+
+== Performance Characteristics
+
+=== Latency Targets
+
+[cols="2,1,1"]
+|===
+|Operation |Target |Achieved
+
+|Vector Insert |<5ms |2-3ms
+|Vector Search |<10ms |5-6ms
+|Collection Operations |<1ms |0.5ms
+|===
+
+=== Throughput Benchmarks
+
+**Insert Performance**: 1,758 vectors/second sustained
+**Search Performance**: 6.10x improvement over baseline
+**Memory Efficiency**: 4x reduction with quantization
+
+=== Scalability Limits
+
+**Single Node**: 100M vectors, 1TB storage
+**Memory**: 32GB recommended for optimal performance
+**Storage**: Unlimited with cloud integration
+
+== Monitoring and Observability
+
+=== Built-in Metrics
+
+**System Metrics**:
+- Request latency (p50, p95, p99)
+- Throughput (operations/second)
+- Memory usage and garbage collection
+
+**Application Metrics**:
+- Search accuracy and recall
+- Index build times
+- Storage utilization
+
+=== Health Checks
+
+**Endpoint**: `/health`
+**Response**:
+[source,json]
+----
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "uptime": "24h15m",
+  "storage": "operational",
+  "indexing": "operational"
+}
+----
+
+== Security Model
+
+=== Authentication
+
+**API Key Authentication**:
+- Configurable key rotation
+- Role-based access control
+- Audit logging
+
+**TLS Encryption**:
+- TLS 1.3 for all communication
+- Certificate-based mutual authentication
+- Encrypted storage at rest
+
+=== Access Control
+
+**Collection-Level Security**:
+- Per-collection access policies
+- Read/write permission separation
+- Metadata-based filtering
+
+== Operational Considerations
+
+=== Configuration Management
+
+**Environment-Based Config**:
+- Development, staging, production profiles
+- Environment variable overrides
+- Validation and schema checking
+
+=== Backup and Recovery
+
+**Automated Backups**:
+- Point-in-time recovery
+- Multi-region replication
+- Incremental backup strategies
+
+=== Maintenance
+
+**Zero-Downtime Operations**:
+- Rolling updates
+- Configuration hot-reloading
+- Graceful shutdown procedures
+
+---
+
+**Next Steps**: For implementation details, see link:technical_reference.adoc[Technical Reference] | For development workflows, see link:developer_guide.adoc[Developer Guide]

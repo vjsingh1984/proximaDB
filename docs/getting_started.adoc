@@ -1,0 +1,119 @@
+= Getting Started with ProximaDB
+:doctype: book
+:toc: left
+:toclevels: 2
+:sectlinks:
+:sectanchors:
+:sectnums:
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:experimental:
+:imagesdir: diagrams/images
+
+[.lead]
+Get ProximaDB running in under 5 minutes and perform your first vector operations.
+
+== Quick Installation
+
+=== Docker (Recommended)
+
+[source,bash]
+----
+# Complete demo setup
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb/demo && docker compose up -d
+
+# Verify installation
+curl http://localhost:5678/health
+----
+
+=== From Source
+
+[source,bash]
+----
+# Prerequisites: Rust 1.70+, Protocol Buffers compiler
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb
+cargo run --bin proximadb-server
+
+# Server runs on ports 5678 (REST) and 5679 (gRPC)
+----
+
+== First Vector Operations
+
+=== Python Client Setup
+
+[source,bash]
+----
+pip install proximadb-python
+----
+
+=== Basic Workflow
+
+[source,python]
+----
+from proximadb import connect_rest
+from sentence_transformers import SentenceTransformer
+
+# 1. Connect to ProximaDB
+client = connect_rest("http://localhost:5678")
+
+# 2. Create a collection
+collection = client.create_collection("documents", dimension=384)
+
+# 3. Generate embeddings
+model = SentenceTransformer('all-MiniLM-L6-v2')
+texts = [
+    "ProximaDB is a vector database",
+    "Vector search enables semantic similarity",
+    "Machine learning powers modern AI"
+]
+embeddings = model.encode(texts)
+
+# 4. Insert vectors with metadata
+for i, (text, embedding) in enumerate(zip(texts, embeddings)):
+    client.insert_vector(
+        collection_id="documents",
+        vector_id=f"doc_{i}",
+        vector=embedding.tolist(),
+        metadata={"text": text, "index": i}
+    )
+
+# 5. Search for similar vectors
+query_embedding = model.encode(["AI and machine learning"])
+results = client.search_vectors(
+    collection_id="documents",
+    query_vector=query_embedding[0].tolist(),
+    k=2
+)
+
+# 6. View results
+for result in results:
+    print(f"Score: {result.score:.4f} - {result.metadata['text']}")
+----
+
+== Next Steps
+
+**For Users**: Continue with link:user_guide.adoc[User Guide] for comprehensive workflows
+
+**For Developers**: See link:developer_guide.adoc[Developer Guide] for API details and SDK development
+
+**For Architects**: Review link:architecture.adoc[Architecture Guide] for system design
+
+== Common Issues
+
+**Connection Failed**: Ensure ProximaDB server is running on port 5678
+**Dimension Mismatch**: Vector dimensions must match collection dimension
+**Missing Dependencies**: Install `sentence-transformers` for embedding generation
+
+== Performance Tips
+
+- Use batch operations for >100 vectors
+- Enable quantization for memory efficiency
+- Configure appropriate flush thresholds for your workload
+- Use metadata filters to narrow search scope
+
+---
+
+**Ready to explore more?** Check out the link:../demo/README.adoc[Demo Guide] for comprehensive examples.

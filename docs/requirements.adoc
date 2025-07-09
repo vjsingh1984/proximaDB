@@ -23,13 +23,11 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-*ProximaDB Requirements Specification* defines system requirements for the cloud-native vector database engineered for AI applications. This document tracks implementation status and provides functional and non-functional requirements.
-
-image::Production_Readiness_Status.png[Production Readiness Status,width=100%]
+System requirements and acceptance criteria for ProximaDB, defining what the system must deliver to users and stakeholders.
 
 [NOTE]
 ====
-🔗 **Related Documents**: This specification connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:lld.adoc[Low-Level Design]
+🔗 **Architecture**: See link:architecture.adoc[Architecture Guide] for system design | **Implementation**: See link:technical_reference.adoc[Technical Reference] for details
 ====
 
 === Implementation Status Dashboard

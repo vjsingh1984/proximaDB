@@ -100,18 +100,16 @@ results = client.search("docs", query_vector, k=10)
 == 📚 Documentation & Resources
 
 **Core Documentation**:
-- link:docs/requirements.adoc[Requirements Specification] - Functional and non-functional requirements
-- link:docs/hld.adoc[High-Level Design] - Architecture overview and design decisions
-- link:docs/lld.adoc[Low-Level Design] - Implementation details and algorithms
-- link:demo/README.adoc[Demo Guide] - Complete setup guide with platform-specific instructions
+- link:docs/getting_started.adoc[Getting Started] - 5-minute setup and first operations
+- link:docs/user_guide.adoc[User Guide] - Complete workflows and integration patterns
+- link:docs/architecture.adoc[Architecture] - System design and performance characteristics
+- link:docs/developer_guide.adoc[Developer Guide] - APIs, SDKs, and contribution workflows
 
-**Feature Guides**:
-- **link:docs/lld.adoc#vector-quantization-implementation[Vector Quantization]**: 4x memory reduction with zero accuracy loss
-- **link:docs/lld.adoc#text-chunking-strategies[Text Chunking]**: 6 strategies for RAG applications  
-- **link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Cloud Migration]**: Zero-downtime cloud provider switching
-- **link:docs/lld.adoc#axis-hnsw-integration[AXIS+HNSW Indexing]**: Advanced hierarchical indexing with metadata filtering
-- **link:docs/lld.adoc#ml-clustering-implementation[ML Clustering]**: K-means++ clustering with 20% growth threshold
-- **link:docs/lld.adoc#unified-memtable-architecture[Unified Memtable]**: Behavior wrappers and storage engine specialization
+**Technical Reference**:
+- link:docs/requirements.adoc[Requirements] - System requirements and acceptance criteria
+- link:docs/technical_reference.adoc[Technical Reference] - Implementation details and algorithms
+- link:docs/quantization_support.adoc[Vector Quantization] - 4x memory reduction techniques
+- link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Setup] - Production deployment strategies
 
 == 🤝 Contributing & Community
 

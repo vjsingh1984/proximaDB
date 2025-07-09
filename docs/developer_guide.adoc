@@ -23,30 +23,19 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-*ProximaDB Developer Guide* provides comprehensive development documentation for the production-ready vector database built with Rust. This guide covers setup, API usage, SDK development, and contribution workflows.
+Complete development guide for building applications with ProximaDB, contributing to the codebase, and extending functionality.
 
 [NOTE]
 ====
-🔗 **Related Documents**: This guide connects to link:../README.adoc[Project Overview], link:hld.adoc[High-Level Design], and link:../demo/README.adoc[Demo Guide]
+🔗 **Architecture**: See link:architecture.adoc[Architecture Guide] for system design | **Implementation**: See link:technical_reference.adoc[Technical Reference] for algorithms
 ====
 
-=== Development Status Dashboard
+== Development Philosophy
 
-[cols="3,2,1"]
-|===
-|**Component** |**Status** |**Completion**
-
-|🛠️ **Development Environment**
-|✅ Production Ready
-|100%
-
-|📚 **API Documentation**
-|✅ Complete (REST + gRPC)
-|95%
-
-|🐍 **Python SDK**
-|✅ Feature Complete
-|100%
+**Performance-First**:: Every feature optimized for production workloads
+**Test-Driven**:: Comprehensive test coverage with real-world scenarios  
+**Documentation-Driven**:: All public APIs thoroughly documented
+**Community-Focused**:: Open development with transparent decision-making
 
 |🧪 **Testing Infrastructure**
 |✅ Comprehensive Suite

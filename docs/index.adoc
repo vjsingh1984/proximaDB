@@ -32,21 +32,21 @@ endif::[]
 |**Level** |**Documentation Path** |**Time**
 
 |🟢 **New Users**
-|link:../README.adoc[Project Overview] → link:../demo/demo.adoc[Demo Guide] → link:user_guide.adoc[User Guide]
+|link:../README.adoc[Overview] → link:getting_started.adoc[Getting Started] → link:user_guide.adoc[User Guide]
 |30 min
 
 |🟡 **Developers** 
-|link:developer_guide.adoc[Developer Guide] → link:hld.adoc[High-Level Design] → link:lld.adoc[Low-Level Design]
+|link:developer_guide.adoc[Developer Guide] → link:architecture.adoc[Architecture] → link:technical_reference.adoc[Technical Reference]
 |2 hours
 
 |🔴 **Architects**
-|link:requirements.adoc[Requirements] → link:hld.adoc[High-Level Design] → link:quantization_support.adoc[Advanced Features]
+|link:requirements.adoc[Requirements] → link:architecture.adoc[Architecture] → link:quantization_support.adoc[Advanced Features]
 |4+ hours
 |===
 
 [TIP]
 ====
-🎯 **Fastest Start**: Get ProximaDB running in 5 minutes with the link:../demo/demo.adoc#docker-quick-start[Docker Quick Start]
+🎯 **Fastest Start**: Get ProximaDB running in 5 minutes with the link:getting_started.adoc[Getting Started Guide]
 ====
 
 == 📚 Documentation Categories
@@ -115,29 +115,29 @@ endif::[]
 == 🧭 Navigation by Use Case
 
 === 🎯 "I want to try ProximaDB quickly"
-1. link:../README.adoc#quick-start[5-minute Docker setup]
-2. link:../demo/demo.adoc#basic-demo[Basic demo walkthrough]
-3. link:user_guide.adoc#quick-start[User guide quick start]
+1. link:../README.adoc#getting-started[Project overview]
+2. link:getting_started.adoc[5-minute getting started guide]
+3. link:user_guide.adoc[Complete user workflows]
 
 === 🔧 "I want to integrate ProximaDB into my application"
 1. link:developer_guide.adoc#client-sdk-usage[SDK documentation]
 2. link:developer_guide.adoc#api-documentation[API reference]
-3. link:../demo/demo.adoc#advanced-features[Advanced features demo]
+3. link:technical_reference.adoc[Implementation details]
 
 === 🏗️ "I want to understand the architecture"
-1. link:hld.adoc[High-level design overview]
-2. link:lld.adoc[Low-level implementation details]
-3. link:requirements.adoc[Requirements and status tracking]
+1. link:architecture.adoc[System architecture overview]
+2. link:technical_reference.adoc[Technical implementation details]
+3. link:requirements.adoc[Requirements and acceptance criteria]
 
 === ⚡ "I want to optimize performance"
 1. link:quantization_support.adoc[Vector quantization guide]
-2. link:requirements.adoc[Performance requirements and roadmap]
-3. link:../demo/demo.adoc#reproducing-benchmarks[Benchmark reproduction]
+2. link:architecture.adoc#performance-characteristics[Performance benchmarks]
+3. link:technical_reference.adoc#performance-optimization[Optimization techniques]
 
 === 🏢 "I want to deploy ProximaDB in production"
-1. link:developer_guide.adoc#deployment[Deployment guide]
-2. link:../README.adoc#competitive-advantages[Competitive analysis]
-3. link:requirements.adoc#enterprise-features[Enterprise features]
+1. link:architecture.adoc#deployment-architecture[Deployment strategies]
+2. link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-disk configuration]
+3. link:developer_guide.adoc#deployment[Production deployment guide]
 
 == 📖 Documentation Standards
 
