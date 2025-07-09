@@ -97,19 +97,86 @@ results = client.search("docs", query_vector, k=10)
 **Deployment**: Multi-cloud freedom with URL-based configuration  
 **Cost**: Zero licensing fees with enterprise-grade features
 
-== 📚 Documentation & Resources
+== 📚 Documentation Guide
 
-**Core Documentation**:
-- link:docs/getting_started.adoc[Getting Started] - 5-minute setup and first operations
-- link:docs/user_guide.adoc[User Guide] - Complete workflows and integration patterns
-- link:docs/architecture.adoc[Architecture] - System design and performance characteristics
-- link:docs/developer_guide.adoc[Developer Guide] - APIs, SDKs, and contribution workflows
+ProximaDB documentation follows a **progressive disclosure** model - start with high-level concepts and dive deeper based on your needs.
 
-**Technical Reference**:
-- link:docs/requirements.adoc[Requirements] - System requirements and acceptance criteria
-- link:docs/technical_reference.adoc[Technical Reference] - Implementation details and algorithms
-- link:docs/quantization_support.adoc[Vector Quantization] - 4x memory reduction techniques
-- link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Setup] - Production deployment strategies
+=== 🎯 How to Navigate the Documentation
+
+**New to ProximaDB?** → **5-Minute Journey**
+[source,text]
+----
+README.adoc (this file) → getting_started.adoc → First vector operations
+----
+
+**Building an Application?** → **User-Focused Path**
+[source,text]
+----
+getting_started.adoc → user_guide.adoc → Integration patterns & workflows
+----
+
+**Contributing to ProximaDB?** → **Developer-Focused Path**
+[source,text]
+----
+developer_guide.adoc → architecture.adoc → technical_reference.adoc
+----
+
+**Designing a System?** → **Architecture-Focused Path**
+[source,text]
+----
+requirements.adoc → architecture.adoc → Performance & deployment strategies
+----
+
+=== 📖 Document Overview
+
+[cols="2,3,2,1"]
+|===
+|**Document** |**Purpose** |**Audience** |**Read Time**
+
+|**link:docs/getting_started.adoc[Getting Started]**
+|Get ProximaDB running in 5 minutes with first vector operations
+|Everyone
+|5 min
+
+|**link:docs/user_guide.adoc[User Guide]**
+|Complete workflows, AI integration, and production usage patterns
+|Users, ML Engineers
+|30 min
+
+|**link:docs/architecture.adoc[Architecture]**
+|System design, performance characteristics, and deployment strategies
+|Architects, Engineers
+|20 min
+
+|**link:docs/developer_guide.adoc[Developer Guide]**
+|APIs, SDKs, testing, and contribution workflows
+|Developers, Contributors
+|45 min
+
+|**link:docs/technical_reference.adoc[Technical Reference]**
+|Implementation details, algorithms, and optimization techniques
+|System Engineers
+|60 min
+
+|**link:docs/requirements.adoc[Requirements]**
+|System requirements and acceptance criteria
+|Product Managers, Architects
+|30 min
+|===
+
+=== 🚀 Specialized Guides
+
+**Performance Optimization**:
+- link:docs/quantization_support.adoc[Vector Quantization] - 4x memory reduction with zero accuracy loss
+- link:docs/architecture.adoc#performance-characteristics[Performance Benchmarks] - Latency and throughput metrics
+
+**Production Deployment**:
+- link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Setup] - High-performance storage configuration
+- link:docs/architecture.adoc#deployment-architecture[Deployment Strategies] - Single-node to multi-cloud
+
+**Advanced Features**:
+- link:docs/technical_reference.adoc#ml-clustering-implementation[ML Clustering] - K-means++ for >1M vectors
+- link:docs/technical_reference.adoc#simd-optimization[SIMD Optimization] - Hardware acceleration
 
 == 🤝 Contributing & Community
 
