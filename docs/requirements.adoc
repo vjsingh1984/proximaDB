@@ -86,7 +86,7 @@ System requirements and acceptance criteria for ProximaDB, defining what the sys
 
 The ProximaDB architecture must deliver:
 
-image::diagrams/images/proximadb-component.png[Complete System Architecture,width=100%]
+image::proximadb-component.png[Complete System Architecture,width=100%]
 
 **Unified Storage Interface**:: Single memtable interface supporting multiple backends (SkipList, BTree, HashMap, DashMap)
 
@@ -506,7 +506,7 @@ Deliver a cloud-native vector database that provides:
 
 === WAL Flush Coordination Architecture
 
-image::diagrams/images/WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
+image::WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
 
 ==== WAL Durability Strategy Configuration
 

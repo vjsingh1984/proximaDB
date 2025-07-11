@@ -22,14 +22,8 @@ from .proximadb_pb2 import *
 from . import proximadb_pb2 as pb2
 from . import proximadb_pb2_grpc as pb2_grpc
 from .exceptions import ProximaDBError
-from .models import (
-    Collection, 
-    SearchResult, 
-    InsertResult, 
-    BatchResult,
-    DeleteResult,
-    HealthStatus
-)
+# Note: gRPC client uses proto-generated classes directly - no Pydantic models
+# Proto classes are accessed via pb2.ClassName (e.g., pb2.Collection, pb2.SearchResult)
 
 logger = logging.getLogger(__name__)
 
@@ -188,28 +182,30 @@ class ProximaDBClient:
         self,
         name: str,
         dimension: int,
-        distance_metric: int = 1,  # COSINE
-        indexing_algorithm: int = 1,  # HNSW
-        storage_engine: int = 1,  # VIPER
-        filterable_metadata_fields: List[str] = None,
-        indexing_config: Dict[str, Any] = None
-    ) -> Collection:
+        distance_metric: int = pb2.DistanceMetric.COSINE,
+        indexing_algorithm: int = pb2.IndexingAlgorithm.HNSW,
+        storage_engine: int = pb2.StorageEngine.VIPER,
+        filterable_columns: List[pb2.FilterableColumnSpec] = None,
+        index_configs: List[pb2.IndexConfig] = None,
+        quantization_config: pb2.QuantizationConfig = None
+    ) -> pb2.Collection:
         """Create a new collection"""
         
-        # Build CollectionConfig
+        # Build CollectionConfig using proto types
         config = pb2.CollectionConfig(
             name=name,
             dimension=dimension,
             distance_metric=distance_metric,
-            indexing_algorithm=indexing_algorithm,
+            primary_indexing_algorithm=indexing_algorithm,
             storage_engine=storage_engine,
-            filterable_metadata_fields=filterable_metadata_fields or [],
-            indexing_config=indexing_config or {}
+            filterable_columns=filterable_columns or [],
+            index_configs=index_configs or [],
+            quantization_config=quantization_config
         )
         
         # Build CollectionRequest
         request = pb2.CollectionRequest(
-            operation=pb2.COLLECTION_CREATE,
+            operation=pb2.CollectionOperation.COLLECTION_CREATE,
             collection_config=config
         )
         
@@ -219,15 +215,15 @@ class ProximaDBClient:
             raise ProximaDBError(f"Failed to create collection: {response.error_message}")
         
         if response.collection:
-            return self._convert_collection(response.collection)
+            return response.collection  # Return proto object directly
         else:
             raise ProximaDBError("No collection returned in response")
     
-    async def get_collection(self, name: str) -> Optional[Collection]:
+    async def get_collection(self, name: str) -> Optional[pb2.Collection]:
         """Get collection by name"""
         
         request = pb2.CollectionRequest(
-            operation=pb2.COLLECTION_GET,
+            operation=pb2.CollectionOperation.COLLECTION_GET,
             collection_id=name
         )
         
@@ -239,14 +235,14 @@ class ProximaDBClient:
             raise ProximaDBError(f"Failed to get collection: {response.error_message}")
         
         if response.collection:
-            return self._convert_collection(response.collection)
+            return response.collection  # Return proto object directly
         return None
     
-    async def list_collections(self) -> List[Collection]:
+    async def list_collections(self) -> List[pb2.Collection]:
         """List all collections"""
         
         request = pb2.CollectionRequest(
-            operation=pb2.COLLECTION_LIST
+            operation=pb2.CollectionOperation.COLLECTION_LIST
         )
         
         response = self._call_with_timeout(self.stub.CollectionOperation, request)
@@ -254,13 +250,13 @@ class ProximaDBClient:
         if not response.success:
             raise ProximaDBError(f"Failed to list collections: {response.error_message}")
         
-        return [self._convert_collection(col) for col in response.collections]
+        return list(response.collections)  # Return proto objects directly
     
     async def delete_collection(self, name: str) -> bool:
         """Delete collection by name"""
         
         request = pb2.CollectionRequest(
-            operation=pb2.COLLECTION_DELETE,
+            operation=pb2.CollectionOperation.COLLECTION_DELETE,
             collection_id=name
         )
         
@@ -273,22 +269,14 @@ class ProximaDBClient:
         
         return True
     
-    async def update_collection(self, name: str, config: Dict[str, Any]) -> Collection:
+    async def update_collection(self, name: str, config: pb2.CollectionConfig) -> pb2.Collection:
         """Update collection configuration"""
         
-        # Build updated CollectionConfig
-        collection_config = pb2.CollectionConfig(
-            name=name,
-            dimension=config.get('dimension', 128),
-            distance_metric=config.get('distance_metric', 1),
-            indexing_algorithm=config.get('indexing_algorithm', 1),
-            storage_engine=config.get('storage_engine', 1),
-            filterable_metadata_fields=config.get('filterable_metadata_fields', []),
-            indexing_config=config.get('indexing_config', {})
-        )
+        # Use provided config directly (it's already a proto object)
+        collection_config = config
         
         request = pb2.CollectionRequest(
-            operation=pb2.COLLECTION_UPDATE,
+            operation=pb2.CollectionOperation.COLLECTION_UPDATE,
             collection_id=name,
             collection_config=collection_config
         )
@@ -299,90 +287,75 @@ class ProximaDBClient:
             raise ProximaDBError(f"Failed to update collection: {response.error_message}")
         
         if response.collection:
-            return self._convert_collection(response.collection)
+            return response.collection  # Return proto object directly
         else:
             raise ProximaDBError("No collection returned in response")
     
     # Health Check
     
-    async def health_check(self) -> HealthStatus:
+    async def health_check(self) -> pb2.HealthResponse:
         """Check server health"""
         
         request = pb2.HealthRequest()
         
         response = self._call_with_timeout(self.stub.Health, request)
         
-        return HealthStatus(
-            status=response.status,
-            version=response.version,
-            uptime_seconds=response.uptime_seconds
+        return response  # Return proto object directly
+    
+    # Helper methods for proto object creation
+    
+    def create_vector_record(
+        self, 
+        vector: List[float], 
+        id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        timestamp: Optional[int] = None,
+        version: int = 0,
+        expires_at: Optional[int] = None
+    ) -> pb2.VectorRecord:
+        """Create a VectorRecord proto object"""
+        record = pb2.VectorRecord(
+            vector=vector,
+            version=version
         )
+        
+        if id is not None:
+            record.id = id
+        if timestamp is not None:
+            record.timestamp = timestamp
+        if expires_at is not None:
+            record.expires_at = expires_at
+        if metadata:
+            record.metadata.CopyFrom(self._dict_to_metadata_map(metadata))
+        
+        return record
     
-    # Helper methods
-    
-    def _convert_collection(self, pb_collection: pb2.Collection) -> Collection:
-        """Convert protobuf Collection to Python model"""
-        # Handle cases where config might be None
-        if pb_collection.config:
-            return Collection(
-                id=pb_collection.id,
-                name=pb_collection.config.name,
-                dimension=pb_collection.config.dimension,
-                distance_metric=self._distance_metric_to_string(pb_collection.config.distance_metric),
-                indexing_algorithm=self._indexing_algorithm_to_string(pb_collection.config.indexing_algorithm),
-                storage_engine=self._storage_engine_to_string(pb_collection.config.storage_engine),
-                vector_count=pb_collection.stats.vector_count if pb_collection.stats else 0,
-                created_at=pb_collection.created_at,
-                updated_at=pb_collection.updated_at,
-                status='active',
-                metric=self._distance_metric_to_string(pb_collection.config.distance_metric),
-                index_type=self._indexing_algorithm_to_string(pb_collection.config.indexing_algorithm)
-            )
-        else:
-            # Fallback when config is None
-            return Collection(
-                id=pb_collection.id,
-                name="unknown",  # We don't have the name without config
-                dimension=0,
-                distance_metric="UNKNOWN",
-                indexing_algorithm="UNKNOWN",
-                storage_engine="UNKNOWN",
-                vector_count=pb_collection.stats.vector_count if pb_collection.stats else 0,
-                created_at=pb_collection.created_at,
-                updated_at=pb_collection.updated_at,
-                status='active'
-            )
-    
-    def _distance_metric_to_string(self, metric: int) -> str:
-        """Convert distance metric enum to string"""
-        mapping = {
-            1: "COSINE",
-            2: "EUCLIDEAN", 
-            3: "DOT_PRODUCT",
-            4: "HAMMING"
-        }
-        return mapping.get(metric, "COSINE")
-    
-    def _indexing_algorithm_to_string(self, algo: int) -> str:
-        """Convert indexing algorithm enum to string"""
-        mapping = {
-            1: "HNSW",
-            2: "IVF",
-            3: "PQ",
-            4: "FLAT",
-            5: "ANNOY"
-        }
-        return mapping.get(algo, "HNSW")
-    
-    def _storage_engine_to_string(self, engine: int) -> str:
-        """Convert storage engine enum to string"""
-        mapping = {
-            1: "VIPER",
-            2: "LSM",
-            3: "MMAP",
-            4: "HYBRID"
-        }
-        return mapping.get(engine, "VIPER")
+    def _dict_to_metadata_map(self, metadata: Dict[str, Any]) -> pb2.MetadataMap:
+        """Convert Python dict to proto MetadataMap"""
+        meta_map = pb2.MetadataMap()
+        
+        for key, value in metadata.items():
+            meta_value = pb2.MetadataValue()
+            
+            if isinstance(value, str):
+                meta_value.string_value = value
+            elif isinstance(value, int):
+                meta_value.int_value = value
+            elif isinstance(value, float):
+                meta_value.double_value = value
+            elif isinstance(value, bool):
+                meta_value.bool_value = value
+            elif isinstance(value, list):
+                if value and isinstance(value[0], str):
+                    meta_value.string_array.CopyFrom(pb2.StringArray(values=value))
+                elif value and isinstance(value[0], int):
+                    meta_value.int_array.CopyFrom(pb2.Int64Array(values=value))
+                elif value and isinstance(value[0], float):
+                    meta_value.double_array.CopyFrom(pb2.DoubleArray(values=value))
+            
+            meta_map.fields[key].CopyFrom(meta_value)
+        
+        return meta_map
     
     # Vector operations
     def insert_vectors(
@@ -392,7 +365,7 @@ class ProximaDBClient:
         ids: Optional[List[str]] = None,
         metadata: Optional[List[Dict[str, Any]]] = None,
         upsert: bool = False
-    ) -> InsertResult:
+    ) -> pb2.VectorOperationResponse:
         """
         Unified vector insertion interface - handles single vectors or batches
         
@@ -430,15 +403,14 @@ class ProximaDBClient:
                 # Serialize chunk to proper Avro binary format
                 vectors_avro_binary = self._create_avro_vector_batch(chunk)
                 
-                # Create VectorInsertRequest
-                request = pb2.VectorInsertRequest(
+                # Create VectorBatchRequest (unified batch operation)
+                request = pb2.VectorBatchRequest(
                     collection_id=collection_id,
-                    upsert_mode=upsert,
                     vectors_avro_payload=vectors_avro_binary
                 )
                 
                 # Call gRPC service
-                response = self._call_with_timeout(self.stub.VectorInsert, request)
+                response = self._call_with_timeout(self.stub.VectorBatch, request)
                 
                 if response.success:
                     # Get metrics if available
@@ -455,12 +427,8 @@ class ProximaDBClient:
                     logger.error(f"Chunk {i//chunk_size + 1} failed: {error_msg}")
                     total_failed += len(chunk)
             
-            return InsertResult(
-                count=total_inserted,
-                failed_count=total_failed,
-                duration_ms=total_duration,
-                request_id=None
-            )
+            # Return the last response (or could aggregate if needed)
+            return response
                 
         except grpc.RpcError as e:
             logger.error(f"gRPC error during vector insert: {e}")
@@ -530,7 +498,7 @@ class ProximaDBClient:
         vector: List[float],
         metadata: Optional[Dict[str, Any]] = None,
         upsert: bool = False
-    ) -> InsertResult:
+    ) -> pb2.VectorOperationResponse:
         """
         Insert a single vector (convenience method)
         
@@ -542,7 +510,7 @@ class ProximaDBClient:
             upsert: If True, update existing vector
         
         Returns:
-            InsertResult
+            VectorOperationResponse proto
         """
         vector_dict = {
             "id": vector_id,
@@ -560,8 +528,8 @@ class ProximaDBClient:
         metadata_filters: Optional[Dict[str, Any]] = None,
         include_metadata: bool = True,
         include_vectors: bool = False,
-        optimization_hints: Optional[Dict[str, Any]] = None
-    ) -> List[SearchResult]:
+        search_params: Optional[pb2.SearchParameters] = None
+    ) -> pb2.VectorOperationResponse:
         """
         Search for similar vectors
         
@@ -572,19 +540,32 @@ class ProximaDBClient:
             metadata_filters: Optional metadata filters
             include_metadata: Include metadata in results
             include_vectors: Include vector data in results
-            optimization_hints: Search optimization hints for performance tuning
+            search_params: Optional search parameters for algorithm tuning
         
         Returns:
-            List of SearchResult objects
+            VectorOperationResponse proto with search results
         """
         try:
             # Create search queries
             queries = []
             for vector in query_vectors:
-                query = pb2.SearchQuery(
-                    vector=vector,
-                    metadata_filter=metadata_filters or {}
-                )
+                query = pb2.SearchQuery(vector=vector)
+                
+                # Add metadata filter if provided
+                if metadata_filters:
+                    # Convert dict to MetadataFilter proto
+                    meta_filter = pb2.MetadataFilter(
+                        operator=pb2.FilterOperator.AND
+                    )
+                    for key, value in metadata_filters.items():
+                        condition = pb2.FilterCondition(
+                            field_name=key,
+                            operation=pb2.FilterOperation.EQUALS,
+                            value=self._value_to_metadata_value(value)
+                        )
+                        meta_filter.conditions.append(condition)
+                    query.metadata_filter.CopyFrom(meta_filter)
+                
                 queries.append(query)
             
             # Create include fields
@@ -603,93 +584,40 @@ class ProximaDBClient:
                 include_fields=include_fields
             )
             
-            # Add optimization hints if provided
-            if optimization_hints:
-                hints = pb2.SearchOptimizationHints()
-                
-                # Set basic optimization flags
-                if 'enable_two_stage_search' in optimization_hints:
-                    hints.enable_two_stage_search = optimization_hints['enable_two_stage_search']
-                if 'candidate_multiplier' in optimization_hints:
-                    hints.candidate_multiplier = optimization_hints['candidate_multiplier']
-                if 'min_candidates' in optimization_hints:
-                    hints.min_candidates = optimization_hints['min_candidates']
-                if 'max_candidates' in optimization_hints:
-                    hints.max_candidates = optimization_hints['max_candidates']
-                if 'enable_clustering_optimization' in optimization_hints:
-                    hints.enable_clustering_optimization = optimization_hints['enable_clustering_optimization']
-                if 'enable_metadata_filtering_hint' in optimization_hints:
-                    hints.enable_metadata_filtering_hint = optimization_hints['enable_metadata_filtering_hint']
-                if 'enable_parallel_search' in optimization_hints:
-                    hints.enable_parallel_search = optimization_hints['enable_parallel_search']
-                if 'accuracy_threshold' in optimization_hints:
-                    hints.accuracy_threshold = optimization_hints['accuracy_threshold']
-                if 'timeout_ms' in optimization_hints:
-                    hints.timeout_ms = optimization_hints['timeout_ms']
-                if 'include_expired_vectors' in optimization_hints:
-                    hints.include_expired_vectors = optimization_hints['include_expired_vectors']
-                
-                # Handle quantization hint
-                if 'quantization_hint' in optimization_hints:
-                    quant_hint = optimization_hints['quantization_hint']
-                    if quant_hint == 'FP32' or quant_hint == 'NONE':
-                        hints.quantization_hint.none.CopyFrom(pb2.NoQuantization())
-                    elif quant_hint.startswith('PQ'):
-                        bits = int(quant_hint[2:]) if len(quant_hint) > 2 else 8
-                        pq = pb2.ProductQuantization(bits_per_code=bits)
-                        hints.quantization_hint.pq.CopyFrom(pq)
-                    elif quant_hint.startswith('INT'):
-                        bits = int(quant_hint[3:]) if len(quant_hint) > 3 else 8
-                        scalar = pb2.ScalarQuantization(bits=bits, scale=1.0, offset=0.0)
-                        hints.quantization_hint.scalar.CopyFrom(scalar)
-                    elif quant_hint == 'BINARY':
-                        binary = pb2.BinaryQuantization(sign_based=True)
-                        hints.quantization_hint.binary.CopyFrom(binary)
-                
-                # Handle custom hints
-                if 'custom_hints' in optimization_hints:
-                    for key, value in optimization_hints['custom_hints'].items():
-                        hints.custom_hints[key] = str(value)
-                
-                request.optimization_hints.CopyFrom(hints)
+            # Add search parameters if provided
+            if search_params:
+                request.search_params.CopyFrom(search_params)
             
             # Call gRPC service
             response = self._call_with_timeout(self.stub.VectorSearch, request)
             
-            if response.success:
-                results = []
-                
-                # Check which oneof field is set for result_payload
-                result_type = response.WhichOneof('result_payload')
-                if result_type == 'compact_results':
-                    # Parse compact results
-                    for result in response.compact_results.results:
-                        results.append(SearchResult(
-                            id=result.id if result.id else None,
-                            score=result.score,
-                            vector=list(result.vector) if include_vectors else None,
-                            metadata=dict(result.metadata) if include_metadata else None
-                        ))
-                elif result_type == 'avro_results':
-                    # Parse Avro results
-                    avro_data = json.loads(response.avro_results)
-                    for result in avro_data.get('results', []):
-                        results.append(SearchResult(
-                            id=result.get('vector_id') if result.get('vector_id') else None,
-                            score=result.get('score', 0.0),
-                            vector=result.get('vector') if include_vectors else None,
-                            metadata=result.get('metadata') if include_metadata else None
-                        ))
-                
-                return results
-            else:
-                raise ProximaDBError(
-                    f"Vector search failed: {response.error_message or 'Unknown error'}"
-                )
+            return response  # Return proto object directly
                 
         except grpc.RpcError as e:
             logger.error(f"gRPC error during vector search: {e}")
             raise ProximaDBError(f"Vector search failed: {str(e)}")
+    
+    def _value_to_metadata_value(self, value: Any) -> pb2.MetadataValue:
+        """Convert Python value to proto MetadataValue"""
+        meta_value = pb2.MetadataValue()
+        
+        if isinstance(value, str):
+            meta_value.string_value = value
+        elif isinstance(value, int):
+            meta_value.int_value = value
+        elif isinstance(value, float):
+            meta_value.double_value = value
+        elif isinstance(value, bool):
+            meta_value.bool_value = value
+        elif isinstance(value, list):
+            if value and isinstance(value[0], str):
+                meta_value.string_array.CopyFrom(pb2.StringArray(values=value))
+            elif value and isinstance(value[0], int):
+                meta_value.int_array.CopyFrom(pb2.Int64Array(values=value))
+            elif value and isinstance(value[0], float):
+                meta_value.double_array.CopyFrom(pb2.DoubleArray(values=value))
+        
+        return meta_value
     
     def update_vector(
         self,
@@ -710,73 +638,35 @@ class ProximaDBClient:
         Returns:
             True if successful
         """
-        try:
-            # Create selector
-            selector = pb2.VectorSelector(ids=[vector_id])
-            
-            # Create updates
-            updates = pb2.VectorUpdates()
-            if vector is not None:
-                updates.vector.extend(vector)
-            if metadata is not None:
-                updates.metadata.update(metadata)
-            
-            # Create mutation request
-            request = pb2.VectorMutationRequest(
-                collection_id=collection_id,
-                operation=pb2.MutationType.MUTATION_UPDATE,
-                selector=selector,
-                updates=updates
-            )
-            
-            # Call gRPC service
-            response = self._call_with_timeout(self.stub.VectorMutation, request)
-            
-            return response.success
-            
-        except grpc.RpcError as e:
-            logger.error(f"gRPC error during vector update: {e}")
-            raise ProximaDBError(f"Vector update failed: {str(e)}")
+        # Use upsert to update the vector
+        vector_dict = {
+            "id": vector_id,
+            "vector": vector or [0.0],  # Placeholder if no vector provided
+            "metadata": metadata or {}
+        }
+        
+        return self.insert_vectors(collection_id, [vector_dict], upsert=True)
     
-    def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
+    def delete_vector(self, collection_id: str, vector_id: str) -> pb2.VectorOperationResponse:
         """
-        Delete a vector
+        Delete a vector using expires_at mechanism
         
         Args:
             collection_id: Collection name/ID
             vector_id: Vector ID to delete
             
         Returns:
-            DeleteResult object
+            VectorOperationResponse proto
         """
-        try:
-            # Create selector
-            selector = pb2.VectorSelector(ids=[vector_id])
-            
-            # Create mutation request
-            request = pb2.VectorMutationRequest(
-                collection_id=collection_id,
-                operation=pb2.MutationType.MUTATION_DELETE,
-                selector=selector
-            )
-            
-            # Call gRPC service
-            response = self._call_with_timeout(self.stub.VectorMutation, request)
-            
-            if response.success:
-                return DeleteResult(
-                    success=True,
-                    deleted_count=1 if response.metrics and response.metrics.successful_count > 0 else 0,
-                    message="Vector deleted successfully"
-                )
-            else:
-                raise ProximaDBError(
-                    f"Vector delete failed: {response.error_message or 'Unknown error'}"
-                )
-                
-        except grpc.RpcError as e:
-            logger.error(f"gRPC error during vector delete: {e}")
-            raise ProximaDBError(f"Vector delete failed: {str(e)}")
+        # Create record with expires_at=0 to mark for deletion
+        delete_record = {
+            "id": vector_id,
+            "vector": [0.0],  # Placeholder vector
+            "metadata": {},
+            "expires_at": 0  # Mark for deletion
+        }
+        
+        return self.insert_vectors(collection_id, [delete_record], upsert=False)
     
     def get_vector(
         self,
@@ -784,9 +674,9 @@ class ProximaDBClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[pb2.SearchResult]:
         """
-        Get a single vector by ID
+        Get a single vector by ID using search
         
         Args:
             collection_id: Collection name/ID
@@ -795,20 +685,41 @@ class ProximaDBClient:
             include_metadata: Include metadata
             
         Returns:
-            Vector data dict or None if not found
+            SearchResult proto or None if not found
         """
-        # Search by ID (since we don't have a dedicated get endpoint yet)
-        results = self.search_vectors(
-            collection_id=collection_id,
-            query_vectors=[[]],  # Empty query
-            top_k=1,
-            metadata_filters={"id": vector_id},
-            include_metadata=include_metadata,
-            include_vectors=include_vector
+        # Create search query by ID
+        query = pb2.SearchQuery(id=vector_id)
+        
+        # Create include fields
+        include_fields = pb2.IncludeFields(
+            vector=include_vector,
+            metadata=include_metadata,
+            score=True,
+            rank=True
         )
         
-        if results:
-            result = results[0]
+        # Create search request
+        request = pb2.VectorSearchRequest(
+            collection_id=collection_id,
+            queries=[query],
+            top_k=1,
+            include_fields=include_fields
+        )
+        
+        try:
+            response = self._call_with_timeout(self.stub.VectorSearch, request)
+            
+            if response.success:
+                # Check for results
+                if hasattr(response, 'compact_results') and response.compact_results.results:
+                    return response.compact_results.results[0]
+                # Could also handle avro_results if needed
+                
+            return None
+            
+        except grpc.RpcError as e:
+            logger.error(f"gRPC error during vector get: {e}")
+            return None
             return {
                 "id": result.id,
                 "vector": result.vector,

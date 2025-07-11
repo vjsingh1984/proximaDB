@@ -16,7 +16,7 @@ ProximaDB's architecture delivers 6.10x performance improvement through three co
 
 == Core Architecture Principles
 
-image::diagrams/images/proximadb-component.png[ProximaDB Component Architecture,width=100%]
+image::proximadb-component.png[ProximaDB Component Architecture,width=100%]
 
 === Design Philosophy
 
@@ -26,7 +26,7 @@ image::diagrams/images/proximadb-component.png[ProximaDB Component Architecture,
 
 === Key Innovations
 
-image::diagrams/images/unified_memtable_architecture.png[Unified Memtable Architecture,width=100%]
+image::unified_memtable_architecture.png[Unified Memtable Architecture,width=100%]
 
 **Unified Memtable Architecture**:: 
 - Single interface with pluggable backends (SkipList, BTree, HashMap, DashMap)
@@ -59,7 +59,7 @@ image::diagrams/images/unified_memtable_architecture.png[Unified Memtable Archit
 
 === Storage Layer
 
-image::diagrams/images/proximadb-class-storage.png[Storage Architecture,width=100%]
+image::proximadb-class-storage.png[Storage Architecture,width=100%]
 
 **Write-Ahead Log (WAL)**::
 - Pluggable serialization strategies (Avro, Bincode)
@@ -78,7 +78,7 @@ image::diagrams/images/proximadb-class-storage.png[Storage Architecture,width=10
 
 === Quantization System (Phase 4)
 
-image::diagrams/images/unified_quantization_system.png[Unified Quantization Architecture,width=100%]
+image::unified_quantization_system.png[Unified Quantization Architecture,width=100%]
 
 **Unified Quantization Engine**::
 - Support for 1-32 bit quantization levels
@@ -101,7 +101,7 @@ image::diagrams/images/unified_quantization_system.png[Unified Quantization Arch
 
 === Indexing System
 
-image::diagrams/images/tenant-routing-architecture.png[ML Clustering Architecture,width=100%]
+image::tenant-routing-architecture.png[ML Clustering Architecture,width=100%]
 
 **AXIS Framework**::
 - Adaptive index selection based on data characteristics
@@ -115,7 +115,7 @@ image::diagrams/images/tenant-routing-architecture.png[ML Clustering Architectur
 
 == Data Flow
 
-image::diagrams/images/proximadb-data-flow.png[Data Flow Architecture,width=100%]
+image::proximadb-data-flow.png[Data Flow Architecture,width=100%]
 
 === Write Path
 

@@ -2,7 +2,7 @@
 ProximaDB Python REST Client - Updated for API v1
 
 Implements the complete ProximaDB REST API v1 specification
-as documented in REST_API_REFERENCE.adoc
+using Pydantic models for type safety and validation.
 
 Copyright 2025 ProximaDB
 """
@@ -17,13 +17,32 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from .config import ClientConfig, load_config
 from .models import (
+    # Collection models
     Collection,
     CollectionConfig,
+    CollectionOperationType,
+    CollectionOperationRequest,
+    CollectionResponse,
+    CollectionStats,
+    # Vector models
+    VectorRecord,
+    VectorOperationType,
+    VectorBatchRequest,
+    VectorSearchRequest,
+    VectorOperationResponse,
+    # Search models
+    SearchQuery,
     SearchResult,
-    InsertResult,
-    BatchResult,
-    DeleteResult,
+    SearchParameters,
+    IncludeFields,
+    SearchOptimization,
+    MetadataFilter,
+    # System models
     HealthStatus,
+    ApiResponse,
+    ApiError,
+    OperationMetrics,
+    # Type aliases
     VectorArray,
     MetadataDict,
     FilterDict,
@@ -45,7 +64,7 @@ class ProximaDBRestClient:
     ProximaDB REST API v1 Client
     
     Implements the complete REST API specification with proper endpoint mapping
-    and request/response handling according to the documented API contract.
+    and request/response handling using Pydantic models.
     """
     
     def __init__(
@@ -150,66 +169,29 @@ class ProximaDBRestClient:
         
         raise map_http_error(response.status_code, error_data)
     
-    def _resolve_collection_id(self, collection_id: str) -> str:
-        """
-        Resolve collection identifier. 
+    def _parse_api_response(self, response: httpx.Response, model=None) -> Any:
+        """Parse API response and optionally convert to Pydantic model"""
+        data = response.json()
         
-        For REST API, collection names and UUIDs are handled transparently by the server,
-        so we can pass the collection_id as-is. The server will:
-        1. First try to find by UUID
-        2. Fall back to finding by name
-        3. Return 404 if neither exists
+        # Handle API response wrapper
+        if isinstance(data, dict) and "success" in data:
+            api_response = ApiResponse(**data)
+            if not api_response.success:
+                error = api_response.error or ApiError(
+                    code="UNKNOWN", 
+                    message=api_response.message or "Operation failed"
+                )
+                raise ProximaDBError(f"{error.code}: {error.message}")
+            
+            # Return the data field, optionally converted to model
+            if model and api_response.data is not None:
+                return model(**api_response.data) if isinstance(api_response.data, dict) else api_response.data
+            return api_response.data
         
-        Args:
-            collection_id: Collection name or UUID
-            
-        Returns:
-            Collection identifier (name or UUID) - passed through as-is
-        """
-        return collection_id
-    
-    def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
-        """
-        Get collection UUID by name using the dedicated lookup endpoint.
-        
-        Args:
-            collection_name: Name of the collection
-            
-        Returns:
-            Collection UUID if found, None if not found
-            
-        Raises:
-            ProximaDBError: If there's an error retrieving the collection
-        """
-        try:
-            # Use the dedicated lookup endpoint
-            response = self._make_request(
-                "GET", 
-                f"/collections/by-name/{collection_name}/id"
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success') and 'data' in data:
-                    return data['data']
-            elif response.status_code == 404:
-                return None
-            else:
-                # Handle other error cases
-                self._handle_error_response(response)
-                
-        except ProximaDBError:
-            return None
-        except Exception as e:
-            logger.error(f"Error getting collection ID by name: {e}")
-            # Fallback to the original method
-            try:
-                collection = self.get_collection(collection_name)
-                if collection and hasattr(collection, 'id'):
-                    return collection.id
-                return None
-            except ProximaDBError:
-                return None
+        # Direct response without wrapper
+        if model:
+            return model(**data) if isinstance(data, dict) else data
+        return data
     
     def _normalize_vector(self, vector: Union[List[float], np.ndarray]) -> List[float]:
         """Normalize single vector to list format"""
@@ -228,7 +210,7 @@ class ProximaDBRestClient:
         return vectors
     
     # =============================================================================
-    # SYSTEM OPERATIONS (as per API specification)
+    # SYSTEM OPERATIONS
     # =============================================================================
     
     def health(self) -> HealthStatus:
@@ -236,13 +218,8 @@ class ProximaDBRestClient:
         
         Returns:
             HealthStatus: Server health information
-            
-        Example:
-            >>> client = ProximaDBRestClient()
-            >>> health = client.health()
-            >>> print(f"Status: {health.status}")
         """
-        # Health endpoint is at root level, not under /api/v1
+        # Health endpoint is at root level
         health_url = self.config.url.rstrip('/') + '/health'
         response = httpx.get(health_url, timeout=self.config.timeout)
         
@@ -253,15 +230,11 @@ class ProximaDBRestClient:
         if data.get("success", False) and "data" in data:
             health_data = data["data"]
             return HealthStatus(
-                status=health_data.get("status", "unknown"),
+                status=health_data.get("status", "healthy"),
                 version=health_data.get("version", "0.1.0"),
-                uptime_seconds=0,  # Not provided by simple health check
-                total_operations=0,
-                successful_operations=0,
-                failed_operations=0,
-                storage_healthy=True,
-                wal_healthy=True,
-                timestamp=0
+                uptime_seconds=health_data.get("uptime_seconds", 0),
+                services=health_data.get("services", {}),
+                timestamp=health_data.get("timestamp", 0)
             )
         else:
             raise ProximaDBError(f"Health check failed: {data.get('error', 'Unknown error')}")
@@ -273,10 +246,10 @@ class ProximaDBRestClient:
             Dict: System performance metrics
         """
         response = self._make_request("GET", "/metrics")
-        return response.json()
+        return self._parse_api_response(response)
     
     # =============================================================================
-    # COLLECTION MANAGEMENT (as per API specification)
+    # COLLECTION MANAGEMENT
     # =============================================================================
     
     def create_collection(
@@ -294,83 +267,65 @@ class ProximaDBRestClient:
             
         Returns:
             Collection: Created collection metadata
-            
-        Example:
-            >>> client = ProximaDBRestClient()
-            >>> config = CollectionConfig(
-            ...     dimension=768,
-            ...     distance_metric="cosine",
-            ...     storage_layout="viper"
-            ... )
-            >>> collection = client.create_collection("documents", config)
         """
         if config is None:
-            config = CollectionConfig(**kwargs)
+            config = CollectionConfig(name=name, **kwargs)
+        else:
+            # Ensure name is set in config
+            config.name = name
         
-        request_data = {
-            "name": name,
-            "dimension": config.dimension,
-            "distance_metric": config.distance_metric,
-            "indexing_algorithm": getattr(config, 'indexing_algorithm', 'hnsw'),
-        }
+        # Create request using Pydantic model
+        request = CollectionOperationRequest(
+            operation=CollectionOperationType.CREATE,
+            config=config
+        )
         
         logger.debug(f"🏗️ Creating collection: {name}")
-        response = self._make_request("POST", "/collections", json=request_data)
+        response = self._make_request("POST", "/collections/operation", json=request.model_dump())
         
-        data = response.json()
-        if data.get("success", False):
-            # The actual API returns just the collection name on success
-            return Collection(
-                id=data["data"],  # collection name is returned as data
-                name=data["data"],
-                dimension=config.dimension,
-                metric=config.distance_metric,
-                index_type=getattr(config, 'indexing_algorithm', 'hnsw'),
-                created_at=0,  # Will be populated when we get the collection
-                vector_count=0
-            )
+        # Parse response
+        coll_response = self._parse_api_response(response, CollectionResponse)
+        if coll_response.collection:
+            return coll_response.collection
         else:
-            raise ProximaDBError(f"Failed to create collection: {data.get('error', 'Unknown error')}")
+            raise ProximaDBError("Collection creation response missing collection data")
     
     def get_collection(self, collection_id: str) -> Collection:
         """Get collection metadata
         
         Args:
-            collection_id: Collection identifier
+            collection_id: Collection identifier (name or UUID)
             
         Returns:
             Collection: Collection metadata
         """
-        response = self._make_request("GET", f"/collections/{collection_id}")
-        data = response.json()
+        request = CollectionOperationRequest(
+            operation=CollectionOperationType.GET,
+            collection_id=collection_id
+        )
         
-        if data.get("success", False) and "data" in data:
-            coll_data = data["data"]
-            return Collection(
-                id=coll_data["uuid"],
-                name=coll_data["name"],
-                dimension=coll_data["dimension"],
-                metric=coll_data["distance_metric"],
-                index_type=coll_data.get("indexing_algorithm", "hnsw"),
-                created_at=coll_data.get("created_at", 0),
-                vector_count=coll_data.get("vector_count", 0)
-            )
+        response = self._make_request("POST", "/collections/operation", json=request.model_dump())
+        
+        coll_response = self._parse_api_response(response, CollectionResponse)
+        if coll_response.collection:
+            return coll_response.collection
         else:
-            raise ProximaDBError(f"Failed to get collection: {data.get('error', 'Collection not found')}")
+            raise ProximaDBError(f"Collection not found: {collection_id}")
     
-    def list_collections(self) -> List[str]:
+    def list_collections(self) -> List[Collection]:
         """List all collections
         
         Returns:
-            List[str]: List of collection names
+            List[Collection]: List of collections
         """
-        response = self._make_request("GET", "/collections")
-        data = response.json()
+        request = CollectionOperationRequest(
+            operation=CollectionOperationType.LIST
+        )
         
-        if data.get("success", False) and "data" in data:
-            return data["data"]  # API returns list of collection names
-        else:
-            raise ProximaDBError(f"Failed to list collections: {data.get('error', 'Unknown error')}")
+        response = self._make_request("POST", "/collections/operation", json=request.model_dump())
+        
+        coll_response = self._parse_api_response(response, CollectionResponse)
+        return coll_response.collections or []
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection
@@ -381,12 +336,224 @@ class ProximaDBRestClient:
         Returns:
             bool: True if deletion was successful
         """
-        response = self._make_request("DELETE", f"/collections/{collection_id}")
-        data = response.json()
-        return data.get("success", False)
+        request = CollectionOperationRequest(
+            operation=CollectionOperationType.DELETE,
+            collection_id=collection_id
+        )
+        
+        response = self._make_request("POST", "/collections/operation", json=request.model_dump())
+        
+        coll_response = self._parse_api_response(response, CollectionResponse)
+        return coll_response.success
+    
+    def update_collection(
+        self,
+        collection_id: str,
+        config: CollectionConfig
+    ) -> Collection:
+        """Update collection configuration
+        
+        Args:
+            collection_id: Collection identifier
+            config: Updated configuration
+            
+        Returns:
+            Collection: Updated collection metadata
+        """
+        request = CollectionOperationRequest(
+            operation=CollectionOperationType.UPDATE,
+            collection_id=collection_id,
+            config=config
+        )
+        
+        response = self._make_request("POST", "/collections/operation", json=request.model_dump())
+        
+        coll_response = self._parse_api_response(response, CollectionResponse)
+        if coll_response.collection:
+            return coll_response.collection
+        else:
+            raise ProximaDBError("Collection update response missing collection data")
     
     # =============================================================================
-    # VECTOR OPERATIONS (as per API specification)
+    # VECTOR OPERATIONS
+    # =============================================================================
+    
+    def insert_vectors(
+        self,
+        collection_id: str,
+        records: List[VectorRecord]
+    ) -> VectorOperationResponse:
+        """Insert vectors into a collection
+        
+        Args:
+            collection_id: Collection identifier
+            records: List of vector records to insert
+            
+        Returns:
+            VectorOperationResponse: Operation metrics and results
+        """
+        request = VectorBatchRequest(
+            collection_id=collection_id,
+            operation=VectorOperationType.INSERT,
+            records=records
+        )
+        
+        response = self._make_request("POST", "/vectors/batch", json=request.model_dump())
+        
+        return self._parse_api_response(response, VectorOperationResponse)
+    
+    def upsert_vectors(
+        self,
+        collection_id: str,
+        records: List[VectorRecord]
+    ) -> VectorOperationResponse:
+        """Upsert vectors into a collection
+        
+        Args:
+            collection_id: Collection identifier
+            records: List of vector records to upsert
+            
+        Returns:
+            VectorOperationResponse: Operation metrics and results
+        """
+        request = VectorBatchRequest(
+            collection_id=collection_id,
+            operation=VectorOperationType.UPSERT,
+            records=records
+        )
+        
+        response = self._make_request("POST", "/vectors/batch", json=request.model_dump())
+        
+        return self._parse_api_response(response, VectorOperationResponse)
+    
+    def delete_vectors(
+        self,
+        collection_id: str,
+        vector_ids: List[str]
+    ) -> VectorOperationResponse:
+        """Delete vectors from a collection
+        
+        Args:
+            collection_id: Collection identifier
+            vector_ids: List of vector IDs to delete
+            
+        Returns:
+            VectorOperationResponse: Operation metrics and results
+        """
+        # Create records with expires_at=0 for deletion
+        records = [
+            VectorRecord(id=vid, vector=[0.0], expires_at=0)
+            for vid in vector_ids
+        ]
+        
+        request = VectorBatchRequest(
+            collection_id=collection_id,
+            operation=VectorOperationType.DELETE,
+            records=records
+        )
+        
+        response = self._make_request("POST", "/vectors/batch", json=request.model_dump())
+        
+        return self._parse_api_response(response, VectorOperationResponse)
+    
+    def search(
+        self,
+        collection_id: str,
+        queries: List[SearchQuery],
+        search_params: Optional[SearchParameters] = None,
+        include_fields: Optional[IncludeFields] = None,
+        search_optimization: Optional[SearchOptimization] = None
+    ) -> List[SearchResult]:
+        """Search for similar vectors
+        
+        Args:
+            collection_id: Collection identifier
+            queries: List of search queries
+            search_params: Search parameters
+            include_fields: Fields to include in results
+            search_optimization: Search optimization hints
+            
+        Returns:
+            List[SearchResult]: Search results for each query
+        """
+        request = VectorSearchRequest(
+            collection_id=collection_id,
+            queries=queries,
+            search_params=search_params,
+            include_fields=include_fields,
+            search_optimization=search_optimization
+        )
+        
+        response = self._make_request("POST", "/vectors/search", json=request.model_dump())
+        
+        vec_response = self._parse_api_response(response, VectorOperationResponse)
+        return vec_response.results or []
+    
+    def search_single(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        metadata_filter: Optional[MetadataFilter] = None,
+        **kwargs
+    ) -> List[SearchResult]:
+        """Search for similar vectors with a single query
+        
+        Args:
+            collection_id: Collection identifier
+            vector: Query vector
+            top_k: Number of results to return
+            metadata_filter: Metadata filter
+            **kwargs: Additional search optimization parameters
+            
+        Returns:
+            List[SearchResult]: Search results
+        """
+        # Normalize vector
+        vector = self._normalize_vector(vector)
+        
+        # Create search query
+        query = SearchQuery(
+            vector=vector,
+            metadata_filter=metadata_filter
+        )
+        
+        # Create search optimization from kwargs
+        search_optimization = SearchOptimization(
+            top_k=top_k,
+            **kwargs
+        )
+        
+        # Perform search
+        results = self.search(
+            collection_id=collection_id,
+            queries=[query],
+            search_optimization=search_optimization
+        )
+        
+        return results
+    
+    def get_vector(
+        self,
+        collection_id: str,
+        vector_id: str
+    ) -> VectorRecord:
+        """Get a single vector by ID
+        
+        Args:
+            collection_id: Collection identifier
+            vector_id: Vector ID
+            
+        Returns:
+            VectorRecord: Vector record
+        """
+        response = self._make_request("GET", f"/collections/{collection_id}/vectors/{vector_id}")
+        
+        data = self._parse_api_response(response)
+        return VectorRecord(**data)
+    
+    # =============================================================================
+    # LEGACY COMPATIBILITY METHODS
     # =============================================================================
     
     def insert_vector(
@@ -397,606 +564,73 @@ class ProximaDBRestClient:
         vectors: Optional[Union[List[List[float]], np.ndarray]] = None,
         ids: Optional[List[str]] = None,
         metadata: Optional[Union[MetadataDict, List[MetadataDict]]] = None,
-        upsert: bool = False,
-    ) -> Union[InsertResult, BatchResult]:
-        """Insert single or multiple vectors
+        **kwargs
+    ) -> VectorOperationResponse:
+        """Legacy insert method for backward compatibility"""
+        warnings.warn(
+            "insert_vector is deprecated. Use insert_vectors instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         
-        Supports both formats:
-        - 1D array: Single vector insertion
-        - 2D array: Bulk vector insertion
+        # Convert legacy parameters to VectorRecord list
+        records = []
         
-        Args:
-            collection_id: Target collection ID
-            vector_id: Single vector ID (for 1D array)
-            vector: Single vector data (1D array)
-            vectors: Multiple vectors data (2D array)
-            ids: List of vector IDs (for 2D array)
-            metadata: Metadata dict (single) or list of dicts (bulk)
-            upsert: Update if vector already exists
+        if vector is not None:
+            # Single vector
+            record = VectorRecord(
+                id=vector_id,
+                vector=self._normalize_vector(vector),
+                metadata=metadata if isinstance(metadata, dict) else {}
+            )
+            records.append(record)
+        elif vectors is not None:
+            # Multiple vectors
+            vectors = self._normalize_vectors(vectors)
+            if ids is None:
+                ids = [None] * len(vectors)
+            if metadata is None:
+                metadata = [{}] * len(vectors)
+            elif isinstance(metadata, dict):
+                metadata = [metadata] * len(vectors)
             
-        Returns:
-            InsertResult or BatchResult depending on input format
-            
-        Examples:
-            >>> # Single vector (1D array)
-            >>> result = client.insert_vector(
-            ...     "col_123",
-            ...     vector_id="doc_001",
-            ...     vector=[0.1, 0.2, 0.3, 0.4],
-            ...     metadata={"category": "research"}
-            ... )
-            
-            >>> # Bulk vectors (2D array)
-            >>> result = client.insert_vector(
-            ...     "col_123",
-            ...     vectors=[[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
-            ...     ids=["doc_001", "doc_002", "doc_003"],
-            ...     metadata=[{"cat": "A"}, {"cat": "B"}, {"cat": "C"}]
-            ... )
-        """
-        # Determine format: single vector or bulk
-        if vector is not None and vectors is None:
-            # Single vector (1D array) format
-            vector_data = self._normalize_vector(vector)
-            
-            request_data = {
-                "id": vector_id,
-                "vector": vector_data,
-                "metadata": metadata or {}
-            }
-            
-            logger.debug(f"📥 Inserting single vector: {vector_id} to {collection_id}")
-            response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
-            
-            data = response.json()
-            result_data = data.get("data", {})
-            
-            if result_data.get("type") == "single":
-                return InsertResult(
-                    count=1 if data.get("success", True) else 0,
-                    failed_count=0 if data.get("success", True) else 1,
-                    duration_ms=data.get("processing_time_us", 0) // 1000,
-                    errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
+            for i, (vec, vid, meta) in enumerate(zip(vectors, ids, metadata)):
+                record = VectorRecord(
+                    id=vid,
+                    vector=vec,
+                    metadata=meta
                 )
-            else:
-                # Server handled it as bulk
-                return BatchResult(
-                    total_count=1,
-                    successful_count=1 if data.get("success", True) else 0,
-                    failed_count=0 if data.get("success", True) else 1,
-                    duration_ms=data.get("processing_time_us", 0) // 1000,
-                    errors=None
-                )
-                
-        elif vectors is not None and vector is None:
-            # Bulk vectors (2D array) format
-            vectors_list = self._normalize_vectors(vectors)
-            
-            request_data = {
-                "ids": ids,
-                "vectors": vectors_list,
-                "metadata": metadata if isinstance(metadata, list) else None
-            }
-            
-            logger.debug(f"📥 Bulk inserting {len(vectors_list)} vectors to {collection_id}")
-            response = self._make_request("POST", f"/collections/{collection_id}/vectors", json=request_data)
-            
-            data = response.json()
-            result_data = data.get("data", {})
-            
-            return BatchResult(
-                total_count=result_data.get("count", len(vectors_list)),
-                successful_count=result_data.get("count", len(vectors_list)) if data.get("success", True) else 0,
-                failed_count=0 if data.get("success", True) else result_data.get("count", len(vectors_list)),
-                duration_ms=data.get("processing_time_us", 0) // 1000,
-                errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
-            )
-        else:
-            raise ValueError("Provide either 'vector' (1D) or 'vectors' (2D), not both")
+                records.append(record)
+        
+        return self.insert_vectors(collection_id, records)
     
-    def insert_vectors(
+    def search_vectors(
         self,
         collection_id: str,
-        vectors: VectorArray,
-        ids: List[str],
-        metadata: Optional[List[MetadataDict]] = None,
-        upsert: bool = False,
-        batch_size: Optional[int] = None,
-    ) -> BatchResult:
-        """Insert multiple vectors
-        
-        Args:
-            collection_id: Target collection ID
-            vectors: Vector data array
-            ids: List of unique vector identifiers
-            metadata: Optional list of metadata dictionaries
-            upsert: Update if vectors already exist
-            batch_size: Override default batch size
-            
-        Returns:
-            BatchResult: Batch insert operation result
-        """
-        vectors_list = self._normalize_vectors(vectors)
-        
-        if len(vectors_list) != len(ids):
-            raise ValueError("Number of vectors must match number of IDs")
-        
-        if metadata and len(metadata) != len(vectors_list):
-            raise ValueError("Number of metadata items must match number of vectors")
-        
-        # Prepare vector data
-        vector_data = []
-        for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
-            item = {
-                "id": vector_id,
-                "vector": vector,
-                "metadata": metadata[i] if metadata else {}
-            }
-            vector_data.append(item)
-        
-        logger.debug(f"📥 Batch inserting {len(vector_data)} vectors to {collection_id}")
-        response = self._make_request("POST", f"/collections/{collection_id}/vectors/batch", json=vector_data)
-        
-        data = response.json()
-        return BatchResult(
-            total_count=len(vector_data),
-            successful_count=data.get("affected_count", 0),
-            failed_count=len(vector_data) - data.get("affected_count", 0),
-            duration_ms=data.get("processing_time_us", 0) // 1000,
-            errors=None
-        )
-    
-    def search(
-        self,
-        collection_id: str,
-        query: Union[List[float], np.ndarray],
-        k: int = 10,
-        filter: Optional[FilterDict] = None,
-        include_vectors: bool = False,
-        include_metadata: bool = True,
-        ef: Optional[int] = None,
-        exact: bool = False,
-        timeout: Optional[float] = None,
-        optimization_hints: Optional[Dict[str, Any]] = None,
+        query_vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        filters: Optional[FilterDict] = None,
+        **kwargs
     ) -> List[SearchResult]:
-        """Search for similar vectors
-        
-        Args:
-            collection_id: Target collection ID
-            query: Query vector
-            k: Number of results to return
-            filter: Metadata filter conditions
-            include_vectors: Include vector data in results
-            include_metadata: Include metadata in results
-            ef: HNSW search parameter (higher = more accurate, slower)
-            exact: Use exact search instead of approximate
-            timeout: Request timeout override
-            optimization_hints: Search optimization hints for performance tuning
-            
-        Returns:
-            List[SearchResult]: List of search results ordered by similarity
-            
-        Example:
-            >>> client = ProximaDBRestClient()
-            >>> results = client.search(
-            ...     "col_123",
-            ...     [0.1, 0.2, 0.3, 0.4],
-            ...     k=5,
-            ...     filter={"category": "research"},
-            ...     optimization_hints={
-            ...         "enable_two_stage_search": True,
-            ...         "quantization_hint": "PQ8",
-            ...         "candidate_multiplier": 3.0
-            ...     }
-            ... )
-        """
-        query_vector = self._normalize_vector(query)
-        
-        request_data = {
-            "vector": query_vector,
-            "k": k,
-            "include_vectors": include_vectors,
-            "include_metadata": include_metadata,
-        }
-        
-        if filter:
-            request_data["filters"] = filter
-            
-        if optimization_hints:
-            request_data["optimization_hints"] = optimization_hints
-        
-        logger.debug(f"🔍 Searching in {collection_id}, top_k={k}")
-        if optimization_hints:
-            logger.debug(f"🔧 Using optimization hints: {optimization_hints}")
-            
-        response = self._make_request(
-            "POST", 
-            f"/collections/{collection_id}/search", 
-            json=request_data,
-            timeout=timeout or self.config.timeout
+        """Legacy search method for backward compatibility"""
+        warnings.warn(
+            "search_vectors is deprecated. Use search or search_single instead.",
+            DeprecationWarning,
+            stacklevel=2
         )
         
-        data = response.json()
-        results = []
-        
-        if data.get("success", False) and "data" in data:
-            for result in data["data"]:
-                results.append(SearchResult(
-                    id=result["id"],
-                    score=result["score"],
-                    vector=result.get("vector"),
-                    metadata=result.get("metadata")
-                ))
-        
-        return results
-    
-    def get_vector(
-        self,
-        collection_id: str,
-        vector_id: str,
-        include_vector: bool = True,
-        include_metadata: bool = True,
-    ) -> Optional[Dict[str, Any]]:
-        """Get a single vector by ID
-        
-        Args:
-            collection_id: Collection identifier
-            vector_id: Vector identifier
-            include_vector: Include vector data in response
-            include_metadata: Include metadata in response
-            
-        Returns:
-            Optional[Dict]: Vector data or None if not found
-        """
-        params = {
-            "include_vector": include_vector,
-            "include_metadata": include_metadata,
-        }
-        
-        try:
-            response = self._make_request(
-                "GET",
-                f"/collections/{collection_id}/vectors/{vector_id}",
-                params=params
-            )
-            data = response.json()
-            if data.get("success", False):
-                return data.get("data")
-            return None
-        except Exception:
-            return None
-    
-    def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
-        """Delete a single vector
-        
-        Args:
-            collection_id: Collection identifier
-            vector_id: Vector identifier
-            
-        Returns:
-            DeleteResult: Deletion operation result
-        """
-        response = self._make_request(
-            "DELETE",
-            f"/collections/{collection_id}/vectors/{vector_id}"
+        return self.search_single(
+            collection_id=collection_id,
+            vector=query_vector,
+            top_k=top_k,
+            filters=filters,
+            **kwargs
         )
-        
-        data = response.json()
-        return DeleteResult(
-            deleted_count=1 if data.get("success", True) else 0,
-            count=1 if data.get("success", True) else 0,
-            errors=None if data.get("success", True) else [data.get("error", "Unknown error")]
-        )
-    
-    def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
-        """Delete multiple vectors
-        
-        Args:
-            collection_id: Collection identifier
-            vector_ids: List of vector identifiers
-            
-        Returns:
-            DeleteResult: Deletion operation result
-        """
-        total_deleted = 0
-        errors = []
-        
-        # Delete vectors one by one (REST API doesn't have batch delete)
-        for vector_id in vector_ids:
-            try:
-                result = self.delete_vector(collection_id, vector_id)
-                if result.success:
-                    total_deleted += result.count
-            except Exception as e:
-                errors.append(f"Failed to delete {vector_id}: {e}")
-        
-        return DeleteResult(
-            deleted_count=total_deleted,
-            count=total_deleted,
-            errors=errors if errors else None
-        )
-    
-    def update_collection(
-        self,
-        collection_id: str,
-        updates: Dict[str, Any]
-    ) -> Collection:
-        """Update collection metadata and configuration
-        
-        Args:
-            collection_id: Collection identifier
-            updates: Dictionary of fields to update
-            
-        Returns:
-            Collection: Updated collection metadata
-        """
-        url = f"{self.config.url}/collections/{collection_id}"
-        
-        try:
-            response = self._http_client.patch(url, json=updates, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return Collection(**data)
-        except httpx.RequestError as e:
-            logger.error(f"Network error updating collection {collection_id}: {e}")
-            raise NetworkError(f"Failed to update collection: {e}")
-    
-    def delete_vectors_by_filter(
-        self,
-        collection_id: str,
-        filter: FilterDict
-    ) -> DeleteResult:
-        """Delete vectors matching filter criteria
-        
-        Args:
-            collection_id: Collection identifier
-            filter: Filter criteria for vector deletion
-            
-        Returns:
-            DeleteResult: Deletion operation result
-        """
-        url = f"{self.config.url}/collections/{collection_id}/vectors"
-        
-        try:
-            response = self._http_client.delete(
-                url,
-                json={"filter": filter},
-                timeout=self.config.timeout
-            )
-            self._handle_error_response(response)
-            data = response.json()
-            return DeleteResult(**data)
-        except httpx.RequestError as e:
-            logger.error(f"Network error deleting vectors by filter: {e}")
-            raise NetworkError(f"Failed to delete vectors: {e}")
-    
-    def get_vector_history(
-        self,
-        collection_id: str,
-        vector_id: str,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Get vector version history
-        
-        Args:
-            collection_id: Collection identifier
-            vector_id: Vector identifier
-            limit: Maximum number of history entries
-            
-        Returns:
-            List[Dict[str, Any]]: Vector version history
-        """
-        url = f"{self.config.url}/collections/{collection_id}/vectors/{vector_id}/history"
-        params = {"limit": limit}
-        
-        try:
-            response = self._http_client.get(url, params=params, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return data.get("history", [])
-        except httpx.RequestError as e:
-            logger.error(f"Network error getting vector history: {e}")
-            raise NetworkError(f"Failed to get vector history: {e}")
-    
-    def multi_search(
-        self,
-        collection_id: str,
-        queries: List[Union[List[float], np.ndarray]],
-        k: int = 10,
-        filter: Optional[FilterDict] = None,
-        include_vectors: bool = False,
-        include_metadata: bool = True
-    ) -> List[SearchResult]:
-        """Search with multiple query vectors
-        
-        Args:
-            collection_id: Collection identifier
-            queries: List of query vectors
-            k: Number of results per query
-            filter: Optional metadata filter
-            include_vectors: Include vector data in results
-            include_metadata: Include metadata in results
-            
-        Returns:
-            List[SearchResult]: Combined search results from all queries
-        """
-        url = f"{self.config.url}/collections/{collection_id}/multi_search"
-        
-        # Normalize query vectors
-        normalized_queries = [self._normalize_vector(q) for q in queries]
-        
-        payload = {
-            "queries": normalized_queries,
-            "k": k,
-            "include_vectors": include_vectors,
-            "include_metadata": include_metadata
-        }
-        
-        if filter:
-            payload["filter"] = filter
-        
-        try:
-            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            
-            results = []
-            for result_data in data.get("results", []):
-                results.append(SearchResult(**result_data))
-            
-            return results
-        except httpx.RequestError as e:
-            logger.error(f"Network error in multi-search: {e}")
-            raise NetworkError(f"Multi-search failed: {e}")
-    
-    def search_with_aggregations(
-        self,
-        collection_id: str,
-        query: Union[List[float], np.ndarray],
-        aggregations: List[str],
-        k: int = 10,
-        group_by: Optional[str] = None,
-        filter: Optional[FilterDict] = None
-    ) -> Dict[str, Any]:
-        """Search with result aggregations
-        
-        Args:
-            collection_id: Collection identifier
-            query: Query vector
-            k: Number of results
-            aggregations: List of fields to aggregate
-            group_by: Field to group results by
-            filter: Optional metadata filter
-            
-        Returns:
-            Dict[str, Any]: Search results with aggregations
-        """
-        url = f"{self.config.url}/collections/{collection_id}/search_aggregated"
-        
-        # Normalize query vector
-        normalized_query = self._normalize_vector(query)
-        
-        payload = {
-            "query": normalized_query,
-            "k": k,
-            "aggregations": aggregations
-        }
-        
-        if group_by:
-            payload["group_by"] = group_by
-        if filter:
-            payload["filter"] = filter
-        
-        try:
-            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            return response.json()
-        except httpx.RequestError as e:
-            logger.error(f"Network error in aggregated search: {e}")
-            raise NetworkError(f"Aggregated search failed: {e}")
-    
-    def atomic_insert_vectors(
-        self,
-        collection_id: str,
-        vectors: VectorArray,
-        ids: List[str],
-        metadata: Optional[List[MetadataDict]] = None
-    ) -> BatchResult:
-        """Insert vectors atomically (all-or-nothing)
-        
-        Args:
-            collection_id: Collection identifier
-            vectors: Vector data to insert
-            ids: Vector identifiers
-            metadata: Optional metadata for each vector
-            
-        Returns:
-            BatchResult: Atomic insertion result
-        """
-        url = f"{self.config.url}/collections/{collection_id}/vectors/atomic"
-        
-        # Normalize vectors
-        normalized_vectors = self._normalize_vectors(vectors)
-        
-        payload = {
-            "vectors": normalized_vectors,
-            "ids": ids,
-            "atomic": True
-        }
-        
-        if metadata:
-            payload["metadata"] = metadata
-        
-        try:
-            response = self._http_client.post(url, json=payload, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return BatchResult(**data)
-        except httpx.RequestError as e:
-            logger.error(f"Network error in atomic insert: {e}")
-            raise NetworkError(f"Atomic insert failed: {e}")
-    
-    def begin_transaction(self) -> str:
-        """Begin a new transaction and return transaction ID
-        
-        Returns:
-            str: Transaction identifier
-        """
-        url = f"{self.config.url}/transactions"
-        
-        try:
-            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return data["transaction_id"]
-        except httpx.RequestError as e:
-            logger.error(f"Network error beginning transaction: {e}")
-            raise NetworkError(f"Failed to begin transaction: {e}")
-    
-    def commit_transaction(self, transaction_id: str) -> bool:
-        """Commit a transaction
-        
-        Args:
-            transaction_id: Transaction identifier
-            
-        Returns:
-            bool: True if committed successfully
-        """
-        url = f"{self.config.url}/transactions/{transaction_id}/commit"
-        
-        try:
-            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return data.get("success", False)
-        except httpx.RequestError as e:
-            logger.error(f"Network error committing transaction: {e}")
-            raise NetworkError(f"Failed to commit transaction: {e}")
-    
-    def rollback_transaction(self, transaction_id: str) -> bool:
-        """Rollback a transaction
-        
-        Args:
-            transaction_id: Transaction identifier
-            
-        Returns:
-            bool: True if rolled back successfully
-        """
-        url = f"{self.config.url}/transactions/{transaction_id}/rollback"
-        
-        try:
-            response = self._http_client.post(url, json={}, timeout=self.config.timeout)
-            self._handle_error_response(response)
-            data = response.json()
-            return data.get("success", False)
-        except httpx.RequestError as e:
-            logger.error(f"Network error rolling back transaction: {e}")
-            raise NetworkError(f"Failed to rollback transaction: {e}")
     
     def close(self) -> None:
-        """Close the client and cleanup resources"""
-        if hasattr(self, '_http_client'):
-            self._http_client.close()
+        """Close the HTTP client connection"""
+        self._http_client.close()
+        logger.info("REST client connection closed")
     
     def __enter__(self):
         """Context manager entry"""
@@ -1005,24 +639,3 @@ class ProximaDBRestClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
         self.close()
-    
-    def __del__(self):
-        """Destructor - cleanup resources"""
-        try:
-            self.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
-
-
-# Alias for backward compatibility
-ProximaDBClient = ProximaDBRestClient
-
-
-# Convenience functions
-def connect_rest(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    **kwargs
-) -> ProximaDBRestClient:
-    """Create a ProximaDB REST client with simplified parameters"""
-    return ProximaDBRestClient(url=url, api_key=api_key, **kwargs)

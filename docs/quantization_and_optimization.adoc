@@ -46,11 +46,11 @@ ProximaDB implements state-of-the-art quantization techniques and search optimiz
 
 The quantization and optimization flow traverses all layers of ProximaDB:
 
-image::diagrams/images/quantization-flow.png[Quantization Flow,width=100%,align=center]
+image::quantization-flow.png[Quantization Flow,width=100%,align=center]
 
 === Component Interactions
 
-image::diagrams/images/quantization-components.png[Component Interactions,width=100%,align=center]
+image::quantization-components.png[Component Interactions,width=100%,align=center]
 
 == Quantization Methods
 
@@ -60,7 +60,7 @@ ProximaDB supports multiple quantization techniques, each optimized for differen
 
 Product Quantization divides high-dimensional vectors into subvectors, quantizing each independently using learned codebooks.
 
-image::diagrams/images/product-quantization.png[Product Quantization,width=100%,align=center]
+image::product-quantization.png[Product Quantization,width=100%,align=center]
 
 ==== How PQ Works
 
@@ -175,7 +175,7 @@ quantization_config = QuantizationConfig(
 
 Binary quantization provides maximum compression using 1 bit per dimension:
 
-image::diagrams/images/binary-quantization.png[Binary Quantization,width=80%,align=center]
+image::binary-quantization.png[Binary Quantization,width=80%,align=center]
 
 ==== Binary Methods
 
@@ -240,7 +240,7 @@ Flexible bit-width quantization with configurable precision:
 
 ProximaDB's two-stage search leverages quantization for fast candidate selection followed by precise reranking:
 
-image::diagrams/images/two-stage-search.png[Two-Stage Search,width=100%,align=center]
+image::two-stage-search.png[Two-Stage Search,width=100%,align=center]
 
 === Algorithm Overview
 
@@ -267,7 +267,7 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
 
 === Performance Analysis
 
-image::diagrams/images/performance-comparison.png[Performance Comparison,width=100%,align=center]
+image::performance-comparison.png[Performance Comparison,width=100%,align=center]
 
 .Two-Stage Search Performance Metrics
 [width="100%",cols="2,2,2,2",options="header"]
@@ -404,7 +404,7 @@ pub struct RestSearchOptimizationHints {
 
 The vector service orchestrates search strategies:
 
-image::diagrams/images/vector-service-flow.png[Vector Service Flow,width=100%,align=center]
+image::vector-service-flow.png[Vector Service Flow,width=100%,align=center]
 
 [source,rust]
 ----
@@ -422,7 +422,7 @@ match (enable_two_stage, quantization_hint) {
 
 VIPER leverages Parquet's columnar format:
 
-image::diagrams/images/viper-quantization.png[VIPER Quantization,width=100%,align=center]
+image::viper-quantization.png[VIPER Quantization,width=100%,align=center]
 
 .VIPER Quantization Features
 * Separate columns for quantized/full vectors
@@ -553,7 +553,7 @@ results = client.search_vectors(
 
 === Choosing Quantization Type
 
-image::diagrams/images/quantization-decision-tree.png[Decision Tree,width=100%,align=center]
+image::quantization-decision-tree.png[Decision Tree,width=100%,align=center]
 
 === Optimization Strategies
 

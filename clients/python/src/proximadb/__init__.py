@@ -20,19 +20,24 @@ limitations under the License.
 from .unified_client import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
 
 # Specialized clients (for advanced use cases)
-from .client import ProximaDBClient as ProximaDBRestClient
-from .sync_grpc_client import ProximaDBSyncGrpcClient as ProximaDBGrpcClient
+from .rest_client import ProximaDBRestClient
+from .grpc_client import ProximaDBClient as ProximaDBGrpcClient
 from .config import ClientConfig
 from .models import (
     Collection,
     CollectionConfig,
-    IndexConfig,
+    IndexConfiguration,
     SearchResult,
-    SearchStats,
-    InsertResult,
-    BatchResult,
+    VectorOperationResponse,
+    OperationMetrics,
     DistanceMetric,
-    IndexAlgorithm,
+    IndexingAlgorithm,
+    StorageEngine,
+    VectorRecord,
+    HealthStatus,
+    VectorArray,
+    MetadataDict,
+    FilterDict,
 )
 from .exceptions import (
     ProximaDBError,
@@ -76,13 +81,18 @@ __all__ = [
     # Models
     "Collection",
     "CollectionConfig", 
-    "IndexConfig",
+    "IndexConfiguration",
     "SearchResult",
-    "SearchStats",
-    "InsertResult",
-    "BatchResult",
+    "VectorOperationResponse",
+    "OperationMetrics",
     "DistanceMetric",
-    "IndexAlgorithm",
+    "IndexingAlgorithm",
+    "StorageEngine",
+    "VectorRecord",
+    "HealthStatus",
+    "VectorArray",
+    "MetadataDict",
+    "FilterDict",
     
     # Exceptions
     "ProximaDBError",

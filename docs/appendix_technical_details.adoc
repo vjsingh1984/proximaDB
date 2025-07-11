@@ -18,7 +18,7 @@ This appendix provides deep technical implementation details for ProximaDB's adv
 
 ProximaDB implements sophisticated search strategies that adapt to data characteristics and query patterns. The system supports multiple indexing approaches with automatic selection based on collection properties.
 
-image::diagrams/images/proximadb-class-storage.png[Storage-Aware Search Architecture,width=100%]
+image::proximadb-class-storage.png[Storage-Aware Search Architecture,width=100%]
 
 === Advanced Search Strategies
 
@@ -61,7 +61,7 @@ enum SearchStrategy {
 
 ProximaDB implements a unified quantization system supporting multiple strategies for memory-efficient vector storage:
 
-image::diagrams/images/unified_quantization_system.png[Unified Quantization Architecture,width=100%]
+image::unified_quantization_system.png[Unified Quantization Architecture,width=100%]
 
 **Unified Quantization Levels**:
 - **None**: Full FP32 precision (no quantization)
@@ -116,7 +116,7 @@ enum OperationCost {
 
 ==== Query Planner Architecture
 
-image::diagrams/images/search-optimization-flow.png[Search Optimization Flow,width=100%]
+image::search-optimization-flow.png[Search Optimization Flow,width=100%]
 
 The query planner optimizes execution by analyzing filter selectivity and reordering operations:
 
@@ -157,7 +157,7 @@ impl QueryPlanner {
 
 ProximaDB's storage architecture provides flexible, URL-based configuration for multi-cloud deployments. The system supports tiered storage with automatic lifecycle management.
 
-image::diagrams/images/storage-tiers.png[Storage Tiers Architecture,width=100%]
+image::storage-tiers.png[Storage Tiers Architecture,width=100%]
 
 === Storage Policy Implementation
 
@@ -179,7 +179,7 @@ pub struct StoragePolicy {
 
 ==== Storage Lifecycle Management
 
-image::diagrams/images/wal-flush-triggers.png[WAL Flush Triggers,width=100%]
+image::wal-flush-triggers.png[WAL Flush Triggers,width=100%]
 
 [source,rust]
 ----
@@ -198,7 +198,7 @@ pub struct StorageLifecycle {
 
 The Adaptive eXtensible Indexing System (AXIS) provides intelligent index selection and migration based on collection characteristics and query patterns.
 
-image::diagrams/images/proximadb-component.png[AXIS Architecture,width=100%]
+image::proximadb-component.png[AXIS Architecture,width=100%]
 
 === AXIS Implementation Details
 
@@ -223,7 +223,7 @@ pub struct CollectionAnalyzer {
 
 ===== Migration Flow Diagram
 
-image::diagrams/images/indexconfig-flow.png[Index Migration Flow,width=100%]
+image::indexconfig-flow.png[Index Migration Flow,width=100%]
 
 The migration engine continuously monitors collection performance and automatically adapts indexing strategies based on changing data characteristics and query patterns.
 
@@ -401,7 +401,7 @@ This section provides detailed performance metrics and optimization strategies f
 
 ProximaDB supports multiple levels of tenant isolation to meet various security, performance, and compliance requirements.
 
-image::diagrams/images/proximadb-component.png[Multi-Tenant Architecture,width=100%]
+image::proximadb-component.png[Multi-Tenant Architecture,width=100%]
 
 === Multi-Tenant Implementation
 
@@ -429,7 +429,7 @@ image::diagrams/images/proximadb-component.png[Multi-Tenant Architecture,width=1
 
 ===== Routing Architecture Diagram
 
-image::diagrams/images/tenant-routing-architecture.png[Tenant Routing Architecture,width=100%]
+image::tenant-routing-architecture.png[Tenant Routing Architecture,width=100%]
 
 The tenant router intelligently directs requests based on isolation requirements, ensuring proper resource allocation and security boundaries.
 
