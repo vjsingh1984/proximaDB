@@ -150,14 +150,9 @@ async fn test_lsm_engine_flush_operations() -> Result<()> {
 
     println!("📝 Added 10 records to LSM engine");
 
-    // Test LSM's UnifiedStorageEngine flush method
-    let flush_params = FlushParameters::new()
-        .with_collection_id("test_collection".to_string())
-        .force()
-        .synchronous();
-    let flush_result = lsm_engine.flush(flush_params).await;
+    // Test LSM's direct flush method (since we inserted directly to LSM)
+    let flush_result = lsm_engine.flush().await;
     assert!(flush_result.is_ok());
-    assert!(flush_result.unwrap().success);
 
     println!("✅ LSM engine flush operations verified");
     println!("   - Direct flush: Success");

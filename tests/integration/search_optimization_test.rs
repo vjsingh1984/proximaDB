@@ -8,7 +8,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 use tokio::test;
 
-use crate::core::{CollectionId, SearchResult};
+use crate::core::SearchResult;
 use crate::storage::engines::viper::clustering_models::ClusteringModelManager;
 use crate::storage::engines::viper::search::{ViperSearchEngine, ViperSearchConfig, SearchHints};
 use crate::storage::engines::viper::ViperEngine;
@@ -77,7 +77,7 @@ async fn test_search_without_trained_model() {
         .await
         .expect("Failed to create VIPER engine");
     
-    let collection_id = CollectionId::from("no_model_test".to_string());
+    let collection_id = "no_model_test".to_string();
     let query_vector = vec![1.0; 128];
     
     // Search without trained model (should use fallback)
@@ -167,7 +167,7 @@ async fn test_cluster_selection_optimization() {
     search_engine.set_model_manager(Arc::clone(&model_manager));
     
     // Test cluster selection (internal method testing)
-    let collection_id_typed = CollectionId::from(collection_id.to_string());
+    let collection_id_typed = collection_id.clone();
     let selected_clusters = search_engine
         .select_relevant_clusters(&collection_id_typed, &query_cluster_1)
         .await
@@ -207,7 +207,7 @@ async fn test_search_performance_with_clustering() {
     
     // Test search performance
     let query_vector = generate_query_for_cluster(2, dimension);
-    let collection_id_typed = CollectionId::from(collection_id.to_string());
+    let collection_id_typed = collection_id.clone();
     
     // Measure cluster selection time
     let start_time = Instant::now();
@@ -255,7 +255,7 @@ async fn test_search_metrics_tracking() {
         generate_query_for_cluster(2, 64),
     ];
     
-    let collection_id_typed = CollectionId::from(collection_id.to_string());
+    let collection_id_typed = collection_id.clone();
     
     for query in &query_vectors {
         let _clusters = search_engine
@@ -303,7 +303,7 @@ async fn test_search_hints_optimization() {
     };
     
     let query_vector = generate_query_for_cluster(1, 128);
-    let collection_id_typed = CollectionId::from(collection_id.to_string());
+    let collection_id_typed = collection_id.clone();
     
     let clusters_with_hints = search_engine
         .select_relevant_clusters(&collection_id_typed, &query_vector)
@@ -421,7 +421,7 @@ async fn test_search_strategy_selection() {
     search_engine.set_model_manager(Arc::clone(&model_manager));
     
     // Test strategy selection for small collection (should use direct search)
-    let small_collection = CollectionId::from("small_collection".to_string());
+    let small_collection = "small_collection".to_string();
     let query_vector = vec![1.0; 64];
     
     let strategy = search_engine.determine_search_strategy(

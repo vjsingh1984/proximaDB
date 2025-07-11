@@ -219,6 +219,28 @@ pub struct BincodeWalStrategy {
 - **Size**: More compact than Avro
 - **Compatibility**: Rust-native only
 
+=== Proto-First Architecture
+
+**Design Principles**:
+- **Zero Double Serialization**: Direct proto types throughout the system
+- **No Wrappers**: Direct field access pattern for performance
+- **Unified Enums**: Proto-generated enums as single source of truth
+- **Binary Payloads**: Vector data stays as Avro binary for zero-copy
+
+**Proto-Native Collections**:
+[source,rust]
+----
+// Direct proto type usage - no intermediate structs
+pub async fn create_collection(
+    &self, 
+    collection: proto::proximadb::Collection
+) -> Result<()> {
+    // Store proto directly, no conversion
+    self.metadata_backend.put_collection(&collection).await?;
+    Ok(())
+}
+----
+
 === Protocol Buffer Schemas
 
 **Core Message Types**:

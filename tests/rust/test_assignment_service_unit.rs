@@ -10,7 +10,6 @@ mod assignment_service_tests {
         StorageComponentType, AssignmentDiscovery
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::core::CollectionId;
     
     #[tokio::test]
     async fn test_round_robin_assignment() {
@@ -32,7 +31,7 @@ mod assignment_service_tests {
         
         for collection in &collections {
             let assignment = service.assign_storage_url(
-                &CollectionId::from(collection.to_string()), 
+                collection, 
                 &config
             ).await.unwrap();
             assignments.push(assignment.directory_index);
@@ -55,7 +54,7 @@ mod assignment_service_tests {
             collection_affinity: true,
         };
         
-        let collection_id = CollectionId::from("test_collection".to_string());
+        let collection_id = "test_collection";
         
         // Assign multiple times - should always get same result
         let assignment1 = service.assign_storage_url(&collection_id, &config).await.unwrap();

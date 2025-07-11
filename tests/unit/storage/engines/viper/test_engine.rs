@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::test;
 
-use crate::core::CollectionId;
 use crate::storage::engines::viper::{ViperEngine, ViperConfig};
 use crate::storage::engines::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -54,7 +53,7 @@ async fn test_collection_metadata_management() {
         .await
         .expect("Failed to create VIPER engine");
     
-    let collection_id = CollectionId::from("test_collection".to_string());
+    let collection_id = "test_collection".to_string();
     
     // Test that initially no metadata exists
     let metadata = engine.get_collection_metadata(&collection_id).await;
@@ -106,7 +105,7 @@ async fn test_parquet_file_discovery() {
         .await
         .expect("Failed to create VIPER engine");
     
-    let collection_id = CollectionId::from("file_discovery_test".to_string());
+    let collection_id = "file_discovery_test".to_string();
     
     // Test Parquet file discovery
     let parquet_files = engine.get_parquet_files_for_collection(&collection_id)
@@ -135,7 +134,7 @@ async fn test_cluster_prediction() {
         .await
         .expect("Failed to create VIPER engine");
     
-    let collection_id = CollectionId::from("cluster_prediction_test".to_string());
+    let collection_id = "cluster_prediction_test".to_string();
     let test_vector = vec![1.0, 2.0, 3.0, 4.0];
     
     // Test cluster prediction
@@ -258,8 +257,8 @@ async fn test_multiple_collections() {
         .await
         .expect("Failed to create VIPER engine");
     
-    let collection_1 = CollectionId::from("collection_1".to_string());
-    let collection_2 = CollectionId::from("collection_2".to_string());
+    let collection_1 = "collection_1".to_string();
+    let collection_2 = "collection_2".to_string();
     
     // Create metadata for both collections
     let metadata_1 = CollectionMetadata {

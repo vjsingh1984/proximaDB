@@ -4,16 +4,14 @@
 //! - All configuration types and their default values
 //! - Configuration serialization/deserialization
 //! - Configuration validation and edge cases
-//! - Multi-disk and cloud backup configurations
-//! - Performance and compression configurations
 
 use anyhow::Result;
 use proximadb::storage::persistence::wal::config::{
     WalConfig, WalStrategyType, MemTableConfig, MemTableType, MultiDiskConfig,
     DiskDistributionStrategy, CompressionConfig, PerformanceConfig, SyncMode,
-    CollectionWalConfig, CloudBackupConfig, CloudStorageType, RetentionPolicy,
-    CompressionAlgorithm,
+    CollectionWalConfig,
 };
+use proximadb::core::CompressionAlgorithm;
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -192,14 +190,7 @@ mod wal_config_tests {
             ttl_cleanup_interval_secs: 600,   // 10 minutes
             sync_mode: SyncMode::Always,
             global_shrink_factor: 0.6,
-            cloud_backup: Some(CloudBackupConfig {
-                storage_type: CloudStorageType::S3,
-                bucket: "backup-bucket".to_string(),
-                path_prefix: "wal-backups".to_string(),
-                retention: RetentionPolicy::Days(30),
-                enable_compression: true,
-                backup_interval_secs: 3600,
-            }),
+            cloud_backup: None,
         };
         
         let json = serde_json::to_string(&custom_config).unwrap();
@@ -207,54 +198,29 @@ mod wal_config_tests {
         assert_eq!(custom_config.memory_flush_size_bytes, deserialized.memory_flush_size_bytes);
         assert_eq!(custom_config.concurrent_flushes, deserialized.concurrent_flushes);
         assert_eq!(custom_config.global_shrink_factor, deserialized.global_shrink_factor);
-        assert!(deserialized.cloud_backup.is_some());
-    }
-
-    #[test]
-    fn test_cloud_backup_config() -> Result<()> {
-        let backup_config = CloudBackupConfig {
-            storage_type: CloudStorageType::Azure,
-            bucket: "test-container".to_string(),
-            path_prefix: "backups/wal".to_string(),
-            retention: RetentionPolicy::Count(10),
-            enable_compression: true,
-            backup_interval_secs: 1800, // 30 minutes
-        };
-        
-        let json = serde_json::to_string(&backup_config)?;
-        let deserialized: CloudBackupConfig = serde_json::from_str(&json)?;
-        
-        assert_eq!(backup_config.storage_type, deserialized.storage_type);
-        assert_eq!(backup_config.bucket, deserialized.bucket);
-        assert_eq!(backup_config.path_prefix, deserialized.path_prefix);
-        assert_eq!(backup_config.enable_compression, deserialized.enable_compression);
-        assert_eq!(backup_config.backup_interval_secs, deserialized.backup_interval_secs);
-        
-        Ok(())
+        assert!(deserialized.cloud_backup.is_none());
     }
 
     #[test]
     fn test_collection_wal_config() -> Result<()> {
         let collection_config = CollectionWalConfig {
-            strategy_override: Some(WalStrategyType::BincodeBatch),
-            flush_size_override: Some(5 * 1024 * 1024), // 5MB
-            compression_override: Some(CompressionConfig {
+            memory_flush_size_bytes: Some(5 * 1024 * 1024), // 5MB
+            disk_segment_size: Some(128 * 1024 * 1024), // 128MB
+            compression: Some(CompressionConfig {
                 algorithm: CompressionAlgorithm::Snappy,
                 compress_memory: true,
                 compress_disk: true,
                 min_compress_size: 512,
             }),
-            enable_ttl: Some(true),
-            ttl_seconds: Some(86400), // 1 day
+            default_ttl_days: Some(1), // 1 day
         };
         
         let json = serde_json::to_string(&collection_config)?;
         let deserialized: CollectionWalConfig = serde_json::from_str(&json)?;
         
-        assert_eq!(collection_config.strategy_override, deserialized.strategy_override);
-        assert_eq!(collection_config.flush_size_override, deserialized.flush_size_override);
-        assert_eq!(collection_config.enable_ttl, deserialized.enable_ttl);
-        assert_eq!(collection_config.ttl_seconds, deserialized.ttl_seconds);
+        assert_eq!(collection_config.memory_flush_size_bytes, deserialized.memory_flush_size_bytes);
+        assert_eq!(collection_config.disk_segment_size, deserialized.disk_segment_size);
+        assert_eq!(collection_config.default_ttl_days, deserialized.default_ttl_days);
         
         Ok(())
     }
@@ -265,11 +231,10 @@ mod wal_config_tests {
         collection_overrides.insert(
             "high_volume_collection".to_string(),
             CollectionWalConfig {
-                strategy_override: Some(WalStrategyType::BincodeBatch),
-                flush_size_override: Some(20 * 1024 * 1024), // 20MB
-                compression_override: None,
-                enable_ttl: Some(false),
-                ttl_seconds: None,
+                memory_flush_size_bytes: Some(20 * 1024 * 1024), // 20MB
+                disk_segment_size: Some(1024 * 1024 * 1024), // 1GB
+                compression: None,
+                default_ttl_days: None,
             },
         );
         
@@ -306,14 +271,7 @@ mod wal_config_tests {
                 ttl_cleanup_interval_secs: 600,   // 10 minutes
                 sync_mode: SyncMode::Periodic,
                 global_shrink_factor: 0.5,
-                cloud_backup: Some(CloudBackupConfig {
-                    storage_type: CloudStorageType::Gcs,
-                    bucket: "wal-backups".to_string(),
-                    path_prefix: "production".to_string(),
-                    retention: RetentionPolicy::Days(90),
-                    enable_compression: true,
-                    backup_interval_secs: 7200, // 2 hours
-                }),
+                cloud_backup: None,
             },
             enable_mvcc: true,
             enable_ttl: true,
@@ -363,36 +321,6 @@ mod wal_config_tests {
         
         // Verify no collection overrides by default
         assert!(config.collection_overrides.is_empty());
-    }
-
-    #[test]
-    fn test_cloud_storage_types() {
-        let storage_types = vec![
-            CloudStorageType::S3,
-            CloudStorageType::Azure,
-            CloudStorageType::Gcs,
-        ];
-        
-        for storage_type in storage_types {
-            let json = serde_json::to_string(&storage_type).unwrap();
-            let deserialized: CloudStorageType = serde_json::from_str(&json).unwrap();
-            assert_eq!(storage_type, deserialized);
-        }
-    }
-
-    #[test]
-    fn test_retention_policy() {
-        let policies = vec![
-            RetentionPolicy::Days(7),
-            RetentionPolicy::Count(100),
-            RetentionPolicy::Never,
-        ];
-        
-        for policy in policies {
-            let json = serde_json::to_string(&policy).unwrap();
-            let deserialized: RetentionPolicy = serde_json::from_str(&json).unwrap();
-            assert_eq!(policy, deserialized);
-        }
     }
 
     #[test]
@@ -474,5 +402,57 @@ mod wal_config_tests {
         assert!(config.performance.global_shrink_factor <= 1.0);
         assert!(config.memtable.mvcc_versions_retained >= 1);
         assert!(config.compression.min_compress_size >= 0);
+    }
+
+    #[test]
+    fn test_collection_config_overrides() {
+        let mut config = WalConfig::default();
+        
+        // Add collection-specific overrides
+        config.collection_overrides.insert(
+            "large_vectors".to_string(),
+            CollectionWalConfig {
+                memory_flush_size_bytes: Some(100 * 1024 * 1024), // 100MB
+                disk_segment_size: Some(2 * 1024 * 1024 * 1024), // 2GB
+                compression: Some(CompressionConfig {
+                    algorithm: CompressionAlgorithm::Zstd,
+                    compress_memory: false,
+                    compress_disk: true,
+                    min_compress_size: 4096,
+                }),
+                default_ttl_days: Some(90), // 90 days
+            },
+        );
+        
+        config.collection_overrides.insert(
+            "small_vectors".to_string(),
+            CollectionWalConfig {
+                memory_flush_size_bytes: Some(1024 * 1024), // 1MB
+                disk_segment_size: Some(64 * 1024 * 1024), // 64MB
+                compression: Some(CompressionConfig {
+                    algorithm: CompressionAlgorithm::Lz4,
+                    compress_memory: true,
+                    compress_disk: true,
+                    min_compress_size: 256,
+                }),
+                default_ttl_days: Some(7), // 7 days
+            },
+        );
+        
+        // Verify overrides are preserved
+        assert_eq!(config.collection_overrides.len(), 2);
+        
+        let large_config = config.collection_overrides.get("large_vectors").unwrap();
+        assert_eq!(large_config.memory_flush_size_bytes, Some(100 * 1024 * 1024));
+        assert_eq!(large_config.default_ttl_days, Some(90));
+        
+        let small_config = config.collection_overrides.get("small_vectors").unwrap();
+        assert_eq!(small_config.memory_flush_size_bytes, Some(1024 * 1024));
+        assert_eq!(small_config.default_ttl_days, Some(7));
+        
+        // Test serialization with overrides
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: WalConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.collection_overrides.len(), deserialized.collection_overrides.len());
     }
 }

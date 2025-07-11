@@ -22,15 +22,13 @@ use rocksdb::{
     WriteBatch, WriteOptions,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::core::{Collection, String};
 use crate::proto::proximadb::{
-    Collection as Collection, CollectionConfig, CollectionStats,
+    Collection, CollectionConfig, CollectionStats,
     DistanceMetric, IndexingAlgorithm, StorageEngine
 };
 use crate::storage::metadata::backends::MetadataBackend;
@@ -137,9 +135,6 @@ pub struct RocksDbMetadataBackend {
     
     /// Statistics
     stats: Arc<RwLock<BackendStatistics>>,
-    
-    /// Active transactions
-    transactions: Arc<RwLock<HashMap<String, Transaction<'static, TransactionDB>>>>,
 }
 
 /// Backend statistics
@@ -163,7 +158,6 @@ impl RocksDbMetadataBackend {
             db: Arc::new(RwLock::new(None)),
             regular_db: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(BackendStatistics::default())),
-            transactions: Arc::new(RwLock::new(HashMap::new())),
         };
         
         backend.initialize().await?;

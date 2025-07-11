@@ -17,25 +17,35 @@
 //! Unit tests for single collection index functionality
 
 use proximadb::storage::metadata::single_index::SingleCollectionIndex;
-use proximadb::storage::metadata::backends::filestore_backend::CollectionRecord;
+use proximadb::proto::proximadb::{Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine, IndexingAlgorithm};
 
-fn create_test_record(uuid: &str, name: &str) -> CollectionRecord {
-    CollectionRecord {
-        uuid: uuid.to_string(),
-        name: name.to_string(),
-        dimension: 128,
-        distance_metric: "cosine".to_string(),
-        indexing_algorithm: "hnsw".to_string(),
-        storage_engine: "viper".to_string(),
+fn create_test_collection(id: &str, name: &str) -> Collection {
+    Collection {
+        id: id.to_string(),
+        config: Some(CollectionConfig {
+            name: name.to_string(),
+            dimension: 128,
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Viper as i32,
+            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization_config: None,
+            primary_index_name: "default".to_string(),
+            enable_automatic_index_selection: false,
+            metadata_fields: vec![],
+        }),
+        stats: Some(CollectionStats {
+            vector_count: 100,
+            index_size_bytes: 1024,
+            data_size_bytes: 2048,
+            metadata_size_bytes: 512,
+            average_vector_size_bytes: 20.0,
+            compression_ratio: 0.85,
+            last_updated: chrono::Utc::now().timestamp_millis(),
+        }),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
-        version: 1,
-        vector_count: 100,
-        total_size_bytes: 1024,
-        config: "{}".to_string(),
-        description: None,
-        tags: vec![],
-        owner: None,
     }
 }
 
@@ -43,21 +53,21 @@ fn create_test_record(uuid: &str, name: &str) -> CollectionRecord {
 fn test_single_index_operations() {
     let index = SingleCollectionIndex::new();
     
-    let record = create_test_record("uuid-123", "test-collection");
+    let collection = create_test_collection("uuid-123", "test-collection");
     
     // Test upsert
-    index.upsert_collection(record.clone());
+    index.upsert_collection(collection.clone());
     assert_eq!(index.count(), 1);
     
     // Test UUID lookup - O(1)
     let result = index.get_by_uuid("uuid-123");
     assert!(result.is_some());
-    assert_eq!(result.unwrap().name, "test-collection");
+    assert_eq!(result.unwrap().id, "uuid-123");
     
     // Test name lookup - O(n) but efficient
     let result = index.get_by_name("test-collection");
     assert!(result.is_some());
-    assert_eq!(result.unwrap().uuid, "uuid-123");
+    assert_eq!(result.unwrap().id, "uuid-123");
     
     // Test UUID by name
     let uuid = index.get_uuid_by_name("test-collection");
@@ -82,9 +92,9 @@ fn test_single_index_rebuild() {
     let index = SingleCollectionIndex::new();
     
     let records = vec![
-        create_test_record("uuid-1", "collection-1"),
-        create_test_record("uuid-2", "collection-2"),
-        create_test_record("uuid-3", "collection-3"),
+        create_test_collection("uuid-1", "collection-1"),
+        create_test_collection("uuid-2", "collection-2"),
+        create_test_collection("uuid-3", "collection-3"),
     ];
     
     index.rebuild_from_records(records);
@@ -110,8 +120,8 @@ fn test_concurrent_access() {
     for i in 0..10 {
         let index_clone = index.clone();
         let handle = thread::spawn(move || {
-            let record = create_test_record(&format!("uuid-{}", i), &format!("collection-{}", i));
-            index_clone.upsert_collection(record);
+            let collection = create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
+            index_clone.upsert_collection(collection);
             
             // Immediate lookup to test consistency
             let uuid_result = index_clone.get_by_uuid(&format!("uuid-{}", i));
@@ -151,8 +161,8 @@ fn test_performance_characteristics() {
     
     // Insert test data
     for i in 0..1000 {
-        let record = create_test_record(&format!("uuid-{:04}", i), &format!("collection-{:04}", i));
-        index.upsert_collection(record);
+        let collection = create_test_collection(&format!("uuid-{:04}", i), &format!("collection-{:04}", i));
+        index.upsert_collection(collection);
     }
     
     // Test UUID lookup performance (should be O(1))

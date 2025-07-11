@@ -5,10 +5,10 @@ use proximadb::storage::engine::StorageEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::wal::{WalConfig, WalManager, WalStrategyType};
 use proximadb::storage::metadata::backends::memory_backend::MemoryMetadataBackend;
-use proximadb::storage::metadata::store::UnifiedMetadataStore;
+use proximadb::storage::metadata::store::AtomicMetadataStore;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::services::SharedServices;
-use proximadb::storage::assignment_service::StaticAssignmentService;
+use proximadb::network::multi_server::SharedServices;
+use proximadb::storage::assignment_service::AssignmentService;
 use proximadb::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine as ProtoStorageEngine};
 use proximadb::compute::distance::DistanceMetric;
 use std::sync::Arc;
@@ -31,10 +31,10 @@ async fn create_test_environment() -> (Arc<StorageEngine>, Arc<CollectionService
     
     // Create metadata store
     let metadata_backend = Arc::new(MemoryMetadataBackend::new());
-    let metadata_store = Arc::new(UnifiedMetadataStore::new(metadata_backend));
+    let metadata_store = Arc::new(AtomicMetadataStore::new(metadata_backend));
     
     // Create assignment service
-    let assignment_service = Arc::new(StaticAssignmentService::new(temp_dir.path().to_path_buf()));
+    let assignment_service = Arc::new(AssignmentService::new(temp_dir.path().to_path_buf()));
     
     // Create collection service
     let collection_service = Arc::new(CollectionService::new(

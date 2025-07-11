@@ -3,14 +3,14 @@
 use proximadb::services::vector_service::{VectorService, VectorInsertRequest, VectorSearchRequest};
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::engine::StorageEngine;
-use proximadb::storage::assignment_service::{AssignmentService, StaticAssignmentService};
+use proximadb::storage::assignment_service::AssignmentService;
 use proximadb::index::axis::manager::AxisManager;
 use proximadb::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine as ProtoStorageEngine};
 use proximadb::core::{VectorRecord, VectorId};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::metadata::backends::memory_backend::MemoryMetadataBackend;
-use proximadb::storage::metadata::store::UnifiedMetadataStore;
-use proximadb::services::SharedServices;
+use proximadb::storage::metadata::store::AtomicMetadataStore;
+use proximadb::network::multi_server::SharedServices;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -30,12 +30,12 @@ async fn create_test_vector_service() -> (VectorService, TempDir) {
     
     // Create metadata store
     let metadata_backend = Arc::new(MemoryMetadataBackend::new());
-    let metadata_store = Arc::new(UnifiedMetadataStore::new(metadata_backend));
+    let metadata_store = Arc::new(AtomicMetadataStore::new(metadata_backend));
     
     // Create collection service with basic config
     let collection_service = Arc::new(CollectionService::new(
         temp_dir.path().to_path_buf(),
-        Arc::new(StaticAssignmentService::new(temp_dir.path().to_path_buf())),
+        Arc::new(AssignmentService::new(temp_dir.path().to_path_buf())),
         metadata_store.clone(),
     ));
     
@@ -53,7 +53,7 @@ async fn create_test_vector_service() -> (VectorService, TempDir) {
     // Create shared services
     let shared_services = SharedServices {
         collection_service: collection_service.clone(),
-        assignment_service: Arc::new(StaticAssignmentService::new(temp_dir.path().to_path_buf())),
+        assignment_service: Arc::new(AssignmentService::new(temp_dir.path().to_path_buf())),
         metadata_store: metadata_store.clone(),
     };
     

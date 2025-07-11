@@ -299,7 +299,7 @@ fn test_different_distance_metrics() {
     let metrics = vec![
         DistanceMetric::Cosine,
         DistanceMetric::Euclidean,
-        DistanceMetric::Dot,
+        DistanceMetric::DotProduct,
     ];
     
     for metric in metrics {

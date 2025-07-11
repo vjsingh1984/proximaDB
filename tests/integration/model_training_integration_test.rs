@@ -11,7 +11,6 @@ use tempfile::TempDir;
 use tokio::test;
 use tokio::time::sleep;
 
-use crate::core::CollectionId;
 use crate::storage::engines::viper::clustering_models::{
     ClusteringModelManager, MIN_VECTORS_FOR_CLUSTERING,
 };
@@ -114,7 +113,7 @@ async fn test_model_training_threshold_logic() {
     let mut background_manager = BackgroundMaintenanceManager::new(wal_config);
     background_manager.set_clustering_model_manager(Arc::clone(&model_manager));
     
-    let collection_id = CollectionId::from("threshold_test".to_string());
+    let collection_id = "threshold_test".to_string();
     
     // Test 1: Small collection should not trigger training
     let should_train_small = background_manager
@@ -164,7 +163,7 @@ async fn test_model_training_stats_tracking() {
     let mut background_manager = BackgroundMaintenanceManager::new(wal_config);
     background_manager.set_clustering_model_manager(Arc::clone(&model_manager));
     
-    let collection_id = CollectionId::from("stats_test".to_string());
+    let collection_id = "stats_test".to_string();
     
     // Test skipping small collection
     let _should_train = background_manager
@@ -378,7 +377,7 @@ async fn test_model_training_workflow_integration() {
     let mut search_engine = ViperSearchEngine::with_config(ViperSearchConfig::default());
     search_engine.set_model_manager(Arc::clone(&model_manager));
     
-    let collection_id = CollectionId::from("workflow_test".to_string());
+    let collection_id = "workflow_test".to_string();
     
     // Step 1: Simulate large collection creation (should trigger training)
     let large_vector_count = MIN_VECTORS_FOR_CLUSTERING + 500_000;

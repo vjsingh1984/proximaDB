@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod metadata_backend_tests {
     use super::super::*;
-    use crate::core::{Collection, String, StorageConfig};
+    use crate::core::StorageConfig;
     use crate::network::multi_server::{MultiServerConfig, SharedServices};
     use crate::services::collection_service::CollectionService;
     use crate::storage::metadata::backends::filestore_backend::{
         FilestoreMetadataBackend, FilestoreMetadataConfig,
     };
-    use crate::proto::proximadb::Collection as Collection;
+    use crate::proto::proximadb::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::CollectionMetadataProvider;
     use crate::storage::StorageEngine;

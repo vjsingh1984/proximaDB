@@ -9,7 +9,7 @@ pub mod compaction;
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 
 // Main LSM Tree implementation (contents from original lsm/mod.rs)
-use crate::core::{String, LsmConfig, VectorId, VectorRecord};
+use crate::core::{LsmConfig, VectorId, VectorRecord};
 use crate::storage::memtable::core::MemtableCore;
 use crate::storage::memtable::specialized::LsmMemtable;
 use crate::storage::persistence::filesystem::FilesystemFactory;

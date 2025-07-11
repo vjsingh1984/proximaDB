@@ -5,8 +5,10 @@
 
 use proximadb::compute::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel, UnifiedDistanceCompute,
-    InMemoryCodebookStore, DistanceMetric,
+    InMemoryCodebookStore, DistanceMetric, QuantizationLevelType,
+    ProductQuantization, BinaryQuantization, UniformQuantization, ScalarQuantization,
 };
+use proximadb::compute::CodebookStore;
 use std::sync::Arc;
 
 #[test]
@@ -16,10 +18,21 @@ fn test_quantization_level_bytes() {
     let pq8 = UnifiedQuantizationLevel::pq8(16);
     assert_eq!(pq8.bytes_per_vector(dimension), 16); // 16 subvectors * 1 byte
     
-    let uniform4 = UnifiedQuantizationLevel::Uniform { bits: 4, scale: None, offset: None };
+    let uniform4 = UnifiedQuantizationLevel {
+        level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+            bits: 4,
+            scale: None,
+            offset: None,
+        })),
+    };
     assert_eq!(uniform4.bytes_per_vector(dimension), 384); // 768 * 4 bits / 8
     
-    let binary = UnifiedQuantizationLevel::Binary { threshold: None };
+    let binary = UnifiedQuantizationLevel {
+        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            threshold: None,
+            sign_based: false,
+        })),
+    };
     assert_eq!(binary.bytes_per_vector(dimension), 96); // 768 bits / 8
 }
 
@@ -54,21 +67,21 @@ async fn test_quantization_roundtrip() {
 fn test_quantization_level_variants() {
     // Test PQ4 creation
     let pq4 = UnifiedQuantizationLevel::pq4(8);
-    match pq4 {
-        UnifiedQuantizationLevel::ProductQuantization { bits_per_code, num_subvectors, .. } => {
-            assert_eq!(bits_per_code, 4);
-            assert_eq!(num_subvectors, 8);
+    match &pq4.level_type {
+        Some(QuantizationLevelType::Pq(pq)) => {
+            assert_eq!(pq.bits_per_code, 4);
+            assert_eq!(pq.num_subvectors, 8);
         }
         _ => panic!("Expected ProductQuantization"),
     }
     
     // Test INT8 creation
     let int8 = UnifiedQuantizationLevel::int8();
-    match int8 {
-        UnifiedQuantizationLevel::Scalar { bits, scale, offset } => {
-            assert_eq!(bits, 8);
-            assert_eq!(scale, 1.0);
-            assert_eq!(offset, 0.0);
+    match &int8.level_type {
+        Some(QuantizationLevelType::Scalar(s)) => {
+            assert_eq!(s.bits, 8);
+            assert_eq!(s.scale, 1.0);
+            assert_eq!(s.offset, 0.0);
         }
         _ => panic!("Expected Scalar"),
     }
@@ -79,18 +92,33 @@ fn test_bytes_per_vector_calculation() {
     let dim = 128;
     
     // Test None (FP32)
-    assert_eq!(UnifiedQuantizationLevel::None.bytes_per_vector(dim), 512); // 128 * 4
+    let none_level = UnifiedQuantizationLevel {
+        level_type: None,
+    };
+    assert_eq!(none_level.bytes_per_vector(dim), 512); // 128 * 4
     
     // Test ProductQuantization
     let pq = UnifiedQuantizationLevel::pq8(16);
     assert_eq!(pq.bytes_per_vector(dim), 16); // 16 subvectors * 1 byte
     
     // Test Binary
-    let binary = UnifiedQuantizationLevel::Binary { threshold: None };
+    let binary = UnifiedQuantizationLevel {
+        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            threshold: None,
+            sign_based: false,
+        })),
+    };
     assert_eq!(binary.bytes_per_vector(dim), 16); // 128 bits / 8
     
     // Test Scalar
-    let scalar = UnifiedQuantizationLevel::Scalar { bits: 16, scale: 1.0, offset: 0.0 };
+    let scalar = UnifiedQuantizationLevel {
+        level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
+            bits: 16,
+            scale: 1.0,
+            offset: 0.0,
+            clamp_values: true,
+        })),
+    };
     assert_eq!(scalar.bytes_per_vector(dim), 256); // 128 * 2
 }
 
@@ -99,7 +127,9 @@ fn test_compression_ratio_calculations() {
     let dim = 512;
     
     // No compression
-    let none = UnifiedQuantizationLevel::None;
+    let none = UnifiedQuantizationLevel {
+        level_type: None,
+    };
     assert_eq!(none.compression_ratio(dim), 1.0);
     
     // PQ8 with 16 subvectors
@@ -108,7 +138,12 @@ fn test_compression_ratio_calculations() {
     assert!((ratio - 128.0).abs() < 0.1); // 512*4/16 = 128
     
     // Binary quantization
-    let binary = UnifiedQuantizationLevel::Binary { threshold: None };
+    let binary = UnifiedQuantizationLevel {
+        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            threshold: None,
+            sign_based: false,
+        })),
+    };
     let ratio = binary.compression_ratio(dim);
     assert!((ratio - 32.0).abs() < 0.1); // 512*4/(512/8) = 32
 }

@@ -6,11 +6,11 @@ use proximadb::storage::engines::viper::pipeline::{ViperPipeline, SortingStrateg
 use proximadb::core::VectorRecord;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::metadata::backends::memory_backend::MemoryMetadataBackend;
-use proximadb::storage::metadata::store::UnifiedMetadataStore;
+use proximadb::storage::metadata::store::AtomicMetadataStore;
 use proximadb::proto::proximadb::{Collection, CollectionConfig as ProtoCollectionConfig, DistanceMetric, StorageEngine};
-use proximadb::services::SharedServices;
+use proximadb::network::multi_server::SharedServices;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::assignment_service::StaticAssignmentService;
+use proximadb::storage::assignment_service::AssignmentService;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -33,10 +33,10 @@ async fn create_test_viper_engine(
     
     // Create metadata store
     let metadata_backend = Arc::new(MemoryMetadataBackend::new());
-    let metadata_store = Arc::new(UnifiedMetadataStore::new(metadata_backend));
+    let metadata_store = Arc::new(AtomicMetadataStore::new(metadata_backend));
     
     // Create assignment service
-    let assignment_service = Arc::new(StaticAssignmentService::new(temp_dir.path().to_path_buf()));
+    let assignment_service = Arc::new(AssignmentService::new(temp_dir.path().to_path_buf()));
     
     // Create collection service
     let collection_service = Arc::new(CollectionService::new(

@@ -38,6 +38,8 @@ image::unified_memtable_architecture.png[Unified Memtable Architecture,width=100
 - Three-tier search: WAL → VIPER → LSM
 - 6.10x performance improvement with 100% accuracy
 
+image::storage-aware-search.png[Storage-Aware Search Architecture,width=100%]
+
 **Dual Storage Strategy**::
 - VIPER: Vector-optimized Parquet with ML clustering
 - LSM: Row-based SSTable with bloom filters

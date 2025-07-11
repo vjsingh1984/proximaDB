@@ -16,7 +16,7 @@
 
 //! Unit tests for filestore metadata backend and dependency injection
 
-use proximadb::core::{Collection, CollectionId, StorageConfig};
+use proximadb::core::StorageConfig;
 use proximadb::network::multi_server::{MultiServerConfig, SharedServices};
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::filestore_backend::{
