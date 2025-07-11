@@ -20,7 +20,7 @@
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
 use super::LsmRecord;
-use crate::core::{CollectionId, LsmConfig, VectorId};
+use crate::core::{String, LsmConfig, VectorId};
 use crate::storage::Result;
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -34,7 +34,7 @@ use tracing::{debug, error, info, warn};
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
 pub struct CompactionTask {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -71,7 +71,7 @@ pub struct CompactionManager {
     worker_handles: Vec<JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
-    active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionTask>>>,
+    active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
 }
 
 impl CompactionManager {
@@ -211,7 +211,7 @@ impl CompactionManager {
     pub async fn check_compaction_needed(
         &self,
         collection_dir: &Path,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CompactionTask>> {
         let sst_files = self.get_sst_files_by_level(collection_dir).await?;
 
@@ -235,7 +235,7 @@ impl CompactionManager {
                 };
 
                 return Ok(Some(CompactionTask {
-                    collection_id: collection_id.clone(),
+                    collection_id: collection_id.to_string(),
                     level,
                     input_files,
                     output_file,
@@ -258,7 +258,7 @@ impl CompactionManager {
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
         shutdown_signal: Arc<AtomicBool>,
         stats: Arc<RwLock<CompactionStats>>,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionTask>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
         config: LsmConfig,
     ) {
         debug!("Compaction worker {} started", worker_id);
@@ -606,9 +606,19 @@ impl CompactionManager {
             let path = entry.path();
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                 if filename.starts_with("sst_") && filename.ends_with(".db") {
-                    // For now, assign all SST files to level 0
-                    // TODO: Parse level from filename or metadata
-                    files_by_level.entry(0).or_insert_with(Vec::new).push(path);
+                    // Parse level from filename format: sst_L{level}_{timestamp}.db
+                    let level = if let Some(level_str) = filename.strip_prefix("sst_L") {
+                        level_str.chars()
+                            .take_while(|c| c.is_numeric())
+                            .collect::<String>()
+                            .parse::<u8>()
+                            .unwrap_or(0)
+                    } else {
+                        // Legacy format without level, assume level 0
+                        0
+                    };
+                    
+                    files_by_level.entry(level).or_insert_with(Vec::new).push(path);
                 }
             }
         }

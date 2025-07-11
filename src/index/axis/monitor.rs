@@ -14,7 +14,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
 
 use super::{AlertThresholds, AxisConfig, MonitoringConfig};
-use crate::core::CollectionId;
+
 
 /// Performance monitor for AXIS with real-time alerting
 pub struct PerformanceMonitor {
@@ -49,7 +49,7 @@ impl std::fmt::Debug for PerformanceMonitor {
 #[derive(Debug)]
 struct MetricsCollector {
     /// Current metrics per collection
-    collection_metrics: Arc<RwLock<HashMap<CollectionId, CollectionMetrics>>>,
+    collection_metrics: Arc<RwLock<HashMap<String, CollectionMetrics>>>,
 
     /// System-wide metrics
     system_metrics: Arc<RwLock<SystemMetrics>>,
@@ -79,10 +79,10 @@ struct AlertManager {
 /// Performance tracker for trends and predictions
 struct PerformanceTracker {
     /// Performance trends per collection
-    trends: Arc<RwLock<HashMap<CollectionId, PerformanceTrend>>>,
+    trends: Arc<RwLock<HashMap<String, PerformanceTrend>>>,
 
     /// Baseline performance metrics
-    baselines: Arc<RwLock<HashMap<CollectionId, BaselineMetrics>>>,
+    baselines: Arc<RwLock<HashMap<String, BaselineMetrics>>>,
 
     /// Anomaly detector
     anomaly_detector: Arc<AnomalyDetector>,
@@ -100,7 +100,7 @@ struct HealthChecker {
 /// Collection-specific metrics
 #[derive(Debug, Clone)]
 pub struct CollectionMetrics {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub query_latency_ms: LatencyMetrics,
     pub throughput_qps: f64,
     pub error_rate: f64,
@@ -156,7 +156,7 @@ pub struct SystemMetrics {
 #[derive(Debug, Clone)]
 struct HistoricalMetric {
     pub timestamp: DateTime<Utc>,
-    pub collection_id: Option<CollectionId>,
+    pub collection_id: Option<String>,
     pub metric_type: MetricType,
     pub value: f64,
 }
@@ -178,7 +178,7 @@ pub struct Alert {
     pub alert_id: String,
     pub alert_type: AlertType,
     pub severity: AlertSeverity,
-    pub collection_id: Option<CollectionId>,
+    pub collection_id: Option<String>,
     pub message: String,
     pub triggered_at: DateTime<Utc>,
     pub metric_value: f64,
@@ -225,7 +225,7 @@ pub trait AlertSubscriber {
 /// Performance trend analysis
 #[derive(Debug, Clone)]
 pub struct PerformanceTrend {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub latency_trend: TrendDirection,
     pub throughput_trend: TrendDirection,
     pub error_rate_trend: TrendDirection,
@@ -245,7 +245,7 @@ enum TrendDirection {
 /// Baseline performance metrics
 #[derive(Debug, Clone)]
 struct BaselineMetrics {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub baseline_latency_ms: f64,
     pub baseline_throughput_qps: f64,
     pub baseline_error_rate: f64,
@@ -256,13 +256,13 @@ struct BaselineMetrics {
 /// Anomaly detector
 struct AnomalyDetector {
     /// Anomaly detection models per collection
-    models: Arc<RwLock<HashMap<CollectionId, AnomalyModel>>>,
+    models: Arc<RwLock<HashMap<String, AnomalyModel>>>,
 }
 
 /// Anomaly detection model
 #[derive(Debug, Clone)]
 struct AnomalyModel {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub model_type: AnomalyModelType,
     pub sensitivity: f64,
     pub training_data: Vec<f64>,
@@ -301,7 +301,7 @@ enum HealthStatus {
 #[derive(Debug, Clone)]
 pub enum MonitoringEvent {
     MetricsUpdated {
-        collection_id: CollectionId,
+        collection_id: String,
         metrics: CollectionMetrics,
     },
     AlertTriggered {
@@ -311,13 +311,13 @@ pub enum MonitoringEvent {
         alert_id: String,
     },
     AnomalyDetected {
-        collection_id: CollectionId,
+        collection_id: String,
         metric_type: MetricType,
         value: f64,
         expected_range: (f64, f64),
     },
     PerformanceTrendChanged {
-        collection_id: CollectionId,
+        collection_id: String,
         trend: PerformanceTrend,
     },
 }
@@ -345,7 +345,7 @@ impl PerformanceMonitor {
     /// Record performance metrics for a collection
     pub async fn record_metrics(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metrics: CollectionMetrics,
     ) -> Result<()> {
         // Update current metrics
@@ -367,7 +367,7 @@ impl PerformanceMonitor {
         let _ = self
             .event_broadcaster
             .send(MonitoringEvent::MetricsUpdated {
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 metrics,
             });
 
@@ -375,7 +375,7 @@ impl PerformanceMonitor {
     }
 
     /// Get current metrics for a collection
-    pub async fn get_metrics(&self, collection_id: &CollectionId) -> Option<CollectionMetrics> {
+    pub async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
         self.metrics_collector.get_metrics(collection_id).await
     }
 
@@ -453,16 +453,16 @@ impl MetricsCollector {
     }
 
     /// Update metrics for a collection
-    async fn update_metrics(&self, collection_id: &CollectionId, metrics: CollectionMetrics) {
+    async fn update_metrics(&self, collection_id: &str, metrics: CollectionMetrics) {
         let mut collection_metrics = self.collection_metrics.write().await;
-        collection_metrics.insert(collection_id.clone(), metrics.clone());
+        collection_metrics.insert(collection_id.to_string(), metrics.clone());
         drop(collection_metrics);
 
         // Add to historical metrics
         let mut historical = self.historical_metrics.write().await;
         historical.push(HistoricalMetric {
             timestamp: Utc::now(),
-            collection_id: Some(collection_id.clone()),
+            collection_id: Some(collection_id.to_string()),
             metric_type: MetricType::QueryLatency,
             value: metrics.query_latency_ms.average,
         });
@@ -473,7 +473,7 @@ impl MetricsCollector {
     }
 
     /// Get metrics for a collection
-    async fn get_metrics(&self, collection_id: &CollectionId) -> Option<CollectionMetrics> {
+    async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
         collection_metrics.get(collection_id).cloned()
     }
@@ -515,7 +515,7 @@ impl AlertManager {
     }
 
     /// Check thresholds and trigger alerts if needed
-    async fn check_thresholds(&self, collection_id: &CollectionId, metrics: &CollectionMetrics) {
+    async fn check_thresholds(&self, collection_id: &str, metrics: &CollectionMetrics) {
         let mut alerts_to_trigger = Vec::new();
 
         // Check latency threshold
@@ -524,7 +524,7 @@ impl AlertManager {
                 alert_id: format!("latency_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::HighLatency,
                 severity: AlertSeverity::Warning,
-                collection_id: Some(collection_id.clone()),
+                collection_id: Some(collection_id.to_string()),
                 message: format!(
                     "High query latency detected: {:.2}ms (threshold: {}ms)",
                     metrics.query_latency_ms.p99, self.thresholds.max_query_latency_ms
@@ -542,7 +542,7 @@ impl AlertManager {
                 alert_id: format!("throughput_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::LowThroughput,
                 severity: AlertSeverity::Warning,
-                collection_id: Some(collection_id.clone()),
+                collection_id: Some(collection_id.to_string()),
                 message: format!(
                     "Low query throughput detected: {:.2} QPS (threshold: {} QPS)",
                     metrics.throughput_qps, self.thresholds.min_query_throughput
@@ -560,7 +560,7 @@ impl AlertManager {
                 alert_id: format!("error_rate_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::HighErrorRate,
                 severity: AlertSeverity::Critical,
-                collection_id: Some(collection_id.clone()),
+                collection_id: Some(collection_id.to_string()),
                 message: format!(
                     "High error rate detected: {:.2}% (threshold: {:.2}%)",
                     metrics.error_rate * 100.0,
@@ -626,7 +626,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, _collection_id: &CollectionId, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
         // TODO: Implement trend analysis
     }
 }

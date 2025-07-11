@@ -46,7 +46,7 @@ Comprehensive workflows for using ProximaDB in production environments, from bas
 
 === Step 1: Create Your First Collection
 
-image::Assignment Service Flow.png[Collection Management Flow,width=100%]
+image::diagrams/images/assignment_service_flow.png[Collection Management Flow,width=100%]
 
 A collection in ProximaDB is a container for vectors with the same dimensions and distance metric.
 

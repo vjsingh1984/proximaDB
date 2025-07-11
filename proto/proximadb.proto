@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package proximadb;
 
+import "google/protobuf/struct.proto";
+
 // ============================================================================
 // ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
 // - Vector INSERT/UPSERT: Avro binary for zero-copy performance
@@ -13,10 +15,9 @@ service ProximaDB {
   // Collection management - single unified endpoint for flexibility
   rpc CollectionOperation(CollectionRequest) returns (CollectionResponse);
   
-  // Vector operations - optimized by use case
-  rpc VectorInsert(VectorInsertRequest) returns (VectorOperationResponse);        // Zero-copy Avro binary
-  rpc VectorMutation(VectorMutationRequest) returns (VectorOperationResponse);    // UPDATE/DELETE via gRPC
-  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);        // Search via gRPC
+  // Vector operations - optimized batch operations
+  rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);         // Unified batch: insert/upsert/delete
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);       // Search via gRPC
   
   // Health and monitoring
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -33,6 +34,9 @@ enum DistanceMetric {
   EUCLIDEAN = 2;
   DOT_PRODUCT = 3;
   HAMMING = 4;
+  MANHATTAN = 5;
+  JACCARD = 6;
+  CUSTOM = 7;
 }
 
 enum StorageEngine {
@@ -65,18 +69,11 @@ enum CollectionOperation {
 
 enum VectorOperation {
   VECTOR_OPERATION_UNSPECIFIED = 0;
-  VECTOR_INSERT = 1;
-  VECTOR_UPSERT = 2;
-  VECTOR_UPDATE = 3;
-  VECTOR_DELETE = 4;
-  VECTOR_SEARCH = 5;
+  VECTOR_BATCH = 1;      // Unified batch operation (insert/upsert/delete via expires_at)
+  VECTOR_SEARCH = 2;     // Vector search operation
 }
 
-enum MutationType {
-  MUTATION_TYPE_UNSPECIFIED = 0;
-  MUTATION_UPDATE = 1;
-  MUTATION_DELETE = 2;  // Sets expires_at to current time
-}
+// MutationType removed - using unified batch operations with expires_at for deletes
 
 // ============================================================================
 // CORE DATA TYPES - Aligned with Avro schema
@@ -85,10 +82,39 @@ enum MutationType {
 message VectorRecord {
   optional string id = 1;                    // Auto-generated if null
   repeated float vector = 2;                 // REQUIRED for inserts
-  map<string, string> metadata = 3;          // Simplified - all values as strings
+  MetadataMap metadata = 3;                  // Native typed metadata
   optional int64 timestamp = 4;              // Microseconds since epoch
   int64 version = 5;                         // For optimistic concurrency
   optional int64 expires_at = 6;             // TTL support
+}
+
+// Native typed metadata supporting multiple value types
+message MetadataMap {
+  map<string, MetadataValue> fields = 1;
+}
+
+message MetadataValue {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+    StringArray string_array = 5;
+    Int64Array int_array = 6;
+    DoubleArray double_array = 7;
+  }
+}
+
+message StringArray {
+  repeated string values = 1;
+}
+
+message Int64Array {
+  repeated int64 values = 1;
+}
+
+message DoubleArray {
+  repeated double values = 1;
 }
 
 message CollectionConfig {
@@ -96,31 +122,47 @@ message CollectionConfig {
   int32 dimension = 2;
   DistanceMetric distance_metric = 3;
   StorageEngine storage_engine = 4;
-  IndexingAlgorithm indexing_algorithm = 5;
-  repeated string filterable_metadata_fields = 6;  // Legacy - simple field names
-  map<string, string> indexing_config = 7;         // Algorithm-specific parameters
-  repeated FilterableColumnSpec filterable_columns = 8;  // Enhanced filterable column specs
-  IndexConfig index_config = 9;                    // Advanced index configuration
+  IndexingAlgorithm primary_indexing_algorithm = 5;     // Primary/default algorithm
+  repeated FilterableColumnSpec filterable_columns = 6; // Native typed filterable column specs
+  repeated IndexConfig index_configs = 7;               // MULTIPLE index configurations
+  QuantizationConfig quantization_config = 8;           // Vector quantization configuration
+  
+  // Additional configuration for multiple indexes
+  string primary_index_name = 9;                        // Name of primary index to use for search
+  bool enable_automatic_index_selection = 10;           // Auto-select best index per query
+  
+  // Metadata fields
+  optional string description = 11;                     // Human-readable description
+  repeated string tags = 12;                            // Tags for categorization
+  optional string owner = 13;                           // Owner/creator of the collection
+  // Note: Use filterable_columns (field 6) for specifying filterable fields with proper types!
 }
 
 // Advanced index configuration with per-collection customization
 message IndexConfig {
-  // Index update behavior configuration
-  IndexUpdateMode update_mode = 1;                 // Sync/async index updates
-  optional int64 async_update_timeout_ms = 2;      // Timeout for async updates
-  optional int32 async_update_batch_size = 3;      // Batch size for async updates
-  bool enable_background_optimization = 4;         // Background index optimization
+  string index_name = 1;                           // Unique name for this index
+  IndexingAlgorithm algorithm = 2;                 // Algorithm for this specific index
+  IndexUpdateMode update_mode = 3;                 // Sync/async index updates
+  optional int64 async_update_timeout_ms = 4;      // Timeout for async updates
+  optional int32 async_update_batch_size = 5;      // Batch size for async updates
+  bool enable_background_optimization = 6;         // Background index optimization
   
-  // HNSW-specific configuration
-  optional HnswConfig hnsw_config = 5;
-  
-  // IVF-specific configuration  
-  optional IvfConfig ivf_config = 6;
+  // Algorithm-specific configurations
+  optional HnswConfig hnsw_config = 7;
+  optional IvfConfig ivf_config = 8;
+  optional FlatConfig flat_config = 9;             // Configuration for flat/brute-force index
+  optional PqConfig pq_config = 10;                // Configuration for product quantization index
+  optional AnnoyConfig annoy_config = 11;          // Configuration for Annoy index
   
   // Performance tuning
-  optional int32 build_concurrency = 7;            // Parallel index building
-  optional int64 memory_limit_mb = 8;              // Memory limit per index
-  optional int32 checkpoint_interval_ms = 9;       // Index checkpoint frequency
+  optional int32 build_concurrency = 12;           // Parallel index building
+  optional int64 memory_limit_mb = 13;             // Memory limit per index
+  optional int32 checkpoint_interval_ms = 14;      // Index checkpoint frequency
+  
+  // Index usage configuration
+  bool is_primary = 15;                            // Whether this is the primary index
+  repeated string use_cases = 16;                  // When to use this index (e.g., "high_recall", "fast_search")
+  optional float selectivity_threshold = 17;       // Use this index when query selectivity is above threshold
 }
 
 // Index update behavior modes
@@ -154,6 +196,139 @@ message IvfConfig {
   int32 pq_subspaces = 5;                         // PQ subspaces (default: 8)
   bool train_on_insert = 6;                       // Retrain on every insert (default: false)
   int32 min_train_size = 7;                       // Minimum size to trigger training (default: 1000)
+}
+
+// Flat/Brute-force index configuration
+message FlatConfig {
+  bool enable_simd = 1;                           // Use SIMD optimizations (default: true)
+  int32 batch_size = 2;                           // Batch size for distance calculations (default: 1000)
+  bool enable_parallel_search = 3;                // Parallel search execution (default: true)
+}
+
+// Product Quantization index configuration
+message PqConfig {
+  int32 subvectors = 1;                           // Number of subvectors (default: 8)
+  int32 bits_per_subvector = 2;                   // Bits per subvector (default: 8)
+  int32 training_sample_count = 3;                // Training samples (default: 10000)
+  bool enable_reranking = 4;                      // Enable full-precision reranking (default: true)
+}
+
+// Annoy index configuration  
+message AnnoyConfig {
+  int32 n_trees = 1;                              // Number of trees (default: 10)
+  int32 search_k = 2;                             // Search parameter (default: -1)
+  int32 max_leaf_size = 3;                        // Maximum leaf size (default: 100)
+  bool enable_mmap = 4;                           // Memory-map index files (default: true)
+}
+
+// Comprehensive quantization configuration with storage-aware strategies
+message QuantizationConfig {
+  bool enabled = 1;                               // Enable quantization for this collection
+  
+  // Storage-aligned quantization (VIPER only)
+  optional StorageQuantizationConfig storage_quantization = 2;
+  
+  // Index-time quantization (all storage engines)
+  optional IndexQuantizationConfig index_quantization = 3;
+  
+  // Search-time quantization (all storage engines)
+  optional SearchQuantizationConfig search_quantization = 4;
+  
+  // Global settings
+  float compression_ratio_target = 5;             // Target compression ratio (e.g., 4.0 for 4:1)
+  optional QuantizationValidation validation = 6; // Validation configuration
+}
+
+// Storage-aligned quantization - data physically stored quantized (VIPER only)
+message StorageQuantizationConfig {
+  bool enabled = 1;                               // Enable storage quantization
+  QuantizationLevel level = 2;                    // Quantization method for storage
+  optional string codebook_id = 3;                // Reference to stored codebook
+  bool progressive_quantization = 4;              // Enable adding quantization to existing data
+  StorageEngineCompatibility storage_compatibility = 5; // Which engines support this
+}
+
+// Index-time quantization - quantized indexes for faster search
+message IndexQuantizationConfig {
+  bool enabled = 1;                               // Enable index quantization
+  repeated IndexQuantizationStrategy strategies = 2; // Multiple strategies per index
+  bool auto_select_strategy = 3;                  // Automatically choose best strategy
+}
+
+message IndexQuantizationStrategy {
+  string index_name = 1;                          // Which index this applies to
+  QuantizationLevel level = 2;                    // Quantization method for this index
+  bool build_async = 3;                           // Build quantized index asynchronously
+  optional string codebook_id = 4;                // Reference to stored codebook
+}
+
+// Search-time quantization - dynamic approximation without pre-built indexes
+message SearchQuantizationConfig {
+  bool enabled = 1;                               // Enable search-time quantization
+  QuantizationLevel default_level = 2;            // Default quantization for approximation
+  bool adaptive_precision = 3;                    // Adjust precision based on query
+  float accuracy_threshold = 4;                   // Minimum accuracy to maintain (0.0-1.0)
+  int32 candidate_multiplier = 5;                 // Multiplier for candidate selection
+}
+
+enum StorageEngineCompatibility {
+  STORAGE_ENGINE_COMPATIBILITY_UNSPECIFIED = 0;
+  VIPER_ONLY = 1;                                 // Only VIPER supports storage quantization
+  ALL_ENGINES = 2;                                // All engines support this feature
+  LSM_AND_VIPER = 3;                              // LSM and VIPER support this feature
+}
+
+// Quantization level and method configuration
+message QuantizationLevel {
+  oneof level_type {
+    NoQuantization none = 1;                      // No quantization - full FP32
+    UniformQuantization uniform = 2;              // Uniform quantization (1-32 bits/dim)
+    ProductQuantization pq = 3;                   // Product quantization
+    ScalarQuantization scalar = 4;                // Scalar quantization (INT8/INT16)
+    BinaryQuantization binary = 5;                // Binary quantization (1 bit/dim)
+    CustomQuantization custom = 6;                // Custom quantization for extensions
+  }
+}
+
+message NoQuantization {}
+
+message UniformQuantization {
+  int32 bits = 1;                                 // 1-32 bits per dimension
+  optional float scale = 2;                       // Scaling factor
+  optional float offset = 3;                      // Offset value
+}
+
+message ProductQuantization {
+  int32 bits_per_code = 1;                        // 1-16 bits per subvector
+  int32 num_subvectors = 2;                       // Number of subvectors
+  optional string codebook_id = 3;                // Reference to stored codebook
+  bool adaptive_subvectors = 4;                   // Adapt subvector count to dimension
+}
+
+message ScalarQuantization {
+  int32 bits = 1;                                 // 8 or 16 typically
+  float scale = 2;                                // Scaling factor
+  float offset = 3;                               // Offset value
+  bool clamp_values = 4;                          // Clamp to quantization range
+}
+
+message BinaryQuantization {
+  optional float threshold = 1;                   // Threshold for binarization (default: 0.0)
+  bool sign_based = 2;                            // Use sign-based binarization
+}
+
+message CustomQuantization {
+  string type_id = 1;                             // Custom quantization type identifier
+  int32 bits_per_element = 2;                     // Bits per element
+  map<string, string> config = 3;                 // Type-specific configuration
+}
+
+// Quantization validation and quality control
+message QuantizationValidation {
+  float accuracy_threshold = 1;                   // Minimum recall requirement (0.0-1.0)
+  int32 validation_sample_size = 2;               // Sample size for validation
+  bool enable_quality_monitoring = 3;             // Monitor quantization quality
+  float retraining_threshold = 4;                 // Trigger retraining if quality drops below this
 }
 
 message FilterableColumnSpec {
@@ -228,36 +403,17 @@ message CollectionResponse {
 // VECTOR OPERATIONS - Performance-optimized schemas
 // ============================================================================
 
-// ZERO-COPY INSERT - Uses Avro binary for vector data only
+// UNIFIED BATCH - Uses Avro binary for all vector operations
 // vectors_avro_payload format: Avro-serialized array of VectorRecord
-// VectorRecord: {id: string, vector: [float], metadata: {key: value}, timestamp?: int64, version?: int64}
-message VectorInsertRequest {
-  string collection_id = 1;                 // Collection identifier (gRPC field)
-  bool upsert_mode = 2;                     // Insert vs upsert behavior (gRPC field)
-  bytes vectors_avro_payload = 3;           // Serialized vector data only (Avro binary)
-  optional int64 batch_timeout_ms = 4;      // Optional batch processing timeout
-  optional string request_id = 5;           // Optional request tracking ID
+// VectorRecord supports: insert (new ID), upsert (existing ID), delete (expires_at set)
+message VectorBatchRequest {
+  string collection_id = 1;                 // Collection identifier
+  bytes vectors_avro_payload = 2;           // Serialized vector data (Avro binary)
+  optional int64 batch_timeout_ms = 3;      // Optional batch processing timeout
+  optional string request_id = 4;           // Optional request tracking ID
 }
 
-// FLEXIBLE MUTATION - UPDATE and DELETE via regular gRPC
-message VectorMutationRequest {
-  string collection_id = 1;
-  MutationType operation = 2;
-  VectorSelector selector = 3;
-  optional VectorUpdates updates = 4;        // null for DELETE
-}
-
-message VectorSelector {
-  repeated string ids = 1;                   // Select by IDs
-  map<string, string> metadata_filter = 2;  // Select by metadata
-  repeated float vector_match = 3;           // Select by exact vector match
-}
-
-message VectorUpdates {
-  repeated float vector = 1;                 // New vector data
-  map<string, string> metadata = 2;         // New metadata
-  optional int64 expires_at = 3;            // New expiration
-}
+// VectorSelector and VectorUpdates removed - using unified VectorRecord batch operations
 
 // FLEXIBLE SEARCH - Supports multiple query modes
 message VectorSearchRequest {
@@ -265,14 +421,69 @@ message VectorSearchRequest {
   repeated SearchQuery queries = 2;          // Batch search support
   int32 top_k = 3;
   optional DistanceMetric distance_metric_override = 4;
-  map<string, string> search_params = 5;    // ef_search, nprobe, etc.
+  SearchParameters search_params = 5;       // Algorithm-specific search parameters (HNSW, IVF, etc)
   IncludeFields include_fields = 6;
+  optional SearchParams search_optimization = 7; // Unified search params aligned with native types
+}
+
+// Native typed search parameters - no more string maps!
+message SearchParameters {
+  // HNSW parameters
+  optional int32 ef_search = 1;              // HNSW search parameter
+  optional int32 max_connections = 2;        // HNSW max connections
+  
+  // IVF parameters  
+  optional int32 n_probe = 3;                // IVF clusters to probe
+  optional bool enable_reranking = 4;        // IVF reranking
+  
+  // General parameters
+  optional int32 batch_size = 5;             // Batch processing size
+  optional int64 timeout_ms = 6;             // Search timeout
+  optional float accuracy_threshold = 7;     // Minimum accuracy requirement
+  
+  // Advanced parameters
+  optional bool enable_parallel_search = 8;  // Parallel search execution
+  optional int32 thread_count = 9;           // Thread count for parallel search
 }
 
 message SearchQuery {
   repeated float vector = 1;                 // Query vector
   optional string id = 2;                   // Search by ID
-  map<string, string> metadata_filter = 3;  // Metadata filtering
+  MetadataFilter metadata_filter = 3;       // Native typed metadata filtering
+}
+
+// Native typed metadata filtering - no more string-only filters!
+message MetadataFilter {
+  repeated FilterCondition conditions = 1;   // Multiple filter conditions
+  FilterOperator operator = 2;               // AND, OR, NOT
+}
+
+message FilterCondition {
+  string field_name = 1;                     // Metadata field name
+  FilterOperation operation = 2;             // equals, gt, lt, in, etc.
+  MetadataValue value = 3;                   // Native typed value
+}
+
+enum FilterOperator {
+  FILTER_OPERATOR_UNSPECIFIED = 0;
+  AND = 1;
+  OR = 2;
+  NOT = 3;
+}
+
+enum FilterOperation {
+  FILTER_OPERATION_UNSPECIFIED = 0;
+  EQUALS = 1;
+  NOT_EQUALS = 2;
+  GREATER_THAN = 3;
+  LESS_THAN = 4;
+  GREATER_THAN_OR_EQUAL = 5;
+  LESS_THAN_OR_EQUAL = 6;
+  IN = 7;
+  NOT_IN = 8;
+  CONTAINS = 9;
+  STARTS_WITH = 10;
+  ENDS_WITH = 11;
 }
 
 message IncludeFields {
@@ -281,6 +492,52 @@ message IncludeFields {
   bool score = 3;
   bool rank = 4;
 }
+
+// Quantization parameter types for SearchParams
+message BinaryQuantizationParams {
+  // No parameters needed for binary quantization
+}
+
+message ScalarQuantizationParams {
+  uint32 bits = 1;  // 8 or 16
+}
+
+message ProductQuantizationParams {
+  uint32 num_subvectors = 1;
+  uint32 bits_per_code = 2;
+}
+
+message UniformQuantizationParams {
+  float scale = 1;
+  float offset = 2;
+}
+
+// Search optimization hints for performance tuning
+// SearchParams aligned with core::search::SearchParams for zero-copy conversion
+message SearchParams {
+  // Required parameters  
+  optional uint32 top_k = 1;                        // Number of results to return
+  map<string, google.protobuf.Value> filters = 2;   // Metadata filters to apply
+  optional float accuracy_threshold = 3;            // Accuracy threshold for search (0.0-1.0)
+  optional bool include_expired = 4;                // Include expired vectors in results
+  optional uint64 timeout_ms = 5;                   // Search timeout in milliseconds
+  optional bool enable_two_stage = 6;               // Enable two-stage search with quantization
+  
+  // Quantization hint - directly maps to UnifiedQuantizationLevel
+  oneof quantization_hint {
+    bool no_quantization = 7;                      // FP32 - no quantization
+    BinaryQuantizationParams binary = 8;           // Binary quantization
+    ScalarQuantizationParams scalar = 9;           // INT8/INT16 quantization
+    ProductQuantizationParams product = 10;        // Product quantization
+    UniformQuantizationParams uniform = 11;        // Uniform quantization
+  }
+  
+  // Optional optimization hints
+  optional bool enable_clustering_hint = 12;       // Hint to enable/disable cluster optimization
+  optional bool enable_metadata_filtering_hint = 13; // Hint to enable/disable metadata filtering optimization
+  map<string, google.protobuf.Value> custom_hints = 14; // Custom optimization parameters
+}
+
 
 // UNIFIED RESPONSE - All vector operations with optimized data transfer
 message VectorOperationResponse {
@@ -350,4 +607,11 @@ message MetricsRequest {
 message MetricsResponse {
   map<string, double> metrics = 1;           // metric_name -> value
   int64 timestamp = 2;                       // When metrics were collected
+}
+
+// Collection snapshot for checkpoint/recovery
+message CollectionSnapshot {
+  repeated Collection collections = 1;        // All collections in the snapshot
+  int32 version = 2;                         // Snapshot format version
+  int64 timestamp = 3;                       // When snapshot was created (microseconds)
 }

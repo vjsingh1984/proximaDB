@@ -16,7 +16,7 @@ pub use config::{IndexConfig, IndexUpdateMode, HnswConfig, IvfConfig};
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
+use crate::core::{avro_unified::VectorRecord, String, VectorId};
 
 /// Placeholder Global ID Index
 #[derive(Debug)]
@@ -32,7 +32,7 @@ impl GlobalIdIndex {
     pub async fn insert(
         &self,
         _id: VectorId,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
         _vector: &VectorRecord,
     ) -> Result<()> {
         Ok(())
@@ -46,7 +46,7 @@ impl GlobalIdIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -74,7 +74,7 @@ impl MetadataIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -102,7 +102,7 @@ impl DenseVectorIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -130,7 +130,7 @@ impl SparseVectorIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }

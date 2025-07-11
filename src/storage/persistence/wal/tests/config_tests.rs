@@ -11,11 +11,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_wal_strategy_type_variants() {
-        let avro_strategy = WalStrategyType::Avro;
-        let bincode_strategy = WalStrategyType::Bincode;
+        let avro_strategy = WalStrategyType::AvroBatch;
+        let bincode_strategy = WalStrategyType::BincodeBatch;
 
-        assert_eq!(format!("{:?}", avro_strategy), "Avro");
-        assert_eq!(format!("{:?}", bincode_strategy), "Bincode");
+        assert_eq!(format!("{:?}", avro_strategy), "AvroBatch");
+        assert_eq!(format!("{:?}", bincode_strategy), "BincodeBatch");
 
         let cloned_avro = avro_strategy.clone();
         assert_eq!(avro_strategy, cloned_avro);
@@ -61,7 +61,7 @@ mod tests {
     async fn test_wal_config_default() {
         let config = WalConfig::default();
 
-        assert_eq!(config.strategy_type, WalStrategyType::Avro);
+        assert_eq!(config.strategy_type, WalStrategyType::AvroBatch);
         assert_eq!(config.memtable.memtable_type, MemTableType::Art);
         assert_eq!(
             config.multi_disk.distribution_strategy,
@@ -76,7 +76,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let config = WalConfig {
-            strategy_type: WalStrategyType::Bincode,
+            strategy_type: WalStrategyType::BincodeBatch,
             multi_disk: MultiDiskConfig {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::Hash,
@@ -102,6 +102,8 @@ mod tests {
                 concurrent_flushes: 2,
                 batch_threshold: 100,
                 mvcc_cleanup_interval_secs: 1800,
+                cloud_backup: Default::default(),
+                global_shrink_factor: 0.8,
                 ttl_cleanup_interval_secs: 600,
                 sync_mode: crate::storage::persistence::wal::config::SyncMode::Always,
             },
@@ -111,7 +113,7 @@ mod tests {
             collection_overrides: std::collections::HashMap::new(),
         };
 
-        assert_eq!(config.strategy_type, WalStrategyType::Bincode);
+        assert_eq!(config.strategy_type, WalStrategyType::BincodeBatch);
         assert_eq!(config.memtable.memtable_type, MemTableType::SkipList);
         assert_eq!(
             config.multi_disk.distribution_strategy,
@@ -134,7 +136,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let config = WalConfig {
-            strategy_type: WalStrategyType::Avro,
+            strategy_type: WalStrategyType::AvroBatch,
             multi_disk: MultiDiskConfig {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::LoadBalanced,

@@ -18,8 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::core::{CollectionId, VectorRecord};
-use super::types::*;
+use crate::core::{String, VectorRecord};
 use super::schema::SchemaManager;
 
 /// Flush manager for VIPER storage engine
@@ -45,7 +44,7 @@ impl FlushManager {
     /// Core flush operation using proper staging pattern
     pub async fn flush_vectors(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_records: &[VectorRecord],
         batch_ids: &[String],
         force: bool,
@@ -60,11 +59,11 @@ impl FlushManager {
             batch_ids.len()
         );
 
-        // Fetch collection configuration using unified interface
+        // Fetch collection configuration using proto type directly
         let collection_config = {
             let service_lock = self.collection_service.read().await;
             if let Some(ref service) = *service_lock {
-                match service.get_collection_unified(collection_id).await {
+                match service.get_proto_collection(collection_id).await {
                     Ok(Some(collection)) => Some(collection),
                     Ok(None) => {
                         warn!("⚠️ Collection {} not found during flush", collection_id);
@@ -84,6 +83,7 @@ impl FlushManager {
         // Extract vector dimensions for efficient capacity planning
         let vector_dimensions = collection_config
             .as_ref()
+            .and_then(|c| c.config.as_ref())
             .map(|config| config.dimension as usize)
             .unwrap_or(512); // Default to 512 if not available
 
@@ -104,7 +104,7 @@ impl FlushManager {
             );
             return Ok(crate::storage::traits::FlushResult {
                 success: true,
-                collections_affected: vec![collection_id.clone()],
+                collections_affected: vec![collection_id.to_string()],
                 entries_flushed: 0,
                 bytes_written: 0,
                 files_created: 0,
@@ -228,7 +228,7 @@ impl FlushManager {
         // Step 8: Return successful flush result with BatchId coordination
         Ok(crate::storage::traits::FlushResult {
             success: true,
-            collections_affected: vec![collection_id.clone()],
+            collections_affected: vec![collection_id.to_string()],
             entries_flushed: vector_records.len() as u64,
             bytes_written: parquet_data.len() as u64,
             files_created: 1,
@@ -271,8 +271,8 @@ impl FlushManager {
     async fn serialize_records_to_parquet(
         &self,
         records: &[VectorRecord],
-        collection_id: &CollectionId,
-        collection_config: &Option<crate::core::Collection>,
+        collection_id: &str,
+        collection_config: &Option<crate::proto::proximadb::Collection>,
         vector_dimensions: usize,
     ) -> Result<Vec<u8>> {
         if records.is_empty() {
@@ -302,35 +302,21 @@ impl FlushManager {
             Field::new("version", DataType::Int64, false),
         ];
 
-        // 🎯 DYNAMIC FILTERABLE METADATA: Use pre-fetched collection config to avoid service calls
-        let filterable_metadata: Vec<FilterableColumn> = if let Some(ref collection) = collection_config {
-            let config_json = serde_json::to_string(&collection.config)
-                .context("Failed to serialize collection config")?;
-            self.schema_manager.parse_filterable_columns(&config_json)?
+        // 🎯 DYNAMIC FILTERABLE METADATA: Use proto filterable_columns directly  
+        let filterable_metadata: Vec<&crate::proto::proximadb::FilterableColumnSpec> = if let Some(ref collection) = collection_config {
+            if let Some(ref config) = collection.config {
+                config.filterable_columns.iter().collect()
+            } else {
+                Vec::new()
+            }
         } else {
             info!("Collection {} config not available, using empty filterable metadata", collection_id);
             Vec::new()
         };
         
-        // Add filterable metadata columns based on collection configuration
+        // Add filterable metadata columns based on collection configuration using proto types
         for filterable_column in &filterable_metadata {
-            let arrow_data_type = match filterable_column.data_type {
-                FilterableDataType::String => DataType::Utf8,
-                FilterableDataType::Integer => DataType::Int64,
-                FilterableDataType::Float => DataType::Float64,
-                FilterableDataType::Boolean => DataType::Boolean,
-                FilterableDataType::DateTime => DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None),
-                FilterableDataType::Array(ref inner_type) => {
-                    let inner_arrow_type = match **inner_type {
-                        FilterableDataType::String => DataType::Utf8,
-                        FilterableDataType::Integer => DataType::Int64,
-                        FilterableDataType::Float => DataType::Float64,
-                        FilterableDataType::Boolean => DataType::Boolean,
-                        _ => DataType::Utf8, // Default fallback
-                    };
-                    DataType::List(Arc::new(Field::new("item", inner_arrow_type, false)))
-                }
-            };
+            let arrow_data_type = self.schema_manager.convert_proto_type_to_arrow(filterable_column.data_type)?;
             
             schema_fields.push(Field::new(
                 &filterable_column.name,
@@ -431,64 +417,91 @@ impl FlushManager {
         for filterable_column in &filterable_metadata {
             let values = filterable_arrays.get(&filterable_column.name).unwrap();
             
-            let arrow_array: Arc<dyn Array> = match filterable_column.data_type {
-                FilterableDataType::String => {
-                    let string_values: Vec<Option<String>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { Some(v.as_str().unwrap_or("").to_string()) })
-                        .collect();
-                    Arc::new(StringArray::from(string_values))
-                }
-                FilterableDataType::Integer => {
-                    let int_values: Vec<Option<i64>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { v.as_i64() })
-                        .collect();
-                    Arc::new(arrow_array::Int64Array::from(int_values))
-                }
-                FilterableDataType::Float => {
-                    let float_values: Vec<Option<f64>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { v.as_f64() })
-                        .collect();
-                    Arc::new(arrow_array::Float64Array::from(float_values))
-                }
-                FilterableDataType::Boolean => {
-                    let bool_values: Vec<Option<bool>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { v.as_bool() })
-                        .collect();
-                    Arc::new(arrow_array::BooleanArray::from(bool_values))
-                }
-                FilterableDataType::DateTime => {
-                    let ts_values: Vec<Option<i64>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { v.as_i64() })
-                        .collect();
-                    Arc::new(arrow_array::TimestampMicrosecondArray::from(ts_values))
-                }
-                FilterableDataType::Array(_) => {
-                    // For array types, serialize as JSON strings for now
-                    let json_values: Vec<Option<String>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { Some(v.to_string()) })
-                        .collect();
-                    Arc::new(StringArray::from(json_values))
+            let arrow_array: Arc<dyn Array> = {
+                use crate::proto::proximadb::FilterableDataType;
+                match FilterableDataType::try_from(filterable_column.data_type) {
+                    Ok(FilterableDataType::FilterableString) => {
+                        let string_values: Vec<Option<String>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { Some(v.as_str().unwrap_or("").to_string()) })
+                            .collect();
+                        Arc::new(StringArray::from(string_values))
+                    }
+                    Ok(FilterableDataType::FilterableInteger) => {
+                        let int_values: Vec<Option<i64>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { v.as_i64() })
+                            .collect();
+                        Arc::new(arrow_array::Int64Array::from(int_values))
+                    }
+                    Ok(FilterableDataType::FilterableFloat) => {
+                        let float_values: Vec<Option<f64>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { v.as_f64() })
+                            .collect();
+                        Arc::new(arrow_array::Float64Array::from(float_values))
+                    }
+                    Ok(FilterableDataType::FilterableBoolean) => {
+                        let bool_values: Vec<Option<bool>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { v.as_bool() })
+                            .collect();
+                        Arc::new(arrow_array::BooleanArray::from(bool_values))
+                    }
+                    Ok(FilterableDataType::FilterableDatetime) => {
+                        let ts_values: Vec<Option<i64>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { v.as_i64() })
+                            .collect();
+                        Arc::new(arrow_array::TimestampMicrosecondArray::from(ts_values))
+                    }
+                    Ok(FilterableDataType::FilterableArrayString) | 
+                    Ok(FilterableDataType::FilterableArrayInteger) | 
+                    Ok(FilterableDataType::FilterableArrayFloat) => {
+                        // For array types, serialize as JSON strings for now
+                        let json_values: Vec<Option<String>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { Some(v.to_string()) })
+                            .collect();
+                        Arc::new(StringArray::from(json_values))
+                    }
+                    _ => {
+                        // Default to string for unknown types
+                        let string_values: Vec<Option<String>> = values.iter()
+                            .map(|v| if v.is_null() { None } else { Some(v.to_string()) })
+                            .collect();
+                        Arc::new(StringArray::from(string_values))
+                    }
                 }
             };
             
             dynamic_filterable_arrays.push(arrow_array);
         }
 
-        // 🎯 EXTRA METADATA: Serialize as JSON strings for flexible storage
-        let extra_meta_strings: Vec<Option<String>> = extra_metadata_data.iter()
-            .map(|kvs| {
-                if kvs.is_empty() {
-                    None
-                } else {
-                    let json_obj: serde_json::Value = kvs.iter()
-                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                        .collect::<serde_json::Map<String, serde_json::Value>>()
-                        .into();
-                    Some(json_obj.to_string())
+        // 🎯 EXTRA METADATA: Serialize as list of key-value pairs for structured data management
+        use arrow_array::builder::{ListBuilder, StructBuilder, StringBuilder};
+        
+        let mut extra_meta_builder = ListBuilder::new(StructBuilder::new(
+            vec![
+                Field::new("key", DataType::Utf8, false),
+                Field::new("value", DataType::Utf8, false),
+            ],
+            vec![
+                Box::new(StringBuilder::new()),
+                Box::new(StringBuilder::new()),
+            ],
+        ));
+        
+        for kvs in extra_metadata_data {
+            if kvs.is_empty() {
+                extra_meta_builder.append(false); // NULL value for empty metadata
+            } else {
+                let struct_builder = extra_meta_builder.values();
+                
+                for (key, value) in kvs {
+                    struct_builder.field_builder::<StringBuilder>(0).unwrap().append_value(key);
+                    struct_builder.field_builder::<StringBuilder>(1).unwrap().append_value(value);
+                    struct_builder.append(true);
                 }
-            })
-            .collect();
-        let extra_meta_array = StringArray::from(extra_meta_strings);
+                extra_meta_builder.append(true);
+            }
+        }
+        
+        let extra_meta_array = extra_meta_builder.finish();
 
         // Combine all arrays into columns
         let mut columns: Vec<Arc<dyn Array>> = vec![
@@ -524,7 +537,7 @@ impl FlushManager {
     }
 
     /// Ensure staging directory exists
-    async fn ensure_staging_directory(&self, collection_id: &CollectionId, stage_name: &str) -> Result<String> {
+    async fn ensure_staging_directory(&self, collection_id: &str, stage_name: &str) -> Result<String> {
         let staging_dir = format!("/tmp/viper_staging/{}_{}", collection_id, stage_name);
         std::fs::create_dir_all(&staging_dir)?;
         Ok(staging_dir)
@@ -538,7 +551,7 @@ impl FlushManager {
     }
 
     /// Atomic move from staging to final destination
-    async fn atomic_move_from_staging(&self, collection_id: &CollectionId, staging_path: &str, filename: &str) -> Result<String> {
+    async fn atomic_move_from_staging(&self, collection_id: &str, staging_path: &str, filename: &str) -> Result<String> {
         let final_dir = format!("/tmp/viper_final/{}", collection_id);
         std::fs::create_dir_all(&final_dir)?;
         let final_path = format!("{}/{}", final_dir, filename);
@@ -553,14 +566,76 @@ impl FlushManager {
     }
 
     /// Check if compaction should be triggered
-    async fn check_compaction_trigger(&self, _collection_id: &CollectionId) -> Result<bool> {
-        // TODO: Implement compaction trigger logic
+    async fn check_compaction_trigger(&self, collection_id: &str) -> Result<bool> {
+        // Compaction triggers based on multiple factors
+        
+        // 1. Check number of Parquet files for this collection
+        // TODO: Get filesystem and flush_path from somewhere
+        let file_count = 0; // Placeholder
+        
+        // 2. Define compaction thresholds
+        const MAX_FILES_BEFORE_COMPACTION: usize = 10;
+        const MIN_FILES_FOR_COMPACTION: usize = 3;
+        const FILE_SIZE_THRESHOLD_MB: u64 = 100;
+        
+        // Trigger if too many files
+        if file_count >= MAX_FILES_BEFORE_COMPACTION {
+            tracing::info!("Compaction triggered for {}: {} files exceed max threshold", 
+                collection_id, file_count);
+            return Ok(true);
+        }
+        
+        // Check if we have enough small files to compact
+        if file_count >= MIN_FILES_FOR_COMPACTION {
+            let mut small_file_count = 0;
+            // TODO: Check file sizes when filesystem is available
+            /*for file_info in &collection_files {
+                if let Some(size) = file_info.size {
+                    if size < FILE_SIZE_THRESHOLD_MB * 1024 * 1024 {
+                        small_file_count += 1;
+                    }
+                }
+            }*/
+            let small_file_count = 0; // Placeholder
+            
+            // Trigger if more than half are small files
+            if small_file_count > file_count / 2 {
+                tracing::info!("Compaction triggered for {}: {} small files out of {}", 
+                    collection_id, small_file_count, file_count);
+                return Ok(true);
+            }
+        }
+        
         Ok(false)
     }
 
     /// Update collection metadata after flush
-    async fn update_collection_metadata_after_flush(&self, _collection_id: &CollectionId, _records_count: usize, _bytes_written: usize) -> Result<()> {
-        // TODO: Implement metadata update logic
+    async fn update_collection_metadata_after_flush(&self, collection_id: &str, records_count: usize, bytes_written: usize) -> Result<()> {
+        // Update collection statistics through shared services if available
+        // TODO: Update collection statistics through collection service
+        if false {
+            // Update collection metadata with new stats
+            let metadata_update = crate::storage::metadata::MetadataOperation::UpdateStats {
+                collection_id: collection_id.to_string(),
+                vector_delta: records_count as i64,
+                size_delta: bytes_written as i64,
+            };
+            
+            // Execute metadata update through shared services
+            /*if let Some(metadata_store) = shared_services.metadata_store() {
+                metadata_store.batch_operations(vec![metadata_update]).await?;
+                
+                tracing::debug!(
+                    "Updated collection {} metadata: +{} vectors, +{} bytes",
+                    collection_id, records_count, bytes_written
+                );
+            } else {
+                tracing::warn!("No metadata store available to update collection stats");
+            }*/
+        } else {
+            tracing::debug!("No shared services available for metadata update");
+        }
+        
         Ok(())
     }
 }

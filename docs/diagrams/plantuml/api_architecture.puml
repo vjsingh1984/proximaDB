@@ -1,5 +1,5 @@
 @startuml ProximaDB_API_Architecture
-!theme aws-orange
+!theme plain
 title ProximaDB API Layer Architecture
 
 skinparam interface {
@@ -13,70 +13,51 @@ skinparam component {
 }
 
 package "Client SDKs" {
-    component "Python SDK" as python {
-        component "Unified Client" as unified
-        component "REST Client" as rest_client
-        component "gRPC Client" as grpc_client
-        component "Protocol Detection" as detection
-    }
+    component "Python SDK" as python
+    component "REST Client" as rest_client
+    component "gRPC Client" as grpc_client
+    component "Protocol Detection" as detection
+    component "Unified Client" as unified
     
-    component "Future SDKs" as future {
-        component "JavaScript SDK" as js
-        component "Rust SDK" as rust
-        component "Java SDK" as java
-    }
+    component "Future SDKs" as future
+    component "JavaScript SDK" as js
+    component "Rust SDK" as rust
+    component "Java SDK" as java
 }
 
 package "ProximaDB Server" {
-    interface "REST API (5678)" as rest_api {
+    interface "REST API (5678)" as rest_api
+    interface "gRPC API (5679)" as grpc_api
+    
+    package "REST Components" {
         component "Axum Framework" as axum
         component "JSON Serialization" as json
         component "OpenAPI Spec" as openapi
     }
     
-    interface "gRPC API (5679)" as grpc_api {
+    package "gRPC Components" {
         component "Tonic Framework" as tonic
         component "Protocol Buffers" as protobuf
         component "Binary Serialization" as binary
     }
     
-    component "Request Router" as router {
-        component "Protocol Detection" as proto_detect
-        component "Load Balancing" as lb
-        component "Circuit Breaker" as cb
-    }
+    component "Request Router" as router
+    component "Protocol Detection" as proto_detect
+    component "Load Balancing" as lb
+    component "Circuit Breaker" as cb
 }
 
 package "API Endpoints" {
-    interface "Collection Operations" as coll_ops {
-        usecase "POST /collections" as create_coll
-        usecase "GET /collections" as list_coll
-        usecase "GET /collections/{id}" as get_coll
-        usecase "PUT /collections/{id}" as update_coll
-        usecase "DELETE /collections/{id}" as delete_coll
-    }
-    
-    interface "Vector Operations" as vec_ops {
-        usecase "POST /collections/{id}/vectors" as insert_vec
-        usecase "GET /collections/{id}/vectors/{vid}" as get_vec
-        usecase "POST /collections/{id}/search" as search_vec
-        usecase "DELETE /collections/{id}/vectors/{vid}" as delete_vec
-        usecase "POST /collections/{id}/vectors/batch" as batch_vec
-    }
-    
-    interface "System Operations" as sys_ops {
-        usecase "GET /health" as health
-        usecase "GET /metrics" as metrics
-        usecase "GET /version" as version
-    }
+    interface "Collection Operations" as coll_ops
+    interface "Vector Operations" as vec_ops
+    interface "System Operations" as sys_ops
 }
 
 package "Authentication & Authorization" {
-    component "Auth Middleware" as auth {
-        component "API Key Validation" as api_key
-        component "JWT Token Validation" as jwt
-        component "Rate Limiting" as rate_limit
-    }
+    component "Auth Middleware" as auth
+    component "API Key Validation" as api_key
+    component "JWT Token Validation" as jwt
+    component "Rate Limiting" as rate_limit
 }
 
 ' Client connections
@@ -92,8 +73,14 @@ rest_api --> router
 grpc_api --> router
 router --> auth
 
+router --> proto_detect
+router --> lb
+router --> cb
+
 axum --> json
+rest_api ..> axum
 tonic --> protobuf
+grpc_api ..> tonic
 json --> openapi
 protobuf --> binary
 

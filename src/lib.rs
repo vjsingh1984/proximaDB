@@ -72,15 +72,31 @@ impl ProximaDB {
     pub async fn new(config: core::Config) -> Result<Self> {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
 
-        // Create collection service
+        // Create a temporary collection service with proper metadata config
+        // SharedServices will create the real one with same config
         use crate::services::collection_service::CollectionService;
         use crate::storage::metadata::backends::filestore_backend::{
             FilestoreMetadataBackend, FilestoreMetadataConfig,
         };
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
-        let filestore_config = FilestoreMetadataConfig::default();
-        let filesystem_config = FilesystemConfig::default();
+        // Use metadata config from TOML if available
+        let (filestore_config, filesystem_config) = if let Some(ref metadata_config) = config.storage.metadata_backend {
+            tracing::info!("📂 Using metadata config from TOML: {}", metadata_config.storage_url);
+            let filestore_config = FilestoreMetadataConfig {
+                storage_url: metadata_config.storage_url.clone(),
+                enable_compression: true,
+                enable_snapshots: true,
+                snapshot_threshold: 1000,
+                keep_snapshots: 5,
+                backup_url: None,
+                temp_dir: None,
+            };
+            (filestore_config, FilesystemConfig::default())
+        } else {
+            tracing::info!("📂 Using default metadata config");
+            (FilestoreMetadataConfig::default(), FilesystemConfig::default())
+        };
 
         let filesystem_factory = Arc::new(
             FilesystemFactory::new(filesystem_config)

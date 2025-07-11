@@ -23,8 +23,15 @@
 // pub mod sqlite_backend;      // MOVED: obsolete/storage/metadata/backends/
 
 // Active backends used in metadata-first architecture
-pub mod filestore_backend; // Primary filestore-based backend with Avro and filesystem API
+pub mod filestore_backend; // Primary filestore-based backend with Avro and filesystem API (includes snapshot/checkpoint)
 pub mod memory_backend; // In-memory backend for testing
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb_backend; // High-performance RocksDB backend
+
+#[cfg(test)]
+mod tests {
+    pub mod filestore_tests;
+}
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{CollectionMetadata, MetadataFilter, MetadataOperation, SystemMetadata};
-use crate::core::CollectionId;
+
 
 /// Metadata backend configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,18 +344,18 @@ pub trait MetadataBackend: Send + Sync {
     /// Get collection metadata
     async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>>;
 
     /// Update collection metadata
     async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()>;
 
     /// Delete collection metadata
-    async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool>;
+    async fn delete_collection(&self, collection_id: &str) -> Result<bool>;
 
     /// List collections with filtering
     async fn list_collections(
@@ -359,7 +366,7 @@ pub trait MetadataBackend: Send + Sync {
     /// Update collection statistics atomically
     async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()>;

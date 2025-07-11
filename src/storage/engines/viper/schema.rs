@@ -14,14 +14,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::core::CollectionId;
+
 use super::types::{FilterableColumn, FilterableDataType};
 
 /// Schema cache and management
 #[derive(Debug)]
 pub struct SchemaManager {
     /// Schema cache to avoid repeated collection service calls
-    schema_cache: Arc<RwLock<HashMap<CollectionId, Arc<arrow_schema::Schema>>>>,
+    schema_cache: Arc<RwLock<HashMap<String, Arc<arrow_schema::Schema>>>>,
 }
 
 impl SchemaManager {
@@ -34,8 +34,8 @@ impl SchemaManager {
     /// Get or generate cached schema for a collection with pre-fetched config
     pub async fn get_or_generate_cached_schema(
         &self, 
-        collection_id: &CollectionId, 
-        collection_config: &Option<crate::core::Collection>
+        collection_id: &str, 
+        collection_config: &Option<crate::proto::proximadb::Collection>
     ) -> Result<Arc<arrow_schema::Schema>> {
         // Check cache first
         {
@@ -53,7 +53,7 @@ impl SchemaManager {
         // Cache the schema
         {
             let mut cache = self.schema_cache.write().await;
-            cache.insert(collection_id.clone(), schema.clone());
+            cache.insert(collection_id.to_string(), schema.clone());
         }
         
         info!("📊 Cached schema for collection {} ({} fields)", collection_id, schema.fields().len());
@@ -63,10 +63,10 @@ impl SchemaManager {
     /// Generate dynamic Parquet schema based on collection configuration
     async fn generate_dynamic_parquet_schema(
         &self, 
-        collection_id: &CollectionId, 
-        collection_config: &Option<crate::core::Collection>
+        collection_id: &str, 
+        collection_config: &Option<crate::proto::proximadb::Collection>
     ) -> Result<Arc<arrow_schema::Schema>> {
-        use arrow_schema::{DataType, Field, Schema};
+        use arrow_schema::{DataType, Field, Fields, Schema};
         use std::sync::Arc;
         
         info!("🔧 Generating dynamic Parquet schema for collection {} with pre-fetched config", collection_id);
@@ -91,14 +91,84 @@ impl SchemaManager {
         schema_fields.push(Field::new("version", DataType::Int64, false));
         schema_fields.push(Field::new("expires_at", DataType::Int64, true)); // Nullable for TTL
         
-        // Quantization fields (optional)
-        if collection_config.as_ref().map_or(false, |c| c.config.contains_key("quantization")) {
-            schema_fields.push(Field::new(
-                "vector_pq",
-                DataType::List(Arc::new(Field::new("item", DataType::UInt8, false))),
-                true, // Nullable - may not be present for all records
-            ));
-            schema_fields.push(Field::new("pq_centroids", DataType::Binary, true));
+        // Quantization fields (optional) - optimized for performance
+        if let Some(ref collection) = collection_config {
+            if let Some(quant_config) = collection.config.as_ref().and_then(|c| c.quantization_config.as_ref()) {
+                // Use proto quantization config directly
+                // Check quantization type from proto oneof
+                // Check storage quantization config
+                let quant_type = if let Some(storage_quant) = &quant_config.storage_quantization {
+                    if let Some(level) = &storage_quant.level {
+                        match &level.level_type {
+                            Some(crate::proto::proximadb::quantization_level::LevelType::Pq(_)) => "pq",
+                            Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(_)) => "sq",
+                            Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_)) => "binary",
+                            _ => "pq", // default
+                        }
+                    } else {
+                        "pq" // default
+                    }
+                } else {
+                    "pq" // default  
+                };
+                
+                match quant_type {
+                    "pq" | "pq4" | "pq8" => {
+                        // Product Quantization - use FixedSizeBinary for better performance
+                        let (subvectors, bits) = if let Some(storage_quant) = &quant_config.storage_quantization {
+                            if let Some(level) = &storage_quant.level {
+                                if let Some(crate::proto::proximadb::quantization_level::LevelType::Pq(pq)) = &level.level_type {
+                                    (pq.num_subvectors, pq.bits_per_code)
+                                } else {
+                                    (16, 8) // defaults
+                                }
+                            } else {
+                                (16, 8) // defaults
+                            }
+                        } else {
+                            (16, 8) // defaults
+                        };
+                        let pq_size = subvectors * (bits / 8);
+                        
+                        schema_fields.push(Field::new(
+                            "vector_pq",
+                            DataType::FixedSizeBinary(pq_size),
+                            true, // Nullable for progressive rollout
+                        ));
+                    },
+                    "sq" => {
+                        // Scalar Quantization
+                        schema_fields.push(Field::new(
+                            "vector_sq",
+                            DataType::List(Arc::new(Field::new("item", DataType::Int8, false))),
+                            true,
+                        ));
+                        schema_fields.push(Field::new("sq_scale", DataType::Float32, true));
+                        schema_fields.push(Field::new("sq_offset", DataType::Float32, true));
+                    },
+                    "binary" => {
+                        // Binary Quantization
+                        let dimension = collection.config.as_ref().map(|c| c.dimension).unwrap_or(0);
+                        let binary_size = (dimension + 7) / 8; // Bits to bytes
+                        schema_fields.push(Field::new(
+                            "vector_binary",
+                            DataType::FixedSizeBinary(binary_size),
+                            true,
+                        ));
+                    },
+                    _ => {
+                        // Default to PQ8 format for unknown types
+                        schema_fields.push(Field::new(
+                            "vector_quantized",
+                            DataType::Binary,
+                            true,
+                        ));
+                    }
+                }
+                
+                // Quantization metadata stored once per row group, not per row
+                // This will be stored in Parquet metadata instead
+            }
         }
         
         // Filterable metadata columns as native Parquet columns
@@ -117,8 +187,17 @@ impl SchemaManager {
             }
         }
         
-        // Extra metadata as JSON string (for non-filterable fields)
-        schema_fields.push(Field::new("extra_meta", DataType::Utf8, true));
+        // Extra metadata as list of key-value pairs (for non-filterable fields)
+        // Each element is a struct with "key" and "value" fields
+        let key_value_struct = DataType::Struct(Fields::from(vec![
+            Field::new("key", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ]));
+        schema_fields.push(Field::new(
+            "extra_meta", 
+            DataType::List(Arc::new(Field::new("item", key_value_struct, false))), 
+            true
+        ));
         
         let schema = Schema::new(schema_fields);
         
@@ -128,7 +207,25 @@ impl SchemaManager {
         Ok(Arc::new(schema))
     }
 
-    /// Parse filterable columns from collection config JSON
+    /// Convert proto FilterableDataType to Arrow DataType
+    pub fn convert_proto_type_to_arrow(&self, data_type: i32) -> Result<arrow_schema::DataType> {
+        use crate::proto::proximadb::FilterableDataType;
+        use arrow_schema::DataType;
+        
+        match FilterableDataType::try_from(data_type) {
+            Ok(FilterableDataType::FilterableString) => Ok(DataType::Utf8),
+            Ok(FilterableDataType::FilterableInteger) => Ok(DataType::Int64),
+            Ok(FilterableDataType::FilterableFloat) => Ok(DataType::Float64),
+            Ok(FilterableDataType::FilterableBoolean) => Ok(DataType::Boolean),
+            Ok(FilterableDataType::FilterableDatetime) => Ok(DataType::Timestamp(arrow_schema::TimeUnit::Millisecond, None)),
+            Ok(FilterableDataType::FilterableArrayString) => Ok(DataType::List(Arc::new(arrow_schema::Field::new("item", DataType::Utf8, false)))),
+            Ok(FilterableDataType::FilterableArrayInteger) => Ok(DataType::List(Arc::new(arrow_schema::Field::new("item", DataType::Int64, false)))),
+            Ok(FilterableDataType::FilterableArrayFloat) => Ok(DataType::List(Arc::new(arrow_schema::Field::new("item", DataType::Float64, false)))),
+            _ => Ok(DataType::Utf8), // Default to string
+        }
+    }
+    
+    /// Parse filterable columns from collection config JSON (legacy)
     pub fn parse_filterable_columns(&self, config: &str) -> Result<Vec<FilterableColumn>> {
         let config: serde_json::Value = serde_json::from_str(config)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -189,7 +286,7 @@ impl SchemaManager {
     }
 
     /// Clear schema cache for a collection
-    pub async fn clear_schema_cache(&self, collection_id: &CollectionId) {
+    pub async fn clear_schema_cache(&self, collection_id: &str) {
         let mut cache = self.schema_cache.write().await;
         cache.remove(collection_id);
         info!("🗑️ Cleared schema cache for collection {}", collection_id);

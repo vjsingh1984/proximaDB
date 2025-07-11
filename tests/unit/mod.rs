@@ -22,3 +22,5 @@
 pub mod compute;
 pub mod storage;
 pub mod server;
+pub mod services;
+pub mod search;

@@ -1,3 +1,11 @@
+[env]
+CC = "gcc-14"
+CXX = "g++-14"
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "gcc-14"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "gcc-14"
+
 [patch.crates-io]
 # Patch arrow-arith to fix chrono quarter method conflict
 # This uses a local copy with the disambiguation fix applied

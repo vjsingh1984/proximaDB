@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::core::{CollectionId, CompressionAlgorithm, VectorRecord};
+use crate::core::{String, CompressionAlgorithm, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Utilities coordinator - Central management for all utility services
@@ -84,7 +84,7 @@ pub struct PerformanceStatsCollector {
     operation_metrics: Arc<RwLock<HashMap<String, OperationMetrics>>>,
 
     /// Collection-level statistics
-    collection_stats: Arc<RwLock<HashMap<CollectionId, CollectionStats>>>,
+    collection_stats: Arc<RwLock<HashMap<String, CollectionStats>>>,
 
     /// Global VIPER statistics
     global_stats: Arc<RwLock<GlobalViperStats>>,
@@ -116,7 +116,7 @@ pub struct StatsConfig {
 #[derive(Debug, Clone)]
 pub struct OperationMetrics {
     pub operation_type: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub records_processed: u64,
     pub total_time_ms: u64,
     pub preprocessing_time_ms: u64,
@@ -131,7 +131,7 @@ pub struct OperationMetrics {
 /// Collection-level statistics
 #[derive(Debug, Clone)]
 pub struct CollectionStats {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub total_operations: u64,
     pub total_records: u64,
     pub total_bytes: u64,
@@ -340,7 +340,7 @@ pub struct DataPartitioner {
     config: PartitioningConfig,
 
     /// ML models for clustering
-    clustering_models: Arc<RwLock<HashMap<CollectionId, ClusteringModel>>>,
+    clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
 
     /// Partition metadata
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
@@ -388,7 +388,7 @@ pub enum ClusteringAlgorithm {
 #[derive(Debug)]
 pub struct ClusteringModel {
     pub model_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub algorithm: ClusteringAlgorithm,
     pub cluster_count: usize,
     pub centroids: Vec<Vec<f32>>,
@@ -400,7 +400,7 @@ pub struct ClusteringModel {
 #[derive(Debug, Clone)]
 pub struct PartitionMetadata {
     pub partition_id: PartitionId,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub cluster_id: ClusterId,
     pub file_path: String,
     pub vector_count: usize,
@@ -432,7 +432,7 @@ pub struct CompressionOptimizer {
     config: CompressionConfig,
 
     /// Compression models per collection
-    compression_models: Arc<RwLock<HashMap<CollectionId, CompressionModel>>>,
+    compression_models: Arc<RwLock<HashMap<String, CompressionModel>>>,
 
     /// Compression statistics
     stats: Arc<RwLock<CompressionStats>>,
@@ -467,7 +467,7 @@ pub struct CompressionConfig {
 #[derive(Debug)]
 pub struct CompressionModel {
     pub model_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub optimal_algorithm: CompressionAlgorithm,
     pub optimal_level: u8,
     pub expected_ratio: f32,
@@ -598,7 +598,7 @@ impl ViperUtilities {
     /// Get performance statistics
     pub async fn get_performance_stats(
         &self,
-        collection_id: Option<&CollectionId>,
+        collection_id: Option<&String>,
     ) -> Result<PerformanceReport> {
         self.stats_collector
             .get_performance_report(collection_id)
@@ -606,7 +606,7 @@ impl ViperUtilities {
     }
 
     /// Schedule TTL cleanup
-    pub async fn schedule_ttl_cleanup(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn schedule_ttl_cleanup(&self, collection_id: &str) -> Result<()> {
         let ttl_service = self.ttl_service.lock().await;
         ttl_service.schedule_cleanup(collection_id).await
     }
@@ -614,7 +614,7 @@ impl ViperUtilities {
     /// Optimize compression for collection
     pub async fn optimize_compression(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CompressionRecommendation> {
         self.compression_optimizer
             .optimize_for_collection(collection_id)
@@ -624,7 +624,7 @@ impl ViperUtilities {
     /// Partition data for optimal storage
     pub async fn partition_data(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         records: Vec<VectorRecord>,
     ) -> Result<Vec<PartitionedData>> {
         self.partitioner
@@ -711,7 +711,7 @@ impl PerformanceStatsCollector {
 
     async fn get_performance_report(
         &self,
-        _collection_id: Option<&CollectionId>,
+        _collection_id: Option<&String>,
     ) -> Result<PerformanceReport> {
         Ok(PerformanceReport {
             global_stats: GlobalViperStats::default(),
@@ -741,7 +741,7 @@ impl TTLCleanupService {
         Ok(())
     }
 
-    async fn schedule_cleanup(&self, _collection_id: &CollectionId) -> Result<()> {
+    async fn schedule_cleanup(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -800,7 +800,7 @@ impl DataPartitioner {
 
     async fn partition_records(
         &self,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
         _records: Vec<VectorRecord>,
     ) -> Result<Vec<PartitionedData>> {
         Ok(Vec::new())
@@ -823,7 +823,7 @@ impl CompressionOptimizer {
 
     async fn optimize_for_collection(
         &self,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
     ) -> Result<CompressionRecommendation> {
         Ok(CompressionRecommendation {
             recommended_algorithm: CompressionAlgorithm::Zstd,
@@ -841,7 +841,7 @@ impl CompressionOptimizer {
 }
 
 impl OperationStatsCollector {
-    pub fn new(operation_type: String, collection_id: CollectionId) -> Self {
+    pub fn new(operation_type: String, collection_id: String) -> Self {
         Self {
             operation_start: None,
             phase_timers: HashMap::new(),

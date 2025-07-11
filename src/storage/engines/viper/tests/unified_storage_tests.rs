@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{String, VectorRecord};
 use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
 use crate::storage::engines::viper::{ViperEngine, types::ViperConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};

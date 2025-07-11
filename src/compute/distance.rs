@@ -27,30 +27,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tracing::info;
 
-/// Distance metrics supported by ProximaDB
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum DistanceMetric {
-    #[serde(rename = "COSINE")]
-    Cosine,
-    #[serde(rename = "EUCLIDEAN")]
-    Euclidean,
-    #[serde(rename = "MANHATTAN")]
-    Manhattan,
-    #[serde(rename = "DOT_PRODUCT")]
-    DotProduct,
-    #[serde(rename = "HAMMING")]
-    Hamming,
-    #[serde(rename = "JACCARD")]
-    Jaccard,
-    #[serde(rename = "CUSTOM")]
-    Custom(String),
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        DistanceMetric::Cosine // Cosine is the default distance metric
-    }
-}
+// Use proto enum as the single source of truth
+pub use crate::proto::proximadb::DistanceMetric;
 
 /// Platform-agnostic SIMD capability detection
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -355,7 +333,7 @@ impl DistanceCompute for GenericScalar {
                     1.0 - (intersection / union)  // Jaccard distance
                 }
             }
-            DistanceMetric::Custom(_) => {
+            DistanceMetric::Custom => {
                 // Custom metrics fall back to cosine distance
                 CosineScalar.distance(a, b)
             }

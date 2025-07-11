@@ -24,8 +24,9 @@ use super::{
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
-use crate::core::CollectionId;
+
 use crate::storage::persistence::filesystem::FilesystemFactory;
+// Strategy configuration is imported through metadata module
 use crate::storage::strategy::CollectionStrategyConfig;
 
 /// Transaction identifier
@@ -121,13 +122,13 @@ pub struct AtomicMetadataStore {
     wal_manager: Arc<MetadataWalManager>,
 
     /// Version store for MVCC
-    version_store: Arc<RwLock<HashMap<CollectionId, Vec<VersionInfo>>>>,
+    version_store: Arc<RwLock<HashMap<String, Vec<VersionInfo>>>>,
 
     /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, MetadataTransaction>>>,
 
     /// Lock table for concurrent access
-    lock_table: Arc<RwLock<HashMap<CollectionId, Vec<LockInfo>>>>,
+    lock_table: Arc<RwLock<HashMap<String, Vec<LockInfo>>>>,
 
     /// Global version counter
     version_counter: Arc<Mutex<u64>>,
@@ -465,7 +466,7 @@ impl AtomicMetadataStore {
     }
 
     /// Extract collection IDs from operations
-    fn extract_collection_ids(&self, operations: &[MetadataOperation]) -> Vec<CollectionId> {
+    fn extract_collection_ids(&self, operations: &[MetadataOperation]) -> Vec<String> {
         let mut collection_ids = Vec::new();
 
         for operation in operations {
@@ -502,10 +503,10 @@ impl AtomicMetadataStore {
     /// Acquire locks for collections
     async fn acquire_locks(
         &self,
-        collection_ids: &[CollectionId],
+        collection_ids: &[String],
         transaction_id: &TransactionId,
         lock_type: LockType,
-    ) -> Result<Vec<CollectionId>> {
+    ) -> Result<Vec<String>> {
         let mut lock_table = self.lock_table.write().await;
         let mut acquired_locks = Vec::new();
 
@@ -584,7 +585,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
     async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
         tracing::debug!("🔍 Getting collection metadata: {}", collection_id);
 
@@ -606,7 +607,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 tags: versioned.tags,
                 owner: versioned.owner,
                 description: versioned.description,
-                strategy_config: crate::storage::strategy::CollectionStrategyConfig::default(), // TODO: Convert back
+                strategy_config: super::CollectionStrategyConfig::default(),
                 strategy_change_history: Vec::new(), // TODO: Convert back
                 flush_config: None,                  // TODO: Convert back
             };
@@ -619,7 +620,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
     async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()> {
         let transaction_id = self
@@ -628,7 +629,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         self.add_to_transaction(
             &transaction_id,
             MetadataOperation::UpdateCollection {
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 metadata,
             },
         )
@@ -636,7 +637,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         self.commit_transaction(&transaction_id).await
     }
 
-    async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool> {
+    async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
         let exists = self.get_collection(collection_id).await?.is_some();
 
         if exists {
@@ -645,7 +646,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 .await?;
             self.add_to_transaction(
                 &transaction_id,
-                MetadataOperation::DeleteCollection(collection_id.clone()),
+                MetadataOperation::DeleteCollection(collection_id.to_string()),
             )
             .await?;
             self.commit_transaction(&transaction_id).await?;
@@ -700,7 +701,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
     async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {

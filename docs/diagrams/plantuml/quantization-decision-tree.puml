@@ -1,0 +1,65 @@
+@startuml quantization-decision-tree
+!theme plain
+skinparam backgroundColor #FEFEFE
+
+title Quantization Type Selection Decision Tree
+
+start
+
+:Evaluate Requirements;
+
+if (Accuracy > 99%?) then (yes)
+  if (Memory critical?) then (yes)
+    :Scalar INT16;
+    note right
+      2x compression
+      >99% accuracy
+    end note
+  else (no)
+    :No Quantization;
+    note right
+      Full FP32
+      100% accuracy
+    end note
+  endif
+elseif (Accuracy > 95%?) then (yes)
+  if (Dimension divisible by 8?) then (yes)
+    :Product Quantization (PQ8);
+    note right
+      8-16x compression
+      95-98% accuracy
+    end note
+  else (no)
+    :Scalar INT8;
+    note right
+      4x compression
+      97-99% accuracy
+    end note
+  endif
+elseif (Accuracy > 90%?) then (yes)
+  :Product Quantization (PQ4);
+  note right
+    16-32x compression
+    90-95% accuracy
+  end note
+else (< 90%)
+  if (Maximum compression?) then (yes)
+    :Binary Quantization;
+    note right
+      32x compression
+      85-90% accuracy
+    end note
+  else (no)
+    :Uniform Quantization;
+    note right
+      Custom bit width
+      Variable accuracy
+    end note
+  endif
+endif
+
+:Apply Configuration;
+
+stop
+
+@enduml

@@ -20,12 +20,15 @@ classDiagram
         +deduplicate_by_id() Future~()~
     }
 
-    class ViperCoreEngine {
+    class ViperEngine {
         +config: ViperConfig
         +pipeline: Arc~ViperPipeline~
         +compactor: Arc~CompactionEngine~
         +storage_handler: Arc~StorageLayoutHandler~
         +ml_optimizer: Arc~MLGuidedOptimizer~
+        +quantization_engine: Arc~UnifiedQuantizationEngine~
+        +column_projection: ColumnProjectionStrategy
+        +two_stage_search: Option~TwoStageSearchEngine~
         +search_vectors(query: Vec~f32~, k: usize) Future~Vec~SearchResult~~
         +get_statistics() Future~EngineStatistics~
     }
@@ -68,10 +71,29 @@ classDiagram
         +drop_collection(id: &CollectionId) Future~Result~
     }
 
+    class UnifiedQuantizationEngine {
+        +distance_compute: Arc~UnifiedDistanceCompute~
+        +codebook_store: Arc~dyn CodebookStore~
+        +quantize_async(vectors: Vec~Vec~f32~~, level: UnifiedQuantizationLevel) Future~QuantizedVectors~
+        +dequantize_async(quantized: QuantizedVectors) Future~Vec~Vec~f32~~~
+        +calculate_distance(q1: QuantizedVector, q2: QuantizedVector) f32
+    }
+
+    class TwoStageSearchEngine {
+        +distance_compute: Arc~UnifiedDistanceCompute~
+        +quantization_engine: Arc~UnifiedQuantizationEngine~
+        +config: TwoStageSearchConfig
+        +stage1_quantized_search(query: Vec~f32~, k: usize) Future~Vec~CandidateResult~~
+        +stage2_fp32_refinement(candidates: Vec~CandidateResult~) Future~Vec~SearchResult~~
+    }
+
     VectorService --> SearchEngineFactory
     VectorService --> WalManager
     VectorService --> CollectionService
     SearchEngineFactory --> MultiTierDeduplicator
-    SearchEngineFactory --> ViperCoreEngine
+    SearchEngineFactory --> ViperEngine
     SearchEngineFactory --> WalManager
+    ViperEngine --> UnifiedQuantizationEngine
+    ViperEngine --> TwoStageSearchEngine
+    TwoStageSearchEngine --> UnifiedQuantizationEngine
     WalManager --> WalStrategy

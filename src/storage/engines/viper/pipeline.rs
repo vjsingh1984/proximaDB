@@ -31,7 +31,7 @@ use tracing::{debug, info, warn};
 
 use super::ml_clustering::{KMeansConfig, MLClusteringEngine};
 use super::quantization::{QuantizationConfig, VectorQuantizationEngine};
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -285,7 +285,7 @@ pub trait SchemaGenerationStrategy: Send + Sync {
     fn generate_schema(&self, records: &[VectorRecord]) -> Result<Arc<Schema>>;
 
     /// Get collection ID
-    fn get_collection_id(&self) -> &CollectionId;
+    fn get_collection_id(&self) -> &String;
 
     /// Get filterable fields
     fn get_filterable_fields(&self) -> &[String];
@@ -354,7 +354,7 @@ pub struct FlushResult {
     pub entries_flushed: u64,
     pub bytes_written: u64,
     pub segments_created: u64,
-    pub collections_affected: Vec<CollectionId>,
+    pub collections_affected: Vec<String>,
     pub flush_duration_ms: u64,
     pub compression_ratio: f32,
 }
@@ -370,7 +370,7 @@ pub struct CompactionEngine {
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
 
     /// Active compaction operations
-    active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+    active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
 
     /// ML optimization model
     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
@@ -392,7 +392,7 @@ pub struct CompactionEngine {
 #[derive(Debug, Clone)]
 pub struct CompactionTask {
     pub task_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub compaction_type: CompactionType,
     pub priority: CompactionPriority,
     pub input_partitions: Vec<PartitionId>,
@@ -406,7 +406,7 @@ pub struct CompactionTask {
 #[derive(Debug)]
 pub struct CompactionOperation {
     pub operation_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub operation_type: CompactionType,
     pub started_at: DateTime<Utc>,
     pub progress: f32,
@@ -582,7 +582,7 @@ impl ViperPipeline {
     /// Process vector records through the complete pipeline
     pub async fn process_records(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         records: Vec<VectorRecord>,
         output_path: &str,
     ) -> Result<FlushResult> {
@@ -2366,14 +2366,14 @@ impl CompactionEngine {
     }
 
     /// Schedule compaction if needed
-    pub async fn schedule_compaction_if_needed(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn schedule_compaction_if_needed(&self, collection_id: &str) -> Result<()> {
         // Check if compaction is needed based on ML model or heuristics
         let needs_compaction = self.evaluate_compaction_need(collection_id).await?;
 
         if needs_compaction {
             let task = CompactionTask {
                 task_id: uuid::Uuid::new_v4().to_string(),
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 compaction_type: CompactionType::FileMerging {
                     target_file_size_mb: self.config.target_file_size_mb,
                     max_files_per_merge: self.config.max_files_per_merge,
@@ -2439,7 +2439,7 @@ impl CompactionEngine {
         Ok(())
     }
 
-    async fn evaluate_compaction_need(&self, _collection_id: &CollectionId) -> Result<bool> {
+    async fn evaluate_compaction_need(&self, _collection_id: &str) -> Result<bool> {
         // Simplified evaluation - would implement actual heuristics
         Ok(true)
     }
@@ -2447,7 +2447,7 @@ impl CompactionEngine {
     async fn worker_loop(
         worker_id: usize,
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
         _config: CompactionConfig,
@@ -2476,7 +2476,7 @@ impl CompactionEngine {
 
     async fn execute_compaction_task(
         task: CompactionTask,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
     ) {
         let operation = CompactionOperation {
@@ -3480,7 +3480,7 @@ impl SchemaAdapter {
 
     async fn get_or_generate_schema(
         &self,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
         _records: &[VectorRecord],
     ) -> Result<Arc<Schema>> {
         // Placeholder implementation

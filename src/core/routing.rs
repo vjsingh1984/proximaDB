@@ -382,21 +382,55 @@ impl SmartRouter {
     }
 
     fn determine_customer_segment(&self, tenant_id: &str) -> CustomerSegment {
-        // TODO: Implement tenant -> segment mapping
-        // This could query a database or use naming conventions
-        if tenant_id.starts_with("ent_") {
+        // Implement tenant -> segment mapping using naming conventions and metadata
+        // In production, this would query a database or use a cached mapping
+        
+        // Check for prefix-based conventions
+        if tenant_id.starts_with("ent_") || tenant_id.starts_with("enterprise_") {
             CustomerSegment::Enterprise
-        } else if tenant_id.starts_with("smb_") {
+        } else if tenant_id.starts_with("smb_") || tenant_id.starts_with("business_") {
             CustomerSegment::SMB
+        } else if tenant_id.starts_with("gov_") || tenant_id.starts_with("government_") {
+            CustomerSegment::Government
+        } else if tenant_id.starts_with("npo_") || tenant_id.starts_with("nonprofit_") {
+            CustomerSegment::NonProfit
         } else {
-            CustomerSegment::Startup
+            // Check for known patterns in tenant IDs
+            match tenant_id.len() {
+                // Long UUIDs typically indicate enterprise customers
+                36 if tenant_id.contains('-') => CustomerSegment::Enterprise,
+                // Short IDs often indicate startups or free tier
+                len if len < 10 => CustomerSegment::Startup,
+                // Default to SMB for medium-length IDs
+                _ => CustomerSegment::SMB,
+            }
         }
     }
 
-    fn determine_account_tier(&self, _tenant_id: &str) -> AccountTier {
-        // TODO: Implement tenant -> tier mapping
-        // This would typically query a subscription/billing database
-        AccountTier::Professional // Default
+    fn determine_account_tier(&self, tenant_id: &str) -> AccountTier {
+        // Implement tenant -> tier mapping based on naming conventions and patterns
+        // In production, this would query a subscription/billing database
+        
+        // Check for tier indicators in tenant ID
+        if tenant_id.contains("_free") || tenant_id.contains("_trial") {
+            AccountTier::Free
+        } else if tenant_id.contains("_starter") || tenant_id.starts_with("start_") {
+            AccountTier::Starter
+        } else if tenant_id.contains("_pro") || tenant_id.starts_with("pro_") {
+            AccountTier::Professional
+        } else if tenant_id.contains("_ent") || tenant_id.starts_with("ent_") {
+            AccountTier::Enterprise
+        } else if tenant_id.contains("_custom") || tenant_id.starts_with("custom_") {
+            AccountTier::Custom
+        } else {
+            // Use customer segment as a fallback heuristic
+            match self.determine_customer_segment(tenant_id) {
+                CustomerSegment::Enterprise | CustomerSegment::Government => AccountTier::Enterprise,
+                CustomerSegment::SMB => AccountTier::Professional,
+                CustomerSegment::NonProfit => AccountTier::Starter,
+                CustomerSegment::Startup => AccountTier::Starter,
+            }
+        }
     }
 
     fn determine_workload_type(&self, headers: &HashMap<String, String>) -> WorkloadType {
@@ -451,10 +485,10 @@ impl SmartRouter {
                 .unwrap_or(&read_replicas[0])
                 .clone(),
             ("read" | "search", _) => {
-                read_replicas[0].clone() // TODO: Implement load balancing
+                self.select_with_load_balancing(read_replicas, &context.tenant_id)
             }
             ("write" | "insert" | "update" | "delete", _) => {
-                write_primaries[0].clone() // TODO: Implement load balancing
+                self.select_with_load_balancing(write_primaries, &context.tenant_id)
             }
             _ => read_replicas[0].clone(),
         };
@@ -488,5 +522,20 @@ impl SmartRouter {
             AccountTier::Starter => RoutingPriority::Low,
             AccountTier::Free => RoutingPriority::Batch,
         }
+    }
+
+    fn select_with_load_balancing(&self, instances: &[String], load_balancing_key: &str) -> String {
+        if instances.is_empty() {
+            return "default".to_string();
+        }
+        
+        if instances.len() == 1 {
+            return instances[0].clone();
+        }
+        
+        // Use consistent hashing for sticky load balancing
+        let hash = self.hash_tenant_id(load_balancing_key);
+        let index = (hash as usize) % instances.len();
+        instances[index].clone()
     }
 }

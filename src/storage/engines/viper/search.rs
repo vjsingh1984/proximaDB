@@ -7,15 +7,19 @@
 //! - Multi-precision quantization support (FP32, PQ4, PQ8, Binary)
 //! - Storage-aware search strategies
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 use chrono;
 
-use crate::core::{CollectionId, SearchResult};
+use crate::core::{String, SearchResult, search::SearchParams};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, EfficientClusteringModel};
+use crate::storage::engines::viper::column_projection::{ColumnProjectionStrategy, ColumnProjection, QuantizationColumnMapping};
+use crate::storage::engines::viper::two_stage_search::{TwoStageSearchEngine, TwoStageSearchBuilder};
+use crate::compute::{UnifiedDistanceCompute, DistanceMetric, UnifiedQuantizationEngine, InMemoryCodebookStore};
+
 
 /// VIPER Storage-Aware Search Engine
 /// 
@@ -36,6 +40,15 @@ pub struct ViperSearchEngine {
     
     /// Clustering model manager for trained models
     model_manager: Option<Arc<ClusteringModelManager>>,
+    
+    /// Column projection strategy for optimized I/O
+    column_projection: ColumnProjectionStrategy,
+    
+    /// Unified distance compute with quantization support
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    
+    /// Two-stage search engine for quantized search
+    two_stage_engine: Option<TwoStageSearchEngine>,
 }
 
 /// Configuration for VIPER search operations
@@ -57,7 +70,7 @@ pub struct ViperSearchConfig {
     pub enable_predicate_pushdown: bool,
     
     /// Default quantization level for vector search
-    pub default_quantization: QuantizationLevel,
+    pub default_quantization: crate::compute::UnifiedQuantizationLevel,
     
     /// Search timeout in milliseconds
     pub search_timeout_ms: u64,
@@ -71,26 +84,15 @@ impl Default for ViperSearchConfig {
             max_clusters_to_search: 10,
             cluster_confidence_threshold: 0.7,
             enable_predicate_pushdown: true,
-            default_quantization: QuantizationLevel::FP32,
+            default_quantization: crate::compute::UnifiedQuantizationLevel {
+                level_type: Some(crate::compute::QuantizationLevelType::None(crate::compute::NoQuantization {})),
+            },
             search_timeout_ms: 5000,
         }
     }
 }
 
-/// Vector quantization levels supported by VIPER
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuantizationLevel {
-    /// Full 32-bit floating point precision (100% accuracy)
-    FP32,
-    /// 8-bit product quantization (faster, ~95% accuracy)
-    PQ8,
-    /// 4-bit product quantization (4x faster, ~90% accuracy)
-    PQ4,
-    /// Binary quantization (16x faster, ~80% accuracy)
-    Binary,
-    /// Scalar quantization to 8-bit integers
-    INT8,
-}
+// Use unified quantization from compute module
 
 /// Cluster metadata cache for ML-driven search optimization
 #[derive(Debug, Default)]
@@ -127,32 +129,6 @@ pub struct SearchMetrics {
     pub predicate_pushdown_reduction: f32,
 }
 
-/// Search hints for optimization
-#[derive(Debug, Clone)]
-pub struct SearchHints {
-    /// Preferred quantization level
-    pub quantization_level: Option<QuantizationLevel>,
-    
-    /// Enable cluster optimization
-    pub enable_clustering: bool,
-    
-    /// Enable metadata filtering optimization
-    pub enable_metadata_filtering: bool,
-    
-    /// Custom optimization parameters
-    pub custom_params: HashMap<String, serde_json::Value>,
-}
-
-impl Default for SearchHints {
-    fn default() -> Self {
-        Self {
-            quantization_level: None,
-            enable_clustering: true,
-            enable_metadata_filtering: true,
-            custom_params: HashMap::new(),
-        }
-    }
-}
 
 impl ViperSearchEngine {
     /// Create a new VIPER search engine
@@ -165,6 +141,9 @@ impl ViperSearchEngine {
             })),
             metrics: Arc::new(tokio::sync::RwLock::new(SearchMetrics::default())),
             model_manager: None,
+            column_projection: ColumnProjectionStrategy::new(),
+            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
+            two_stage_engine: None,
         }
     }
 
@@ -178,6 +157,9 @@ impl ViperSearchEngine {
             })),
             metrics: Arc::new(tokio::sync::RwLock::new(SearchMetrics::default())),
             model_manager: None,
+            column_projection: ColumnProjectionStrategy::new(),
+            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
+            two_stage_engine: None,
         }
     }
 
@@ -185,6 +167,33 @@ impl ViperSearchEngine {
     pub fn set_model_manager(&mut self, model_manager: Arc<ClusteringModelManager>) {
         self.model_manager = Some(model_manager);
         info!("🧠 VIPER Search: Model manager set for trained clustering models");
+    }
+    
+    /// Configure column projection strategy with quantization mapping
+    pub fn configure_column_projection(&mut self, mapping: QuantizationColumnMapping) {
+        self.column_projection = self.column_projection.clone().with_quantization_mapping(mapping);
+        info!("📊 VIPER Search: Column projection configured with quantization mapping");
+    }
+    
+    /// Initialize two-stage search engine
+    pub fn initialize_two_stage_search(&mut self) {
+        // Create quantization engine with in-memory codebook store
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            self.distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        // Build two-stage search engine
+        self.two_stage_engine = Some(
+            TwoStageSearchBuilder::new()
+                .candidate_multiplier(3.0)
+                .min_candidates(100)
+                .max_candidates(10000)
+                .build(self.distance_compute.clone(), quantization_engine)
+        );
+        
+        info!("🔍 VIPER Search: Two-stage search engine initialized");
     }
 
     /// **PRIMARY SEARCH METHOD: Storage-Aware Polymorphic Search**
@@ -196,13 +205,12 @@ impl ViperSearchEngine {
     pub async fn search_vectors(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
-        k: usize,
-        metadata_filters: Option<&HashMap<String, serde_json::Value>>,
-        search_hints: Option<&SearchHints>,
+        search_params: &SearchParams,
     ) -> Result<Vec<SearchResult>> {
         let start_time = std::time::Instant::now();
+        let k = search_params.top_k.unwrap_or(10);
 
         info!(
             "🔍 VIPER Search: Starting polymorphic search - collection={}, dimension={}, k={}",
@@ -214,28 +222,56 @@ impl ViperSearchEngine {
         // Validate input parameters
         self.validate_search_parameters(collection_id, query_vector, k)?;
 
+        // Generate optimal column projection for this query
+        let column_projection = self.generate_column_projection(
+            viper_engine,
+            collection_id,
+            search_params,
+        ).await?;
+
+        info!("📊 VIPER Search: Using column projection with {} columns, estimated I/O reduction: {:.1}%", 
+              column_projection.columns.len(), 
+              column_projection.io_reduction_estimate * 100.0);
+
         // Determine optimal search strategy based on collection characteristics
         let search_strategy = self.determine_search_strategy(
             viper_engine,
             collection_id,
             query_vector,
-            k,
-            metadata_filters,
-            search_hints,
+            search_params,
         ).await?;
 
         info!("🔍 VIPER Search: Using strategy={:?} for collection={}", search_strategy, collection_id);
 
-        // Execute search using selected strategy
+        // Execute search using selected strategy with column projection
         let results = match search_strategy {
             SearchStrategy::ClusterOptimized => {
-                self.cluster_optimized_search(viper_engine, collection_id, query_vector, k, metadata_filters, search_hints).await?
+                self.cluster_optimized_search(viper_engine, collection_id, query_vector, search_params, &column_projection).await?
             }
             SearchStrategy::DirectSearch => {
-                self.direct_search(viper_engine, collection_id, query_vector, k, metadata_filters).await?
+                self.direct_search(viper_engine, collection_id, query_vector, search_params, &column_projection).await?
             }
             SearchStrategy::HybridSearch => {
-                self.hybrid_search(viper_engine, collection_id, query_vector, k, metadata_filters, search_hints).await?
+                self.hybrid_search(viper_engine, collection_id, query_vector, search_params, &column_projection).await?
+            }
+            SearchStrategy::TwoStageSearch => {
+                // Use two-stage search if available and configured
+                if let Some(ref two_stage) = self.two_stage_engine {
+                    let distance_metric = &DistanceMetric::Cosine; // Default to cosine
+                    
+                    two_stage.search(
+                        viper_engine,
+                        collection_id,
+                        query_vector,
+                        search_params,
+                        &column_projection,
+                        distance_metric,
+                    ).await?
+                } else {
+                    // Fallback to direct search if two-stage not initialized
+                    warn!("Two-stage search requested but not initialized, falling back to direct search");
+                    self.direct_search(viper_engine, collection_id, query_vector, search_params, &column_projection).await?
+                }
             }
         };
 
@@ -253,36 +289,133 @@ impl ViperSearchEngine {
         Ok(results)
     }
 
+    /// Generate optimal column projection for the search query
+    async fn generate_column_projection(
+        &self,
+        viper_engine: &ViperEngine,
+        collection_id: &str,
+        search_params: &SearchParams,
+    ) -> Result<ColumnProjection> {
+        // Get available quantization levels from collection metadata
+        let available_quantization = self.get_available_quantization_levels(viper_engine, collection_id).await?;
+        
+        // Estimate result size based on collection size and filters
+        let estimated_result_size = self.estimate_result_size(viper_engine, collection_id, search_params).await?;
+        
+        // Use column projection strategy to select optimal columns
+        let mut projection = self.column_projection.select_columns(
+            search_params,
+            &available_quantization,
+            estimated_result_size,
+        )?;
+        
+        // Calculate I/O reduction estimate
+        let total_columns = self.get_total_column_count(viper_engine, collection_id).await?;
+        projection.io_reduction_estimate = projection.estimate_io_reduction(total_columns);
+        
+        Ok(projection)
+    }
+
+    /// Get available quantization levels from collection configuration
+    async fn get_available_quantization_levels(
+        &self,
+        viper_engine: &ViperEngine,
+        collection_id: &str,
+    ) -> Result<Vec<crate::compute::UnifiedQuantizationLevel>> {
+        // This would read from collection metadata to determine what quantization columns exist
+        // For now, return a default set
+        Ok(vec![
+            crate::compute::UnifiedQuantizationLevel {
+                level_type: Some(crate::compute::QuantizationLevelType::None(crate::compute::NoQuantization {})),
+            },
+            crate::compute::UnifiedQuantizationLevel::pq8(8),
+            crate::compute::UnifiedQuantizationLevel {
+                level_type: Some(crate::compute::QuantizationLevelType::Binary(crate::compute::BinaryQuantization {
+                    threshold: None,
+                    sign_based: false,
+                })),
+            },
+        ])
+    }
+
+    /// Estimate result size based on collection size and filters
+    async fn estimate_result_size(
+        &self,
+        viper_engine: &ViperEngine,
+        collection_id: &str,
+        search_params: &SearchParams,
+    ) -> Result<usize> {
+        // Simple heuristic: assume 1000 candidates per result
+        let k = search_params.top_k.unwrap_or(10);
+        
+        // Apply filter selectivity estimation
+        let filter_selectivity = if search_params.filters.is_some() {
+            0.1 // Assume filters reduce search space by 90%
+        } else {
+            1.0
+        };
+        
+        Ok((k as f32 * 1000.0 * filter_selectivity) as usize)
+    }
+
+    /// Get total column count for I/O reduction calculation
+    async fn get_total_column_count(
+        &self,
+        viper_engine: &ViperEngine,
+        collection_id: &str,
+    ) -> Result<usize> {
+        // This would read from schema metadata
+        // For now, return a typical count
+        Ok(20)
+    }
+
     /// Determine the optimal search strategy based on collection and query characteristics
     async fn determine_search_strategy(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
-        k: usize,
-        metadata_filters: Option<&HashMap<String, serde_json::Value>>,
-        search_hints: Option<&SearchHints>,
+        search_params: &SearchParams,
     ) -> Result<SearchStrategy> {
         // Get collection metadata to inform strategy selection
         let collection_metadata = viper_engine.get_collection_metadata(collection_id).await;
 
-        // Check if ML clustering is available and beneficial
+        // Check if two-stage search is enabled and available
+        let has_quantization = if let Some(metadata) = &collection_metadata {
+            // Check if collection has quantization configured
+            metadata.quantization_config.is_some() && self.two_stage_engine.is_some()
+        } else {
+            false
+        };
+
+        // Check for explicit hints in search params
+        if search_params.quantization_hint.is_some() && has_quantization {
+            info!("🔍 VIPER Search: Using two-stage search based on quantization hint");
+            return Ok(SearchStrategy::TwoStageSearch);
+        }
+
+        // Check if ML clustering is available (OPTIONAL - via AXIS)
+        // Many collections won't have clustering and that's fine
         let has_clusters = if self.config.enable_ml_clustering {
+            // This would check with AXIS if clustering index exists
             self.check_cluster_availability(collection_id).await?
         } else {
             false
         };
 
-        // Strategy selection logic based on collection characteristics
-        match (collection_metadata, has_clusters, metadata_filters.is_some()) {
-            // Large collection with clusters and metadata filters
-            (Some(_), true, true) => Ok(SearchStrategy::HybridSearch),
+        // Strategy selection - DirectSearch is the baseline that always works
+        match (collection_metadata, has_quantization, has_clusters, search_params.filters.is_some()) {
+            // Collection with quantization enabled - use two-stage search
+            (Some(_), true, _, _) => Ok(SearchStrategy::TwoStageSearch),
             
-            // Large collection with clusters, no metadata filters
-            (Some(_), true, false) => Ok(SearchStrategy::ClusterOptimized),
+            // Collection with AXIS ML clustering + metadata filters
+            (Some(_), false, true, true) => Ok(SearchStrategy::HybridSearch),
             
-            // Small collection or no clusters available
-            (Some(_), false, _) | (None, _, _) => Ok(SearchStrategy::DirectSearch),
+            // Collection with AXIS ML clustering, no metadata filters
+            (Some(_), false, true, false) => Ok(SearchStrategy::ClusterOptimized),
+            
+            // DEFAULT: Direct Parquet search (no clustering or clustering disabled)
+            (Some(_), false, false, _) | (None, _, _, _) => Ok(SearchStrategy::DirectSearch),
         }
     }
 
@@ -290,11 +423,10 @@ impl ViperSearchEngine {
     async fn cluster_optimized_search(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
-        k: usize,
-        metadata_filters: Option<&HashMap<String, serde_json::Value>>,
-        search_hints: Option<&SearchHints>,
+        search_params: &SearchParams,
+        column_projection: &ColumnProjection,
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 VIPER: Executing cluster-optimized search for collection {}", collection_id);
 
@@ -303,7 +435,7 @@ impl ViperSearchEngine {
 
         if relevant_clusters.is_empty() {
             warn!("🔍 VIPER: No relevant clusters found, falling back to direct search");
-            return self.direct_search(viper_engine, collection_id, query_vector, k, metadata_filters).await;
+            return self.direct_search(viper_engine, collection_id, query_vector, search_params, column_projection).await;
         }
 
         info!("🔍 VIPER: Selected {} clusters for search", relevant_clusters.len());
@@ -317,9 +449,10 @@ impl ViperSearchEngine {
                 let viper_engine = viper_engine;
                 let collection_id = collection_id.clone();
                 let query_vector = query_vector.to_vec();
+                let search_params = search_params.clone();
                 
                 async move {
-                    self.search_cluster(viper_engine, &collection_id, &cluster_id, &query_vector, k * 2).await
+                    self.search_cluster(viper_engine, &collection_id, &cluster_id, &query_vector, &search_params).await
                 }
             }).collect();
             
@@ -333,7 +466,7 @@ impl ViperSearchEngine {
         } else {
             // Sequential cluster search
             for cluster_id in relevant_clusters {
-                match self.search_cluster(viper_engine, collection_id, &cluster_id, query_vector, k * 2).await {
+                match self.search_cluster(viper_engine, collection_id, &cluster_id, query_vector, search_params).await {
                     Ok(cluster_results) => {
                         debug!("🔍 VIPER: Cluster {} returned {} results", cluster_id.0, cluster_results.len());
                         all_results.extend(cluster_results);
@@ -347,11 +480,12 @@ impl ViperSearchEngine {
         }
 
         // Step 3: Apply metadata filters if specified
-        if let Some(filters) = metadata_filters {
+        if let Some(filters) = &search_params.filters {
             all_results = self.apply_metadata_filters(all_results, filters)?;
         }
 
         // Step 4: Merge, rank, and truncate results
+        let k = search_params.top_k.unwrap_or(10);
         all_results.sort_by(|a, b| {
             b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -360,14 +494,15 @@ impl ViperSearchEngine {
         Ok(all_results)
     }
 
-    /// **DIRECT SEARCH**: Parquet-based vector search across all storage tiers
+    /// **DIRECT SEARCH**: Baseline Parquet search without ML clustering
+    /// This must work for ALL collections, with clustering as optional optimization
     async fn direct_search(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
-        k: usize,
-        metadata_filters: Option<&HashMap<String, serde_json::Value>>,
+        search_params: &SearchParams,
+        column_projection: &ColumnProjection,
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 VIPER: Executing direct search for collection {}", collection_id);
         let search_start = std::time::Instant::now();
@@ -378,6 +513,8 @@ impl ViperSearchEngine {
 
         let mut all_results = Vec::new();
         let mut files_searched = 0;
+        let k = search_params.top_k.unwrap_or(10);
+        let metadata_filters = search_params.filters.as_ref();
 
         // Search each Parquet file using predicate pushdown
         for parquet_file in parquet_files {
@@ -411,25 +548,24 @@ impl ViperSearchEngine {
     async fn hybrid_search(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
-        k: usize,
-        metadata_filters: Option<&HashMap<String, serde_json::Value>>,
-        search_hints: Option<&SearchHints>,
+        search_params: &SearchParams,
+        column_projection: &ColumnProjection,
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 VIPER: Executing hybrid search for collection {}", collection_id);
 
         // For now, delegate to cluster-optimized search with metadata filtering
         // In a full implementation, this would implement predicate pushdown
         // to filter at the Parquet storage level before vector operations
-        self.cluster_optimized_search(viper_engine, collection_id, query_vector, k, metadata_filters, search_hints).await
+        self.cluster_optimized_search(viper_engine, collection_id, query_vector, search_params, column_projection).await
     }
 
 
     /// Select relevant clusters using trained ML models
     async fn select_relevant_clusters(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
     ) -> Result<Vec<ClusterId>> {
         // Try to get trained model first
@@ -484,7 +620,7 @@ impl ViperSearchEngine {
     /// Fallback cluster selection using cache
     async fn select_clusters_from_cache(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
     ) -> Result<Vec<ClusterId>> {
         debug!("🧠 Falling back to cache-based cluster selection");
@@ -515,7 +651,7 @@ impl ViperSearchEngine {
     }
 
     /// Check if ML clustering is available for a collection
-    async fn check_cluster_availability(&self, collection_id: &CollectionId) -> Result<bool> {
+    async fn check_cluster_availability(&self, collection_id: &str) -> Result<bool> {
         let cache = self.cluster_cache.read().await;
         Ok(!cache.cluster_centroids.is_empty())
     }
@@ -551,11 +687,12 @@ impl ViperSearchEngine {
     pub async fn search_cluster(
         &self,
         viper_engine: &ViperEngine,
-        collection_id: &CollectionId,
+        collection_id: &str,
         cluster_id: &ClusterId,
         query_vector: &[f32],
-        k: usize,
+        search_params: &SearchParams,
     ) -> Result<Vec<SearchResult>> {
+        let k = search_params.top_k.unwrap_or(10);
         debug!("🔍 VIPER: Searching cluster {} for collection {}", cluster_id.0, collection_id);
         let cluster_start = std::time::Instant::now();
 
@@ -639,48 +776,257 @@ impl ViperSearchEngine {
         k: usize,
         metadata_filters: Option<&HashMap<String, serde_json::Value>>,
     ) -> Result<Vec<SearchResult>> {
+        use arrow_array::{Array, Float32Array, ListArray, StringArray, Int64Array, BooleanArray, Float64Array, TimestampMicrosecondArray, StructArray};
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        
         debug!("🔍 Searching Parquet file: {}", parquet_file_path);
+        let search_start = std::time::Instant::now();
         
-        // TODO: Implement actual Parquet file reading and vector distance calculation
-        // This would involve:
-        // 1. Opening the Parquet file with Arrow
-        // 2. Reading vector columns (List<Float32>)
-        // 3. Applying metadata filters as Parquet predicates
-        // 4. Computing distances using SIMD operations
-        // 5. Returning top-k results with scores
+        // Open Parquet file
+        let file = File::open(parquet_file_path)
+            .context(format!("Failed to open Parquet file: {}", parquet_file_path))?;
+        let file_reader = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let metadata = file_reader.metadata();
+        debug!("📊 Parquet file has {} row groups", metadata.num_row_groups());
         
-        // For now, return mock results to demonstrate the control flow
-        let mock_results = vec![
-            SearchResult {
-                id: format!("vec_{}_{}", parquet_file_path.replace("/", "_"), 1),
-                vector_id: None,
-                score: 0.95,
-                distance: Some(0.05),
-                rank: Some(1),
-                vector: None,
-                metadata: std::collections::HashMap::new(),
-                collection_id: None,
-                created_at: Some(chrono::Utc::now().timestamp_millis()),
-                algorithm_used: Some("viper_parquet_search".to_string()),
-                processing_time_us: Some(1000),
-            },
-            SearchResult {
-                id: format!("vec_{}_{}", parquet_file_path.replace("/", "_"), 2),
-                vector_id: None,
-                score: 0.90,
-                distance: Some(0.10),
-                rank: Some(2),
-                vector: None,
-                metadata: std::collections::HashMap::new(),
-                collection_id: None,
-                created_at: Some(chrono::Utc::now().timestamp_millis()),
-                algorithm_used: Some("viper_parquet_search".to_string()),
-                processing_time_us: Some(1500),
-            },
+        // Build reader with column projection
+        let mut reader_builder = file_reader;
+        
+        // Select only needed columns for efficiency
+        let mut projection = vec![
+            "id",
+            "vector",  // Original FP32 vectors
+            "vector_pq",  // Optional quantized vectors
+            "timestamp",
+            "version",
+            "expires_at",
+            "extra_meta",
         ];
         
-        debug!("🔍 Parquet file {} returned {} mock results", parquet_file_path, mock_results.len());
-        Ok(mock_results)
+        // Add filterable metadata columns to projection
+        if let Some(filters) = metadata_filters {
+            for key in filters.keys() {
+                // Add filterable column if not already in projection
+                if !projection.contains(&key.as_str()) {
+                    projection.push(key);
+                }
+            }
+        }
+        
+        let mut batch_reader = reader_builder.build()?;
+        let current_time = chrono::Utc::now().timestamp_micros();
+        
+        // Collect all valid candidates with distances
+        let mut candidates: Vec<(String, f32, i64, i64, SearchResult)> = Vec::new();
+        
+        // Process each record batch
+        while let Some(batch) = batch_reader.next() {
+            let batch = batch?;
+            
+            // Get columns
+            let id_array = batch.column_by_name("id")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'id' column"))?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid 'id' column type"))?;
+                
+            let vector_array = batch.column_by_name("vector")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'vector' column"))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid 'vector' column type"))?;
+                
+            let timestamp_array = batch.column_by_name("timestamp")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'timestamp' column"))?
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid 'timestamp' column type"))?;
+                
+            let version_array = batch.column_by_name("version")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'version' column"))?
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid 'version' column type"))?;
+                
+            let expires_at_array = batch.column_by_name("expires_at")
+                .ok_or_else(|| anyhow::anyhow!("Missing 'expires_at' column"))?
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid 'expires_at' column type"))?;
+            
+            // Process each row
+            for row_idx in 0..batch.num_rows() {
+                // Skip expired records
+                if !expires_at_array.is_null(row_idx) {
+                    let expires_at = expires_at_array.value(row_idx);
+                    if expires_at > 0 && expires_at < current_time {
+                        continue; // Skip expired vectors
+                    }
+                }
+                
+                // Get vector data
+                let vector_values = vector_array.value(row_idx);
+                let vector_float_array = vector_values
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid vector values type"))?;
+                
+                // Convert to Vec<f32>
+                let vector: Vec<f32> = (0..vector_float_array.len())
+                    .map(|i| vector_float_array.value(i))
+                    .collect();
+                
+                // Skip if dimensions don't match
+                if vector.len() != query_vector.len() {
+                    warn!("Vector dimension mismatch: {} != {}", vector.len(), query_vector.len());
+                    continue;
+                }
+                
+                // Calculate distance
+                let distance = self.calculate_cosine_distance(query_vector, &vector);
+                let score = 1.0 - distance; // Convert distance to similarity score
+                
+                // Create search result
+                let result = SearchResult {
+                    id: id_array.value(row_idx).to_string(),
+                    vector_id: Some(id_array.value(row_idx).to_string()),
+                    score,
+                    distance: Some(distance),
+                    rank: None, // Will be set after sorting
+                    vector: None, // Don't return full vector to save memory
+                    metadata: {
+                        let mut metadata = HashMap::new();
+                        
+                        // Parse metadata from extra_meta list of key-value pairs
+                        if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
+                            if let Some(extra_meta_list) = extra_meta_col.as_any().downcast_ref::<ListArray>() {
+                                if !extra_meta_list.is_null(row_idx) {
+                                    let kv_pairs = extra_meta_list.value(row_idx);
+                                    if let Some(struct_array) = kv_pairs.as_any().downcast_ref::<StructArray>() {
+                                        let key_array = struct_array.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                                        let value_array = struct_array.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                                        
+                                        for kv_idx in 0..struct_array.len() {
+                                            if !struct_array.is_null(kv_idx) {
+                                                let key = key_array.value(kv_idx).to_string();
+                                                let value = value_array.value(kv_idx).to_string();
+                                                metadata.insert(key, serde_json::Value::String(value));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Also parse filterable metadata columns (they have their own columns)
+                        for field in batch.schema().fields() {
+                            let field_name = field.name();
+                            // Skip core fields - only process filterable metadata columns
+                            if !matches!(field_name.as_str(), "id" | "collection_id" | "vector" | "timestamp" | "created_at" | "updated_at" | "version" | "expires_at" | "extra_meta" | "vector_pq" | "vector_sq" | "vector_binary" | "vector_quantized" | "sq_scale" | "sq_offset") {
+                                if let Some(column) = batch.column_by_name(field_name) {
+                                    if !column.is_null(row_idx) {
+                                        // Convert Arrow value to JSON based on data type
+                                        let json_value = match field.data_type() {
+                                            arrow_schema::DataType::Utf8 => {
+                                                if let Some(str_array) = column.as_any().downcast_ref::<StringArray>() {
+                                                    serde_json::Value::String(str_array.value(row_idx).to_string())
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Int64 => {
+                                                if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>() {
+                                                    serde_json::Value::Number(serde_json::Number::from(int_array.value(row_idx)))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Float64 => {
+                                                if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
+                                                    serde_json::Value::Number(serde_json::Number::from_f64(float_array.value(row_idx)).unwrap_or(serde_json::Number::from(0)))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Boolean => {
+                                                if let Some(bool_array) = column.as_any().downcast_ref::<BooleanArray>() {
+                                                    serde_json::Value::Bool(bool_array.value(row_idx))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, _) => {
+                                                if let Some(ts_array) = column.as_any().downcast_ref::<TimestampMicrosecondArray>() {
+                                                    serde_json::Value::Number(serde_json::Number::from(ts_array.value(row_idx)))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::List(_) => {
+                                                // For list columns, serialize as JSON array
+                                                if let Some(list_array) = column.as_any().downcast_ref::<ListArray>() {
+                                                    let list_value = list_array.value(row_idx);
+                                                    // Convert Arrow array to JSON array (simplified)
+                                                    serde_json::Value::String(format!("list_length_{}", list_value.len()))
+                                                } else { continue; }
+                                            }
+                                            _ => continue, // Skip unsupported types
+                                        };
+                                        metadata.insert(field_name.to_string(), json_value);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        metadata
+                    },
+                    collection_id: None,
+                    created_at: Some(timestamp_array.value(row_idx)),
+                    algorithm_used: Some("viper_parquet_cosine".to_string()),
+                    processing_time_us: None,
+                };
+                
+                candidates.push((
+                    id_array.value(row_idx).to_string(),
+                    distance,
+                    version_array.value(row_idx),
+                    timestamp_array.value(row_idx),
+                    result
+                ));
+            }
+        }
+        
+        // Sort by distance (ascending) and take top-k
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Deduplicate by ID (keep highest version/newest timestamp)
+        let mut seen_ids = HashMap::new();
+        let mut final_results = Vec::new();
+        
+        for (id, distance, version, timestamp, mut result) in candidates.into_iter().take(k * 2) {
+            match seen_ids.get(&id) {
+                Some(&(existing_version, existing_timestamp)) => {
+                    // Keep the newer version or timestamp
+                    if version > existing_version || 
+                       (version == existing_version && timestamp > existing_timestamp) {
+                        // Remove old result and add new one
+                        final_results.retain(|r: &SearchResult| r.id != id);
+                        seen_ids.insert(id.clone(), (version, timestamp));
+                        result.rank = Some((final_results.len() + 1) as i32);
+                        final_results.push(result);
+                    }
+                }
+                None => {
+                    seen_ids.insert(id.clone(), (version, timestamp));
+                    result.rank = Some((final_results.len() + 1) as i32);
+                    final_results.push(result);
+                    if final_results.len() >= k {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Update processing time
+        let processing_time_us = search_start.elapsed().as_micros() as i64;
+        for result in &mut final_results {
+            result.processing_time_us = Some(processing_time_us);
+        }
+        
+        debug!("🔍 Parquet file {} returned {} results in {}μs", 
+               parquet_file_path, final_results.len(), processing_time_us);
+        Ok(final_results)
     }
 
     /// Calculate cosine distance between two vectors
@@ -703,7 +1049,7 @@ impl ViperSearchEngine {
     /// Validate search parameters
     fn validate_search_parameters(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
         k: usize,
     ) -> Result<()> {
@@ -755,7 +1101,7 @@ impl ViperSearchEngine {
     /// Update cluster metadata cache (called by ML clustering system)
     pub async fn update_cluster_cache(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         cluster_centroids: HashMap<ClusterId, Vec<f32>>,
         cluster_sizes: HashMap<ClusterId, usize>,
     ) -> Result<()> {
@@ -781,6 +1127,8 @@ enum SearchStrategy {
     DirectSearch,
     /// Hybrid approach with predicate pushdown
     HybridSearch,
+    /// Two-stage search with quantized filtering
+    TwoStageSearch,
 }
 
 /// Cluster identifier

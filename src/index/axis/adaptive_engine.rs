@@ -14,7 +14,7 @@ use super::{
     strategy::ResourceRequirements, AxisConfig, CollectionAnalyzer, IndexStrategy, IndexType,
     MigrationDecision, MigrationPriority, OptimizationConfig,
 };
-use crate::core::CollectionId;
+
 
 /// Engine for analyzing collections and recommending optimal indexing strategies
 pub struct AdaptiveIndexEngine {
@@ -45,7 +45,7 @@ impl std::fmt::Debug for AdaptiveIndexEngine {
 /// Collection characteristics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionCharacteristics {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub vector_count: u64,
     pub average_sparsity: f32,
     pub sparsity_variance: f32,
@@ -238,7 +238,7 @@ pub struct ResourcePrediction {
 /// Strategy decision record
 #[derive(Debug, Clone)]
 pub struct StrategyDecision {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub timestamp: DateTime<Utc>,
     pub characteristics: CollectionCharacteristics,
     pub recommended_strategy: IndexStrategy,
@@ -265,7 +265,7 @@ impl AdaptiveIndexEngine {
     /// Analyze collection characteristics
     pub async fn analyze_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CollectionCharacteristics> {
         self.collection_analyzer
             .analyze_collection(collection_id)
@@ -303,7 +303,7 @@ impl AdaptiveIndexEngine {
     /// Determine if migration is beneficial
     pub async fn should_migrate(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         characteristics: &CollectionCharacteristics,
     ) -> Result<MigrationDecision> {
         // Get current strategy (mock for now)
@@ -346,7 +346,7 @@ impl AdaptiveIndexEngine {
 
         // Record decision
         let decision = StrategyDecision {
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             timestamp: Utc::now(),
             characteristics: characteristics.clone(),
             recommended_strategy: optimal_strategy.clone(),
@@ -453,7 +453,7 @@ impl AdaptiveIndexEngine {
     }
 
     /// Get current strategy (mock implementation)
-    async fn get_current_strategy(&self, _collection_id: &CollectionId) -> Result<IndexStrategy> {
+    async fn get_current_strategy(&self, _collection_id: &str) -> Result<IndexStrategy> {
         // TODO: Get from actual storage
         Ok(IndexStrategy::default())
     }

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 
 use super::{IndexStrategy, IndexType, MigrationPriority};
-use crate::core::CollectionId;
+
 
 /// Engine for performing zero-downtime index migrations
 pub struct IndexMigrationEngine {
@@ -42,7 +42,7 @@ impl std::fmt::Debug for IndexMigrationEngine {
 #[derive(Debug, Clone)]
 pub struct MigrationPlan {
     pub migration_id: uuid::Uuid,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub from_strategy: IndexStrategy,
     pub to_strategy: IndexStrategy,
     pub steps: Vec<MigrationStep>,
@@ -211,7 +211,7 @@ pub trait StepExecutor {
 
 /// Migration context
 pub struct MigrationContext {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub migration_id: uuid::Uuid,
     pub from_strategy: IndexStrategy,
     pub to_strategy: IndexStrategy,
@@ -286,7 +286,7 @@ pub enum MigrationPhase {
 #[derive(Debug, Clone)]
 pub struct MigrationHistory {
     pub migration_id: uuid::Uuid,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub from_strategy: IndexStrategy,
     pub to_strategy: IndexStrategy,
     pub start_time: DateTime<Utc>,
@@ -311,7 +311,7 @@ impl IndexMigrationEngine {
     /// Execute a migration plan
     pub async fn execute_migration(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from: IndexStrategy,
         to: IndexStrategy,
     ) -> Result<MigrationResult> {
@@ -339,7 +339,7 @@ impl IndexMigrationEngine {
 
         // Create migration context
         let context = MigrationContext {
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             migration_id: plan.migration_id,
             from_strategy: from.clone(),
             to_strategy: to.clone(),
@@ -395,7 +395,7 @@ impl IndexMigrationEngine {
         let mut history = self.history.write().await;
         history.push(MigrationHistory {
             migration_id: plan.migration_id,
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             from_strategy: from,
             to_strategy: to,
             start_time: Utc::now()
@@ -416,7 +416,7 @@ impl IndexMigrationEngine {
     /// Create migration plan
     fn create_migration_plan(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from: IndexStrategy,
         to: IndexStrategy,
     ) -> Result<MigrationPlan> {
@@ -525,7 +525,7 @@ impl IndexMigrationEngine {
 
         Ok(MigrationPlan {
             migration_id,
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             from_strategy: from,
             to_strategy: to,
             steps,

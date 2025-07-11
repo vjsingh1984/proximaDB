@@ -1,7 +1,7 @@
 //! Data Persistence Layer
 //!
 //! This module contains all data persistence components including
-//! WAL, filesystem abstraction, and disk management.
+//! WAL, filesystem abstraction, disk management, and atomicity coordination.
 
 pub mod disk_manager;
 pub mod filesystem;

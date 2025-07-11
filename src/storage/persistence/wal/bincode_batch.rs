@@ -8,11 +8,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::batch_strategy::WalBatchStrategy;
-use super::atomicity_manager::{UnifiedAtomicityManager, UnifiedAtomicityConfig};
+// use super::atomicity_manager::{UnifiedAtomicityManager, UnifiedAtomicityConfig}; // Module removed
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use super::{FlushResult, WalConfig, WalStats};
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
 // AtomicityManager import removed - use UnifiedAtomicCoordinator from atomic module instead
 use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
@@ -42,8 +43,8 @@ pub struct BincodeWalBatchStrategy {
     /// Distance computation
     distance_compute: UnifiedDistanceCompute,
     
-    /// Unified atomicity manager for all atomic operations
-    unified_atomicity_manager: Option<Arc<UnifiedAtomicityManager>>,
+    /// Unified atomic coordinator for all atomic operations
+    unified_atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
 }
 
 impl std::fmt::Debug for BincodeWalBatchStrategy {
@@ -55,7 +56,7 @@ impl std::fmt::Debug for BincodeWalBatchStrategy {
             .field("flush_coordinator", &"<flush_coordinator>")
             .field("assignment_service", &"<assignment_service>")
             .field("distance_compute", &"<distance_compute>")
-            .field("unified_atomicity_manager", &self.unified_atomicity_manager.is_some())
+            .field("unified_atomic_coordinator", &self.unified_atomic_coordinator.is_some())
             .finish()
     }
 }
@@ -70,20 +71,18 @@ impl BincodeWalBatchStrategy {
             flush_coordinator: WalFlushCoordinator::new(),
             assignment_service: get_assignment_service(),
             distance_compute: UnifiedDistanceCompute::default(),
-            unified_atomicity_manager: None,
+            unified_atomic_coordinator: None,
         }
     }
     
     /// Enable unified atomicity with configuration
-    pub fn enable_unified_atomicity(&mut self, config: UnifiedAtomicityConfig) -> Result<()> {
+    pub async fn enable_unified_atomicity(&mut self, temp_directory: Option<String>) -> Result<()> {
         if let Some(filesystem) = &self.filesystem {
-            let base_atomicity_manager = Arc::new(AtomicityManager::new(Default::default()));
-            let unified_manager = Arc::new(UnifiedAtomicityManager::new(
-                base_atomicity_manager,
+            let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
                 filesystem.clone(),
-                config,
-            ));
-            self.unified_atomicity_manager = Some(unified_manager);
+                temp_directory,
+            ).await?);
+            self.unified_atomic_coordinator = Some(coordinator);
             tracing::info!("✅ Unified atomicity enabled for BincodeWalBatchStrategy");
             Ok(())
         } else {
@@ -127,33 +126,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         // Enable cloud atomicity if cloud backup is configured
         if let Some(cloud_backup) = &config.performance.cloud_backup {
             if cloud_backup.enabled {
-                let unified_config = UnifiedAtomicityConfig {
-                    transaction_timeout: std::time::Duration::from_secs(300),
-                    staging_timeout: std::time::Duration::from_secs(60),
-                    validation_timeout: std::time::Duration::from_secs(30),
-                    cleanup_timeout: std::time::Duration::from_secs(120),
-                    max_concurrent_transactions: 10,
-                    enable_staging: true,
-                    enable_validation: cloud_backup.verify_integrity,
-                    enable_background_pipeline: true,
-                    enable_cloud_operations: true,
-                    retry_config: super::atomicity_manager::UnifiedRetryPolicy {
-                        max_retries: cloud_backup.retry_config.max_retries,
-                        initial_delay: std::time::Duration::from_millis(cloud_backup.retry_config.initial_delay_ms),
-                        max_delay: std::time::Duration::from_millis(cloud_backup.retry_config.max_delay_ms),
-                        backoff_multiplier: cloud_backup.retry_config.backoff_multiplier,
-                        error_strategies: std::collections::HashMap::new(),
-                    },
-                    staging_configs: std::collections::HashMap::new(),
-                    background_config: super::atomicity_manager::BackgroundPipelineConfig {
-                        parallel_execution: false,
-                        max_concurrent_pipelines: 5,
-                        stage_timeout: std::time::Duration::from_secs(120),
-                        pipeline_timeout: std::time::Duration::from_secs(600),
-                    },
-                };
-                
-                self.enable_unified_atomicity(unified_config)?;
+                self.enable_unified_atomicity(Some("/tmp/wal_staging".to_string())).await?;
                 tracing::info!("🌐 Cloud atomicity enabled based on config");
             }
         }
@@ -163,9 +136,19 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
     }
 
     fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
-        let mut engine = self.storage_engine.blocking_write();
-        *engine = Some(storage_engine);
-        tracing::debug!("🏗️ Storage engine attached to Bincode WAL Batch Strategy");
+        // Use try_write to avoid blocking in async context
+        if let Ok(mut engine) = self.storage_engine.try_write() {
+            *engine = Some(storage_engine);
+            tracing::debug!("🏗️ Storage engine attached to Bincode WAL Batch Strategy");
+        } else {
+            // If we can't get the lock immediately, spawn a blocking task
+            let storage_engine_clone = self.storage_engine.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut engine = storage_engine_clone.blocking_write();
+                *engine = Some(storage_engine);
+                tracing::debug!("🏗️ Storage engine attached to Bincode WAL Batch Strategy (async)");
+            });
+        }
     }
 
     fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>> {
@@ -175,7 +158,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
     /// 🔄 OPTIMAL BINCODE IMPLEMENTATION - Single deserialization in WalBehavior
     async fn write_avro_batch(
         &self, 
-        collection_id: &CollectionId,
+        collection_id: &str,
         avro_bytes: &[u8]
     ) -> Result<super::WalOperation> {
         let memtable = self
@@ -281,7 +264,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
 
     async fn read_vector_batches(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<WalVectorBatch>> {
@@ -312,7 +295,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
 
     async fn search_vector_by_id(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
         let memtable = self
@@ -348,7 +331,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
 
     async fn search_vectors_similarity(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
@@ -376,7 +359,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         Ok(converted_results)
     }
 
-    async fn get_collection_vectors(&self, collection_id: &CollectionId) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let memtable = self
             .memtable
             .as_ref()
@@ -394,7 +377,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         Ok(vectors)
     }
 
-    async fn flush_collection(&self, collection_id: &CollectionId) -> Result<FlushResult> {
+    async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
         // If we have a storage engine, delegate to it
         let storage_engine = self.storage_engine.read().await;
         if let Some(engine) = storage_engine.as_ref() {
@@ -433,7 +416,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
             
             Ok(FlushResult {
                 success: true,
-                collections_affected: vec![collection_id.clone()],
+                collections_affected: vec![collection_id.to_string()],
                 entries_flushed: cleared as u64,
                 bytes_written: vectors.iter().map(|v| v.actual_size_bytes() as u64).sum(),
                 files_created: 1,
@@ -448,7 +431,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         }
     }
 
-    async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         let memtable = self
             .memtable
             .as_ref()
@@ -492,7 +475,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         })
     }
 
-    async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<WalStats> {
+    async fn get_collection_stats(&self, collection_id: &str) -> Result<WalStats> {
         let memtable = self
             .memtable
             .as_ref()
@@ -538,13 +521,13 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
+    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
         // TODO: Implement force sync to disk when needed
         tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
         Ok(())
     }
 
-    async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64> {
+    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
         // TODO: Implement MVCC compaction, TTL cleanup
         // For now, return 0 entries compacted
         tracing::debug!("🔧 Compacting collection {} (placeholder)", collection_id);
@@ -557,113 +540,102 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
 }
 
 impl BincodeWalBatchStrategy {
-    /// Execute atomic cloud write with transaction guarantees
+    /// Execute atomic cloud write
     pub async fn atomic_write_batch_to_cloud(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         batch: WalVectorBatch,
         cloud_url: &str,
     ) -> Result<String> {
-        if let Some(unified_manager) = &self.unified_atomicity_manager {
-            // Begin atomic cloud transaction
-            let transaction_id = unified_manager.begin_transaction(
-                super::atomicity_manager::UnifiedTransactionType::StorageMigration,
-                vec![collection_id.clone()],
-                super::atomicity_manager::UnifiedTransactionMetadata {
-                    collections: vec![collection_id.clone()],
-                    total_size_bytes: batch.total_size_bytes,
-                    operations_count: 1,
-                    storage_providers: vec![cloud_url.split("://").next().unwrap_or("unknown").to_string()],
-                    staging_directories: vec![],
-                    retry_count: 0,
-                    priority: crate::storage::atomicity::OperationPriority::Normal,
-                },
+        if let Some(coordinator) = &self.unified_atomic_coordinator {
+            // Begin atomic operation
+            let staging_config = StagingConfig {
+                base_url: cloud_url.to_string(),
+                collection_id: Some(collection_id.to_string()),
+                operation_type: StagingOperationType::Wal,
+                custom_staging_dir: None,
+                auto_cleanup: true,
+                max_orphaned_age_hours: 24,
+            };
+            let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
+            
+            let operation_id = &op_metadata.operation_id;
+            
+            // Serialize batch data
+            let batch_data = bincode::serialize(&batch.vector_records)
+                .context("Failed to serialize batch for cloud write")?;
+            
+            // Write to staging
+            let staging_path = format!("wal_batch_{}_{}.bin", collection_id, batch.batch_id.batch_uuid);
+            coordinator.write_to_staging(
+                operation_id,
+                &staging_path,
+                &batch_data,
             ).await?;
             
-            // Execute cloud migration operation
-            let result = unified_manager.execute_cloud_migration(
-                transaction_id,
-                collection_id,
-                "local://temp",
-                cloud_url,
-            ).await;
+            // Finalize the operation (atomic move to cloud)
+            coordinator.finalize_atomic_operation(operation_id).await?;
             
-            match result {
-                Ok(operation_result) => {
-                    // Commit transaction
-                    unified_manager.commit_transaction(transaction_id).await?;
-                    tracing::info!(
-                        "✅ ATOMIC_CLOUD_WRITE: Successfully committed batch to {} (transaction: {})",
-                        cloud_url,
-                        transaction_id
-                    );
-                    Ok(cloud_url.to_string())
-                }
-                Err(e) => {
-                    // Rollback transaction
-                    if let Err(rollback_err) = unified_manager.rollback_transaction(transaction_id).await {
-                        tracing::error!("Failed to rollback transaction {}: {}", transaction_id, rollback_err);
-                    }
-                    Err(e)
-                }
-            }
+            tracing::info!(
+                "✅ ATOMIC_CLOUD_WRITE: Successfully wrote batch to {} atomically",
+                cloud_url
+            );
+            Ok(cloud_url.to_string())
         } else {
             // Fallback to non-atomic operation
             self.write_batch_to_cloud(collection_id, &batch, cloud_url).await
         }
     }
     
-    /// Execute atomic cloud migration with transaction guarantees
+    /// Execute atomic cloud migration
     pub async fn atomic_migrate_batch_to_cloud(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         batch: WalVectorBatch,
         local_path: &str,
         cloud_url: &str,
     ) -> Result<String> {
-        if let Some(unified_manager) = &self.unified_atomicity_manager {
-            // Begin atomic cloud transaction
-            let transaction_id = unified_manager.begin_transaction(
-                super::atomicity_manager::UnifiedTransactionType::StorageMigration,
-                vec![collection_id.clone()],
-                super::atomicity_manager::UnifiedTransactionMetadata {
-                    collections: vec![collection_id.clone()],
-                    total_size_bytes: batch.total_size_bytes,
-                    operations_count: 1,
-                    storage_providers: vec![cloud_url.split("://").next().unwrap_or("unknown").to_string()],
-                    staging_directories: vec![],
-                    retry_count: 0,
-                    priority: crate::storage::atomicity::OperationPriority::Normal,
-                },
-            ).await?;
+        if let Some(coordinator) = &self.unified_atomic_coordinator {
+            // Begin atomic operation
+            let staging_config = StagingConfig {
+                base_url: cloud_url.to_string(),
+                collection_id: Some(collection_id.to_string()),
+                operation_type: StagingOperationType::Wal,
+                custom_staging_dir: None,
+                auto_cleanup: true,
+                max_orphaned_age_hours: 24,
+            };
+            let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
             
-            // Execute cloud migration operation
-            let result = unified_manager.execute_cloud_migration(
-                transaction_id,
-                collection_id,
-                local_path,
-                cloud_url,
-            ).await;
+            let operation_id = &op_metadata.operation_id;
             
-            match result {
-                Ok(operation_result) => {
-                    // Commit transaction
-                    unified_manager.commit_transaction(transaction_id).await?;
-                    tracing::info!(
-                        "✅ ATOMIC_CLOUD_MIGRATION: Successfully migrated batch from {} to {} (transaction: {})",
-                        local_path,
-                        operation_result.final_url,
-                        transaction_id
-                    );
-                    Ok(operation_result.final_url)
-                }
-                Err(e) => {
-                    // Rollback transaction
-                    if let Err(rollback_err) = unified_manager.rollback_transaction(transaction_id).await {
-                        tracing::error!("Failed to rollback migration transaction {}: {}", transaction_id, rollback_err);
-                    }
-                    Err(e)
-                }
+            // Read data from local path
+            if let Some(filesystem) = &self.filesystem {
+                let local_fs = filesystem.get_filesystem(&format!("file://{}", local_path))?;
+                let data = local_fs.read(local_path).await?;
+                
+                // Write to staging  
+                let staging_path = format!("wal_batch_{}_{}.bin", collection_id, batch.batch_id.batch_uuid);
+                coordinator.write_to_staging(
+                    operation_id,
+                    &staging_path,
+                    &data,
+                ).await?;
+                
+                // Finalize the operation (atomic move to cloud)
+                coordinator.finalize_atomic_operation(operation_id).await?;
+                
+                // Delete local file after successful migration
+                let _ = local_fs.delete(local_path).await;
+                
+                tracing::info!(
+                    "✅ ATOMIC_CLOUD_MIGRATION: Successfully migrated batch from {} to {} atomically",
+                    local_path,
+                    cloud_url
+                );
+                Ok(cloud_url.to_string())
+            } else {
+                Err(anyhow::anyhow!("Filesystem not initialized"))
             }
         } else {
             // Fallback to non-atomic operation
@@ -671,23 +643,9 @@ impl BincodeWalBatchStrategy {
         }
     }
     
-    /// Get unified atomicity statistics
-    pub async fn get_unified_atomicity_stats(&self) -> Result<super::atomicity_manager::UnifiedAtomicityStats> {
-        if let Some(unified_manager) = &self.unified_atomicity_manager {
-            Ok(unified_manager.get_stats().await)
-        } else {
-            Err(anyhow::anyhow!("Unified atomicity not enabled"))
-        }
-    }
+    // get_unified_atomicity_stats removed - UnifiedAtomicCoordinator has different API
     
-    /// Cleanup completed unified transactions
-    pub async fn cleanup_unified_transactions(&self) -> Result<usize> {
-        if let Some(unified_manager) = &self.unified_atomicity_manager {
-            unified_manager.cleanup_completed_transactions().await
-        } else {
-            Ok(0)
-        }
-    }
+    // cleanup_unified_transactions removed - UnifiedAtomicCoordinator has different API
 }
 
 impl DistanceComputeProvider for BincodeWalBatchStrategy {

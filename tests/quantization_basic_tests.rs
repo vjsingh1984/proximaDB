@@ -7,11 +7,11 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb::compute::quantization::{
+    use proximadb::compute::{
         QuantizationEngine, QuantizationConfig, QuantizationType, ProductQuantizer, 
-        VectorQuantizer, QuantizedVector
+        VectorQuantizer, UnifiedQuantizationEngine, UnifiedQuantizationLevel
     };
-    use proximadb::storage::engines::viper::quantization::{
+    use proximadb::storage::engines::viper::{
         VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, 
         QuantizationLevel
     };

@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::backends::filestore_backend::CollectionRecord;
+use crate::proto::proximadb::Collection as Collection;
 
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]
@@ -42,17 +42,17 @@ pub struct CollectionLookupResult {
     pub updated_at: i64,
 }
 
-impl From<&CollectionRecord> for CollectionLookupResult {
-    fn from(record: &CollectionRecord) -> Self {
+impl From<&Collection> for CollectionLookupResult {
+    fn from(record: &Collection) -> Self {
         Self {
-            uuid: record.uuid.clone(),
-            name: record.name.clone(),
-            dimension: record.dimension,
-            distance_metric: record.distance_metric.clone(),
-            indexing_algorithm: record.indexing_algorithm.clone(),
-            storage_engine: record.storage_engine.clone(),
-            vector_count: record.vector_count,
-            total_size_bytes: record.total_size_bytes,
+            uuid: record.id.clone(),
+            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
+            distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric).unwrap_or(0)),
+            indexing_algorithm: format!("{:?}", record.config.as_ref().map(|c| c.primary_indexing_algorithm).unwrap_or(0)),
+            storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine).unwrap_or(0)),
+            vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
             created_at: record.created_at,
             updated_at: record.updated_at,
         }
@@ -79,7 +79,7 @@ pub struct IndexStatistics {
 pub struct MetadataMemoryIndexes {
     /// Primary UUID index - O(1) lookup by UUID (HashMap for 1:1 mapping)
     /// Most important for storage/WAL operations that use UUIDs
-    uuid_to_record: DashMap<String, Arc<CollectionRecord>>,
+    uuid_to_record: DashMap<String, Arc<Collection>>,
 
     /// Name index - O(1) lookup by collection name (HashMap for 1:1 mapping)
     /// Important for user queries using collection names
@@ -130,10 +130,10 @@ impl MetadataMemoryIndexes {
     }
 
     /// Insert or update collection in all indexes
-    pub async fn upsert_collection(&self, record: CollectionRecord) {
+    pub async fn upsert_collection(&self, record: Collection) {
         let start_time = std::time::Instant::now();
-        let uuid = record.uuid.clone();
-        let name = record.name.clone();
+        let uuid = record.id.clone();
+        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
@@ -162,7 +162,8 @@ impl MetadataMemoryIndexes {
     pub async fn remove_collection(&self, uuid: &str) {
         if let Some((_, record)) = self.uuid_to_record.remove(uuid) {
             // Remove from name index
-            self.name_to_uuid.remove(&record.name);
+            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            self.name_to_uuid.remove(&name);
 
             // Remove from secondary indexes
             self.remove_from_secondary_indexes(&record).await;
@@ -175,7 +176,7 @@ impl MetadataMemoryIndexes {
     }
 
     /// Fast UUID lookup - O(1) - Primary use case for storage/WAL operations
-    pub async fn get_by_uuid(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub async fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start_time = std::time::Instant::now();
         let result = self
             .uuid_to_record
@@ -197,7 +198,7 @@ impl MetadataMemoryIndexes {
     }
 
     /// Fast name lookup - O(1) - Primary use case for user queries
-    pub async fn get_by_name(&self, name: &str) -> Option<Arc<CollectionRecord>> {
+    pub async fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         let start_time = std::time::Instant::now();
 
         let result = if let Some(uuid) = self.name_to_uuid.get(name) {
@@ -360,7 +361,7 @@ impl MetadataMemoryIndexes {
     }
 
     /// Rebuild indexes from collection records - for recovery scenarios
-    pub async fn rebuild_from_records(&self, records: Vec<CollectionRecord>) {
+    pub async fn rebuild_from_records(&self, records: Vec<Collection>) {
         self.clear().await;
 
         for record in records {
@@ -372,38 +373,43 @@ impl MetadataMemoryIndexes {
     }
 
     /// Insert into secondary indexes
-    async fn insert_into_secondary_indexes(&self, record: &CollectionRecord) {
+    async fn insert_into_secondary_indexes(&self, record: &Collection) {
         // Name prefix index
         {
             let mut prefix_index = self.name_prefix_index.write().await;
             // Index all prefixes of the name (for efficient prefix search)
-            for i in 1..=record.name.len() {
-                let prefix = record.name[..i].to_string();
+            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            for i in 1..=name.len() {
+                let prefix = name[..i].to_string();
                 prefix_index
                     .entry(prefix)
                     .or_insert_with(Vec::new)
-                    .push(record.uuid.clone());
+                    .push(record.id.clone());
             }
         }
 
         // Tag index
         {
             let mut tag_index = self.tag_to_uuids.write().await;
-            for tag in &record.tags {
-                tag_index
-                    .entry(tag.clone())
-                    .or_insert_with(Vec::new)
-                    .push(record.uuid.clone());
+            if let Some(config) = &record.config {
+                for tag in &config.tags {
+                    tag_index
+                        .entry(tag.clone())
+                        .or_insert_with(Vec::new)
+                        .push(record.id.clone());
+                }
             }
         }
 
         // Size index
         {
             let mut size_index = self.size_index.write().await;
-            size_index
-                .entry(record.total_size_bytes)
-                .or_insert_with(Vec::new)
-                .push(record.uuid.clone());
+            if let Some(stats) = &record.stats {
+                size_index
+                    .entry(stats.data_size_bytes)
+                    .or_insert_with(Vec::new)
+                    .push(record.id.clone());
+            }
         }
 
         // Time index
@@ -412,19 +418,20 @@ impl MetadataMemoryIndexes {
             time_index
                 .entry(record.created_at)
                 .or_insert_with(Vec::new)
-                .push(record.uuid.clone());
+                .push(record.id.clone());
         }
     }
 
     /// Remove from secondary indexes
-    async fn remove_from_secondary_indexes(&self, record: &CollectionRecord) {
+    async fn remove_from_secondary_indexes(&self, record: &Collection) {
         // Name prefix index
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            for i in 1..=record.name.len() {
-                let prefix = record.name[..i].to_string();
+            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            for i in 1..=name.len() {
+                let prefix = name[..i].to_string();
                 if let Some(uuids) = prefix_index.get_mut(&prefix) {
-                    uuids.retain(|uuid| uuid != &record.uuid);
+                    uuids.retain(|uuid| uuid != &record.id);
                     if uuids.is_empty() {
                         prefix_index.remove(&prefix);
                     }
@@ -435,11 +442,13 @@ impl MetadataMemoryIndexes {
         // Tag index
         {
             let mut tag_index = self.tag_to_uuids.write().await;
-            for tag in &record.tags {
-                if let Some(uuids) = tag_index.get_mut(tag) {
-                    uuids.retain(|uuid| uuid != &record.uuid);
-                    if uuids.is_empty() {
-                        tag_index.remove(tag);
+            if let Some(config) = &record.config {
+                for tag in &config.tags {
+                    if let Some(uuids) = tag_index.get_mut(tag) {
+                        uuids.retain(|uuid| uuid != &record.id);
+                        if uuids.is_empty() {
+                            tag_index.remove(tag);
+                        }
                     }
                 }
             }
@@ -448,10 +457,12 @@ impl MetadataMemoryIndexes {
         // Size index
         {
             let mut size_index = self.size_index.write().await;
-            if let Some(uuids) = size_index.get_mut(&record.total_size_bytes) {
-                uuids.retain(|uuid| uuid != &record.uuid);
-                if uuids.is_empty() {
-                    size_index.remove(&record.total_size_bytes);
+            if let Some(stats) = &record.stats {
+                if let Some(uuids) = size_index.get_mut(&stats.data_size_bytes) {
+                    uuids.retain(|uuid| uuid != &record.id);
+                    if uuids.is_empty() {
+                        size_index.remove(&stats.data_size_bytes);
+                    }
                 }
             }
         }
@@ -460,7 +471,7 @@ impl MetadataMemoryIndexes {
         {
             let mut time_index = self.created_time_index.write().await;
             if let Some(uuids) = time_index.get_mut(&record.created_at) {
-                uuids.retain(|uuid| uuid != &record.uuid);
+                uuids.retain(|uuid| uuid != &record.id);
                 if uuids.is_empty() {
                     time_index.remove(&record.created_at);
                 }
@@ -472,7 +483,7 @@ impl MetadataMemoryIndexes {
     fn estimate_memory_usage(&self) -> usize {
         // Rough estimation - would need more precise calculation in production
         let uuid_index_size =
-            self.uuid_to_record.len() * (32 + std::mem::size_of::<CollectionRecord>());
+            self.uuid_to_record.len() * (32 + std::mem::size_of::<Collection>());
         let name_index_size = self.name_to_uuid.len() * 64; // Approximate
 
         uuid_index_size + name_index_size + 1024 // Add overhead for secondary indexes

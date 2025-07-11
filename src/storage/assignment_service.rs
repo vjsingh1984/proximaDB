@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::CollectionId;
+
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Storage component type for assignment tracking
@@ -29,11 +29,6 @@ pub enum StorageComponentType {
     Storage,
     /// Index storage
     Index,
-    /// Collection metadata (deprecated - should use dedicated config URL)
-    #[deprecated(
-        note = "Metadata should use dedicated storage URL from config, not assignment service"
-    )]
-    Metadata,
 }
 
 impl std::fmt::Display for StorageComponentType {
@@ -42,8 +37,6 @@ impl std::fmt::Display for StorageComponentType {
             Self::Wal => write!(f, "wal"),
             Self::Storage => write!(f, "storage"),
             Self::Index => write!(f, "index"),
-            #[allow(deprecated)]
-            Self::Metadata => write!(f, "metadata"),
         }
     }
 }
@@ -76,21 +69,21 @@ pub trait AssignmentService: Send + Sync {
     /// Assign a storage URL for a collection
     async fn assign_storage_url(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         config: &StorageAssignmentConfig,
     ) -> Result<StorageAssignmentResult>;
 
     /// Get existing assignment for a collection
     async fn get_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
     ) -> Option<StorageAssignmentResult>;
 
     /// Record an assignment (for discovered collections)
     async fn record_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
         assignment: StorageAssignmentResult,
     ) -> Result<()>;
@@ -98,7 +91,7 @@ pub trait AssignmentService: Send + Sync {
     /// Remove assignment (when collection is deleted)
     async fn remove_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
     ) -> Result<()>;
 
@@ -106,7 +99,7 @@ pub trait AssignmentService: Send + Sync {
     async fn get_all_assignments(
         &self,
         component_type: StorageComponentType,
-    ) -> HashMap<CollectionId, StorageAssignmentResult>;
+    ) -> HashMap<String, StorageAssignmentResult>;
 
     /// Get assignment statistics
     async fn get_assignment_stats(&self) -> Result<serde_json::Value>;
@@ -116,7 +109,7 @@ pub trait AssignmentService: Send + Sync {
 pub struct RoundRobinAssignmentService {
     /// Assignment cache: component_type -> collection_id -> assignment
     assignments:
-        Arc<RwLock<HashMap<StorageComponentType, HashMap<CollectionId, StorageAssignmentResult>>>>,
+        Arc<RwLock<HashMap<StorageComponentType, HashMap<String, StorageAssignmentResult>>>>,
     /// Round-robin counters per component type
     round_robin_counters: Arc<RwLock<HashMap<StorageComponentType, usize>>>,
 }
@@ -171,7 +164,7 @@ impl RoundRobinAssignmentService {
     }
 
     /// Hash collection ID for consistent assignment (if collection affinity is enabled)
-    fn hash_collection_id(&self, collection_id: &CollectionId) -> usize {
+    fn hash_collection_id(&self, collection_id: &str) -> usize {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -185,7 +178,7 @@ impl RoundRobinAssignmentService {
 impl AssignmentService for RoundRobinAssignmentService {
     async fn assign_storage_url(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         config: &StorageAssignmentConfig,
     ) -> Result<StorageAssignmentResult> {
         // Check if already assigned
@@ -241,7 +234,7 @@ impl AssignmentService for RoundRobinAssignmentService {
 
     async fn get_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
     ) -> Option<StorageAssignmentResult> {
         let assignments = self.assignments.read().await;
@@ -253,7 +246,7 @@ impl AssignmentService for RoundRobinAssignmentService {
 
     async fn record_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
         assignment: StorageAssignmentResult,
     ) -> Result<()> {
@@ -261,13 +254,13 @@ impl AssignmentService for RoundRobinAssignmentService {
         let component_assignments = assignments
             .entry(component_type)
             .or_insert_with(HashMap::new);
-        component_assignments.insert(collection_id.clone(), assignment);
+        component_assignments.insert(collection_id.to_string(), assignment);
         Ok(())
     }
 
     async fn remove_assignment(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         component_type: StorageComponentType,
     ) -> Result<()> {
         let mut assignments = self.assignments.write().await;
@@ -286,7 +279,7 @@ impl AssignmentService for RoundRobinAssignmentService {
     async fn get_all_assignments(
         &self,
         component_type: StorageComponentType,
-    ) -> HashMap<CollectionId, StorageAssignmentResult> {
+    ) -> HashMap<String, StorageAssignmentResult> {
         let assignments = self.assignments.read().await;
         assignments
             .get(&component_type)
@@ -524,7 +517,7 @@ impl AssignmentDiscovery {
 
                                         assignment_service
                                             .record_assignment(
-                                                &CollectionId::from(dir_name),
+                                                &String::from(dir_name),
                                                 component_type,
                                                 assignment,
                                             )
@@ -591,8 +584,6 @@ impl AssignmentDiscovery {
                 StorageComponentType::Index => {
                     extension == "idx" || extension == "hnsw" || extension == "ivf"
                 }
-                #[allow(deprecated)]
-                StorageComponentType::Metadata => extension == "json" || extension == "meta",
             }
         } else {
             false
@@ -627,7 +618,7 @@ mod tests {
 
         for collection in &collections {
             let assignment = service
-                .assign_storage_url(&CollectionId::from(collection.to_string()), &config)
+                .assign_storage_url(&String::from(collection.to_string()), &config)
                 .await
                 .unwrap();
             assignments.push(assignment.directory_index);
@@ -650,7 +641,7 @@ mod tests {
             collection_affinity: true,
         };
 
-        let collection_id = CollectionId::from("test_collection".to_string());
+        let collection_id = String::from("test_collection".to_string());
 
         // Assign multiple times - should always get same result
         let assignment1 = service
@@ -681,7 +672,7 @@ mod tests {
             collection_affinity: false,
         };
 
-        let collection_id = CollectionId::from("lifecycle_test".to_string());
+        let collection_id = String::from("lifecycle_test".to_string());
 
         // Initially no assignment
         assert!(service
@@ -788,9 +779,9 @@ mod tests {
         assert_eq!(storage_assignments.len(), 1);
 
         // Verify correct collections were assigned
-        assert!(wal_assignments.contains_key(&CollectionId::from("test_collection_1".to_string())));
+        assert!(wal_assignments.contains_key(&String::from("test_collection_1".to_string())));
         assert!(
-            storage_assignments.contains_key(&CollectionId::from("test_collection_2".to_string()))
+            storage_assignments.contains_key(&String::from("test_collection_2".to_string()))
         );
     }
 
@@ -872,7 +863,7 @@ mod tests {
         let collections = vec!["coll1", "coll2", "coll3"];
         for collection in &collections {
             service
-                .assign_storage_url(&CollectionId::from(collection.to_string()), &config)
+                .assign_storage_url(&String::from(collection.to_string()), &config)
                 .await
                 .unwrap();
         }

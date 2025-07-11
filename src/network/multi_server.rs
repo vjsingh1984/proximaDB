@@ -180,7 +180,7 @@ impl Default for MultiServerConfig {
                 bind_address: "0.0.0.0:5679".parse().unwrap(),
                 tls_bind_address: None,
                 enable_grpc: true,
-                max_message_size: 8 * 1024 * 1024, // 8MB for vector data with Avro
+                max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts with Avro
                 enable_reflection: true,
                 enable_compression: true,
                 tls_cert_file: None,
@@ -307,12 +307,13 @@ impl SharedServices {
             );
 
             let filestore_config = FilestoreMetadataConfig {
-                filestore_url: config.storage_url.clone(),
+                storage_url: config.storage_url.clone(),
                 enable_compression: config.cache_size_mb.map(|_| true).unwrap_or(true),
-                enable_backup: true,
-                enable_snapshot_archival: true,
-                max_archived_snapshots: 5,
-                temp_directory: None,
+                enable_snapshots: true,
+                snapshot_threshold: 1000,
+                keep_snapshots: 5,
+                backup_url: None,
+                temp_dir: None,
             };
 
             // SharedServices handles cloud vs local filesystem logic
@@ -358,7 +359,7 @@ impl SharedServices {
 
         info!(
             "📁 SharedServices: Unified metadata backend URL: {}",
-            filestore_config.filestore_url
+            filestore_config.storage_url
         );
 
         // SharedServices creates the unified metadata backend for all protocols
@@ -368,6 +369,13 @@ impl SharedServices {
             Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
 
         let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
+        
+        // 🔗 DEPENDENCY INJECTION: Inject collection service into storage engine
+        {
+            let storage_ref = storage.read().await;
+            storage_ref.set_metadata_provider(collection_service.clone() as Arc<dyn crate::storage::traits::CollectionMetadataProvider>).await;
+        }
+        info!("✅ SharedServices: Collection service injected into StorageEngine");
 
         // SharedServices coordinates vector operations with WAL
         let avro_config = crate::services::vector_service::UnifiedServiceConfig::default();
@@ -410,30 +418,39 @@ impl SharedServices {
                     collection_id
                 );
 
-                // Convert storage metadata to collection record format
-                let collection_record =
-                    crate::storage::metadata::backends::filestore_backend::CollectionRecord {
-                        uuid: format!("recovered-{}", Uuid::new_v4()),
-                        name: metadata.name,
-                        dimension: metadata.dimension as i32,
-                        distance_metric: metadata.distance_metric,
-                        storage_engine: "viper".to_string(),
-                        indexing_algorithm: metadata.indexing_algorithm,
+                // Convert storage metadata to proto collection format
+                let collection_config = crate::proto::proximadb::CollectionConfig {
+                    name: metadata.name.clone(),
+                    dimension: metadata.dimension as i32,
+                    distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default
+                    storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32, // Default
+                    primary_indexing_algorithm: crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32, // Default
+                    filterable_columns: vec![],
+                    index_configs: vec![],
+                    quantization_config: None,
+                    primary_index_name: String::new(),
+                    enable_automatic_index_selection: false,
+                    description: None,
+                    tags: vec![],
+                    owner: None,
+                };
+
+                let proto_collection = crate::proto::proximadb::Collection {
+                    id: format!("recovered-{}", Uuid::new_v4()),
+                    config: Some(collection_config),
+                    stats: Some(crate::proto::proximadb::CollectionStats {
                         vector_count: metadata.vector_count as i64,
-                        total_size_bytes: metadata.total_size_bytes as i64,
-                        created_at: metadata.created_at.timestamp(),
-                        updated_at: metadata.updated_at.timestamp(),
-                        version: 1,
-                        config: "{}".to_string(), // Empty JSON config
-                        description: Some("Recovered from WAL".to_string()),
-                        tags: vec![],
-                        owner: Some("system".to_string()),
-                    };
+                        index_size_bytes: metadata.total_size_bytes as i64,
+                        data_size_bytes: metadata.total_size_bytes as i64,
+                    }),
+                    created_at: metadata.created_at.timestamp_millis(),
+                    updated_at: metadata.updated_at.timestamp_millis(),
+                };
 
                 // Store the recovered collection in the metadata backend
                 match collection_service
                     .get_metadata_backend()
-                    .upsert_collection_record(collection_record)
+                    .upsert_collection_proto(&proto_collection)
                     .await
                 {
                     Ok(_) => {
@@ -523,7 +540,8 @@ impl MultiServer {
             let grpc_service =
                 crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
 
-            let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
+            let mut server_builder = tonic::transport::Server::builder()
+                .add_service(grpc_service);
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {

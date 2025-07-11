@@ -1,0 +1,105 @@
+@startuml ProximaDB Search Sequence
+!theme plain
+title ProximaDB - Polymorphic Search Sequence Diagram
+
+participant "Client" as C
+participant "REST/gRPC\nHandler" as H
+participant "Vector\nService" as VS
+participant "Search\nFactory" as SF
+participant "WAL\nEngine" as WAL
+participant "LSM\nEngine" as LSM
+participant "VIPER\nEngine" as VIPER
+participant "Dedup\nManager" as DM
+
+== Search Request Flow ==
+
+C -> H: POST /api/v1/vector/search
+activate H
+H -> H: Parse request & extract\nsearch parameters
+H -> VS: search_vectors_polymorphic(\ncollection_id, query_vector,\nk, search_params)
+activate VS
+
+VS -> VS: Validate collection exists
+VS -> VS: Build SearchContext with\nquantization hints
+
+VS -> SF: create_search_engine(\ncollection, search_params)
+activate SF
+SF -> SF: Detect storage distribution
+SF -> SF: Select optimal search strategy
+SF <-- SF: SearchEngine instance
+VS <-- SF: Polymorphic SearchEngine
+deactivate SF
+
+== Multi-Tier Search ==
+
+VS -> WAL: search_unflushed(query, k)
+activate WAL
+WAL -> WAL: Scan in-memory vectors
+WAL -> WAL: Apply metadata filters
+WAL --> VS: WAL results + timestamps
+deactivate WAL
+
+VS -> LSM: search_recent(query, k)
+activate LSM
+LSM -> LSM: Search SSTable indexes
+LSM -> LSM: Use bloom filters
+LSM -> LSM: Apply metadata predicates
+LSM --> VS: LSM results + timestamps
+deactivate LSM
+
+VS -> VIPER: search_compacted(query, k)
+activate VIPER
+VIPER -> VIPER: ML cluster selection
+VIPER -> VIPER: Quantized coarse search
+VIPER -> VIPER: Parquet predicate pushdown
+VIPER -> VIPER: Fine-grained reranking
+VIPER --> VS: VIPER results + timestamps
+deactivate VIPER
+
+== Deduplication & Merge ==
+
+VS -> DM: deduplicate_results(\nwal_results, lsm_results,\nviper_results)
+activate DM
+DM -> DM: Group by vector ID
+DM -> DM: Select newest version\nby timestamp
+DM -> DM: Sort by relevance score
+DM --> VS: Final deduplicated results
+deactivate DM
+
+VS -> VS: Apply result limit (top-k)
+VS -> VS: Format response with\nrequested fields
+
+VS --> H: Search results (JSON/Proto)
+deactivate VS
+
+H -> H: Add metrics & timing
+H --> C: HTTP 200 OK\n{results, metrics}
+deactivate H
+
+== Error Handling ==
+
+alt Collection Not Found
+  VS --> H: Error: Collection not found
+  H --> C: HTTP 404 Not Found
+end
+
+alt Timeout Exceeded
+  VS --> H: Error: Search timeout
+  H --> C: HTTP 408 Request Timeout
+end
+
+note over SF
+  SearchEngineFactory selects:
+  - MemoryOnlyEngine (WAL only)
+  - LsmEngine (WAL + LSM)
+  - ViperEngine (WAL + VIPER)
+  - HybridEngine (All tiers)
+end note
+
+note over VIPER
+  Two-stage search:
+  1. Coarse: INT8/PQ quantized
+  2. Fine: FP32 reranking
+end note
+
+@enduml

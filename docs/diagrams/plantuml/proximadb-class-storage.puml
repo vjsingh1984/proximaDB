@@ -1,0 +1,210 @@
+@startuml ProximaDB Storage Layer Class Diagram
+!theme plain
+title ProximaDB - Storage Layer Class Diagram
+
+package "Storage Traits" {
+  interface StorageEngine {
+    +insert_vector(record: VectorRecord): Result<()>
+    +get_vector_by_id(id: &str): Result<Option<VectorRecord>>
+    +search_vectors(query: SearchQuery): Result<Vec<SearchResult>>
+    +delete_vector(id: &str): Result<bool>
+    +flush(): Result<FlushStats>
+    +compact(): Result<CompactionStats>
+  }
+  
+  interface WALStrategy {
+    +append_batch(batch: Vec<VectorRecord>): Result<()>
+    +read_segments(): Result<Vec<Segment>>
+    +checkpoint(): Result<()>
+    +recover(): Result<RecoveryStats>
+  }
+  
+  interface CompactionStrategy {
+    +should_compact(stats: &StorageStats): bool
+    +compact_files(files: Vec<File>): Result<File>
+    +estimate_size_reduction(): usize
+  }
+}
+
+package "WAL Implementation" {
+  class WalManager {
+    -active_segment: Arc<RwLock<Segment>>
+    -segments: Vec<Segment>
+    -config: WalConfig
+    -filesystem: Arc<FilesystemFactory>
+    --
+    +new(config: WalConfig): Self
+    +append_batch(batch: &[u8]): Result<()>
+    +flush_to_storage(engine: &dyn StorageEngine): Result<()>
+    +get_unflushed_segments(): Vec<Segment>
+    +mark_flushed(segment_id: u64): Result<()>
+  }
+  
+  class WalConfig {
+    +sync_mode: SyncMode
+    +segment_size: usize
+    +compression: CompressionType
+    +retention_period: Duration
+  }
+  
+  class Segment {
+    -id: u64
+    -data: Vec<u8>
+    -timestamp: i64
+    -is_flushed: bool
+    -sequence_start: u64
+    -sequence_end: u64
+  }
+  
+  class BatchFactory {
+    +create_avro_batch(records: Vec<VectorRecord>): Result<Vec<u8>>
+    +create_bincode_batch(records: Vec<VectorRecord>): Result<Vec<u8>>
+    +deserialize_batch(data: &[u8], format: Format): Result<Vec<VectorRecord>>
+  }
+}
+
+package "LSM Implementation" {
+  class LsmTree {
+    -memtable: Arc<RwLock<BTreeMemtable>>
+    -sstables: Vec<SSTable>
+    -config: LsmConfig
+    -wal: Arc<WalManager>
+    --
+    +insert(record: VectorRecord): Result<()>
+    +get(id: &str): Result<Option<VectorRecord>>
+    +search(query: &SearchQuery): Result<Vec<SearchResult>>
+    +flush_memtable(): Result<SSTable>
+    +compact_levels(): Result<CompactionStats>
+  }
+  
+  class SSTable {
+    -level: u32
+    -file_path: PathBuf
+    -index: BTreeMap<String, u64>
+    -bloom_filter: BloomFilter
+    -metadata: SSTableMetadata
+    --
+    +read_record(offset: u64): Result<VectorRecord>
+    +scan_range(start: &str, end: &str): Iterator<VectorRecord>
+    +contains_key(id: &str): bool
+  }
+  
+  class BTreeMemtable {
+    -data: BTreeMap<String, VectorRecord>
+    -size_bytes: usize
+    -write_buffer_size: usize
+    --
+    +insert(id: String, record: VectorRecord): Result<()>
+    +get(id: &str): Option<&VectorRecord>
+    +is_full(): bool
+    +drain(): Vec<(String, VectorRecord)>
+  }
+}
+
+package "VIPER Implementation" {
+  class ViperEngine {
+    -config: ViperConfig
+    -parquet_writer: ParquetWriter
+    -ml_clusters: HashMap<u32, Cluster>
+    -quantization_engine: UnifiedQuantization
+    --
+    +insert_batch(records: Vec<VectorRecord>): Result<()>
+    +search_with_clustering(query: SearchQuery): Result<Vec<SearchResult>>
+    +two_stage_search(query: SearchQuery): Result<Vec<SearchResult>>
+    +update_clusters(): Result<()>
+    +compact_parquet_files(): Result<CompactionStats>
+  }
+  
+  class ParquetWriter {
+    -schema: Arc<Schema>
+    -row_group_size: usize
+    -compression: CompressionType
+    --
+    +write_batch(records: Vec<VectorRecord>): Result<PathBuf>
+    +create_arrow_batch(records: Vec<VectorRecord>): Result<RecordBatch>
+    +apply_column_encoding(batch: RecordBatch): Result<RecordBatch>
+  }
+  
+  class TwoStageSearch {
+    -coarse_engine: QuantizedSearchEngine
+    -fine_engine: ExactSearchEngine
+    -candidate_multiplier: f32
+    --
+    +search(query: &[f32], k: usize): Result<Vec<SearchResult>>
+    +optimize_parameters(accuracy_target: f32): Result<()>
+  }
+  
+  class MLCluster {
+    -centroid: Vec<f32>
+    -radius: f32
+    -vector_count: usize
+    -quantized_centroid: Vec<u8>
+    --
+    +distance_to_query(query: &[f32]): f32
+    +should_search(query: &[f32], threshold: f32): bool
+  }
+}
+
+package "Unified Components" {
+  class StorageEngineFactory {
+    +create_engine(config: StorageConfig): Box<dyn StorageEngine>
+    +detect_optimal_engine(workload: &WorkloadProfile): StorageEngineType
+  }
+  
+  class UnifiedAtomicityManager {
+    -operations: Arc<RwLock<HashMap<Uuid, AtomicOperation>>>
+    -staging_dir: PathBuf
+    --
+    +begin_operation(op_type: OperationType): Result<Uuid>
+    +commit_operation(id: Uuid): Result<()>
+    +rollback_operation(id: Uuid): Result<()>
+    +cleanup_expired(): Result<usize>
+  }
+  
+  class SearchEngineFactory {
+    +create_polymorphic_engine(storage_info: StorageInfo): Box<dyn SearchEngine>
+    +create_hybrid_engine(engines: Vec<Box<dyn SearchEngine>>): HybridSearchEngine
+  }
+}
+
+' Inheritance relationships
+StorageEngine <|.. LsmTree
+StorageEngine <|.. ViperEngine
+WALStrategy <|.. WalManager
+CompactionStrategy <|.. LsmTree
+CompactionStrategy <|.. ViperEngine
+
+' Composition relationships
+WalManager *-- Segment
+WalManager o-- WalConfig
+LsmTree *-- BTreeMemtable
+LsmTree *-- SSTable
+LsmTree o-- WalManager
+ViperEngine *-- ParquetWriter
+ViperEngine *-- MLCluster
+ViperEngine *-- TwoStageSearch
+SSTable *-- BloomFilter
+
+' Usage relationships
+LsmTree ..> BatchFactory : uses
+ViperEngine ..> BatchFactory : uses
+StorageEngineFactory ..> LsmTree : creates
+StorageEngineFactory ..> ViperEngine : creates
+SearchEngineFactory ..> TwoStageSearch : creates
+
+note top of StorageEngine
+  Core storage interface implemented
+  by all storage engines (LSM, VIPER)
+end note
+
+note right of WalManager
+  Write-Ahead Log ensures
+  durability and crash recovery
+end note
+
+note bottom of ViperEngine
+  VIPER: Vector-Optimized Parquet
+  with ML clustering and quantization
+end note
+
+@enduml

@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::core::{CollectionId, VectorId};
+use crate::core::{String, VectorId};
 
 /// Search operation type for cost estimation and optimization
 #[derive(Debug, Clone, PartialEq)]
@@ -182,21 +182,21 @@ pub trait SearchEngine: Send + Sync {
     /// Create an execution plan for the given search operation
     async fn create_plan(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         operation: SearchOperation,
     ) -> Result<SearchPlan>;
 
     /// Execute a search operation with the given plan
     async fn execute_search(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         plan: SearchPlan,
     ) -> Result<Vec<SearchResult>>;
 
     /// Execute search operation (convenience method that creates plan automatically)
     async fn search(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         operation: SearchOperation,
     ) -> Result<Vec<SearchResult>> {
         let plan = self.create_plan(collection_id, operation).await?;
@@ -206,30 +206,30 @@ pub trait SearchEngine: Send + Sync {
     /// Get search statistics for optimization
     async fn get_search_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<HashMap<String, SearchStats>>;
 
     /// Update search statistics (called after each operation)
     async fn update_search_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         stats: SearchStats,
     ) -> Result<()>;
 
     /// Get available indexes for the collection
-    async fn list_indexes(&self, collection_id: &CollectionId) -> Result<Vec<IndexInfo>>;
+    async fn list_indexes(&self, collection_id: &str) -> Result<Vec<IndexInfo>>;
 
     /// Create index for optimization
-    async fn create_index(&self, collection_id: &CollectionId, index_spec: IndexSpec)
+    async fn create_index(&self, collection_id: &str, index_spec: IndexSpec)
         -> Result<()>;
 
     /// Drop index
-    async fn drop_index(&self, collection_id: &CollectionId, index_name: &str) -> Result<()>;
+    async fn drop_index(&self, collection_id: &str, index_name: &str) -> Result<()>;
 
     /// Explain query execution plan (for debugging)
     async fn explain_plan(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         operation: SearchOperation,
     ) -> Result<String>;
 }
@@ -287,7 +287,7 @@ pub mod optimizer {
 
     /// Cost-based optimizer for search operations
     pub struct SearchOptimizer {
-        pub collection_stats: HashMap<CollectionId, CollectionStats>,
+        pub collection_stats: HashMap<String, CollectionStats>,
         pub index_stats: HashMap<String, IndexStats>,
     }
 
@@ -325,7 +325,7 @@ pub mod optimizer {
         /// Choose optimal execution strategy based on cost estimates
         pub async fn optimize_search(
             &self,
-            _collection_id: &CollectionId,
+            _collection_id: &str,
             _operation: &SearchOperation,
         ) -> Result<SearchPlan> {
             // Implementation will analyze costs and choose best strategy
@@ -335,7 +335,7 @@ pub mod optimizer {
         /// Update statistics based on execution results
         pub async fn update_stats(
             &mut self,
-            _collection_id: &CollectionId,
+            _collection_id: &str,
             _operation: &SearchOperation,
             _stats: &SearchStats,
         ) -> Result<()> {

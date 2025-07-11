@@ -113,10 +113,6 @@ pub enum SyncMode {
 /// WAL strategy type selection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalStrategyType {
-    /// Legacy Avro with schema evolution support (deprecated)
-    Avro,
-    /// Legacy Bincode for maximum native Rust performance (deprecated)
-    Bincode,
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
     /// Modern Bincode batch strategy with optimal Rust performance
@@ -125,8 +121,8 @@ pub enum WalStrategyType {
 
 impl Default for WalStrategyType {
     fn default() -> Self {
-        // Default to Avro for schema evolution, robust recovery, and bulk insert efficiency
-        Self::Avro
+        // Default to AvroBatch for schema evolution, robust recovery, and bulk insert efficiency
+        Self::AvroBatch
     }
 }
 
@@ -304,8 +300,8 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
             wal_config.strategy_type = match strategy_type.as_str() {
-                "Avro" => WalStrategyType::Avro,
-                "Bincode" => WalStrategyType::Bincode,
+                "Avro" => WalStrategyType::AvroBatch,
+                "Bincode" => WalStrategyType::BincodeBatch,
                 "AvroBatch" => WalStrategyType::AvroBatch,
                 "BincodeBatch" => WalStrategyType::BincodeBatch,
                 _ => WalStrategyType::default(),
@@ -358,7 +354,7 @@ impl WalConfig {
     /// Create configuration optimized for high-throughput writes
     pub fn high_throughput() -> Self {
         let mut config = Self::default();
-        config.strategy_type = WalStrategyType::Bincode; // Faster serialization
+        config.strategy_type = WalStrategyType::BincodeBatch; // Faster serialization
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB
@@ -393,7 +389,7 @@ impl WalConfig {
     pub fn range_query_optimized() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Excellent range scan performance
-        config.strategy_type = WalStrategyType::Avro; // Schema evolution for analytics
+        config.strategy_type = WalStrategyType::AvroBatch; // Schema evolution for analytics
         config.compression.algorithm = CompressionAlgorithm::Snappy; // Balanced compression
         config.performance.memory_flush_size_bytes = 64 * 1024 * 1024; // 64MB moderate memory usage
         config
@@ -403,7 +399,7 @@ impl WalConfig {
     pub fn high_concurrency() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::Art; // Excellent concurrency
-        config.strategy_type = WalStrategyType::Bincode; // Fast serialization
+        config.strategy_type = WalStrategyType::BincodeBatch; // Fast serialization
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
         config.memtable.enable_concurrency = true;
         config

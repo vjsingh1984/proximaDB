@@ -264,12 +264,30 @@ async fn test_grpc_vector_search() -> Result<()> {
         rank: true,
     };
 
+    // Create SearchParams with quantization hints
+    let search_params = SearchParams {
+        top_k: Some(10),
+        filters: HashMap::new(),
+        accuracy_threshold: Some(0.95),
+        include_expired: Some(false),
+        timeout_ms: Some(5000),
+        enable_two_stage: Some(true),
+        quantization_hint: Some(search_params::QuantizationHint::Scalar(ScalarQuantizationParams {
+            bits: 8,
+            scale: 1.0,
+            offset: 0.0,
+        })),
+        enable_clustering_hint: Some(true),
+        enable_metadata_filtering_hint: Some(true),
+        custom_hints: HashMap::new(),
+    };
+
     let search_request = Request::new(VectorSearchRequest {
         collection_id: collection_id.to_string(),
         queries: vec![search_query],
         top_k: 10,
         distance_metric_override: Some(DistanceMetric::Cosine as i32),
-        search_params: HashMap::new(),
+        search_params: Some(search_params),
         include_fields: Some(include_fields),
     });
 
@@ -375,6 +393,228 @@ async fn test_grpc_vector_end_to_end() -> Result<()> {
     if let Some(result_info) = &search_response.get_ref().result_info {
         println!("   Search found {} results", result_info.result_count);
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_grpc_vector_search_with_quantization() -> Result<()> {
+    let (_temp_dir, service) = create_test_service().await?;
+    let collection_id = "quantization_test_collection";
+
+    // Create collection with quantization config
+    let quantization_config = QuantizationConfig {
+        enabled: true,
+        storage_quantization: Some(StorageQuantizationConfig {
+            enabled: true,
+            level: Some(QuantizationLevel {
+                level_type: Some(quantization_level::LevelType::Scalar(ScalarQuantization {
+                    bits: 8,
+                    scale: 1.0,
+                    offset: 0.0,
+                    clamp_values: true,
+                })),
+            }),
+            codebook_id: None,
+            progressive_quantization: false,
+            storage_compatibility: StorageEngineCompatibility::ViperOnly as i32,
+        }),
+        index_quantization: None,
+        search_quantization: Some(SearchQuantizationConfig {
+            enabled: true,
+            default_level: Some(QuantizationLevel {
+                level_type: Some(quantization_level::LevelType::Scalar(ScalarQuantization {
+                    bits: 8,
+                    scale: 1.0,
+                    offset: 0.0,
+                    clamp_values: true,
+                })),
+            }),
+            adaptive_precision: true,
+            accuracy_threshold: 0.95,
+            candidate_multiplier: 3,
+        }),
+        compression_ratio_target: 4.0,
+        validation: Some(QuantizationValidation {
+            accuracy_threshold: 0.95,
+            validation_sample_size: 1000,
+            enable_quality_monitoring: true,
+            retraining_threshold: 0.90,
+        }),
+    };
+
+    let collection_config = CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: 384,
+        distance_metric: DistanceMetric::Cosine as i32,
+        storage_engine: StorageEngine::Viper as i32,
+        indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+        filterable_metadata_fields: vec!["category".to_string()],
+        indexing_config: HashMap::new(),
+        filterable_columns: vec![],
+        index_config: None,
+        quantization_config: Some(quantization_config),
+    };
+
+    let create_request = Request::new(CollectionRequest {
+        operation: CollectionOperation::Create as i32,
+        collection_id: None,
+        collection_config: Some(collection_config),
+        query_params: HashMap::new(),
+        options: HashMap::new(),
+        migration_config: HashMap::new(),
+    });
+
+    let create_response = service.collection_operation(create_request).await?;
+    assert!(create_response.get_ref().success);
+
+    // Insert test vectors
+    let test_vectors = vec![
+        (
+            "quant_vec_1".to_string(),
+            vec![0.1; 384],
+            [("category".to_string(), "quantized".to_string())]
+                .iter()
+                .cloned()
+                .collect(),
+        ),
+        (
+            "quant_vec_2".to_string(),
+            vec![0.2; 384],
+            [("category".to_string(), "quantized".to_string())]
+                .iter()
+                .cloned()
+                .collect(),
+        ),
+    ];
+
+    let avro_payload = create_vector_avro_payload(test_vectors);
+    let insert_request = Request::new(VectorInsertRequest {
+        collection_id: collection_id.to_string(),
+        upsert_mode: false,
+        vectors_avro_payload: avro_payload,
+        batch_timeout_ms: Some(5000),
+        request_id: Some("test_quant_insert".to_string()),
+    });
+
+    let insert_response = service.vector_insert(insert_request).await?;
+    assert!(insert_response.get_ref().success);
+
+    // Search with different quantization levels
+    let query_vector = vec![0.15; 384];
+    
+    // Test 1: Binary quantization for fast approximate search
+    let binary_search_params = SearchParams {
+        top_k: Some(10),
+        filters: HashMap::new(),
+        accuracy_threshold: Some(0.90),
+        include_expired: Some(false),
+        timeout_ms: Some(1000),
+        enable_two_stage: Some(true),
+        quantization_hint: Some(search_params::QuantizationHint::Binary(BinaryQuantizationParams {
+            threshold: 0.0,
+        })),
+        enable_clustering_hint: Some(true),
+        enable_metadata_filtering_hint: Some(true),
+        custom_hints: HashMap::new(),
+    };
+
+    let binary_search_request = Request::new(VectorSearchRequest {
+        collection_id: collection_id.to_string(),
+        queries: vec![SearchQuery {
+            vector: query_vector.clone(),
+            id: None,
+            metadata_filter: HashMap::new(),
+        }],
+        top_k: 10,
+        distance_metric_override: Some(DistanceMetric::Cosine as i32),
+        search_params: Some(binary_search_params),
+        include_fields: Some(IncludeFields {
+            vector: false,
+            metadata: true,
+            score: true,
+            rank: true,
+        }),
+    });
+
+    let binary_response = service.vector_search(binary_search_request).await?;
+    assert!(binary_response.get_ref().success);
+    println!("✅ Binary quantization search passed");
+
+    // Test 2: Product quantization for balanced accuracy/speed
+    let pq_search_params = SearchParams {
+        top_k: Some(10),
+        filters: HashMap::new(),
+        accuracy_threshold: Some(0.95),
+        include_expired: Some(false),
+        timeout_ms: Some(2000),
+        enable_two_stage: Some(true),
+        quantization_hint: Some(search_params::QuantizationHint::Product(ProductQuantizationParams {
+            num_subvectors: 8,
+            bits_per_code: 8,
+        })),
+        enable_clustering_hint: Some(true),
+        enable_metadata_filtering_hint: Some(true),
+        custom_hints: HashMap::new(),
+    };
+
+    let pq_search_request = Request::new(VectorSearchRequest {
+        collection_id: collection_id.to_string(),
+        queries: vec![SearchQuery {
+            vector: query_vector.clone(),
+            id: None,
+            metadata_filter: HashMap::new(),
+        }],
+        top_k: 10,
+        distance_metric_override: Some(DistanceMetric::Cosine as i32),
+        search_params: Some(pq_search_params),
+        include_fields: Some(IncludeFields {
+            vector: false,
+            metadata: true,
+            score: true,
+            rank: true,
+        }),
+    });
+
+    let pq_response = service.vector_search(pq_search_request).await?;
+    assert!(pq_response.get_ref().success);
+    println!("✅ Product quantization search passed");
+
+    // Test 3: Full precision search (no quantization)
+    let fp32_search_params = SearchParams {
+        top_k: Some(10),
+        filters: HashMap::new(),
+        accuracy_threshold: Some(1.0),
+        include_expired: Some(false),
+        timeout_ms: Some(5000),
+        enable_two_stage: Some(false),
+        quantization_hint: Some(search_params::QuantizationHint::NoQuantization(true)),
+        enable_clustering_hint: Some(true),
+        enable_metadata_filtering_hint: Some(true),
+        custom_hints: HashMap::new(),
+    };
+
+    let fp32_search_request = Request::new(VectorSearchRequest {
+        collection_id: collection_id.to_string(),
+        queries: vec![SearchQuery {
+            vector: query_vector,
+            id: None,
+            metadata_filter: HashMap::new(),
+        }],
+        top_k: 10,
+        distance_metric_override: Some(DistanceMetric::Cosine as i32),
+        search_params: Some(fp32_search_params),
+        include_fields: Some(IncludeFields {
+            vector: false,
+            metadata: true,
+            score: true,
+            rank: true,
+        }),
+    });
+
+    let fp32_response = service.vector_search(fp32_search_request).await?;
+    assert!(fp32_response.get_ref().success);
+    println!("✅ Full precision search passed");
 
     Ok(())
 }

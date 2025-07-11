@@ -21,12 +21,12 @@ use super::{
     BackendStats, CollectionMetadata, MetadataBackend, MetadataBackendConfig, MetadataBackendType,
     MetadataFilter, MetadataOperation, SystemMetadata,
 };
-use crate::core::CollectionId;
+
 
 /// In-memory metadata backend
 pub struct MemoryMetadataBackend {
     /// In-memory collection storage
-    collections: Arc<RwLock<HashMap<CollectionId, CollectionMetadata>>>,
+    collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
 
     /// System metadata
     system_metadata: Arc<RwLock<SystemMetadata>>,
@@ -45,19 +45,19 @@ pub struct MemoryMetadataBackend {
 #[derive(Debug, Default)]
 struct MemoryIndexes {
     /// Index by collection name
-    by_name: HashMap<String, CollectionId>,
+    by_name: HashMap<String, String>,
 
     /// Index by owner
-    by_owner: HashMap<String, Vec<CollectionId>>,
+    by_owner: HashMap<String, Vec<String>>,
 
     /// Index by access pattern
-    by_access_pattern: HashMap<String, Vec<CollectionId>>,
+    by_access_pattern: HashMap<String, Vec<String>>,
 
     /// Index by tags
-    by_tag: HashMap<String, Vec<CollectionId>>,
+    by_tag: HashMap<String, Vec<String>>,
 
     /// Full-text search index (simple keyword matching)
-    keywords: HashMap<String, Vec<CollectionId>>,
+    keywords: HashMap<String, Vec<String>>,
 }
 
 /// Backend-specific statistics
@@ -209,9 +209,9 @@ impl MemoryMetadataBackend {
     }
 
     /// Apply metadata filter using indexes
-    async fn apply_filter(&self, filter: &MetadataFilter) -> Result<Vec<CollectionId>> {
+    async fn apply_filter(&self, filter: &MetadataFilter) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
-        let mut candidates: Option<Vec<CollectionId>> = None;
+        let mut candidates: Option<Vec<String>> = None;
 
         // TODO: Implement actual filter logic based on MetadataFilter structure
         // This is a placeholder implementation
@@ -343,7 +343,7 @@ impl MetadataBackend for MemoryMetadataBackend {
 
     async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
         let start = std::time::Instant::now();
 
@@ -363,7 +363,7 @@ impl MetadataBackend for MemoryMetadataBackend {
 
     async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()> {
         let start = std::time::Instant::now();
@@ -378,7 +378,7 @@ impl MetadataBackend for MemoryMetadataBackend {
                 old_metadata = Some(existing.clone());
 
                 // Update collection
-                collections.insert(collection_id.clone(), metadata.clone());
+                collections.insert(collection_id.to_string(), metadata.clone());
                 success = true;
             } else {
                 self.record_operation(start, success).await;
@@ -398,7 +398,7 @@ impl MetadataBackend for MemoryMetadataBackend {
         Ok(())
     }
 
-    async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool> {
+    async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
         let start = std::time::Instant::now();
         let mut deleted_metadata = None;
 
@@ -456,7 +456,7 @@ impl MetadataBackend for MemoryMetadataBackend {
 
     async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {

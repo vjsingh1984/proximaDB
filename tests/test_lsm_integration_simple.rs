@@ -22,22 +22,17 @@ async fn create_lsm_tree_with_wal(temp_dir: &TempDir) -> Result<LsmTree> {
 
     // Create WAL manager
     let mut wal_config = WalConfig::default();
-    wal_config.strategy_type = WalStrategyType::Avro;
+    wal_config.strategy_type = WalStrategyType::AvroBatch;
     wal_config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
     let wal_manager = Arc::new(WalManager::create_with_batch_factory(
-        WalStrategyType::Avro,
+        WalStrategyType::AvroBatch,
         wal_config,
         filesystem
     ).await?);
 
     // Create LSM config
-    let lsm_config = LsmConfig {
-        memtable_size_mb: 1, // Small size for testing
-        level_count: 4,
-        compaction_threshold: 4,
-        block_size_kb: 64,
-    };
+    let lsm_config = LsmConfig::default();
 
     // Create LSM tree
     let collection_id = "test_collection".to_string();

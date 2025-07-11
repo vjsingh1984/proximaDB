@@ -4,7 +4,7 @@
 mod tests {
     use crate::compute::distance::DistanceMetric;
     use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
-    use crate::core::{CollectionId, VectorId, VectorRecord};
+    use crate::core::{String, VectorId, VectorRecord};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
     use std::collections::HashMap;
@@ -27,7 +27,7 @@ mod tests {
                 .expect("Failed to create filesystem"),
         );
 
-        let wal_strategy = WalFactory::create_from_config(&wal_config, filesystem)
+        let wal_strategy = WalBatchFactory::create_strategy(WalStrategyType::AvroBatch, &wal_config, filesystem)
             .await
             .expect("Failed to create WAL strategy");
 
@@ -185,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn test_wal_search_with_unified_distances() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
-        let collection_id = CollectionId::from("test_collection".to_string());
+        let collection_id = String::from("test_collection".to_string());
         let records = create_test_vector_records();
 
         // Insert test vectors

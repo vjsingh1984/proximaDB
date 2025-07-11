@@ -36,7 +36,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
 
         let strategy = WalBatchFactory::create_strategy(
-            WalStrategyType::Avro,
+            WalStrategyType::AvroBatch,
             &config,
             filesystem
         ).await.expect("Failed to create Avro batch strategy");
@@ -50,7 +50,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
 
         let strategy = WalBatchFactory::create_strategy(
-            WalStrategyType::Bincode,
+            WalStrategyType::BincodeBatch,
             &config,
             filesystem
         ).await.expect("Failed to create Bincode batch strategy");
@@ -62,7 +62,7 @@ mod tests {
     async fn test_create_from_config_avro() {
         let (filesystem, temp_dir) = create_test_filesystem().await;
         let mut config = create_test_config(&temp_dir);
-        config.strategy_type = WalStrategyType::Avro;
+        config.strategy_type = WalStrategyType::AvroBatch;
 
         let strategy = WalBatchFactory::create_from_config(&config, filesystem)
             .await.expect("Failed to create strategy from config");
@@ -74,7 +74,7 @@ mod tests {
     async fn test_create_from_config_bincode() {
         let (filesystem, temp_dir) = create_test_filesystem().await;
         let mut config = create_test_config(&temp_dir);
-        config.strategy_type = WalStrategyType::Bincode;
+        config.strategy_type = WalStrategyType::BincodeBatch;
 
         let strategy = WalBatchFactory::create_from_config(&config, filesystem)
             .await.expect("Failed to create strategy from config");
@@ -87,13 +87,13 @@ mod tests {
         let strategies = WalBatchFactory::available_strategies();
         
         assert_eq!(strategies.len(), 2);
-        assert!(strategies.contains(&WalStrategyType::Avro));
-        assert!(strategies.contains(&WalStrategyType::Bincode));
+        assert!(strategies.contains(&WalStrategyType::AvroBatch));
+        assert!(strategies.contains(&WalStrategyType::BincodeBatch));
     }
 
     #[test]
     fn test_avro_strategy_info() {
-        let info = WalBatchFactory::get_strategy_info(&WalStrategyType::Avro);
+        let info = WalBatchFactory::get_strategy_info(&WalStrategyType::AvroBatch);
         
         assert_eq!(info.name, "AvroBatch");
         assert_eq!(info.serialization, "Apache Avro");
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn test_bincode_strategy_info() {
-        let info = WalBatchFactory::get_strategy_info(&WalStrategyType::Bincode);
+        let info = WalBatchFactory::get_strategy_info(&WalStrategyType::BincodeBatch);
         
         assert_eq!(info.name, "BincodeBatch");
         assert_eq!(info.serialization, "Bincode (native Rust)");
@@ -132,8 +132,8 @@ mod tests {
 
     #[test]
     fn test_strategy_info_consistency() {
-        let avro_info = WalBatchFactory::get_strategy_info(&WalStrategyType::Avro);
-        let bincode_info = WalBatchFactory::get_strategy_info(&WalStrategyType::Bincode);
+        let avro_info = WalBatchFactory::get_strategy_info(&WalStrategyType::AvroBatch);
+        let bincode_info = WalBatchFactory::get_strategy_info(&WalStrategyType::BincodeBatch);
         
         // Both should be batch-native
         assert!(avro_info.batch_native);
@@ -154,7 +154,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
 
         // Test both strategies can be created and used
-        for strategy_type in &[WalStrategyType::Avro, WalStrategyType::Bincode] {
+        for strategy_type in &[WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch] {
             let strategy = WalBatchFactory::create_strategy(
                 strategy_type.clone(),
                 &config,
@@ -179,7 +179,7 @@ mod tests {
         let tasks: Vec<_> = (0..5).map(|i| {
             let fs = filesystem.clone();
             let cfg = config.clone();
-            let strategy_type = if i % 2 == 0 { WalStrategyType::Avro } else { WalStrategyType::Bincode };
+            let strategy_type = if i % 2 == 0 { WalStrategyType::AvroBatch } else { WalStrategyType::BincodeBatch };
             
             tokio::spawn(async move {
                 WalBatchFactory::create_strategy(strategy_type, &cfg, fs).await
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_strategy_info_completeness() {
-        for strategy_type in &[WalStrategyType::Avro, WalStrategyType::Bincode] {
+        for strategy_type in &[WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch] {
             let info = WalBatchFactory::get_strategy_info(strategy_type);
             
             // All fields should be populated

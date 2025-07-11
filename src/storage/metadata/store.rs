@@ -20,9 +20,10 @@ use super::{
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
-use crate::core::CollectionId;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::strategy::CollectionStrategyConfig;
+
+use crate::storage::persistence::filesystem::FilesystemFactory;
+// Strategy configuration is imported through metadata module
 
 /// Configuration for metadata store
 #[derive(Debug, Clone)]
@@ -402,7 +403,7 @@ impl MetadataStore {
     /// Get collection metadata
     pub async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
         MetadataStoreInterface::get_collection(self, collection_id).await
     }
@@ -410,14 +411,14 @@ impl MetadataStore {
     /// Update collection metadata
     pub async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()> {
         MetadataStoreInterface::update_collection(self, collection_id, metadata).await
     }
 
     /// Delete collection
-    pub async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool> {
+    pub async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
         MetadataStoreInterface::delete_collection(self, collection_id).await
     }
 
@@ -429,7 +430,7 @@ impl MetadataStore {
     /// Update collection statistics
     pub async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {
@@ -472,7 +473,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
         if let Some(atomic_store) = &self.atomic_store {
             atomic_store.get_collection(collection_id).await
@@ -508,7 +509,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()> {
         if let Some(atomic_store) = &self.atomic_store {
@@ -540,7 +541,7 @@ impl MetadataStoreInterface for MetadataStore {
         }
     }
 
-    async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool> {
+    async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
         if let Some(atomic_store) = &self.atomic_store {
             atomic_store.delete_collection(collection_id).await
         } else {
@@ -576,7 +577,7 @@ impl MetadataStoreInterface for MetadataStore {
                     tags: versioned.tags,
                     owner: versioned.owner,
                     description: versioned.description,
-                    strategy_config: super::CollectionStrategyConfig::default(),
+                    strategy_config: CollectionStrategyConfig::default(),
                     strategy_change_history: Vec::new(),
                     flush_config: None,
                 })
@@ -588,7 +589,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {

@@ -720,7 +720,7 @@ mod tests {
     async fn test_storage_system_builder() {
         let builder = StorageSystemBuilder::new()
             .with_viper_layout()
-            .with_wal_strategy(WalStrategyType::Avro)
+            .with_wal_strategy(WalStrategyType::AvroBatch)
             .with_wal_memtable(MemTableType::BTree)
             .with_high_data_compression();
 
@@ -730,7 +730,7 @@ mod tests {
         );
         assert_eq!(
             builder.config.wal_system.strategy_type,
-            WalStrategyType::Avro
+            WalStrategyType::AvroBatch
         );
         assert_eq!(
             builder.config.wal_system.memtable.memtable_type,

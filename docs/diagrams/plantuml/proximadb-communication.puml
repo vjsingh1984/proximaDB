@@ -1,0 +1,133 @@
+@startuml ProximaDB Communication Diagram
+!theme plain
+title ProximaDB - Component Communication Diagram
+
+participant "Client" as C
+participant "REST/gRPC Handler" as H
+participant "Vector Service" as VS
+participant "Collection Service" as CS
+participant "Storage Coordinator" as SC
+participant "WAL Manager" as WAL
+participant "Storage Engine" as SE
+participant "AXIS Manager" as AXIS
+participant "Search Factory" as SF
+participant "Metrics Collector" as MC
+
+== Asynchronous Insert Flow ==
+
+C ->> H : 1: insert_vectors(request)
+activate H
+
+H ->> VS : 2: insert_batch(collection_id, vectors)
+activate VS
+
+VS ->> CS : 3: get_collection_config(id)
+activate CS
+CS -->> VS : 3.1: collection_config
+deactivate CS
+
+VS ->> SC : 4: validate_and_prepare(vectors, config)
+activate SC
+SC -->> VS : 4.1: prepared_batch
+deactivate SC
+
+VS ->> WAL : 5: append_async(batch)
+activate WAL
+WAL -->> VS : 5.1: write_handle
+deactivate WAL
+
+VS ->> AXIS : 6: queue_index_update(vectors)
+activate AXIS
+AXIS -->> VS : 6.1: update_queued
+deactivate AXIS
+
+VS -->> H : 7: success_response
+deactivate VS
+
+H -->> C : 8: HTTP 200 OK
+deactivate H
+
+note over WAL : Background flush\nto storage
+
+WAL ->> SE : 9: flush_batch_async()
+activate SE
+SE ->> MC : 9.1: report_flush_metrics()
+SE -->> WAL : 9.2: flush_complete
+deactivate SE
+
+== Synchronous Search Flow ==
+
+C ->> H : 10: search_vectors(query)
+activate H
+
+H ->> VS : 11: search_polymorphic(params)
+activate VS
+
+VS ->> SF : 12: create_search_engine(collection)
+activate SF
+SF -->> VS : 12.1: polymorphic_engine
+deactivate SF
+
+VS ->> WAL : 13: search_unflushed()
+activate WAL
+WAL -->> VS : 13.1: wal_results
+deactivate WAL
+
+VS ->> SE : 14: search_storage()
+activate SE
+SE ->> MC : 14.1: report_search_metrics()
+SE -->> VS : 14.2: storage_results
+deactivate SE
+
+VS ->> SC : 15: deduplicate_merge(results)
+activate SC
+SC -->> VS : 15.1: final_results
+deactivate SC
+
+VS -->> H : 16: search_response
+deactivate VS
+
+H -->> C : 17: HTTP 200 OK
+deactivate H
+
+== Event-Driven Communications ==
+
+SE ->> SC : 18: compaction_needed
+SC ->> SE : 18.1: start_compaction()
+
+AXIS ->> SC : 19: index_optimized
+SC ->> MC : 19.1: report_optimization()
+
+WAL ->> MC : 20: wal_full_event
+MC ->> VS : 20.1: trigger_emergency_flush()
+
+== Monitoring Communications ==
+
+MC <<-- VS : metrics.vector_ops
+MC <<-- WAL : metrics.wal_stats
+MC <<-- SE : metrics.storage_stats
+MC <<-- AXIS : metrics.index_stats
+
+note over MC
+  Aggregates metrics
+  for Prometheus export
+end note
+
+== Error Handling Communications ==
+
+VS -x H : error: collection_not_found
+H -x C : HTTP 404
+
+SE -x VS : error: storage_full
+VS -x H : error: service_unavailable
+H -x C : HTTP 503
+
+note right of C
+  Communication Patterns:
+  1. Request-Response (sync)
+  2. Fire-and-Forget (async)
+  3. Event-Driven (pub-sub)
+  4. Streaming (gRPC only)
+end note
+
+@enduml

@@ -48,14 +48,22 @@ pub trait MemtableManager {
 struct ViperEngine {
     parquet_writer: ParquetWriter<VectorRecord>,
     ml_clustering: Option<KMeansCluster>,
-    quantization: Option<QuantizationModel>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    column_projection: ColumnProjectionStrategy,
 }
 ----
 
 **Vector Storage Format**:
 - **Schema**: Dynamic Parquet schema with List<Float32> for vectors
-- **Metadata**: Separate column for JSON metadata
+- **Quantization**: Adjacent columns for quantized vectors (e.g., vector_pq8, vector_binary)
+- **Metadata**: List<Struct<key: String, value: String>> for structured access
 - **Compression**: ZSTD compression for optimal storage density
+
+**Unified Quantization Support**:
+- **Pre-computed**: Quantized vectors stored during flush, no runtime overhead
+- **Multiple Formats**: PQ4/PQ8, Scalar INT8/INT16, Binary, Custom 1-32 bits
+- **Hardware Acceleration**: SIMD, NEON, CUDA, ROCm, MPS backends
+- **Column Projection**: Query-aware selection reduces I/O by 50-80%
 
 **ML Clustering Implementation**:
 - **Algorithm**: K-means++ with intelligent centroid initialization
@@ -84,6 +92,34 @@ struct LsmRecord {
 
 == Search Engine Implementation
 
+=== Two-Stage Search Strategy
+
+**Stage 1: Quantized Candidate Selection**:
+[source,rust]
+----
+pub async fn stage1_quantized_search(&self, query: &SearchQuery) -> Vec<CandidateResult> {
+    // Use quantized vectors for fast filtering
+    let candidates = self.search_quantized_columns(
+        query.vector,
+        query.k * self.config.candidate_multiplier,
+    ).await?;
+    
+    candidates
+}
+----
+
+**Stage 2: FP32 Refinement**:
+[source,rust]
+----
+pub async fn stage2_fp32_refinement(&self, candidates: Vec<CandidateResult>) -> Vec<SearchResult> {
+    // Retrieve FP32 vectors for accurate distance
+    let fp32_vectors = self.retrieve_fp32_for_candidates(&candidates).await?;
+    
+    // Calculate exact distances and re-rank
+    self.calculate_exact_distances(query.vector, fp32_vectors)
+}
+----
+
 === Storage-Aware Polymorphic Search
 
 **Engine Selection Logic**:
@@ -95,6 +131,14 @@ async fn select_search_engine(&self, query: &SearchQuery) -> Vec<Box<dyn SearchE
     // WAL search for unflushed data
     if self.wal_has_unflushed_data(query.collection_id) {
         engines.push(Box::new(WalSearchEngine::new(self.wal.clone())));
+    }
+    
+    // VIPER search with two-stage strategy for quantized data
+    if self.has_quantized_data(query.collection_id) {
+        engines.push(Box::new(TwoStageSearchEngine::new(
+            self.distance_compute.clone(),
+            self.quantization_engine.clone(),
+        )));
     }
     
     // VIPER search for clustered data

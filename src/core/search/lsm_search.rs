@@ -16,10 +16,11 @@ use crate::core::indexing::{BloomFilter, BloomFilterCollection};
 use crate::core::search::storage_aware::{
     QuantizationLevel, SearchCapabilities, SearchHints, SearchMetrics, StorageSearchEngine,
 };
-use crate::core::{SearchResult, StorageEngine as StorageEngineType, VectorRecord};
+use crate::core::{SearchResult, VectorRecord};
+use crate::storage::strategy::StorageEngineType;
 use super::multi_tier_deduplication::MetadataFilter;
 use crate::storage::engines::lsm::LsmTree;
-use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
+use crate::proto::proximadb::Collection;
 
 /// LSM-specific search engine with tiered search optimizations
 ///
@@ -33,7 +34,7 @@ pub struct LSMSearchEngine {
     lsm_tree: Arc<LsmTree>,
 
     /// Collection metadata for optimization decisions
-    collection_record: CollectionRecord,
+    collection: Collection,
 
     /// Bloom filters for each SSTable to skip irrelevant files
     bloom_filters: Arc<tokio::sync::RwLock<BloomFilterCollection>>,
@@ -47,7 +48,7 @@ pub struct LSMSearchEngine {
 
 impl LSMSearchEngine {
     /// Create a new LSM search engine
-    pub fn new(lsm_tree: Arc<LsmTree>, collection_record: CollectionRecord) -> Result<Self> {
+    pub fn new(lsm_tree: Arc<LsmTree>, collection: Collection) -> Result<Self> {
         let capabilities = SearchCapabilities {
             supports_predicate_pushdown: false, // LSM doesn't support predicate pushdown
             supports_bloom_filters: true,
@@ -82,7 +83,7 @@ impl LSMSearchEngine {
 
         Ok(Self {
             lsm_tree,
-            collection_record,
+            collection,
             bloom_filters: Arc::new(tokio::sync::RwLock::new(bloom_filters)),
             metrics: Arc::new(tokio::sync::RwLock::new(LSMSearchMetrics::default())),
             capabilities,
@@ -208,10 +209,25 @@ impl LSMSearchEngine {
         let memtable_vectors = self.lsm_tree.iter_all().await?;
 
         // Calculate distances and rank
+        // Use unified distance computation from compute module
+        let distance_compute = crate::compute::unified_distance::UnifiedDistanceCompute::default();
+        let metric_i32 = self.collection.config.as_ref()
+            .map(|c| c.distance_metric)
+            .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine as i32);
+        let metric = match metric_i32 {
+            1 => crate::compute::DistanceMetric::Cosine,
+            2 => crate::compute::DistanceMetric::Euclidean,
+            3 => crate::compute::DistanceMetric::DotProduct,
+            4 => crate::compute::DistanceMetric::Hamming,
+            5 => crate::compute::DistanceMetric::Manhattan,
+            6 => crate::compute::DistanceMetric::Jaccard,
+            _ => crate::compute::DistanceMetric::Cosine,
+        };
+        
         let mut candidates: Vec<(f32, VectorRecord)> = memtable_vectors
             .into_iter()
             .filter_map(|record| {
-                let distance = Self::cosine_distance(query_vector, &record.vector);
+                let distance = distance_compute.calculate_distance(query_vector, &record.vector, &metric);
                 if distance.is_finite() {
                     Some((distance, record))
                 } else {
@@ -382,7 +398,7 @@ impl LSMSearchEngine {
         let base_storage_path = format!(
             "{}/{}",
             self.lsm_tree.data_dir().display(),
-            self.collection_record.uuid
+            self.collection.id
         );
         let storage_path = format!("{}/level_{}", base_storage_path, level);
 
@@ -471,23 +487,6 @@ impl LSMSearchEngine {
         Ok(final_results)
     }
 
-    // Distance calculation utilities
-
-    fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return f32::MAX;
-        }
-
-        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-        if norm_a == 0.0 || norm_b == 0.0 {
-            return f32::MAX;
-        }
-
-        1.0 - (dot_product / (norm_a * norm_b))
-    }
 }
 
 #[async_trait]
@@ -510,7 +509,9 @@ impl StorageSearchEngine for LSMSearchEngine {
         );
 
         // Validate parameters
-        if let Some(dimension) = self.collection_record.get_dimension() {
+        let dimension = self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0);
+        if dimension > 0 {
+            let dimension = dimension as usize;
             if query_vector.len() != dimension {
                 return Err(anyhow::anyhow!(
                     "Query vector dimension {} does not match collection dimension {}",
@@ -599,7 +600,9 @@ impl StorageSearchEngine for LSMSearchEngine {
             return Err(anyhow::anyhow!("k must be greater than 0"));
         }
 
-        if let Some(dimension) = self.collection_record.get_dimension() {
+        let dimension = self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0);
+        if dimension > 0 {
+            let dimension = dimension as usize;
             if query_vector.len() != dimension {
                 return Err(anyhow::anyhow!("Query vector dimension mismatch"));
             }
@@ -723,58 +726,3 @@ impl LSMSearchMetrics {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::VectorRecord;
-
-    #[test]
-    fn test_cosine_distance() {
-        let a = vec![1.0, 0.0, 0.0];
-        let b = vec![0.0, 1.0, 0.0];
-        let distance = LSMSearchEngine::cosine_distance(&a, &b);
-        assert!((distance - 1.0).abs() < 0.001); // Orthogonal vectors
-
-        let c = vec![1.0, 0.0, 0.0];
-        let d = vec![1.0, 0.0, 0.0];
-        let distance2 = LSMSearchEngine::cosine_distance(&c, &d);
-        assert!(distance2.abs() < 0.001); // Identical vectors
-    }
-
-    #[test]
-    fn test_search_hints_optimization() {
-        use crate::proto::proximadb::StorageEngine;
-        use crate::storage::engines::lsm::LsmTree;
-        use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
-        use chrono::Utc;
-
-        // Create a mock collection record
-        let collection_record = CollectionRecord {
-            uuid: "test-uuid".to_string(),
-            name: "test-collection".to_string(),
-            description: None,
-            dimension: 384,
-            distance_metric: "COSINE".to_string(),
-            storage_engine: "LSM".to_string(),
-            indexing_algorithm: "HNSW".to_string(),
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
-            version: 1,
-            vector_count: 0,
-            total_size_bytes: 0,
-            tags: Vec::new(),
-            owner: None,
-            config: "{}".to_string(),
-        };
-
-        // This would need proper LSM tree initialization in a real test
-        // For now, we'll skip the full engine creation
-
-        let hints = SearchHints::default();
-
-        // Test optimization logic
-        assert!(hints.predicate_pushdown); // Default is true
-        assert!(hints.use_bloom_filters); // Default is true
-        assert_eq!(hints.quantization_level, QuantizationLevel::FP32);
-    }
-}

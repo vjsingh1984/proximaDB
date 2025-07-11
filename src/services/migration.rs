@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::core::CollectionId;
+
 use crate::storage::{
     metadata::{StrategyChangeStatus, StrategyChangeType},
-    strategy::{CollectionStrategyConfig, DistanceMetric, IndexingAlgorithm, StorageEngineType},
+    strategy::{CollectionStrategyConfig, StorageEngineType, IndexingAlgorithm, DistanceMetric},
     MetadataStore,
 };
 
@@ -32,7 +32,7 @@ pub struct MigrationService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyMigrationRequest {
     /// Collection to migrate
-    pub collection_id: CollectionId,
+    pub collection_id: String,
 
     /// New storage engine (optional - keep current if None)
     pub storage_engine: Option<StorageEngineType>,
@@ -40,7 +40,7 @@ pub struct StrategyMigrationRequest {
     /// New indexing algorithm (optional - keep current if None)
     pub indexing_algorithm: Option<IndexingAlgorithm>,
 
-    /// New search/distance metric (optional - keep current if None)
+    /// New distance metric (optional - keep current if None)
     pub distance_metric: Option<DistanceMetric>,
 
     /// Additional indexing parameters
@@ -71,7 +71,7 @@ pub struct StrategyMigrationResponse {
     /// Previous strategy configuration
     pub previous_strategy: CollectionStrategyConfig,
 
-    /// New strategy configuration  
+    /// New strategy configuration
     pub new_strategy: CollectionStrategyConfig,
 
     /// What was changed
@@ -212,7 +212,7 @@ impl MigrationService {
     /// Get migration history for a collection
     pub async fn get_migration_history(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Vec<StrategyChangeStatus>> {
         let metadata = self
             .metadata_store
@@ -226,7 +226,7 @@ impl MigrationService {
     /// Get current strategy for a collection
     pub async fn get_current_strategy(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CollectionStrategyConfig> {
         let metadata = self
             .metadata_store

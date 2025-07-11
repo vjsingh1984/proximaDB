@@ -2,7 +2,7 @@
 
 use super::common::*;
 use anyhow::Result;
-use proximadb::storage::engines::viper::core::{FilterableColumn, FilterableDataType};
+use proximadb::storage::engines::viper::types::{FilterableColumn, FilterableDataType};
 use std::collections::HashMap;
 
 #[cfg(test)]

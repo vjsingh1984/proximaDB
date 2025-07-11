@@ -1,5 +1,5 @@
 @startuml DIAGRAM_NAME
-!theme aws-orange
+!theme plain
 !define $PRIMARY_COLOR #2196F3
 !define $SECONDARY_COLOR #4CAF50
 !define $ACCENT_COLOR #FF9800

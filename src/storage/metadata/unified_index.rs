@@ -23,7 +23,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::backends::filestore_backend::CollectionRecord;
+use crate::proto::proximadb::Collection as Collection;
 
 /// Performance metrics for monitoring and optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,9 +41,9 @@ pub struct IndexPerformanceMetrics {
 /// Unified collection index - single source of truth for all metadata operations
 /// Optimized for O(1) access patterns with excellent concurrency
 pub struct UnifiedCollectionIndex {
-    /// Primary store: UUID -> CollectionRecord (most critical for storage/WAL operations)
+    /// Primary store: UUID -> Collection (most critical for storage/WAL operations)
     /// Uses DashMap for lock-free concurrent access - perfect for serverless horizontal scaling
-    collections: DashMap<String, Arc<CollectionRecord>>,
+    collections: DashMap<String, Arc<Collection>>,
 
     /// Secondary index: Name -> UUID (critical for user API queries)
     /// Separate map ensures O(1) name lookups without scanning primary store
@@ -74,10 +74,10 @@ impl UnifiedCollectionIndex {
 
     /// Insert or update collection - atomic operation across both indexes
     /// Critical: This is the ONLY way to modify the index to ensure consistency
-    pub fn upsert_collection(&self, record: CollectionRecord) {
+    pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
-        let uuid = record.uuid.clone();
-        let name = record.name.clone();
+        let uuid = record.id.clone();
+        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
 
         // Atomic operation: insert into both maps
         let record_arc = Arc::new(record);
@@ -93,13 +93,13 @@ impl UnifiedCollectionIndex {
     }
 
     /// Remove collection - atomic operation across both indexes
-    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
 
         // Remove from primary store first to get the record
         if let Some((_, record)) = self.collections.remove(uuid) {
             // Remove from secondary index
-            self.name_to_uuid.remove(&record.name);
+            self.name_to_uuid.remove(&record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default());
 
             // Update metrics
             let elapsed = start.elapsed().as_nanos() as u64;
@@ -118,7 +118,7 @@ impl UnifiedCollectionIndex {
     }
 
     /// Get collection by UUID - O(1) - Primary access pattern for storage/WAL
-    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
         let result = self
             .collections
@@ -140,7 +140,7 @@ impl UnifiedCollectionIndex {
     }
 
     /// Get collection by name - O(1) - Primary access pattern for user APIs
-    pub fn get_by_name(&self, name: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
 
         // Two-step O(1) lookup: name -> UUID -> record
@@ -182,8 +182,8 @@ impl UnifiedCollectionIndex {
     }
 
     /// List all collections - O(n) but efficient iteration
-    /// Returns cloned Arc<CollectionRecord> for zero-copy sharing
-    pub fn list_all(&self) -> Vec<Arc<CollectionRecord>> {
+    /// Returns cloned Arc<Collection> for zero-copy sharing
+    pub fn list_all(&self) -> Vec<Arc<Collection>> {
         self.collections
             .iter()
             .map(|entry| entry.value().clone())
@@ -208,7 +208,7 @@ impl UnifiedCollectionIndex {
 
     /// Rebuild from collection records - for recovery from disk
     /// This is the critical recovery method for serverless startup
-    pub fn rebuild_from_records(&self, records: Vec<CollectionRecord>) {
+    pub fn rebuild_from_records(&self, records: Vec<Collection>) {
         // Clear existing data
         self.clear();
 
@@ -237,7 +237,7 @@ impl UnifiedCollectionIndex {
         let collections_size = self.collections.len()
             * (
                 32 +  // UUID string
-            std::mem::size_of::<CollectionRecord>() + 
+            std::mem::size_of::<Collection>() + 
             64
                 // Arc overhead
             );
@@ -253,7 +253,7 @@ impl UnifiedCollectionIndex {
 
     /// Advanced: Prefix search on collection names - O(n) but optimized
     /// Only use when necessary - for most cases, exact name lookup is preferred
-    pub fn find_by_name_prefix(&self, prefix: &str) -> Vec<Arc<CollectionRecord>> {
+    pub fn find_by_name_prefix(&self, prefix: &str) -> Vec<Arc<Collection>> {
         self.name_to_uuid
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
@@ -267,9 +267,9 @@ impl UnifiedCollectionIndex {
 
     /// Advanced: Filter collections by predicate - O(n)
     /// Use sparingly - prefer exact lookups when possible
-    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<CollectionRecord>>
+    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>
     where
-        F: Fn(&CollectionRecord) -> bool,
+        F: Fn(&Collection) -> bool,
     {
         self.collections
             .iter()
@@ -299,19 +299,19 @@ impl ThreadSafeUnifiedIndex {
 
     /// All operations delegate to the underlying unified index
     /// DashMap already provides thread safety, so this is mostly for API consistency
-    pub fn upsert_collection(&self, record: CollectionRecord) {
+    pub fn upsert_collection(&self, record: Collection) {
         self.index.upsert_collection(record);
     }
 
-    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<Collection>> {
         self.index.remove_collection(uuid)
     }
 
-    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         self.index.get_by_uuid(uuid)
     }
 
-    pub fn get_by_name(&self, name: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         self.index.get_by_name(name)
     }
 
@@ -327,7 +327,7 @@ impl ThreadSafeUnifiedIndex {
         self.index.exists_by_name(name)
     }
 
-    pub fn list_all(&self) -> Vec<Arc<CollectionRecord>> {
+    pub fn list_all(&self) -> Vec<Arc<Collection>> {
         self.index.list_all()
     }
 
@@ -335,7 +335,7 @@ impl ThreadSafeUnifiedIndex {
         self.index.count()
     }
 
-    pub fn rebuild_from_records(&self, records: Vec<CollectionRecord>) {
+    pub fn rebuild_from_records(&self, records: Vec<Collection>) {
         self.index.rebuild_from_records(records);
     }
 

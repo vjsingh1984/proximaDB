@@ -17,7 +17,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::Avro;
+        config.strategy_type = WalStrategyType::AvroBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config =
@@ -29,7 +29,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::Avro,
+            WalStrategyType::AvroBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -381,7 +381,7 @@ mod tests {
             let vector_id = format!("vector_{}", i + 1);
             let result = manager
                 .insert(
-                    crate::core::CollectionId::from(collection_id.to_string()),
+                    crate::core::String::from(collection_id.to_string()),
                     crate::core::VectorId::from(vector_id),
                     record.clone(),
                 )
@@ -395,7 +395,7 @@ mod tests {
         // Test cosine similarity search
         let cosine_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 k,
                 Some(DistanceMetric::Cosine),
@@ -422,7 +422,7 @@ mod tests {
         // Test Euclidean distance search
         let euclidean_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 k,
                 Some(DistanceMetric::Euclidean),
@@ -449,7 +449,7 @@ mod tests {
         // Test Manhattan distance search
         let manhattan_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 k,
                 Some(DistanceMetric::Manhattan),
@@ -469,7 +469,7 @@ mod tests {
         // Test dot product search
         let dot_product_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 k,
                 Some(DistanceMetric::DotProduct),
@@ -550,7 +550,7 @@ mod tests {
         for record in records {
             let result = manager
                 .insert(
-                    crate::core::CollectionId::from(collection_id.to_string()),
+                    crate::core::String::from(collection_id.to_string()),
                     crate::core::VectorId::from(record.id.clone()),
                     record,
                 )
@@ -563,7 +563,7 @@ mod tests {
         // Test cosine similarity ordering (higher is better)
         let cosine_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 3,
                 Some(DistanceMetric::Cosine),
@@ -587,7 +587,7 @@ mod tests {
         // Test Euclidean distance ordering (lower is better)
         let euclidean_results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 3,
                 Some(DistanceMetric::Euclidean),
@@ -627,7 +627,7 @@ mod tests {
         // Test search in empty collection
         let results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 5,
                 Some(DistanceMetric::Cosine),
@@ -653,7 +653,7 @@ mod tests {
             let vector_id = format!("vector_{}", i + 1);
             let result = manager
                 .insert(
-                    crate::core::CollectionId::from(collection_id.to_string()),
+                    crate::core::String::from(collection_id.to_string()),
                     crate::core::VectorId::from(vector_id),
                     record.clone(),
                 )
@@ -667,7 +667,7 @@ mod tests {
         // Test search with k larger than available vectors
         let results = manager
             .search_vectors_similarity(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 &query_vector,
                 large_k,
                 Some(DistanceMetric::Cosine),

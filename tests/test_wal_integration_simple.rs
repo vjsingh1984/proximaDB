@@ -17,14 +17,14 @@ async fn test_wal_testing_helper_integration() -> Result<()> {
 
     // Create WAL manager using the same pattern as existing tests
     let mut config = WalConfig::default();
-    config.strategy_type = WalStrategyType::Avro;
+    config.strategy_type = WalStrategyType::AvroBatch;
     config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
     let wal_manager = WalManager::create_with_batch_factory(
-        WalStrategyType::Avro,
+        WalStrategyType::AvroBatch,
         config,
         filesystem
     ).await?;
@@ -56,14 +56,14 @@ async fn test_basic_wal_operations() -> Result<()> {
     let temp_dir = TempDir::new()?;
 
     let mut config = WalConfig::default();
-    config.strategy_type = WalStrategyType::Avro;
+    config.strategy_type = WalStrategyType::AvroBatch;
     config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
     // Create filesystem factory with proper config
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
     let wal_manager = WalManager::create_with_batch_factory(
-        WalStrategyType::Avro,
+        WalStrategyType::AvroBatch,
         config,
         filesystem
     ).await?;

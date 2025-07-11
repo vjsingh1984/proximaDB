@@ -9,31 +9,35 @@ use tempfile::TempDir;
 
 use chrono::Utc;
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::viper::core::{
-    AtomicOperationsConfig, CompressionConfig, SchemaConfig, ViperCoreConfig, ViperCoreEngine,
+use proximadb::storage::engines::viper::{
+    AtomicOperationsConfig, CompressionConfig, SchemaConfig, ViperConfig, ViperEngine,
 };
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 
 /// Helper function to create VIPER storage engine
-async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperCoreEngine> {
+async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperEngine> {
     // Create filesystem factory
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
     // Create VIPER config
-    let viper_config = ViperCoreConfig {
+    let viper_config = ViperConfig {
         enable_ml_clustering: true,
         enable_background_compaction: true,
-        compression_config: CompressionConfig::default(),
-        schema_config: SchemaConfig::default(),
-        atomic_config: AtomicOperationsConfig::default(),
-        writer_pool_size: 4,
-        stats_interval_secs: 60,
+        parquet_compression: proximadb::storage::engines::viper::ParquetCompression::Snappy,
+        row_group_size: 1024,
+        initial_cluster_count: 8,
+        enable_quantization: false,
+        flush_size_bytes: None,
+        quantization_config: None,
+        cluster_quantization_map: std::collections::HashMap::new(),
+        vector_quality_metrics: proximadb::storage::engines::viper::VectorQualityMetrics::default(),
+        search_performance_stats: proximadb::storage::engines::viper::SearchPerformanceStats::default(),
     };
 
     // Create VIPER storage engine
-    let viper_engine = ViperCoreEngine::new(viper_config, filesystem).await?;
+    let viper_engine = ViperEngine::new(viper_config, filesystem).await?;
 
     Ok(viper_engine)
 }

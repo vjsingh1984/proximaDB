@@ -181,22 +181,61 @@ pub async fn insert_vector(&self, request: InsertVectorRequest) -> Result<Insert
 
 == Storage Engine Patterns
 
-=== VIPER Integration
+=== VIPER Integration (Phase 4 Update)
 
 [source,rust]
 ----
-impl ViperCoreEngine {
+impl ViperEngine {
     pub async fn do_flush(&self, flush_cycle: FlushCycle) -> Result<FlushResult> {
         // Zero-copy vector record processing (Avro optimization)
         let vector_records = flush_cycle.vector_records;
         
-        // Serialize to Parquet with ML clustering
-        let parquet_data = self.serialize_records_to_parquet(vector_records).await?;
+        // Apply quantization if configured
+        let (quantized_vectors, quantization_metadata) = if let Some(quantization) = &self.quantization_config {
+            self.quantization_engine.batch_quantize_async(
+                &vector_records.iter().map(|r| r.vector.clone()).collect::<Vec<_>>(),
+                quantization,
+            ).await?
+        } else {
+            (vec![], None)
+        };
+        
+        // Serialize to Parquet with both FP32 and quantized vectors
+        let parquet_data = self.serialize_records_to_parquet_with_quantization(
+            vector_records,
+            quantized_vectors,
+            quantization_metadata,
+        ).await?;
         
         // Atomic write to storage
         self.write_parquet_file(parquet_data).await?;
         
         Ok(FlushResult::success())
+    }
+}
+----
+
+=== Two-Stage Search Pattern
+
+[source,rust]
+----
+impl TwoStageSearchEngine {
+    pub async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
+        // Stage 1: Fast candidate selection with quantized vectors
+        let candidates = self.stage1_quantized_search(
+            query.vector,
+            query.k * self.config.candidate_multiplier,
+            &query.filters,
+        ).await?;
+        
+        // Stage 2: Accurate refinement with FP32 vectors
+        let final_results = self.stage2_fp32_refinement(
+            query.vector,
+            candidates,
+            query.k,
+        ).await?;
+        
+        Ok(final_results)
     }
 }
 ----
@@ -368,6 +407,45 @@ archive_after_days = 90
 | ❌ Missing completely
 | `src/services/transaction_manager.rs`
 | Complete transaction system with ACID guarantees
+|===
+
+=== Phase 4: Quantization Implementation
+
+[cols="3,2,1", options="header"]
+|===
+|**Component** |**Status** |**Completion**
+
+|Unified Quantization Engine
+|✅ Complete
+|100%
+
+|Static Column Projection
+|✅ Complete
+|100%
+
+|Two-Stage Search Framework
+|✅ Complete
+|100%
+
+|Hardware Acceleration Config
+|✅ Complete
+|100%
+
+|Distance Calculation Support
+|✅ Complete
+|100%
+
+|VIPER Integration
+|🚧 In Progress
+|70%
+
+|WAL Disk File Reading
+|❌ Pending
+|0%
+
+|AXIS Index Persistence
+|❌ Pending
+|0%
 |===
 
 == Development Guidelines

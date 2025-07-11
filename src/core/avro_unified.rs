@@ -334,52 +334,14 @@ impl SearchResult {
     }
 }
 
-/// Unified collection metadata
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Collection {
-    pub id: String,
-    pub name: String,
-    pub dimension: i32,
-    pub distance_metric: DistanceMetric,
-    pub storage_engine: StorageEngine,
-    pub indexing_algorithm: IndexingAlgorithm,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub vector_count: i64,
-    pub total_size_bytes: i64,
-    pub config: HashMap<String, String>,
-    pub filterable_metadata_fields: Vec<String>,
-}
+// Collection struct removed - use crate::proto::proximadb::Collection for proto-first architecture
 
-/// Distance metrics - retains hardware acceleration via compute::distance_optimized
-// Use the canonical DistanceMetric from compute distance module
-pub use crate::compute::distance::DistanceMetric;
+/// Use proto-generated enums as single source of truth
+pub use crate::proto::proximadb::DistanceMetric;
+pub use crate::proto::proximadb::StorageEngine;
+pub use crate::proto::proximadb::IndexingAlgorithm;
 
-// Use the canonical StorageEngine from proto instead of duplicate enum
-pub use crate::storage::strategy::StorageEngineType as StorageEngine;
-
-/// Indexing algorithms - matches Avro enum  
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum IndexingAlgorithm {
-    #[serde(rename = "HNSW")]
-    Hnsw,
-    #[serde(rename = "IVF")]
-    Ivf,
-    #[serde(rename = "PQ")]
-    Pq,
-    #[serde(rename = "FLAT")]
-    Flat,
-    #[serde(rename = "ANNOY")]
-    Annoy,
-    #[serde(rename = "LSH")]
-    Lsh,
-}
-
-impl Default for IndexingAlgorithm {
-    fn default() -> Self {
-        Self::Hnsw
-    }
-}
+// IndexingAlgorithm enum removed - using proto-generated version
 
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -604,7 +566,7 @@ pub struct VectorSearchRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSearchRequest {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub query_vector: Vector,
     pub k: usize,
     pub filter: Option<HashMap<String, serde_json::Value>>,
@@ -703,12 +665,12 @@ pub struct CollectionResponse {
     pub success: bool,
     /// Type of operation that was performed
     pub operation: CollectionOperation,
-    /// Single collection result (for GET operation)
+    /// Single collection result (for GET operation) - use proto Collection
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub collection: Option<Collection>,
-    /// Multiple collections result (for LIST operation)
+    pub collection: Option<crate::proto::proximadb::Collection>,
+    /// Multiple collections result (for LIST operation) - use proto Collection
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collections: Vec<Collection>,
+    pub collections: Vec<crate::proto::proximadb::Collection>,
     /// Number of affected items
     #[serde(default)]
     pub affected_count: i64,
@@ -835,14 +797,14 @@ impl CollectionResponse {
     }
 
     /// Set the single collection result
-    pub fn with_collection(mut self, collection: Collection) -> Self {
+    pub fn with_collection(mut self, collection: crate::proto::proximadb::Collection) -> Self {
         self.collection = Some(collection);
         self.affected_count = 1;
         self
     }
 
     /// Set the multiple collections result
-    pub fn with_collections(mut self, collections: Vec<Collection>) -> Self {
+    pub fn with_collections(mut self, collections: Vec<crate::proto::proximadb::Collection>) -> Self {
         self.affected_count = collections.len() as i64;
         self.collections = collections;
         self
@@ -851,7 +813,7 @@ impl CollectionResponse {
 
 // Core type aliases from types.rs
 pub type VectorId = String;
-pub type CollectionId = String;
+pub type String = std::string::String;
 pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
@@ -1170,5 +1132,5 @@ impl OperationResponse {
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
 pub type UnifiedSearchResult = SearchResult;
-pub type UnifiedCollection = Collection;
+pub type UnifiedCollection = crate::proto::proximadb::Collection;
 pub type VectorSearchResult = SearchResult; // Alias from schema_types.rs

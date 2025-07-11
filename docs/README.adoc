@@ -1,0 +1,202 @@
+= ProximaDB Documentation
+:toc: left
+:toclevels: 2
+:icons: font
+
+== Overview
+
+This directory contains the comprehensive documentation for ProximaDB, a high-performance vector database built in Rust.
+
+== Documentation Structure
+
+[cols="2,1,4"]
+|===
+| Document | Type | Description
+
+| link:architecture.adoc[Architecture Overview]
+| Core
+| System architecture, components, and design decisions
+
+| link:technical_reference.adoc[Technical Reference]
+| Core
+| Detailed implementation guide for developers
+
+| link:developer_guide.adoc[Developer Guide]
+| Core
+| Development setup, contributing guidelines, and best practices
+
+| link:api/unified_rest_api.adoc[REST API Reference]
+| API
+| Complete REST API documentation with examples
+
+| link:appendix_implementation_notes.adoc[Implementation Notes]
+| Appendix
+| Detailed notes on specific implementations
+
+| link:appendix_technical_details.adoc[Technical Details]
+| Appendix
+| Deep dive into algorithms and optimizations
+
+| link:quantization_and_optimization.adoc[Quantization Guide]
+| Feature
+| Comprehensive guide to quantization features
+|===
+
+== Quick Links
+
+=== For Users
+* link:api/unified_rest_api.adoc[REST API Reference]
+* Getting Started Guide (coming soon)
+* Configuration Guide (coming soon)
+
+=== For Developers
+* link:developer_guide.adoc[Developer Guide]
+* link:technical_reference.adoc[Technical Reference]
+* link:../CONTRIBUTING.md[Contributing Guidelines]
+
+=== Architecture & Design
+* link:architecture.adoc[Architecture Overview]
+* link:diagrams/[Architecture Diagrams]
+* Design Decisions (coming soon)
+
+== Building Documentation
+
+=== Prerequisites
+
+.Required Tools
+* **PlantUML**: For UML diagrams (requires Java)
+* **Mermaid CLI**: For flowcharts and graphs  
+* **AsciiDoctor**: For converting AsciiDoc to HTML/PDF
+
+.Installation Commands
+[source,bash]
+----
+# Ubuntu/Debian
+sudo apt-get install plantuml
+npm install -g @mermaid-js/mermaid-cli
+gem install asciidoctor asciidoctor-pdf asciidoctor-diagram
+
+# macOS
+brew install plantuml
+npm install -g @mermaid-js/mermaid-cli
+gem install asciidoctor asciidoctor-pdf asciidoctor-diagram
+----
+
+=== Generating Diagrams
+
+Use the provided script to generate all diagrams:
+
+[source,bash]
+----
+cd docs
+./generate_diagrams.sh
+----
+
+Or generate manually:
+
+[source,bash]
+----
+# PlantUML
+plantuml -tpng -o diagrams/images diagrams/plantuml/*.puml
+
+# Mermaid
+mmdc -i diagrams/quantization-components.mmd -o diagrams/images/quantization-components.png
+----
+
+=== Building HTML Documentation
+
+[source,bash]
+----
+# Basic HTML
+asciidoctor quantization_support.adoc
+
+# With embedded diagram generation
+asciidoctor -r asciidoctor-diagram quantization_support.adoc
+----
+
+=== Building PDF Documentation
+
+[source,bash]
+----
+asciidoctor-pdf quantization_support.adoc
+----
+
+== Diagram Types
+
+=== PlantUML Diagrams
+
+[cols="2,3", options="header"]
+|===
+|Diagram |Description
+
+|`quantization-flow.puml`
+|Complete request flow from client through storage
+
+|`product-quantization.puml`
+|Visual explanation of PQ algorithm
+
+|`two-stage-search.puml`
+|Two-stage search algorithm flowchart
+
+|`vector-service-flow.puml`
+|Vector service class relationships
+
+|`quantization-decision-tree.puml`
+|Decision tree for selecting quantization type
+|===
+
+=== Mermaid Diagrams
+
+[cols="2,3", options="header"]
+|===
+|Diagram |Description
+
+|`quantization-components.mmd`
+|System component interaction graph
+
+|`binary-quantization.mmd`
+|Binary quantization example
+
+|`performance-comparison.mmd`
+|Performance comparison flowchart
+
+|`viper-quantization.mmd`
+|VIPER storage layout visualization
+|===
+
+== Writing Guidelines
+
+=== AsciiDoc Best Practices
+
+. Use semantic headers (=, ==, ===)
+. Include table of contents with `:toc:`
+. Use source code blocks with syntax highlighting
+. Reference images with proper paths
+. Use tables for structured data
+. Include cross-references for navigation
+
+=== Diagram Guidelines
+
+. Keep diagrams focused on one concept
+. Use consistent color schemes
+. Include labels and annotations
+. Maintain reasonable size (max 1200px width)
+. Use Material theme for PlantUML
+. Export as PNG for compatibility
+
+== Contributing
+
+When adding new documentation:
+
+. Write content in AsciiDoc format
+. Create diagrams in `diagrams/plantuml/` or `diagrams/`
+. Run `./generate_diagrams.sh` to update images
+. Test HTML generation with `asciidoctor`
+. Submit PR with both source and generated files
+
+== Additional Resources
+
+* link:https://asciidoctor.org/docs/user-manual/[AsciiDoctor User Manual]
+* link:https://plantuml.com/guide[PlantUML Guide]
+* link:https://mermaid-js.github.io/mermaid/[Mermaid Documentation]
+* link:https://docs.asciidoctor.org/diagram-extension/latest/[AsciiDoctor Diagram Extension]

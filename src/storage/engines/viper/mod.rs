@@ -18,6 +18,8 @@ pub mod flush;
 pub mod engine;
 pub mod search;
 pub mod clustering_models;
+pub mod column_projection;
+pub mod two_stage_search;
 
 // Test modules
 #[cfg(test)]
@@ -43,5 +45,6 @@ pub use schema::SchemaManager;
 pub use compaction::CompactionManager;
 pub use flush::FlushManager;
 pub use engine::ViperEngine;
-pub use search::{ViperSearchEngine, ViperSearchConfig, SearchHints};
+pub use search::{ViperSearchEngine, ViperSearchConfig};
 pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats};
+pub use column_projection::{ColumnProjectionStrategy, ColumnProjection, QuantizationColumnMapping};

@@ -9,7 +9,7 @@ pub mod compaction;
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 
 // Main LSM Tree implementation (contents from original lsm/mod.rs)
-use crate::core::{CollectionId, LsmConfig, VectorId, VectorRecord};
+use crate::core::{String, LsmConfig, VectorId, VectorRecord};
 use crate::storage::memtable::core::MemtableCore;
 use crate::storage::memtable::specialized::LsmMemtable;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -162,7 +162,7 @@ impl BatchExtractionStats {
 #[derive(Debug)]
 pub struct LsmTree {
     config: LsmConfig,
-    collection_id: CollectionId,
+    collection_id: String,
     memtable: LsmMemtable<String, LsmRecord>,
     wal_manager: Arc<WalManager>,
     data_dir: PathBuf,
@@ -174,7 +174,7 @@ pub struct LsmTree {
 impl LsmTree {
     pub fn new(
         config: &LsmConfig,
-        collection_id: CollectionId,
+        collection_id: String,
         wal_manager: Arc<WalManager>,
         data_dir: PathBuf,
         compaction_manager: Option<Arc<CompactionManager>>,

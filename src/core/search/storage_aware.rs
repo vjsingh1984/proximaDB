@@ -10,7 +10,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::{SearchResult, VectorRecord, StorageEngine as StorageEngineType};
+use crate::core::{SearchResult, VectorRecord};
+use crate::proto::proximadb::StorageEngine as StorageEngineType;
 use super::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchResult, StorageTier, DeduplicationStorageEngine, MetadataFilter};
 
 /// Core trait for storage-aware search engines
@@ -260,10 +261,11 @@ impl SearchEngineFactory {
     /// Searches across all storage tiers (unflushed WAL + flushed storage) with ID-based deduplication
     pub async fn search_with_deduplication(
         &self,
-        collection_record: &crate::storage::metadata::backends::filestore_backend::CollectionRecord,
+        collection: &crate::proto::proximadb::Collection,
         query_vector: &[f32],
         k: usize,
         filters: Option<&MetadataFilter>,
+        search_params: Option<&crate::core::search::SearchParams>,
         viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::ViperEngine>>,
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Vec<SearchResult>> {
@@ -273,18 +275,86 @@ impl SearchEngineFactory {
             MultiTierDeduplicator::new()
         };
 
-        let search_hints = Self::create_optimized_hints(
-            collection_record.get_storage_engine_enum().into(),
-            query_vector,
-            k,
-            filters.is_some(),
-        );
+        // Create search hints from search params or use defaults
+        let search_hints = if let Some(params) = search_params {
+            // Extract hints from SearchParams
+            let storage_engine_i32 = collection.config.as_ref()
+                .map(|c| c.storage_engine)
+                .unwrap_or(crate::proto::proximadb::StorageEngine::Viper as i32);
+            let storage_type = match storage_engine_i32 {
+                x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => crate::proto::proximadb::StorageEngine::Viper,
+                x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => crate::proto::proximadb::StorageEngine::Lsm,
+                _ => crate::proto::proximadb::StorageEngine::Viper,
+            };
+            let mut hints = Self::create_optimized_hints(
+                storage_type,
+                query_vector,
+                k,
+                filters.is_some(),
+            );
+            
+            // Apply params to hints
+            if let Some(enable_two_stage) = params.enable_two_stage {
+                hints.engine_specific.insert("two_stage_search".to_string(), serde_json::json!(enable_two_stage));
+            }
+            if let Some(quant_hint) = &params.quantization_hint {
+                // Map UnifiedQuantizationLevel to QuantizationLevel
+                use crate::compute::unified_quantization::QuantizationLevelType;
+                
+                let quantization_level = match &quant_hint.level_type {
+                    Some(QuantizationLevelType::Scalar(scalar)) => {
+                        match scalar.bits {
+                            8 => QuantizationLevel::INT8,
+                            _ => QuantizationLevel::FP32, // Default to FP32 for unsupported bits
+                        }
+                    }
+                    Some(QuantizationLevelType::Binary(_)) => QuantizationLevel::Binary,
+                    Some(QuantizationLevelType::Pq(pq)) => {
+                        match pq.bits_per_code {
+                            8 => QuantizationLevel::PQ8,
+                            4 => QuantizationLevel::PQ4,
+                            _ => QuantizationLevel::PQ8, // Default to PQ8
+                        }
+                    }
+                    Some(QuantizationLevelType::None(_)) => QuantizationLevel::FP32,
+                    Some(QuantizationLevelType::Uniform(_)) => QuantizationLevel::FP32, // Not supported yet
+                    Some(QuantizationLevelType::Custom(_)) => QuantizationLevel::FP32, // Not supported yet
+                    None => QuantizationLevel::FP32,
+                };
+                
+                hints.quantization_level = quantization_level;
+            }
+            if let Some(enable_clustering) = params.enable_clustering_hint {
+                if enable_clustering {
+                    hints.clustering_hints = Some(ClusteringHints::default());
+                } else {
+                    hints.clustering_hints = None;
+                }
+            }
+            
+            hints
+        } else {
+            let storage_engine_i32_2 = collection.config.as_ref()
+                .map(|c| c.storage_engine)
+                .unwrap_or(crate::proto::proximadb::StorageEngine::Viper as i32);
+            let storage_type_2 = match storage_engine_i32_2 {
+                x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => crate::proto::proximadb::StorageEngine::Viper,
+                x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => crate::proto::proximadb::StorageEngine::Lsm,
+                _ => crate::proto::proximadb::StorageEngine::Viper,
+            };
+            Self::create_optimized_hints(
+                storage_type_2,
+                query_vector,
+                k,
+                filters.is_some(),
+            )
+        };
 
         // 1. Search unflushed WAL data (highest priority)
         if let Some(wal_manager) = &self.wal_manager {
             if let Ok(wal_results) = self.search_wal_data(
                 wal_manager,
-                &collection_record.name,
+                collection.config.as_ref().map(|c| c.name.as_str()).unwrap_or("unknown"),
                 query_vector,
                 k * 2, // Get more results for better deduplication
                 filters,
@@ -295,9 +365,9 @@ impl SearchEngineFactory {
         }
 
         // 2. Search flushed/compacted storage data
-        let storage_engine = Self::create_for_collection(collection_record, viper_engine, lsm_engine).await?;
+        let storage_engine = Self::create_for_collection(collection, viper_engine, lsm_engine).await?;
         let storage_results = storage_engine.search_vectors(
-            &collection_record.name,
+            collection.config.as_ref().map(|c| c.name.as_str()).unwrap_or("unknown"),
             query_vector,
             k * 2, // Get more results for better deduplication
             filters,
@@ -305,9 +375,17 @@ impl SearchEngineFactory {
         ).await?;
 
         // Convert SearchResult to TieredSearchResult
+        let storage_engine_enum = collection.config.as_ref()
+            .map(|c| c.storage_engine)
+            .unwrap_or(crate::proto::proximadb::StorageEngine::Viper as i32);
+        let storage_type = match storage_engine_enum {
+            x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => crate::proto::proximadb::StorageEngine::Viper,
+            x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => crate::proto::proximadb::StorageEngine::Lsm,
+            _ => crate::proto::proximadb::StorageEngine::Viper,
+        };
         let tiered_storage_results = self.convert_to_tiered_results(
             storage_results,
-            collection_record.get_storage_engine_enum().into(),
+            storage_type,
         );
 
         tracing::debug!("🔍 Storage search: {} results", tiered_storage_results.len());
@@ -419,7 +497,7 @@ impl SearchEngineFactory {
         k: usize,
         filters: Option<&MetadataFilter>,
     ) -> Result<Vec<TieredSearchResult>> {
-        let collection_id_typed = crate::core::CollectionId::from(collection_id.to_string());
+        let collection_id_typed = crate::core::String::from(collection_id.to_string());
         let wal_entries = wal_manager.get_collection_vectors(&collection_id_typed).await?;
         let mut results = Vec::new();
 
@@ -576,17 +654,17 @@ impl SearchEngineFactory {
     /// This factory method examines the collection's storage engine type
     /// and creates the appropriate search engine with optimized configuration.
     pub async fn create_for_collection(
-        collection_record: &crate::storage::metadata::backends::filestore_backend::CollectionRecord,
+        collection: &crate::proto::proximadb::Collection,
         // Dependencies will be injected here based on storage type
         viper_engine: Option<std::sync::Arc<crate::storage::engines::viper::ViperEngine>>,
         lsm_engine: Option<std::sync::Arc<crate::storage::engines::lsm::LsmTree>>,
     ) -> Result<Box<dyn StorageSearchEngine>> {
-        match collection_record.get_storage_engine_enum() {
-            crate::proto::proximadb::StorageEngine::Viper => {
+        match collection.config.as_ref().map(|c| c.storage_engine).unwrap_or(0) {
+            x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => {
                 if let Some(viper) = viper_engine {
                     Ok(Box::new(super::viper_search::ViperSearchEngine::new(
                         viper,
-                        collection_record.clone(),
+                        collection.clone(),
                     )?))
                 } else {
                     Err(anyhow::anyhow!(
@@ -594,11 +672,11 @@ impl SearchEngineFactory {
                     ))
                 }
             }
-            crate::proto::proximadb::StorageEngine::Lsm => {
+            x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => {
                 if let Some(lsm) = lsm_engine {
                     Ok(Box::new(super::lsm_search::LSMSearchEngine::new(
                         lsm,
-                        collection_record.clone(),
+                        collection.clone(),
                     )?))
                 } else {
                     Err(anyhow::anyhow!(
@@ -606,10 +684,10 @@ impl SearchEngineFactory {
                     ))
                 }
             }
+            // ProximaDB only supports LSM and VIPER engines
             _ => Err(anyhow::anyhow!(
-                "Unsupported storage engine type: {:?}",
-                collection_record.storage_engine
-            )),
+                "Unsupported storage engine type. Only LSM and VIPER are supported."
+            ))
         }
     }
 

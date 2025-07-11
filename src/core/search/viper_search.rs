@@ -17,10 +17,11 @@ use crate::core::search::storage_aware::{
     ClusteringHints, QuantizationLevel, SearchCapabilities, SearchHints, SearchMetrics,
     SearchValidator, StorageSearchEngine,
 };
-use crate::core::{SearchResult, StorageEngine as StorageEngineType};
+use crate::core::SearchResult;
+use crate::storage::strategy::StorageEngineType;
 use super::multi_tier_deduplication::MetadataFilter;
 use crate::storage::engines::viper::ViperEngine;
-use crate::storage::metadata::backends::filestore_backend::CollectionRecord;
+use crate::proto::proximadb::Collection;
 
 /// VIPER-specific search engine with Parquet optimizations
 ///
@@ -34,7 +35,7 @@ pub struct ViperSearchEngine {
     viper_engine: Arc<ViperEngine>,
 
     /// Collection metadata for optimization decisions
-    collection_record: CollectionRecord,
+    collection: Collection,
 
     /// Roaring bitmap index for categorical metadata filtering
     metadata_index: Arc<tokio::sync::RwLock<RoaringBitmapIndex>>,
@@ -53,7 +54,7 @@ impl ViperSearchEngine {
     /// Create a new VIPER search engine
     pub fn new(
         viper_engine: Arc<ViperEngine>,
-        collection_record: CollectionRecord,
+        collection: Collection,
     ) -> Result<Self> {
         let capabilities = SearchCapabilities {
             supports_predicate_pushdown: true,
@@ -87,7 +88,7 @@ impl ViperSearchEngine {
 
         Ok(Self {
             viper_engine,
-            collection_record,
+            collection,
             metadata_index: Arc::new(tokio::sync::RwLock::new(RoaringBitmapIndex::new())),
             cluster_cache: Arc::new(tokio::sync::RwLock::new(ClusterMetadataCache::new())),
             metrics: Arc::new(tokio::sync::RwLock::new(ViperSearchMetrics::default())),
@@ -112,7 +113,8 @@ impl ViperSearchEngine {
         optimized.predicate_pushdown = true;
 
         // Optimize quantization based on collection characteristics
-        if let Some(dimension) = self.collection_record.get_dimension() {
+        if self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) > 0 {
+            let dimension = self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) as usize;
             optimized.quantization_level = match (dimension, hints.quantization_level) {
                 // Small vectors - use higher precision
                 (d, _) if d <= 256 => QuantizationLevel::FP32,
@@ -222,20 +224,23 @@ impl ViperSearchEngine {
                 .iter()
                 .enumerate()
                 .map(|(i, centroid)| {
-                    let distance = match clustering_hints.cluster_distance_metric {
+                    // Use unified distance computation from compute module
+                    let distance_compute = crate::compute::unified_distance::UnifiedDistanceCompute::default();
+                    let metric = match clustering_hints.cluster_distance_metric {
                         crate::core::search::storage_aware::ClusterDistanceMetric::Cosine => {
-                            Self::cosine_distance(query_vector, centroid)
+                            crate::compute::distance::DistanceMetric::Cosine
                         }
                         crate::core::search::storage_aware::ClusterDistanceMetric::Euclidean => {
-                            Self::euclidean_distance(query_vector, centroid)
+                            crate::compute::distance::DistanceMetric::Euclidean
                         }
                         crate::core::search::storage_aware::ClusterDistanceMetric::DotProduct => {
-                            -Self::dot_product(query_vector, centroid) // Negative for ascending sort
+                            crate::compute::distance::DistanceMetric::DotProduct
                         }
                         crate::core::search::storage_aware::ClusterDistanceMetric::Manhattan => {
-                            Self::manhattan_distance(query_vector, centroid)
+                            crate::compute::distance::DistanceMetric::Manhattan
                         }
                     };
+                    let distance = distance_compute.calculate_distance(query_vector, centroid, &metric);
                     (ClusterId(i), distance)
                 })
                 .collect();
@@ -313,7 +318,7 @@ impl ViperSearchEngine {
         _parquet_predicates: &[ParquetPredicate],
     ) -> Result<Vec<SearchResult>> {
         // Delegate to VIPER engine with cluster-based optimization
-        let collection_id = &self.collection_record.name;
+        let collection_id = self.collection.config.as_ref().map(|c| c.name.as_str()).unwrap_or("unknown");
 
         if cluster_ids.is_empty() {
             // No cluster optimization - full search
@@ -431,51 +436,6 @@ impl ViperSearchEngine {
         Ok(reranked)
     }
 
-    // Distance calculation utilities
-
-    fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return f32::MAX;
-        }
-
-        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-        if norm_a == 0.0 || norm_b == 0.0 {
-            return f32::MAX;
-        }
-
-        1.0 - (dot_product / (norm_a * norm_b))
-    }
-
-    fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return f32::MAX;
-        }
-
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum::<f32>()
-            .sqrt()
-    }
-
-    fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return 0.0;
-        }
-
-        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
-    }
-
-    fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return f32::MAX;
-        }
-
-        a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
-    }
 }
 
 #[async_trait]
@@ -499,7 +459,8 @@ impl StorageSearchEngine for ViperSearchEngine {
         );
 
         // Validate parameters
-        if let Some(dimension) = self.collection_record.get_dimension() {
+        if self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) > 0 {
+            let dimension = self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) as usize;
             if query_vector.len() != dimension {
                 return Err(anyhow::anyhow!(
                     "Query vector dimension {} does not match collection dimension {}",
@@ -593,7 +554,7 @@ impl StorageSearchEngine for ViperSearchEngine {
         SearchValidator::validate_common_params(
             query_vector,
             k,
-            self.collection_record.get_dimension().unwrap_or(0),
+            self.collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) as usize,
         )?;
         SearchValidator::validate_search_hints(hints)?;
 

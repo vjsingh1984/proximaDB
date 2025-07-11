@@ -216,15 +216,29 @@ impl IndexConfig {
         });
 
         crate::proto::proximadb::IndexConfig {
+            index_name: "default".to_string(), // Default index name
+            algorithm: match &self.hnsw_config {
+                Some(_) => crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32,
+                None => match &self.ivf_config {
+                    Some(_) => crate::proto::proximadb::IndexingAlgorithm::Ivf as i32,
+                    None => crate::proto::proximadb::IndexingAlgorithm::Flat as i32,
+                }
+            },
             update_mode,
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as i64),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as i32),
             enable_background_optimization: self.enable_background_optimization,
             hnsw_config,
             ivf_config,
+            flat_config: None, // Flat config is algorithm-specific, set when FLAT algorithm is selected
+            pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected  
+            annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             build_concurrency: self.build_concurrency.map(|c| c as i32),
             memory_limit_mb: self.memory_limit_mb.map(|m| m as i64),
             checkpoint_interval_ms: self.checkpoint_interval_ms.map(|i| i as i32),
+            is_primary: true, // Default to primary index
+            use_cases: vec![], // Default empty use cases
+            selectivity_threshold: None, // Default no selectivity threshold
         }
     }
 
@@ -443,6 +457,69 @@ impl IndexConfig {
                 config.update_mode = IndexUpdateMode::Synchronous;
                 config.async_update_timeout_ms = Some(10000); // Short timeout
                 config.async_update_batch_size = Some(100); // Small batches
+                config.memory_limit_mb = Some(256); // Low memory for brute force
+                config.enable_background_optimization = false; // No optimization for flat
+            }
+            "PQ" => {
+                // Product Quantization: memory-efficient approximate search
+                config.update_mode = IndexUpdateMode::Asynchronous; // PQ training is expensive
+                
+                if let Some(size) = collection_size_hint {
+                    if size < 50_000 {
+                        // Small collection: simpler PQ setup
+                        config.async_update_timeout_ms = Some(60000); // 1 minute
+                        config.async_update_batch_size = Some(1000);
+                        config.memory_limit_mb = Some(512);
+                    } else {
+                        // Large collection: optimize for compression
+                        config.async_update_timeout_ms = Some(300000); // 5 minutes for training
+                        config.async_update_batch_size = Some(10000);
+                        config.memory_limit_mb = Some(1024);
+                    }
+                }
+                
+                // PQ typically uses IVF as the coarse quantizer
+                let mut ivf = IvfConfig::default();
+                if let Some(size) = collection_size_hint {
+                    ivf.n_lists = ((size as f64).sqrt() / 4.0).ceil() as usize;
+                    ivf.n_lists = ivf.n_lists.max(50).min(1000);
+                    ivf.n_probe = 4;
+                    ivf.use_pq = true;
+                    ivf.pq_subspaces = 8; // Common PQ8 configuration
+                    ivf.quantization_bits = 8;
+                }
+                config.ivf_config = Some(ivf);
+            }
+            "ANNOY" => {
+                // Annoy (Approximate Nearest Neighbors Oh Yeah): tree-based index
+                config.update_mode = IndexUpdateMode::Synchronous; // Annoy builds are relatively fast
+                
+                if let Some(size) = collection_size_hint {
+                    if size < 10_000 {
+                        // Small collection: more trees for accuracy
+                        config.async_update_timeout_ms = Some(20000); // 20 seconds
+                        config.async_update_batch_size = Some(500);
+                        config.memory_limit_mb = Some(256);
+                        config.build_concurrency = Some(4); // Parallel tree building
+                    } else if size < 100_000 {
+                        // Medium collection: balanced
+                        config.async_update_timeout_ms = Some(60000); // 1 minute
+                        config.async_update_batch_size = Some(2000);
+                        config.memory_limit_mb = Some(512);
+                        config.build_concurrency = Some(8);
+                    } else {
+                        // Large collection: optimize for speed
+                        config.update_mode = IndexUpdateMode::Asynchronous;
+                        config.async_update_timeout_ms = Some(180000); // 3 minutes
+                        config.async_update_batch_size = Some(5000);
+                        config.memory_limit_mb = Some(1024);
+                        config.build_concurrency = Some(16);
+                    }
+                }
+                
+                // Annoy-specific parameters could be added to a new AnnoyConfig struct
+                // For now, we use general config parameters
+                config.checkpoint_interval_ms = Some(30000); // More frequent checkpoints for tree-based
             }
             _ => {
                 // Unknown algorithm: conservative defaults

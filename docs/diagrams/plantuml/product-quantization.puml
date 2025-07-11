@@ -1,0 +1,54 @@
+@startuml product-quantization
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam rectangle {
+  BackgroundColor #E8F5E9
+  BorderColor #2E7D32
+}
+
+title Product Quantization (PQ) Process
+
+rectangle "Original Vector\n768 dimensions" as original #FFE082
+
+rectangle "Subvector Division" as division {
+  rectangle "SV1\n8 dims" as sv1 #81C784
+  rectangle "SV2\n8 dims" as sv2 #81C784
+  rectangle "SV3\n8 dims" as sv3 #81C784
+  rectangle "...\n" as dots #81C784
+  rectangle "SV96\n8 dims" as sv96 #81C784
+}
+
+rectangle "Quantization" as quant {
+  rectangle "Code 1\n8 bits" as c1 #4FC3F7
+  rectangle "Code 2\n8 bits" as c2 #4FC3F7
+  rectangle "Code 3\n8 bits" as c3 #4FC3F7
+  rectangle "...\n" as cdots #4FC3F7
+  rectangle "Code 96\n8 bits" as c96 #4FC3F7
+}
+
+rectangle "Codebook" as codebook {
+  rectangle "Codebook 1\n256 entries" as cb1 #CE93D8
+  rectangle "Codebook 2\n256 entries" as cb2 #CE93D8
+  rectangle "Codebook 3\n256 entries" as cb3 #CE93D8
+  rectangle "...\n" as cbdots #CE93D8
+  rectangle "Codebook 96\n256 entries" as cb96 #CE93D8
+}
+
+original --> division : "Divide into\n96 subvectors"
+sv1 --> c1 : "Quantize"
+sv2 --> c2 : "Quantize"
+sv3 --> c3 : "Quantize"
+sv96 --> c96 : "Quantize"
+
+cb1 ..> c1 : "Lookup"
+cb2 ..> c2 : "Lookup"
+cb3 ..> c3 : "Lookup"
+cb96 ..> c96 : "Lookup"
+
+note bottom of quant
+  Original: 768 × 32 bits = 24,576 bits
+  PQ8: 96 × 8 bits = 768 bits
+  Compression: 32x
+end note
+
+@enduml

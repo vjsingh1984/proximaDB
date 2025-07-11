@@ -1,0 +1,10 @@
+// Copyright 2025 ProximaDB
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+//! Test modules for metadata backends
+
+pub mod filestore_tests;
+pub mod filestore_proto_tests;
+pub mod rocksdb_proto_tests;

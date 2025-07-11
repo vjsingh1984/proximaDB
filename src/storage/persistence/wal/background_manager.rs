@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use super::WalConfig;
-use crate::core::CollectionId;
+
 use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, MIN_VECTORS_FOR_CLUSTERING};
 
 /// Configuration for dynamic schema generation
@@ -81,7 +81,7 @@ pub enum BackgroundTaskStatus {
 /// Background maintenance manager
 pub struct BackgroundMaintenanceManager {
     /// Per-collection task status tracking
-    collection_status: Arc<RwLock<HashMap<CollectionId, BackgroundTaskStatus>>>,
+    collection_status: Arc<RwLock<HashMap<String, BackgroundTaskStatus>>>,
 
     /// Configuration
     config: Arc<WalConfig>,
@@ -102,7 +102,7 @@ pub struct BackgroundMaintenanceManager {
     clustering_model_manager: Option<Arc<ClusteringModelManager>>,
     
     /// Collection vector counts at last model training
-    last_training_vector_counts: Arc<RwLock<HashMap<CollectionId, usize>>>,
+    last_training_vector_counts: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 /// Statistics for background maintenance operations
@@ -174,7 +174,7 @@ impl BackgroundMaintenanceManager {
     /// 1. Collection has >1M vectors (MIN_VECTORS_FOR_CLUSTERING)
     /// 2. Vector count has grown by >20% since last training
     /// 3. At least 6 hours have passed since last training
-    async fn should_retrain_model(&self, collection_id: &CollectionId, current_vectors: usize) -> bool {
+    async fn should_retrain_model(&self, collection_id: &str, current_vectors: usize) -> bool {
         // Rule 1: Only train for large collections (>1M vectors)
         if current_vectors < MIN_VECTORS_FOR_CLUSTERING {
             let mut stats = self.stats.lock().await;
@@ -263,7 +263,7 @@ impl BackgroundMaintenanceManager {
     /// Returns true if flush was triggered, false if already running
     pub async fn trigger_flush_if_needed(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         current_memory_size: usize,
     ) -> Result<bool> {
         let effective_config = self.config.effective_config_for_collection(collection_id);
@@ -297,7 +297,7 @@ impl BackgroundMaintenanceManager {
                         drop(status_map);
                         let mut status_map = self.collection_status.write().await;
                         status_map
-                            .insert(collection_id.clone(), BackgroundTaskStatus::FlushAndCompact);
+                            .insert(collection_id.to_string(), BackgroundTaskStatus::FlushAndCompact);
                         return Ok(false);
                     }
                     BackgroundTaskStatus::FlushAndCompact => {
@@ -316,11 +316,11 @@ impl BackgroundMaintenanceManager {
         // Set status to flushing
         {
             let mut status_map = self.collection_status.write().await;
-            status_map.insert(collection_id.clone(), BackgroundTaskStatus::Flushing);
+            status_map.insert(collection_id.to_string(), BackgroundTaskStatus::Flushing);
         }
 
         // Trigger async flush task
-        let collection_id_clone = collection_id.clone();
+        let collection_id_clone = collection_id.to_string();
         let status_map_clone = self.collection_status.clone();
         let stats_clone = self.stats.clone();
         let flush_coordinator = self.flush_coordinator.clone();
@@ -412,7 +412,7 @@ impl BackgroundMaintenanceManager {
                 {
                     let mut status_map = status_map_clone.write().await;
                     status_map.insert(
-                        collection_id_clone.clone(),
+                        collection_id_clone.to_string(),
                         BackgroundTaskStatus::Compacting,
                     );
                 }
@@ -645,7 +645,7 @@ impl BackgroundMaintenanceManager {
     }
 
     /// Check if collection needs compaction based on file count and sizes
-    async fn should_trigger_compaction_after_flush(_collection_id: &CollectionId) -> bool {
+    async fn should_trigger_compaction_after_flush(_collection_id: &str) -> bool {
         // TODO: Implement proper compaction criteria check
         // This would check file count and average file sizes
         // For now, always trigger compaction to test the Arrow/Parquet implementation
@@ -653,7 +653,7 @@ impl BackgroundMaintenanceManager {
     }
 
     /// Get collection configuration from collection service
-    async fn get_collection_configuration(collection_id: &CollectionId) -> Result<CollectionConfiguration> {
+    async fn get_collection_configuration(collection_id: &str) -> Result<CollectionConfiguration> {
         // TODO: Inject collection service dependency into BackgroundManager
         // For now, we'll simulate getting configuration from collection service
         // In production, this would be: collection_service.get_collection_by_name(collection_id).await?
@@ -662,9 +662,9 @@ impl BackgroundMaintenanceManager {
         
         // Simulate collection service call with realistic configuration
         // This would be replaced with actual collection service integration
-        let collection_config = match collection_id.as_str() {
+        let collection_config = match collection_id.as_ref() {
             "embeddings" => CollectionConfiguration {
-                name: collection_id.clone(),
+                name: collection_id.to_string(),
                 dimension: 384,
                 distance_metric: "cosine".to_string(),
                 quantization_settings: Some(QuantizationSettings {
@@ -697,7 +697,7 @@ impl BackgroundMaintenanceManager {
                 ],
             },
             "documents" => CollectionConfiguration {
-                name: collection_id.clone(),
+                name: collection_id.to_string(),
                 dimension: 1024,
                 distance_metric: "euclidean".to_string(),
                 quantization_settings: Some(QuantizationSettings {
@@ -725,7 +725,7 @@ impl BackgroundMaintenanceManager {
                 ],
             },
             _ => CollectionConfiguration {
-                name: collection_id.clone(),
+                name: collection_id.to_string(),
                 dimension: 512,
                 distance_metric: "cosine".to_string(),
                 quantization_settings: None, // No quantization for default
@@ -752,7 +752,7 @@ impl BackgroundMaintenanceManager {
     }
 
     /// Generate dynamic Parquet schema based on collection configuration
-    async fn generate_parquet_schema_for_collection(collection_id: &CollectionId) -> Result<Arc<arrow_schema::Schema>> {
+    async fn generate_parquet_schema_for_collection(collection_id: &str) -> Result<Arc<arrow_schema::Schema>> {
         use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc;
         
@@ -867,7 +867,7 @@ impl BackgroundMaintenanceManager {
     /// Execute compaction for a collection - delegates to storage engine (instance method)
     async fn execute_compaction(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Vec<String>> {
         Self::execute_compaction_with_engines(&self.storage_engines, collection_id).await
     }
@@ -875,7 +875,7 @@ impl BackgroundMaintenanceManager {
     /// Execute compaction for a collection - delegates to storage engine (static helper for async context)
     async fn execute_compaction_with_engines(
         storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn crate::storage::traits::UnifiedStorageEngine>>>>,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Vec<String>> {
         info!(
             "🔄 [COMPACTION] Starting compaction for collection {} (delegating to storage engine)",
@@ -901,7 +901,7 @@ impl BackgroundMaintenanceManager {
         
         // Create compaction parameters
         let compaction_params = crate::storage::traits::CompactionParameters {
-            collection_id: Some(collection_id.clone()),
+            collection_id: Some(collection_id.to_string()),
             force: false, // Background compaction is not forced
             synchronous: true, // Wait for completion
             hints: std::collections::HashMap::new(),
@@ -1092,7 +1092,7 @@ impl BackgroundMaintenanceManager {
     /// Get current status for a collection
     pub async fn get_collection_status(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> BackgroundTaskStatus {
         let status_map = self.collection_status.read().await;
         status_map

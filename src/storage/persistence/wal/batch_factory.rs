@@ -26,13 +26,13 @@ impl WalBatchFactory {
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WalBatchStrategy>> {
         match strategy_type {
-            WalStrategyType::Avro | WalStrategyType::AvroBatch => {
+            WalStrategyType::AvroBatch => {
                 tracing::info!("🎯 Creating modern AvroWalBatchStrategy");
                 let mut strategy = Box::new(AvroWalBatchStrategy::new());
                 strategy.initialize(config, filesystem).await?;
                 Ok(strategy)
             }
-            WalStrategyType::Bincode | WalStrategyType::BincodeBatch => {
+            WalStrategyType::BincodeBatch => {
                 tracing::info!("🎯 Creating modern BincodeWalBatchStrategy");
                 let mut strategy = Box::new(BincodeWalBatchStrategy::new());
                 strategy.initialize(config, filesystem).await?;
@@ -51,13 +51,13 @@ impl WalBatchFactory {
 
     /// List available strategy types
     pub fn available_strategies() -> Vec<WalStrategyType> {
-        vec![WalStrategyType::Avro, WalStrategyType::Bincode, WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch]
+        vec![WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch]
     }
 
     /// Get strategy information for debugging and monitoring
     pub fn get_strategy_info(strategy_type: &WalStrategyType) -> StrategyInfo {
         match strategy_type {
-            WalStrategyType::Avro | WalStrategyType::AvroBatch => StrategyInfo {
+            WalStrategyType::AvroBatch | WalStrategyType::AvroBatch => StrategyInfo {
                 name: "AvroBatch".to_string(),
                 description: "Modern Avro-based WAL strategy with schema evolution support and native batch operations".to_string(),
                 serialization: "Apache Avro".to_string(),
@@ -70,7 +70,7 @@ impl WalBatchFactory {
                     "Long-term data storage with compatibility guarantees".to_string(),
                 ],
             },
-            WalStrategyType::Bincode | WalStrategyType::BincodeBatch => StrategyInfo {
+            WalStrategyType::BincodeBatch | WalStrategyType::BincodeBatch => StrategyInfo {
                 name: "BincodeBatch".to_string(),
                 description: "Modern Bincode-based WAL strategy optimized for maximum native Rust performance with native batch operations".to_string(),
                 serialization: "Bincode (native Rust)".to_string(),
@@ -144,18 +144,18 @@ mod tests {
     fn test_available_strategies() {
         let strategies = WalBatchFactory::available_strategies();
         assert_eq!(strategies.len(), 2);
-        assert!(strategies.contains(&WalStrategyType::Avro));
-        assert!(strategies.contains(&WalStrategyType::Bincode));
+        assert!(strategies.contains(&WalStrategyType::AvroBatch));
+        assert!(strategies.contains(&WalStrategyType::BincodeBatch));
     }
 
     #[test]
     fn test_strategy_info() {
-        let avro_info = WalBatchFactory::get_strategy_info(&WalStrategyType::Avro);
+        let avro_info = WalBatchFactory::get_strategy_info(&WalStrategyType::AvroBatch);
         assert_eq!(avro_info.name, "AvroBatch");
         assert!(avro_info.schema_evolution);
         assert!(avro_info.batch_native);
 
-        let bincode_info = WalBatchFactory::get_strategy_info(&WalStrategyType::Bincode);
+        let bincode_info = WalBatchFactory::get_strategy_info(&WalStrategyType::BincodeBatch);
         assert_eq!(bincode_info.name, "BincodeBatch");
         assert!(!bincode_info.schema_evolution);
         assert!(bincode_info.batch_native);

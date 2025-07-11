@@ -5,7 +5,7 @@
 use chrono::Utc;
 use proximadb::core::avro_unified::VectorRecord;
 use proximadb::index::axis::{
-    AxisConfig, AxisIndexManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+    AxisConfig, AxisManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,7 +52,7 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
 #[tokio::test]
 async fn test_axis_large_scale_insertion() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Test large-scale insertion across multiple collections
     for collection_idx in 0..3 {
@@ -83,7 +83,7 @@ async fn test_axis_large_scale_insertion() {
 #[tokio::test]
 async fn test_axis_concurrent_operations() {
     let config = AxisConfig::default();
-    let axis_manager = Arc::new(AxisIndexManager::new(config).await.unwrap());
+    let axis_manager = Arc::new(AxisManager::new(config).await.unwrap());
 
     // Create multiple concurrent insertion tasks
     let mut handles = vec![];
@@ -122,7 +122,7 @@ async fn test_axis_concurrent_operations() {
 #[tokio::test]
 async fn test_axis_adaptive_optimization() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Insert different types of data to trigger adaptive behavior
     let dense_collection = "dense_optimized_collection";
@@ -166,7 +166,7 @@ async fn test_axis_adaptive_optimization() {
 #[tokio::test]
 async fn test_axis_complex_hybrid_queries() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     let collection_id = "hybrid_query_collection";
 
@@ -226,7 +226,7 @@ async fn test_axis_complex_hybrid_queries() {
 #[tokio::test]
 async fn test_axis_system_recovery() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Setup multiple collections
     for coll_id in 0..3 {
@@ -265,7 +265,7 @@ async fn test_axis_system_recovery() {
 #[tokio::test]
 async fn test_axis_collection_lifecycle() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     let collection_id = "lifecycle_test_collection";
 

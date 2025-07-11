@@ -36,6 +36,12 @@ pub enum QuantizationType {
 
     /// Optimized Product Quantization (OPQ)
     OptimizedProductQuantization,
+    
+    /// Uniform quantization with custom bits (VIPER compatibility)
+    Uniform { bits: u8 },
+    
+    /// Custom quantization (VIPER compatibility)
+    Custom { bits_per_element: u8, signed: bool },
 }
 
 /// Quantization configuration
@@ -142,6 +148,16 @@ impl QuantizationEngine {
             }
             QuantizationType::AdditiveQuantization => {
                 Ok(Box::new(AdditiveQuantizer::new(config.clone())))
+            }
+            QuantizationType::Uniform { .. } => {
+                Err(VectorDBError::Internal(
+                    "Uniform quantization not yet implemented".to_string()
+                ))
+            }
+            QuantizationType::Custom { .. } => {
+                Err(VectorDBError::Internal(
+                    "Custom quantization not yet implemented".to_string()
+                ))
             }
             QuantizationType::ResidualVectorQuantization => {
                 Ok(Box::new(ResidualVectorQuantizer::new(config.clone())))

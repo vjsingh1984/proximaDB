@@ -28,6 +28,7 @@ pub mod hardware_detection;
 pub mod indexing;
 pub mod quantization;
 pub mod unified_distance;
+pub mod unified_quantization;
 
 // Unit tests - will be added as modules are completed
 // #[cfg(test)]
@@ -37,8 +38,16 @@ pub use algorithms::*;
 pub use distance::*;
 pub use hardware::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
-pub use quantization::*;
+pub use quantization::{
+    QuantizationType, QuantizationConfig, QuantizationEngine, VectorQuantizer,
+    ProductQuantizer, ScalarQuantizer, BinaryQuantizer, AdditiveQuantizer,
+    ResidualVectorQuantizer, OptimizedProductQuantizer,
+};
 pub use unified_distance::*;
+pub use unified_quantization::*;
+
+#[cfg(test)]
+mod tests;
 
 use serde::{Deserialize, Serialize};
 

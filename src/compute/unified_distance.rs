@@ -124,7 +124,8 @@ impl UnifiedDistanceCompute {
             DistanceMetric::DotProduct => "Dot Product Similarity (higher = more similar, inverted to lower = more similar)",
             DistanceMetric::Hamming => "Hamming Distance (lower = more similar, native)",
             DistanceMetric::Jaccard => "Jaccard Distance (lower = more similar, native)",
-            DistanceMetric::Custom(_name) => "Custom metric (fallback to cosine distance)",
+            DistanceMetric::Custom => "Custom metric (fallback to cosine distance)",
+            DistanceMetric::Unspecified => "Unspecified metric (defaults to cosine distance)",
         }
     }
 
@@ -180,8 +181,8 @@ impl UnifiedDistanceCompute {
             DistanceMetric::Hamming | DistanceMetric::Jaccard => {
                 1.0  // Maximum discrete distance
             }
-            // For custom metrics, fall back to cosine behavior
-            DistanceMetric::Custom(_) => 2.0,
+            // For custom or unspecified metrics, fall back to cosine behavior
+            DistanceMetric::Custom | DistanceMetric::Unspecified => 2.0,
         }
     }
 
@@ -334,20 +335,20 @@ impl UnifiedDistanceCompute {
         // 2. Try to get collection default
         if let Some(service) = collection_service {
             if let Ok(Some(collection)) =
-                service.get_collection_by_name_or_uuid(collection_id).await
+                service.get_proto_collection(collection_id).await
             {
-                // Parse distance metric from string to enum
-                let metric = match collection.distance_metric.as_str() {
-                    "cosine" => DistanceMetric::Cosine,
-                    "euclidean" => DistanceMetric::Euclidean,
-                    "manhattan" => DistanceMetric::Manhattan,
-                    "dot_product" => DistanceMetric::DotProduct,
-                    "hamming" => DistanceMetric::Hamming,
-                    "jaccard" => DistanceMetric::Jaccard,
-                    other => DistanceMetric::Custom(other.to_string()),
-                };
+                // Distance metric is in the config field of proto Collection
+                let metric = collection.config.as_ref().map(|c| c.distance_metric).unwrap_or(0);
                 debug!("🎯 Using collection default distance metric: {:?}", metric);
-                return metric;
+                return match metric {
+                    1 => DistanceMetric::Cosine,
+                    2 => DistanceMetric::Euclidean,
+                    3 => DistanceMetric::DotProduct,
+                    4 => DistanceMetric::Hamming,
+                    5 => DistanceMetric::Manhattan,
+                    6 => DistanceMetric::Jaccard,
+                    _ => DistanceMetric::Cosine,
+                };
             }
         }
 
@@ -678,7 +679,7 @@ mod tests {
         assert!(compute.metric_behavior_description(&DistanceMetric::Cosine).contains("native"));
         assert!(compute.metric_behavior_description(&DistanceMetric::Euclidean).contains("native"));
         assert!(compute.metric_behavior_description(&DistanceMetric::DotProduct).contains("inverted"));
-        assert!(compute.metric_behavior_description(&DistanceMetric::Custom("test".to_string())).contains("Custom"));
+        assert!(compute.metric_behavior_description(&DistanceMetric::Custom).contains("Custom"));
     }
 
     #[tokio::test]

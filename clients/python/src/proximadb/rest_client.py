@@ -557,6 +557,7 @@ class ProximaDBRestClient:
         ef: Optional[int] = None,
         exact: bool = False,
         timeout: Optional[float] = None,
+        optimization_hints: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResult]:
         """Search for similar vectors
         
@@ -570,6 +571,7 @@ class ProximaDBRestClient:
             ef: HNSW search parameter (higher = more accurate, slower)
             exact: Use exact search instead of approximate
             timeout: Request timeout override
+            optimization_hints: Search optimization hints for performance tuning
             
         Returns:
             List[SearchResult]: List of search results ordered by similarity
@@ -580,7 +582,12 @@ class ProximaDBRestClient:
             ...     "col_123",
             ...     [0.1, 0.2, 0.3, 0.4],
             ...     k=5,
-            ...     filter={"category": "research"}
+            ...     filter={"category": "research"},
+            ...     optimization_hints={
+            ...         "enable_two_stage_search": True,
+            ...         "quantization_hint": "PQ8",
+            ...         "candidate_multiplier": 3.0
+            ...     }
             ... )
         """
         query_vector = self._normalize_vector(query)
@@ -594,8 +601,14 @@ class ProximaDBRestClient:
         
         if filter:
             request_data["filters"] = filter
+            
+        if optimization_hints:
+            request_data["optimization_hints"] = optimization_hints
         
         logger.debug(f"🔍 Searching in {collection_id}, top_k={k}")
+        if optimization_hints:
+            logger.debug(f"🔧 Using optimization hints: {optimization_hints}")
+            
         response = self._make_request(
             "POST", 
             f"/collections/{collection_id}/search", 

@@ -13,17 +13,17 @@
 
 == High-Level Package Diagram (Mermaid)
 
-image::architecture-overview.png[Architecture Overview,800,align=center]
+image::diagrams/images/architecture-overview.png[Architecture Overview,800,align=center]
 
 === Updated Architecture Diagram
 
 The architecture shows the clean separation of concerns with AXIS handling IndexConfig:
 
-image::Architecture_Overview.png[Architecture Overview,width=100%]
+image::diagrams/images/architecture-overview.png[Architecture Overview,width=100%]
 
 == Core Classes Diagram (PlantUML)
 
-image::core-classes.png[Core Classes,800,align=center]
+image::diagrams/images/proximadb-class-services.png[Core Classes,800,align=center]
 
 === Core Classes Implementation
 
@@ -142,13 +142,13 @@ IndexConfig --> IndexUpdateMode
 
 The service architecture shows the separation of concerns between services:
 
-image::Service_Architecture_Classes.png[Service Architecture Classes,width=100%]
+image::diagrams/images/service-architecture-classes.png[Service Architecture Classes,width=100%]
 
 The UnifiedServer coordinates both REST and gRPC services, with CollectionService managing metadata and VectorService handling vector operations through a unified storage engine interface.
 
 == IndexConfig Flow Diagram (Mermaid)
 
-image::indexconfig-flow.png[IndexConfig Flow,800,align=center]
+image::diagrams/images/indexconfig-flow.png[IndexConfig Flow,800,align=center]
 
 === IndexConfig Flow Implementation
 

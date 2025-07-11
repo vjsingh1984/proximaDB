@@ -20,6 +20,7 @@ name = "proximadb-server"
 path = "src/bin/server.rs"
 
 
+
 [dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }
@@ -58,7 +59,7 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # Storage & Memory Management
 memmap2 = "0.9"
-# rocksdb = "0.21"  # Commented out to fix build issues
+rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 parquet = { version = "51.0", default-features = false, features = ["arrow"] }
 # arrow = { version = "51.0", default-features = false }  # Full Arrow pulls in arrow-arith
@@ -107,6 +108,7 @@ num_cpus = "1.16"
 
 # Random number generation
 rand = "0.8"
+rand_chacha = "0.3"
 
 # GPU acceleration (removed - was placeholder code)
 
@@ -155,6 +157,7 @@ lru = "0.12"
 [build-dependencies]
 tonic-build = "0.10"
 apache-avro = "0.16"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -169,6 +172,7 @@ env_logger = "0.10"
 
 [features]
 default = []  # Minimal features for ARM64 Ubuntu compatibility
+rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation

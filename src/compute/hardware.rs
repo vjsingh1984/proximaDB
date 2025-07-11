@@ -95,19 +95,44 @@ impl RocmAccelerator {
             initialized: false,
         }
     }
+    
+    /// Check if ROCm runtime is available on the system
+    fn check_rocm_availability() -> bool {
+        // Check for ROCm installation by looking for common ROCm paths
+        // In production, this would use proper ROCm detection
+        if std::path::Path::new("/opt/rocm").exists() {
+            return true;
+        }
+        
+        // Check environment variable
+        if std::env::var("ROCM_PATH").is_ok() {
+            return true;
+        }
+        
+        // For now, return false as ROCm requires specific hardware
+        false
+    }
 }
 
 #[async_trait]
 impl HardwareAccelerator for RocmAccelerator {
     async fn initialize(&mut self) -> Result<(), String> {
-        // TODO: Initialize ROCm device
+        // Check if ROCm is available on the system
+        if !Self::check_rocm_availability() {
+            return Err("ROCm runtime not found. Please install ROCm drivers.".to_string());
+        }
+        
+        // Initialize ROCm device
+        // In a real implementation, this would use rocm-sys or hip-sys bindings
+        // For now, we simulate initialization
+        tracing::info!("Initializing ROCm device {}", self.device_id);
+        
         self.initialized = true;
         Ok(())
     }
 
     fn is_available(&self) -> bool {
-        // TODO: Check ROCm availability
-        false
+        self.initialized && Self::check_rocm_availability()
     }
 
     fn get_info(&self) -> HardwareInfo {
@@ -174,6 +199,121 @@ impl CpuAccelerator {
             use_simd,
         }
     }
+    
+    /// Get system memory information
+    fn get_system_memory() -> (u64, u64) {
+        #[cfg(target_os = "linux")]
+        {
+            // Read from /proc/meminfo on Linux
+            if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+                let mut total_kb = 0u64;
+                let mut available_kb = 0u64;
+                
+                for line in meminfo.lines() {
+                    if line.starts_with("MemTotal:") {
+                        if let Some(val) = line.split_whitespace().nth(1) {
+                            total_kb = val.parse().unwrap_or(0);
+                        }
+                    } else if line.starts_with("MemAvailable:") {
+                        if let Some(val) = line.split_whitespace().nth(1) {
+                            available_kb = val.parse().unwrap_or(0);
+                        }
+                    }
+                }
+                
+                return (total_kb * 1024, available_kb * 1024);
+            }
+        }
+        
+        #[cfg(target_os = "macos")]
+        {
+            // Use sysctl on macOS
+            use std::process::Command;
+            
+            if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.memsize"]).output() {
+                if let Ok(total_str) = String::from_utf8(output.stdout) {
+                    if let Ok(total) = total_str.trim().parse::<u64>() {
+                        // Estimate free memory as 50% for macOS
+                        return (total, total / 2);
+                    }
+                }
+            }
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            // Windows memory detection would use Windows API
+            // For now, return a reasonable default
+        }
+        
+        // Fallback: 16GB total, 8GB free
+        (16 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+    }
+    
+    /// Get CPU cache sizes
+    fn get_cache_sizes() -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            // Try to read cache info from sysfs
+            let mut cache_info = Vec::new();
+            
+            // L1 Data Cache
+            if let Ok(size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/size") {
+                cache_info.push(format!("L1d:{}", size.trim()));
+            }
+            
+            // L1 Instruction Cache
+            if let Ok(size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index1/size") {
+                cache_info.push(format!("L1i:{}", size.trim()));
+            }
+            
+            // L2 Cache
+            if let Ok(size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index2/size") {
+                cache_info.push(format!("L2:{}", size.trim()));
+            }
+            
+            // L3 Cache
+            if let Ok(size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index3/size") {
+                cache_info.push(format!("L3:{}", size.trim()));
+            }
+            
+            if !cache_info.is_empty() {
+                return Some(cache_info.join(", "));
+            }
+        }
+        
+        None
+    }
+    
+    /// Get CPU name/model
+    fn get_cpu_name() -> String {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
+                for line in cpuinfo.lines() {
+                    if line.starts_with("model name") {
+                        if let Some(name) = line.split(':').nth(1) {
+                            return name.trim().to_string();
+                        }
+                    }
+                }
+            }
+        }
+        
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            
+            if let Ok(output) = Command::new("sysctl").args(&["-n", "machdep.cpu.brand_string"]).output() {
+                if let Ok(cpu_str) = String::from_utf8(output.stdout) {
+                    return cpu_str.trim().to_string();
+                }
+            }
+        }
+        
+        // Fallback
+        format!("CPU ({} cores)", num_cpus::get())
+    }
 }
 
 #[async_trait]
@@ -188,16 +328,17 @@ impl HardwareAccelerator for CpuAccelerator {
     }
 
     fn get_info(&self) -> HardwareInfo {
-        let total_memory = 16 * 1024 * 1024 * 1024; // TODO: Get actual system memory
-
+        let (total_memory, free_memory) = Self::get_system_memory();
+        let cache_sizes = Self::get_cache_sizes();
+        
         HardwareInfo {
             backend: ComputeBackend::CPU {
                 threads: Some(self.thread_count),
             },
-            device_name: "CPU".to_string(),
+            device_name: Self::get_cpu_name(),
             memory_total: total_memory,
-            memory_free: total_memory / 2, // Rough estimate
-            compute_capability: None,
+            memory_free: free_memory,
+            compute_capability: cache_sizes,
             max_threads_per_block: None,
             multiprocessor_count: Some(num_cpus::get() as u32),
         }

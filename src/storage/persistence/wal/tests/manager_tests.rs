@@ -16,7 +16,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::Avro;
+        config.strategy_type = WalStrategyType::AvroBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config =
@@ -28,7 +28,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::Avro,
+            WalStrategyType::AvroBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -65,7 +65,7 @@ mod tests {
     async fn test_wal_manager_insert_single_record() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
         let record = create_test_vector_record("test_collection", "test_vector_1");
 
@@ -82,7 +82,7 @@ mod tests {
     async fn test_wal_manager_vector_operations() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let now = chrono::Utc::now().timestamp_millis();
         let vector_record = crate::core::VectorRecord {
             id: "test_vector".to_string(),
@@ -116,7 +116,7 @@ mod tests {
     async fn test_wal_manager_batch_operations() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let records = vec![
             (
                 crate::core::VectorId::from("vector_1".to_string()),
@@ -162,7 +162,7 @@ mod tests {
     async fn test_wal_manager_stats() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
         let record = create_test_vector_record("test_collection", "test_vector_1");
 
@@ -183,7 +183,7 @@ mod tests {
     async fn test_wal_manager_flush() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
         let record = create_test_vector_record("test_collection", "test_vector_1");
 
@@ -197,6 +197,6 @@ mod tests {
         let flush_info = flush_result.unwrap();
         assert!(flush_info.entries_flushed >= 0);
         assert!(flush_info.bytes_written >= 0);
-        assert!(flush_info.flush_duration_ms >= 0);
+        // Note: flush_duration_ms field no longer exists in FlushResult
     }
 }

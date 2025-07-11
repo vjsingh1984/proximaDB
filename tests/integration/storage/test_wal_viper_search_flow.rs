@@ -11,7 +11,7 @@ use tokio::time::{sleep, Duration};
 
 use proximadb::core::{VectorRecord, CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::{VectorService, CollectionService};
-use proximadb::storage::engines::viper::core::{ViperCoreEngine, ViperCoreConfig};
+use proximadb::storage::engines::viper::engine::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::wal::{WalManager, WalConfig, WalFactory, WalStrategyType};
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
@@ -19,7 +19,7 @@ use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 /// Create test infrastructure with WAL, VIPER, and services
 async fn create_test_infrastructure() -> Result<(
     Arc<WalManager>,
-    Arc<ViperCoreEngine>,
+    Arc<ViperEngine>,
     Arc<VectorService>,
     Arc<CollectionService>,
     TempDir,
@@ -43,8 +43,8 @@ async fn create_test_infrastructure() -> Result<(
     let wal_manager = Arc::new(WalManager::new(strategy, wal_config).await?);
     
     // Create VIPER engine
-    let viper_config = ViperCoreConfig::default();
-    let viper_engine = Arc::new(ViperCoreEngine::new(viper_config, filesystem.clone()).await?);
+    let viper_config = ViperConfig::default();
+    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem.clone()).await?);
     
     // Create collection service
     let collection_service = Arc::new(CollectionService::new(
@@ -338,8 +338,8 @@ async fn test_wal_recovery_after_crash() -> Result<()> {
         assert_eq!(stats.total_entries, 30, "WAL should recover all 30 entries");
         
         // Create VIPER engine and flush recovered data
-        let viper_config = ViperCoreConfig::default();
-        let viper_engine = Arc::new(ViperCoreEngine::new(viper_config, filesystem).await?);
+        let viper_config = ViperConfig::default();
+        let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem).await?);
         
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),

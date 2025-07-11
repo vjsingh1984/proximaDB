@@ -1,0 +1,89 @@
+@startuml ProximaDB WAL State Machine
+!theme plain
+title ProximaDB - WAL Segment State Machine Diagram
+
+[*] --> Created : new()
+
+state Created
+Created : Empty segment
+Created : No data written
+
+state Active
+Active : Accepting writes
+Active : In-memory buffer
+Active : Not yet synced
+
+state Syncing
+Syncing : Writing to disk
+Syncing : Buffer locked
+Syncing : No new writes
+
+state Synced
+Synced : Persisted to disk
+Synced : Available for flush
+Synced : Read-only
+
+state Flushing
+Flushing : Being processed
+Flushing : Copying to storage
+Flushing : Cannot be modified
+
+state Flushed
+Flushed : Data in storage
+Flushed : Can be released
+Flushed : Marked for cleanup
+
+state Archived
+Archived : Moved to cold storage
+Archived : Metadata retained
+Archived : Data compressed
+
+state Released
+Released : Memory freed
+Released : File deleted
+Released : No longer accessible
+
+Created --> Active : first write
+Active --> Active : append data
+Active --> Syncing : sync triggered
+
+Syncing --> Synced : sync complete
+Syncing --> Active : sync failed\n[retry]
+
+Synced --> Flushing : flush initiated
+Synced --> Archived : archive policy\n[old segments]
+
+Flushing --> Flushed : flush success
+Flushing --> Synced : flush failed\n[retry]
+
+Flushed --> Released : cleanup cycle
+Flushed --> Archived : retention policy
+
+Archived --> Released : retention expired
+
+Released --> [*]
+
+note right of Active
+  Triggers for sync:
+  - Size threshold
+  - Time interval
+  - Explicit flush
+  - Memory pressure
+end note
+
+note left of Flushing
+  Flush process:
+  1. Deserialize records
+  2. Route to storage engine
+  3. Update metadata
+  4. Mark complete
+end note
+
+note bottom of Archived
+  Archive conditions:
+  - Age > threshold
+  - Access frequency low
+  - Backup requirement
+end note
+
+@enduml

@@ -16,7 +16,7 @@ use std::hash::Hash;
 /// Core memtable trait for unified storage operations
 ///
 /// Generic over key and value types to support:
-/// - WAL: K=u64 (sequence), V=WalEntry
+/// - WAL: K=u64 (sequence), V=WalVectorBatch
 /// - LSM: K=VectorId, V=LsmEntry
 #[async_trait]
 pub trait MemtableCore<K, V>: Send + Sync + Debug
@@ -111,5 +111,5 @@ impl Default for MemtableConfig {
 
 // Re-export common types for convenience (these may not exist yet)
 // pub use crate::core::{VectorId, VectorRecord};
-// pub use crate::storage::persistence::wal::WalEntry;
+// pub use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 // pub use crate::storage::engines::lsm::LsmEntry;

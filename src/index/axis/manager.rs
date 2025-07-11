@@ -15,7 +15,7 @@ use super::{
     AdaptiveIndexEngine, AxisConfig, IndexMigrationEngine, IndexStrategy, IndexType,
     MigrationDecision, PerformanceMonitor,
 };
-use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
+use crate::core::{avro_unified::VectorRecord, String, VectorId};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 
 /// Central manager for AXIS with adaptive capabilities
@@ -33,10 +33,10 @@ pub struct AxisManager {
     performance_monitor: Arc<PerformanceMonitor>,
 
     /// Collection-specific configurations
-    collection_strategies: Arc<RwLock<HashMap<CollectionId, IndexStrategy>>>,
+    collection_strategies: Arc<RwLock<HashMap<String, IndexStrategy>>>,
 
     /// Active migrations
-    active_migrations: Arc<RwLock<HashMap<CollectionId, MigrationStatus>>>,
+    active_migrations: Arc<RwLock<HashMap<String, MigrationStatus>>>,
 
     /// Configuration and metrics
     config: AxisConfig,
@@ -111,9 +111,9 @@ impl AxisManager {
     }
 
     /// Get collection's IndexConfig from collection service for index build decisions
-    pub async fn get_collection_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+    pub async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
         if let Some(collection_service) = &self.collection_service {
-            match collection_service.get_collection_index_config(collection_id).await {
+            match collection_service.get_native_index_config(collection_id).await {
                 Ok(Some(config)) => {
                     tracing::debug!("📋 AXIS: Retrieved IndexConfig for collection: {}", collection_id);
                     Ok(config)
@@ -186,7 +186,7 @@ impl AxisManager {
     }
 
     /// Delete a vector (soft delete with expires_at)
-    pub async fn delete(&self, collection_id: &CollectionId, vector_id: VectorId) -> Result<()> {
+    pub async fn delete(&self, collection_id: &str, vector_id: VectorId) -> Result<()> {
         // For MVCC, we don't actually delete - we set expires_at to now
         // This is handled by the storage layer creating a tombstone
 
@@ -259,7 +259,7 @@ impl AxisManager {
     }
 
     /// Analyze collection and trigger migration if beneficial
-    pub async fn analyze_and_optimize(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn analyze_and_optimize(&self, collection_id: &str) -> Result<()> {
         // Check if migration is already in progress
         let migrations = self.active_migrations.read().await;
         if migrations.contains_key(collection_id) {
@@ -306,7 +306,7 @@ impl AxisManager {
     /// Start migration to new indexing strategy
     async fn start_migration(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from: IndexStrategy,
         to: IndexStrategy,
     ) -> Result<()> {
@@ -315,7 +315,7 @@ impl AxisManager {
         // Record migration start
         let mut migrations = self.active_migrations.write().await;
         migrations.insert(
-            collection_id.clone(),
+            collection_id.to_string(),
             MigrationStatus {
                 migration_id,
                 from_strategy: from.clone(),
@@ -329,7 +329,7 @@ impl AxisManager {
 
         // Execute migration in background
         let migration_engine = self.migration_engine.clone();
-        let collection_id = collection_id.clone();
+        let collection_id = collection_id.to_string();
         let active_migrations = self.active_migrations.clone();
         let collection_strategies = self.collection_strategies.clone();
         let metrics = self.metrics.clone();
@@ -347,7 +347,7 @@ impl AxisManager {
                 Ok(migration_result) => {
                     // Update strategy
                     let mut strategies = collection_strategies.write().await;
-                    strategies.insert(collection_id.clone(), migration_result.new_strategy);
+                    strategies.insert(collection_id.to_string(), migration_result.new_strategy);
 
                     // Update metrics
                     let mut metrics = metrics.write().await;
@@ -380,7 +380,7 @@ impl AxisManager {
     }
 
     /// Ensure collection has an indexing strategy
-    pub async fn ensure_collection_strategy(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn ensure_collection_strategy(&self, collection_id: &str) -> Result<()> {
         let strategies = self.collection_strategies.read().await;
         if strategies.contains_key(collection_id) {
             return Ok(());
@@ -398,7 +398,7 @@ impl AxisManager {
             .await?;
 
         let mut strategies = self.collection_strategies.write().await;
-        strategies.insert(collection_id.clone(), strategy);
+        strategies.insert(collection_id.to_string(), strategy);
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -409,7 +409,7 @@ impl AxisManager {
 
 
     /// Get current strategy for collection
-    pub async fn get_collection_strategy(&self, collection_id: &CollectionId) -> Result<IndexStrategy> {
+    pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexStrategy> {
         let strategies = self.collection_strategies.read().await;
         strategies
             .get(collection_id)
@@ -418,16 +418,16 @@ impl AxisManager {
     }
 
     /// Update collection strategy
-    pub async fn update_collection_strategy(&self, collection_id: &CollectionId, strategy: IndexStrategy) -> Result<()> {
+    pub async fn update_collection_strategy(&self, collection_id: &str, strategy: IndexStrategy) -> Result<()> {
         let mut strategies = self.collection_strategies.write().await;
-        strategies.insert(collection_id.clone(), strategy);
+        strategies.insert(collection_id.to_string(), strategy);
         Ok(())
     }
 
 
 
     /// Maybe evaluate if strategy should change
-    async fn maybe_evaluate_strategy(&self, _collection_id: &CollectionId) -> Result<()> {
+    async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
         // TODO: Implement periodic evaluation logic
         // For now, we'll rely on explicit analyze_and_optimize calls
         Ok(())
@@ -436,7 +436,7 @@ impl AxisManager {
     /// Get migration status for a collection
     pub async fn get_migration_status(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Option<MigrationStatus> {
         let migrations = self.active_migrations.read().await;
         migrations.get(collection_id).cloned()
@@ -448,7 +448,7 @@ impl AxisManager {
     }
 
     /// Drop all indexes for a collection (used during collection deletion)
-    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         tracing::info!(
             "🗑️ Dropping all AXIS indexes for collection: {}",
             collection_id
@@ -487,12 +487,12 @@ impl AxisManager {
     /// Get collection statistics
     pub async fn get_collection_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CollectionStats> {
         let strategy = self.get_collection_strategy(collection_id).await?;
 
         Ok(CollectionStats {
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             strategy_type: strategy.primary_index_type,
             total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
@@ -505,7 +505,7 @@ impl AxisManager {
     pub async fn update_vector_file_reference(
         &self,
         vector_id: &VectorId,
-        collection_id: &CollectionId,
+        collection_id: &str,
         file_path: &str,
     ) -> Result<()> {
         tracing::debug!(
@@ -556,7 +556,7 @@ impl AxisManager {
     /// This is called when storage files are merged/compacted
     pub async fn rebuild_indexes_after_compaction(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         old_files: &[String],
         new_files: &[String],
     ) -> Result<()> {
@@ -610,7 +610,7 @@ impl AxisManager {
     /// This method is called by the flush coordinator after successful storage flush
     pub async fn handle_flushed_vectors(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         flushed_vectors: Vec<VectorRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
@@ -627,7 +627,7 @@ impl AxisManager {
         );
 
         // Get IndexConfig for this collection to determine indexing behavior
-        let index_config = match self.get_collection_index_config(collection_id).await {
+        let index_config = match self.get_native_index_config(collection_id).await {
             Ok(config) => config,
             Err(e) => {
                 tracing::warn!(
@@ -669,7 +669,7 @@ impl AxisManager {
     /// Index vectors synchronously (blocking the flush completion)
     async fn index_vectors_synchronously(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vectors: Vec<VectorRecord>,
         _files_created: &[String],
     ) -> Result<()> {
@@ -693,7 +693,7 @@ impl AxisManager {
     /// Index vectors asynchronously (non-blocking)
     async fn index_vectors_asynchronously(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vectors: Vec<VectorRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
@@ -730,7 +730,7 @@ impl AxisManager {
     /// Index vectors using hybrid mode (adaptive based on batch size)
     async fn index_vectors_hybrid(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vectors: Vec<VectorRecord>,
         files_created: Vec<String>,
         index_config: &crate::index::config::IndexConfig,
@@ -757,7 +757,7 @@ impl AxisManager {
 /// Collection statistics
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CollectionStats {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub strategy_type: super::IndexType,
     pub total_vectors: u64,
     pub index_size_bytes: u64,
@@ -767,7 +767,7 @@ pub struct CollectionStats {
 /// Hybrid query combining multiple search criteria
 #[derive(Debug, Clone)]
 pub struct HybridQuery {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub vector_query: Option<VectorQuery>,
     pub metadata_filters: Vec<MetadataFilter>,
     pub id_filters: Vec<VectorId>,

@@ -1,0 +1,55 @@
+@startuml quantization-flow
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam participant {
+  BackgroundColor #E1F5FE
+  BorderColor #0288D1
+  FontColor #01579B
+}
+skinparam note {
+  BackgroundColor #FFF9C4
+  BorderColor #F57F17
+}
+
+title Quantization and Search Optimization Flow
+
+actor "Client SDK" as client
+participant "REST/gRPC\nHandler" as handler
+participant "Vector\nService" as service
+participant "Storage\nEngine" as storage
+database "Quantized\nData" as qdata
+database "Full\nPrecision" as fpdata
+
+== Search Request ==
+client -> handler: Search Request\n+ Optimization Hints
+note right of client
+  {
+    "enable_two_stage_search": true,
+    "quantization_hint": "PQ8",
+    "candidate_multiplier": 3.0
+  }
+end note
+
+handler -> handler: Extract hints\nConvert proto to JSON
+handler -> service: Forward request\n+ search_hints
+
+== Stage 1: Quantized Search ==
+service -> service: Parse optimization hints
+service -> storage: Request quantized search\n(Stage 1)
+storage -> qdata: Load quantized vectors
+qdata --> storage: Quantized data
+storage -> storage: Compute approximate\ndistances
+storage --> service: Return k × multiplier\ncandidates
+
+== Stage 2: Precision Verification ==
+service -> storage: Request full vectors\nfor candidates only
+storage -> fpdata: Load FP32 vectors\n(candidates only)
+fpdata --> storage: Full precision data
+storage -> storage: Compute exact distances\nRerank candidates
+storage --> service: Final top-k results
+
+== Response ==
+service --> handler: Search results
+handler --> client: Response with results
+
+@enduml

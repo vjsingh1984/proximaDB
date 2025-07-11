@@ -75,14 +75,21 @@ class ProximaDBClient:
     def _connect(self):
         """Establish gRPC connection"""
         try:
+            # Configure message size limits for bulk vector operations (64MB)
+            max_message_size = 64 * 1024 * 1024
+            options = [
+                ('grpc.max_receive_message_length', max_message_size),
+                ('grpc.max_send_message_length', max_message_size),
+            ]
+            
             if self.use_tls:
                 credentials = grpc.ssl_channel_credentials()
-                self.channel = grpc.secure_channel(self.endpoint, credentials)
+                self.channel = grpc.secure_channel(self.endpoint, credentials, options=options)
             else:
-                self.channel = grpc.insecure_channel(self.endpoint)
+                self.channel = grpc.insecure_channel(self.endpoint, options=options)
             
             self.stub = pb2_grpc.ProximaDBStub(self.channel)
-            logger.info(f"Connected to ProximaDB gRPC service at {self.endpoint}")
+            logger.info(f"Connected to ProximaDB gRPC service at {self.endpoint} (64MB message limit)")
             
         except Exception as e:
             raise ProximaDBError(f"Failed to connect to gRPC server: {e}")
@@ -552,7 +559,8 @@ class ProximaDBClient:
         top_k: int = 10,
         metadata_filters: Optional[Dict[str, Any]] = None,
         include_metadata: bool = True,
-        include_vectors: bool = False
+        include_vectors: bool = False,
+        optimization_hints: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """
         Search for similar vectors
@@ -564,6 +572,7 @@ class ProximaDBClient:
             metadata_filters: Optional metadata filters
             include_metadata: Include metadata in results
             include_vectors: Include vector data in results
+            optimization_hints: Search optimization hints for performance tuning
         
         Returns:
             List of SearchResult objects
@@ -593,6 +602,56 @@ class ProximaDBClient:
                 top_k=top_k,
                 include_fields=include_fields
             )
+            
+            # Add optimization hints if provided
+            if optimization_hints:
+                hints = pb2.SearchOptimizationHints()
+                
+                # Set basic optimization flags
+                if 'enable_two_stage_search' in optimization_hints:
+                    hints.enable_two_stage_search = optimization_hints['enable_two_stage_search']
+                if 'candidate_multiplier' in optimization_hints:
+                    hints.candidate_multiplier = optimization_hints['candidate_multiplier']
+                if 'min_candidates' in optimization_hints:
+                    hints.min_candidates = optimization_hints['min_candidates']
+                if 'max_candidates' in optimization_hints:
+                    hints.max_candidates = optimization_hints['max_candidates']
+                if 'enable_clustering_optimization' in optimization_hints:
+                    hints.enable_clustering_optimization = optimization_hints['enable_clustering_optimization']
+                if 'enable_metadata_filtering_hint' in optimization_hints:
+                    hints.enable_metadata_filtering_hint = optimization_hints['enable_metadata_filtering_hint']
+                if 'enable_parallel_search' in optimization_hints:
+                    hints.enable_parallel_search = optimization_hints['enable_parallel_search']
+                if 'accuracy_threshold' in optimization_hints:
+                    hints.accuracy_threshold = optimization_hints['accuracy_threshold']
+                if 'timeout_ms' in optimization_hints:
+                    hints.timeout_ms = optimization_hints['timeout_ms']
+                if 'include_expired_vectors' in optimization_hints:
+                    hints.include_expired_vectors = optimization_hints['include_expired_vectors']
+                
+                # Handle quantization hint
+                if 'quantization_hint' in optimization_hints:
+                    quant_hint = optimization_hints['quantization_hint']
+                    if quant_hint == 'FP32' or quant_hint == 'NONE':
+                        hints.quantization_hint.none.CopyFrom(pb2.NoQuantization())
+                    elif quant_hint.startswith('PQ'):
+                        bits = int(quant_hint[2:]) if len(quant_hint) > 2 else 8
+                        pq = pb2.ProductQuantization(bits_per_code=bits)
+                        hints.quantization_hint.pq.CopyFrom(pq)
+                    elif quant_hint.startswith('INT'):
+                        bits = int(quant_hint[3:]) if len(quant_hint) > 3 else 8
+                        scalar = pb2.ScalarQuantization(bits=bits, scale=1.0, offset=0.0)
+                        hints.quantization_hint.scalar.CopyFrom(scalar)
+                    elif quant_hint == 'BINARY':
+                        binary = pb2.BinaryQuantization(sign_based=True)
+                        hints.quantization_hint.binary.CopyFrom(binary)
+                
+                # Handle custom hints
+                if 'custom_hints' in optimization_hints:
+                    for key, value in optimization_hints['custom_hints'].items():
+                        hints.custom_hints[key] = str(value)
+                
+                request.optimization_hints.CopyFrom(hints)
             
             # Call gRPC service
             response = self._call_with_timeout(self.stub.VectorSearch, request)

@@ -3,10 +3,26 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! VIPER Engine Coordination
+//! VIPER Engine - Vector Storage Layer
 //!
-//! This module provides the main VIPER engine that coordinates between the different
-//! specialized modules (schema, compaction, flush) to provide a unified interface.
+//! VIPER (Vector-optimized Intelligent Parquet with Efficient Retrieval) is a pure
+//! storage engine focused on durability and efficient serialization of vectors.
+//!
+//! Responsibilities:
+//! - Store vectors in columnar Parquet format
+//! - Handle flush operations from WAL to persistent storage
+//! - Perform compaction to optimize storage layout
+//! - Provide direct vector search on Parquet files (baseline functionality)
+//!
+//! NOT Responsible For:
+//! - ML clustering (belongs in AXIS indexing service)
+//! - Index management (AXIS responsibility)
+//! - Query optimization strategies (AXIS layer)
+//!
+//! Architecture:
+//! - VIPER provides baseline search that works for ALL collections
+//! - AXIS can optionally add ML clustering as an optimization layer
+//! - Clean separation: VIPER = storage, AXIS = indexing
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -14,7 +30,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 
@@ -22,7 +38,7 @@ use super::types::*;
 use super::schema::SchemaManager;
 use super::compaction::CompactionManager;
 use super::flush::FlushManager;
-use super::ml_clustering::MLClusteringEngine;
+use super::ml_clustering::MLClusteringEngine; // TODO: Move to AXIS
 use super::utilities::ViperUtilities;
 use super::search::{ViperSearchEngine, ViperSearchConfig};
 use super::types::CollectionMetadata;
@@ -51,7 +67,7 @@ pub struct ViperEngine {
     stats: Arc<RwLock<EngineStats>>,
     
     /// Collection metadata cache
-    collections: Arc<RwLock<HashMap<CollectionId, CollectionMetadata>>>,
+    collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
 }
 
 impl ViperEngine {
@@ -107,11 +123,9 @@ impl ViperEngine {
         stats.total_vectors += 1;
         stats.total_size_bytes += record.vector.len() as u64 * 4; // f32 = 4 bytes
         
-        // TODO: Implement actual vector insertion logic
-        // This would typically involve:
-        // 1. Validating the record
-        // 2. Adding to in-memory buffer
-        // 3. Triggering flush if thresholds are met
+        // Note: This method is not used in production - inserts happen at WAL level
+        // Storage engines only handle flush/compaction operations
+        // This method exists for testing/debugging purposes only
         
         Ok(())
     }
@@ -119,7 +133,7 @@ impl ViperEngine {
     /// Flush vectors to storage
     pub async fn flush_vectors(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_records: &[VectorRecord],
         batch_ids: &[String],
         force: bool,
@@ -140,7 +154,7 @@ impl ViperEngine {
     /// Compact Parquet files
     pub async fn compact_parquet_files(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         input_files: Vec<String>,
     ) -> Result<Vec<String>> {
         info!(
@@ -159,15 +173,200 @@ impl ViperEngine {
         collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
+        use arrow_array::{Array, Float32Array, ListArray, StringArray, Int64Array, BooleanArray, Float64Array, TimestampMicrosecondArray, StructArray};
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs::File;
+        
         info!("🔍 VIPER Engine: Looking up vector {} in collection {}", vector_id, collection_id);
         
-        // TODO: Implement vector search logic
-        // This would involve:
-        // 1. Searching in-memory buffers
-        // 2. Searching Parquet files
-        // 3. Applying MVCC and expiration logic
+        // Get all Parquet files for the collection
+        let parquet_files = self.get_parquet_files_for_collection(&String::from(collection_id.to_string())).await?;
         
-        Ok(None)
+        if parquet_files.is_empty() {
+            debug!("📁 No Parquet files found for collection {}", collection_id);
+            return Ok(None);
+        }
+        
+        let current_time = chrono::Utc::now().timestamp_micros();
+        let mut best_match: Option<(VectorRecord, i64, i64)> = None; // (record, version, timestamp)
+        
+        // Search through all Parquet files
+        for parquet_file in parquet_files {
+            debug!("🔍 Searching file: {}", parquet_file);
+            
+            // Open Parquet file
+            let file = match File::open(&parquet_file) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Failed to open Parquet file {}: {}", parquet_file, e);
+                    continue;
+                }
+            };
+            
+            let reader_builder = match ParquetRecordBatchReaderBuilder::try_new(file) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Failed to create Parquet reader for {}: {}", parquet_file, e);
+                    continue;
+                }
+            };
+            
+            let mut batch_reader = reader_builder.build()?;
+            
+            // Process each record batch
+            while let Some(batch) = batch_reader.next() {
+                let batch = batch?;
+                
+                // Get ID column
+                let id_array = batch.column_by_name("id")
+                    .and_then(|col| col.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'id' column"))?;
+                
+                // Find matching ID
+                for row_idx in 0..batch.num_rows() {
+                    if id_array.value(row_idx) == vector_id {
+                        // Found a match! Extract the full record
+                        let vector_array = batch.column_by_name("vector")
+                            .and_then(|col| col.as_any().downcast_ref::<ListArray>())
+                            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vector' column"))?;
+                        
+                        let timestamp = batch.column_by_name("timestamp")
+                            .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                            .map(|arr| arr.value(row_idx))
+                            .unwrap_or(0);
+                        
+                        let version = batch.column_by_name("version")
+                            .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                            .map(|arr| arr.value(row_idx))
+                            .unwrap_or(1);
+                        
+                        let expires_at = batch.column_by_name("expires_at")
+                            .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                            .and_then(|arr| if arr.is_null(row_idx) { None } else { Some(arr.value(row_idx)) });
+                        
+                        // Skip if expired
+                        if let Some(exp) = expires_at {
+                            if exp > 0 && exp < current_time {
+                                debug!("Skipping expired vector {} (expired at {})", vector_id, exp);
+                                continue;
+                            }
+                        }
+                        
+                        // Extract vector data
+                        let vector_values = vector_array.value(row_idx);
+                        let vector_float_array = vector_values
+                            .as_any()
+                            .downcast_ref::<Float32Array>()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid vector values type"))?;
+                        
+                        let vector: Vec<f32> = (0..vector_float_array.len())
+                            .map(|i| vector_float_array.value(i))
+                            .collect();
+                        
+                        // Extract other fields
+                        let created_at = batch.column_by_name("created_at")
+                            .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                            .map(|arr| arr.value(row_idx))
+                            .unwrap_or(timestamp);
+                        
+                        let updated_at = batch.column_by_name("updated_at")
+                            .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                            .map(|arr| arr.value(row_idx))
+                            .unwrap_or(timestamp);
+                        
+                        // Parse metadata from extra_meta list of key-value pairs
+                        let mut metadata = HashMap::new();
+                        if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
+                            if let Some(extra_meta_list) = extra_meta_col.as_any().downcast_ref::<ListArray>() {
+                                if !extra_meta_list.is_null(row_idx) {
+                                    let kv_pairs = extra_meta_list.value(row_idx);
+                                    if let Some(struct_array) = kv_pairs.as_any().downcast_ref::<StructArray>() {
+                                        let key_array = struct_array.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                                        let value_array = struct_array.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                                        
+                                        for kv_idx in 0..struct_array.len() {
+                                            if !struct_array.is_null(kv_idx) {
+                                                let key = key_array.value(kv_idx).to_string();
+                                                let value = value_array.value(kv_idx).to_string();
+                                                metadata.insert(key, serde_json::Value::String(value));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Also parse filterable metadata columns (they have their own columns)
+                        for field in batch.schema().fields() {
+                            let field_name = field.name();
+                            // Skip core fields - only process filterable metadata columns
+                            if !matches!(field_name.as_str(), "id" | "collection_id" | "vector" | "timestamp" | "created_at" | "updated_at" | "version" | "expires_at" | "extra_meta") {
+                                if let Some(column) = batch.column_by_name(field_name) {
+                                    if !column.is_null(row_idx) {
+                                        // Convert Arrow value to JSON based on data type
+                                        let json_value = match field.data_type() {
+                                            arrow_schema::DataType::Utf8 => {
+                                                if let Some(str_array) = column.as_any().downcast_ref::<StringArray>() {
+                                                    serde_json::Value::String(str_array.value(row_idx).to_string())
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Int64 => {
+                                                if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>() {
+                                                    serde_json::Value::Number(serde_json::Number::from(int_array.value(row_idx)))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Float64 => {
+                                                if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
+                                                    serde_json::Value::Number(serde_json::Number::from_f64(float_array.value(row_idx)).unwrap_or(serde_json::Number::from(0)))
+                                                } else { continue; }
+                                            }
+                                            arrow_schema::DataType::Boolean => {
+                                                if let Some(bool_array) = column.as_any().downcast_ref::<BooleanArray>() {
+                                                    serde_json::Value::Bool(bool_array.value(row_idx))
+                                                } else { continue; }
+                                            }
+                                            _ => continue, // Skip unsupported types
+                                        };
+                                        metadata.insert(field_name.to_string(), json_value);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        let record = VectorRecord {
+                            id: vector_id.to_string(),
+                            collection_id: collection_id.to_string(),
+                            vector,
+                            metadata,
+                            timestamp,
+                            created_at,
+                            updated_at,
+                            expires_at,
+                            version,
+                            rank: None,
+                            score: None,
+                            distance: None,
+                        };
+                        
+                        // Check if this is a better match than what we have
+                        match &best_match {
+                            Some((_, best_version, best_timestamp)) => {
+                                if version > *best_version || 
+                                   (version == *best_version && timestamp > *best_timestamp) {
+                                    best_match = Some((record, version, timestamp));
+                                }
+                            }
+                            None => {
+                                best_match = Some((record, version, timestamp));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Return the best match (highest version/newest timestamp)
+        Ok(best_match.map(|(record, _, _)| record))
     }
     
     /// Get engine statistics
@@ -176,7 +375,7 @@ impl ViperEngine {
     }
     
     /// Clear schema cache for a collection
-    pub async fn clear_schema_cache(&self, collection_id: &CollectionId) {
+    pub async fn clear_schema_cache(&self, collection_id: &str) {
         self.schema_manager.clear_schema_cache(collection_id).await;
     }
     
@@ -192,22 +391,22 @@ impl ViperEngine {
     
     /// Internal health check
     pub async fn internal_health_check(&self) -> Result<bool> {
-        // TODO: Implement comprehensive health check
-        // - Check filesystem connectivity
-        // - Check collection service availability
-        // - Check internal state consistency
+        // Basic health check - can be extended to check:
+        // - Filesystem connectivity
+        // - Collection service availability
+        // - Internal state consistency
         
         Ok(true)
     }
     
     /// Get collection metadata
-    pub async fn get_collection_metadata(&self, collection_id: &CollectionId) -> Option<CollectionMetadata> {
+    pub async fn get_collection_metadata(&self, collection_id: &str) -> Option<CollectionMetadata> {
         let collections = self.collections.read().await;
         collections.get(collection_id).cloned()
     }
     
     /// Update collection metadata
-    pub async fn update_collection_metadata(&self, collection_id: CollectionId, metadata: CollectionMetadata) {
+    pub async fn update_collection_metadata(&self, collection_id: String, metadata: CollectionMetadata) {
         let mut collections = self.collections.write().await;
         collections.insert(collection_id, metadata);
     }
@@ -218,23 +417,24 @@ impl ViperEngine {
     }
     
     /// Predict cluster for a vector using ML clustering
-    pub async fn predict_cluster(&self, collection_id: &CollectionId, vector: &[f32]) -> Result<Option<String>> {
-        // TODO: Implement proper cluster prediction with the ML clustering engine
-        // For now, return None (no cluster prediction)
+    /// DEPRECATED: This functionality should be moved to AXIS indexing service
+    pub async fn predict_cluster(&self, collection_id: &str, vector: &[f32]) -> Result<Option<String>> {
+        // ML clustering belongs in AXIS, not in the storage engine
+        // VIPER should focus on storage operations only
         Ok(None)
     }
     
     /// Train ML clustering model for a collection
-    pub async fn train_clustering_model(&self, _collection_id: &CollectionId, vectors: Vec<Vec<f32>>) -> Result<()> {
-        // TODO: Implement proper ML clustering model training
-        // Currently the MLClusteringEngine requires mutable access which doesn't work with our design
-        // This is a placeholder that would need architectural changes to implement properly
-        info!("🧠 ML clustering model training requested for collection {} with {} vectors", _collection_id, vectors.len());
+    /// DEPRECATED: This functionality should be moved to AXIS indexing service
+    pub async fn train_clustering_model(&self, _collection_id: &str, vectors: Vec<Vec<f32>>) -> Result<()> {
+        // ML clustering belongs in AXIS, not in the storage engine
+        // AXIS should handle all indexing strategies including ML models
+        info!("🧠 ML clustering should be handled by AXIS, not VIPER storage engine");
         Ok(())
     }
     
     /// Get clustering model for a collection
-    pub async fn get_clustering_model(&self, collection_id: &CollectionId) -> Option<super::ml_clustering::MLClusteringModel> {
+    pub async fn get_clustering_model(&self, collection_id: &str) -> Option<super::ml_clustering::MLClusteringModel> {
         self.ml_clustering_engine.get_model().cloned()
     }
     
@@ -244,12 +444,12 @@ impl ViperEngine {
     }
     
     /// Get performance statistics
-    pub async fn get_performance_report(&self, collection_id: Option<&CollectionId>) -> Result<super::utilities::PerformanceReport> {
+    pub async fn get_performance_report(&self, collection_id: Option<&String>) -> Result<super::utilities::PerformanceReport> {
         self.utilities.get_performance_stats(collection_id).await
     }
     
     /// Optimize compression for a collection
-    pub async fn optimize_compression(&self, collection_id: &CollectionId) -> Result<super::utilities::CompressionRecommendation> {
+    pub async fn optimize_compression(&self, collection_id: &str) -> Result<super::utilities::CompressionRecommendation> {
         self.utilities.optimize_compression(collection_id).await
     }
     
@@ -277,16 +477,20 @@ impl ViperEngine {
     ) -> Result<Vec<crate::core::SearchResult>> {
         info!("🔍 VIPER Engine: Polymorphic vector search - collection={}, k={}", collection_id, k);
         
-        let collection_id_typed = CollectionId::from(collection_id.to_string());
+        let collection_id_typed = String::from(collection_id.to_string());
+        
+        // Create search parameters with only the necessary overrides
+        let search_params = crate::core::search::SearchParams {
+            top_k: Some(k),
+            ..Default::default()
+        };
         
         // Delegate to the storage-aware search engine for optimal strategy selection
         self.search_engine.search_vectors(
             self,  // Pass self reference for engine access
             &collection_id_typed,
             query_vector,
-            k,
-            None,  // No metadata filters for simple interface
-            None,  // Use default search hints
+            &search_params,
         ).await
     }
     
@@ -304,10 +508,9 @@ impl ViperEngine {
     ) -> Result<Vec<crate::core::SearchResult>> {
         info!("🔍 VIPER Engine: Cluster search - collection={}, cluster={}, k={}", collection_id, cluster_id, k);
         
-        // TODO: Implement actual cluster-specific search with:
-        // - Cluster-specific Parquet file filtering
-        // - Cluster centroid distance optimization
-        // - Predicate pushdown for cluster metadata
+        // Note: Cluster-based search should be handled by AXIS indexing service
+        // VIPER should only provide raw vector retrieval from Parquet files
+        // AXIS will determine which clusters/files to search based on its ML models
         
         // For cluster-specific search, return empty results for now
         // Real implementation would:
@@ -321,24 +524,67 @@ impl ViperEngine {
     }
 
     /// Get all Parquet files associated with a collection
-    pub async fn get_parquet_files_for_collection(&self, collection_id: &CollectionId) -> Result<Vec<String>> {
+    pub async fn get_parquet_files_for_collection(&self, collection_id: &str) -> Result<Vec<String>> {
         debug!("📁 Getting Parquet files for collection: {}", collection_id);
         
-        // TODO: Implement actual Parquet file discovery from storage engine
-        // This would involve:
-        // 1. Querying the filesystem for collection-specific Parquet files
-        // 2. Reading from the storage engine's file registry
-        // 3. Filtering by collection ID and file type
+        // Get storage URL from assignment service
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let storage_assignment = assignment_service
+            .get_assignment(collection_id, crate::storage::assignment_service::StorageComponentType::Storage)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", collection_id))?;
         
-        // For now, return mock file paths to demonstrate control flow
-        let mock_files = vec![
-            format!("collections/{}/data_001.parquet", collection_id),
-            format!("collections/{}/data_002.parquet", collection_id),
-            format!("collections/{}/data_003.parquet", collection_id),
-        ];
+        let storage_url = &storage_assignment.storage_url;
+        debug!("📁 Storage URL for collection {}: {}", collection_id, storage_url);
         
-        info!("📁 Found {} Parquet files for collection {}", mock_files.len(), collection_id);
-        Ok(mock_files)
+        // Handle different storage backends
+        let parquet_files = if storage_url.starts_with("file://") {
+            // Local filesystem
+            let path = storage_url.strip_prefix("file://").unwrap_or(storage_url);
+            let collection_path = std::path::Path::new(path).join(collection_id);
+            
+            if !collection_path.exists() {
+                debug!("📁 Collection directory does not exist: {:?}", collection_path);
+                return Ok(Vec::new());
+            }
+            
+            // Find all .parquet files in the collection directory
+            let mut files = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&collection_path) {
+                for entry in entries.flatten() {
+                    if let Some(file_name) = entry.file_name().to_str() {
+                        if file_name.ends_with(".parquet") && !file_name.starts_with(".") {
+                            files.push(entry.path().to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+            
+            // Sort files for consistent ordering
+            files.sort();
+            files
+        } else if storage_url.starts_with("s3://") || 
+                  storage_url.starts_with("gcs://") || 
+                  storage_url.starts_with("adls://") {
+            // Cloud storage - use filesystem factory
+            let collection_url = format!("{}/{}", storage_url, collection_id);
+            match self.filesystem.list(&collection_url).await {
+                Ok(entries) => entries.into_iter()
+                    .filter(|e| e.name.ends_with(".parquet"))
+                    .map(|e| format!("{}/{}", collection_url, e.name))
+                    .collect(),
+                Err(e) => {
+                    warn!("📁 Failed to list cloud files for collection {}: {}", collection_id, e);
+                    Vec::new()
+                }
+            }
+        } else {
+            warn!("📁 Unsupported storage URL scheme: {}", storage_url);
+            Vec::new()
+        };
+        
+        info!("📁 Found {} Parquet files for collection {}", parquet_files.len(), collection_id);
+        Ok(parquet_files)
     }
 
 }

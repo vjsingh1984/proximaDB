@@ -1,0 +1,80 @@
+@startuml ProximaDB Detailed Component Interactions
+!theme plain
+title ProximaDB - Detailed Component Interaction Diagram
+
+package "ProximaDB Core System" {
+  
+  package "API Layer" {
+    component "REST Server" as REST_SRV
+    component "gRPC Server" as GRPC_SRV
+  }
+  
+  package "Service Layer" {
+    component "Vector Service" as VEC_SVC
+    component "Collection Service" as COL_SVC
+    component "Search Factory" as SEARCH_FAC
+  }
+  
+  package "Storage Layer" {
+    component "WAL Manager" as WAL_MGR
+    component "LSM Engine" as LSM_ENG
+    component "VIPER Engine" as VIPER_ENG
+  }
+  
+  package "Index Layer" {
+    component "AXIS Manager" as AXIS_MGR
+    component "HNSW Index" as HNSW_IDX
+    component "IVF Index" as IVF_IDX
+  }
+  
+  package "Infrastructure" {
+    component "Atomicity Manager" as ATOM_MGR
+    component "Filesystem" as FS
+  }
+}
+
+' API to Service connections
+REST_SRV --> VEC_SVC : HTTP requests
+GRPC_SRV --> VEC_SVC : gRPC calls
+REST_SRV --> COL_SVC : Collection ops
+GRPC_SRV --> COL_SVC : Collection ops
+
+' Service layer connections
+VEC_SVC --> WAL_MGR : Write path
+VEC_SVC --> SEARCH_FAC : Read path
+SEARCH_FAC --> LSM_ENG : Search LSM
+SEARCH_FAC --> VIPER_ENG : Search VIPER
+
+' Storage connections
+WAL_MGR --> LSM_ENG : Flush
+WAL_MGR --> VIPER_ENG : Flush
+LSM_ENG --> ATOM_MGR : Atomic ops
+VIPER_ENG --> ATOM_MGR : Atomic ops
+
+' Index connections
+VEC_SVC --> AXIS_MGR : Index updates
+AXIS_MGR --> HNSW_IDX : Build HNSW
+AXIS_MGR --> IVF_IDX : Build IVF
+
+' Infrastructure usage
+WAL_MGR --> FS : Write segments
+LSM_ENG --> FS : Write SSTables
+VIPER_ENG --> FS : Write Parquet
+
+note top of VEC_SVC
+  Central service handling
+  all vector operations
+end note
+
+note right of SEARCH_FAC
+  Creates polymorphic
+  search engines based
+  on data location
+end note
+
+note bottom of ATOM_MGR
+  Ensures ACID properties
+  for all storage operations
+end note
+
+@enduml

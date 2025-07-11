@@ -79,7 +79,14 @@ impl From<&VectorRecord> for AvroVector {
                 record
                     .metadata
                     .iter()
-                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .map(|(k, v)| {
+                        // Properly handle JSON values - extract string without quotes
+                        let value_str = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            _ => v.to_string(),
+                        };
+                        (k.clone(), value_str)
+                    })
                     .collect(),
             )
         };
@@ -302,32 +309,7 @@ pub fn serialize_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>
     create_avro_vector_batch(vector_records)
 }
 
-/// Convert WalEntry to AvroVector for disk writing (compatibility function)
-/// This is a temporary function to support legacy disk.rs until we implement direct payload writing
-pub fn convert_to_avro_entry(entry: &crate::storage::persistence::wal::WalEntry) -> Result<AvroVector> {
-    // Handle different payload formats
-    let vectors = match entry.operation.payload_format.as_str() {
-        "avro" => {
-            // Deserialize Avro payload
-            deserialize_vector_batch(&entry.operation.payload_data)?
-        }
-        "bincode" => {
-            // For bincode, we'd need a bincode deserializer
-            // For now, return error as disk.rs should use direct payload writing for bincode
-            anyhow::bail!("Bincode payload format not supported in legacy conversion function - use direct payload writing")
-        }
-        format => {
-            anyhow::bail!("Unknown payload format: {}", format)
-        }
-    };
-    
-    if vectors.is_empty() {
-        anyhow::bail!("WalOperation contains empty vector batch")
-    }
-    
-    // Return first vector in the batch (for disk.rs compatibility)
-    Ok(AvroVector::from(&vectors[0]))
-}
+// convert_to_avro_entry removed - use WalVectorBatch for batch operations
 
 #[cfg(test)]
 mod tests {

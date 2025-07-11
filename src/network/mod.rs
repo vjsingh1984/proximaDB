@@ -72,7 +72,7 @@ impl Default for NetworkConfig {
             auth: AuthConfig::default(),
             rate_limit: RateLimitConfig::default(),
             request_timeout_secs: 30,
-            max_request_size: 32 * 1024 * 1024, // 32MB
+            max_request_size: 64 * 1024 * 1024, // 64MB for bulk operations
             keep_alive_timeout_secs: 60,
             tcp_nodelay: true,
         }

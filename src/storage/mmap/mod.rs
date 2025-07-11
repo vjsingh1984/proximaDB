@@ -1,4 +1,4 @@
-use crate::core::{CollectionId, StorageError, VectorId, VectorRecord};
+use crate::core::{String, StorageError, VectorId, VectorRecord};
 use crate::storage::{engines::lsm::LsmRecord, Result};
 use memmap2::MmapOptions;
 use std::collections::BTreeMap;
@@ -22,13 +22,13 @@ struct MmapSstFile {
 
 #[derive(Debug)]
 pub struct MmapReader {
-    collection_id: CollectionId,
+    collection_id: String,
     data_dir: PathBuf,
     sst_files: Arc<RwLock<Vec<MmapSstFile>>>,
 }
 
 impl MmapReader {
-    pub fn new(collection_id: CollectionId, data_dir: PathBuf) -> Result<Self> {
+    pub fn new(collection_id: String, data_dir: PathBuf) -> Result<Self> {
         Ok(Self {
             collection_id: collection_id.clone(),
             data_dir,

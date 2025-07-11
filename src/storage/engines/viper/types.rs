@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-use crate::core::CollectionId;
+
 
 /// Filterable column configuration for server-side metadata filtering
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -54,7 +54,7 @@ pub enum ColumnIndexType {
 /// Parquet schema design for user-configurable columns
 #[derive(Debug, Clone)]
 pub struct ParquetSchemaDesign {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub fields: Vec<ParquetField>,
     pub filterable_columns: Vec<FilterableColumn>,
     pub partition_columns: Vec<String>,
@@ -138,7 +138,7 @@ pub struct ViperConfig {
 /// Collection metadata in VIPER with quantization and clustering support
 #[derive(Debug, Clone)]
 pub struct CollectionMetadata {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub vector_dimensions: usize,
     pub distance_metric: String,
     pub created_at: SystemTime,

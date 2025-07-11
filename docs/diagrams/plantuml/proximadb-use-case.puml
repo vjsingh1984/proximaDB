@@ -1,0 +1,102 @@
+@startuml ProximaDB Use Case Diagram
+!theme plain
+title ProximaDB - Use Case Diagram
+
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+
+' Actors
+actor "Client Application" as Client
+actor "System Administrator" as Admin
+actor "Data Scientist" as DataSci
+actor "DevOps Engineer" as DevOps
+
+' System boundary
+rectangle "ProximaDB System" {
+  ' Core Vector Operations
+  usecase "Insert Vectors" as UC1
+  usecase "Search Vectors" as UC2
+  usecase "Update Vectors" as UC3
+  usecase "Delete Vectors" as UC4
+  usecase "Get Vector by ID" as UC5
+  
+  ' Collection Management
+  usecase "Create Collection" as UC6
+  usecase "Delete Collection" as UC7
+  usecase "List Collections" as UC8
+  usecase "Update Collection Config" as UC9
+  
+  ' Advanced Features
+  usecase "Batch Insert" as UC10
+  usecase "Multi-Query Search" as UC11
+  usecase "Metadata Filtering" as UC12
+  usecase "Quantized Search" as UC13
+  usecase "Two-Stage Search" as UC14
+  
+  ' System Operations
+  usecase "Monitor Performance" as UC15
+  usecase "Configure Storage" as UC16
+  usecase "Manage Indexes" as UC17
+  usecase "Backup Data" as UC18
+  usecase "Restore Data" as UC19
+  
+  ' ML Operations
+  usecase "Train Quantization Model" as UC20
+  usecase "Optimize Indexes" as UC21
+  usecase "Analyze Query Patterns" as UC22
+}
+
+' Client relationships
+Client --> UC1 : "Insert vector data"
+Client --> UC2 : "Search similar vectors"
+Client --> UC3 : "Update existing vectors"
+Client --> UC4 : "Remove vectors"
+Client --> UC5 : "Retrieve specific vector"
+Client --> UC10 : "Bulk operations"
+Client --> UC11 : "Multiple queries"
+
+' Data Scientist relationships
+DataSci --> UC2 : "Similarity search"
+DataSci --> UC12 : "Filter by metadata"
+DataSci --> UC13 : "Use quantization"
+DataSci --> UC14 : "Two-stage search"
+DataSci --> UC20 : "Train models"
+DataSci --> UC22 : "Analyze patterns"
+
+' Admin relationships
+Admin --> UC6 : "Setup collections"
+Admin --> UC7 : "Remove collections"
+Admin --> UC8 : "View collections"
+Admin --> UC9 : "Configure settings"
+Admin --> UC15 : "Monitor system"
+Admin --> UC17 : "Manage indexes"
+
+' DevOps relationships
+DevOps --> UC16 : "Configure storage"
+DevOps --> UC18 : "Backup system"
+DevOps --> UC19 : "Restore system"
+DevOps --> UC15 : "Monitor metrics"
+
+' Include relationships
+UC2 ..> UC12 : <<include>>
+UC2 ..> UC13 : <<include>>
+UC2 ..> UC14 : <<include>>
+UC10 ..> UC1 : <<include>>
+UC11 ..> UC2 : <<include>>
+
+' Extend relationships
+UC21 ..> UC17 : <<extend>>
+UC20 ..> UC13 : <<extend>>
+
+note right of UC2
+  Polymorphic search across
+  WAL, LSM, and VIPER tiers
+end note
+
+note bottom of UC13
+  Supports INT8, PQ8/PQ4,
+  Binary quantization
+end note
+
+@enduml

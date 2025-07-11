@@ -3,15 +3,16 @@
  */
 
 use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, span, Instrument, Level};
 
 use crate::proto::proximadb::proxima_db_server::ProximaDb;
-use crate::proto::proximadb::{
+use crate::proto::proximadb::{metadata_value, 
     CollectionOperation, CollectionRequest, CollectionResponse, HealthRequest, HealthResponse,
     MetricsRequest, MetricsResponse, OperationMetrics, ResultMetadata, SearchResult,
-    SearchResultsCompact, VectorInsertRequest, VectorMutationRequest, VectorOperation,
+    SearchResultsCompact, VectorBatchRequest, VectorOperation,
     VectorOperationResponse, VectorSearchRequest,
 };
 use crate::services::collection_service::CollectionService;
@@ -94,12 +95,13 @@ impl ProximaDbGrpcService {
             );
 
             let filestore_config = FilestoreMetadataConfig {
-                filestore_url: config.storage_url.clone(),
+                storage_url: config.storage_url.clone(),
                 enable_compression: true,
-                enable_backup: true,
-                enable_snapshot_archival: true,
-                max_archived_snapshots: 5,
-                temp_directory: None,
+                enable_snapshots: true,
+                snapshot_threshold: 1000,
+                keep_snapshots: 5,
+                backup_url: None,
+                temp_dir: None,
             };
 
             // Configure filesystem for cloud storage if needed
@@ -124,7 +126,7 @@ impl ProximaDbGrpcService {
             )
         };
 
-        info!("📁 Filestore URL: {}", filestore_config.filestore_url);
+        info!("📁 Filestore URL: {}", filestore_config.storage_url);
 
         let filesystem_factory = Arc::new(
             FilesystemFactory::new(filesystem_config)
@@ -155,6 +157,30 @@ impl ProximaDbGrpcService {
         }
     }
 
+    /// Convert prost::Value to serde_json::Value
+    fn convert_prost_value_to_json(&self, value: &prost_types::Value) -> serde_json::Value {
+        use prost_types::value::Kind;
+        match &value.kind {
+            Some(Kind::NullValue(_)) => serde_json::Value::Null,
+            Some(Kind::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0))),
+            Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
+            Some(Kind::BoolValue(b)) => serde_json::Value::Bool(*b),
+            Some(Kind::StructValue(s)) => {
+                let map: serde_json::Map<String, serde_json::Value> = s.fields.iter()
+                    .map(|(k, v)| (k.clone(), self.convert_prost_value_to_json(v)))
+                    .collect();
+                serde_json::Value::Object(map)
+            },
+            Some(Kind::ListValue(l)) => {
+                let vec: Vec<serde_json::Value> = l.values.iter()
+                    .map(|v| self.convert_prost_value_to_json(v))
+                    .collect();
+                serde_json::Value::Array(vec)
+            },
+            None => serde_json::Value::Null,
+        }
+    }
+
     /// Create versioned payload format for gRPC to VectorService communication
     fn create_versioned_payload(operation_type: &str, json_data: &[u8]) -> Vec<u8> {
         let schema_version = 1u32.to_le_bytes();
@@ -181,9 +207,32 @@ impl ProximaDbGrpcService {
             vector: proto_record.vector.clone(),
             metadata: proto_record
                 .metadata
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect(),
+                .as_ref()
+                .map(|m| {
+                    m.fields
+                        .iter()
+                        .map(|(k, v)| {
+                            let json_value = match &v.value {
+                                Some(metadata_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                                Some(metadata_value::Value::IntValue(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                                Some(metadata_value::Value::DoubleValue(d)) => serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0))),
+                                Some(metadata_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                Some(metadata_value::Value::StringArray(array)) => {
+                                    serde_json::Value::Array(array.values.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+                                }
+                                Some(metadata_value::Value::IntArray(array)) => {
+                                    serde_json::Value::Array(array.values.iter().map(|i| serde_json::Value::Number(serde_json::Number::from(*i))).collect())
+                                }
+                                Some(metadata_value::Value::DoubleArray(array)) => {
+                                    serde_json::Value::Array(array.values.iter().map(|d| serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)))).collect())
+                                }
+                                None => serde_json::Value::Null,
+                            };
+                            (k.clone(), json_value)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             timestamp: proto_record
                 .timestamp
                 .unwrap_or_else(|| Utc::now().timestamp_millis()),
@@ -234,43 +283,35 @@ impl ProximaDb for ProximaDbGrpcService {
                     Status::invalid_argument("Missing collection config for CREATE")
                 })?;
 
-                // Use CollectionService directly with FilestoreMetadataBackend
+                // Parse proto types to native types - using proto enum directly
+                let distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
+                    Ok(metric) => metric,
+                    _ => crate::proto::proximadb::DistanceMetric::Cosine,
+                };
+                
+                let storage_engine = match crate::proto::proximadb::StorageEngine::try_from(config.storage_engine) {
+                    Ok(engine) => engine,
+                    _ => crate::proto::proximadb::StorageEngine::Viper,
+                };
+                
+                let indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_indexing_algorithm) {
+                    Ok(algo) => algo,
+                    _ => crate::proto::proximadb::IndexingAlgorithm::Hnsw,
+                };
+                
+                // Using native proto types directly - no JSON conversion needed!
+
+                // Call create_collection with native proto types directly
                 let result = self
                     .collection_service
-                    .create_collection_from_grpc(config)
+                    .create_collection(&config)
                     .instrument(span!(Level::DEBUG, "grpc_collection_create"))
                     .await
                     .map_err(|e| Status::internal(format!("Collection creation failed: {}", e)))?;
 
                 if result.success {
-                    // Get the created collection to return it
-                    let created_collection = if let Some(uuid) = &result.collection_uuid {
-                        self.collection_service
-                            .get_collection_by_name(&config.name)
-                            .await
-                            .map_err(|e| {
-                                Status::internal(format!(
-                                    "Failed to retrieve created collection: {}",
-                                    e
-                                ))
-                            })?
-                            .map(|record| {
-                                let collection_config = record.to_grpc_config();
-                                crate::proto::proximadb::Collection {
-                                    id: record.uuid,
-                                    config: Some(collection_config),
-                                    stats: Some(crate::proto::proximadb::CollectionStats {
-                                        vector_count: record.vector_count,
-                                        index_size_bytes: 0, // TODO: Calculate from storage
-                                        data_size_bytes: record.total_size_bytes,
-                                    }),
-                                    created_at: record.created_at,
-                                    updated_at: record.updated_at,
-                                }
-                            })
-                    } else {
-                        None
-                    };
+                    // Use the proto collection directly from the response - no conversion needed!
+                    let created_collection = result.collection;
 
                     Ok(Response::new(CollectionResponse {
                         success: true,
@@ -308,25 +349,14 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 let collection = self
                     .collection_service
-                    .get_collection_by_name_or_uuid(collection_id)
+                    .get_proto_collection(collection_id)
                     .await
                     .map_err(|e| Status::internal(format!("Failed to get collection: {}", e)))?;
 
                 let processing_time = start_time.elapsed().as_micros() as i64;
 
-                if let Some(record) = collection {
-                    let collection_config = record.to_grpc_config();
-                    let collection = crate::proto::proximadb::Collection {
-                        id: record.uuid,
-                        config: Some(collection_config),
-                        stats: Some(crate::proto::proximadb::CollectionStats {
-                            vector_count: record.vector_count,
-                            index_size_bytes: 0, // TODO: Calculate from storage
-                            data_size_bytes: record.total_size_bytes,
-                        }),
-                        created_at: record.created_at,
-                        updated_at: record.updated_at,
-                    };
+                if let Some(collection) = collection {
+                    // Direct proto Collection usage - no conversion needed!
 
                     Ok(Response::new(CollectionResponse {
                         success: true,
@@ -365,23 +395,8 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 let processing_time = start_time.elapsed().as_micros() as i64;
 
-                let proto_collections: Vec<crate::proto::proximadb::Collection> = collections
-                    .into_iter()
-                    .map(|record| {
-                        let collection_config = record.to_grpc_config();
-                        crate::proto::proximadb::Collection {
-                            id: record.uuid,
-                            config: Some(collection_config),
-                            stats: Some(crate::proto::proximadb::CollectionStats {
-                                vector_count: record.vector_count,
-                                index_size_bytes: 0, // TODO: Calculate from storage
-                                data_size_bytes: record.total_size_bytes,
-                            }),
-                            created_at: record.created_at,
-                            updated_at: record.updated_at,
-                        }
-                    })
-                    .collect();
+                // Collections are already proto Collections, no conversion needed
+                let proto_collections = collections;
 
                 let total_count = proto_collections.len() as i64;
 
@@ -446,58 +461,96 @@ impl ProximaDb for ProximaDbGrpcService {
                     .as_ref()
                     .ok_or_else(|| Status::invalid_argument("Missing collection_id for UPDATE"))?;
 
-                // The updates should be in query_params field as JSON key-value pairs
-                if req.query_params.is_empty() {
-                    return Err(Status::invalid_argument(
-                        "No updates provided in query_params",
-                    ));
-                }
-
-                // Convert query_params (HashMap<String, String>) to HashMap<String, serde_json::Value>
-                let mut updates = std::collections::HashMap::new();
+                // Parse updates from query_params to native types
+                let mut description: Option<Option<String>> = None;
+                let mut tags: Option<Vec<String>> = None;
+                let mut owner: Option<Option<String>> = None;
+                let mut config: Option<serde_json::Value> = None;
+                
                 for (key, value) in req.query_params.iter() {
-                    // Try to parse the value as JSON, if it fails treat it as a string
-                    let json_value = match serde_json::from_str::<serde_json::Value>(value) {
-                        Ok(v) => v,
-                        Err(_) => serde_json::Value::String(value.clone()),
-                    };
-                    updates.insert(key.clone(), json_value);
+                    match key.as_str() {
+                        "description" => {
+                            if value == "null" {
+                                description = Some(None); // Clear the field
+                            } else {
+                                description = Some(Some(value.clone()));
+                            }
+                        }
+                        "tags" => {
+                            // Parse as JSON array
+                            if let Ok(tags_array) = serde_json::from_str::<Vec<String>>(value) {
+                                tags = Some(tags_array);
+                            } else {
+                                return Err(Status::invalid_argument("tags must be a JSON array of strings"));
+                            }
+                        }
+                        "owner" => {
+                            if value == "null" {
+                                owner = Some(None); // Clear the field
+                            } else {
+                                owner = Some(Some(value.clone()));
+                            }
+                        }
+                        "config" => {
+                            // Parse as JSON object
+                            if let Ok(config_obj) = serde_json::from_str::<serde_json::Value>(value) {
+                                if config_obj.is_object() {
+                                    config = Some(config_obj);
+                                } else {
+                                    return Err(Status::invalid_argument("config must be a JSON object"));
+                                }
+                            } else {
+                                return Err(Status::invalid_argument("config must be valid JSON"));
+                            }
+                        }
+                        _ => {
+                            return Err(Status::invalid_argument(format!("Unknown field: {}", key)));
+                        }
+                    }
                 }
-
+                
+                // Check if any updates were provided
+                if description.is_none() && tags.is_none() && owner.is_none() && config.is_none() {
+                    return Err(Status::invalid_argument("No valid updates provided"));
+                }
+                
+                // Build a CollectionConfig with only the fields to update
+                let config_update = if description.is_some() || tags.is_some() || owner.is_some() {
+                    Some(crate::proto::proximadb::CollectionConfig {
+                        name: String::new(), // Empty name means don't update
+                        dimension: 0, // 0 means don't update
+                        distance_metric: 0, // 0 means don't update
+                        storage_engine: 0, // 0 means don't update
+                        primary_indexing_algorithm: 0, // 0 means don't update
+                        description: description.unwrap_or(None),
+                        tags: tags.unwrap_or_default(),
+                        owner: owner.unwrap_or(None),
+                        filterable_columns: vec![],
+                        index_configs: vec![],
+                        quantization_config: None,
+                        primary_index_name: String::new(),
+                        enable_automatic_index_selection: false,
+                    })
+                } else {
+                    None
+                };
+                
+                // Call update_collection with native types
                 let result = self
                     .collection_service
-                    .update_collection_metadata(collection_id, &updates)
+                    .update_collection(
+                        collection_id,
+                        config_update,
+                    )
                     .await
                     .map_err(|e| {
                         Status::internal(format!("Failed to update collection metadata: {}", e))
                     })?;
 
                 if result.success {
-                    // Get the updated collection to return
-                    let updated_collection = self
-                        .collection_service
-                        .get_collection_by_name_or_uuid(collection_id)
-                        .await
-                        .map_err(|e| {
-                            Status::internal(format!(
-                                "Failed to retrieve updated collection: {}",
-                                e
-                            ))
-                        })?
-                        .map(|record| {
-                            let collection_config = record.to_grpc_config();
-                            crate::proto::proximadb::Collection {
-                                id: record.uuid,
-                                config: Some(collection_config),
-                                stats: Some(crate::proto::proximadb::CollectionStats {
-                                    vector_count: record.vector_count,
-                                    index_size_bytes: 0, // TODO: Calculate from storage
-                                    data_size_bytes: record.total_size_bytes,
-                                }),
-                                created_at: record.created_at,
-                                updated_at: record.updated_at,
-                            }
-                        });
+                    // Use the updated collection directly from response
+                    // Collection is already proto Collection, no conversion needed
+                    let updated_collection = result.collection;
 
                     Ok(Response::new(CollectionResponse {
                         success: true,
@@ -548,7 +601,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 let uuid_result = self
                     .collection_service
-                    .get_collection_uuid(collection_name)
+                    .get_uuid(collection_name)
                     .await
                     .map_err(|e| {
                         Status::internal(format!("Failed to get collection UUID: {}", e))
@@ -590,16 +643,15 @@ impl ProximaDb for ProximaDbGrpcService {
     }
 
     /// Zero-copy vector insert using Avro binary in gRPC message for WAL performance
-    async fn vector_insert(
+    async fn vector_batch(
         &self,
-        request: Request<VectorInsertRequest>,
+        request: Request<VectorBatchRequest>,
     ) -> Result<Response<VectorOperationResponse>, Status> {
         let req = request.into_inner();
         debug!(
-            "📦 gRPC vector_insert: collection={}, vectors_payload_size={}, upsert={}",
+            "📦 gRPC vector_batch: collection={}, vectors_payload_size={}",
             req.collection_id,
-            req.vectors_avro_payload.len(),
-            req.upsert_mode
+            req.vectors_avro_payload.len()
         );
 
         let start_time = std::time::Instant::now();
@@ -618,9 +670,8 @@ impl ProximaDb for ProximaDbGrpcService {
 
         let result = self
             .avro_service
-            .handle_vector_insert(
+            .handle_vector_batch(
                 &req.collection_id,
-                req.upsert_mode,
                 &req.vectors_avro_payload,
             )
             .instrument(span!(Level::DEBUG, "grpc_vector_insert_zero_copy"))
@@ -637,7 +688,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
         Ok(Response::new(VectorOperationResponse {
             success: schema_response.success,
-            operation: VectorOperation::VectorInsert as i32,
+            operation: VectorOperation::VectorBatch as i32,
             metrics: Some(operation_metrics),
             result_payload: None, // No search results for insert
             vector_ids: schema_response.vector_ids,
@@ -652,210 +703,7 @@ impl ProximaDb for ProximaDbGrpcService {
         }))
     }
 
-    /// Vector mutation (UPDATE/DELETE) via regular gRPC for flexibility
-    async fn vector_mutation(
-        &self,
-        request: Request<VectorMutationRequest>,
-    ) -> Result<Response<VectorOperationResponse>, Status> {
-        let req = request.into_inner();
-        let mutation_type = crate::proto::proximadb::MutationType::try_from(req.operation)
-            .map_err(|_| Status::invalid_argument("Invalid mutation type"))?;
-
-        debug!(
-            "📦 gRPC vector_mutation: collection={}, operation={:?}",
-            req.collection_id, mutation_type
-        );
-
-        let start_time = std::time::Instant::now();
-
-        match mutation_type {
-            crate::proto::proximadb::MutationType::MutationUpdate => {
-                // Extract update data
-                let selector = req
-                    .selector
-                    .as_ref()
-                    .ok_or_else(|| Status::invalid_argument("Missing selector for update"))?;
-                let updates = req.updates.as_ref().ok_or_else(|| {
-                    Status::invalid_argument("Missing updates for update operation")
-                })?;
-
-                // Create update request for VectorService
-                let update_request = json!({
-                    "collection_id": req.collection_id,
-                    "operation": "update",
-                    "selector": {
-                        "ids": selector.ids,
-                        "metadata_filter": selector.metadata_filter,
-                        "vector_match": selector.vector_match,
-                    },
-                    "updates": {
-                        "vector": updates.vector,
-                        "metadata": updates.metadata,
-                        "expires_at": updates.expires_at,
-                    }
-                });
-
-                let json_data = serde_json::to_vec(&update_request).map_err(|e| {
-                    Status::internal(format!("Failed to serialize update request: {}", e))
-                })?;
-
-                // Create versioned payload
-                let avro_payload = Self::create_versioned_payload("vector_update", &json_data);
-
-                // Execute update via unified service
-                let result = self
-                    .avro_service
-                    .handle_vector_mutation(&avro_payload)
-                    .instrument(span!(Level::DEBUG, "grpc_vector_update"))
-                    .await
-                    .map_err(|e| Status::internal(format!("Vector update failed: {}", e)))?;
-
-                let processing_time = start_time.elapsed().as_micros() as i64;
-
-                // Parse response
-                let response: JsonValue = serde_json::from_slice(&result).map_err(|e| {
-                    Status::internal(format!("Failed to parse update response: {}", e))
-                })?;
-
-                let affected_count = response
-                    .get("affected_count")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let vector_ids = response
-                    .get("vector_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                Ok(Response::new(VectorOperationResponse {
-                    success: response
-                        .get("success")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                    operation: VectorOperation::VectorUpdate as i32,
-                    metrics: Some(OperationMetrics {
-                        total_processed: affected_count,
-                        successful_count: affected_count,
-                        failed_count: 0,
-                        updated_count: affected_count,
-                        processing_time_us: processing_time,
-                        wal_write_time_us: 0,
-                        index_update_time_us: 0,
-                    }),
-                    result_payload: None,
-                    vector_ids,
-                    error_message: response
-                        .get("error_message")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    error_code: response
-                        .get("error_code")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    result_info: Some(ResultMetadata {
-                        result_count: affected_count,
-                        estimated_size_bytes: 0,
-                        is_avro_binary: false,
-                        avro_schema_version: "1".to_string(),
-                    }),
-                }))
-            }
-
-            crate::proto::proximadb::MutationType::MutationDelete => {
-                // Extract delete selector
-                let selector = req
-                    .selector
-                    .as_ref()
-                    .ok_or_else(|| Status::invalid_argument("Missing selector for delete"))?;
-
-                // Create delete request
-                let delete_request = json!({
-                    "collection_id": req.collection_id,
-                    "operation": "delete",
-                    "selector": {
-                        "ids": selector.ids,
-                        "metadata_filter": selector.metadata_filter,
-                        "vector_match": selector.vector_match,
-                    }
-                });
-
-                let json_data = serde_json::to_vec(&delete_request).map_err(|e| {
-                    Status::internal(format!("Failed to serialize delete request: {}", e))
-                })?;
-
-                // Create versioned payload
-                let avro_payload = Self::create_versioned_payload("vector_delete", &json_data);
-
-                // Execute delete via unified service
-                let result = self
-                    .avro_service
-                    .handle_vector_mutation(&avro_payload)
-                    .instrument(span!(Level::DEBUG, "grpc_vector_delete"))
-                    .await
-                    .map_err(|e| Status::internal(format!("Vector delete failed: {}", e)))?;
-
-                let processing_time = start_time.elapsed().as_micros() as i64;
-
-                // Parse response
-                let response: JsonValue = serde_json::from_slice(&result).map_err(|e| {
-                    Status::internal(format!("Failed to parse delete response: {}", e))
-                })?;
-
-                let affected_count = response
-                    .get("affected_count")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let vector_ids = response
-                    .get("vector_ids")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                Ok(Response::new(VectorOperationResponse {
-                    success: response
-                        .get("success")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
-                    operation: VectorOperation::VectorDelete as i32,
-                    metrics: Some(OperationMetrics {
-                        total_processed: affected_count,
-                        successful_count: affected_count,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: processing_time,
-                        wal_write_time_us: 0,
-                        index_update_time_us: 0,
-                    }),
-                    result_payload: None,
-                    vector_ids,
-                    error_message: response
-                        .get("error_message")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    error_code: response
-                        .get("error_code")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    result_info: Some(ResultMetadata {
-                        result_count: affected_count,
-                        estimated_size_bytes: 0,
-                        is_avro_binary: false,
-                        avro_schema_version: "1".to_string(),
-                    }),
-                }))
-            }
-
-            _ => Err(Status::invalid_argument("Unknown mutation type")),
-        }
-    }
+    // Vector mutation removed - using unified batch operations with expires_at for deletes
 
     /// Vector search with multiple search types: similarity, metadata filters, ID lookup
     async fn vector_search(
@@ -879,11 +727,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
         // Extract metadata filters from first query (if any)
         let metadata_filters = if let Some(first_query) = req.queries.first() {
-            if !first_query.metadata_filter.is_empty() {
-                Some(first_query.metadata_filter.clone())
-            } else {
-                None
-            }
+            first_query.metadata_filter.clone()
         } else {
             None
         };
@@ -908,87 +752,212 @@ impl ProximaDb for ProximaDbGrpcService {
         // Create versioned payload for optimized search
         let avro_payload = Self::create_versioned_payload("vector_search", &json_data);
 
-        // Execute search via storage-aware polymorphic method
+        // Extract search optimization from proto request
+        let search_optimization = req.search_optimization.as_ref();
+
+        // Execute search via native typed method (no JSON serialization)
         let avro_result = if req.queries.len() == 1 {
-            // Single query - use optimized storage-aware search
-            let optimized_search_request = json!({
-                "collection_id": req.collection_id,
-                "vector": req.queries[0].vector.clone(),
-                "k": req.top_k,
-                "filters": metadata_filters,
-                "threshold": 0.0,
-                "search_hints": {
-                    "predicate_pushdown": true,
-                    "use_bloom_filters": true,
-                    "use_clustering": true,
-                    "quantization_level": "FP32",
-                    "parallel_search": true,
-                    "engine_specific": {
-                        "optimization_level": "high",
-                        "enable_simd": true,
-                        "prefer_indices": true,
-                        "distance_metric": req.distance_metric_override.unwrap_or(1)
+            // Single query - use native typed search
+            
+            // Build native SearchParams from proto SearchParams
+            let mut search_params = crate::core::search::SearchParams::default();
+            search_params.top_k = Some(req.top_k as usize);
+            // Convert MetadataFilter to HashMap<String, Value> for now
+            // TODO: Update SearchParams to use MetadataFilter directly
+            search_params.filters = None;
+            
+            if let Some(proto_params) = search_optimization {
+                // Direct field mapping - no complex conversions!
+                search_params.top_k = proto_params.top_k.map(|k| k as usize).or(Some(req.top_k as usize));
+                search_params.accuracy_threshold = proto_params.accuracy_threshold;
+                search_params.include_expired = proto_params.include_expired;
+                search_params.timeout_ms = proto_params.timeout_ms;
+                search_params.enable_two_stage = proto_params.enable_two_stage;
+                search_params.enable_clustering_hint = proto_params.enable_clustering_hint;
+                search_params.enable_metadata_filtering_hint = proto_params.enable_metadata_filtering_hint;
+                
+                // Convert proto filters to native
+                if !proto_params.filters.is_empty() {
+                    let mut filters = HashMap::new();
+                    for (k, v) in &proto_params.filters {
+                        // Convert prost::Value to serde_json::Value
+                        let json_value = self.convert_prost_value_to_json(v);
+                        filters.insert(k.clone(), json_value);
                     }
-                },
-                "include_vectors": include_vectors,
-                "include_metadata": include_metadata
-            });
+                    search_params.filters = Some(filters);
+                }
+                
+                // Convert quantization hint using proto oneof
+                search_params.quantization_hint = match &proto_params.quantization_hint {
+                    Some(hint) => match hint {
+                        crate::proto::proximadb::search_params::QuantizationHint::NoQuantization(_) => None,
+                        crate::proto::proximadb::search_params::QuantizationHint::Binary(_) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Binary(crate::compute::BinaryQuantization {
+                                    threshold: None,
+                                    sign_based: false,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Scalar(s) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Scalar(crate::compute::ScalarQuantization {
+                                    bits: s.bits as i32,
+                                    scale: 1.0,
+                                    offset: 0.0,
+                                    clamp_values: true,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Product(p) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Pq(crate::compute::ProductQuantization {
+                                    bits_per_code: p.bits_per_code as i32,
+                                    num_subvectors: p.num_subvectors as i32,
+                                    codebook_id: None,
+                                    adaptive_subvectors: false,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Uniform(u) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Uniform(crate::compute::UniformQuantization {
+                                    bits: 8, // default
+                                    scale: Some(u.scale),
+                                    offset: Some(u.offset),
+                                })),
+                            }),
+                    },
+                    None => None,
+                };
+                
+                // Convert custom hints
+                if !proto_params.custom_hints.is_empty() {
+                    let mut custom = HashMap::new();
+                    for (k, v) in &proto_params.custom_hints {
+                        // Convert prost::Value to serde_json::Value
+                        let json_value = self.convert_prost_value_to_json(v);
+                        custom.insert(k.clone(), json_value);
+                    }
+                    search_params.custom_hints = Some(custom);
+                }
+            }
 
-            let optimized_query_data =
-                serde_json::to_vec(&optimized_search_request).map_err(|e| {
-                    Status::internal(format!(
-                        "Failed to serialize optimized search request: {}",
-                        e
-                    ))
-                })?;
-
-            info!("🚀 gRPC: Using storage-aware polymorphic search with optimization hints");
+            // Extract metadata filters from the first query (for now)
+            let metadata_filters = if let Some(first_query) = req.queries.first() {
+                if let Some(metadata_filter) = &first_query.metadata_filter {
+                    // Convert MetadataFilter to HashMap<String, Value> 
+                    // For now, just return None as proper conversion is complex
+                    None
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            info!("🚀 gRPC: Using native typed search with quantization={:?}", search_params.quantization_hint);
             self.avro_service
-                .search_vectors_polymorphic(&optimized_query_data)
-                .instrument(span!(Level::DEBUG, "grpc_optimized_search"))
+                .search_vectors_polymorphic(
+                    &req.collection_id,
+                    &req.queries[0].vector,
+                    req.top_k as usize,
+                    &search_params,
+                    metadata_filters.as_ref(),
+                    include_vectors,
+                    include_metadata,
+                )
+                .instrument(span!(Level::DEBUG, "grpc_polymorphic_search"))
                 .await
-                .map_err(|e| Status::internal(format!("Optimized search failed: {}", e)))?
+                .map_err(|e| Status::internal(format!("Search failed: {}", e)))?
         } else {
             // Multi-query - process each query with optimized search and combine
             info!("🚀 gRPC: Using storage-aware search for multi-query request");
             let mut all_results = Vec::new();
+            
+            // Build native SearchParams for multi-query (same as single query)
+            let mut search_params = crate::core::search::SearchParams::default();
+            search_params.top_k = Some(req.top_k as usize);
+            // Convert MetadataFilter to HashMap<String, Value> for now
+            // TODO: Update SearchParams to use MetadataFilter directly
+            search_params.filters = None;
+            
+            if let Some(proto_params) = search_optimization {
+                // Direct field mapping - no complex conversions!
+                search_params.top_k = proto_params.top_k.map(|k| k as usize).or(Some(req.top_k as usize));
+                search_params.accuracy_threshold = proto_params.accuracy_threshold;
+                search_params.include_expired = proto_params.include_expired;
+                search_params.timeout_ms = proto_params.timeout_ms;
+                search_params.enable_two_stage = proto_params.enable_two_stage;
+                search_params.enable_clustering_hint = proto_params.enable_clustering_hint;
+                search_params.enable_metadata_filtering_hint = proto_params.enable_metadata_filtering_hint;
+                
+                // Convert quantization hint using proto oneof
+                search_params.quantization_hint = match &proto_params.quantization_hint {
+                    Some(hint) => match hint {
+                        crate::proto::proximadb::search_params::QuantizationHint::NoQuantization(_) => None,
+                        crate::proto::proximadb::search_params::QuantizationHint::Binary(_) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Binary(crate::compute::BinaryQuantization {
+                                    threshold: None,
+                                    sign_based: false,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Scalar(s) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Scalar(crate::compute::ScalarQuantization {
+                                    bits: s.bits as i32,
+                                    scale: 1.0,
+                                    offset: 0.0,
+                                    clamp_values: true,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Product(p) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Pq(crate::compute::ProductQuantization {
+                                    bits_per_code: p.bits_per_code as i32,
+                                    num_subvectors: p.num_subvectors as i32,
+                                    codebook_id: None,
+                                    adaptive_subvectors: false,
+                                })),
+                            }),
+                        crate::proto::proximadb::search_params::QuantizationHint::Uniform(u) => 
+                            Some(crate::compute::UnifiedQuantizationLevel {
+                                level_type: Some(crate::compute::QuantizationLevelType::Uniform(crate::compute::UniformQuantization {
+                                    bits: 8, // default
+                                    scale: Some(u.scale),
+                                    offset: Some(u.offset),
+                                })),
+                            }),
+                    },
+                    None => None,
+                };
+            }
 
             for (index, query) in req.queries.iter().enumerate() {
-                let optimized_search_request = json!({
-                    "collection_id": req.collection_id,
-                    "vector": query.vector.clone(),
-                    "k": req.top_k,
-                    "filters": metadata_filters,
-                    "threshold": 0.0,
-                    "search_hints": {
-                        "predicate_pushdown": true,
-                        "use_bloom_filters": true,
-                        "use_clustering": true,
-                        "quantization_level": "FP32",
-                        "parallel_search": true,
-                        "engine_specific": {
-                            "optimization_level": "high",
-                            "enable_simd": true,
-                            "prefer_indices": true,
-                            "distance_metric": req.distance_metric_override.unwrap_or(1),
-                            "query_index": index
-                        }
-                    },
-                    "include_vectors": include_vectors,
-                    "include_metadata": include_metadata
-                });
-
-                let optimized_query_data =
-                    serde_json::to_vec(&optimized_search_request).map_err(|e| {
-                        Status::internal(format!(
-                            "Failed to serialize multi-query {}: {}",
-                            index, e
-                        ))
-                    })?;
-
+                // Reuse the same search params for all queries
+                let query_params = search_params.clone();
+                
+                info!("🚀 gRPC: Processing query {} of {} with quantization={:?}", 
+                    index + 1, req.queries.len(), query_params.quantization_hint);
+                
+                // Extract metadata filters from this specific query
+                let metadata_filters = if let Some(metadata_filter) = &query.metadata_filter {
+                    // Convert MetadataFilter to HashMap<String, Value>
+                    // For now, just return None as proper conversion is complex
+                    None
+                } else {
+                    None
+                };
+                
                 let query_result = self
                     .avro_service
-                    .search_vectors_polymorphic(&optimized_query_data)
+                    .search_vectors_polymorphic(
+                        &req.collection_id,
+                        &query.vector,
+                        req.top_k as usize,
+                        &query_params,
+                        metadata_filters.as_ref(),
+                        include_vectors,
+                        include_metadata,
+                    )
                     .instrument(span!(
                         Level::DEBUG,
                         "grpc_multi_query_search",

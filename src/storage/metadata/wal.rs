@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::CollectionId;
+
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::{
@@ -59,7 +59,7 @@ impl Default for MetadataWalConfig {
         let mut base_config = WalConfig::default();
 
         // Use Avro for schema evolution (metadata schemas change more than vector schemas)
-        base_config.strategy_type = WalStrategyType::Avro;
+        base_config.strategy_type = WalStrategyType::AvroBatch;
 
         // Use B+Tree for sorted iteration and range queries on collection metadata
         // Better than ART since we need range scans for list operations
@@ -95,7 +95,7 @@ impl Default for MetadataWalConfig {
 /// Collection metadata with versioning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionedCollectionMetadata {
-    pub id: CollectionId,
+    pub id: String,
     pub name: String,
     pub dimension: usize,
     pub distance_metric: String,
@@ -145,10 +145,10 @@ pub struct MetadataWalManager {
     config: MetadataWalConfig,
 
     /// In-memory cache of all metadata
-    metadata_cache: Arc<tokio::sync::RwLock<HashMap<CollectionId, VersionedCollectionMetadata>>>,
+    metadata_cache: Arc<tokio::sync::RwLock<HashMap<String, VersionedCollectionMetadata>>>,
 
     /// Cache timestamps for TTL
-    cache_timestamps: Arc<tokio::sync::RwLock<HashMap<CollectionId, DateTime<Utc>>>>,
+    cache_timestamps: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
 
     /// Statistics
     stats: Arc<tokio::sync::RwLock<MetadataStats>>,
@@ -265,7 +265,7 @@ impl MetadataWalManager {
     /// Get collection metadata
     pub async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<VersionedCollectionMetadata>> {
         tracing::debug!("🔍 Getting metadata for collection: {}", collection_id);
 
@@ -315,8 +315,8 @@ impl MetadataWalManager {
                 let mut cache = self.metadata_cache.write().await;
                 let mut timestamps = self.cache_timestamps.write().await;
 
-                cache.insert(collection_id.clone(), metadata.clone());
-                timestamps.insert(collection_id.clone(), Utc::now());
+                cache.insert(collection_id.to_string(), metadata.clone());
+                timestamps.insert(collection_id.to_string(), Utc::now());
             }
 
             return Ok(Some(metadata));
@@ -442,7 +442,7 @@ impl MetadataWalManager {
     }
 
     /// Get all collection IDs that have metadata stored in WAL
-    async fn get_all_collection_ids(&self) -> Result<Vec<CollectionId>> {
+    async fn get_all_collection_ids(&self) -> Result<Vec<String>> {
         // If cache is populated, use it
         if self.config.enable_metadata_cache {
             let cache = self.metadata_cache.read().await;
@@ -455,7 +455,7 @@ impl MetadataWalManager {
         if let Some(behavior_wrapper) = self.wal_strategy.get_wal_behavior_wrapper() {
             if let Ok(stats_map) = behavior_wrapper.get_stats().await {
                 // Extract collection IDs from WAL stats
-                let collection_ids: Vec<CollectionId> = stats_map.keys().cloned().collect();
+                let collection_ids: Vec<String> = stats_map.keys().cloned().collect();
                 
                 let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
                 let collections_count = stats_map.len();
@@ -476,7 +476,7 @@ impl MetadataWalManager {
     }
 
     /// Delete collection metadata
-    pub async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool> {
+    pub async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
         tracing::debug!("🗑️ Deleting metadata for collection: {}", collection_id);
 
         // Check if exists
@@ -489,7 +489,7 @@ impl MetadataWalManager {
             
             let delete_record = crate::core::VectorRecord {
                 id: vector_id,
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: std::collections::HashMap::new(),
                 timestamp: current_time,
@@ -508,7 +508,7 @@ impl MetadataWalManager {
                 // Create WalVectorBatch for the delete
                 let delete_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
                     batch_id: crate::storage::persistence::wal::BatchId::new(
-                        collection_id.clone(),
+                        collection_id.to_string(),
                         2, // sequence
                         delete_batch_records.len() as u64,
                     ),
@@ -544,7 +544,7 @@ impl MetadataWalManager {
     /// Update collection statistics (vector count, size)
     pub async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {

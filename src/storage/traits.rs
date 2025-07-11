@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::proto::proximadb::Collection;
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -26,6 +27,28 @@ pub enum StorageEngineStrategy {
 impl Default for StorageEngineStrategy {
     fn default() -> Self {
         Self::Viper // VIPER is the default strategy
+    }
+}
+
+/// Trait for providing collection metadata to storage engines
+/// This breaks the circular dependency between StorageEngine and CollectionService
+#[async_trait]
+pub trait CollectionMetadataProvider: Send + Sync {
+    /// Get collection UUID by name or ID
+    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
+    
+    /// Get full collection metadata
+    async fn get_collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
+    
+    /// Get collection as unified type
+    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
+    
+    /// List all collections
+    async fn list_collections(&self) -> Result<Vec<Collection>>;
+    
+    /// Check if collection exists
+    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
+        Ok(self.get_uuid(collection_id).await?.is_some())
     }
 }
 
@@ -103,7 +126,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         };
 
         match assignment_service.get_assignment(
-            &crate::core::CollectionId::from(collection_id.to_string()), 
+            &crate::core::String::from(collection_id.to_string()), 
             component_type
         ).await {
             Some(assignment) => {
@@ -137,7 +160,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         match assignment_service
             .get_assignment(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 component_type,
             )
             .await
@@ -168,7 +191,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         assignment_service
             .get_assignment(
-                &crate::core::CollectionId::from(collection_id.to_string()),
+                &crate::core::String::from(collection_id.to_string()),
                 component_type,
             )
             .await
@@ -188,9 +211,9 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService>;
 
     /// Get collection's IndexConfig from collection service
-    async fn get_collection_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+    async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
         if let Some(collection_service) = self.get_collection_service() {
-            match collection_service.get_collection_index_config(collection_id).await {
+            match collection_service.get_native_index_config(collection_id).await {
                 Ok(Some(config)) => {
                     tracing::debug!("📋 Retrieved IndexConfig for collection: {}", collection_id);
                     Ok(config)

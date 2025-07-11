@@ -16,7 +16,7 @@ ProximaDB's architecture delivers 6.10x performance improvement through three co
 
 == Core Architecture Principles
 
-image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=100%]
+image::diagrams/images/proximadb-component.png[ProximaDB Component Architecture,width=100%]
 
 === Design Philosophy
 
@@ -26,7 +26,7 @@ image::ProximaDB_Complete_System_Architecture.png[ProximaDB Architecture,width=1
 
 === Key Innovations
 
-image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100%]
+image::diagrams/images/unified_memtable_architecture.png[Unified Memtable Architecture,width=100%]
 
 **Unified Memtable Architecture**:: 
 - Single interface with pluggable backends (SkipList, BTree, HashMap, DashMap)
@@ -59,7 +59,7 @@ image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,width=100
 
 === Storage Layer
 
-image::ProximaDB_Storage_Architecture.png[Storage Architecture,width=100%]
+image::diagrams/images/proximadb-class-storage.png[Storage Architecture,width=100%]
 
 **Write-Ahead Log (WAL)**::
 - Pluggable serialization strategies (Avro, Bincode)
@@ -76,9 +76,32 @@ image::ProximaDB_Storage_Architecture.png[Storage Architecture,width=100%]
 - Bloom filters for efficient lookups
 - Automatic compaction with garbage collection
 
+=== Quantization System (Phase 4)
+
+image::diagrams/images/unified_quantization_system.png[Unified Quantization Architecture,width=100%]
+
+**Unified Quantization Engine**::
+- Support for 1-32 bit quantization levels
+- Product Quantization (PQ4, PQ8) with configurable subvectors
+- Scalar quantization (INT8, INT16) with learned scale/offset
+- Binary quantization for maximum compression
+- Hardware acceleration (SIMD, NEON, CUDA, ROCm, MPS)
+
+**Two-Stage Search Strategy**::
+- Stage 1: Fast candidate selection using quantized vectors
+- Stage 2: Accurate refinement with FP32 vectors
+- Configurable candidate multiplier (default: 3x)
+- Maintains 100% recall with 3-6x speedup
+
+**Static Column Projection**::
+- Query-aware column selection reduces I/O by 50-80%
+- Automatic quantization format detection
+- Optimized Parquet file reading
+- Intelligent caching of frequently accessed columns
+
 === Indexing System
 
-image::ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
+image::diagrams/images/tenant-routing-architecture.png[ML Clustering Architecture,width=100%]
 
 **AXIS Framework**::
 - Adaptive index selection based on data characteristics
@@ -92,7 +115,7 @@ image::ML_Clustering_Architecture.png[ML Clustering Architecture,width=100%]
 
 == Data Flow
 
-image::ProximaDB_Data_Flow.png[Data Flow Architecture,width=100%]
+image::diagrams/images/proximadb-data-flow.png[Data Flow Architecture,width=100%]
 
 === Write Path
 

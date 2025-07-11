@@ -7,7 +7,7 @@ use tokio::time::sleep;
 use proximadb::core::{LsmConfig, VectorRecord};
 use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
 use proximadb::storage::engines::lsm::LsmRecord;
-use proximadb::storage::engines::viper::core::ViperEngine;
+use proximadb::storage::engines::viper::engine::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 

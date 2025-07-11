@@ -18,7 +18,7 @@ This appendix provides deep technical implementation details for ProximaDB's adv
 
 ProximaDB implements sophisticated search strategies that adapt to data characteristics and query patterns. The system supports multiple indexing approaches with automatic selection based on collection properties.
 
-image::ProximaDB_Storage_Architecture.png[Storage-Aware Search Architecture,width=100%]
+image::diagrams/images/proximadb-class-storage.png[Storage-Aware Search Architecture,width=100%]
 
 === Advanced Search Strategies
 
@@ -27,43 +27,62 @@ image::ProximaDB_Storage_Architecture.png[Storage-Aware Search Architecture,widt
 [source,rust]
 ----
 enum SearchStrategy {
+    // Two-stage search with quantized filtering
+    TwoStageQuantized {
+        quantization: UnifiedQuantizationLevel,  // Any supported quantization
+        candidate_multiplier: f32,               // e.g., 3x candidates
+        min_candidates: usize,                   // Minimum to retrieve
+        max_candidates: usize,                   // Maximum for memory bounds
+    },
+    
     // Default for most use cases
     HNSWQuantized {
-        quantization: QuantizationType,  // SQ8, PQ
-        ef: usize,                       // Search breadth
-        re_rank_count: usize,           // Full-precision candidates
+        quantization: UnifiedQuantizationLevel,  // Unified quantization
+        ef: usize,                               // Search breadth
+        re_rank_count: usize,                    // Full-precision candidates
     },
     
     // For massive datasets with clear clustering
     IVFExhaustive {
-        nprobe: usize,                  // Clusters to search
-        quantization: Option<QuantizationType>,
+        nprobe: usize,                           // Clusters to search
+        quantization: Option<UnifiedQuantizationLevel>,
     },
     
     // Future: extreme scale hybrid
     IVFHNSWHybrid {
         coarse_nprobe: usize,
         fine_ef: usize,
-        quantization: QuantizationType,
+        quantization: UnifiedQuantizationLevel,
     },
 }
 ----
 
-==== Quantization Details
+==== Quantization Details (Phase 4 Update)
 
-ProximaDB supports multiple quantization strategies for memory-efficient vector storage:
+ProximaDB implements a unified quantization system supporting multiple strategies for memory-efficient vector storage:
 
-image::Comparative_Architecture.png[Quantization Architecture,width=100%]
+image::diagrams/images/unified_quantization_system.png[Unified Quantization Architecture,width=100%]
 
-**Scalar Quantization (SQ)**:
-- Convert float32 → int8 with learned min/max per dimension
-- 4x memory reduction, 2-4x speed improvement
-- Negligible accuracy loss for most datasets
+**Unified Quantization Levels**:
+- **None**: Full FP32 precision (no quantization)
+- **Uniform**: Custom bit precision (1-32 bits) with automatic scale/offset
+- **Product Quantization (PQ)**: Divide vectors into subvectors, quantize independently
+- **Scalar**: INT8/INT16 with learned scale and offset
+- **Binary**: 1-bit quantization for maximum compression
+- **Custom**: Flexible bit-level quantization with optional codebooks
 
-**Product Quantization (PQ)**:  
-- Divide vector into subspaces, quantize each independently
-- 8-32x compression possible with controlled accuracy trade-off
-- Ideal for memory-constrained environments
+**Hardware Acceleration**:
+- SIMD (x86): AVX2, AVX512 optimizations
+- NEON (ARM): ARM SIMD instructions
+- CUDA (NVIDIA): GPU acceleration for batch operations
+- ROCm (AMD): AMD GPU support
+- MPS (Apple): Metal Performance Shaders
+
+**Pre-computed Quantization**:
+- Quantized vectors stored alongside FP32 in Parquet columns
+- Zero runtime quantization overhead
+- Static column projection for I/O optimization
+- 50-80% I/O reduction through intelligent column selection
 
 === Cost-Based Query Optimizer
 
@@ -97,7 +116,7 @@ enum OperationCost {
 
 ==== Query Planner Architecture
 
-image::Search_Optimization_Flow.png[Search Optimization Flow,width=100%]
+image::diagrams/images/search-optimization-flow.png[Search Optimization Flow,width=100%]
 
 The query planner optimizes execution by analyzing filter selectivity and reordering operations:
 
@@ -138,7 +157,7 @@ impl QueryPlanner {
 
 ProximaDB's storage architecture provides flexible, URL-based configuration for multi-cloud deployments. The system supports tiered storage with automatic lifecycle management.
 
-image::Storage_Tiers.png[Storage Tiers Architecture,width=100%]
+image::diagrams/images/storage-tiers.png[Storage Tiers Architecture,width=100%]
 
 === Storage Policy Implementation
 
@@ -160,7 +179,7 @@ pub struct StoragePolicy {
 
 ==== Storage Lifecycle Management
 
-image::WAL_Flush_Triggers.png[WAL Flush Triggers,width=100%]
+image::diagrams/images/wal-flush-triggers.png[WAL Flush Triggers,width=100%]
 
 [source,rust]
 ----
@@ -179,7 +198,7 @@ pub struct StorageLifecycle {
 
 The Adaptive eXtensible Indexing System (AXIS) provides intelligent index selection and migration based on collection characteristics and query patterns.
 
-image::ProximaDB_Complete_System_Architecture.png[AXIS Architecture,width=100%]
+image::diagrams/images/proximadb-component.png[AXIS Architecture,width=100%]
 
 === AXIS Implementation Details
 
@@ -204,7 +223,7 @@ pub struct CollectionAnalyzer {
 
 ===== Migration Flow Diagram
 
-image::Index_Migration_Flow.png[Index Migration Flow,width=100%]
+image::diagrams/images/indexconfig-flow.png[Index Migration Flow,width=100%]
 
 The migration engine continuously monitors collection performance and automatically adapts indexing strategies based on changing data characteristics and query patterns.
 
@@ -351,14 +370,14 @@ This section provides detailed performance metrics and optimization strategies f
 |Large collections with clear clusters
 
 |**VIPER**
-|PQ8 Quantization
-|10-20x memory reduction
-|Memory-constrained environments
+|Unified Quantization (1-32 bits)
+|2-32x memory reduction
+|Flexible compression/quality tradeoffs
 
 |**VIPER**
-|Predicate Pushdown
-|30-70% I/O reduction
-|Filtered queries with selective predicates
+|Column Projection + Predicate Pushdown
+|50-80% I/O reduction
+|Query-aware column selection with filters
 
 |**LSM**
 |Bloom Filters
@@ -382,7 +401,7 @@ This section provides detailed performance metrics and optimization strategies f
 
 ProximaDB supports multiple levels of tenant isolation to meet various security, performance, and compliance requirements.
 
-image::ProximaDB_Complete_System_Architecture.png[Multi-Tenant Architecture,width=100%]
+image::diagrams/images/proximadb-component.png[Multi-Tenant Architecture,width=100%]
 
 === Multi-Tenant Implementation
 
@@ -410,7 +429,7 @@ image::ProximaDB_Complete_System_Architecture.png[Multi-Tenant Architecture,widt
 
 ===== Routing Architecture Diagram
 
-image::Tenant_Routing_Architecture.png[Tenant Routing Architecture,width=100%]
+image::diagrams/images/tenant-routing-architecture.png[Tenant Routing Architecture,width=100%]
 
 The tenant router intelligently directs requests based on isolation requirements, ensuring proper resource allocation and security boundaries.
 

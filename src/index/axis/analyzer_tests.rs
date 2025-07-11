@@ -2,7 +2,7 @@
 
 use super::analyzer::*;
 use super::*;
-use crate::core::{avro_unified::VectorRecord, CollectionId};
+use crate::core::{avro_unified::VectorRecord, String};
 use chrono::Utc;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -43,7 +43,7 @@ mod tests {
     #[tokio::test]
     async fn test_analyze_collection_characteristics() {
         let analyzer = CollectionAnalyzer::new().await.unwrap();
-        let collection_id: CollectionId = "test_collection".to_string();
+        let collection_id: String = "test_collection".to_string();
 
         let result = analyzer.analyze_collection(&collection_id).await;
         assert!(
@@ -55,7 +55,7 @@ mod tests {
     #[tokio::test]
     async fn test_analyze_vector_sample() {
         let analyzer = CollectionAnalyzer::new().await.unwrap();
-        let collection_id: CollectionId = "test_collection".to_string();
+        let collection_id: String = "test_collection".to_string();
 
         let vectors = vec![
             create_test_vector("test_collection"),

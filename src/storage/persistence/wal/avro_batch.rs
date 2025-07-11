@@ -12,7 +12,7 @@ use super::batch_strategy::WalBatchStrategy;
 use super::{FlushResult, WalConfig, WalStats};
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
 use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -114,15 +114,25 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
     }
 
     fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
-        let mut engine = self.storage_engine.blocking_write();
-        *engine = Some(storage_engine);
-        tracing::debug!("🏗️ Storage engine attached to Avro WAL Batch Strategy");
+        // Use try_write to avoid blocking in async context
+        if let Ok(mut engine) = self.storage_engine.try_write() {
+            *engine = Some(storage_engine);
+            tracing::debug!("🏗️ Storage engine attached to Avro WAL Batch Strategy");
+        } else {
+            // If we can't get the lock immediately, spawn a blocking task
+            let storage_engine_clone = self.storage_engine.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut engine = storage_engine_clone.blocking_write();
+                *engine = Some(storage_engine);
+                tracing::debug!("🏗️ Storage engine attached to Avro WAL Batch Strategy (async)");
+            });
+        }
     }
 
     /// 🚀 OPTIMAL AVRO IMPLEMENTATION - Single deserialization in WalBehavior
     async fn write_avro_batch(
         &self, 
-        collection_id: &CollectionId,
+        collection_id: &str,
         avro_bytes: &[u8]
     ) -> Result<super::WalOperation> {
         let memtable = self
@@ -200,7 +210,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
 
     async fn read_vector_batches(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<WalVectorBatch>> {
@@ -231,7 +241,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
 
     async fn search_vector_by_id(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
         let memtable = self
@@ -267,7 +277,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
 
     async fn search_vectors_similarity(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
@@ -295,7 +305,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         Ok(converted_results)
     }
 
-    async fn get_collection_vectors(&self, collection_id: &CollectionId) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let memtable = self
             .memtable
             .as_ref()
@@ -313,7 +323,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         Ok(vectors)
     }
 
-    async fn flush_collection(&self, collection_id: &CollectionId) -> Result<FlushResult> {
+    async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
         // If we have a storage engine, delegate to it
         let storage_engine = self.storage_engine.read().await;
         if let Some(engine) = storage_engine.as_ref() {
@@ -352,7 +362,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
             
             Ok(FlushResult {
                 success: true,
-                collections_affected: vec![collection_id.clone()],
+                collections_affected: vec![collection_id.to_string()],
                 entries_flushed: cleared as u64,
                 bytes_written: vectors.iter().map(|v| v.actual_size_bytes() as u64).sum(),
                 files_created: 1,
@@ -367,7 +377,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         }
     }
 
-    async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         let memtable = self
             .memtable
             .as_ref()
@@ -411,7 +421,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         })
     }
 
-    async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<WalStats> {
+    async fn get_collection_stats(&self, collection_id: &str) -> Result<WalStats> {
         let memtable = self
             .memtable
             .as_ref()
@@ -457,13 +467,13 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
+    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
         // TODO: Implement force sync to disk when needed
         tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
         Ok(())
     }
 
-    async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64> {
+    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
         // TODO: Implement MVCC compaction, TTL cleanup
         // For now, return 0 entries compacted
         tracing::debug!("🔧 Compacting collection {} (placeholder)", collection_id);

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::core::CollectionId;
+
 use super::schema::SchemaManager;
 
 /// Compaction manager for VIPER storage engine
@@ -45,14 +45,14 @@ impl CompactionManager {
     /// This is the main compaction implementation for VIPER storage engine
     pub async fn compact_parquet_files(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         input_files: Vec<String>,
     ) -> Result<Vec<String>> {
         // Fetch collection configuration using unified interface
         let collection_config = {
             let service_lock = self.collection_service.read().await;
             if let Some(ref service) = *service_lock {
-                match service.get_collection_unified(collection_id).await {
+                match service.get_proto_collection(collection_id).await {
                     Ok(Some(collection)) => Some(collection),
                     Ok(None) => {
                         warn!("⚠️ Collection {} not found during compaction", collection_id);
@@ -72,6 +72,7 @@ impl CompactionManager {
         // Extract vector dimensions for efficient capacity planning
         let vector_dimensions = collection_config
             .as_ref()
+            .and_then(|collection| collection.config.as_ref())
             .map(|config| config.dimension as usize)
             .unwrap_or(512); // Default to 512 if not available
         
@@ -84,10 +85,10 @@ impl CompactionManager {
     /// Internal compaction implementation with collection config
     async fn compact_parquet_files_with_config(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         input_files: Vec<String>,
         vector_dimensions: usize,
-        collection_config: Option<crate::core::Collection>,
+        collection_config: Option<crate::proto::proximadb::Collection>,
     ) -> Result<Vec<String>> {
         
         info!(
@@ -454,16 +455,46 @@ impl CompactionManager {
             DataType::Timestamp(TimeUnit::Millisecond, _) => {
                 Arc::new(TimestampMillisecondArray::from(vec![Option::<i64>::None; length]))
             }
-            DataType::List(_field) => {
+            DataType::List(field) => {
                 // Create empty list array based on inner field type
-                use arrow_array::builder::{ListBuilder, Float32Builder};
-                // Use reasonable capacity for null arrays (length * typical vector dimensions)
-                let mut list_builder = ListBuilder::new(Float32Builder::with_capacity(length * 512));
-                for _ in 0..length {
-                    list_builder.append_value([]);
+                match field.data_type() {
+                    DataType::Float32 => {
+                        // For vector data: List<Float32>
+                        use arrow_array::builder::{ListBuilder, Float32Builder};
+                        let mut list_builder = ListBuilder::new(Float32Builder::with_capacity(length * 512));
+                        for _ in 0..length {
+                            list_builder.append_value([]);
+                        }
+                        Arc::new(list_builder.finish())
+                    }
+                    DataType::Struct(_) => {
+                        // For extra_meta data: List<Struct<key: String, value: String>>
+                        use arrow_array::builder::{ListBuilder, StructBuilder, StringBuilder};
+                        let mut list_builder = ListBuilder::new(StructBuilder::new(
+                            vec![
+                                arrow_schema::Field::new("key", DataType::Utf8, false),
+                                arrow_schema::Field::new("value", DataType::Utf8, false),
+                            ],
+                            vec![
+                                Box::new(StringBuilder::new()),
+                                Box::new(StringBuilder::new()),
+                            ],
+                        ));
+                        for _ in 0..length {
+                            list_builder.append(false); // Empty list for each row
+                        }
+                        Arc::new(list_builder.finish())
+                    }
+                    _ => {
+                        // Fallback for other List types
+                        use arrow_array::builder::{ListBuilder, Float32Builder};
+                        let mut list_builder = ListBuilder::new(Float32Builder::with_capacity(length * 512));
+                        for _ in 0..length {
+                            list_builder.append_value([]);
+                        }
+                        Arc::new(list_builder.finish())
+                    }
                 }
-                let list_array = list_builder.finish();
-                Arc::new(list_array)
             }
             _ => {
                 return Err(anyhow::anyhow!(
@@ -528,65 +559,123 @@ impl CompactionManager {
                 }
                 Ok(Arc::new(Int64Array::from(values)))
             }
-            DataType::List(_) => {
-                // For List types (like vectors), we need to handle them specially
-                info!("Concatenating List arrays for vector data with {} arrays", arrays.len());
+            DataType::List(field) => {
+                // For List types, we need to handle them specially based on inner type
+                info!("Concatenating List arrays with {} arrays", arrays.len());
                 
                 // For single array, return as-is
                 if arrays.len() == 1 {
                     return Ok(arrays[0].clone());
                 }
                 
-                // COMPACTION FIX: Proper List array concatenation for vectors
-                // This replaces the previous shortcut that returned only the first array
-                use arrow_array::builder::{ListBuilder, Float32Builder};
-                
-                // Use the pre-fetched vector dimensions for efficient capacity planning
-                
-                // Calculate optimal capacity: number of vectors * vector dimensions
-                // Each vector is an array of f32 with 'vector_dimensions' elements
-                let total_vectors = arrays.iter()
-                    .map(|array| {
-                        let list_array = array.as_any().downcast_ref::<arrow_array::ListArray>().unwrap();
-                        list_array.len()
-                    })
-                    .sum::<usize>();
-                
-                // Total capacity = number of vectors × dimensions per vector
-                // This ensures we allocate enough f32 elements for all vectors
-                let capacity = total_vectors * vector_dimensions;
-                
-                debug!("🔧 VIPER LIST CONCATENATION: {} vectors × {} f32 elements per vector = {} total f32 capacity (from collection service)", 
-                       total_vectors, vector_dimensions, capacity);
-                
-                let mut list_builder = ListBuilder::new(Float32Builder::with_capacity(capacity));
-                
-                for array_ref in &arrays {
-                    let list_array = array_ref
-                        .as_any()
-                        .downcast_ref::<arrow_array::ListArray>()
-                        .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ListArray"))?;
-                    
-                    for i in 0..list_array.len() {
-                        if list_array.is_null(i) {
-                            list_builder.append(false);
-                        } else {
-                            let values = list_array.value(i);
-                            let float_array = values
+                match field.data_type() {
+                    DataType::Float32 => {
+                        // Handle vector data: List<Float32>
+                        use arrow_array::builder::{ListBuilder, Float32Builder};
+                        
+                        // Calculate optimal capacity: number of vectors * vector dimensions
+                        let total_vectors = arrays.iter()
+                            .map(|array| {
+                                let list_array = array.as_any().downcast_ref::<arrow_array::ListArray>().unwrap();
+                                list_array.len()
+                            })
+                            .sum::<usize>();
+                        
+                        let capacity = total_vectors * vector_dimensions;
+                        
+                        debug!("🔧 VIPER LIST CONCATENATION: {} vectors × {} f32 elements per vector = {} total f32 capacity", 
+                               total_vectors, vector_dimensions, capacity);
+                        
+                        let mut list_builder = ListBuilder::new(Float32Builder::with_capacity(capacity));
+                        
+                        for array_ref in &arrays {
+                            let list_array = array_ref
                                 .as_any()
-                                .downcast_ref::<arrow_array::Float32Array>()
-                                .ok_or_else(|| anyhow::anyhow!("Failed to downcast vector values to Float32Array"))?;
+                                .downcast_ref::<arrow_array::ListArray>()
+                                .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ListArray"))?;
                             
-                            // Append the vector values
-                            for j in 0..float_array.len() {
-                                list_builder.values().append_value(float_array.value(j));
+                            for i in 0..list_array.len() {
+                                if list_array.is_null(i) {
+                                    list_builder.append(false);
+                                } else {
+                                    let values = list_array.value(i);
+                                    let float_array = values
+                                        .as_any()
+                                        .downcast_ref::<arrow_array::Float32Array>()
+                                        .ok_or_else(|| anyhow::anyhow!("Failed to downcast vector values to Float32Array"))?;
+                                    
+                                    // Append the vector values
+                                    for j in 0..float_array.len() {
+                                        list_builder.values().append_value(float_array.value(j));
+                                    }
+                                    list_builder.append(true);
+                                }
                             }
-                            list_builder.append(true);
                         }
+                        
+                        Ok(Arc::new(list_builder.finish()))
+                    }
+                    DataType::Struct(_) => {
+                        // Handle extra_meta data: List<Struct<key: String, value: String>>
+                        use arrow_array::builder::{ListBuilder, StructBuilder, StringBuilder};
+                        
+                        debug!("🔧 VIPER LIST CONCATENATION: Handling List<Struct> for extra_meta");
+                        
+                        let mut list_builder = ListBuilder::new(StructBuilder::new(
+                            vec![
+                                arrow_schema::Field::new("key", DataType::Utf8, false),
+                                arrow_schema::Field::new("value", DataType::Utf8, false),
+                            ],
+                            vec![
+                                Box::new(StringBuilder::new()),
+                                Box::new(StringBuilder::new()),
+                            ],
+                        ));
+                        
+                        for array_ref in &arrays {
+                            let list_array = array_ref
+                                .as_any()
+                                .downcast_ref::<arrow_array::ListArray>()
+                                .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ListArray"))?;
+                            
+                            for i in 0..list_array.len() {
+                                if list_array.is_null(i) {
+                                    list_builder.append(false);
+                                } else {
+                                    let values = list_array.value(i);
+                                    let struct_array = values
+                                        .as_any()
+                                        .downcast_ref::<arrow_array::StructArray>()
+                                        .ok_or_else(|| anyhow::anyhow!("Failed to downcast to StructArray"))?;
+                                    
+                                    let struct_builder = list_builder.values();
+                                    
+                                    // Extract key and value arrays from the struct
+                                    let key_array = struct_array.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+                                    let value_array = struct_array.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+                                    
+                                    // Append all key-value pairs from this struct array
+                                    for j in 0..struct_array.len() {
+                                        if !struct_array.is_null(j) {
+                                            struct_builder.field_builder::<StringBuilder>(0).unwrap().append_value(key_array.value(j));
+                                            struct_builder.field_builder::<StringBuilder>(1).unwrap().append_value(value_array.value(j));
+                                            struct_builder.append(true);
+                                        }
+                                    }
+                                    
+                                    list_builder.append(true);
+                                }
+                            }
+                        }
+                        
+                        Ok(Arc::new(list_builder.finish()))
+                    }
+                    _ => {
+                        // For other List types, use fallback
+                        warn!("List concatenation for inner type {:?} not implemented, using first array", field.data_type());
+                        Ok(arrays[0].clone())
                     }
                 }
-                
-                Ok(Arc::new(list_builder.finish()))
             }
             _ => {
                 // For other types, return the first array as fallback

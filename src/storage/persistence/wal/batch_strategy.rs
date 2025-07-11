@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::DistanceComputeProvider;
-use crate::core::{CollectionId, VectorId, VectorRecord};
+use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -49,7 +49,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// Write WAL batch to cloud storage with URL-based routing
     async fn write_batch_to_cloud(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         batch: &WalVectorBatch,
         cloud_url: &str,
     ) -> Result<String> {
@@ -164,7 +164,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// This is the optimal write operation that accepts pre-serialized Avro from Vector Service
     async fn write_avro_batch(
         &self, 
-        collection_id: &CollectionId,
+        collection_id: &str,
         avro_bytes: &[u8]
     ) -> Result<super::WalOperation>;
 
@@ -182,7 +182,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// Read vector batches for a collection starting from sequence
     async fn read_vector_batches(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<WalVectorBatch>>;
@@ -190,14 +190,14 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// Search vector by ID within a collection
     async fn search_vector_by_id(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>>;
 
     /// Similarity search for vectors in WAL with configurable distance metric
     async fn search_vectors_similarity(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
@@ -206,13 +206,13 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     // 🎯 COLLECTION MANAGEMENT
 
     /// Get all vector records for a collection (for flush operations)
-    async fn get_collection_vectors(&self, collection_id: &CollectionId) -> Result<Vec<VectorRecord>>;
+    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>>;
 
     /// Flush collection to storage (delegates to storage engine)
-    async fn flush_collection(&self, collection_id: &CollectionId) -> Result<FlushResult>;
+    async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult>;
 
     /// Drop all data for a collection
-    async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()>;
+    async fn drop_collection(&self, collection_id: &str) -> Result<()>;
 
     // 🎯 STATISTICS AND MONITORING
 
@@ -220,7 +220,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     async fn get_stats(&self) -> Result<WalStats>;
 
     /// Get statistics for a specific collection
-    async fn get_collection_stats(&self, collection_id: &CollectionId) -> Result<WalStats>;
+    async fn get_collection_stats(&self, collection_id: &str) -> Result<WalStats>;
 
     // 🎯 LIFECYCLE MANAGEMENT
 
@@ -231,12 +231,12 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     async fn close(&self) -> Result<()>;
 
     /// Force immediate sync of in-memory data to disk
-    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()>;
+    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()>;
 
     // 🎯 ADVANCED OPERATIONS
 
     /// Compact collection (clean up old MVCC versions, TTL expired entries)
-    async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64>;
+    async fn compact_collection(&self, collection_id: &str) -> Result<u64>;
 
     /// Get WAL behavior wrapper for specialized operations
     fn get_wal_behavior(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
@@ -246,7 +246,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// Migrate WAL batch from local to cloud storage
     async fn migrate_batch_to_cloud(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         batch: &WalVectorBatch,
         local_path: &str,
         cloud_url: &str,
@@ -282,7 +282,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// List WAL batches from cloud storage with URL-based routing
     async fn list_cloud_batches(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         cloud_base_url: &str,
     ) -> Result<Vec<String>> {
         if let Some(fs) = self.get_filesystem() {
@@ -414,11 +414,11 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     // 🎯 ADDITIONAL BATCH OPERATIONS
 
     /// Delete vector by ID using batch operations
-    async fn delete_vector(&self, collection_id: &CollectionId, vector_id: &VectorId) -> Result<u64> {
+    async fn delete_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<u64> {
         // Create a tombstone vector record for deletion
         let tombstone = VectorRecord {
             id: vector_id.clone(),
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             vector: vec![], // Empty vector for tombstone
             metadata: std::collections::HashMap::new(),
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -433,7 +433,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
 
         // Create single-vector batch for deletion
         use super::BatchId;
-        let batch_id = BatchId::new(collection_id.clone(), 1, 1);
+        let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
         let batch = WalVectorBatch {
             batch_id,
             vector_records: vec![tombstone],
@@ -447,7 +447,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     }
 
     /// Flush collections using batch operations
-    async fn flush(&self, collection_id: Option<&CollectionId>) -> Result<FlushResult> {
+    async fn flush(&self, collection_id: Option<&String>) -> Result<FlushResult> {
         if let Some(cid) = collection_id {
             self.flush_collection(cid).await
         } else {
@@ -476,7 +476,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     /// 4. Prepares for disk WAL file cleanup upon flush completion
     async fn atomic_retrieve_for_flush(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         flush_id: &str,
     ) -> Result<super::FlushCycle> {
         // Get WAL behavior wrapper to access GlobalPartitionedMemtable
@@ -506,8 +506,8 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             // Create flush cycle with batch-oriented data
             Ok(super::FlushCycle {
                 flush_id: flush_id.to_string(),
-                collection_id: collection_id.clone(),
-                entries: vec![], // Legacy entries - not used in batch architecture
+                collection_id: collection_id.to_string(),
+                batches: unflushed_batches, // Use actual batches instead of empty vec
                 vector_records: all_vector_records,
                 marked_segments: vec![], // Will be populated with disk WAL file paths for cleanup
                 marked_sequences,
@@ -521,8 +521,8 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             
             Ok(super::FlushCycle {
                 flush_id: flush_id.to_string(),
-                collection_id: collection_id.clone(),
-                entries: vec![], // Legacy entries - not used in batch architecture
+                collection_id: collection_id.to_string(),
+                batches: vec![], // No batches in fallback mode
                 vector_records,
                 marked_segments: vec![],
                 marked_sequences: vec![(0, record_count)],
@@ -576,7 +576,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
 
     /// Check if collection needs flush based on thresholds (called during writes)
     /// Returns true if flush should be triggered for the collection
-    async fn should_trigger_flush(&self, collection_id: &CollectionId) -> Result<bool> {
+    async fn should_trigger_flush(&self, collection_id: &str) -> Result<bool> {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get collection statistics from GlobalPartitionedMemtable
             let stats = wal_behavior.get_stats().await?;
@@ -613,13 +613,13 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
     /// Insert single vector (creates batch of size 1)
     async fn insert_vector(
         &self,
-        collection_id: CollectionId,
+        collection_id: String,
         vector_record: VectorRecord,
     ) -> Result<u64> {
         use super::BatchId;
         
         // Create single-vector batch
-        let batch_id = BatchId::new(collection_id.clone(), 1, 1);
+        let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
         let total_size_bytes = vector_record.actual_size_bytes();
         
         let batch = WalVectorBatch {
@@ -637,7 +637,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
     /// Insert multiple vectors efficiently
     async fn insert_vectors(
         &self,
-        collection_id: CollectionId,
+        collection_id: String,
         vector_records: Vec<VectorRecord>,
     ) -> Result<Vec<u64>> {
         use super::BatchId;
@@ -672,7 +672,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
     /// Insert vectors with cloud backup option
     async fn insert_vectors_with_cloud_backup(
         &self,
-        collection_id: CollectionId,
+        collection_id: String,
         vector_records: Vec<VectorRecord>,
         cloud_backup_url: Option<&str>,
     ) -> Result<Vec<u64>> {
@@ -713,150 +713,3 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
 // Blanket implementation of convenience methods for all batch strategies
 impl<T: WalBatchStrategy> WalBatchStrategyExt for T {}
 
-// 🚫 REMOVED: LegacyWalStrategyAdapter no longer needed - WalStrategy trait removed
-// All code now uses WalBatchStrategy with single-entry batches for individual operations
-/*
-pub struct LegacyWalStrategyAdapter {
-    legacy_strategy: Box<dyn super::WalStrategy>,
-}*/
-
-/*
-impl LegacyWalStrategyAdapter {
-    pub fn new(legacy_strategy: Box<dyn super::WalStrategy>) -> Self {
-        Self { legacy_strategy }
-    }
-}
-
-#[async_trait]
-impl WalBatchStrategy for LegacyWalStrategyAdapter {
-    fn strategy_name(&self) -> &'static str {
-        "LegacyAdapter"
-    }
-
-    async fn initialize(
-        &mut self,
-        config: &WalConfig,
-        filesystem: Arc<FilesystemFactory>,
-    ) -> Result<()> {
-        #[allow(deprecated)]
-        self.legacy_strategy.initialize(config, filesystem).await
-    }
-
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
-        self.legacy_strategy.set_storage_engine(storage_engine);
-    }
-
-    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        // Convert batch to individual entries for legacy strategy
-        #[allow(deprecated)]
-        self.legacy_strategy.write_vector_batch(batch).await
-    }
-
-    async fn write_vector_batch_with_sync(
-        &self, 
-        batch: WalVectorBatch, 
-        immediate_sync: bool
-    ) -> Result<Vec<u64>> {
-        #[allow(deprecated)]
-        self.legacy_strategy.write_vector_batch_with_sync(batch, immediate_sync).await
-    }
-
-    async fn read_vector_batches(
-        &self,
-        collection_id: &CollectionId,
-        from_sequence: u64,
-        limit: Option<usize>,
-    ) -> Result<Vec<WalVectorBatch>> {
-        #[allow(deprecated)]
-        self.legacy_strategy.read_vector_batches(collection_id, from_sequence, limit).await
-    }
-
-    async fn search_vector_by_id(
-        &self,
-        collection_id: &CollectionId,
-        vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        #[allow(deprecated)]
-        self.legacy_strategy.search_vector_by_id(collection_id, vector_id).await
-    }
-
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &CollectionId,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
-        #[allow(deprecated)]
-        let results = self.legacy_strategy.search_vectors_similarity(collection_id, query_vector, k, distance_metric).await?;
-        
-        // Convert from (VectorId, f32, WalEntry) to (VectorId, f32, VectorRecord)
-        let mut converted_results = Vec::new();
-        for (vector_id, score, entry) in results {
-            if let Ok(vector_record) = entry.extract_vector_record() {
-                converted_results.push((vector_id, score, vector_record));
-            }
-        }
-        Ok(converted_results)
-    }
-
-    async fn get_collection_vectors(&self, collection_id: &CollectionId) -> Result<Vec<VectorRecord>> {
-        #[allow(deprecated)]
-        let entries = self.legacy_strategy.get_collection_entries(collection_id).await?;
-        
-        let mut vectors = Vec::new();
-        for entry in entries {
-            if let Ok(vector_record) = entry.extract_vector_record() {
-                vectors.push(vector_record);
-            }
-        }
-        Ok(vectors)
-    }
-
-    async fn flush_collection(&self, collection_id: &CollectionId) -> Result<FlushResult> {
-        #[allow(deprecated)]
-        self.legacy_strategy.flush(Some(collection_id)).await
-    }
-
-    async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
-        #[allow(deprecated)]
-        self.legacy_strategy.drop_collection(collection_id).await
-    }
-
-    async fn get_stats(&self) -> Result<WalStats> {
-        #[allow(deprecated)]
-        self.legacy_strategy.get_stats().await
-    }
-
-    async fn get_collection_stats(&self, _collection_id: &CollectionId) -> Result<WalStats> {
-        // Legacy strategies don't support per-collection stats, return global stats
-        self.get_stats().await
-    }
-
-    async fn recover(&self) -> Result<u64> {
-        #[allow(deprecated)]
-        self.legacy_strategy.recover().await
-    }
-
-    async fn close(&self) -> Result<()> {
-        #[allow(deprecated)]
-        self.legacy_strategy.close().await
-    }
-
-    async fn force_sync(&self, collection_id: Option<&CollectionId>) -> Result<()> {
-        #[allow(deprecated)]
-        self.legacy_strategy.force_sync(collection_id).await
-    }
-
-    async fn compact_collection(&self, collection_id: &CollectionId) -> Result<u64> {
-        #[allow(deprecated)]
-        self.legacy_strategy.compact_collection(collection_id).await
-    }
-}
-
-impl DistanceComputeProvider for LegacyWalStrategyAdapter {
-    fn distance_compute(&self) -> &UnifiedDistanceCompute {
-        self.legacy_strategy.distance_compute()
-    }
-}
-*/

@@ -115,7 +115,7 @@ pub struct MemtableFactory;
 
 impl MemtableFactory {
     /// Create WAL-optimized memtable (global partitioned for collection isolation + vector content search)
-    pub fn create_for_wal(config: MemtableConfig) -> specialized::WalMemtable {
+    pub fn create_for_wal(config: MemtableConfig) -> specialized::wal_behavior::WalBehaviorWrapper {
         specialized::SpecializedMemtableFactory::create_global_partitioned_for_wal(config)
     }
 

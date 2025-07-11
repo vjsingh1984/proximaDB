@@ -16,7 +16,7 @@ use super::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
-use crate::core::{avro_unified::VectorRecord, CollectionId};
+use crate::core::{avro_unified::VectorRecord, String};
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {
@@ -46,10 +46,10 @@ impl std::fmt::Debug for CollectionAnalyzer {
 #[derive(Debug)]
 struct QueryPatternTracker {
     /// Query history per collection
-    query_history: HashMap<CollectionId, Vec<QueryEvent>>,
+    query_history: HashMap<String, Vec<QueryEvent>>,
 
     /// Query statistics
-    query_stats: HashMap<CollectionId, QueryStatistics>,
+    query_stats: HashMap<String, QueryStatistics>,
 
     /// Maximum history size
     max_history_size: usize,
@@ -95,10 +95,10 @@ struct QueryStatistics {
 #[derive(Debug)]
 struct PerformanceMetricsCollector {
     /// Current metrics per collection
-    current_metrics: Arc<RwLock<HashMap<CollectionId, PerformanceMetrics>>>,
+    current_metrics: Arc<RwLock<HashMap<String, PerformanceMetrics>>>,
 
     /// Historical metrics for trend analysis
-    historical_metrics: Arc<RwLock<HashMap<CollectionId, Vec<TimestampedMetrics>>>>,
+    historical_metrics: Arc<RwLock<HashMap<String, Vec<TimestampedMetrics>>>>,
 }
 
 /// Timestamped performance metrics
@@ -111,7 +111,7 @@ struct TimestampedMetrics {
 /// Vector characteristics analyzer
 struct VectorCharacteristicsAnalyzer {
     /// Cached characteristics per collection
-    cached_characteristics: Arc<RwLock<HashMap<CollectionId, VectorCharacteristics>>>,
+    cached_characteristics: Arc<RwLock<HashMap<String, VectorCharacteristics>>>,
 }
 
 /// Vector characteristics
@@ -129,13 +129,13 @@ struct VectorCharacteristics {
 /// Metadata complexity analyzer
 struct MetadataComplexityAnalyzer {
     /// Cached complexity analysis per collection
-    cached_complexity: Arc<RwLock<HashMap<CollectionId, MetadataComplexity>>>,
+    cached_complexity: Arc<RwLock<HashMap<String, MetadataComplexity>>>,
 }
 
 /// Temporal pattern detector
 struct TemporalPatternDetector {
     /// Access patterns per collection
-    access_patterns: Arc<RwLock<HashMap<CollectionId, AccessPattern>>>,
+    access_patterns: Arc<RwLock<HashMap<String, AccessPattern>>>,
 }
 
 /// Access pattern information
@@ -172,7 +172,7 @@ impl CollectionAnalyzer {
     /// Analyze collection characteristics
     pub async fn analyze_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CollectionCharacteristics> {
         // Get vector characteristics
         let vector_chars = self.vector_analyzer.analyze_vectors(collection_id).await?;
@@ -201,7 +201,7 @@ impl CollectionAnalyzer {
             .await?;
 
         Ok(CollectionCharacteristics {
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             vector_count: vector_chars.vector_count,
             average_sparsity: vector_chars.average_sparsity,
             sparsity_variance: vector_chars.sparsity_variance,
@@ -217,7 +217,7 @@ impl CollectionAnalyzer {
     /// Record a query event for pattern analysis
     pub async fn record_query(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         query_type: QueryPatternType,
         latency_ms: f64,
         k_value: Option<usize>,
@@ -244,7 +244,7 @@ impl CollectionAnalyzer {
     /// Update performance metrics
     pub async fn update_performance_metrics(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metrics: PerformanceMetrics,
     ) -> Result<()> {
         self.performance_collector
@@ -256,7 +256,7 @@ impl CollectionAnalyzer {
     /// Analyze vector characteristics from sample
     pub async fn analyze_vector_sample(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vectors: &[VectorRecord],
     ) -> Result<()> {
         self.vector_analyzer
@@ -268,7 +268,7 @@ impl CollectionAnalyzer {
     /// Calculate access frequency metrics
     async fn calculate_access_frequency(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<AccessFrequencyMetrics> {
         let tracker = self.query_tracker.read().await;
         let stats = tracker
@@ -311,11 +311,11 @@ impl QueryPatternTracker {
     }
 
     /// Record a query event
-    fn record_query(&mut self, collection_id: &CollectionId, event: QueryEvent) {
+    fn record_query(&mut self, collection_id: &str, event: QueryEvent) {
         // Add to history
         let history = self
             .query_history
-            .entry(collection_id.clone())
+            .entry(collection_id.to_string())
             .or_insert_with(Vec::new);
         history.push(event.clone());
 
@@ -327,7 +327,7 @@ impl QueryPatternTracker {
         // Update statistics
         let stats = self
             .query_stats
-            .entry(collection_id.clone())
+            .entry(collection_id.to_string())
             .or_insert_with(QueryStatistics::default);
 
         stats.total_queries += 1;
@@ -359,7 +359,7 @@ impl QueryPatternTracker {
     }
 
     /// Analyze query patterns for a collection
-    fn analyze_patterns(&self, collection_id: &CollectionId) -> QueryPatternAnalysis {
+    fn analyze_patterns(&self, collection_id: &str) -> QueryPatternAnalysis {
         let stats = self
             .query_stats
             .get(collection_id)
@@ -407,16 +407,16 @@ impl PerformanceMetricsCollector {
     }
 
     /// Update performance metrics for a collection
-    async fn update_metrics(&self, collection_id: &CollectionId, metrics: PerformanceMetrics) {
+    async fn update_metrics(&self, collection_id: &str, metrics: PerformanceMetrics) {
         // Update current metrics
         let mut current = self.current_metrics.write().await;
-        current.insert(collection_id.clone(), metrics.clone());
+        current.insert(collection_id.to_string(), metrics.clone());
         drop(current);
 
         // Add to historical metrics
         let mut historical = self.historical_metrics.write().await;
         let history = historical
-            .entry(collection_id.clone())
+            .entry(collection_id.to_string())
             .or_insert_with(Vec::new);
 
         history.push(TimestampedMetrics {
@@ -430,7 +430,7 @@ impl PerformanceMetricsCollector {
     }
 
     /// Get current performance metrics
-    async fn get_metrics(&self, collection_id: &CollectionId) -> Option<PerformanceMetrics> {
+    async fn get_metrics(&self, collection_id: &str) -> Option<PerformanceMetrics> {
         let current = self.current_metrics.read().await;
         current.get(collection_id).cloned()
     }
@@ -458,7 +458,7 @@ impl VectorCharacteristicsAnalyzer {
     }
 
     /// Analyze vector characteristics for a collection
-    async fn analyze_vectors(&self, collection_id: &CollectionId) -> Result<VectorCharacteristics> {
+    async fn analyze_vectors(&self, collection_id: &str) -> Result<VectorCharacteristics> {
         let cached = self.cached_characteristics.read().await;
         if let Some(chars) = cached.get(collection_id) {
             // Return cached if recent (within 1 hour)
@@ -473,7 +473,7 @@ impl VectorCharacteristicsAnalyzer {
 
         // Cache the result
         let mut cached = self.cached_characteristics.write().await;
-        cached.insert(collection_id.clone(), characteristics.clone());
+        cached.insert(collection_id.to_string(), characteristics.clone());
 
         Ok(characteristics)
     }
@@ -481,13 +481,13 @@ impl VectorCharacteristicsAnalyzer {
     /// Analyze vectors from collection (real implementation)
     async fn analyze_collection_vectors(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<VectorCharacteristics> {
         // For new collections without data, return reasonable defaults
         // In production, this would query the storage layer for actual vector data
 
         // Simulate basic analysis based on collection ID patterns
-        let (vector_count, dimension, sparsity) = match collection_id.as_str() {
+        let (vector_count, dimension, sparsity) = match collection_id {
             id if id.contains("small") => (1_000, 128, 0.1),
             id if id.contains("sparse") => (10_000, 512, 0.8),
             id if id.contains("large") => (100_000, 768, 0.2),
@@ -508,7 +508,7 @@ impl VectorCharacteristicsAnalyzer {
     }
 
     /// Analyze a sample of vectors
-    async fn analyze_sample(&self, collection_id: &CollectionId, vectors: &[VectorRecord]) {
+    async fn analyze_sample(&self, collection_id: &str, vectors: &[VectorRecord]) {
         if vectors.is_empty() {
             return;
         }
@@ -574,7 +574,7 @@ impl VectorCharacteristicsAnalyzer {
         };
 
         let mut cached = self.cached_characteristics.write().await;
-        cached.insert(collection_id.clone(), characteristics);
+        cached.insert(collection_id.to_string(), characteristics);
     }
 }
 
@@ -587,7 +587,7 @@ impl MetadataComplexityAnalyzer {
     }
 
     /// Analyze metadata complexity for a collection
-    async fn analyze_complexity(&self, collection_id: &CollectionId) -> Result<MetadataComplexity> {
+    async fn analyze_complexity(&self, collection_id: &str) -> Result<MetadataComplexity> {
         let cached = self.cached_complexity.read().await;
         if let Some(complexity) = cached.get(collection_id) {
             return Ok(complexity.clone());
@@ -605,7 +605,7 @@ impl MetadataComplexityAnalyzer {
 
         // Cache the result
         let mut cached = self.cached_complexity.write().await;
-        cached.insert(collection_id.clone(), complexity.clone());
+        cached.insert(collection_id.to_string(), complexity.clone());
 
         Ok(complexity)
     }
@@ -620,7 +620,7 @@ impl TemporalPatternDetector {
     }
 
     /// Detect temporal patterns for a collection
-    async fn detect_patterns(&self, collection_id: &CollectionId) -> TemporalPattern {
+    async fn detect_patterns(&self, collection_id: &str) -> TemporalPattern {
         let patterns = self.access_patterns.read().await;
         if let Some(pattern) = patterns.get(collection_id) {
             return pattern.temporal_pattern.clone();

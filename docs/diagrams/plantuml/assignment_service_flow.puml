@@ -1,5 +1,5 @@
 @startuml Assignment Service Flow
-!theme aws-orange
+!theme plain
 
 title Collection Assignment Service Flow
 scale 1.2
@@ -28,11 +28,6 @@ group Collection Creation Flow
         deactivate RR
         
         AssignSvc -> AssignSvc: create StorageAssignmentResult
-            StorageAssignmentResult 
-                storage_url: "file:///data/disk2/wal"
-                directory_index: 1
-                assigned_at: timestamp
-            }
         
         AssignSvc -> AssignSvc: record_assignment(collection_id, WAL, assignment)
     else Existing assignment found
@@ -71,9 +66,6 @@ group Server Startup Recovery Flow
             
             alt Collection has data
                 Discovery -> AssignSvc: record_assignment(collection_id, WAL, discovered_assignment)
-                    Discovered assignment records
-                    existing collection-to-disk
-                    mappings for recovery
             end
         end
     end

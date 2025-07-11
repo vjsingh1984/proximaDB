@@ -40,4 +40,7 @@ pub mod search_distance_metrics;
 // Unified distance system integration tests
 pub mod unified_distance_system_integration;
 
+// VIPER engine integration tests
+pub mod viper;
+
 // Middleware integration tests are at this level since they cross-cut concerns

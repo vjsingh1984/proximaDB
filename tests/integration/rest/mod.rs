@@ -16,5 +16,5 @@
 
 //! REST API integration tests
 
-// Note: Tests in this module are individual integration test files
-// and don't need to be declared as modules since they are standalone test binaries
+// Integration test modules for REST API
+pub mod collection_handler_tests;

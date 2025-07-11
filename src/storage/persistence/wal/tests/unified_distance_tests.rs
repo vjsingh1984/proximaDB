@@ -28,7 +28,7 @@ mod tests {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
-        let strategy = WalFactory::create_from_config(&config, filesystem).await?;
+        let strategy = WalBatchFactory::create_strategy(WalStrategyType::AvroBatch, &config, filesystem).await?;
 
         let manager = WalManager::new(strategy, config).await?;
 
@@ -140,7 +140,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vectors = create_distance_test_vectors();
 
         // Insert test vectors
@@ -196,7 +196,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vectors = create_distance_test_vectors();
 
         // Insert test vectors
@@ -255,7 +255,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
 
         // Create vectors with clear Manhattan distance relationships
         let now = Utc::now().timestamp_millis();
@@ -347,7 +347,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vectors = create_distance_test_vectors();
 
         // Insert test vectors
@@ -408,7 +408,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("binary_collection".to_string());
+        let collection_id = crate::core::String::from("binary_collection".to_string());
 
         // Create binary-like vectors for Hamming distance
         let now = Utc::now().timestamp_millis();
@@ -502,7 +502,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("set_collection".to_string());
+        let collection_id = crate::core::String::from("set_collection".to_string());
 
         // Create set-like vectors for Jaccard distance
         let now = Utc::now().timestamp_millis();
@@ -598,7 +598,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vector = create_distance_test_vectors()[0].clone();
 
         // Insert a test vector
@@ -650,7 +650,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
 
         // Insert 3D vector
         let vector_3d = VectorRecord {
@@ -705,7 +705,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vectors = create_distance_test_vectors();
 
         // Insert batch of vectors
@@ -763,7 +763,7 @@ mod tests {
             .await
             .expect("Failed to create WAL manager");
 
-        let collection_id = crate::core::CollectionId::from("test_collection".to_string());
+        let collection_id = crate::core::String::from("test_collection".to_string());
         let vector = create_distance_test_vectors()[0].clone();
 
         manager

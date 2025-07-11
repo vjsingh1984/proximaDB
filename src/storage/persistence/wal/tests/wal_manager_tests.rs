@@ -20,7 +20,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::Bincode;
+        config.strategy_type = WalStrategyType::BincodeBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -31,7 +31,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::Bincode,
+            WalStrategyType::BincodeBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -50,7 +50,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::Avro;
+        config.strategy_type = WalStrategyType::AvroBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -61,7 +61,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::Avro,
+            WalStrategyType::AvroBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -75,7 +75,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::Bincode;
+        config.strategy_type = WalStrategyType::BincodeBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -86,7 +86,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::Bincode,
+            WalStrategyType::BincodeBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -321,7 +321,7 @@ mod tests {
         let (manager, _temp_dir) = create_test_batch_wal_manager_avro().await;
         
         let config = manager.get_config();
-        assert_eq!(config.strategy_type, WalStrategyType::Avro);
+        assert_eq!(config.strategy_type, WalStrategyType::AvroBatch);
     }
 
     #[tokio::test]
@@ -395,7 +395,7 @@ mod tests {
         );
 
         // Test both strategy types via factory
-        for strategy_type in &[WalStrategyType::Avro, WalStrategyType::Bincode] {
+        for strategy_type in &[WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch] {
             let manager = WalManager::create_with_batch_factory(
                 strategy_type.clone(),
                 config.clone(),
