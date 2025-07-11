@@ -26,7 +26,7 @@ pub mod distance;
 pub mod hardware;
 pub mod hardware_detection;
 pub mod indexing;
-pub mod quantization;
+// pub mod quantization;  // Removed - use unified_quantization instead
 pub mod unified_distance;
 pub mod unified_quantization;
 
@@ -38,11 +38,7 @@ pub use algorithms::*;
 pub use distance::*;
 pub use hardware::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
-pub use quantization::{
-    QuantizationType, QuantizationConfig, QuantizationEngine, VectorQuantizer,
-    ProductQuantizer, ScalarQuantizer, BinaryQuantizer, AdditiveQuantizer,
-    ResidualVectorQuantizer, OptimizedProductQuantizer,
-};
+// Old quantization module removed - use unified_quantization types instead
 pub use unified_distance::*;
 pub use unified_quantization::*;
 
@@ -151,7 +147,7 @@ pub struct AlgorithmConfig {
     /// Search algorithm tuning
     pub search_params: SearchParams,
     /// Quantization settings
-    pub quantization: QuantizationConfig,
+    pub quantization: UnifiedQuantizationLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,7 +312,9 @@ impl Default for ComputeConfig {
                     early_termination_threshold: None,
                     parallel_threads: None,
                 },
-                quantization: QuantizationConfig::default(),
+                quantization: UnifiedQuantizationLevel {
+                    level_type: None, // No quantization
+                },
             },
             memory: MemoryConfig {
                 prefetch_strategy: PrefetchStrategy::Adaptive,

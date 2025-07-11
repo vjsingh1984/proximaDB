@@ -30,12 +30,13 @@ mod performance_tests {
 
             assert_eq!(batch.len(), batch_size);
 
-            // Performance expectations
+            // Performance expectations - adjust based on actual operation (just creating vectors)
+            // Vector creation should be very fast
             match test_name {
-                "small_batch" => assert!(measurement.throughput > 1000.0),
-                "medium_batch" => assert!(measurement.throughput > 500.0),
-                "large_batch" => assert!(measurement.throughput > 100.0),
-                "high_dimension" => assert!(measurement.throughput > 50.0),
+                "small_batch" => assert!(measurement.throughput > 10000.0, "Small batch throughput: {}", measurement.throughput),
+                "medium_batch" => assert!(measurement.throughput > 5000.0, "Medium batch throughput: {}", measurement.throughput),
+                "large_batch" => assert!(measurement.throughput > 1000.0, "Large batch throughput: {}", measurement.throughput),
+                "high_dimension" => assert!(measurement.throughput > 500.0, "High dimension throughput: {}", measurement.throughput),
                 _ => {}
             }
         }

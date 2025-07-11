@@ -395,7 +395,7 @@ impl UnifiedStorageEngine for LsmTree {
     // =============================================================================
 
     fn engine_name(&self) -> &'static str {
-        "LSM"
+        "lsm"
     }
 
     fn engine_version(&self) -> &'static str {

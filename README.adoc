@@ -58,7 +58,7 @@ Modern AI applications need vector databases that don't compromise on performanc
 
 Production-ready, cloud-native vector database built in Rust with three core innovations:
 
-image::core-classes.png[Core Classes Architecture,700,align=center]
+image::docs/diagrams/images/proximadb-class-services.png[Core Services Architecture,700,align=center]
 
 **Unified Memtable System**:: Single interface with pluggable backends and behavior wrappers → link:docs/technical_reference.adoc#unified-memtable-system[Architecture details]
 **Storage-Aware Search**:: Automatic engine selection with three-tier aggregation → link:docs/architecture.adoc#polymorphic-search[Implementation]  

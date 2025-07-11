@@ -12,7 +12,7 @@ use proximadb::core::{LsmConfig, VectorRecord};
 use proximadb::storage::engines::lsm::LsmTree;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
-use proximadb::storage::traits::{CompactionParameters, UnifiedStorageEngine};
+use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 
 /// Helper function to create LSM tree with WAL manager
 async fn create_lsm_tree_with_wal(temp_dir: &TempDir) -> Result<LsmTree> {
@@ -150,9 +150,14 @@ async fn test_lsm_engine_flush_operations() -> Result<()> {
 
     println!("📝 Added 10 records to LSM engine");
 
-    // Test LSM's direct flush method (returns Result<()>)
-    let flush_result = lsm_engine.flush().await;
+    // Test LSM's UnifiedStorageEngine flush method
+    let flush_params = FlushParameters::new()
+        .with_collection_id("test_collection".to_string())
+        .force()
+        .synchronous();
+    let flush_result = lsm_engine.flush(flush_params).await;
     assert!(flush_result.is_ok());
+    assert!(flush_result.unwrap().success);
 
     println!("✅ LSM engine flush operations verified");
     println!("   - Direct flush: Success");

@@ -179,8 +179,51 @@ impl VectorRecord {
     /// Zero-copy serialization to Avro binary format
     /// This is used for WAL writes, network transmission, storage
     pub fn to_avro_bytes(&self) -> Result<Vec<u8>, apache_avro::Error> {
+        use apache_avro::{types::Record, types::Value};
+        
         let mut writer = Writer::new(&*VECTOR_RECORD_SCHEMA, Vec::new());
-        writer.append_ser(self)?;
+        
+        // Create an Avro record manually to handle union types properly
+        let mut record = Record::new(&*VECTOR_RECORD_SCHEMA).ok_or_else(|| {
+            apache_avro::Error::DeserializeValue("Failed to create Avro record".to_string())
+        })?;
+        record.put("id", Value::String(self.id.clone()));
+        record.put("collection_id", Value::String(self.collection_id.clone()));
+        record.put("vector", Value::Array(self.vector.iter().map(|&f| Value::Float(f)).collect()));
+        
+        // Convert metadata map with union values
+        let mut metadata_map = std::collections::HashMap::new();
+        for (key, value) in &self.metadata {
+            let avro_value = match value {
+                serde_json::Value::Null => Value::Union(0, Box::new(Value::Null)),
+                serde_json::Value::String(s) => Value::Union(1, Box::new(Value::String(s.clone()))),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Value::Union(2, Box::new(Value::Long(i)))
+                    } else if let Some(f) = n.as_f64() {
+                        Value::Union(3, Box::new(Value::Double(f)))
+                    } else {
+                        Value::Union(0, Box::new(Value::Null))
+                    }
+                }
+                serde_json::Value::Bool(b) => Value::Union(4, Box::new(Value::Boolean(*b))),
+                _ => Value::Union(0, Box::new(Value::Null)), // Arrays and objects become null
+            };
+            metadata_map.insert(key.clone(), avro_value);
+        }
+        record.put("metadata", Value::Map(metadata_map));
+        
+        record.put("timestamp", Value::Long(self.timestamp));
+        record.put("created_at", Value::Long(self.created_at));
+        record.put("updated_at", Value::Long(self.updated_at));
+        record.put("expires_at", self.expires_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        record.put("version", Value::Long(self.version));
+        record.put("rank", self.rank.map(Value::Int).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        record.put("score", self.score.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        record.put("distance", self.distance.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        
+        writer.append(record)?;
+        writer.flush()?;
         Ok(writer.into_inner()?)
     }
 

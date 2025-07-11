@@ -8,8 +8,7 @@ use std::collections::HashMap;
 mod tests {
     use super::*;
     use proximadb::compute::{
-        QuantizationEngine, QuantizationConfig, QuantizationType, ProductQuantizer, 
-        VectorQuantizer, UnifiedQuantizationEngine, UnifiedQuantizationLevel
+        UnifiedQuantizationEngine, UnifiedQuantizationLevel
     };
     use proximadb::storage::engines::viper::{
         VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, 
@@ -59,40 +58,40 @@ mod tests {
 
     #[test]
     fn test_product_quantization_basic() {
-        // Test basic Product Quantization functionality
-        let config = QuantizationConfig {
-            quantization_type: QuantizationType::ProductQuantization,
-            num_subquantizers: 8,
-            num_centroids: 256,
-            bits_per_code: 8,
-            training_iterations: 10,
-            enable_fast_distance: true,
-            compression_ratio: 4.0,
+        // Test basic Product Quantization functionality using UnifiedQuantizationEngine
+        let level = UnifiedQuantizationLevel {
+            level_type: proximadb::proto::proximadb::QuantizationLevelType::ProductQuantization as i32,
+            bits: 8,
+            subvectors: 8,
         };
 
-        let mut quantizer = ProductQuantizer::new(config.clone());
+        let mut engine = UnifiedQuantizationEngine::new(level.clone());
         
         // Generate training data
         let training_vectors = generate_test_vectors(100, 64); // 64 dimensions, divisible by 8
         
         // Train the quantizer
-        assert!(quantizer.train(&training_vectors).is_ok());
-        assert!(quantizer.is_trained());
+        let codebook = engine.train_codebook(&training_vectors).unwrap();
+        assert!(!codebook.centroids.is_empty());
         
         // Test quantization
         let test_vectors = generate_test_vectors(10, 64);
-        let quantized = quantizer.quantize(&test_vectors).unwrap();
+        let quantized = engine.quantize_batch(&test_vectors);
         
         assert_eq!(quantized.len(), test_vectors.len());
         
-        // Each quantized vector should have correct code length
+        // Each quantized vector should have data
         for qv in &quantized {
-            assert_eq!(qv.codes.len(), config.num_subquantizers);
+            assert!(!qv.data.is_empty());
+            assert_eq!(qv.quantization_level.level_type, level.level_type);
         }
         
         // Test distance computation
         let query = &test_vectors[0];
-        let distances = quantizer.compute_distances(query, &quantized).unwrap();
+        let quantized_query = engine.quantize(query);
+        let distances: Vec<f32> = quantized.iter()
+            .map(|qv| engine.compute_distance(&quantized_query, qv))
+            .collect();
         assert_eq!(distances.len(), quantized.len());
         
         // Distance to self should be smallest (approximately)
@@ -102,29 +101,48 @@ mod tests {
 
     #[test]
     fn test_quantization_levels() {
-        // Test different quantization levels
+        // Test different quantization levels using unified API
         let levels = vec![
-            QuantizationLevel::uniform_8bit(),
-            QuantizationLevel::uniform_4bit(),
-            QuantizationLevel::pq8(8),
-            QuantizationLevel::pq4(4),
-            QuantizationLevel::binary(),
+            UnifiedQuantizationLevel {
+                level_type: proximadb::proto::proximadb::QuantizationLevelType::UniformQuantization as i32,
+                bits: 8,
+                subvectors: 1,
+            },
+            UnifiedQuantizationLevel {
+                level_type: proximadb::proto::proximadb::QuantizationLevelType::UniformQuantization as i32,
+                bits: 4,
+                subvectors: 1,
+            },
+            UnifiedQuantizationLevel {
+                level_type: proximadb::proto::proximadb::QuantizationLevelType::ProductQuantization as i32,
+                bits: 8,
+                subvectors: 8,
+            },
+            UnifiedQuantizationLevel {
+                level_type: proximadb::proto::proximadb::QuantizationLevelType::ProductQuantization as i32,
+                bits: 4,
+                subvectors: 4,
+            },
+            UnifiedQuantizationLevel {
+                level_type: proximadb::proto::proximadb::QuantizationLevelType::BinaryQuantization as i32,
+                bits: 1,
+                subvectors: 1,
+            },
         ];
 
         for level in levels {
-            // Test compression ratio calculation
-            let compression_ratio = level.compression_ratio();
-            assert!(compression_ratio >= 1.0);
+            let engine = UnifiedQuantizationEngine::new(level.clone());
             
-            // Test quality retention estimation
-            let quality = level.quality_retention();
-            assert!(quality > 0.0 && quality <= 1.0);
+            // Test that engine is created successfully
+            let test_vector = vec![1.0; 64];
+            let quantized = engine.quantize(&test_vector);
             
-            // Test validation
-            assert!(level.validate().is_ok());
+            // Basic validation
+            assert!(!quantized.data.is_empty());
+            assert_eq!(quantized.quantization_level.level_type, level.level_type);
             
-            println!("Level {:?}: {:.1}x compression, {:.1}% quality", 
-                     level, compression_ratio, quality * 100.0);
+            println!("Level type {}: {} bits, {} subvectors", 
+                     level.level_type, level.bits, level.subvectors);
         }
     }
 
