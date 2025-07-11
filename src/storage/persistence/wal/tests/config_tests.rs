@@ -48,7 +48,7 @@ mod tests {
     async fn test_performance_config_default() {
         let config = PerformanceConfig::default();
 
-        assert_eq!(config.memory_flush_size_bytes, 1 * 1024 * 1024);
+        assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024); // Updated to 10MB
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
         assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);
         assert_eq!(

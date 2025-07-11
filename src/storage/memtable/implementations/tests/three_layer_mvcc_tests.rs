@@ -41,8 +41,13 @@ fn create_wal_batch(
     vectors: Vec<VectorRecord>,
 ) -> WalVectorBatch {
     let vector_count = vectors.len() as u64;
+    let end_sequence = if vector_count > 0 {
+        sequence + vector_count - 1
+    } else {
+        sequence
+    };
     WalVectorBatch {
-        batch_id: BatchId::new(collection_id.to_string(), sequence, vector_count),
+        batch_id: BatchId::new(collection_id.to_string(), sequence, end_sequence),
         vector_records: vectors,
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate

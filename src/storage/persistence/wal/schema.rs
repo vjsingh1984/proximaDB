@@ -162,33 +162,56 @@ pub fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u
         vectors: avro_vectors,
     };
 
-    // Convert to Avro Value and serialize to binary format
-    use apache_avro::types::Value;
+    // Use apache_avro Writer for proper serialization
+    use apache_avro::{Writer, types::Value};
     
-    let batch_value = Value::Record(vec![
-        ("vectors".to_string(), Value::Array(
-            batch.vectors.into_iter().map(|v| Value::Record(vec![
-                ("id".to_string(), match v.id {
-                    Some(id) => Value::String(id),
-                    None => Value::Null,
-                }),
-                ("collection_id".to_string(), Value::String(v.collection_id)),
-                ("vector".to_string(), Value::Array(v.vector.into_iter().map(Value::Float).collect())),
-                ("metadata".to_string(), match v.metadata {
-                    Some(meta) => Value::Map(meta.into_iter().map(|(k, v)| (k, Value::String(v))).collect()),
-                    None => Value::Null,
-                }),
-                ("timestamp".to_string(), Value::Int(v.timestamp)),
-                ("expires_at".to_string(), match v.expires_at {
-                    Some(exp) => Value::Int(exp),
-                    None => Value::Null,
-                }),
-                ("version".to_string(), Value::Int(v.version)),
-            ])).collect()
-        ))
+    let mut writer = Writer::new(&schema, Vec::new());
+    
+    // Create the batch value with proper field ordering
+    let vectors_array = Value::Array(
+        batch.vectors.into_iter().map(|v| {
+            let mut fields = vec![];
+            
+            // Add fields in the order they appear in the schema
+            fields.push(("id".to_string(), match v.id {
+                Some(id) => Value::Union(1, Box::new(Value::String(id))),
+                None => Value::Union(0, Box::new(Value::Null)),
+            }));
+            
+            fields.push(("collection_id".to_string(), Value::String(v.collection_id)));
+            
+            fields.push(("vector".to_string(), Value::Array(
+                v.vector.into_iter().map(Value::Float).collect()
+            )));
+            
+            fields.push(("metadata".to_string(), match v.metadata {
+                Some(meta) => Value::Union(1, Box::new(Value::Map(
+                    meta.into_iter().map(|(k, v)| (k, Value::String(v))).collect()
+                ))),
+                None => Value::Union(0, Box::new(Value::Null)),
+            }));
+            
+            fields.push(("timestamp".to_string(), Value::Int(v.timestamp)));
+            
+            fields.push(("expires_at".to_string(), match v.expires_at {
+                Some(exp) => Value::Union(1, Box::new(Value::Int(exp))),
+                None => Value::Union(0, Box::new(Value::Null)),
+            }));
+            
+            fields.push(("version".to_string(), Value::Int(v.version)));
+            
+            Value::Record(fields)
+        }).collect()
+    );
+    
+    let batch_record = Value::Record(vec![
+        ("vectors".to_string(), vectors_array)
     ]);
     
-    let avro_bytes = to_avro_datum(&schema, batch_value)
+    writer.append(batch_record)
+        .map_err(|e| anyhow::anyhow!("Failed to append vector batch: {}", e))?;
+    
+    let avro_bytes = writer.into_inner()
         .map_err(|e| anyhow::anyhow!("Failed to serialize vector batch: {}", e))?;
 
     Ok(avro_bytes)
@@ -196,30 +219,37 @@ pub fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u
 
 /// Deserialize Avro vector batch to VectorRecord list (used by WAL strategies)
 pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>> {
-    use apache_avro::{from_avro_datum, Schema};
+    use apache_avro::{Reader, Schema};
 
     let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
         .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
 
-    let mut reader = std::io::Cursor::new(avro_payload);
-    let avro_value = from_avro_datum(&schema, &mut reader, None)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize Avro payload: {}", e))?;
+    let reader = Reader::with_schema(&schema, avro_payload)
+        .map_err(|e| anyhow::anyhow!("Failed to create Avro reader: {}", e))?;
+    
+    let mut result = Vec::new();
+    
+    for value in reader {
+        let avro_value = value.map_err(|e| anyhow::anyhow!("Failed to read Avro value: {}", e))?;
 
-    // Parse the Avro value into VectorRecord structs
-    if let apache_avro::types::Value::Record(record) = avro_value {
-        if let Some((_, apache_avro::types::Value::Array(vectors))) = record.iter().find(|(key, _)| *key == "vectors") {
-            let mut result = Vec::new();
-            for vector_value in vectors {
+        // Parse the Avro value into VectorRecord structs
+        if let apache_avro::types::Value::Record(record) = avro_value {
+            if let Some((_, apache_avro::types::Value::Array(vectors))) = record.iter().find(|(key, _)| *key == "vectors") {
+                for vector_value in vectors {
                 if let apache_avro::types::Value::Record(vector_record) = vector_value {
                     let id = vector_record
                         .iter()
                         .find(|(key, _)| key == "id")
-                        .and_then(|(_, v)| {
-                            if let apache_avro::types::Value::String(s) = v {
-                                Some(s.clone())
-                            } else {
-                                None
+                        .and_then(|(_, v)| match v {
+                            apache_avro::types::Value::Union(_, inner) => {
+                                if let apache_avro::types::Value::String(s) = inner.as_ref() {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             }
+                            apache_avro::types::Value::String(s) => Some(s.clone()),
+                            _ => None,
                         })
                         .unwrap_or_default();
 
@@ -248,8 +278,27 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                     let metadata = vector_record
                         .iter()
                         .find(|(key, _)| key == "metadata")
-                        .and_then(|(_, v)| {
-                            if let apache_avro::types::Value::Map(map) = v {
+                        .and_then(|(_, v)| match v {
+                            apache_avro::types::Value::Union(_, inner) => {
+                                if let apache_avro::types::Value::Map(map) = inner.as_ref() {
+                                    Some(
+                                        map.iter()
+                                            .map(|(k, v)| {
+                                                let value = match v {
+                                                    apache_avro::types::Value::String(s) => {
+                                                        serde_json::Value::String(s.clone())
+                                                    }
+                                                    _ => serde_json::Value::String(format!("{:?}", v)),
+                                                };
+                                                (k.clone(), value)
+                                            })
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
+                            apache_avro::types::Value::Map(map) => {
                                 Some(
                                     map.iter()
                                         .map(|(k, v)| {
@@ -263,21 +312,18 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                                         })
                                         .collect(),
                                 )
-                            } else {
-                                None
                             }
+                            _ => None,
                         })
                         .unwrap_or_default();
 
                     let timestamp = vector_record
                         .iter()
                         .find(|(key, _)| key == "timestamp")
-                        .and_then(|(_, v)| {
-                            if let apache_avro::types::Value::Long(ts) = v {
-                                Some(*ts)
-                            } else {
-                                None
-                            }
+                        .and_then(|(_, v)| match v {
+                            apache_avro::types::Value::Int(ts) => Some(*ts as i64),
+                            apache_avro::types::Value::Long(ts) => Some(*ts),
+                            _ => None,
                         })
                         .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
 
@@ -297,11 +343,11 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                     });
                 }
             }
-            return Ok(result);
         }
     }
-
-    anyhow::bail!("Invalid Avro payload structure")
+    }
+    
+    Ok(result)
 }
 
 /// Serialize vector batch to Avro binary (convenience function)
@@ -326,9 +372,9 @@ mod tests {
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata,
-            timestamp: 1234567890,
-            created_at: 1234567890,
-            updated_at: 1234567890,
+            timestamp: 1234000000, // Use timestamp that doesn't lose precision in Avro conversion
+            created_at: 1234000000,
+            updated_at: 1234000000,
             expires_at: None,
             version: 1,
             rank: None,

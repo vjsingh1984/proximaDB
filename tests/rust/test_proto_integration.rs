@@ -21,12 +21,15 @@ async fn test_quantization_config_fields() -> Result<()> {
         dimension: 128,
         distance_metric: 1, // COSINE
         storage_engine: 1,  // VIPER  
-        indexing_algorithm: 1, // HNSW
-        filterable_metadata_fields: vec!["category".to_string()],
-        indexing_config: HashMap::new(),
+        primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
-        index_config: None,
+        index_configs: vec![],
         quantization_config: None, // This field should exist
+        primary_index_name: "default".to_string(),
+        enable_automatic_index_selection: false,
+        description: Some("Test collection".to_string()),
+        tags: vec![],
+        owner: Some("test".to_string()),
     };
     
     assert_eq!(basic_config.name, "basic_collection");
@@ -46,16 +49,19 @@ async fn test_index_config_field() -> Result<()> {
         dimension: 256,
         distance_metric: 1, // COSINE
         storage_engine: 1,  // VIPER  
-        indexing_algorithm: 1, // HNSW
-        filterable_metadata_fields: vec![],
-        indexing_config: HashMap::new(),
+        primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
-        index_config: None, // This field should exist
+        index_configs: vec![],
         quantization_config: None,
+        primary_index_name: "default".to_string(),
+        enable_automatic_index_selection: false,
+        description: Some("Test collection".to_string()),
+        tags: vec![],
+        owner: Some("test".to_string()),
     };
     
     assert_eq!(config_with_index.name, "indexed_collection");
-    assert!(config_with_index.index_config.is_none());
+    assert!(config_with_index.index_configs.is_empty());
     
     println!("✅ Index config field exists in CollectionConfig");
     Ok(())
@@ -70,7 +76,7 @@ async fn test_search_optimization_hints_field() -> Result<()> {
     let search_query = SearchQuery {
         vector: vec![1.0, 2.0, 3.0, 4.0],
         id: None,
-        metadata_filter: HashMap::new(),
+        metadata_filter: None,
     };
     
     let search_request = VectorSearchRequest {
@@ -78,16 +84,16 @@ async fn test_search_optimization_hints_field() -> Result<()> {
         queries: vec![search_query],
         top_k: 10,
         distance_metric_override: None,
-        search_params: HashMap::new(),
+        search_params: None,
         include_fields: Some(IncludeFields::default()),
-        optimization_hints: None, // This field should exist from our proto updates
+        search_optimization: None, // This field should exist from our proto updates
     };
     
     assert_eq!(search_request.collection_id, "test_collection");
     assert_eq!(search_request.queries.len(), 1);
     assert_eq!(search_request.queries[0].vector.len(), 4);
     assert_eq!(search_request.top_k, 10);
-    assert!(search_request.optimization_hints.is_none());
+    assert!(search_request.search_optimization.is_none());
     
     println!("✅ Search optimization hints field exists in VectorSearchRequest");
     Ok(())
@@ -103,11 +109,11 @@ async fn test_quantization_message_types_exist() -> Result<()> {
     
     // Let's create a simple test that proves the types exist
     let _ = std::any::type_name::<QuantizationConfig>();
-    let _ = std::any::type_name::<SearchOptimizationHints>();
+    let _ = std::any::type_name::<SearchParams>();
     
     // If these types don't exist, the compilation will fail
     println!("✅ Quantization message types exist: {:?}", std::any::type_name::<QuantizationConfig>());
-    println!("✅ Search optimization hints type exists: {:?}", std::any::type_name::<SearchOptimizationHints>());
+    println!("✅ Search params type exists: {:?}", std::any::type_name::<SearchParams>());
     
     Ok(())
 }

@@ -17,6 +17,8 @@ Unified Operations:: Single endpoint per resource type with operation field
 Clean Structure:: No legacy REST patterns, pure operation-based API
 Consistent Naming:: Field names match proto definitions
 Type Safety:: Proper types for all fields (i32, i64, f32, etc.)
+Zero Serialization:: Direct proto-to-JSON conversion via serde
+Batch Operations:: All vector operations work on batches, not individual vectors
 
 === Base URL
 

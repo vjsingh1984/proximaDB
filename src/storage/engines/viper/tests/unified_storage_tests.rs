@@ -211,18 +211,18 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     let metrics = viper_engine.collect_engine_metrics().await?;
 
     // Verify VIPER-specific metrics are present
-    assert!(metrics.contains_key("internal_operations"));
-    assert!(metrics.contains_key("internal_memory_usage"));
-    assert!(metrics.contains_key("internal_collections"));
+    assert!(metrics.contains_key("flush_operations"));
+    assert!(metrics.contains_key("memory_usage_bytes"));
+    assert!(metrics.contains_key("collection_count"));
 
     // Verify metric values are reasonable
-    if let Some(serde_json::Value::Number(ops)) = metrics.get("internal_operations") {
+    if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
         assert!(ops.as_u64().unwrap_or(0) >= 0);
     }
-    if let Some(serde_json::Value::Number(mem)) = metrics.get("internal_memory_usage") {
+    if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
         assert!(mem.as_u64().unwrap_or(0) >= 0);
     }
-    if let Some(serde_json::Value::Number(cols)) = metrics.get("internal_collections") {
+    if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
         assert!(cols.as_u64().unwrap_or(0) >= 0);
     }
 

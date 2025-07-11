@@ -14,7 +14,7 @@ mod tests {
     #[tokio::test]
     async fn test_filestore_backend_create() {
         // Basic creation test
-        let filesystem_factory = Arc::new(FilesystemFactory::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let config = FilestoreMetadataConfig {
             storage_url: "file:///tmp/test_metadata".to_string(),
             enable_compression: true,
@@ -29,6 +29,9 @@ mod tests {
             .await
             .expect("Failed to create filestore backend");
 
-        assert!(backend.internal_health_check().await.is_ok());
+        // Backend was created successfully - test basic operations instead
+        // Since there's no health check method, we'll test a simple operation
+        let collection_uuids = backend.list_collection_uuids();
+        assert!(collection_uuids.is_empty()); // New backend should have no collections
     }
 }

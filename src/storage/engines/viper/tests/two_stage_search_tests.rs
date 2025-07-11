@@ -80,7 +80,7 @@ fn test_two_stage_config_default() {
     let config = TwoStageSearchConfig::default();
     
     assert_eq!(config.candidate_multiplier, 3.0);
-    assert_eq!(config.min_candidates, 50);
+    assert_eq!(config.min_candidates, 100);
     assert_eq!(config.max_candidates, 10000);
     assert!(config.enable_parallel);
 }
@@ -91,7 +91,11 @@ fn test_candidate_result_ordering() {
         CandidateResult {
             id: "vec_1".to_string(),
             approx_distance: 0.5,
-            quantization_level: UnifiedQuantizationLevel::None,
+            quantization_level: UnifiedQuantizationLevel {
+                level_type: Some(crate::proto::proximadb::quantization_level::LevelType::None(
+                    crate::proto::proximadb::NoQuantization {}
+                )),
+            },
             location: VectorLocation {
                 file_path: "test.parquet".to_string(),
                 row_group: 0,
@@ -101,7 +105,11 @@ fn test_candidate_result_ordering() {
         CandidateResult {
             id: "vec_0".to_string(),
             approx_distance: 0.2,
-            quantization_level: UnifiedQuantizationLevel::None,
+            quantization_level: UnifiedQuantizationLevel {
+                level_type: Some(crate::proto::proximadb::quantization_level::LevelType::None(
+                    crate::proto::proximadb::NoQuantization {}
+                )),
+            },
             location: VectorLocation {
                 file_path: "test.parquet".to_string(),
                 row_group: 0,
@@ -111,7 +119,11 @@ fn test_candidate_result_ordering() {
         CandidateResult {
             id: "vec_2".to_string(),
             approx_distance: 0.8,
-            quantization_level: UnifiedQuantizationLevel::None,
+            quantization_level: UnifiedQuantizationLevel {
+                level_type: Some(crate::proto::proximadb::quantization_level::LevelType::None(
+                    crate::proto::proximadb::NoQuantization {}
+                )),
+            },
             location: VectorLocation {
                 file_path: "test.parquet".to_string(),
                 row_group: 0,

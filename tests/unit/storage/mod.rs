@@ -21,3 +21,5 @@ pub mod unified_index_tests;
 pub mod metadata_indexes_tests;
 pub mod metadata_backend_tests;
 pub mod test_wal_config;
+pub mod viper_flush_compaction_tests;
+pub mod lsm_flush_compaction_tests;

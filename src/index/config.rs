@@ -721,7 +721,7 @@ mod tests {
         let ivf_config = IndexConfig::create_for_algorithm("IVF", Some(100_000));
         assert!(ivf_config.ivf_config.is_some());
         let ivf = ivf_config.ivf_config.unwrap();
-        assert_eq!(ivf.n_lists, 316); // sqrt(100000) = 316.22
+        assert_eq!(ivf.n_lists, 317); // sqrt(100000) = 316.22, ceil(316.22) = 317
     }
 
     #[test]

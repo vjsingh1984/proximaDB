@@ -447,22 +447,16 @@ impl WalBehaviorWrapper {
         // Storage engines handle their own serialization (SST for LSM, Parquet for VIPER)
         // This avoids double serialization/deserialization overhead
         
-        let vectors = self.inner.get_collection_vectors(collection_id).await?;
+        let coordinator = self.batch_coordinator.read().await;
+        let unflushed_batch_refs = coordinator.get_unflushed_batches(collection_id);
         
-        // Group vectors into batches (simplified - in real implementation this would track actual batches)
-        if vectors.is_empty() {
-            return Ok(vec![]);
-        }
+        // Clone the batches to return owned data
+        let unflushed_batches = unflushed_batch_refs
+            .into_iter()
+            .cloned()
+            .collect();
         
-        let batch = WalVectorBatch {
-            batch_id: BatchId::new(collection_id.to_string(), 1, vectors.len() as u64),
-            vector_records: vectors,
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes: 0, // Will be calculated by storage engine
-            is_flushed: false,
-        };
-        
-        Ok(vec![batch])
+        Ok(unflushed_batches)
     }
 
     /// Clear flushed batches for collection (MODERN - after successful storage engine flush)
@@ -510,9 +504,15 @@ impl WalBehaviorWrapper {
 
     /// Flush vectors up to sequence number (MODERN)
     pub async fn flush_up_to_sequence(&self, seq: u64) -> Result<Vec<VectorRecord>> {
-        let vectors_to_flush = self
-            .get_from_sequence(0, None)
-            .await?;
+        // Get all vectors with their sequences
+        let all_vectors_with_sequences = self.inner.get_vectors_from_sequence(0, None).await?;
+        
+        // Filter to only get vectors with sequence <= seq
+        let vectors_to_flush: Vec<VectorRecord> = all_vectors_with_sequences
+            .into_iter()
+            .filter(|(vector_seq, _)| *vector_seq <= seq)
+            .map(|(_, vector)| vector)
+            .collect();
 
         // Remove flushed vectors
         self.inner.clear_up_to(seq).await?;

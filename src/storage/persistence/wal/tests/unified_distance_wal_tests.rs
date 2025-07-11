@@ -233,12 +233,26 @@ mod tests {
 
             // Verify that the best match is the expected vector
             let best_result = &results[0];
-            assert_eq!(
-                best_result.0, "unit_x",
-                "Best match for {:?} should be unit_x (identical to query), got: {}",
-                metric,
-                best_result.0
-            );
+            
+            // For Cosine distance, both unit_x and scaled_x have the same similarity
+            // (they're in the same direction), so either is a valid best match
+            match metric {
+                DistanceMetric::Cosine => {
+                    assert!(
+                        best_result.0 == "unit_x" || best_result.0 == "scaled_x",
+                        "Best match for Cosine should be unit_x or scaled_x (same direction), got: {}",
+                        best_result.0
+                    );
+                }
+                _ => {
+                    assert_eq!(
+                        best_result.0, "unit_x",
+                        "Best match for {:?} should be unit_x (identical to query), got: {}",
+                        metric,
+                        best_result.0
+                    );
+                }
+            }
 
             println!("✅ Search with {:?} metric successful", metric);
         }
@@ -344,7 +358,7 @@ mod tests {
         let custom_result = distance_compute.calculate_distance(
             &unit_vec,
             &unit_vec,
-            &DistanceMetric::Custom("unknown_metric".to_string()),
+            &DistanceMetric::Custom,
         );
         let cosine_result =
             distance_compute.calculate_distance(&unit_vec, &unit_vec, &DistanceMetric::Cosine);

@@ -506,11 +506,13 @@ impl MetadataWalManager {
             let delete_batch_records = vec![delete_record];
             if let Some(behavior_wrapper) = self.wal_strategy.get_wal_behavior_wrapper() {
                 // Create WalVectorBatch for the delete
+                let vector_count = delete_batch_records.len() as u64;
+                let end_sequence = if vector_count > 0 { 2 + vector_count - 1 } else { 2 };
                 let delete_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
                     batch_id: crate::storage::persistence::wal::BatchId::new(
                         collection_id.to_string(),
-                        2, // sequence
-                        delete_batch_records.len() as u64,
+                        2, // start sequence
+                        end_sequence, // end sequence
                     ),
                     vector_records: delete_batch_records,
                     created_at: std::time::SystemTime::now(),

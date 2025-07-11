@@ -782,7 +782,7 @@ mod tests {
                 &collection_id,
                 &query_vector,
                 1,
-                Some(DistanceMetric::Custom("my_custom_metric".to_string())),
+                Some(DistanceMetric::Custom),
             )
             .await
             .unwrap();

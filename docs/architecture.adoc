@@ -76,7 +76,7 @@ image::proximadb-class-storage.png[Storage Architecture,width=100%]
 - Bloom filters for efficient lookups
 - Automatic compaction with garbage collection
 
-=== Quantization System (Phase 4)
+=== Quantization System
 
 image::unified_quantization_system.png[Unified Quantization Architecture,width=100%]
 
@@ -98,6 +98,20 @@ image::unified_quantization_system.png[Unified Quantization Architecture,width=1
 - Automatic quantization format detection
 - Optimized Parquet file reading
 - Intelligent caching of frequently accessed columns
+
+=== Proto-First Architecture
+
+**Zero Double Serialization**::
+- Direct proto types throughout the system
+- No intermediate conversion layers
+- Serde support for JSON compatibility
+- 64MB gRPC message size for bulk operations
+
+**Collection Management**::
+- Proto-native collection configuration
+- Unified enums (DistanceMetric, StorageEngine, IndexingAlgorithm)
+- Automatic field validation
+- Extensible without breaking changes
 
 === Indexing System
 

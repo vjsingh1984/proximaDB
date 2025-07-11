@@ -43,4 +43,7 @@ pub mod unified_distance_system_integration;
 // VIPER engine integration tests
 pub mod viper;
 
+// Storage-aware search integration tests
+pub mod storage_aware_search_tests;
+
 // Middleware integration tests are at this level since they cross-cut concerns

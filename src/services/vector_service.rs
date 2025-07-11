@@ -1914,7 +1914,7 @@ impl VectorService {
                                         metadata: r.get("metadata")
                                             .and_then(|m| m.as_object())
                                             .map(|m| m.iter()
-                                                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                                                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.as_str().unwrap_or("").to_string())))
                                                 .collect())
                                             .unwrap_or_default(),
                                         collection_id: Some(collection_id.clone()),
@@ -2166,8 +2166,6 @@ mod tests {
             quantization_hint: Some(crate::proto::proximadb::search_params::QuantizationHint::Scalar(
                 crate::proto::proximadb::ScalarQuantizationParams {
                     bits: 8,
-                    scale: 1.0,
-                    offset: 0.0,
                 }
             )),
             enable_clustering_hint: Some(true),
@@ -2178,7 +2176,20 @@ mod tests {
         // Convert to native SearchParams
         let mut native_params = SearchParams::default();
         native_params.top_k = proto_params.top_k.map(|k| k as usize);
-        native_params.filters = proto_params.filters.clone();
+        native_params.filters = if proto_params.filters.is_empty() {
+            None
+        } else {
+            // Convert from prost_types::Value to serde_json::Value
+            let converted_filters: HashMap<String, serde_json::Value> = proto_params.filters
+                .iter()
+                .map(|(k, v)| {
+                    // Simple conversion - in a real implementation you'd want proper prost_types::Value to serde_json::Value conversion
+                    let json_value = serde_json::Value::String(format!("{:?}", v));
+                    (k.clone(), json_value)
+                })
+                .collect();
+            Some(converted_filters)
+        };
         native_params.accuracy_threshold = proto_params.accuracy_threshold;
         native_params.include_expired = proto_params.include_expired;
         native_params.timeout_ms = proto_params.timeout_ms;
@@ -2189,15 +2200,37 @@ mod tests {
         // Convert quantization hint
         native_params.quantization_hint = match proto_params.quantization_hint {
             Some(crate::proto::proximadb::search_params::QuantizationHint::Scalar(s)) => {
-                Some(UnifiedQuantizationLevel::Scalar { bits: s.bits as u8 })
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(
+                        crate::proto::proximadb::ScalarQuantization {
+                            bits: s.bits as i32,
+                            scale: 1.0,
+                            offset: 0.0,
+                            clamp_values: false,
+                        }
+                    )),
+                })
             }
             Some(crate::proto::proximadb::search_params::QuantizationHint::Binary(_)) => {
-                Some(UnifiedQuantizationLevel::Binary)
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Binary(
+                        crate::proto::proximadb::BinaryQuantization {
+                            threshold: None,
+                            sign_based: false,
+                        }
+                    )),
+                })
             }
             Some(crate::proto::proximadb::search_params::QuantizationHint::Product(p)) => {
-                Some(UnifiedQuantizationLevel::ProductQuantization {
-                    num_subvectors: p.num_subvectors as usize,
-                    bits_per_code: p.bits_per_code as u8,
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Pq(
+                        crate::proto::proximadb::ProductQuantization {
+                            bits_per_code: p.bits_per_code as i32,
+                            num_subvectors: p.num_subvectors as i32,
+                            codebook_id: None,
+                            adaptive_subvectors: false,
+                        }
+                    )),
                 })
             }
             _ => None,
@@ -2206,35 +2239,47 @@ mod tests {
         assert_eq!(native_params.top_k, Some(20));
         assert_eq!(native_params.accuracy_threshold, Some(0.95));
         assert_eq!(native_params.enable_two_stage, Some(true));
-        assert!(matches!(
-            native_params.quantization_hint,
-            Some(UnifiedQuantizationLevel::Scalar { bits: 8 })
-        ));
+        // Check quantization hint was converted correctly
+        if let Some(ref quant) = native_params.quantization_hint {
+            if let Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(scalar)) = &quant.level_type {
+                assert_eq!(scalar.bits, 8);
+            } else {
+                panic!("Expected scalar quantization");
+            }
+        } else {
+            panic!("Expected quantization hint to be set");
+        }
     }
 
     #[test]
     fn test_quantization_level_conversion() {
-        // Test Binary quantization
-        let binary = UnifiedQuantizationLevel::Binary;
-        assert_eq!(binary.to_string(), "Binary");
+        // Test creating different quantization levels using proto-based approach
+        let binary = UnifiedQuantizationLevel {
+            level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Binary(
+                crate::proto::proximadb::BinaryQuantization {
+                    threshold: None,
+                    sign_based: false,
+                }
+            )),
+        };
+        assert!(binary.level_type.is_some());
         
         // Test Scalar quantization
-        let scalar = UnifiedQuantizationLevel::Scalar { bits: 8 };
-        assert_eq!(scalar.to_string(), "INT8");
-        
-        let scalar16 = UnifiedQuantizationLevel::Scalar { bits: 16 };
-        assert_eq!(scalar16.to_string(), "INT16");
+        let scalar = UnifiedQuantizationLevel::int8();
+        if let Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(s)) = &scalar.level_type {
+            assert_eq!(s.bits, 8);
+        } else {
+            panic!("Expected scalar quantization");
+        }
         
         // Test Product quantization
-        let pq = UnifiedQuantizationLevel::ProductQuantization {
-            num_subvectors: 8,
-            bits_per_code: 8,
-        };
-        assert_eq!(pq.to_string(), "PQ8x8");
-        
-        // Test FP32 (no quantization)
-        let fp32 = UnifiedQuantizationLevel::FP32;
-        assert_eq!(fp32.to_string(), "FP32");
+        let pq = UnifiedQuantizationLevel::pq8(8);
+        if let Some(crate::proto::proximadb::quantization_level::LevelType::Pq(p)) = &pq.level_type {
+            assert_eq!(p.num_subvectors, 8);
+            assert_eq!(p.bits_per_code, 8);
+        } else {
+            panic!("Expected product quantization");
+        }
     }
 
     #[test]
@@ -2255,16 +2300,25 @@ mod tests {
         let mut search_params = SearchParams::default();
         search_params.top_k = Some(10);
         search_params.enable_two_stage = Some(true);
-        search_params.quantization_hint = Some(UnifiedQuantizationLevel::Binary);
+        search_params.quantization_hint = Some(UnifiedQuantizationLevel {
+            level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Binary(
+                crate::proto::proximadb::BinaryQuantization {
+                    threshold: None,
+                    sign_based: false,
+                }
+            )),
+        });
         search_params.accuracy_threshold = Some(0.90);
         
         // Verify SearchParams fields are properly initialized
         assert_eq!(search_params.top_k, Some(10));
         assert_eq!(search_params.enable_two_stage, Some(true));
-        assert!(matches!(
-            search_params.quantization_hint,
-            Some(UnifiedQuantizationLevel::Binary)
-        ));
+        // Check quantization hint was set correctly
+        if let Some(ref quant) = search_params.quantization_hint {
+            assert!(matches!(quant.level_type, Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_))));
+        } else {
+            panic!("Expected quantization hint to be set");
+        }
         assert_eq!(search_params.accuracy_threshold, Some(0.90));
     }
 

@@ -326,11 +326,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_debug_format() {
-        let (manager, _temp_dir) = create_test_batch_wal_manager_avro().await;
+        let (manager, _temp_dir) = create_test_batch_wal_manager_bincode().await;
         
         let debug_str = format!("{:?}", manager);
         assert!(debug_str.contains("WalManager"));
-        assert!(debug_str.contains("Batch(AvroBatch)"));
+        assert!(debug_str.contains("BincodeBatch"));
     }
 
     #[tokio::test]

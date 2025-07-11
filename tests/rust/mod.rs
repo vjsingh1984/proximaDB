@@ -4,7 +4,7 @@
 //! Tests are organized by functionality and include performance benchmarks.
 
 pub mod common;
-pub mod test_collection_management;
+// pub mod test_collection_management; // Removed - file missing
 pub mod test_metadata_lifecycle;
 // pub mod test_multi_tier_deduplication; // Removed - deprecated search infrastructure
 // pub mod test_multi_tier_deduplication_unit; // Removed - deprecated search infrastructure

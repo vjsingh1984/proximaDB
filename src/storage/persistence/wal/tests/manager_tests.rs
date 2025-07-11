@@ -5,6 +5,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
+    use crate::storage::persistence::wal::schema::create_avro_vector_batch;
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
@@ -16,7 +17,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
-        config.strategy_type = WalStrategyType::AvroBatch;
+        config.strategy_type = WalStrategyType::BincodeBatch;
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
         let filesystem_config =
@@ -28,7 +29,7 @@ mod tests {
         );
 
         let manager = WalManager::create_with_batch_factory(
-            WalStrategyType::AvroBatch,
+            WalStrategyType::BincodeBatch,
             config,
             filesystem
         ).await.expect("Failed to create WAL manager");
@@ -146,12 +147,20 @@ mod tests {
     async fn test_wal_manager_avro_operations() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
 
-        let operation_type = "test_operation";
-        let avro_payload = vec![1, 2, 3, 4, 5];
+        let operation_type = "vector_batch";
+        
+        // Create a valid Avro payload with vector records
+        let vector_record = create_test_vector_record("test_collection", "test_vector");
+        let avro_payload = create_avro_vector_batch(&[vector_record])
+            .expect("Failed to create Avro payload");
 
         let result = manager
             .append_avro_entry("test_collection", operation_type, &avro_payload)
             .await;
+        
+        if let Err(e) = &result {
+            eprintln!("Append avro entry failed: {:?}", e);
+        }
         assert!(result.is_ok());
 
         let sequence = result.unwrap();
@@ -180,23 +189,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wal_manager_flush() {
-        let (manager, _temp_dir) = create_test_wal_manager().await;
+    async fn test_wal_manager_bincode_batch_reserialize() {
+        // Test BincodeBatch strategy which deserializes Avro and re-serializes to Bincode
+        let (manager, _temp_dir) = create_test_wal_manager().await; // Uses BincodeBatch
 
         let collection_id = crate::core::String::from("test_collection".to_string());
-        let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
-        let record = create_test_vector_record("test_collection", "test_vector_1");
+        
+        // Create test vectors with metadata to verify re-serialization
+        let mut metadata = HashMap::new();
+        metadata.insert("key1".to_string(), json!("value1"));
+        metadata.insert("key2".to_string(), json!(42));
+        
+        let vectors = vec![
+            create_test_vector_record("test_collection", "vec1"),
+            create_test_vector_record("test_collection", "vec2"),
+        ];
+        
+        // Create Avro payload (simulating what REST/gRPC would send)
+        let avro_payload = create_avro_vector_batch(&vectors)
+            .expect("Failed to create Avro batch");
+        
+        // The BincodeBatch strategy will:
+        // 1. Deserialize Avro payload to VectorRecords
+        // 2. Re-serialize to Bincode format for storage
+        let result = manager.append_avro_entry(&collection_id, "vector_batch", &avro_payload).await;
+        
+        if let Err(e) = &result {
+            eprintln!("Append failed with error: {:?}", e);
+        }
+        assert!(result.is_ok());
+        
+        // Verify we can read back the vectors
+        let collection_vectors = manager.get_collection_vectors(&collection_id).await
+            .expect("Failed to get collection vectors");
+        assert_eq!(collection_vectors.len(), 2);
+    }
+    
+    #[tokio::test]
+    async fn test_wal_manager_avro_batch_zero_copy() {
+        // Create manager with AvroBatch strategy for zero-copy operation
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let mut config = WalConfig::default();
+        config.strategy_type = WalStrategyType::AvroBatch;
+        config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
 
-        let _insert_result = manager
-            .insert(collection_id.clone(), vector_id, record)
-            .await;
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(
+            FilesystemFactory::new(filesystem_config)
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
 
-        let flush_result = manager.flush(Some(&collection_id)).await;
-        assert!(flush_result.is_ok());
+        let manager = WalManager::create_with_batch_factory(
+            WalStrategyType::AvroBatch,
+            config,
+            filesystem
+        ).await.expect("Failed to create WAL manager");
 
-        let flush_info = flush_result.unwrap();
-        assert!(flush_info.entries_flushed >= 0);
-        assert!(flush_info.bytes_written >= 0);
-        // Note: flush_duration_ms field no longer exists in FlushResult
+        let collection_id = crate::core::String::from("test_collection".to_string());
+        
+        // Create test vectors
+        let vectors = vec![
+            create_test_vector_record("test_collection", "vec1"),
+            create_test_vector_record("test_collection", "vec2"),
+        ];
+        
+        // Create Avro payload
+        let avro_payload = create_avro_vector_batch(&vectors)
+            .expect("Failed to create Avro batch");
+        
+        // The AvroBatch strategy will store the Avro payload directly (zero-copy)
+        let result = manager.append_avro_entry(&collection_id, "vector_batch", &avro_payload).await;
+        assert!(result.is_ok());
+        
+        // Verify we can read back the vectors
+        let collection_vectors = manager.get_collection_vectors(&collection_id).await
+            .expect("Failed to get collection vectors");
+        assert_eq!(collection_vectors.len(), 2);
     }
 }

@@ -257,7 +257,8 @@ async fn test_mvcc_and_logical_deletes() {
 #[tokio::test]
 async fn test_global_partitioned_deletion_via_expiry() {
     let memtable = GlobalPartitionedMemtable::new();
-    let now = chrono::Utc::now().timestamp_millis();
+    let now_millis = chrono::Utc::now().timestamp_millis();
+    let now_micros = chrono::Utc::now().timestamp_micros();
 
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {
@@ -265,10 +266,10 @@ async fn test_global_partitioned_deletion_via_expiry() {
         collection_id: "collection_a".to_string(),
         vector: vec![1.0, 2.0, 3.0],
         metadata: std::collections::HashMap::new(),
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
-        expires_at: Some(now - 1), // Expired 1ms ago
+        timestamp: now_millis,
+        created_at: now_millis,
+        updated_at: now_millis,
+        expires_at: Some(now_micros - 1000), // Expired 1ms ago (in microseconds)
         version: 1,
         rank: None,
         score: None,
@@ -281,10 +282,10 @@ async fn test_global_partitioned_deletion_via_expiry() {
         collection_id: "collection_a".to_string(),
         vector: vec![4.0, 5.0, 6.0],
         metadata: std::collections::HashMap::new(),
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
-        expires_at: Some(now + 3600000), // Expires in 1 hour
+        timestamp: now_millis,
+        created_at: now_millis,
+        updated_at: now_millis,
+        expires_at: Some(now_micros + 3600000000), // Expires in 1 hour (in microseconds)
         version: 1,
         rank: None,
         score: None,
@@ -301,18 +302,18 @@ async fn test_global_partitioned_deletion_via_expiry() {
 
     let _sequences = memtable.add_wal_batch(batch).await.unwrap();
 
-    // Get all vectors (should include both)
+    // Get all vectors (should filter out expired ones)
     let all_vectors = memtable.get_collection_vectors("collection_a").await.unwrap();
-    assert_eq!(all_vectors.len(), 2);
+    assert_eq!(all_vectors.len(), 1);
+    assert_eq!(all_vectors[0].id, "valid_vec");
 
-    // TODO: When search is updated to filter by expires_at, 
-    // it should only return the valid vector
-    // let search_results = memtable
-    //     .search_vectors(&[1.0, 1.0, 1.0], 10, "collection_a", CoreDistanceMetric::Euclidean)
-    //     .await
-    //     .unwrap();
-    // assert_eq!(search_results.len(), 1);
-    // assert_eq!(search_results[0].1.id, "valid_vec");
+    // Search should also filter out expired vectors
+    let search_results = memtable
+        .search_vectors(&[1.0, 1.0, 1.0], 10, "collection_a", CoreDistanceMetric::Euclidean)
+        .await
+        .unwrap();
+    assert_eq!(search_results.len(), 1);
+    assert_eq!(search_results[0].1.id, "valid_vec");
 }
 
 #[tokio::test]

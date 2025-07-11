@@ -92,16 +92,11 @@ cd docs
 ./generate_diagrams.sh
 ----
 
-Or generate manually:
-
-[source,bash]
-----
-# PlantUML
-plantuml -tpng -o diagrams/images diagrams/plantuml/*.puml
-
-# Mermaid
-mmdc -i diagrams/quantization-components.mmd -o diagrams/images/quantization-components.png
-----
+See link:DIAGRAMS_README.md[Diagram Generation Guide] for:
+- Manual generation commands
+- Troubleshooting tips
+- CI/CD integration
+- Adding new diagrams
 
 === Building HTML Documentation
 

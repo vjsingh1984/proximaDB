@@ -1082,12 +1082,15 @@ mod tests {
             dimension: 128,
             distance_metric: 1,
             storage_engine: 1,
-            indexing_algorithm: 1,
-            filterable_metadata_fields: vec![],
-            indexing_config: std::collections::HashMap::new(),
+            primary_indexing_algorithm: 1,
             filterable_columns: vec![],
-            index_config: None,
+            index_configs: vec![],
             quantization_config: None,
+            primary_index_name: "default".to_string(),
+            enable_automatic_index_selection: false,
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test".to_string()),
         };
         assert!(service.validate_collection_config(&valid_config).is_ok());
 

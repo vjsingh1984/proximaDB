@@ -1337,12 +1337,15 @@ mod tests {
             dimension: 128,
             distance_metric: 1, // Cosine
             storage_engine: 1,  // Viper
-            indexing_algorithm: 1, // HNSW
-            filterable_metadata_fields: vec!["category".to_string()],
-            indexing_config: HashMap::new(),
+            primary_indexing_algorithm: 1, // HNSW
             filterable_columns: vec![],
-            index_config: None,
+            index_configs: vec![],
             quantization_config: None,
+            primary_index_name: "default".to_string(),
+            enable_automatic_index_selection: false,
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test".to_string()),
         };
         
         let uuid = backend.create_collection("test_collection".to_string(), &collection_config).await.unwrap();
@@ -1352,8 +1355,8 @@ mod tests {
         let collection = backend.get_collection("test_collection").await.unwrap();
         assert!(collection.is_some());
         let collection = collection.unwrap();
-        assert_eq!(collection.name, "test_collection");
-        assert_eq!(collection.dimension, 128);
+        assert_eq!(collection.config.as_ref().unwrap().name, "test_collection");
+        assert_eq!(collection.config.as_ref().unwrap().dimension, 128);
         
         // Test list collections
         let collections = backend.list_collections().await.unwrap();

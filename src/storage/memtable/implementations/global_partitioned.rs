@@ -136,7 +136,7 @@ impl CollectionPartition {
             .iter()
             .filter(|(_, batch)| {
                 // Remove if batch is flushed or if all sequences are <= up_to_seq
-                batch.is_flushed || batch.batch_id.sequence_range.1 <= up_to_seq
+                batch.is_flushed || batch.batch_id.sequence_range.0 <= up_to_seq
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -236,79 +236,78 @@ impl CollectionPartition {
     ) -> Vec<(f32, VectorRecord)> {
         use std::collections::HashMap;
         
-        let mut id_to_latest: HashMap<String, (f32, VectorRecord, u64, i64)> = HashMap::new(); // Added version
+        let mut id_to_latest: HashMap<String, (f32, VectorRecord, u64, i64)> = HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
 
-        // Search native WAL batches with MVCC logic
+        // First pass: Find latest version of each ID by sequence and version (MVCC)
         for (batch_id, wal_batch) in &self.wal_batches {
-            tracing::debug!("🔍 Searching native WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
+            tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
             
             for vector_record in &wal_batch.vector_records {
-                // Skip expired records (logical deletes)
-                let is_expired = vector_record.expires_at
-                    .map(|expires| expires < current_time)
-                    .unwrap_or(false);
-                
-                if is_expired {
-                    // This is a tombstone/delete - mark ID as deleted
-                    if !vector_record.id.is_empty() {
-                        id_to_latest.remove(&vector_record.id);
-                        tracing::debug!("🗑️ Tombstone found for ID {}, removing from results", vector_record.id);
-                    }
-                    continue;
-                }
-                
-                let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
                 let sequence = wal_batch.batch_id.sequence_range.0;
                 let version = vector_record.version;
                 
-                // MVCC: Keep only latest version by (sequence, version) for same ID
                 if !vector_record.id.is_empty() {
-                    match id_to_latest.get(&vector_record.id) {
+                    // Check if this is the latest version
+                    let is_newer = match id_to_latest.get(&vector_record.id) {
                         Some((_, _, existing_seq, existing_version)) => {
-                            // Skip if we have a newer version already
-                            if sequence < *existing_seq || (sequence == *existing_seq && version <= *existing_version) {
-                                continue;
-                            }
+                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
                         }
-                        None => {}
+                        None => true,
+                    };
+                    
+                    if is_newer {
+                        let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
+                        id_to_latest.insert(
+                            vector_record.id.clone(),
+                            (score, vector_record.clone(), sequence, version)
+                        );
+                        
+                        tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={}", 
+                                       vector_record.id, sequence, version);
                     }
-                    
-                    // Keep this entry (newer version or first occurrence)
-                    id_to_latest.insert(
-                        vector_record.id.clone(),
-                        (score, vector_record.clone(), sequence, version)
-                    );
-                    
-                    tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={}", 
-                                   vector_record.id, sequence, version);
                 } else {
-                    // No ID - include directly (no MVCC possible)
-                    results_without_id.push((score, vector_record.clone()));
+                    // No ID - include directly (no MVCC possible), but check expiry
+                    let is_expired = vector_record.expires_at
+                        .map(|expires| expires < current_time)
+                        .unwrap_or(false);
+                    
+                    if !is_expired {
+                        let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
+                        results_without_id.push((score, vector_record.clone()));
+                    }
                 }
             }
         }
 
-        // Combine deduplicated ID-based results with non-ID results
+        // Second pass: Filter out expired records (tombstones) from latest versions
         let mut final_results = Vec::new();
+        let mut filtered_count = 0;
+        let latest_versions_count = id_to_latest.len();
         
-        // Count results before moving
-        let unique_ids_count = id_to_latest.len();
-        let results_without_id_count = results_without_id.len();
-        
-        // Add latest version of each ID
-        for (_, (score, vector_record, _, _)) in id_to_latest {
-            final_results.push((score, vector_record));
+        for (id, (score, vector_record, _, _)) in id_to_latest {
+            let is_expired = vector_record.expires_at
+                .map(|expires| expires < current_time)
+                .unwrap_or(false);
+            
+            if is_expired {
+                tracing::debug!("🗑️ Filtering out expired latest version for ID {}", id);
+                filtered_count += 1;
+            } else {
+                final_results.push((score, vector_record));
+            }
         }
         
         // Add non-ID results
+        let results_without_id_count = results_without_id.len();
         final_results.extend(results_without_id);
 
         tracing::debug!(
-            "🔍 Search results: {} batches searched, {} unique IDs, {} without ID, {} final results",
+            "🔍 Search results: {} batches searched, {} latest versions found, {} expired filtered, {} without ID, {} final results",
             self.wal_batches.len(),
-            unique_ids_count,
+            latest_versions_count,
+            filtered_count,
             results_without_id_count,
             final_results.len()
         );

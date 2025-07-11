@@ -21,11 +21,14 @@ Comprehensive technical implementation details for ProximaDB's core systems and 
 **Interface Design**:
 [source,rust]
 ----
-pub trait MemtableManager {
-    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
-    fn scan(&self, start: &[u8], end: &[u8]) -> Result<Iterator<(Vec<u8>, Vec<u8>)>>;
-    fn flush(&mut self) -> Result<()>;
+pub trait UnifiedMemtable: Send + Sync {
+    type Iterator: Iterator<Item = (VectorId, VectorRecord)>;
+    
+    fn insert(&self, id: &VectorId, vector: VectorRecord) -> Result<()>;
+    fn get(&self, id: &VectorId) -> Result<Option<VectorRecord>>;
+    fn delete(&self, id: &VectorId) -> Result<bool>;
+    fn scan(&self, start: Option<&VectorId>, end: Option<&VectorId>) -> Result<Self::Iterator>;
+    fn flush(&self) -> Result<FlushResult>;
 }
 ----
 
@@ -64,6 +67,7 @@ struct ViperEngine {
 - **Multiple Formats**: PQ4/PQ8, Scalar INT8/INT16, Binary, Custom 1-32 bits
 - **Hardware Acceleration**: SIMD, NEON, CUDA, ROCm, MPS backends
 - **Column Projection**: Query-aware selection reduces I/O by 50-80%
+- **Sparse Vector Support**: Efficient null handling in distance calculations
 
 **ML Clustering Implementation**:
 - **Algorithm**: K-means++ with intelligent centroid initialization
@@ -419,6 +423,89 @@ thread_stack_size = 2097152  # 2MB
 - **LRU**: Least recently used eviction
 - **TTL**: Time-based expiration
 - **Size-based**: Memory pressure eviction
+
+== Metadata Backend Architecture
+
+=== Overview
+
+ProximaDB supports multiple metadata backend implementations to meet different performance, scalability, and deployment requirements.
+
+=== Available Backends
+
+**Filestore Backend (Default)**::
+- Proto-based serialization with schema evolution
+- Atomic writes with staging and rename operations
+- Support for local filesystem and cloud storage (S3, GCS, Azure)
+- Single unified index for consistent lookups
+
+**Cached Filestore Backend**::
+- Two-level cache architecture (L1 hot cache, L2 warm cache)
+- LRU eviction policy with configurable TTL
+- Write-through and write-back caching modes
+- Automatic cache promotion based on access patterns
+
+**RocksDB Backend**::
+- LSM tree architecture for write optimization
+- Column families for organized data storage
+- Built-in compression and bloom filters
+- ACID transactions with optimistic concurrency
+
+**Memory Backend**::
+- In-memory storage for testing and development
+- Ultra-fast operations with no disk I/O
+- No persistence (data lost on restart)
+
+=== Backend Selection Guide
+
+[cols="2,3,3,2"]
+|===
+| Backend | Best For | Pros | Cons
+
+| **Filestore**
+| General use, cloud deployments
+| Simple, reliable, cloud-compatible
+| Slower for large datasets
+
+| **Cached Filestore**
+| Read-heavy workloads
+| Fast reads, configurable caching
+| Higher memory usage
+
+| **RocksDB**
+| Write-heavy, large scale
+| High performance, ACID transactions
+| Requires local disk, complex tuning
+
+| **Memory**
+| Testing only
+| Fastest possible
+| No persistence
+|===
+
+=== Configuration Examples
+
+**Filestore Backend**:
+[source,toml]
+----
+[metadata_backend]
+backend_type = "filestore"
+storage_url = "file:///var/lib/proximadb/metadata"
+cache_size_mb = 64
+compression_enabled = true
+----
+
+**RocksDB Backend**:
+[source,toml]
+----
+[metadata_backend]
+backend_type = "rocksdb"
+db_path = "/var/lib/proximadb/metadata/rocksdb"
+enable_compression = true
+use_bloom_filters = true
+block_cache_size_mb = 64
+write_buffer_size_mb = 16
+enable_transactions = true
+----
 
 ---
 

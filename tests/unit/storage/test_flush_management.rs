@@ -41,7 +41,9 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
 /// Helper function to create test WAL batch
 fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
-    let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
+    let vector_count = vectors.len() as u64;
+    let end_sequence = if vector_count > 0 { vector_count } else { 1 };
+    let batch_id = BatchId::new(collection_id.to_string(), 1, end_sequence);
     
     WalVectorBatch {
         batch_id,

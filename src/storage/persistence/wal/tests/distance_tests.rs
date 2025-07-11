@@ -278,7 +278,7 @@ mod tests {
         let custom_distance = distance_compute.calculate_distance(
             &vec_a,
             &vec_b,
-            &DistanceMetric::Custom("my_custom_metric".to_string()),
+            &DistanceMetric::Custom,
         );
         let cosine_distance = distance_compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
 

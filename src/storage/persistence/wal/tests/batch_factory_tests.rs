@@ -124,7 +124,7 @@ mod tests {
         assert!(!comparison.recommendation.is_empty());
         
         // Check that Avro advantages mention schema evolution
-        assert!(comparison.avro_advantages.iter().any(|adv| adv.contains("schema")));
+        assert!(comparison.avro_advantages.iter().any(|adv| adv.to_lowercase().contains("schema")));
         
         // Check that Bincode advantages mention performance
         assert!(comparison.bincode_advantages.iter().any(|adv| adv.contains("performance")));
