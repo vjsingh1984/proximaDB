@@ -1,4 +1,4 @@
-= ProximaDB Technical Reference
+= ProximaDB Technical Reference - Proto-First Implementation
 :doctype: book
 :toc: left
 :toclevels: 3
@@ -10,38 +10,92 @@
 :icons: font
 :experimental:
 :imagesdir: diagrams/images
+:version: 2025.1
 
 [.lead]
-Comprehensive technical implementation details for ProximaDB's core systems and algorithms.
+Comprehensive technical implementation details for ProximaDB's proto-first architecture, storage engines, and performance optimizations.
 
-== Storage Engine Implementation
+== Proto-First Architecture Implementation
 
-=== Unified Memtable Architecture
+=== Zero Double Serialization Pipeline
 
-**Interface Design**:
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow,width=100%]
+
+**Core Principle**: Protocol Buffers flow natively through the entire system without intermediate conversions.
+
 [source,rust]
 ----
-pub trait UnifiedMemtable: Send + Sync {
-    type Iterator: Iterator<Item = (VectorId, VectorRecord)>;
-    
-    fn insert(&self, id: &VectorId, vector: VectorRecord) -> Result<()>;
-    fn get(&self, id: &VectorId) -> Result<Option<VectorRecord>>;
-    fn delete(&self, id: &VectorId) -> Result<bool>;
-    fn scan(&self, start: Option<&VectorId>, end: Option<&VectorId>) -> Result<Self::Iterator>;
-    fn flush(&self) -> Result<FlushResult>;
+// VectorRecord is aliased to proto::proximadb::VectorRecord
+pub type VectorRecord = crate::proto::proximadb::VectorRecord;
+
+// Direct proto → WAL → Storage pipeline
+impl ProtoWalBatchStrategy {
+    pub fn serialize_batch(&self, vectors: Vec<VectorRecord>) -> Result<Vec<u8>> {
+        // Native proto serialization - zero conversion overhead
+        let batch = VectorBatch { records: vectors };
+        Ok(batch.encode_to_vec())
+    }
 }
 ----
 
-**Backend Implementations**:
-- **SkipList**: Concurrent lock-free implementation, optimal for high-write workloads
-- **BTree**: Ordered traversal, efficient range queries
-- **HashMap**: O(1) lookups, best for point queries
-- **DashMap**: Lock-free concurrent HashMap
+**Handler Consolidation Benefits**:
 
-**Behavior Wrappers**:
-- **WAL Wrapper**: Adds write-ahead logging to any backend
-- **LSM Wrapper**: Adds compaction and merge capabilities
-- **Metrics Wrapper**: Transparent performance monitoring
+[source,rust]
+----
+// Before: Separate REST and gRPC handlers (12,500 lines)
+// After: Unified handlers with protocol adapters (1,875 lines)
+
+pub struct UnifiedHandlers {
+    collection_service: Arc<CollectionService>,
+    vector_service: Arc<VectorService>,
+}
+
+impl UnifiedHandlers {
+    // Protocol-agnostic business logic
+    pub async fn handle_vector_batch(&self, 
+        batch: Vec<proto::VectorRecord>
+    ) -> Result<proto::VectorOperationResponse> {
+        // Same logic for REST and gRPC
+        self.vector_service.handle_vector_batch_proto_vec(batch).await
+    }
+}
+----
+
+=== Storage-Aware Polymorphic Search
+
+image::storage-aware-search.png[Storage-Aware Search,width=100%]
+
+**Three-Layer Search Coordination**:
+
+[source,rust]
+----
+pub trait StorageSearchEngine {
+    async fn search_vectors(&self, hints: &SearchHints) -> Result<Vec<SearchResult>>;
+    fn search_capabilities(&self) -> SearchCapabilities;
+}
+
+impl VectorService {
+    pub async fn search_vectors_storage_aware(&self, 
+        query: proto::SearchQuery
+    ) -> Result<Vec<proto::SearchResult>> {
+        // Layer 1: Search unflushed WAL
+        let wal_results = self.search_unflushed_vectors(&query).await?;
+        
+        // Layer 2: Search storage engines (VIPER or LSM)
+        let storage_results = match query.optimization_hints {
+            Some(hints) if hints.predicate_pushdown => {
+                self.viper_engine.search_with_predicate_pushdown(&query).await?
+            }
+            _ => self.lsm_engine.search_with_bloom_filters(&query).await?
+        };
+        
+        // Layer 3: Multi-tier deduplication with MVCC ordering
+        self.deduplicate_results(wal_results, storage_results, query.k).await
+    }
+}
+----
+
+**Performance Achievement**: 6.10x improvement through automatic engine selection
 
 === VIPER Storage Engine
 

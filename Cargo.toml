@@ -82,12 +82,12 @@ sysinfo = "0.30"
 apache-avro = "0.16"
 serde_bytes = "0.11"
 
-# Cloud storage SDKs
-aws-config = "1.0"
-aws-sdk-s3 = "1.0"
-azure_storage = "0.19"
-azure_storage_blobs = "0.19"
-google-cloud-storage = "0.15"
+# Cloud storage SDKs (optional for testing)
+aws-config = { version = "1.0", optional = true }
+aws-sdk-s3 = { version = "1.0", optional = true }
+azure_storage = { version = "0.19", optional = true }
+azure_storage_blobs = { version = "0.19", optional = true }
+google-cloud-storage = { version = "0.15", optional = true }
 
 # ML clustering algorithms for VIPER (unused - basic clustering implemented)
 # linfa = "0.7"
@@ -172,8 +172,14 @@ reqwest = { version = "0.11", features = ["json"] }
 env_logger = "0.10"
 
 [features]
-default = []  # Minimal features for ARM64 Ubuntu compatibility
+default = []  # Minimal features for testing and ARM64 Ubuntu compatibility
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
+
+# Cloud storage features (optional to avoid linking issues during testing)
+aws = ["dep:aws-config", "dep:aws-sdk-s3"]
+azure = ["dep:azure_storage", "dep:azure_storage_blobs"] 
+gcp = ["dep:google-cloud-storage"]
+cloud-full = ["aws", "azure", "gcp"]
 
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
