@@ -45,6 +45,7 @@ pub struct StorageConfig {
     pub lsm_config: LsmConfig,
     pub cache_size_mb: u64,
     pub bloom_filter_bits: u32,
+    pub bloom_filter_config: Option<BloomFilterConfig>,
 
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemConfig,
@@ -186,6 +187,10 @@ impl Default for StorageConfig {
             lsm_config: LsmConfig::default(),
             cache_size_mb: 2048,
             bloom_filter_bits: 12,
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+            }),
             filesystem_config: FilesystemConfig::default(),
             metadata_backend: None, // Use default filestore backend
         }

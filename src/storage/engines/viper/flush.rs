@@ -352,32 +352,33 @@ impl FlushManager {
             .collect();
 
         for record in records {
-            ids.push(record.id.clone());
+            ids.push(record.id.as_deref().unwrap_or("").to_string());
             collection_ids.push(record.collection_id.clone());
             vectors.push(record.vector.clone());
             
             // Process filterable metadata
             for filterable_column in &filterable_metadata {
                 let values = filterable_arrays.get_mut(&filterable_column.name).unwrap();
-                let value = record.metadata.get(&filterable_column.name)
-                    .cloned()
+                let value = record.metadata.iter()
+                    .find(|item| item.key == filterable_column.name)
+                    .map(|item| serde_json::Value::String(item.value.clone()))
                     .unwrap_or(serde_json::Value::Null);
                 values.push(value);
             }
             
             // Collect remaining metadata as extra key-value pairs
             let mut extra_kvs = Vec::new();
-            for (key, value) in &record.metadata {
+            for item in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains(key) {
-                    extra_kvs.push((key.clone(), value.to_string()));
+                if !filterable_field_names.contains(&item.key) {
+                    extra_kvs.push((item.key.clone(), item.value.clone()));
                 }
             }
             extra_metadata_data.push(extra_kvs);
 
             timestamps.push(record.timestamp);
-            created_ats.push(record.created_at);
-            updated_ats.push(record.updated_at);
+            created_ats.push(record.timestamp);
+            updated_ats.push(record.timestamp);
             versions.push(record.version);
         }
 

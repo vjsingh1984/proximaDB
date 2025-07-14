@@ -450,3 +450,4 @@ The tenant router intelligently directs requests based on isolation requirements
 - **OLAP workloads**: Routed to analytics-optimized clusters
 - **ML inference**: Routed to GPU-accelerated clusters
 - **Batch processing**: Routed to cost-optimized clusters
+

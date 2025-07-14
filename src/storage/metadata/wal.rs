@@ -227,7 +227,7 @@ impl MetadataWalManager {
                     1, // sequence
                     batch_records.len() as u64,
                 ),
-                vector_records: batch_records,
+                vector_records: Arc::new(batch_records),
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 1024, // Approximate for metadata
                 is_flushed: false,
@@ -488,10 +488,10 @@ impl MetadataWalManager {
             let current_time = chrono::Utc::now().timestamp_micros();
             
             let delete_record = crate::core::VectorRecord {
-                id: vector_id,
+                id: Some(vector_id),
                 collection_id: collection_id.to_string(),
                 vector: vec![0.0], // Vector content irrelevant for delete
-                metadata: std::collections::HashMap::new(),
+                metadata: Vec::new(),
                 timestamp: current_time,
                 created_at: current_time,
                 updated_at: current_time,
@@ -514,7 +514,7 @@ impl MetadataWalManager {
                         2, // start sequence
                         end_sequence, // end sequence
                     ),
-                    vector_records: delete_batch_records,
+                    vector_records: Arc::new(delete_batch_records),
                     created_at: std::time::SystemTime::now(),
                     total_size_bytes: 1024, // Approximate for metadata
                     is_flushed: false,
@@ -610,10 +610,10 @@ impl MetadataWalManager {
 
         let timestamp = metadata.updated_at.timestamp_millis();
         Ok(crate::core::VectorRecord {
-            id: format!("metadata_{}", metadata.id),
+            id: Some(format!("metadata_{}", metadata.id)),
             collection_id: metadata.id.clone(),
             vector,
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp,
             created_at: timestamp,
             updated_at: timestamp,

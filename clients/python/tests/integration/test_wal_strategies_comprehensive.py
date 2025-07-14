@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "clients" / "python" / "src"))
 
 try:
-    from proximadb.rest_client import ProximaDBClient
+    from proximadb import ProximaDBClient, Protocol
 except ImportError:
     print("ProximaDB Python client not found. Please install it first.")
     sys.exit(1)

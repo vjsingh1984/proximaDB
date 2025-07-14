@@ -17,4 +17,4 @@
 //! REST API integration tests
 
 // Integration test modules for REST API
-pub mod collection_handler_tests;
+// pub mod collection_handler_tests; // Removed - obsolete API

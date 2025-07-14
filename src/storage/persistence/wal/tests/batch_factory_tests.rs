@@ -86,9 +86,10 @@ mod tests {
     fn test_available_strategies() {
         let strategies = WalBatchFactory::available_strategies();
         
-        assert_eq!(strategies.len(), 2);
+        assert_eq!(strategies.len(), 3);
         assert!(strategies.contains(&WalStrategyType::AvroBatch));
         assert!(strategies.contains(&WalStrategyType::BincodeBatch));
+        assert!(strategies.contains(&WalStrategyType::ProtoBatch));
     }
 
     #[test]

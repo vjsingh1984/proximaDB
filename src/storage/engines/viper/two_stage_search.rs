@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 use crate::compute::{
     UnifiedDistanceCompute, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-    DistanceMetric,
+    DistanceMetric, unified_distance::SimilarityResult,
 };
 use crate::core::{String, SearchResult, search::SearchParams};
 use super::column_projection::ColumnProjection;
@@ -259,8 +259,8 @@ impl TwoStageSearchEngine {
                 final_results.push(SearchResult {
                     id: candidate.id.clone(),
                     vector_id: None,
-                    score: exact_distance,
-                    distance: Some(exact_distance),
+                    score: exact_distance.normalized_score, // Use semantic-aware score
+                    distance: Some(exact_distance.rank_value), // Use rank value for distance
                     rank: None,
                     vector: None,
                     metadata: HashMap::new(), // Would be populated from file
@@ -670,13 +670,13 @@ impl TwoStageSearchEngine {
                     .collect();
                 
                 // Calculate distance
-                let distance = self.distance_compute.calculate_distance(
+                let result = self.distance_compute.calculate_distance(
                     query_vector,
                     &vector,
                     distance_metric,
                 );
                 
-                distances.push(distance);
+                distances.push(result.rank_value);
             } else {
                 distances.push(f32::MAX);
             }

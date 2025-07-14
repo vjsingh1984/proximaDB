@@ -20,7 +20,7 @@ from enum import Enum
 # Add Python SDK to path
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService, create_sample_corpus
 
 class SearchStrategy(Enum):

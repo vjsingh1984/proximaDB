@@ -16,7 +16,7 @@ workspace_root = Path(__file__).parent
 sdk_path = workspace_root / "clients/python/src"
 sys.path.insert(0, str(sdk_path))
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 
 # Enable debug logging
 logging.basicConfig(level=logging.DEBUG)

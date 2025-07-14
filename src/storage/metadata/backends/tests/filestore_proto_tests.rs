@@ -152,19 +152,19 @@ mod tests {
             .await
             .expect("Failed to upsert");
 
-        // Check that .proto files were created
+        // Check that .oplog files were created
         let ops_dir = temp_dir.path().join("operations");
         let fs = filesystem_factory.get_filesystem("file://").unwrap();
         let entries = fs.list(&ops_dir.to_string_lossy()).await.unwrap();
         
-        // Should have at least one .proto file
-        let proto_files: Vec<_> = entries
+        // Should have at least one .oplog file
+        let oplog_files: Vec<_> = entries
             .iter()
-            .filter(|e| e.name.ends_with(".proto"))
+            .filter(|e| e.name.ends_with(".oplog"))
             .collect();
         
-        assert!(!proto_files.is_empty(), "Should have created .proto files");
-        assert!(proto_files[0].name.starts_with("op_"), "Proto file should have correct prefix");
+        assert!(!oplog_files.is_empty(), "Should have created .oplog files");
+        assert!(oplog_files[0].name.starts_with("op_"), "Oplog file should have correct prefix");
     }
 
     #[tokio::test]
@@ -235,14 +235,14 @@ mod tests {
         
         let checkpoint_files: Vec<_> = entries
             .iter()
-            .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".proto"))
+            .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".meta"))
             .collect();
         
         assert!(!checkpoint_files.is_empty(), "Should have created checkpoint files");
     }
 
     #[tokio::test]
-    async fn test_recovery_from_proto_files() {
+    async fn test_recovery_from_oplog_files() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::distance::DistanceMetric;
-use super::unified_distance::UnifiedDistanceCompute;
+use super::unified_distance::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
 
 // Use proto types as the single source of truth
 pub use crate::proto::proximadb::{
@@ -260,7 +260,7 @@ impl UnifiedQuantizationEngine {
         query: &[f32],
         quantized: &QuantizedVector,
         metric: &DistanceMetric,
-    ) -> Result<f32> {
+    ) -> Result<SimilarityResult> {
         match &quantized.quantization_level.level_type {
             None | Some(QuantizationLevelType::None(_)) => {
                 // Direct FP32 comparison
@@ -293,13 +293,13 @@ impl UnifiedQuantizationEngine {
         query: &[f32],
         quantized_batch: &[QuantizedVector],
         metric: &DistanceMetric,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<Vec<SimilarityResult>> {
         if quantized_batch.is_empty() {
             return Ok(vec![]);
         }
         
         // Group by quantization level for efficient processing
-        let mut distances = vec![0.0; quantized_batch.len()];
+        let mut distances = vec![SimilarityResult::default(); quantized_batch.len()];
         
         // Check if all vectors have the same quantization level
         let first_level = &quantized_batch[0].quantization_level;
@@ -318,7 +318,7 @@ impl UnifiedQuantizationEngine {
                         let distance_tables = self.precompute_pq_distance_tables(query, &codebook, metric)?;
                         
                         for (i, quantized) in quantized_batch.iter().enumerate() {
-                            distances[i] = self.lookup_pq_distance(&quantized.data, &distance_tables)?;
+                            distances[i] = self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
                         }
                         
                         return Ok(distances);
@@ -336,6 +336,190 @@ impl UnifiedQuantizationEngine {
         Ok(distances)
     }
     
+    /// Train a PQ codebook from training vectors
+    pub async fn train_pq_codebook(
+        &self,
+        training_vectors: &[Vec<f32>],
+        num_subvectors: usize,
+        bits_per_code: u8,
+        codebook_id: &str,
+    ) -> Result<()> {
+        if training_vectors.is_empty() {
+            anyhow::bail!("No training vectors provided");
+        }
+        
+        let dimension = training_vectors[0].len();
+        let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
+        let num_centroids = 1 << bits_per_code;
+        
+        // Initialize centroids for each subspace using k-means++
+        let mut centroids = Vec::with_capacity(num_subvectors);
+        
+        for subspace in 0..num_subvectors {
+            let start = subspace * subvector_dim;
+            let end = (start + subvector_dim).min(dimension);
+            
+            // Extract subvectors for this subspace
+            let subvectors: Vec<Vec<f32>> = training_vectors.iter()
+                .map(|v| v[start..end].to_vec())
+                .collect();
+            
+            // Run k-means for this subspace
+            let subspace_centroids = self.kmeans_clustering(
+                &subvectors,
+                num_centroids,
+                100, // max iterations
+                1e-4, // convergence threshold
+            )?;
+            
+            centroids.push(subspace_centroids);
+        }
+        
+        // Create and store the codebook
+        let codebook = Codebook {
+            id: codebook_id.to_string(),
+            quantization_level: UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+                    bits_per_code: bits_per_code as i32,
+                    num_subvectors: num_subvectors as i32,
+                    codebook_id: Some(codebook_id.to_string()),
+                    adaptive_subvectors: false,
+                })),
+            },
+            created_at: chrono::Utc::now(),
+            training_config: TrainingConfig {
+                num_training_vectors: training_vectors.len(),
+                iterations: 100,
+                convergence_threshold: 1e-4,
+                seed: None,
+            },
+            data: CodebookData::ProductQuantization {
+                centroids,
+                subvector_dim,
+            },
+        };
+        
+        self.codebook_store.store_codebook(codebook_id, &codebook).await?;
+        Ok(())
+    }
+    
+    /// Simple k-means clustering implementation
+    fn kmeans_clustering(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        max_iterations: usize,
+        convergence_threshold: f32,
+    ) -> Result<Vec<Vec<f32>>> {
+        use rand::seq::SliceRandom;
+        
+        if vectors.is_empty() || k == 0 {
+            anyhow::bail!("Invalid input for k-means");
+        }
+        
+        let mut rng = rand::thread_rng();
+        let dimension = vectors[0].len();
+        
+        // Initialize centroids using k-means++
+        let mut centroids = Vec::with_capacity(k);
+        
+        // First centroid is chosen randomly
+        centroids.push(vectors.choose(&mut rng).unwrap().clone());
+        
+        // Choose remaining centroids using k-means++ algorithm
+        for _ in 1..k {
+            let mut distances = vec![f32::INFINITY; vectors.len()];
+            
+            // Compute distance to nearest centroid for each point
+            for (i, vector) in vectors.iter().enumerate() {
+                for centroid in &centroids {
+                    let result = self.distance_compute.calculate_distance(
+                        vector,
+                        centroid,
+                        &DistanceMetric::Euclidean,
+                    );
+                    distances[i] = distances[i].min(result.rank_value);
+                }
+            }
+            
+            // Choose next centroid proportional to squared distance
+            let total_dist: f32 = distances.iter().map(|d| d * d).sum();
+            let mut cumulative = 0.0;
+            let threshold = rand::random::<f32>() * total_dist;
+            
+            for (i, &dist) in distances.iter().enumerate() {
+                cumulative += dist * dist;
+                if cumulative >= threshold {
+                    centroids.push(vectors[i].clone());
+                    break;
+                }
+            }
+        }
+        
+        // Run k-means iterations
+        let mut assignments = vec![0; vectors.len()];
+        
+        for iteration in 0..max_iterations {
+            let old_centroids = centroids.clone();
+            
+            // Assignment step
+            for (i, vector) in vectors.iter().enumerate() {
+                let mut best_idx = 0;
+                let mut best_dist = f32::INFINITY;
+                
+                for (j, centroid) in centroids.iter().enumerate() {
+                    let result = self.distance_compute.calculate_distance(
+                        vector,
+                        centroid,
+                        &DistanceMetric::Euclidean,
+                    );
+                    if result.rank_value < best_dist {
+                        best_dist = result.rank_value;
+                        best_idx = j;
+                    }
+                }
+                
+                assignments[i] = best_idx;
+            }
+            
+            // Update step
+            for j in 0..k {
+                let mut sum = vec![0.0; dimension];
+                let mut count = 0;
+                
+                for (i, &assignment) in assignments.iter().enumerate() {
+                    if assignment == j {
+                        for (dim, val) in vectors[i].iter().enumerate() {
+                            sum[dim] += val;
+                        }
+                        count += 1;
+                    }
+                }
+                
+                if count > 0 {
+                    centroids[j] = sum.iter().map(|&s| s / count as f32).collect();
+                }
+            }
+            
+            // Check convergence
+            let mut max_change = 0.0f32;
+            for (old, new) in old_centroids.iter().zip(&centroids) {
+                let change = self.distance_compute.calculate_distance(
+                    old,
+                    new,
+                    &DistanceMetric::Euclidean,
+                ).rank_value;
+                max_change = max_change.max(change);
+            }
+            
+            if max_change < convergence_threshold {
+                break;
+            }
+        }
+        
+        Ok(centroids)
+    }
+
     /// Dequantize back to approximate FP32 vector
     pub async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
         match &quantized.quantization_level.level_type {
@@ -381,14 +565,14 @@ impl UnifiedQuantizationEngine {
             let mut best_dist = f32::INFINITY;
             
             for (idx, centroid) in centroids_for_subspace.iter().enumerate() {
-                let dist = self.distance_compute.calculate_distance(
+                let result = self.distance_compute.calculate_distance(
                     subvector, 
                     centroid, 
                     &DistanceMetric::Euclidean
                 );
                 
-                if dist < best_dist {
-                    best_dist = dist;
+                if result.rank_value < best_dist {
+                    best_dist = result.rank_value;
                     best_idx = idx;
                 }
             }
@@ -531,7 +715,7 @@ impl UnifiedQuantizationEngine {
         quantized: &QuantizedVector,
         codebook: &Codebook,
         metric: &DistanceMetric,
-    ) -> Result<f32> {
+    ) -> Result<SimilarityResult> {
         let CodebookData::ProductQuantization { centroids, subvector_dim } = &codebook.data else {
             anyhow::bail!("Invalid codebook type for PQ");
         };
@@ -544,12 +728,22 @@ impl UnifiedQuantizationEngine {
             let query_subvec = &query[start..end];
             
             let centroid = &centroids[i][code as usize];
-            let distance = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
+            let result = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
             
-            total_distance += distance * distance; // Square for L2
+            total_distance += result.rank_value * result.rank_value; // Square for L2
         }
         
-        Ok(total_distance.sqrt())
+        // Create SimilarityResult for the final distance
+        let final_distance = total_distance.sqrt();
+        Ok(SimilarityResult {
+            raw_value: final_distance,
+            metric: metric.clone(),
+            normalized_score: match metric.is_similarity() {
+                true => final_distance, // For similarity metrics, higher is better
+                false => 1.0 / (1.0 + final_distance), // For distance metrics, convert to similarity
+            },
+            rank_value: final_distance,
+        })
     }
     
     fn precompute_pq_distance_tables(
@@ -572,8 +766,8 @@ impl UnifiedQuantizationEngine {
             let mut table = Vec::with_capacity(centroids_for_subspace.len());
             
             for centroid in centroids_for_subspace {
-                let distance = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
-                table.push(distance);
+                let result = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
+                table.push(result.rank_value);
             }
             
             tables.push(table);
@@ -582,14 +776,23 @@ impl UnifiedQuantizationEngine {
         Ok(tables)
     }
     
-    fn lookup_pq_distance(&self, codes: &[u8], distance_tables: &[Vec<f32>]) -> Result<f32> {
+    fn lookup_pq_distance(&self, codes: &[u8], distance_tables: &[Vec<f32>], metric: &DistanceMetric) -> Result<SimilarityResult> {
         let mut total = 0.0;
         
         for (i, &code) in codes.iter().enumerate() {
             total += distance_tables[i][code as usize].powi(2);
         }
         
-        Ok(total.sqrt())
+        let distance = total.sqrt();
+        Ok(SimilarityResult {
+            raw_value: distance,
+            metric: metric.clone(),
+            normalized_score: match metric.is_similarity() {
+                true => distance,
+                false => 1.0 / (1.0 + distance),
+            },
+            rank_value: distance,
+        })
     }
     
     /// Calculate distance between Product Quantized vectors
@@ -726,7 +929,7 @@ impl UnifiedQuantizationEngine {
                 // FP32 vectors stored as bytes
                 let query_floats = self.bytes_to_f32(&query.data);
                 let data_floats = self.bytes_to_f32(&data.data);
-                self.distance_compute.calculate_distance(&query_floats, &data_floats, metric)
+                self.distance_compute.calculate_distance(&query_floats, &data_floats, metric).rank_value
             }
             Some(QuantizationLevelType::Pq(pq)) => {
                 self.calculate_pq_distance(&query.data, &data.data, metric, pq.num_subvectors as usize)
@@ -739,7 +942,7 @@ impl UnifiedQuantizationEngine {
                 // This is less efficient but ensures correctness
                 match (self.dequantize_sync(query), self.dequantize_sync(data)) {
                     (Ok(q_vec), Ok(d_vec)) => {
-                        self.distance_compute.calculate_distance(&q_vec, &d_vec, metric)
+                        self.distance_compute.calculate_distance(&q_vec, &d_vec, metric).rank_value
                     }
                     _ => f32::INFINITY,
                 }

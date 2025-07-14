@@ -33,16 +33,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             quantization_config: None,
             primary_index_name: "default".to_string(),
             enable_automatic_index_selection: false,
-            metadata_fields: vec![],
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test_user".to_string()),
         }),
         stats: Some(CollectionStats {
             vector_count: 100,
             index_size_bytes: 1024,
             data_size_bytes: 2048,
-            metadata_size_bytes: 512,
-            average_vector_size_bytes: 20.0,
-            compression_ratio: 0.85,
-            last_updated: chrono::Utc::now().timestamp_millis(),
         }),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
@@ -100,7 +98,7 @@ fn test_concurrent_access() {
         let index_clone = index.clone();
         let handle = thread::spawn(move || {
             let collection = create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
-            index_clone.upsert_collection(record);
+            index_clone.upsert_collection(collection);
             
             // Immediate lookup to test consistency
             let result = index_clone.get_by_uuid(&format!("uuid-{}", i));

@@ -17,22 +17,16 @@ pub mod persistence;
 // Unified atomic operations
 pub mod atomic;
 
-// Legacy modules removed - use organized structure instead
-
-// Other legacy modules
-// atomicity module moved to obsolete - use atomic module instead
+// Core modules
 pub mod encoding;
 pub mod engine;
 pub mod mmap;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
-// search and search_index modules moved to obsolete
-// Use query/ and indexing/ instead
 // Strategy module for collection lifecycle configuration
 pub mod strategy;
 
-// Vector storage system removed - functionality integrated into engines/
 
 // Main exports from organized structure
 pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
@@ -57,15 +51,13 @@ pub use atomic::{
     UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
 };
 
-// Legacy exports (deprecated)
-// Use engines directly instead of legacy StorageEngine
+// Storage engine exports
 pub use engine::StorageEngine;
 // WAL system exports
 use crate::core::StorageError;
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
 pub use persistence::wal::{BatchId, WalConfig, WalManager, WalOperation};
 
-// Vector storage system removed - functionality integrated into engines/
 // ResultProcessor has naming conflicts, import explicitly when needed
 
 pub type Result<T> = std::result::Result<T, StorageError>;

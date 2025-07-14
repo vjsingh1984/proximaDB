@@ -35,6 +35,7 @@ class TestVectorCRUD:
         """Create test collection for vector operations"""
         collection_name = f"vector_crud_{int(time.time())}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Vector CRUD test collection"
@@ -202,10 +203,11 @@ class TestBatchVectorOperations:
         """Create collection optimized for batch operations"""
         collection_name = f"batch_test_{int(time.time())}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="Batch operations test collection",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=32.0)
         )
         
@@ -299,10 +301,11 @@ class TestLargeScaleOperations:
         """Create collection for large-scale testing"""
         collection_name = f"large_scale_{int(time.time())}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=512,  # Larger dimension for more data per vector
             distance_metric=DistanceMetric.COSINE,
             description="Large-scale operations test",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=16.0)  # Lower threshold to trigger flush
         )
         
@@ -456,7 +459,10 @@ class TestVectorValidation:
         collection_name = f"dimension_test_{int(time.time())}"
         
         # Create collection with 128 dimensions
-        config = CollectionConfig(dimension=128)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         collection = client.create_collection(collection_name, config)
         
         try:
@@ -480,7 +486,10 @@ class TestVectorValidation:
         client = connect_rest("http://localhost:5678")
         collection_name = f"invalid_data_test_{int(time.time())}"
         
-        config = CollectionConfig(dimension=128)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         collection = client.create_collection(collection_name, config)
         
         try:

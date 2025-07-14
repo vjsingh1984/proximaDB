@@ -1,7 +1,7 @@
 //! Unit tests for AXIS Index Manager
 
 use super::*;
-use crate::core::avro_unified::VectorRecord;
+use crate::core::VectorRecord;
 use chrono::Utc;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -14,13 +14,17 @@ fn create_test_vector(collection_id: &str, dimension: usize) -> VectorRecord {
         *val = (i as f32) / 100.0;
     }
 
-    let mut metadata = HashMap::new();
-    metadata.insert("test_key".to_string(), serde_json::json!("test_value"));
+    let metadata = vec![
+        crate::proto::proximadb::MetadataItem {
+            key: "test_key".to_string(),
+            value: "test_value".to_string(),
+        }
+    ];
 
     let now = Utc::now().timestamp_millis();
 
     VectorRecord {
-        id: Uuid::new_v4().to_string(),
+        id: Some(Uuid::new_v4().to_string()),
         collection_id: collection_id.to_string(),
         vector: vector_data,
         metadata,
@@ -88,7 +92,7 @@ mod tests {
         let axis_manager = AxisManager::new(config).await.unwrap();
 
         let test_vector = create_test_vector("test_collection", 128);
-        let result = axis_manager.insert(test_vector).await;
+        let result = axis_manager.insert(&test_vector).await;
 
         assert!(result.is_ok(), "Vector insertion should succeed");
     }
@@ -102,7 +106,7 @@ mod tests {
         expired_vector.expires_at =
             Some((Utc::now() - chrono::Duration::hours(1)).timestamp_millis());
 
-        let result = axis_manager.insert(expired_vector).await;
+        let result = axis_manager.insert(&expired_vector).await;
         assert!(
             result.is_ok(),
             "Expired vector insertion should succeed but be skipped"

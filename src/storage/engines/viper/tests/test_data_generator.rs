@@ -532,8 +532,8 @@ mod tests {
         
         for (idx, vector) in sparse_vectors.iter().enumerate() {
             // Use UnifiedDistanceCompute for consistent distance calculation
-            let distance = distance_compute.calculate_distance(&query, vector, &DistanceMetric::Cosine);
-            results.push((distance, idx));
+            let distance_result = distance_compute.calculate_distance(&query, vector, &DistanceMetric::Cosine);
+            results.push((distance_result.rank_value, idx));
         }
         
         // Sort by distance (lower = more similar)
@@ -585,7 +585,7 @@ mod tests {
             
             let quantized_distance = distance_compute.calculate_distance(&query, &dequantized, &DistanceMetric::Cosine);
             let fp32_distance = fp32_distances[idx];
-            let error = (quantized_distance - fp32_distance).abs();
+            let error = (quantized_distance.rank_value - fp32_distance.rank_value).abs();
             
             // INT8 should have reasonable approximation error
             assert!(error < 0.1, "INT8 quantization error too large: {} at index {}", error, idx);
@@ -605,7 +605,7 @@ mod tests {
                 }
             }
             
-            let quantized_distance = distance_compute.calculate_distance(&query, &dequantized, &DistanceMetric::Hamming);
+            let quantized_distance = distance_compute.calculate_distance(&query, &dequantized, &DistanceMetric::Hamming).rank_value;
             // Binary quantization has higher error but should still be bounded
             assert!(quantized_distance >= 0.0, "Hamming distance should be non-negative");
         }
@@ -666,7 +666,7 @@ mod tests {
                 let fp32_distance = distance_compute.calculate_distance(&sparse_query, &sparse_vectors[idx], &DistanceMetric::Cosine);
                 let int8_distance = distance_compute.calculate_distance(&sparse_query, &dequantized, &DistanceMetric::Cosine);
                 
-                let error = (fp32_distance - int8_distance).abs();
+                let error = (fp32_distance.rank_value - int8_distance.rank_value).abs();
                 
                 // Higher sparsity should still maintain reasonable accuracy
                 let error_threshold = 0.2; // Allow more error for very sparse vectors
@@ -711,12 +711,12 @@ mod tests {
         // Compare distances between sparse vectors using UnifiedDistanceCompute
         println!("Testing UnifiedDistanceCompute with sparse vectors:");
         for (idx, sparse_vec) in sparse_vectors.iter().enumerate() {
-            let distance = distance_compute.calculate_distance(&sparse_query, sparse_vec, &DistanceMetric::Cosine);
-            println!("  Sparse vector {} - Cosine distance: {:.4}", idx, distance);
+            let distance_result = distance_compute.calculate_distance(&sparse_query, sparse_vec, &DistanceMetric::Cosine);
+            println!("  Sparse vector {} - Cosine distance: {:.4}", idx, distance_result.raw_value);
             
             // Verify distance is within expected range
-            assert!(distance >= 0.0 && distance <= 2.0, 
-                "Cosine distance should be in [0, 2], got {}", distance);
+            assert!(distance_result.raw_value >= 0.0 && distance_result.raw_value <= 2.0, 
+                "Cosine distance should be in [0, 2], got {}", distance_result.raw_value);
         }
         
         // Test with different metrics
@@ -727,13 +727,12 @@ mod tests {
         ];
         
         for metric in metrics {
-            println!("\nTesting {} metric with sparse vectors:", 
-                distance_compute.metric_behavior_description(&metric));
+            println!("\nTesting {:?} metric with sparse vectors:", metric);
                 
             let mut distances = Vec::new();
             for sparse_vec in &sparse_vectors {
-                let distance = distance_compute.calculate_distance(&sparse_query, sparse_vec, &metric);
-                distances.push(distance);
+                let distance_result = distance_compute.calculate_distance(&sparse_query, sparse_vec, &metric);
+                distances.push(distance_result.rank_value);
             }
             
             // Verify all distances are non-negative (unified system normalizes)
@@ -757,7 +756,7 @@ mod tests {
         println!("\nTesting mixed sparse/dense vector distances:");
         for (idx, dense_vec) in dense_vectors.iter().enumerate() {
             let sparse_to_dense = distance_compute.calculate_distance(&sparse_query, dense_vec, &DistanceMetric::Cosine);
-            println!("  Sparse query to dense vector {} - distance: {:.4}", idx, sparse_to_dense);
+            println!("  Sparse query to dense vector {} - distance: {:.4}", idx, sparse_to_dense.raw_value);
         }
         
         // Demonstrate that quantized vectors can be compared using UnifiedDistanceCompute
@@ -778,10 +777,10 @@ mod tests {
         for (idx, int8_vec) in int8_sparse_vectors.iter().enumerate() {
             let original_distance = distance_compute.calculate_distance(&sparse_query, &sparse_vectors[idx], &DistanceMetric::Cosine);
             let quantized_distance = distance_compute.calculate_distance(&sparse_query, int8_vec, &DistanceMetric::Cosine);
-            let error = (original_distance - quantized_distance).abs();
+            let error = (original_distance.rank_value - quantized_distance.rank_value).abs();
             
             println!("  INT8 vector {} - error: {:.4} (original: {:.4}, quantized: {:.4})", 
-                idx, error, original_distance, quantized_distance);
+                idx, error, original_distance.rank_value, quantized_distance.rank_value);
                 
             // INT8 should maintain reasonable accuracy
             assert!(error < 0.2, "INT8 quantization error too large: {}", error);
@@ -846,8 +845,8 @@ mod tests {
             
             // Verify distance calculations are reasonable
             for (dist, _) in &results_dense {
-                assert!(!dist.is_nan(), "Distance should not be NaN for {:?}", metric);
-                assert!(*dist >= 0.0, "Distance should be non-negative for {:?}", metric);
+                assert!(!dist.rank_value.is_nan(), "Distance should not be NaN for {:?}", metric);
+                assert!(dist.rank_value >= 0.0, "Distance should be non-negative for {:?}", metric);
             }
         }
     }

@@ -33,16 +33,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             quantization_config: None,
             primary_index_name: "default".to_string(),
             enable_automatic_index_selection: false,
-            metadata_fields: vec![],
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test_user".to_string()),
         }),
         stats: Some(CollectionStats {
             vector_count: 100,
             index_size_bytes: 1024,
             data_size_bytes: 2048,
-            metadata_size_bytes: 512,
-            average_vector_size_bytes: 20.0,
-            compression_ratio: 0.85,
-            last_updated: 1000,
         }),
         created_at: 1000,
         updated_at: 1000,
@@ -97,16 +95,17 @@ async fn test_prefix_search() {
         indexes.upsert_collection(collection).await;
     }
     
-    let user_results = indexes.search_by_name_prefix("user_").await;
+    // Use find_by_name_prefix method
+    let user_results = indexes.find_by_name_prefix("user_").await;
     assert_eq!(user_results.len(), 3);
     
-    let data_results = indexes.search_by_name_prefix("user_data").await;
+    let data_results = indexes.find_by_name_prefix("user_data").await;
     assert_eq!(data_results.len(), 2);
     
-    let system_results = indexes.search_by_name_prefix("system").await;
+    let system_results = indexes.find_by_name_prefix("system").await;
     assert_eq!(system_results.len(), 1);
     
-    let nonexistent_results = indexes.search_by_name_prefix("nonexistent").await;
+    let nonexistent_results = indexes.find_by_name_prefix("nonexistent").await;
     assert_eq!(nonexistent_results.len(), 0);
 }
 
@@ -143,7 +142,7 @@ async fn test_concurrent_operations() {
         read_tasks.spawn(async move {
             let result = indexes_clone.get_by_uuid(&format!("uuid-{}", i)).await;
             assert!(result.is_some());
-            result.unwrap().id
+            result.unwrap().id.clone()
         });
     }
     
@@ -171,7 +170,8 @@ async fn test_rebuild_performance() {
         create_test_collection(&format!("new-uuid-{:03}", i), &format!("new-collection-{:03}", i))
     }).collect();
     
-    indexes.rebuild_from_collections(collections).await;
+    // Use rebuild_from_records method
+    indexes.rebuild_from_records(collections).await;
     
     let rebuild_stats = indexes.get_statistics().await;
     assert_eq!(rebuild_stats.total_collections, 100);

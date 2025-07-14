@@ -13,8 +13,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import pytest
-from proximadb.grpc_client import ProximaDBClient
-from proximadb.rest_client import ProximaDBRestClient
+from proximadb import ProximaDBClient, Protocol
+from proximadb import ProximaDBClient, Protocol
 from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
 from proximadb import proximadb_pb2 as pb2
 
@@ -36,7 +36,7 @@ def test_grpc_client_returns_proto_types():
 
 def test_rest_client_uses_pydantic_models():
     """Test that REST client uses Pydantic models"""
-    client = ProximaDBRestClient(url="http://localhost:5678")
+    client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.REST)
     
     # Check that we can create Pydantic models
     config = CollectionConfig(

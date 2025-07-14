@@ -57,6 +57,9 @@ pub enum IndexType {
     /// Sparse vector index (LSM + MinHash)
     SparseVector,
 
+    /// Sparse HNSW for large sparse collections
+    SparseHNSW,
+
     /// Join engine for multi-index queries
     JoinEngine,
 
@@ -178,6 +181,19 @@ impl OptimizationConfig {
             enable_simd: true,
             enable_gpu: false,
             compression: CompressionConfig::high(),
+        }
+    }
+
+    /// High performance sparse configuration
+    pub fn sparse_high_performance() -> Self {
+        Self {
+            enable_caching: true,
+            cache_size_mb: 8192,
+            enable_prefetching: true,
+            batch_size: 20000,
+            enable_simd: true,
+            enable_gpu: true,
+            compression: CompressionConfig::fast(),
         }
     }
 

@@ -16,7 +16,7 @@ pub use config::{IndexConfig, IndexUpdateMode, HnswConfig, IvfConfig};
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{avro_unified::VectorRecord, String, VectorId};
+use crate::core::{VectorRecord, VectorId};
 
 /// Placeholder Global ID Index
 #[derive(Debug)]

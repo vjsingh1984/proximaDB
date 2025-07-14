@@ -117,12 +117,24 @@ pub enum WalStrategyType {
     AvroBatch,
     /// Modern Bincode batch strategy with optimal Rust performance
     BincodeBatch,
+    /// Modern Proto batch strategy for proto-first architecture
+    ProtoBatch,
 }
 
 impl Default for WalStrategyType {
     fn default() -> Self {
         // Default to AvroBatch for schema evolution, robust recovery, and bulk insert efficiency
         Self::AvroBatch
+    }
+}
+
+impl std::fmt::Display for WalStrategyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WalStrategyType::AvroBatch => write!(f, "AvroBatch"),
+            WalStrategyType::BincodeBatch => write!(f, "BincodeBatch"),
+            WalStrategyType::ProtoBatch => write!(f, "ProtoBatch"),
+        }
     }
 }
 
@@ -304,6 +316,8 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
                 "Bincode" => WalStrategyType::BincodeBatch,
                 "AvroBatch" => WalStrategyType::AvroBatch,
                 "BincodeBatch" => WalStrategyType::BincodeBatch,
+                "Proto" => WalStrategyType::ProtoBatch,
+                "ProtoBatch" => WalStrategyType::ProtoBatch,
                 _ => WalStrategyType::default(),
             };
         }

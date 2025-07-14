@@ -687,10 +687,10 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(i, v)| VectorRecord {
-                id: format!("vec_{}", i),
+                id: Some(format!("vec_{}", i)),
                 collection_id: "test".to_string(),
                 vector: v,
-                metadata: std::collections::HashMap::new(),
+                metadata: vec![],
                 timestamp: 0,
                 created_at: 0,
                 updated_at: 0,

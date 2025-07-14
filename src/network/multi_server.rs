@@ -12,6 +12,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
 use crate::services::collection_service::CollectionService;
 use crate::services::vector_service::VectorService;
@@ -280,6 +281,7 @@ impl MultiServerConfig {
 pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
     pub vector_service: Arc<VectorService>,
+    pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     // Internal state for business logic coordination
     storage: Arc<RwLock<StorageEngine>>,
@@ -368,7 +370,9 @@ impl SharedServices {
         let filestore_backend =
             Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
 
-        let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
+        let collection_service = Arc::new(
+            CollectionService::new(filestore_backend, storage.read().await.get_config().clone()).await?
+        );
         
         // 🔗 DEPENDENCY INJECTION: Inject collection service into storage engine
         {
@@ -476,11 +480,18 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
+        // Create unified handlers for shared business logic
+        let unified_handlers = Arc::new(UnifiedHandlers::new(
+            collection_service.clone(),
+            vector_service.clone(),
+        ));
+
         info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
 
         Ok(Self {
             collection_service,
             vector_service,
+            unified_handlers,
             metrics_collector,
             storage,
         })
@@ -577,13 +588,12 @@ impl MultiServer {
             info!("📡 Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.get_http_bind_address();
-            let unified_service = services.vector_service.clone();
-            let collection_service = services.collection_service.clone();
+            let unified_handlers = services.unified_handlers.clone();
 
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::RestServer;
 
-                match RestServer::new(rest_bind_addr, unified_service, collection_service)
+                match RestServer::new(rest_bind_addr, unified_handlers)
                     .start()
                     .await
                 {

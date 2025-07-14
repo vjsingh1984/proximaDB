@@ -1,20 +1,28 @@
 //! Performance benchmark integration tests
 
-use super::common::*;
+// use super::common::*; // Removed - common module deleted
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use tonic::transport::Channel;
+use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
+use proximadb::proto::proximadb::{
+    CollectionRequest, CollectionOperation, VectorBatchRequest, VectorOperation,
+    VectorSearchRequest, SearchQuery, SearchParameters, MetadataFilter, MetadataValue,
+    metadata_value, FilterableColumnSpec, FilterableDataType, IncludeFields,
+};
+use tonic::Request;
 
 #[cfg(test)]
 mod performance_tests {
     use super::*;
-    use crate::measure_performance;
+    // use crate::measure_performance; // Removed - from common module
 
     #[tokio::test]
     async fn test_vector_insertion_performance() -> Result<()> {
-        init_test_env();
+        // init_test_env(); // Removed - from common module
 
-        let collection_id = generate_test_collection_name();
+        let collection_id = format!("test_collection_{}", uuid::Uuid::new_v4());
         let test_cases = vec![
             ("small_batch", 10, 384),
             ("medium_batch", 100, 384),
@@ -47,14 +55,14 @@ mod performance_tests {
 
     #[tokio::test]
     async fn test_distance_calculation_performance() -> Result<()> {
-        init_test_env();
+        // init_test_env(); // Removed - from common module
 
         let dimensions = vec![384, 768, 1536];
         let num_calculations = 1000;
 
         for dim in dimensions {
-            let vec1 = generate_random_vector(dim);
-            let vec2 = generate_random_vector(dim);
+            let vec1 = vec![0.5; dim];
+            let vec2 = vec![0.7; dim];
 
             let (similarities, measurement) = measure_performance!(
                 &format!("Cosine similarity - {}D", dim),
@@ -94,7 +102,7 @@ mod performance_tests {
 
     #[tokio::test]
     async fn test_metadata_processing_performance() -> Result<()> {
-        init_test_env();
+        // init_test_env(); // Removed - from common module
 
         let record_counts = vec![100, 500, 1000, 5000];
         let filterable_columns = vec!["category", "author", "doc_type", "year"];
@@ -204,89 +212,240 @@ mod performance_tests {
     }
 
     #[tokio::test]
-    async fn test_search_performance_simulation() -> Result<()> {
-        init_test_env();
+    async fn test_search_performance_real_data() -> Result<()> {
+        // init_test_env(); // Removed - from common module
 
-        let dataset_sizes = vec![1000, 5000, 10000, 50000];
-        let query_vector = generate_random_vector(384);
+        // Note: This test assumes ProximaDB server is already running on port 5679
+        // In CI/CD, start the server before running tests:
+        // cargo run --release --bin proximadb-server &
 
+        // Connect to gRPC server with retry logic
+        let mut retries = 5;
+        let channel = loop {
+            match Channel::from_static("http://127.0.0.1:5679")
+                .connect()
+                .await 
+            {
+                Ok(ch) => break ch,
+                Err(e) if retries > 0 => {
+                    println!("⏳ Waiting for server to start... (retries left: {})", retries);
+                    retries -= 1;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                Err(e) => return Err(anyhow::anyhow!("Failed to connect to gRPC server: {}", e)),
+            }
+        };
+        let mut client = ProximaDbClient::new(channel);
+
+        // Create test collection
+        let collection_name = format!("test_collection_{}", uuid::Uuid::new_v4());
+        let dimension = 384;
+        
+        let create_request = Request::new(CollectionRequest {
+            operation: Some(CollectionOperation::Create(
+                proximadb::proto::proximadb::CreateCollectionRequest {
+                    config: Some(proximadb::proto::proximadb::CollectionConfig {
+                        name: collection_name.clone(),
+                        dimension,
+                        distance_metric: proximadb::proto::proximadb::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb::proto::proximadb::StorageEngine::Viper as i32,
+                        primary_indexing_algorithm: proximadb::proto::proximadb::IndexingAlgorithm::Hnsw as i32,
+                        filterable_columns: vec![
+                            FilterableColumnSpec {
+                                name: "category".to_string(),
+                                data_type: FilterableDataType::FilterableString as i32,
+                                indexed: true,
+                                supports_range: false,
+                                estimated_cardinality: None,
+                            },
+                        ],
+                        index_configs: vec![],
+                        quantization_config: None,
+                        primary_index_name: "default".to_string(),
+                        enable_automatic_index_selection: false,
+                        description: Some("Performance test collection".to_string()),
+                        tags: vec!["perf_test".to_string()],
+                        owner: Some("test_user".to_string()),
+                    }),
+                },
+            )),
+        });
+        
+        let create_response = client.collection_operation(create_request).await?;
+        assert!(create_response.into_inner().success);
+        println!("✅ Created collection: {}", collection_name);
+
+        // Test different dataset sizes
+        let dataset_sizes = vec![1000, 5000, 10000];
+        
         for dataset_size in dataset_sizes {
-            // Simulate memtable search (linear scan)
-            let (memtable_results, memtable_measurement) = measure_performance!(
-                &format!("Memtable search - {} vectors", dataset_size),
-                dataset_size,
-                {
-                    // Simulate linear scan through all vectors
-                    let mut similarities = Vec::new();
-                    for i in 0..dataset_size {
-                        let candidate_vector = generate_random_vector(384);
-                        let calculator = proximadb::compute::distance::create_distance_calculator(
-                            proximadb::compute::distance::DistanceMetric::Cosine,
-                        );
-                        let sim = calculator.distance(&query_vector, &candidate_vector);
-                        similarities.push((i, sim));
-                    }
-
-                    // Sort by similarity (top-k)
-                    similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                    similarities.into_iter().take(10).collect::<Vec<_>>()
+            println!("\n📊 Testing with {} vectors...", dataset_size);
+            
+            // Insert vectors in batches
+            let batch_size = 1000;
+            let num_batches = (dataset_size + batch_size - 1) / batch_size;
+            
+            let insert_start = Instant::now();
+            for batch_idx in 0..num_batches {
+                let start_idx = batch_idx * batch_size;
+                let end_idx = ((batch_idx + 1) * batch_size).min(dataset_size);
+                let batch_count = end_idx - start_idx;
+                
+                // Create vector batch
+                let mut vector_ops = Vec::new();
+                for i in start_idx..end_idx {
+                    let vector_data = vec![i as f32 / count as f32; dimension];
+                    let mut metadata = HashMap::new();
+                    metadata.insert(
+                        "category".to_string(),
+                        MetadataValue {
+                            value: Some(metadata_value::Value::StringValue(
+                                format!("cat_{}", i % 10)
+                            )),
+                        },
+                    );
+                    
+                    vector_ops.push(VectorOperation::Insert(
+                        proximadb::proto::proximadb::VectorInsert {
+                            id: Some(format!("vec_{:06}", i)),
+                            vector: vector_data,
+                            metadata,
+                        },
+                    ));
                 }
+                
+                let insert_request = Request::new(VectorBatchRequest {
+                    collection_name: collection_name.clone(),
+                    operations: vector_ops,
+                });
+                
+                let response = client.vector_batch_operation(insert_request).await?;
+                assert!(response.into_inner().success);
+            }
+            let insert_duration = insert_start.elapsed();
+            println!("  Inserted {} vectors in {:.2}s ({:.0} vectors/sec)", 
+                dataset_size, 
+                insert_duration.as_secs_f64(),
+                dataset_size as f64 / insert_duration.as_secs_f64()
             );
-
-            // Simulate VIPER search (indexed lookup)
-            let index_overhead = (dataset_size as f64).log2() * 0.001; // Log-time index lookup
-            let filter_ratio = 0.1; // Assume 10% of vectors match filter
-            let filtered_size = (dataset_size as f64 * filter_ratio) as usize;
-
-            let (viper_results, viper_measurement) = measure_performance!(
-                &format!("VIPER search - {} vectors (indexed)", dataset_size),
-                filtered_size,
-                {
-                    // Simulate index lookup + filtered scan
-                    std::thread::sleep(Duration::from_secs_f64(index_overhead));
-
-                    let mut similarities = Vec::new();
-                    for i in 0..filtered_size {
-                        let candidate_vector = generate_random_vector(384);
-                        let calculator = proximadb::compute::distance::create_distance_calculator(
-                            proximadb::compute::distance::DistanceMetric::Cosine,
-                        );
-                        let sim = calculator.distance(&query_vector, &candidate_vector);
-                        similarities.push((i, sim));
-                    }
-
-                    similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                    similarities.into_iter().take(10).collect::<Vec<_>>()
-                }
+            
+            // Wait for vectors to be flushed from memtable to storage
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            
+            // Test search performance - first without filter (full scan)
+            let query_vector = vec![0.5; dimension];
+            
+            let search_start = Instant::now();
+            let search_request = Request::new(VectorSearchRequest {
+                collection_id: collection_name.clone(),
+                queries: vec![SearchQuery {
+                    vector: query_vector.clone(),
+                    metadata_filter: None,
+                    namespace: None,
+                }],
+                top_k: 10,
+                distance_metric_override: Some(proximadb::proto::proximadb::DistanceMetric::Cosine as i32),
+                search_params: Some(SearchParameters {
+                    ef_search: Some(50),
+                    max_connections: None,
+                    num_probes: None,
+                    quantization: None,
+                    rerank_k: None,
+                }),
+                include_fields: Some(IncludeFields {
+                    vector: false,
+                    metadata: true,
+                    score: true,
+                    rank: false,
+                }),
+            });
+            
+            let search_response = client.vector_search(search_request).await?;
+            let full_scan_duration = search_start.elapsed();
+            let full_scan_results = search_response.into_inner().results.len();
+            
+            println!("  Full scan search: {:.2}ms for {} results", 
+                full_scan_duration.as_secs_f64() * 1000.0,
+                full_scan_results
             );
-
-            // Verify results
-            assert_eq!(memtable_results.len(), 10);
-            assert_eq!(viper_results.len(), 10);
-
-            // Calculate performance improvement
-            let speedup = memtable_measurement.duration_ms / viper_measurement.duration_ms;
-
-            println!(
-                "📊 Dataset size {}: VIPER speedup = {:.1}x",
-                dataset_size, speedup
+            
+            // Test search with filter (10% selectivity)
+            let filtered_search_start = Instant::now();
+            let filtered_search_request = Request::new(VectorSearchRequest {
+                collection_id: collection_name.clone(),
+                queries: vec![SearchQuery {
+                    vector: query_vector.clone(),
+                    metadata_filter: Some(MetadataFilter {
+                        field: "category".to_string(),
+                        operator: proximadb::proto::proximadb::FilterOperator::Eq as i32,
+                        value: Some(MetadataValue {
+                            value: Some(metadata_value::Value::StringValue(
+                                "cat_1".to_string()
+                            )),
+                        }),
+                    }),
+                    namespace: None,
+                }],
+                top_k: 10,
+                distance_metric_override: Some(proximadb::proto::proximadb::DistanceMetric::Cosine as i32),
+                search_params: Some(SearchParameters {
+                    ef_search: Some(50),
+                    max_connections: None,
+                    num_probes: None,
+                    quantization: None,
+                    rerank_k: None,
+                }),
+                include_fields: Some(IncludeFields {
+                    vector: false,
+                    metadata: true,
+                    score: true,
+                    rank: false,
+                }),
+            });
+            
+            let filtered_response = client.vector_search(filtered_search_request).await?;
+            let filtered_duration = filtered_search_start.elapsed();
+            let filtered_results = filtered_response.into_inner().results.len();
+            
+            println!("  Filtered search (10% selectivity): {:.2}ms for {} results", 
+                filtered_duration.as_secs_f64() * 1000.0,
+                filtered_results
             );
-
-            // VIPER should be significantly faster for larger datasets
+            
+            // Calculate speedup
+            let speedup = full_scan_duration.as_secs_f64() / filtered_duration.as_secs_f64();
+            println!("  Filtered search speedup: {:.1}x", speedup);
+            
+            // For datasets >= 10k vectors, filtered search should be significantly faster
             if dataset_size >= 10000 {
-                assert!(speedup > 2.0);
+                assert!(
+                    speedup > 2.0,
+                    "Expected filtered search speedup > 2.0x for {} vectors, but got {:.2}x",
+                    dataset_size,
+                    speedup
+                );
             }
         }
-
-        println!("✅ Search performance simulation test completed");
+        
+        // Clean up - delete collection
+        let delete_request = Request::new(CollectionRequest {
+            operation: Some(CollectionOperation::Delete(
+                proximadb::proto::proximadb::DeleteCollectionRequest {
+                    name: collection_name.clone(),
+                },
+            )),
+        });
+        client.collection_operation(delete_request).await?;
+        
+        println!("\n✅ Search performance test with real data completed");
         Ok(())
     }
 
     #[tokio::test]
     async fn test_concurrent_operations_performance() -> Result<()> {
-        init_test_env();
+        // init_test_env(); // Removed - from common module
 
-        let collection_id = generate_test_collection_name();
+        let collection_id = format!("test_collection_{}", uuid::Uuid::new_v4());
         let num_threads = 4;
         let operations_per_thread = 100;
 
@@ -336,14 +495,15 @@ mod performance_tests {
 
     #[tokio::test]
     async fn test_memory_usage_estimation() -> Result<()> {
-        init_test_env();
+        // init_test_env(); // Removed - from common module
 
         let vector_counts = vec![1000, 5000, 10000];
         let dimension = 384;
 
         for count in vector_counts {
             let vectors =
-                create_test_vector_batch(generate_test_collection_name(), count, dimension);
+                // create_test_vector_batch functionality needs to be reimplemented
+                let _batch_id = format!("batch_{}", uuid::Uuid::new_v4());
 
             // Estimate memory usage
             let vector_size_bytes = dimension * 4; // 4 bytes per f32

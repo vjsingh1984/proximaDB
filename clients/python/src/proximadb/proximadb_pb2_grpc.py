@@ -27,9 +27,9 @@ if _version_not_supported:
 
 class ProximaDBStub(object):
     """============================================================================
-    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
-    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
-    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    ProximaDB gRPC Protocol - Proto-First Architecture
+    - Vector INSERT/UPSERT: Pure proto messages for type safety and performance
+    - Vector UPDATE/DELETE/SEARCH: Native proto for consistency
     - Collection operations: Single unified endpoint for all metadata operations
     ============================================================================
 
@@ -70,9 +70,9 @@ class ProximaDBStub(object):
 
 class ProximaDBServicer(object):
     """============================================================================
-    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
-    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
-    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    ProximaDB gRPC Protocol - Proto-First Architecture
+    - Vector INSERT/UPSERT: Pure proto messages for type safety and performance
+    - Vector UPDATE/DELETE/SEARCH: Native proto for consistency
     - Collection operations: Single unified endpoint for all metadata operations
     ============================================================================
 
@@ -151,9 +151,9 @@ def add_ProximaDBServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class ProximaDB(object):
     """============================================================================
-    ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
-    - Vector INSERT/UPSERT: Avro binary for zero-copy performance
-    - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+    ProximaDB gRPC Protocol - Proto-First Architecture
+    - Vector INSERT/UPSERT: Pure proto messages for type safety and performance
+    - Vector UPDATE/DELETE/SEARCH: Native proto for consistency
     - Collection operations: Single unified endpoint for all metadata operations
     ============================================================================
 

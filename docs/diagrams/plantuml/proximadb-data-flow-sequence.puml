@@ -1,0 +1,83 @@
+@startuml proximadb-data-flow
+!theme plain
+title ProximaDB Data Flow - Sequence Diagram
+
+participant "REST Client" as RC
+participant "REST Handler" as RH
+participant "SharedServices" as SS
+participant "VectorService" as VS
+participant "CollectionService" as CS
+participant "WAL Manager" as WM
+participant "Storage Engine" as SE
+participant "Metadata Backend" as MB
+
+== Collection Creation Flow ==
+RC -> RH: POST /api/v1/collection\n{operation: "create", config: {...}}
+activate RH
+RH -> RH: convert_to_proto_config()
+note right: DUPLICATE: Conversion logic
+RH -> SS: get collection_service()
+SS --> RH: Arc<CollectionService>
+RH -> CS: create_collection(proto_config)
+activate CS
+CS -> MB: create_collection(proto_config)
+MB --> CS: proto::Collection
+CS -> SS: assignment_service.assign()
+CS --> RH: CreateCollectionResponse
+deactivate CS
+RH -> RH: convert_from_proto_collection()
+note right: DUPLICATE: Conversion logic
+RH --> RC: JSON Response
+deactivate RH
+
+== Vector Insertion Flow ==
+RC -> RH: POST /api/v1/vector/batch\n{collection_id, vectors: [...]}
+activate RH
+RH -> RH: Convert JSON to VectorRecord
+RH -> RH: create_avro_vector_batch()
+note right: LEGACY: Should use Proto
+RH -> SS: get vector_service()
+SS --> RH: Arc<VectorService>
+RH -> VS: handle_vector_batch(collection_id, avro_payload)
+activate VS
+VS -> VS: validate_avro_payload()
+note right: ERROR: Expects Avro but gets JSON
+VS -> CS: get_collection(collection_id)
+CS --> VS: Collection metadata
+VS -> WM: write_vector_batch(batch)
+activate WM
+WM -> WM: strategy.serialize_batch()
+note right: Uses Avro serialization
+WM -> SE: insert_vector_batch()
+SE --> WM: Success
+WM --> VS: Sequence numbers
+deactivate WM
+VS --> RH: Success
+deactivate VS
+RH --> RC: JSON Response
+deactivate RH
+
+== Search Flow ==
+RC -> RH: POST /api/v1/vector/search\n{collection_id, queries: [...]}
+activate RH
+RH -> VS: search_vectors_polymorphic()
+activate VS
+VS -> VS: Three-layer search:\n1. WAL\n2. Storage\n3. Compacted
+VS -> CS: get_collection_config()
+CS --> VS: Collection config
+VS -> SE: search_vectors()
+SE --> VS: Search results
+VS --> RH: Vec<SearchResult>
+deactivate VS
+RH --> RC: JSON Response
+deactivate RH
+
+note over RH, VS
+  KEY ISSUES:
+  1. REST handler converts to Avro (legacy)
+  2. Collection service is proto-first
+  3. Duplicate conversion logic in handlers
+  4. Vector service expects Avro not Proto
+end note
+
+@enduml

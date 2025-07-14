@@ -110,24 +110,8 @@ pub struct ClusterMetadataCache {
     cache_duration_secs: u64,
 }
 
-/// Search performance metrics
-#[derive(Debug, Default, Clone)]
-pub struct SearchMetrics {
-    /// Total number of searches performed
-    pub total_searches: u64,
-    
-    /// Average search latency in microseconds
-    pub avg_latency_us: f64,
-    
-    /// Total clusters searched
-    pub total_clusters_searched: u64,
-    
-    /// ML clustering hit rate
-    pub ml_clustering_hit_rate: f32,
-    
-    /// Predicate pushdown effectiveness
-    pub predicate_pushdown_reduction: f32,
-}
+// Use unified SearchMetrics from storage_aware module
+pub use crate::core::search::storage_aware::SearchMetrics;
 
 
 impl ViperSearchEngine {
@@ -777,7 +761,6 @@ impl ViperSearchEngine {
         metadata_filters: Option<&HashMap<String, serde_json::Value>>,
     ) -> Result<Vec<SearchResult>> {
         use arrow_array::{Array, Float32Array, ListArray, StringArray, Int64Array, BooleanArray, Float64Array, TimestampMicrosecondArray, StructArray};
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
         
         debug!("🔍 Searching Parquet file: {}", parquet_file_path);

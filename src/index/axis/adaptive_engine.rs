@@ -503,6 +503,46 @@ impl IndexStrategySelector {
             },
         );
 
+        // Add SmallSparse strategy template
+        templates.insert(
+            StrategyType::SmallSparse,
+            IndexStrategyTemplate {
+                strategy_type: StrategyType::SmallSparse,
+                base_strategy: IndexStrategy {
+                    primary_index_type: IndexType::LightweightHNSW,
+                    secondary_indexes: vec![IndexType::Metadata, IndexType::SparseVector],
+                    optimization_config: OptimizationConfig::sparse_optimized(),
+                    migration_priority: MigrationPriority::Low,
+                    resource_requirements: ResourceRequirements::low(),
+                },
+                applicability_conditions: ApplicabilityConditions {
+                    max_vector_count: Some(10_000),
+                    min_sparsity: Some(0.7),
+                    ..Default::default()
+                },
+            },
+        );
+
+        // Add LargeSparse strategy template
+        templates.insert(
+            StrategyType::LargeSparse,
+            IndexStrategyTemplate {
+                strategy_type: StrategyType::LargeSparse,
+                base_strategy: IndexStrategy {
+                    primary_index_type: IndexType::SparseHNSW,
+                    secondary_indexes: vec![IndexType::Metadata, IndexType::SparseVector, IndexType::GlobalId],
+                    optimization_config: OptimizationConfig::sparse_high_performance(),
+                    migration_priority: MigrationPriority::High,
+                    resource_requirements: ResourceRequirements::high(),
+                },
+                applicability_conditions: ApplicabilityConditions {
+                    min_vector_count: Some(10_000),
+                    min_sparsity: Some(0.7),
+                    ..Default::default()
+                },
+            },
+        );
+
         // Add Mixed strategy template for general use cases
         templates.insert(
             StrategyType::Mixed,

@@ -48,7 +48,7 @@ impl ParquetEncoder {
         let schema = Arc::new(Self::create_schema(dimension));
 
         // Extract data into arrays
-        let ids: Vec<String> = records.iter().map(|r| r.id.to_string()).collect();
+        let ids: Vec<String> = records.iter().map(|r| r.id.as_deref().unwrap_or("").to_string()).collect();
         let collection_ids: Vec<String> = records.iter().map(|r| r.collection_id.clone()).collect();
         let timestamps: Vec<i64> = records
             .iter()

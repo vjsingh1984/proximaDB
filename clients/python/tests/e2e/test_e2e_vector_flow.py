@@ -16,7 +16,7 @@ import glob
 # Add the Python client to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'clients', 'python', 'src'))
 
-from proximadb import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from proximadb.models import Vector, CollectionConfig, DistanceMetric
 
 
@@ -84,7 +84,7 @@ def test_end_to_end_flow():
     print("=" * 55)
     
     # Initialize client
-    client = ProximaDBClient("http://localhost:5678")
+    client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.GRPC)
     collection_name = f"bert_test_{int(time.time())}"
     
     try:
@@ -99,9 +99,10 @@ def test_end_to_end_flow():
         dimension = 384  # BERT small model dimension
         
         config = CollectionConfig(
+            name="test_collection",
             dimension=dimension,
             distance_metric=DistanceMetric.COSINE,
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             description="BERT embedding test collection"
         )
         

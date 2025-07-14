@@ -5,9 +5,9 @@ package proximadb;
 import "google/protobuf/struct.proto";
 
 // ============================================================================
-// ProximaDB gRPC Protocol - Optimized for Zero-Copy and Flexibility
-// - Vector INSERT/UPSERT: Avro binary for zero-copy performance
-// - Vector UPDATE/DELETE/SEARCH: Regular gRPC for flexibility
+// ProximaDB gRPC Protocol - Proto-First Architecture
+// - Vector INSERT/UPSERT: Pure proto messages for type safety and performance
+// - Vector UPDATE/DELETE/SEARCH: Native proto for consistency
 // - Collection operations: Single unified endpoint for all metadata operations
 // ============================================================================
 
@@ -79,13 +79,27 @@ enum VectorOperation {
 // CORE DATA TYPES - Aligned with Avro schema
 // ============================================================================
 
+// Metadata item for efficient key-value storage without JSON parsing
+message MetadataItem {
+  string key = 1;
+  string value = 2;
+}
+
 message VectorRecord {
   optional string id = 1;                    // Auto-generated if null
-  repeated float vector = 2;                 // REQUIRED for inserts
-  MetadataMap metadata = 3;                  // Native typed metadata
-  optional int64 timestamp = 4;              // Microseconds since epoch
-  int64 version = 5;                         // For optimistic concurrency
-  optional int64 expires_at = 6;             // TTL support
+  string collection_id = 2;                  // Collection this vector belongs to
+  repeated float vector = 3;                 // REQUIRED for inserts
+  repeated MetadataItem metadata = 4;        // Efficient key-value metadata (no JSON parsing)
+  int64 timestamp = 5;                       // Milliseconds since epoch
+  int64 created_at = 6;                      // Creation timestamp (milliseconds)
+  int64 updated_at = 7;                      // Last update timestamp (milliseconds)
+  optional int64 expires_at = 8;             // TTL support
+  int64 version = 9;                         // For optimistic concurrency
+  
+  // Search result fields (only populated in search responses)
+  optional int32 rank = 10;                  // Search result rank (1-based)
+  optional float score = 11;                 // Similarity score
+  optional float distance = 12;              // Distance value
 }
 
 // Native typed metadata supporting multiple value types
@@ -369,7 +383,7 @@ message SearchResult {
   optional string id = 1;
   float score = 2;                          // REQUIRED
   repeated float vector = 3;                // Optional - for network efficiency
-  map<string, string> metadata = 4;        // Optional - for network efficiency
+  repeated MetadataItem metadata = 4;        // Optional - for network efficiency
   optional int32 rank = 5;                 // 1-based ranking
 }
 
@@ -403,12 +417,11 @@ message CollectionResponse {
 // VECTOR OPERATIONS - Performance-optimized schemas
 // ============================================================================
 
-// UNIFIED BATCH - Uses Avro binary for all vector operations
-// vectors_avro_payload format: Avro-serialized array of VectorRecord
-// VectorRecord supports: insert (new ID), upsert (existing ID), delete (expires_at set)
+// UNIFIED BATCH - Proto-first architecture with pure proto messages
+// Pure proto vector records supporting: insert (new ID), upsert (existing ID), delete (expires_at set)
 message VectorBatchRequest {
   string collection_id = 1;                 // Collection identifier
-  bytes vectors_avro_payload = 2;           // Serialized vector data (Avro binary)
+  repeated VectorRecord vectors = 2;        // Pure proto vector records (proto-first architecture)
   optional int64 batch_timeout_ms = 3;      // Optional batch processing timeout
   optional string request_id = 4;           // Optional request tracking ID
 }

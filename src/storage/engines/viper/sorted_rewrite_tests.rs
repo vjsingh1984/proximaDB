@@ -42,12 +42,36 @@ mod tests {
                 serde_json::Value::Number(((i * 10) % 100).into()),
             );
 
-            let record = VectorRecord::new(
-                format!("test_vector_{:06}", i),
-                "test_collection".to_string(),
-                vec![0.1 * (i as f32); 128], // 128-dimensional test vectors
-                metadata,
-            );
+            // Convert metadata to Vec<MetadataItem>
+            let metadata_items: Vec<crate::proto::proximadb::MetadataItem> = metadata.iter()
+                .map(|(key, value)| {
+                    let string_value = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        _ => value.to_string(),
+                    };
+                    crate::proto::proximadb::MetadataItem {
+                        key: key.clone(),
+                        value: string_value,
+                    }
+                })
+                .collect();
+
+            let record = VectorRecord {
+                id: Some(format!("test_vector_{:06}", i)),
+                collection_id: "test_collection".to_string(),
+                vector: vec![0.1 * (i as f32); 128], // 128-dimensional test vectors
+                metadata: metadata_items,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            };
 
             records.push(record);
         }
@@ -110,7 +134,7 @@ mod tests {
         for i in 1..records.len() {
             assert!(
                 records[i - 1].id <= records[i].id,
-                "Records not sorted by ID: {} > {}",
+                "Records not sorted by ID: {:?} > {:?}",
                 records[i - 1].id,
                 records[i].id
             );
@@ -168,8 +192,14 @@ mod tests {
             }
 
             // If IDs are equal, check metadata ordering
-            let prev_category = prev.metadata.get("category").unwrap().as_str().unwrap();
-            let curr_category = curr.metadata.get("category").unwrap().as_str().unwrap();
+            let prev_category = prev.metadata.iter()
+                .find(|item| item.key == "category")
+                .map(|item| item.value.as_str())
+                .unwrap_or("");
+            let curr_category = curr.metadata.iter()
+                .find(|item| item.key == "category")
+                .map(|item| item.value.as_str())
+                .unwrap_or("");
 
             if prev_category != curr_category {
                 assert!(prev_category <= curr_category, "Category ordering violated");

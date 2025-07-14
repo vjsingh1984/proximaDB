@@ -77,8 +77,10 @@ impl SoftDelete for Tombstone {
 
     fn mark_deleted(&self, record: &mut VectorRecord, delete_time: u64) {
         // Add deletion metadata
-        record
-            .metadata
-            .insert("_deleted_at".to_string(), serde_json::json!(delete_time));
+        // Add deletion timestamp to metadata
+        record.metadata.push(crate::proto::proximadb::MetadataItem {
+            key: "_deleted_at".to_string(),
+            value: delete_time.to_string(),
+        });
     }
 }

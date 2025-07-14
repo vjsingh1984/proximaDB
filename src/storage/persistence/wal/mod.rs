@@ -31,6 +31,7 @@ pub mod batch_strategy;
 pub mod batch_factory;
 pub mod bincode_batch;
 pub mod config;
+pub mod proto_batch;
 pub mod schema;
 pub mod flush_coordinator;
 
@@ -44,6 +45,7 @@ pub use background_manager::{
 };
 pub use avro_batch::AvroWalBatchStrategy;
 pub use bincode_batch::BincodeWalBatchStrategy;
+pub use proto_batch::ProtoWalBatchStrategy;
 pub use batch_strategy::{WalBatchStrategy, WalBatchStrategyExt};
 pub use batch_factory::{WalBatchFactory, StrategyInfo, StrategyComparison};
 pub use config::WalStrategyType;
@@ -56,16 +58,25 @@ pub use flush_coordinator::{
 // Batch coordination exports - BatchId defined below
 
 // Re-export schema functions from centralized module
-pub use schema::{deserialize_vector_batch, serialize_vector_batch, create_avro_vector_batch, AvroVector, AvroVectorBatch, VECTOR_BATCH_SCHEMA_V1};
+// Proto-first re-exports (Avro functions available through specific strategies)
+pub use schema::{
+    create_proto_vector_batch, deserialize_proto_vector_batch, ProtoVectorBatch
+};
 
-/// Modern WAL operation - binary payload for batch operations (Avro OR Bincode)
+// Legacy Avro support - only used by AvroWalBatchStrategy
+pub use schema::{
+    deserialize_vector_batch, serialize_vector_batch, create_avro_vector_batch,
+    AvroVector, AvroVectorBatch, VECTOR_BATCH_SCHEMA_V1
+};
+
+/// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WalOperation {
     /// Operation type: "upsert_batch", "delete_batch", "flush", "checkpoint"
     pub operation_type: String,
-    /// Binary payload data (Avro bytes for AvroWalBatchStrategy, Bincode bytes for BincodeWalBatchStrategy)
+    /// Binary payload data (Proto bytes default, strategy-specific for others)
     pub payload_data: Vec<u8>,
-    /// Payload format: "avro" or "bincode"
+    /// Payload format: "proto" (default), "avro" (legacy), "bincode" (performance)
     pub payload_format: String,
     /// Number of vectors in this batch (for metrics)
     pub vector_count: usize,
@@ -130,17 +141,24 @@ impl WalOperation {
     /// Extract VectorRecord from WAL entry operation
     /// Used by migration adapters and legacy compatibility
     pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
-        // All operations contain Avro-serialized vector data
+        // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
-            // Try to deserialize as single record first
-            if let Ok(record) = VectorRecord::from_avro_bytes(&self.payload_data) {
-                Ok(record)
-            } else {
-                // Try to deserialize as batch and take first record
-                let records = deserialize_vector_batch(&self.payload_data)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize Avro payload: {}", e))?;
-                records.into_iter().next()
-                    .ok_or_else(|| anyhow::anyhow!("Empty vector batch in Avro payload"))
+            match self.payload_format.as_str() {
+                "proto" => {
+                    // Deserialize from proto bytes
+                    use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
+                    let records = deserialize_proto_vector_batch(&self.payload_data)?;
+                    records.into_iter().next()
+                        .ok_or_else(|| anyhow::anyhow!("Empty vector batch in proto payload"))
+                }
+                "avro" => {
+                    // Delegate to Avro-specific deserialization (only for AvroWalBatchStrategy)
+                    let records = deserialize_vector_batch(&self.payload_data)
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize Avro payload: {}", e))?;
+                    records.into_iter().next()
+                        .ok_or_else(|| anyhow::anyhow!("Empty vector batch in Avro payload"))
+                }
+                _ => Err(anyhow::anyhow!("Unsupported payload format: {}", self.payload_format))
             }
         } else {
             Err(anyhow::anyhow!("WAL operation type {} does not contain vector data", self.operation_type))
@@ -292,6 +310,8 @@ pub struct WalManagerWorkload {
 /// # Examples
 /// 
 /// ```rust
+/// use proximadb::storage::persistence::wal::WalManagerPoolConfig;
+/// 
 /// // Configuration for high-throughput workloads
 /// let high_throughput_config = WalManagerPoolConfig::builder()
 ///     .initial_pool_size(8)
@@ -757,18 +777,24 @@ pub async fn get_wal_manager_for_collection(
 /// 
 /// # Examples
 /// 
-/// ```rust
-/// // Configure for high-throughput workloads
-/// configure_wal_manager_pool(WalManagerPoolConfig::high_throughput()).await?;
+/// ```rust,no_run
+/// use proximadb::storage::persistence::wal::{configure_wal_manager_pool, WalManagerPoolConfig};
 /// 
-/// // Configure with custom settings
-/// let custom_config = WalManagerPoolConfig::builder()
-///     .initial_pool_size(4)
-///     .soft_thread_limit(12)
-///     .target_collections_per_manager(800)
-///     .enable_dynamic_scaling(true)
-///     .build();
-/// configure_wal_manager_pool(custom_config).await?;
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     // Configure for high-throughput workloads
+///     configure_wal_manager_pool(WalManagerPoolConfig::high_throughput()).await?;
+///     
+///     // Configure with custom settings
+///     let custom_config = WalManagerPoolConfig::builder()
+///         .initial_pool_size(4)
+///         .soft_thread_limit(12)
+///         .target_collections_per_manager(800)
+///         .enable_dynamic_scaling(true)
+///         .build();
+///     configure_wal_manager_pool(custom_config).await?;
+///     Ok(())
+/// }
 /// ```
 pub async fn configure_wal_manager_pool(pool_config: WalManagerPoolConfig) -> Result<()> {
     // TODO: Implement global pool configuration
@@ -974,7 +1000,7 @@ impl WalManager {
         &self,
         collection_id: String,
         vector_id: VectorId,
-        record: VectorRecord,
+        record: &VectorRecord,
     ) -> Result<u64> {
         let start_time = std::time::Instant::now();
 
@@ -991,12 +1017,12 @@ impl WalManager {
         
         let batch_id = BatchId::new(collection_id.clone(), 1, 1); // Single vector batch
         
-        // Calculate actual size
-        let total_size_bytes = record.actual_size_bytes();
+        // Calculate actual size - approximate based on vector dimensions and metadata
+        let total_size_bytes = record.vector.len() * 4 + 256; // 4 bytes per f32 + metadata overhead
         
         let batch = WalVectorBatch {
             batch_id,
-            vector_records: vec![record],
+            vector_records: Arc::new(vec![record.clone()]),
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -1044,12 +1070,14 @@ impl WalManager {
         // Create batch
         use crate::storage::persistence::wal::BatchId;
         use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-        let total_size_bytes = vector_records.iter().map(|r| r.actual_size_bytes()).sum();
+        let total_size_bytes: usize = vector_records.iter()
+            .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
+            .sum();
         let batch_id = BatchId::new(collection_id.clone(), 1, vector_records.len() as u64);
         
         let batch = WalVectorBatch {
             batch_id,
-            vector_records,
+            vector_records: Arc::new(vector_records),
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -1072,14 +1100,15 @@ impl WalManager {
     ) -> Result<u64> {
         // For modern batch strategies, version management is handled internally
         // Just increment version if not already set
-        if record.version <= 0 {
-            record.version = 1;
-        } else {
-            record.version += 1;
-        }
+        // Proto-first: direct field access
+        let current_version = record.version;
+        let new_version = if current_version <= 0 { 1 } else { current_version + 1 };
+        
+        // Update version directly
+        record.version = new_version;
 
         // Redirect to insert (which is now upsert)
-        self.insert(collection_id, vector_id, record).await
+        self.insert(collection_id, vector_id, &record).await
     }
 
     /// Delete vector record (delegated to batch strategy)
@@ -1138,30 +1167,35 @@ impl WalManager {
         self.strategy.compact_collection(collection_id).await
     }
 
-    /// Append binary Avro entry directly (modern batch approach)
-    ///
-    /// This method deserializes the Avro payload into VectorRecord(s) and uses batch operations
+    /// Legacy method for Avro compatibility - only delegates to AvroWalBatchStrategy
+    /// In proto-first architecture, main WAL should not handle Avro serialization
     pub async fn append_avro_entry(
         &self,
         collection_id: &str,
-        operation_type: &str,
+        _operation_type: &str,
         avro_payload: &[u8],
     ) -> Result<u64> {
-        // Try to deserialize the Avro payload to VectorRecord(s)
-        if let Ok(records) = deserialize_vector_batch(avro_payload) {
-            // Use the modern batch API
-            self.insert_vectors(collection_id.to_string(), records).await
-                .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-        } else if let Ok(record) = crate::core::avro_unified::VectorRecord::from_avro_bytes(avro_payload) {
-            // Single record case
-            self.insert(collection_id.to_string(), record.id.clone(), record).await
-        } else {
-            anyhow::bail!("Failed to deserialize Avro payload")
-        }
+        // Only delegate to the strategy - no Avro logic in main WAL module
+        self.strategy.write_avro_batch(collection_id, avro_payload).await
+            .map(|_| 1) // Return sequence number 1 for single entry
     }
 
-    /// Read vector records by operation type (modern batch approach)
-    pub async fn read_avro_entries(
+    /// Append Proto entry - modern method for proto-first architecture
+    pub async fn append_proto_entry(
+        &self,
+        collection_id: &str,
+        operation_type: &str,
+        proto_payload: &[u8],
+    ) -> Result<u64> {
+        // Use write_proto_batch for proto-first architecture
+        let wal_op = self.strategy.write_proto_batch(collection_id, proto_payload).await?;
+        
+        // Return the first sequence number
+        Ok(wal_op.vector_count as u64)
+    }
+
+    /// Read vector records by operation type (proto-first approach)
+    pub async fn read_proto_entries(
         &self,
         collection_id: &str,
         operation_type: &str,
@@ -1177,15 +1211,19 @@ impl WalManager {
             vectors
         };
         
-        // Serialize each vector back to Avro bytes for compatibility
-        let mut avro_payloads = Vec::new();
+        // Serialize each vector to proto bytes (proto-first architecture)
+        let mut proto_payloads = Vec::new();
         for vector in limited_vectors {
-            if let Ok(avro_bytes) = crate::core::avro_unified::VectorRecord::to_avro_bytes(&vector) {
-                avro_payloads.push(avro_bytes);
-            }
+            // VectorRecord is already proto type in proto-first architecture
+            let proto_record: crate::proto::proximadb::VectorRecord = vector.clone();
+            let proto_bytes = {
+                use prost::Message;
+                proto_record.encode_to_vec()
+            };
+            proto_payloads.push(proto_bytes);
         }
 
-        Ok(avro_payloads)
+        Ok(proto_payloads)
     }
 
     /// Append batch entry using modern batch approach
@@ -1198,11 +1236,11 @@ impl WalManager {
         payload: &[u8],
         immediate_sync: bool,
     ) -> Result<u64> {
-        // Try to deserialize the payload to VectorRecord(s) and use batch operations
-        if let Ok(records) = deserialize_vector_batch(payload) {
+        // Proto-first: try proto deserialization first, then fall back to strategy-specific handling
+        if let Ok(records) = crate::storage::persistence::wal::schema::deserialize_proto_vector_batch(payload) {
             // Use the modern batch API with sync option
             if immediate_sync {
-                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone(), r)).collect(), true).await
+                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().unwrap_or_default(), r)).collect(), true).await
                     .map(|sequences| sequences.into_iter().next().unwrap_or(0))
             } else {
                 self.insert_vectors(collection_id.to_string(), records).await
@@ -1283,6 +1321,37 @@ impl WalManager {
         self.strategy.write_vector_batch(batch).await
     }
 
+    /// PROTO-FIRST ZERO-COPY: Write native VectorRecord with Arc
+    /// This is the optimal method for proto-first architecture
+    pub async fn write_vector_batch_native_arc(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<crate::core::VectorRecord>>,
+    ) -> Result<Vec<u64>> {
+        tracing::info!("🚀 WAL NATIVE ZERO-COPY: Writing {} vectors to collection {}", 
+                      native_vectors.len(), collection_id);
+        
+        // Create native WalVectorBatch with Arc (zero-copy)
+        let batch_id = crate::storage::persistence::wal::BatchId::new(
+            collection_id.to_string(),
+            1, // Start sequence (will be updated by strategy)
+            native_vectors.len() as u64,
+        );
+        
+        let native_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id,
+            vector_records: native_vectors, // Direct Arc, no clone!
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 0, // Will be calculated by strategy
+            is_flushed: false,
+        };
+        
+        // Delegate to strategy - each strategy handles its own serialization
+        self.strategy.write_native_batch(native_batch).await
+    }
+
+    // REMOVED: write_vector_batch_native method - first release, zero-copy Arc-based API only
+
     /// Write vector batch with immediate sync (modern API)
     pub async fn write_vector_batch_with_sync(
         &self, 
@@ -1305,12 +1374,14 @@ impl WalManager {
         // Create batch
         use crate::storage::persistence::wal::BatchId;
         use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-        let total_size_bytes = records.iter().map(|r| r.actual_size_bytes()).sum();
+        let total_size_bytes: usize = records.iter()
+            .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
+            .sum();
         let batch_id = BatchId::new(collection_id.clone(), 1, records.len() as u64);
         
         let batch = WalVectorBatch {
             batch_id,
-            vector_records: records,
+            vector_records: Arc::new(records),
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,

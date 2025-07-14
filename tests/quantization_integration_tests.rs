@@ -42,10 +42,10 @@ fn generate_vector_records(count: usize, dimensions: usize) -> Vec<VectorRecord>
     let vectors = generate_test_vectors(count, dimensions);
     vectors.into_iter().enumerate().map(|(i, vector)| {
         VectorRecord {
-            id: format!("vector_{}", i),
+            id: Some(format!("vector_{}", i)),
             collection_id: "test_collection".to_string(),
             vector,
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_millis(),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),

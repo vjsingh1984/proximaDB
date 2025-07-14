@@ -1,0 +1,186 @@
+@startuml proximadb-architecture-overview
+!theme plain
+title ProximaDB Architecture Overview - Class Diagram
+
+package "Network Layer" {
+    package "REST API" {
+        class RestHandlers {
+            - vector_service: Arc<VectorService>
+            - collection_service: Arc<CollectionService>
+            + collection_operation(request: CollectionOperationRequest): CollectionResponse
+            + vector_batch(request: VectorBatchRequest): VectorOperationResponse
+            + vector_search(request: VectorSearchRequest): VectorOperationResponse
+            - convert_to_proto_config(config: CollectionConfig): proto::CollectionConfig
+            - convert_from_proto_collection(proto: proto::Collection): Collection
+        }
+        
+        class RestModels {
+            + CollectionConfig
+            + VectorBatchRequest
+            + VectorSearchRequest
+            + CollectionOperationRequest
+            + VectorOperationResponse
+            + CollectionResponse
+        }
+    }
+    
+    package "gRPC API" {
+        class GrpcService {
+            - shared_services: Arc<SharedServices>
+            + create_collection(request: CreateCollectionRequest): CreateCollectionResponse
+            + insert_vectors(request: InsertVectorsRequest): InsertVectorsResponse
+            + search_vectors(request: SearchVectorsRequest): SearchVectorsResponse
+            + delete_collection(request: DeleteCollectionRequest): DeleteCollectionResponse
+        }
+        
+        class ProtoTypes {
+            + Collection
+            + CollectionConfig
+            + VectorBatch
+            + SearchQuery
+            + VectorRecord
+        }
+    }
+}
+
+package "Service Layer" {
+    class SharedServices {
+        + vector_service: Arc<VectorService>
+        + collection_service: Arc<CollectionService>
+        + assignment_service: Arc<AssignmentService>
+        + new(storage_engine, metadata_backend): Self
+    }
+    
+    class VectorService {
+        - storage_engine: Arc<UnifiedStorageEngine>
+        - wal_manager: Arc<WalManager>
+        - axis_manager: Arc<AxisManager>
+        - viper_engine: Arc<ViperEngine>
+        - lsm_engine: Arc<LsmEngine>
+        + handle_vector_batch(collection_id, avro_payload): Result<()>
+        + search_vectors_polymorphic(collection_id, queries): Result<Vec<SearchResult>>
+        + inject_collection_service(service: Arc<CollectionService>)
+    }
+    
+    class CollectionService {
+        - metadata_backend: Arc<dyn MetadataBackend>
+        - assignment_service: Arc<AssignmentService>
+        + create_collection(config: proto::CollectionConfig): Result<proto::Collection>
+        + get_collection(id: String): Result<Option<proto::Collection>>
+        + list_collections(): Result<Vec<proto::Collection>>
+        + delete_collection(id: String): Result<()>
+    }
+    
+    class AssignmentService {
+        - strategy: AssignmentStrategy
+        - storage_layout: StorageLayoutConfig
+        + assign_collection(collection_id): StorageAssignment
+        + get_assignment(collection_id): Option<StorageAssignment>
+    }
+}
+
+package "Storage Layer" {
+    interface UnifiedStorageEngine {
+        + insert_vector_batch(collection_id, batch): Result<()>
+        + search_vectors(collection_id, queries): Result<Vec<SearchResult>>
+        + flush(collection_id): Result<()>
+        + compact(collection_id): Result<()>
+    }
+    
+    class ViperEngine implements UnifiedStorageEngine {
+        - parquet_writer: ParquetWriter
+        - ml_clustering: MLClusteringManager
+        - collection_service: Option<Arc<CollectionService>>
+        + generate_dynamic_schema(collection_config): Schema
+        + write_vectors_to_parquet(vectors): Result<()>
+    }
+    
+    class LsmEngine implements UnifiedStorageEngine {
+        - memtable: Arc<dyn UnifiedMemtable>
+        - compaction_manager: CompactionManager
+        - bloom_filters: BloomFilterManager
+        + write_to_sst(records): Result<()>
+        + merge_sstables(levels): Result<()>
+    }
+}
+
+package "WAL & Persistence" {
+    class WalManager {
+        - strategy: Box<dyn WalBatchStrategy>
+        - memtable_wrapper: Arc<WalBehaviorWrapper>
+        - storage_engines: HashMap<String, Arc<dyn UnifiedStorageEngine>>
+        + write_vector_batch(batch: VectorBatch): Result<Vec<u64>>
+        + flush_to_storage(collection_id): Result<()>
+        + recover(): Result<()>
+    }
+    
+    interface WalBatchStrategy {
+        + serialize_batch(batch): Result<Vec<u8>>
+        + deserialize_batch(data): Result<VectorBatch>
+        + get_stats(): WalStats
+    }
+    
+    class BincodeWalBatchStrategy implements WalBatchStrategy {
+        - schema: Schema
+        + serialize_batch(batch): Result<Vec<u8>>
+        + deserialize_batch(data): Result<VectorBatch>
+    }
+    
+    class AvroWalBatchStrategy implements WalBatchStrategy {
+        - schema: Schema
+        + serialize_batch(batch): Result<Vec<u8>>
+        + deserialize_batch(data): Result<VectorBatch>
+    }
+}
+
+package "Metadata Layer" {
+    interface MetadataBackend {
+        + create_collection(config): Result<Collection>
+        + get_collection(id): Result<Option<Collection>>
+        + list_collections(): Result<Vec<Collection>>
+        + delete_collection(id): Result<()>
+    }
+    
+    class FilestoreMetadataBackend implements MetadataBackend {
+        - filesystem: Arc<dyn FileSystem>
+        - collections_index: HashMap<String, Collection>
+        - operation_log: Vec<MetadataOperation>
+        + snapshot(): Result<()>
+        + recover(): Result<()>
+    }
+}
+
+' Relationships
+RestHandlers --> SharedServices : uses
+GrpcService --> SharedServices : uses
+SharedServices --> VectorService : contains
+SharedServices --> CollectionService : contains
+SharedServices --> AssignmentService : contains
+VectorService --> UnifiedStorageEngine : uses
+VectorService --> WalManager : uses
+VectorService --> ViperEngine : contains
+VectorService --> LsmEngine : contains
+CollectionService --> MetadataBackend : uses
+CollectionService --> AssignmentService : uses
+WalManager --> WalBatchStrategy : uses
+WalManager --> UnifiedStorageEngine : delegates to
+ViperEngine --> CollectionService : uses for schema
+RestHandlers ..> ProtoTypes : converts to/from
+RestModels ..> ProtoTypes : maps to
+
+note bottom of RestHandlers
+  DUPLICATE CODE:
+  - Collection operation handling
+  - Vector batch conversion
+  - Error handling patterns
+  - Response building
+end note
+
+note bottom of WalBatchStrategy
+  LEGACY PATTERN:
+  - Avro still used for vectors
+  - Should migrate to Proto
+  - Causes conversion overhead
+end note
+
+@enduml

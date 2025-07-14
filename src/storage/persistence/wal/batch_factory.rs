@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use super::config::WalStrategyType;
-use super::{WalConfig, WalBatchStrategy, AvroWalBatchStrategy, BincodeWalBatchStrategy};
+use super::{WalConfig, WalBatchStrategy, AvroWalBatchStrategy, BincodeWalBatchStrategy, ProtoWalBatchStrategy};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Modern factory for creating WAL batch strategies
@@ -38,6 +38,12 @@ impl WalBatchFactory {
                 strategy.initialize(config, filesystem).await?;
                 Ok(strategy)
             }
+            WalStrategyType::ProtoBatch => {
+                tracing::info!("🎯 Creating modern ProtoWalBatchStrategy");
+                let mut strategy = Box::new(ProtoWalBatchStrategy::new());
+                strategy.initialize(config, filesystem).await?;
+                Ok(strategy)
+            }
         }
     }
 
@@ -51,13 +57,13 @@ impl WalBatchFactory {
 
     /// List available strategy types
     pub fn available_strategies() -> Vec<WalStrategyType> {
-        vec![WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch]
+        vec![WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch, WalStrategyType::ProtoBatch]
     }
 
     /// Get strategy information for debugging and monitoring
     pub fn get_strategy_info(strategy_type: &WalStrategyType) -> StrategyInfo {
         match strategy_type {
-            WalStrategyType::AvroBatch | WalStrategyType::AvroBatch => StrategyInfo {
+            WalStrategyType::AvroBatch => StrategyInfo {
                 name: "AvroBatch".to_string(),
                 description: "Modern Avro-based WAL strategy with schema evolution support and native batch operations".to_string(),
                 serialization: "Apache Avro".to_string(),
@@ -70,7 +76,7 @@ impl WalBatchFactory {
                     "Long-term data storage with compatibility guarantees".to_string(),
                 ],
             },
-            WalStrategyType::BincodeBatch | WalStrategyType::BincodeBatch => StrategyInfo {
+            WalStrategyType::BincodeBatch => StrategyInfo {
                 name: "BincodeBatch".to_string(),
                 description: "Modern Bincode-based WAL strategy optimized for maximum native Rust performance with native batch operations".to_string(),
                 serialization: "Bincode (native Rust)".to_string(),
@@ -81,6 +87,19 @@ impl WalBatchFactory {
                     "High-throughput Rust-only deployments".to_string(),
                     "Performance-critical applications".to_string(),
                     "Minimal serialization overhead requirements".to_string(),
+                ],
+            },
+            WalStrategyType::ProtoBatch => StrategyInfo {
+                name: "ProtoBatch".to_string(),
+                description: "Modern Protocol Buffers-based WAL strategy for proto-first architecture with zero double serialization".to_string(),
+                serialization: "Protocol Buffers".to_string(),
+                schema_evolution: true,
+                batch_native: true,
+                performance_profile: "High Performance - optimized for proto-first architecture with efficient binary encoding".to_string(),
+                recommended_use_cases: vec![
+                    "Proto-first deployments with unified data models".to_string(),
+                    "Zero double serialization requirements".to_string(),
+                    "High-performance cross-language compatibility".to_string(),
                 ],
             }
         }
@@ -111,7 +130,14 @@ impl WalBatchFactory {
                 "Compact binary representation".to_string(),
                 "Zero-copy deseralization potential".to_string(),
             ],
-            recommendation: "Use Avro for production systems requiring schema evolution. Use Bincode for maximum performance in Rust-only environments.".to_string(),
+            proto_advantages: vec![
+                "Proto-first architecture alignment".to_string(),
+                "Zero double serialization".to_string(),
+                "Efficient binary encoding".to_string(),
+                "Strong typing with code generation".to_string(),
+                "Excellent cross-language support".to_string(),
+            ],
+            recommendation: "Use Proto for proto-first architecture with zero double serialization. Use Avro for legacy compatibility. Use Bincode for maximum Rust-only performance.".to_string(),
         }
     }
 }
@@ -133,6 +159,7 @@ pub struct StrategyInfo {
 pub struct StrategyComparison {
     pub avro_advantages: Vec<String>,
     pub bincode_advantages: Vec<String>,
+    pub proto_advantages: Vec<String>,
     pub recommendation: String,
 }
 
@@ -143,9 +170,10 @@ mod tests {
     #[test]
     fn test_available_strategies() {
         let strategies = WalBatchFactory::available_strategies();
-        assert_eq!(strategies.len(), 2);
+        assert_eq!(strategies.len(), 3);
         assert!(strategies.contains(&WalStrategyType::AvroBatch));
         assert!(strategies.contains(&WalStrategyType::BincodeBatch));
+        assert!(strategies.contains(&WalStrategyType::ProtoBatch));
     }
 
     #[test]
@@ -159,6 +187,11 @@ mod tests {
         assert_eq!(bincode_info.name, "BincodeBatch");
         assert!(!bincode_info.schema_evolution);
         assert!(bincode_info.batch_native);
+
+        let proto_info = WalBatchFactory::get_strategy_info(&WalStrategyType::ProtoBatch);
+        assert_eq!(proto_info.name, "ProtoBatch");
+        assert!(proto_info.schema_evolution);
+        assert!(proto_info.batch_native);
     }
 
     #[test]
@@ -166,6 +199,7 @@ mod tests {
         let comparison = WalBatchFactory::compare_strategies();
         assert!(!comparison.avro_advantages.is_empty());
         assert!(!comparison.bincode_advantages.is_empty());
+        assert!(!comparison.proto_advantages.is_empty());
         assert!(!comparison.recommendation.is_empty());
     }
 }

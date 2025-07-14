@@ -240,8 +240,8 @@ impl ViperSearchEngine {
                             crate::compute::distance::DistanceMetric::Manhattan
                         }
                     };
-                    let distance = distance_compute.calculate_distance(query_vector, centroid, &metric);
-                    (ClusterId(i), distance)
+                    let result = distance_compute.calculate_distance(query_vector, centroid, &metric);
+                    (ClusterId(i), result.rank_value)
                 })
                 .collect();
 

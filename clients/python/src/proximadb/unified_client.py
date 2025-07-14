@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from enum import Enum
 
 import numpy as np
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .config import ClientConfig, load_config
 from .models import (
@@ -32,8 +33,16 @@ from .models import (
     DistanceMetric,
     StorageEngine,
     IndexingAlgorithm,
+    QuantizationConfig,
+    QuantizationType,
 )
-from .exceptions import ProximaDBError
+from .exceptions import (
+    ProximaDBError,
+    NetworkError,
+    TimeoutError,
+    RateLimitError,
+    map_http_error,
+)
 
 try:
     from . import proximadb_pb2 as pb2
@@ -66,6 +75,12 @@ class ProximaDBClient:
         api_key: Optional[str] = None,
         protocol: Union[Protocol, str] = Protocol.AUTO,
         config: Optional[ClientConfig] = None,
+        enable_http2: bool = True,
+        pool_size: int = 10,
+        pool_maxsize: int = 50,
+        verify_ssl: bool = True,
+        cert_file: Optional[str] = None,
+        key_file: Optional[str] = None,
         **kwargs
     ):
         """
@@ -76,10 +91,26 @@ class ProximaDBClient:
             api_key: API key for authentication  
             protocol: Communication protocol (auto, grpc, rest)
             config: Client configuration object
+            enable_http2: Enable HTTP/2 support for better performance
+            pool_size: Connection pool size for keepalive connections
+            pool_maxsize: Maximum connection pool size
+            verify_ssl: Verify SSL certificates
+            cert_file: Client certificate file path for mTLS
+            key_file: Client key file path for mTLS
             **kwargs: Additional configuration parameters
         """
         if config is None:
             config = load_config(url=url, api_key=api_key, **kwargs)
+        
+        # Update config with connection parameters
+        if hasattr(config, 'connection'):
+            config.connection.pool_size = pool_size
+            config.connection.pool_maxsize = pool_maxsize
+        if hasattr(config, 'tls'):
+            config.tls.verify = verify_ssl
+            config.tls.cert_file = cert_file
+            config.tls.key_file = key_file
+        config.enable_http2 = enable_http2
         
         self.config = config
         self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
@@ -124,7 +155,7 @@ class ProximaDBClient:
     
     def _create_grpc_client(self):
         """Create gRPC client"""
-        from .grpc_client import ProximaDBClient as GrpcClient
+        from .protocols.grpc_sync import ProximaDBSyncGrpcClient
         
         # Extract host and port from URL for gRPC
         url = self.config.url
@@ -135,15 +166,26 @@ class ProximaDBClient:
         if ':' not in url:
             url = f"{url}:5679"
         
-        return GrpcClient(
-            endpoint=url,
+        return ProximaDBSyncGrpcClient(
+            server_address=url,
             timeout=self.config.timeout
         )
     
     def _create_rest_client(self):
-        """Create REST client"""
-        from .rest_client import ProximaDBRestClient
-        return ProximaDBRestClient(config=self.config)
+        """Create REST client with enhanced configuration"""
+        from .protocols.rest_sync import ProximaDBClient as RestClient
+        
+        # Add retry configuration if not present
+        if not hasattr(self.config, 'retry'):
+            from dataclasses import dataclass
+            @dataclass
+            class RetryConfig:
+                max_retries: int = 3
+                backoff_factor: float = 0.5
+                max_backoff: float = 10.0
+            self.config.retry = RetryConfig()
+        
+        return RestClient(config=self.config)
     
     @property
     def active_protocol(self) -> Protocol:
@@ -248,6 +290,12 @@ class ProximaDBClient:
         if config.owner:
             proto_config.owner = config.owner
         
+        # Handle quantization config
+        if config.quantization_config:
+            proto_config.quantization_config.CopyFrom(
+                self._pydantic_to_proto_quantization_config(config.quantization_config)
+            )
+        
         return proto_config
     
     def _pydantic_to_proto_distance_metric(self, metric: DistanceMetric) -> int:
@@ -283,6 +331,55 @@ class ProximaDBClient:
             IndexingAlgorithm.ANNOY: pb2.IndexingAlgorithm.ANNOY,
         }
         return mapping.get(algo, pb2.IndexingAlgorithm.HNSW)
+    
+    def _pydantic_to_proto_quantization_config(self, config: QuantizationConfig) -> 'pb2.QuantizationConfig':
+        """Convert Pydantic QuantizationConfig to proto QuantizationConfig"""
+        proto_config = pb2.QuantizationConfig(enabled=config.enabled)
+        
+        # For simple quantization config, we need to map to the comprehensive proto structure
+        if config.enabled and config.type != QuantizationType.NONE:
+            # Create a search quantization config based on the simple config
+            search_config = pb2.SearchQuantizationConfig(
+                enabled=True,
+                adaptive_precision=True,
+                accuracy_threshold=config.accuracy_threshold or 0.95,
+                candidate_multiplier=3
+            )
+            
+            # Create the appropriate quantization level
+            level = pb2.QuantizationLevel()
+            if config.type == QuantizationType.BINARY:
+                level.binary.CopyFrom(pb2.BinaryQuantization(
+                    threshold=config.threshold or 0.0,
+                    sign_based=True
+                ))
+            elif config.type == QuantizationType.SCALAR:
+                level.scalar.CopyFrom(pb2.ScalarQuantization(
+                    bits=config.bits_per_vector or 8,
+                    scale=1.0,
+                    offset=0.0,
+                    clamp_values=True
+                ))
+            elif config.type == QuantizationType.PRODUCT:
+                level.pq.CopyFrom(pb2.ProductQuantization(
+                    bits_per_code=config.bits_per_subvector or 8,
+                    num_subvectors=config.num_subvectors or 8,
+                    adaptive_subvectors=True
+                ))
+            elif config.type == QuantizationType.UNIFORM:
+                level.uniform.CopyFrom(pb2.UniformQuantization(
+                    bits=8,
+                    scale=1.0,
+                    offset=0.0
+                ))
+            
+            search_config.default_level.CopyFrom(level)
+            proto_config.search_quantization.CopyFrom(search_config)
+            
+            if config.compression_ratio_target:
+                proto_config.compression_ratio_target = config.compression_ratio_target
+        
+        return proto_config
     
     def _proto_to_pydantic_health_status(self, proto_health: 'pb2.HealthResponse') -> HealthStatus:
         """Convert proto HealthResponse to Pydantic HealthStatus"""
@@ -382,7 +479,16 @@ class ProximaDBClient:
                 )
             )
         else:
-            return self._client.insert_vectors(collection_id, records)
+            # REST client expects separate arrays
+            vectors = [r.vector for r in records]
+            ids = [r.id for r in records if r.id]
+            metadata = [r.metadata for r in records]
+            
+            # If no IDs provided, generate them
+            if not ids:
+                ids = [f"vec_{i}" for i in range(len(vectors))]
+            
+            return self._client.insert_vectors(collection_id, vectors, ids, metadata)
     
     def upsert_vectors(
         self,
@@ -427,13 +533,48 @@ class ProximaDBClient:
         vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        optimization_level: str = "high",
+        use_storage_aware: bool = True,
+        quantization_level: str = "FP32",
+        enable_simd: bool = True,
         **kwargs
     ) -> List[SearchResult]:
-        """Search for similar vectors with a single query"""
+        """Search for similar vectors with storage-aware optimizations
+        
+        Args:
+            collection_id: Target collection ID
+            vector: Query vector
+            top_k: Number of results to return
+            metadata_filter: Metadata filter conditions
+            optimization_level: Search optimization level ('high', 'medium', 'low')
+            use_storage_aware: Enable storage-aware polymorphic search
+            quantization_level: Vector quantization level for search
+            enable_simd: Enable SIMD vectorization optimizations
+            **kwargs: Additional search parameters
+            
+        Returns:
+            List of search results ordered by similarity
+        """
         if self._active_protocol == Protocol.GRPC:
             # Convert vector to list if numpy array
             if isinstance(vector, np.ndarray):
                 vector = vector.tolist()
+            
+            # Add search hints for gRPC
+            search_hints = kwargs.get('search_hints', {})
+            search_hints.update({
+                "predicate_pushdown": True,
+                "use_bloom_filters": True,
+                "use_clustering": True,
+                "quantization_level": quantization_level,
+                "parallel_search": True,
+                "engine_specific": {
+                    "optimization_level": optimization_level,
+                    "enable_simd": enable_simd,
+                    "prefer_indices": True,
+                    "storage_aware": use_storage_aware
+                }
+            })
             
             proto_response = self._client.search_vectors(
                 collection_id=collection_id,
@@ -441,7 +582,8 @@ class ProximaDBClient:
                 top_k=top_k,
                 metadata_filters=metadata_filter,
                 include_metadata=kwargs.get('include_metadata', True),
-                include_vectors=kwargs.get('include_vectors', False)
+                include_vectors=kwargs.get('include_vectors', False),
+                search_hints=search_hints
             )
             
             # Extract results from proto response
@@ -457,13 +599,59 @@ class ProximaDBClient:
                     results.append(search_result)
             return results
         else:
-            return self._client.search_single(
+            # For REST, use search method
+            return self._client.search(
+                collection_id=collection_id,
+                query=vector,
+                k=top_k,
+                filter=metadata_filter,
+                optimization_level=optimization_level,
+                use_storage_aware=use_storage_aware,
+                quantization_level=quantization_level,
+                enable_simd=enable_simd,
+                **kwargs
+            )
+    
+    # Alias for backward compatibility
+    search = search_single
+    
+    def search_batch(
+        self,
+        collection_id: str,
+        vectors: Union[List[List[float]], np.ndarray],
+        top_k: int = 10,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> List[List[SearchResult]]:
+        """Search multiple queries in batch with optimizations
+        
+        Args:
+            collection_id: Target collection ID
+            vectors: Array of query vectors
+            top_k: Number of results per query
+            metadata_filter: Metadata filter conditions
+            **kwargs: Additional search parameters
+            
+        Returns:
+            List of search results for each query
+        """
+        # Convert to list if numpy array
+        if isinstance(vectors, np.ndarray):
+            vectors = vectors.tolist()
+        
+        # Perform batch search
+        all_results = []
+        for vector in vectors:
+            results = self.search_single(
                 collection_id=collection_id,
                 vector=vector,
                 top_k=top_k,
                 metadata_filter=metadata_filter,
                 **kwargs
             )
+            all_results.append(results)
+        
+        return all_results
     
     def delete_vectors(
         self,
@@ -496,10 +684,16 @@ class ProximaDBClient:
         if self._active_protocol == Protocol.GRPC:
             proto_result = self._client.get_vector(collection_id, vector_id, include_vector, include_metadata)
             if proto_result:
+                # Convert repeated MetadataItem to dict
+                metadata_dict = {}
+                if proto_result.metadata:
+                    for item in proto_result.metadata:
+                        metadata_dict[item.key] = item.value
+                
                 return VectorRecord(
                     id=proto_result.id if proto_result.id else "",
                     vector=list(proto_result.vector) if proto_result.vector else [],
-                    metadata=dict(proto_result.metadata) if proto_result.metadata else {}
+                    metadata=metadata_dict
                 )
             return None
         else:
@@ -527,6 +721,81 @@ class ProximaDBClient:
             self.close()
         except Exception:
             pass
+    
+    # Legacy compatibility methods
+    def insert(
+        self,
+        collection_id: str,
+        vectors: Union[List[List[float]], np.ndarray],
+        ids: Optional[List[str]] = None,
+        metadata: Optional[List[Dict[str, Any]]] = None
+    ) -> VectorOperationResponse:
+        """Legacy insert method for backward compatibility"""
+        records = []
+        
+        # Convert vectors to list format
+        if isinstance(vectors, np.ndarray):
+            vectors = vectors.tolist()
+        
+        # Build records
+        for i, vector in enumerate(vectors):
+            record = VectorRecord(
+                vector=vector,
+                id=ids[i] if ids and i < len(ids) else None,
+                metadata=metadata[i] if metadata and i < len(metadata) else {}
+            )
+            records.append(record)
+        
+        return self.insert_vectors(collection_id, records)
+    
+    def upsert(
+        self,
+        collection_id: str,
+        vectors: Union[List[List[float]], np.ndarray],
+        ids: List[str],
+        metadata: Optional[List[Dict[str, Any]]] = None
+    ) -> VectorOperationResponse:
+        """Legacy upsert method for backward compatibility"""
+        records = []
+        
+        # Convert vectors to list format
+        if isinstance(vectors, np.ndarray):
+            vectors = vectors.tolist()
+        
+        # Build records
+        for i, (vector, vector_id) in enumerate(zip(vectors, ids)):
+            record = VectorRecord(
+                vector=vector,
+                id=vector_id,
+                metadata=metadata[i] if metadata and i < len(metadata) else {}
+            )
+            records.append(record)
+        
+        return self.upsert_vectors(collection_id, records)
+    
+    def delete(
+        self,
+        collection_id: str,
+        ids: List[str]
+    ) -> VectorOperationResponse:
+        """Legacy delete method for backward compatibility"""
+        return self.delete_vectors(collection_id, ids)
+    
+    def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
+        """Get collection statistics (legacy compatibility)"""
+        collection = self.get_collection(collection_id)
+        if collection:
+            return {
+                "id": collection.id,
+                "name": collection.config.name,
+                "dimension": collection.config.dimension,
+                "created_at": collection.created_at,
+                "updated_at": collection.updated_at,
+                "vector_count": getattr(collection, 'vector_count', 0),
+                "index_count": getattr(collection, 'index_count', 0),
+                "status": getattr(collection, 'status', 'active')
+            }
+        return {}
 
 
 # Convenience functions for backward compatibility

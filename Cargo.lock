@@ -3808,6 +3808,7 @@ dependencies = [
  "axum-macros",
  "azure_storage",
  "azure_storage_blobs",
+ "base64 0.21.7",
  "bincode",
  "blake3",
  "bplustree",

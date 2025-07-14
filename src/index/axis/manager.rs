@@ -15,7 +15,7 @@ use super::{
     AdaptiveIndexEngine, AxisConfig, IndexMigrationEngine, IndexStrategy, IndexType,
     MigrationDecision, PerformanceMonitor,
 };
-use crate::core::{avro_unified::VectorRecord, String, VectorId};
+use crate::core::{VectorRecord, String, VectorId};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 
 /// Central manager for AXIS with adaptive capabilities
@@ -137,13 +137,14 @@ impl AxisManager {
     }
 
     /// Insert a vector with adaptive indexing
-    pub async fn insert(&self, vector: VectorRecord) -> Result<()> {
+    pub async fn insert(&self, vector: &VectorRecord) -> Result<()> {
+        // Direct field access - zero overhead
         let collection_id = &vector.collection_id;
 
         // Ensure we have a strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
-        // Check if vector is expired (MVCC support)
+        // Check if vector is expired (MVCC support) - direct field access
         if let Some(expires_at) = vector.expires_at {
             if Utc::now().timestamp_millis() >= expires_at {
                 // Skip inserting already expired vectors
@@ -154,9 +155,10 @@ impl AxisManager {
         // Insert into appropriate indexes based on current strategy
         let strategy = self.get_collection_strategy(collection_id).await?;
 
-        // Always insert into global ID index
+        // Always insert into global ID index - direct field access
+        let vector_id = vector.id.as_ref().map(|s| s.as_str()).unwrap_or("");
         self.global_id_index
-            .insert(vector.id.clone(), collection_id, &vector)
+            .insert(vector_id.to_string(), collection_id, &vector)
             .await?;
 
         // Insert into other indexes based on strategy
@@ -677,7 +679,7 @@ impl AxisManager {
         
         let start_time = std::time::Instant::now();
         for vector in vectors {
-            self.insert(vector).await?;
+            self.insert(&vector).await?;
         }
         let duration = start_time.elapsed();
         
@@ -705,7 +707,7 @@ impl AxisManager {
         let mut indexed_count = 0;
         
         for vector in vectors {
-            match self.insert(vector).await {
+            match self.insert(&vector).await {
                 Ok(()) => indexed_count += 1,
                 Err(e) => {
                     tracing::error!("❌ AXIS: Failed to index vector in collection {}: {}", collection_id, e);

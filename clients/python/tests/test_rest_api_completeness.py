@@ -28,7 +28,10 @@ class TestRESTAPICompleteness:
     def test_collection(self, rest_client):
         """Create test collection for endpoint testing"""
         collection_name = f"rest_test_{int(time.time())}"
-        config = CollectionConfig(dimension=32, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         collection = rest_client.create_collection(collection_name, config)
         yield collection_name
@@ -47,7 +50,10 @@ class TestRESTAPICompleteness:
         
         # 1. Create Collection
         try:
-            config = CollectionConfig(dimension=64, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
             collection = rest_client.create_collection(collection_name, config)
             assert collection is not None
             print("✅ POST /collections - Create collection: WORKING")
@@ -304,7 +310,10 @@ class TestRESTAPICompleteness:
         # 2. Invalid Vector Dimensions
         try:
             collection_name = f"error_test_{int(time.time())}"
-            config = CollectionConfig(dimension=64, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
             collection = rest_client.create_collection(collection_name, config)
             
             try:

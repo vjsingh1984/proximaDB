@@ -12,6 +12,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use prost::Message;
 
 use crate::core::VectorRecord;
 
@@ -31,7 +32,7 @@ pub const VECTOR_BATCH_SCHEMA_V1: &str = r#"
         "fields": [
           {"name": "id", "type": ["null", "string"], "default": null},
           {"name": "collection_id", "type": "string"},
-          {"name": "vector", "type": {"type": "array", "items": "float"}},
+          {"name": "vector", "type": {"type": "array", "items": ["null", "float"]}},
           {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null},
           {"name": "timestamp", "type": "int"},
           {"name": "expires_at", "type": ["null", "int"], "default": null},
@@ -71,7 +72,7 @@ pub struct AvroVectorBatch {
 /// Convert VectorRecord to AvroVector
 impl From<&VectorRecord> for AvroVector {
     fn from(record: &VectorRecord) -> Self {
-        // Convert metadata from HashMap<String, serde_json::Value> to HashMap<String, String>
+        // Convert metadata from Vec<MetadataItem> to HashMap<String, String>
         let metadata = if record.metadata.is_empty() {
             None
         } else {
@@ -79,20 +80,13 @@ impl From<&VectorRecord> for AvroVector {
                 record
                     .metadata
                     .iter()
-                    .map(|(k, v)| {
-                        // Properly handle JSON values - extract string without quotes
-                        let value_str = match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => v.to_string(),
-                        };
-                        (k.clone(), value_str)
-                    })
+                    .map(|item| (item.key.clone(), item.value.clone()))
                     .collect(),
             )
         };
 
         Self {
-            id: if record.id.is_empty() { None } else { Some(record.id.clone()) },
+            id: if record.id.as_deref().unwrap_or("").is_empty() { None } else { Some(record.id.as_deref().unwrap_or("").to_string()) },
             collection_id: record.collection_id.clone(),
             vector: record.vector.clone(),
             metadata,
@@ -125,15 +119,15 @@ impl TryFrom<&AvroVector> for VectorRecord {
         
         // 🔧 FLEXIBLE: ID is optional - vectors without ID are immutable and similarity-search only
         // Client/SDK has ownership to populate ID for vectors that need get/delete/upsert operations
-        let id = avro.id.as_ref()
-            .cloned()
-            .unwrap_or_default(); // Empty string for immutable vectors
+        let id = avro.id.clone().unwrap_or_default(); // Empty string for immutable vectors
         
-        Ok(Self {
-            id,
+        // In proto-first architecture, create proto VectorRecord directly
+        use crate::core::proto_metadata_helper::json_metadata_to_proto;
+        Ok(crate::core::VectorRecord {
+            id: if id.is_empty() { None } else { Some(id) },
             collection_id: avro.collection_id.clone(),
             vector: avro.vector.clone(),
-            metadata,
+            metadata: json_metadata_to_proto(&metadata),
             // Convert seconds back to microseconds
             timestamp: timestamp_micros,
             created_at: timestamp_micros,
@@ -150,7 +144,7 @@ impl TryFrom<&AvroVector> for VectorRecord {
 
 /// Create Avro vector batch from VectorRecord list (used by REST/gRPC handlers)
 pub fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>> {
-    use apache_avro::{to_avro_datum, Schema};
+    use apache_avro::Schema;
 
     let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
         .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
@@ -181,7 +175,11 @@ pub fn create_avro_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u
             fields.push(("collection_id".to_string(), Value::String(v.collection_id)));
             
             fields.push(("vector".to_string(), Value::Array(
-                v.vector.into_iter().map(Value::Float).collect()
+                v.vector.into_iter().map(|f| {
+                    // For sparse vectors, we could encode zero as null to save space
+                    // For now, always use the float value (Union index 1)
+                    Value::Union(1, Box::new(Value::Float(f)))
+                }).collect()
             )));
             
             fields.push(("metadata".to_string(), match v.metadata {
@@ -260,11 +258,23 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                             if let apache_avro::types::Value::Array(arr) = v {
                                 Some(
                                     arr.iter()
-                                        .filter_map(|f| {
-                                            if let apache_avro::types::Value::Float(f) = f {
-                                                Some(*f)
-                                            } else {
-                                                None
+                                        .map(|f| {
+                                            match f {
+                                                // Direct float (backward compatibility)
+                                                apache_avro::types::Value::Float(f) => *f,
+                                                // Union with float (new sparse vector support)
+                                                apache_avro::types::Value::Union(idx, inner) => {
+                                                    if *idx == 1 {
+                                                        if let apache_avro::types::Value::Float(f) = inner.as_ref() {
+                                                            *f
+                                                        } else {
+                                                            0.0 // Default for invalid union value
+                                                        }
+                                                    } else {
+                                                        0.0 // Null value (idx == 0) becomes 0.0 for sparse vectors
+                                                    }
+                                                }
+                                                _ => 0.0, // Default for any other type
                                             }
                                         })
                                         .collect(),
@@ -284,13 +294,14 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                                     Some(
                                         map.iter()
                                             .map(|(k, v)| {
-                                                let value = match v {
-                                                    apache_avro::types::Value::String(s) => {
-                                                        serde_json::Value::String(s.clone())
-                                                    }
-                                                    _ => serde_json::Value::String(format!("{:?}", v)),
+                                                let value_str = match v {
+                                                    apache_avro::types::Value::String(s) => s.clone(),
+                                                    _ => format!("{:?}", v),
                                                 };
-                                                (k.clone(), value)
+                                                crate::proto::proximadb::MetadataItem {
+                                                    key: k.clone(),
+                                                    value: value_str,
+                                                }
                                             })
                                             .collect(),
                                     )
@@ -302,13 +313,14 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                                 Some(
                                     map.iter()
                                         .map(|(k, v)| {
-                                            let value = match v {
-                                                apache_avro::types::Value::String(s) => {
-                                                    serde_json::Value::String(s.clone())
-                                                }
-                                                _ => serde_json::Value::String(format!("{:?}", v)),
+                                            let value_str = match v {
+                                                apache_avro::types::Value::String(s) => s.clone(),
+                                                _ => format!("{:?}", v),
                                             };
-                                            (k.clone(), value)
+                                            crate::proto::proximadb::MetadataItem {
+                                                key: k.clone(),
+                                                value: value_str,
+                                            }
                                         })
                                         .collect(),
                                 )
@@ -328,7 +340,7 @@ pub fn deserialize_vector_batch(avro_payload: &[u8]) -> Result<Vec<VectorRecord>
                         .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
 
                     result.push(VectorRecord {
-                        id,
+                        id: Some(id),
                         collection_id: String::new(), // Will be set by caller
                         vector,
                         metadata,
@@ -355,20 +367,315 @@ pub fn serialize_vector_batch(vector_records: &[VectorRecord]) -> Result<Vec<u8>
     create_avro_vector_batch(vector_records)
 }
 
+/// Serialize Avro VectorRecord batch to bytes
+pub fn serialize_avro_vector_batch(avro_records: &[crate::core::avro_unified::VectorRecord]) -> Result<Vec<u8>> {
+    use apache_avro::Schema;
+
+    let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
+        .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
+
+    let mut writer = apache_avro::Writer::new(&schema, Vec::new());
+    
+    for record in avro_records {
+        writer
+            .append_ser(record)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize vector record: {}", e))?;
+    }
+
+    writer
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("Failed to finalize Avro batch: {}", e))
+}
+
 // convert_to_avro_entry removed - use WalVectorBatch for batch operations
+
+// ============================================================================
+// PROTO-BASED WAL SERIALIZATION (Phase 2: Migration to Proto)
+// ============================================================================
+
+/// Proto-based vector batch wrapper for WAL operations
+/// This will replace AvroVectorBatch once migration is complete
+#[derive(Clone, Message)]
+pub struct ProtoVectorBatch {
+    /// Batch of vector records
+    #[prost(message, repeated, tag = "1")]
+    pub vectors: Vec<crate::proto::proximadb::VectorRecord>,
+    
+    /// Batch metadata
+    #[prost(string, optional, tag = "2")]
+    pub batch_id: Option<String>,
+    
+    /// Batch timestamp (microseconds since epoch)
+    #[prost(int64, tag = "3")]
+    pub timestamp: i64,
+    
+    /// Collection ID for this batch
+    #[prost(string, tag = "4")]
+    pub collection_id: String,
+}
+
+/// Create Proto vector batch from VectorRecord list (Phase 2 implementation)
+/// Create proto vector batch - VectorRecord is already proto type
+pub fn create_proto_vector_batch(vector_records: &[VectorRecord], _collection_id: &str) -> Result<Vec<u8>> {
+    // No conversion needed - VectorRecord is already proto type
+    let proto_vectors = vector_records.to_vec();
+    
+    let batch = ProtoVectorBatch {
+        vectors: proto_vectors,
+        batch_id: Some(format!("batch_{}", chrono::Utc::now().timestamp_micros())),
+        timestamp: chrono::Utc::now().timestamp_micros(),
+        collection_id: _collection_id.to_string(),
+    };
+    
+    // Serialize using protobuf
+    let mut buf = Vec::new();
+    batch.encode(&mut buf)
+        .map_err(|e| anyhow::anyhow!("Failed to encode proto vector batch: {}", e))?;
+    
+    Ok(buf)
+}
+
+/// Deserialize Proto vector batch to VectorRecord list (Phase 2 implementation)
+/// This function deserializes protobuf and converts back to Avro VectorRecords for compatibility
+pub fn deserialize_proto_vector_batch(proto_payload: &[u8]) -> Result<Vec<VectorRecord>> {
+    use crate::core::proto_to_avro;
+    
+    // Deserialize protobuf
+    let batch = ProtoVectorBatch::decode(proto_payload)
+        .map_err(|e| anyhow::anyhow!("Failed to decode proto vector batch: {}", e))?;
+    
+    // Direct return - VectorRecord is already proto type in proto-first architecture
+    Ok(batch.vectors)
+}
+
+/// Create Proto vector batch from Proto VectorRecords directly (Future Phase 3)
+/// This will be used once we fully migrate to Proto VectorRecord throughout
+pub fn create_proto_vector_batch_native(
+    proto_vectors: &[crate::proto::proximadb::VectorRecord], 
+    collection_id: &str
+) -> Result<Vec<u8>> {
+    let batch = ProtoVectorBatch {
+        vectors: proto_vectors.to_vec(),
+        batch_id: Some(format!("batch_{}", chrono::Utc::now().timestamp_micros())),
+        timestamp: chrono::Utc::now().timestamp_micros(),
+        collection_id: collection_id.to_string(),
+    };
+    
+    let mut buf = Vec::new();
+    batch.encode(&mut buf)
+        .map_err(|e| anyhow::anyhow!("Failed to encode proto vector batch: {}", e))?;
+    
+    Ok(buf)
+}
+
+/// Deserialize Proto vector batch to Proto VectorRecords directly (Future Phase 3)
+/// This will be used once we fully migrate to Proto VectorRecord throughout
+pub fn deserialize_proto_vector_batch_native(proto_payload: &[u8]) -> Result<(Vec<crate::proto::proximadb::VectorRecord>, String)> {
+    let batch = ProtoVectorBatch::decode(proto_payload)
+        .map_err(|e| anyhow::anyhow!("Failed to decode proto vector batch: {}", e))?;
+    
+    Ok((batch.vectors, batch.collection_id))
+}
+
+/// Unified deserialization function that handles both Avro and Proto formats
+/// This provides backward compatibility during the migration period
+pub fn deserialize_vector_batch_unified(payload: &[u8]) -> Result<Vec<VectorRecord>> {
+    // Try proto first (new format), fall back to Avro (legacy format)
+    match deserialize_proto_vector_batch(payload) {
+        Ok(vectors) => Ok(vectors),
+        Err(_) => {
+            // Fallback to Avro deserialization for backward compatibility
+            deserialize_vector_batch(payload)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn test_proto_vector_batch_serialization() {
+        use crate::core::VectorRecord;
+        
+        let records = vec![
+            VectorRecord {
+                id: Some("vec-1".to_string()),
+                collection_id: "test-collection".to_string(),
+                vector: vec![1.0, 2.0, 3.0, 4.0],
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "category".to_string(),
+                        value: "test".to_string(),
+                    },
+                    crate::proto::proximadb::MetadataItem {
+                        key: "score".to_string(),
+                        value: "42".to_string(),
+                    },
+                ],
+                timestamp: 1640995200000000,
+                created_at: 1640995200000,
+                updated_at: 1640995200000,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+            VectorRecord {
+                id: Some("vec-2".to_string()),
+                collection_id: "test-collection".to_string(),
+                vector: vec![5.0, 6.0, 7.0, 8.0],
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "category".to_string(),
+                        value: "example".to_string(),
+                    },
+                    crate::proto::proximadb::MetadataItem {
+                        key: "active".to_string(),
+                        value: "true".to_string(),
+                    },
+                ],
+                timestamp: 1640995201000000,
+                created_at: 1640995201000,
+                updated_at: 1640995201000,
+                expires_at: Some(1640995300000),
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+        ];
+        
+        // Test proto serialization
+        let proto_payload = create_proto_vector_batch(&records, "test-collection")
+            .expect("Failed to create proto batch");
+        assert!(!proto_payload.is_empty());
+        
+        // Test proto deserialization
+        let deserialized = deserialize_proto_vector_batch(&proto_payload)
+            .expect("Failed to deserialize proto batch");
+        
+        assert_eq!(records.len(), deserialized.len());
+        assert_eq!(records[0].id, deserialized[0].id);
+        assert_eq!(records[0].vector, deserialized[0].vector);
+        assert_eq!(records[1].id, deserialized[1].id);
+        assert_eq!(records[1].vector, deserialized[1].vector);
+        
+        // Verify metadata was preserved
+        let original_category = records[0].metadata.iter()
+            .find(|item| item.key == "category")
+            .map(|item| &item.value);
+        let deserialized_category = deserialized[0].metadata.iter()
+            .find(|item| item.key == "category")
+            .map(|item| &item.value);
+        assert_eq!(original_category, deserialized_category);
+        let original_score = records[0].metadata.iter()
+            .find(|item| item.key == "score")
+            .map(|item| &item.value);
+        let deserialized_score = deserialized[0].metadata.iter()
+            .find(|item| item.key == "score")
+            .map(|item| &item.value);
+        assert_eq!(original_score, deserialized_score);
+    }
+    
+    #[test]
+    fn test_unified_deserialization() {
+        use crate::core::VectorRecord;
+        
+        let records = vec![
+            VectorRecord {
+                id: Some("test-vec".to_string()),
+                collection_id: "test-collection".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: vec![],
+                timestamp: 1640995200000000,
+                created_at: 1640995200000,
+                updated_at: 1640995200000,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+        ];
+        
+        // Test that unified function can handle proto format
+        let proto_payload = create_proto_vector_batch(&records, "test-collection")
+            .expect("Failed to create proto batch");
+        let deserialized_proto = deserialize_vector_batch_unified(&proto_payload)
+            .expect("Failed to deserialize proto via unified");
+        assert_eq!(records[0].id, deserialized_proto[0].id);
+        
+        // Test that unified function can handle avro format
+        let avro_payload = create_avro_vector_batch(&records)
+            .expect("Failed to create avro batch");
+        let deserialized_avro = deserialize_vector_batch_unified(&avro_payload)
+            .expect("Failed to deserialize avro via unified");
+        assert_eq!(records[0].id, deserialized_avro[0].id);
+    }
+    
+    #[test]
+    fn test_proto_native_functions() {
+        use crate::proto::proximadb::{VectorRecord as ProtoVectorRecord, MetadataMap, MetadataValue, metadata_value};
+        
+        let mut metadata_fields = HashMap::new();
+        metadata_fields.insert("test".to_string(), MetadataValue {
+            value: Some(metadata_value::Value::StringValue("value".to_string()))
+        });
+        
+        let proto_vectors = vec![
+            ProtoVectorRecord {
+                id: Some("proto-vec-1".to_string()),
+                collection_id: "test-collection".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "category".to_string(),
+                        value: "test".to_string(),
+                    },
+                ],
+                timestamp: 1640995200000000,
+                created_at: 1640995200000,
+                updated_at: 1640995200000,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            },
+        ];
+        
+        // Test native proto serialization
+        let payload = create_proto_vector_batch_native(&proto_vectors, "test-collection")
+            .expect("Failed to create native proto batch");
+        assert!(!payload.is_empty());
+        
+        // Test native proto deserialization  
+        let (deserialized, collection_id) = deserialize_proto_vector_batch_native(&payload)
+            .expect("Failed to deserialize native proto batch");
+        
+        assert_eq!(collection_id, "test-collection");
+        assert_eq!(proto_vectors.len(), deserialized.len());
+        assert_eq!(proto_vectors[0].id, deserialized[0].id);
+        assert_eq!(proto_vectors[0].vector, deserialized[0].vector);
+    }
+    
+    #[test]
     fn test_vector_record_avro_conversion() {
-        let mut metadata = HashMap::new();
-        metadata.insert("key1".to_string(), serde_json::Value::String("value1".to_string()));
-        metadata.insert("key2".to_string(), serde_json::Value::Number(serde_json::Number::from(42)));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "key1".to_string(),
+                value: "value1".to_string(),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "key2".to_string(),
+                value: "42".to_string(),
+            },
+        ];
 
         let record = VectorRecord {
-            id: "test_vector".to_string(),
+            id: Some("test_vector".to_string()),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata,
@@ -380,28 +687,28 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
-        };
+            };
 
         // Test VectorRecord -> AvroVector -> VectorRecord
         let avro_vector = AvroVector::from(&record);
         let restored_record = VectorRecord::try_from(&avro_vector).expect("Failed to convert back to VectorRecord");
 
-        assert_eq!(record.id, restored_record.id);
+        assert_eq!(record.id.as_deref().unwrap_or(""), restored_record.id.as_deref().unwrap_or(""));
         assert_eq!(record.vector, restored_record.vector);
         assert_eq!(record.timestamp, restored_record.timestamp);
-        // Metadata comparison (string conversion expected)
-        assert!(restored_record.metadata.contains_key("key1"));
-        assert!(restored_record.metadata.contains_key("key2"));
+        // Metadata comparison (Vec<MetadataItem> format)
+        assert!(restored_record.metadata.iter().any(|item| item.key == "key1"));
+        assert!(restored_record.metadata.iter().any(|item| item.key == "key2"));
     }
 
     #[test]
     fn test_vector_batch_serialization() {
         let records = vec![
             VectorRecord {
-                id: "vector1".to_string(),
+                id: Some("vector1".to_string()),
                 collection_id: "test".to_string(),
                 vector: vec![1.0, 2.0],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: 1234567890,
                 created_at: 1234567890,
                 updated_at: 1234567890,
@@ -412,10 +719,10 @@ mod tests {
                 distance: None,
             },
             VectorRecord {
-                id: "vector2".to_string(),
+                id: Some("vector2".to_string()),
                 collection_id: "test".to_string(),
                 vector: vec![3.0, 4.0],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: 1234567891,
                 created_at: 1234567891,
                 updated_at: 1234567891,

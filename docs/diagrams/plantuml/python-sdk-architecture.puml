@@ -1,0 +1,162 @@
+@startuml python-sdk-architecture
+!theme plain
+title ProximaDB Python SDK Architecture - Class Diagram
+
+package "Python SDK" {
+    package "Client Layer" {
+        class ProximaDBClient <<facade>> {
+            - _client: Union[ProximaDBRestClient, ProximaDBGrpcClient]
+            + __init__(url, protocol=None, **kwargs)
+            + create_collection(name, config): Collection
+            + get_collection(id): Collection
+            + insert_vectors(collection_id, vectors): BatchResult
+            + search(collection_id, query, top_k): List[SearchResult]
+        }
+        
+        class ProximaDBRestClient {
+            - _http_client: httpx.Client
+            - config: ClientConfig
+            + _make_request(method, endpoint, **kwargs): Response
+            + _parse_api_response(response, model): Any
+            + create_collection(name, config): Collection
+            + insert_vectors(collection_id, records): VectorOperationResponse
+            + search(collection_id, queries): List[SearchResult]
+            + {deprecated} insert_vector()
+            + {deprecated} search_vectors()
+        }
+        
+        class ProximaDBGrpcClient {
+            - _channel: grpc.Channel
+            - _stub: ProximaDBStub
+            - config: ClientConfig
+            + create_collection(request): Collection
+            + insert_vectors(request): InsertVectorsResponse
+            + search_vectors(request): SearchVectorsResponse
+        }
+    }
+    
+    package "Data Models" {
+        class RestModels <<duplicate>> {
+            + CollectionConfig
+            + VectorRecord
+            + SearchQuery
+            + SearchResult
+            + VectorOperationResponse
+            + CollectionResponse
+            + DistanceMetric <<enum>>
+            + StorageEngine <<enum>>
+            + IndexingAlgorithm <<enum>>
+        }
+        
+        class ProtoModels <<generated>> {
+            + Collection
+            + CollectionConfig
+            + VectorBatch
+            + VectorRecord
+            + SearchQuery
+            + SearchResult
+            + CreateCollectionRequest
+            + InsertVectorsRequest
+            + SearchVectorsRequest
+        }
+        
+        note bottom of RestModels
+            DUPLICATE:
+            - Manually maintained Pydantic models
+            - Mirror proto definitions
+            - Require constant sync
+        end note
+    }
+    
+    package "Configuration" {
+        class ClientConfig {
+            + url: str
+            + api_key: Optional[str]
+            + timeout: int
+            + retry: RetryConfig
+            + connection: ConnectionConfig
+            + tls: TLSConfig
+        }
+        
+        class ConfigLoader {
+            + load_config(url, **overrides): ClientConfig
+            + _load_from_env(): dict
+            + _load_from_file(): dict
+            + _merge_configs(base, overrides): dict
+        }
+    }
+    
+    package "Utilities" {
+        class Exceptions {
+            + ProximaDBError
+            + CollectionNotFoundError
+            + NetworkError
+            + TimeoutError
+            + RateLimitError
+        }
+        
+        class TypeAliases {
+            + VectorArray = Union[List[List[float]], np.ndarray]
+            + MetadataDict = Dict[str, Any]
+            + FilterDict = Dict[str, Any]
+        }
+    }
+}
+
+package "Refactored SDK Design" <<proposed>> {
+    class UnifiedClient <<new>> {
+        - _transport: Transport
+        + create_collection(config: proto.CollectionConfig): proto.Collection
+        + insert_vectors(batch: proto.VectorBatch): proto.VectorOperationResponse
+        + search(query: proto.SearchQuery): proto.SearchResponse
+    }
+    
+    interface Transport <<new>> {
+        + execute(request: ProtoMessage): ProtoMessage
+    }
+    
+    class RestTransport implements Transport {
+        - _http_client: httpx.Client
+        + execute(request: ProtoMessage): ProtoMessage
+        - _proto_to_json(proto): dict
+        - _json_to_proto(json, proto_class): ProtoMessage
+    }
+    
+    class GrpcTransport implements Transport {
+        - _channel: grpc.Channel
+        + execute(request: ProtoMessage): ProtoMessage
+    }
+    
+    note right of UnifiedClient
+        BENEFITS:
+        - Single client interface
+        - Proto types throughout
+        - No duplicate models
+        - Transport abstraction
+    end note
+}
+
+' Relationships
+ProximaDBClient --> ProximaDBRestClient : creates
+ProximaDBClient --> ProximaDBGrpcClient : creates
+ProximaDBRestClient --> RestModels : uses
+ProximaDBGrpcClient --> ProtoModels : uses
+ProximaDBRestClient ..> ProtoModels : should use
+ConfigLoader --> ClientConfig : creates
+
+' Refactored relationships
+UnifiedClient --> Transport : uses
+RestTransport ..|> Transport
+GrpcTransport ..|> Transport
+UnifiedClient --> ProtoModels : uses only
+
+' Issues
+note top of ProximaDBClient
+    ISSUES:
+    1. Three separate client classes
+    2. Duplicate model definitions
+    3. Inconsistent APIs between REST/gRPC
+    4. Legacy compatibility methods
+end note
+
+@enduml

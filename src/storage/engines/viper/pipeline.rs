@@ -746,11 +746,13 @@ impl VectorRecordProcessor {
         fields: &[String],
     ) -> std::cmp::Ordering {
         for field in fields {
-            let a_val = a.metadata.get(field);
-            let b_val = b.metadata.get(field);
+            let a_val = a.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
+            let b_val = b.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
-                    let cmp = self.compare_metadata_values(a_meta, b_meta);
+                    let a_json = serde_json::Value::String(a_meta.clone());
+                    let b_json = serde_json::Value::String(b_meta.clone());
+                    let cmp = self.compare_metadata_values(&a_json, &b_json);
                     if cmp != std::cmp::Ordering::Equal {
                         return cmp;
                     }
@@ -925,9 +927,9 @@ impl VectorRecordProcessor {
                     let training_vectors: Vec<Vec<f32>> = if records.len() > 1000 {
                         // Sample every nth record for training to maintain efficiency
                         let step = records.len() / 1000;
-                        records.iter().step_by(step).map(|r| r.vector.clone()).collect()
+                        records.iter().step_by(step).map(|r| r.vector.to_vec()).collect()
                     } else {
-                        records.iter().map(|r| r.vector.clone()).collect()
+                        records.iter().map(|r| r.vector.to_vec()).collect()
                     };
                     
                     match ml_engine.train_model(&training_vectors, effective_clusters) {
@@ -1045,10 +1047,10 @@ impl VectorRecordProcessor {
                 records
                     .iter()
                     .step_by(step.max(1))
-                    .map(|r| r.vector.clone())
+                    .map(|r| r.vector.to_vec())
                     .collect()
             } else {
-                records.iter().map(|r| r.vector.clone()).collect()
+                records.iter().map(|r| r.vector.to_vec()).collect()
             };
 
             let train_result = quantization_engine.train_model(&training_vectors);
@@ -1167,7 +1169,7 @@ impl VectorRecordProcessor {
 
         // Create minimal RecordBatch (placeholder implementation)
         let id_array = arrow_array::StringArray::from(
-            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            records.iter().map(|r| r.id.as_deref().unwrap_or("")).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
             records
@@ -1275,7 +1277,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.cmp(&b.id)
+                    a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""))
                 });
             }
 
@@ -1327,7 +1329,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1339,7 +1341,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -1406,7 +1408,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1418,7 +1420,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -1847,7 +1849,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1870,7 +1872,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -3027,12 +3029,21 @@ impl CompactionEngine {
                 );
                 meta
             };
-            let record = VectorRecord::new(
-                format!("vec_{:06}", i),
-                collection_id.to_string(),
-                vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
-                metadata,
-            );
+            let timestamp = chrono::Utc::now().timestamp_millis();
+            let record = VectorRecord {
+                id: Some(format!("vec_{:06}", i)),
+                collection_id: collection_id.to_string(),
+                vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
+                metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
+                timestamp,
+                created_at: timestamp,
+                updated_at: timestamp,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            };
             records.push(record);
         }
 
@@ -3124,8 +3135,9 @@ impl CompactionEngine {
                 .filter_map(|field| {
                     record
                         .metadata
-                        .get(field)
-                        .map(|v| format!("{}:{}", field, v))
+                        .iter()
+                        .find(|item| &item.key == field)
+                        .map(|item| format!("{}:{}", field, item.value))
                 })
                 .collect::<Vec<_>>()
                 .join("|");

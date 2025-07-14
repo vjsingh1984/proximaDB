@@ -8,6 +8,7 @@ use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::wal::BatchId;
+use std::sync::Arc;
 
 /// Helper function to create a vector record with specific parameters
 fn create_vector_record(
@@ -19,10 +20,10 @@ fn create_vector_record(
 ) -> VectorRecord {
     let now = chrono::Utc::now().timestamp_millis();
     VectorRecord {
-        id: id.to_string(),
+        id: Some(id.to_string()),
         collection_id: collection_id.to_string(),
         vector,
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -48,7 +49,7 @@ fn create_wal_batch(
     };
     WalVectorBatch {
         batch_id: BatchId::new(collection_id.to_string(), sequence, end_sequence),
-        vector_records: vectors,
+        vector_records: Arc::new(vectors),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
@@ -116,7 +117,7 @@ async fn test_three_layer_search_consistency_basic() {
         .search_vectors(&[1.0, 1.0, 1.0], 10, collection_id, CoreDistanceMetric::Euclidean)
         .await
         .unwrap();
-    assert!(!search_results.iter().any(|(_, record)| record.id == vector_id));
+    assert!(!search_results.iter().any(|(_, record)| record.id == Some(vector_id.to_string())));
 }
 
 #[tokio::test]
@@ -142,13 +143,13 @@ async fn test_get_before_delete_update_consistency() {
     let current_vector = current_vector.unwrap();
 
     // Ensure ID and vector match for consistency
-    assert_eq!(current_vector.id, vector_id);
+    assert_eq!(current_vector.id, Some(vector_id.to_string()));
     assert_eq!(current_vector.vector, vec![1.0, 2.0, 3.0]);
     assert_eq!(current_vector.version, 1);
 
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
-        &current_vector.id, // Use same ID
+        current_vector.id.as_deref().unwrap_or(""), // Use same ID
         collection_id,
         vec![4.0, 5.0, 6.0], // New vector
         current_vector.version + 1, // Increment version
@@ -161,14 +162,14 @@ async fn test_get_before_delete_update_consistency() {
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
-    assert_eq!(found_vector.id, vector_id);
+    assert_eq!(found_vector.id, Some(vector_id.to_string()));
     assert_eq!(found_vector.vector, vec![4.0, 5.0, 6.0]);
     assert_eq!(found_vector.version, 2);
 
     // Delete: Construct tombstone with same ID
     let current_time = chrono::Utc::now().timestamp_micros();
     let delete_vector = create_vector_record(
-        &current_vector.id, // Use same ID
+        current_vector.id.as_deref().unwrap_or(""), // Use same ID
         collection_id,
         vec![0.0, 0.0, 0.0], // Vector content irrelevant for delete
         found_vector.version + 1, // Increment version
@@ -285,7 +286,7 @@ async fn test_expired_records_vs_active_records() {
         .unwrap();
     
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].1.id, "active_vector");
+    assert_eq!(search_results[0].1.id, Some("active_vector".to_string()));
 }
 
 #[tokio::test]
@@ -320,7 +321,7 @@ async fn test_same_id_different_vector_values() {
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
-    assert_eq!(found_vector.id, vector_id);
+    assert_eq!(found_vector.id, Some(vector_id.to_string()));
     assert_eq!(found_vector.version, 2);
     assert_eq!(found_vector.vector, vec![0.0, 0.0, 1.0]);
 
@@ -331,7 +332,7 @@ async fn test_same_id_different_vector_values() {
         .unwrap();
     
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].1.id, vector_id);
+    assert_eq!(search_results[0].1.id, Some(vector_id.to_string()));
     assert_eq!(search_results[0].1.version, 2);
     assert_eq!(search_results[0].1.vector, vec![0.0, 0.0, 1.0]);
 }

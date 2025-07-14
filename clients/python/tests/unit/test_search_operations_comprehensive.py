@@ -41,6 +41,7 @@ class TestSearchOperations:
         collection_name = f"search_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
             distance_metric=DistanceMetric.COSINE,
             description="Search operations test collection"
@@ -394,7 +395,10 @@ class TestSearchOperations:
     def test_empty_collection_search(self, grpc_client, bert_model):
         """Test search on empty collection"""
         empty_collection = f"empty_search_{int(time.time())}"
-        config = CollectionConfig(dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name="test_collection",
+            dimension=768,
+            distance_metric=DistanceMetric.COSINE)
         grpc_client.create_collection(empty_collection, config)
         
         try:
@@ -429,7 +433,10 @@ class TestAdvancedSearchFeatures:
     def test_search_performance_basic(self, grpc_client, bert_model):
         """Test basic search performance characteristics"""
         collection_name = f"perf_test_{int(time.time())}"
-        config = CollectionConfig(dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=768,
+            distance_metric=DistanceMetric.COSINE)
         
         collection = grpc_client.create_collection(collection_name, config)
         

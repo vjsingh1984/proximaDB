@@ -214,9 +214,21 @@ wal_urls = [
 
 === Throughput Benchmarks
 
-**Insert Performance**: 1,758 vectors/second sustained
-**Search Performance**: 6.10x improvement over baseline
-**Memory Efficiency**: 4x reduction with quantization
+**Insert Performance**: 
+- VIPER: 12,000-15,000 vectors/second (with compression)
+- LSM: 14,000-18,000 vectors/second (append-optimized)
+
+**Search Performance**: 
+- Sub-100ms for datasets under 1M vectors
+- 6.10x improvement with storage-aware polymorphic search
+- Near-identical performance between storage engines
+
+**Compression Efficiency**:
+- Up to 172x compression with Product Quantization (PQ8)
+- 4-8x typical compression with Scalar/Uniform quantization
+- Binary quantization: 32x compression consistently
+
+For detailed performance benchmarks and optimization guidelines, see the link:technical_reference.html#performance-benchmarks[Technical Reference Performance section].
 
 === Scalability Limits
 

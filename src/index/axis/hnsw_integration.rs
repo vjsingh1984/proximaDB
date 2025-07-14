@@ -114,13 +114,13 @@ impl PartitionedHnswIndex {
         
         // Add vector to HNSW
         partition.add_vector(
-            vector_record.id.clone(),
-            vector_record.vector.clone(),
-            Some(vector_record.metadata.clone()),
+            vector_record.id.as_deref().unwrap_or("").to_string(),
+            vector_record.vector.to_vec(),
+            Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)),
         ).map_err(|e| anyhow::anyhow!(e))?;
         
         // Update mappings
-        self.vector_partitions.insert(vector_record.id.clone(), partition_id);
+        self.vector_partitions.insert(vector_record.id.as_deref().unwrap_or("").to_string(), partition_id);
         
         // Calculate memory usage before borrowing metadata
         let memory_usage = self.estimate_vector_memory_usage(vector_record);
@@ -143,7 +143,7 @@ impl PartitionedHnswIndex {
         
         tracing::debug!(
             "Added vector {} to HNSW partition {} (total vectors: {})",
-            vector_record.id, partition_id, 
+            vector_record.id.as_deref().unwrap_or(""), partition_id, 
             self.partition_metadata.get(&partition_id).map(|m| m.vector_count).unwrap_or(0)
         );
         
@@ -349,10 +349,17 @@ impl PartitionedHnswIndex {
                     // Extract vector and metadata from HNSW
                     // TODO: Add method to HNSWIndex to get vector by ID
                     let vector_record = VectorRecord {
-                        id: result.vector_id,
+                        id: Some(result.vector_id),
                         collection_id: "".to_string(), // TODO: Track collection
                         vector: vec![], // TODO: Get actual vector
-                        metadata: result.metadata.unwrap_or_default(),
+                        metadata: result.metadata
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                                key: k,
+                                value: v.to_string(),
+                            })
+                            .collect(),
                         timestamp: chrono::Utc::now().timestamp_millis(),
                         created_at: chrono::Utc::now().timestamp_millis(),
                         updated_at: chrono::Utc::now().timestamp_millis(),
@@ -468,7 +475,7 @@ impl AxisManager {
     pub async fn enable_hnsw_index(
         &mut self,
         collection_id: &str,
-        config: Option<AxisHnswConfig>,
+        _config: Option<AxisHnswConfig>,
     ) -> Result<()> {
         tracing::info!("Enabling HNSW indexing for collection {}", collection_id);
         
@@ -487,10 +494,10 @@ impl AxisManager {
     /// Search using HNSW index with AXIS metadata
     pub async fn search_with_hnsw(
         &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        metadata_query: Option<&MetadataQuery>,
+        _collection_id: &str,
+        _query_vector: &[f32],
+        _k: usize,
+        _metadata_query: Option<&MetadataQuery>,
     ) -> Result<Vec<VectorRecord>> {
         // TODO: Integrate with actual HNSW manager
         // For now, return empty results
@@ -504,11 +511,15 @@ mod tests {
     use serde_json::json;
 
     fn create_test_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), json!("test"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: "test".to_string(),
+            }
+        ];
         
         VectorRecord {
-            id: id.to_string(),
+            id: Some(id.to_string()),
             collection_id: "test_collection".to_string(),
             vector,
             metadata,

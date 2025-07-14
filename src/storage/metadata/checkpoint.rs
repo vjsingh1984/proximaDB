@@ -26,7 +26,6 @@ use crate::storage::metadata::backends::filestore_backend::{
     IncrementalOperation, OperationType,
 };
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use prost::Message;
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
 // This specific metadata checkpoint config extends the base config
@@ -108,7 +107,7 @@ impl FilestoreCheckpointManager {
 
         if let Ok(entries) = fs.list(&incremental_dir.to_string_lossy()).await {
             for entry in entries {
-                if entry.name.starts_with("op_") && entry.name.ends_with(".proto") {
+                if entry.name.starts_with("op_") && entry.name.ends_with(".oplog") {
                     count += 1;
                     total_size += entry.metadata.size as usize;
                 }
@@ -177,7 +176,7 @@ impl FilestoreCheckpointManager {
     ) -> Result<BTreeMap<String, Collection>> {
         let snapshot_path = self
             .metadata_path
-            .join("snapshots/current_collections.proto");
+            .join("snapshots/current_collections.meta");
         let mut memtable = BTreeMap::new();
 
         if fs.exists(&snapshot_path.to_string_lossy()).await? {
@@ -210,7 +209,7 @@ impl FilestoreCheckpointManager {
         if let Ok(entries) = fs.list(&incremental_dir.to_string_lossy()).await {
             let mut op_files: Vec<_> = entries
                 .into_iter()
-                .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".proto"))
+                .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".oplog"))
                 .collect();
 
             // Sort by filename (which includes sequence number)
@@ -330,10 +329,10 @@ impl FilestoreCheckpointManager {
     ) -> Result<()> {
         let snapshot_path = self
             .metadata_path
-            .join("snapshots/current_collections.proto");
+            .join("snapshots/current_collections.meta");
         let temp_path = self
             .metadata_path
-            .join("snapshots/current_collections.proto.tmp");
+            .join("snapshots/current_collections.meta.tmp");
 
         info!("Creating new snapshot with {} collections", memtable.len());
 
@@ -384,9 +383,9 @@ impl FilestoreCheckpointManager {
         // Copy current snapshot if exists
         let current_snapshot = self
             .metadata_path
-            .join("snapshots/current_collections.proto");
+            .join("snapshots/current_collections.meta");
         if fs.exists(&current_snapshot.to_string_lossy()).await? {
-            let archive_snapshot = archive_dir.join("snapshot_collections.proto");
+            let archive_snapshot = archive_dir.join("snapshot_collections.meta");
             fs.copy(
                 &current_snapshot.to_string_lossy(),
                 &archive_snapshot.to_string_lossy(),
@@ -402,7 +401,7 @@ impl FilestoreCheckpointManager {
                 .await?;
 
             for entry in entries {
-                if entry.name.ends_with(".proto") {
+                if entry.name.ends_with(".oplog") {
                     let src = incremental_dir.join(&entry.name);
                     let dst = archive_incremental.join(&entry.name);
 
@@ -468,7 +467,7 @@ impl FilestoreCheckpointManager {
 
         if let Ok(entries) = fs.list(&incremental_dir.to_string_lossy()).await {
             for entry in entries {
-                if entry.name.starts_with("op_") && entry.name.ends_with(".proto") {
+                if entry.name.starts_with("op_") && entry.name.ends_with(".oplog") {
                     count += 1;
                     size += entry.metadata.size as usize;
                 }

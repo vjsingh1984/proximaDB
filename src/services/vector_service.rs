@@ -16,6 +16,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use futures::future;
+use prost::Message;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,12 +24,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, span, warn, Level};
 
 use crate::storage::persistence::wal::config::WalConfig;
-// Legacy WalFactory removed - using WalManager with modern batch strategies
-// use crate::storage::persistence::wal::factory::WalFactory;
+// Using WalManager with modern batch strategies
 
 // Use centralized schema from wal module
 use crate::storage::persistence::wal::schema::{
-    VECTOR_BATCH_SCHEMA_V1, deserialize_vector_batch
+    deserialize_vector_batch_unified as deserialize_vector_batch
 };
 
 // Function removed - using centralized deserialize_vector_batch from schema module
@@ -40,11 +40,10 @@ use crate::storage::StorageEngine;
 // These types are now distributed across different modules
 // VIPER engine imports removed - not used in this service
 use crate::core::avro_serialization::get_avro_serializer;
-use crate::core::LsmConfig;
 use crate::core::{
     HealthResponse, IndexStats, MetadataFilter, MetricsResponse,
     OperationResponse, SearchDebugInfo, SearchMetadata, SearchResult,
-    SearchStrategy, VectorInsertResponse,
+    VectorId, VectorInsertResponse,
     VectorOperationMetrics, VectorSearchResponse, WalMetrics,
 };
 use crate::index::axis::{AxisConfig, AxisManager};
@@ -222,7 +221,7 @@ impl CollectionStorageIndexCoordinator {
                     tracing::warn!(
                         "⚠️ [{}] Vector {} belongs to different collection: {}",
                         self.collection_id,
-                        vector.id,
+                        vector.id.as_deref().unwrap_or(""),
                         vector.collection_id
                     );
                     false
@@ -235,9 +234,10 @@ impl CollectionStorageIndexCoordinator {
         // Batch insert vectors to reduce async overhead
         let insert_futures = valid_vectors.into_iter().map(|vector| {
             let axis_manager = Arc::clone(&self.axis_manager);
-            let vector_id = vector.id.clone();
+            let vector_id = vector.id.clone().unwrap_or_default();
             async move {
-                match axis_manager.insert(vector.clone()).await {
+                // Direct usage - no conversion needed in proto-first architecture
+                match axis_manager.insert(&vector).await {
                     Ok(_) => Ok(()),
                     Err(e) => Err((vector_id, e)),
                 }
@@ -520,7 +520,8 @@ impl VectorService {
             .await
             .context("Failed to create filesystem factory for LSM")?,
         );
-        let lsm_engine = Arc::new(Self::create_lsm_engine(&wal, filesystem).await?);
+        let storage_config = storage.read().await.get_config().clone();
+        let lsm_engine = Arc::new(Self::create_lsm_engine(&wal, filesystem, &storage_config).await?);
         info!("✅ LSM engine created for LSM collections");
 
         // Register both storage engines with the WAL flush coordinator
@@ -699,18 +700,24 @@ impl VectorService {
     async fn create_lsm_engine(
         wal: &Arc<WalManager>,
         filesystem: Arc<FilesystemFactory>,
+        storage_config: &crate::core::config::StorageConfig,
     ) -> Result<LsmTree> {
         info!("🔧 Creating LSM engine for LSM collections");
 
-        // Create LSM configuration
-        let lsm_config = LsmConfig::default();
+        // Use LSM configuration from storage config
+        let lsm_config = storage_config.lsm_config.clone();
 
         // Use a dummy collection ID for the unified LSM engine
         // In a real implementation, each collection would have its own LSM tree
         let collection_id = crate::core::String::from("unified_lsm".to_string());
 
-        // Create data directory for LSM (using workspace data directory)
-        let data_dir = std::path::PathBuf::from("/workspace/data/lsm");
+        // Create data directory for LSM using configured path
+        let data_dir = if !storage_config.storage_layout.base_paths.is_empty() {
+            storage_config.storage_layout.base_paths[0].base_dir.join("lsm")
+        } else {
+            std::path::PathBuf::from("./data/lsm")
+        };
+        
         if let Err(_) = std::fs::create_dir_all(&data_dir) {
             warn!(
                 "LSM data directory already exists or creation failed: {:?}",
@@ -794,7 +801,6 @@ impl VectorService {
     // VECTOR OPERATIONS
     // =============================================================================
 
-    // Legacy search_vectors method removed - use search_vectors_polymorphic instead
 
     /// Get single vector by ID
     pub async fn get_vector(
@@ -827,15 +833,15 @@ impl VectorService {
                     score: 1.0, // Exact match
                     distance: Some(0.0),
                     rank: Some(0),
-                    vector: Some(vector_data.vector),
-                    metadata: vector_data.metadata,
+                    vector: Some(vector_data.vector.clone()),
+                    metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_data.metadata),
                     collection_id: Some(collection_id.to_string()),
-                    created_at: Some(vector_data.created_at),
+                    created_at: Some(vector_data.timestamp),
                     algorithm_used: Some("DIRECT_LOOKUP".to_string()),
                     processing_time_us: Some(processing_time),
                 }],
-                total_count: 1,
-                total_found: 1,
+                total_count: 1 as i64,
+                total_found: 1 as i64,
                 processing_time_us: processing_time,
                 algorithm_used: "DIRECT_LOOKUP".to_string(),
                 error_message: None,
@@ -843,7 +849,7 @@ impl VectorService {
                     algorithm_used: "DIRECT_LOOKUP".to_string(),
                     query_id: Some(format!("get_{}", vector_id)),
                     query_complexity: 0.1,
-                    total_results: 1,
+                    total_results: 1 as i64,
                     search_time_ms: processing_time as f64 / 1000.0,
                     performance_hint: None,
                     index_stats: None,
@@ -854,8 +860,8 @@ impl VectorService {
             VectorSearchResponse {
                 success: false,
                 results: vec![],
-                total_count: 0,
-                total_found: 0,
+                total_count: 0 as i64,
+                total_found: 0 as i64,
                 processing_time_us: processing_time,
                 algorithm_used: "DIRECT_LOOKUP".to_string(),
                 error_message: Some("Vector not found".to_string()),
@@ -863,7 +869,7 @@ impl VectorService {
                     algorithm_used: "DIRECT_LOOKUP".to_string(),
                     query_id: Some(format!("get_{}", vector_id)),
                     query_complexity: 0.1,
-                    total_results: 0,
+                    total_results: 0 as i64,
                     search_time_ms: processing_time as f64 / 1000.0,
                     performance_hint: None,
                     index_stats: None,
@@ -1172,10 +1178,10 @@ impl VectorService {
 
         let timestamp_ms = timestamp / 1000; // Convert from microseconds to milliseconds
         let vector_record = crate::core::VectorRecord {
-            id: vector_id.clone(),
+            id: Some(vector_id.clone()),
             collection_id: collection_id.to_string(),
             vector: vector_data,
-            metadata: metadata.unwrap_or_default(),
+            metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata.unwrap_or_default()),
             timestamp: timestamp_ms,
             created_at: timestamp_ms,
             updated_at: timestamp_ms,
@@ -1187,7 +1193,7 @@ impl VectorService {
         };
 
         storage
-            .write(vector_record)
+            .write(&vector_record)
             .await
             .context("Failed to insert vector in batch processing")?;
 
@@ -1317,13 +1323,9 @@ impl VectorService {
                                 updates
                             )?;
 
-                            // Convert to Avro and treat as upsert
-                            let avro_data = vector_record.to_avro_bytes()
-                                .context("Failed to serialize updated vector to Avro")?;
-
-                            // Use append_avro_entry for consistency
+                            // Let WAL strategy handle serialization format
                             match self.wal
-                                .append_avro_entry(collection_id, "upsert", &avro_data)
+                                .insert(collection_id.to_string(), VectorId::from(vector_id.to_string()), &vector_record)
                                 .await
                             {
                                 Ok(_) => {
@@ -1422,10 +1424,10 @@ impl VectorService {
             .and_then(|v| v.as_i64());
 
         let record = crate::core::VectorRecord {
-            id: vector_id.to_string(),
+            id: Some(vector_id.to_string()),
             collection_id: collection_id.to_string(),
             vector,
-            metadata,
+            metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
             timestamp: now_ms,
             created_at: now_ms,
             updated_at: now_ms,
@@ -1443,14 +1445,251 @@ impl VectorService {
     /// Handle vector insert with separated gRPC metadata and Avro vector data
     /// Unified batch handler - insert/upsert/delete determined by VectorRecord contents
     // Renamed from handle_vector_insert for clarity
+    // PROTO-FIRST: Handle vector batch with native proto vectors
     // This method handles ALL vector mutations: insert, upsert, delete
-    // Operation type is determined by the VectorRecord contents in the Avro payload
+    // Operation type is determined by the VectorRecord contents
+    pub async fn handle_vector_batch_proto(
+        &self,
+        collection_id: &str,
+        proto_vectors: Vec<crate::proto::proximadb::VectorRecord>,
+    ) -> Result<Vec<u8>> {
+        // No conversion needed - VectorRecord is ProtoVectorRecord
+        // Convert to Arc for zero-copy sharing throughout the system
+        let arc_vectors = Arc::new(proto_vectors);
+        self.handle_vector_insert_impl_native_arc(collection_id, arc_vectors).await
+    }
+
+    // Handle byte-based input for vector mutations: insert, upsert, delete
+    // Operation type is determined by the VectorRecord contents in the payload
     pub async fn handle_vector_batch(
         &self,
         collection_id: &str,
-        vectors_avro_payload: &[u8],
+        vectors_payload: &[u8],
     ) -> Result<Vec<u8>> {
-        self.handle_vector_insert_impl(collection_id, vectors_avro_payload).await
+        // Try to deserialize as proto first, fall back to avro
+        match self.deserialize_vector_batch(vectors_payload).await {
+            Ok(native_vectors) => {
+                // Use Arc-based method for zero-copy
+                let arc_vectors = Arc::new(native_vectors);
+                self.handle_vector_insert_impl_native_arc(collection_id, arc_vectors).await
+            }
+            Err(e) => {
+                tracing::error!("Failed to deserialize vector batch: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Deserialize vector batch from bytes (proto-first with avro fallback)
+    async fn deserialize_vector_batch(&self, payload: &[u8]) -> Result<Vec<crate::core::VectorRecord>> {
+        // Try proto first (new format)
+        if let Ok(proto_batch) = crate::proto::proximadb::VectorBatchRequest::decode(payload) {
+            return Ok(proto_batch.vectors);
+        }
+        
+        // Try avro format
+        match crate::storage::persistence::wal::schema::deserialize_vector_batch_unified(payload) {
+            Ok(vectors) => Ok(vectors),
+            Err(e) => Err(anyhow::anyhow!("Failed to deserialize as both proto and avro: {}", e))
+        }
+    }
+
+    /// Native implementation with Arc for true zero-copy
+    async fn handle_vector_insert_impl_native_arc(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<crate::core::VectorRecord>>,
+    ) -> Result<Vec<u8>> {
+        tracing::info!("🚀 PROTO-FIRST ZERO-COPY: Processing {} native vectors for collection {}", 
+                      native_vectors.len(), collection_id);
+        
+        // Pass Arc directly to WAL for zero-copy
+        let sequences = self.wal.write_vector_batch_native_arc(collection_id, native_vectors).await?;
+        
+        // Create response
+        let response = crate::core::VectorInsertResponse {
+            success: true,
+            metrics: crate::core::VectorOperationMetrics {
+                total_processed: sequences.len() as i64,
+                successful_count: sequences.len() as i64,
+                failed_count: 0,
+                updated_count: 0,
+                processing_time_us: 0, // TODO: Add timing
+                wal_write_time_us: 0, // TODO: Add timing
+                index_update_time_us: 0, // TODO: Add timing
+            },
+            vector_ids: sequences.iter().map(|s| s.to_string()).collect(),
+            error_message: None,
+            error_code: None,
+        };
+        
+        // Serialize response
+        serde_json::to_vec(&response).context("Failed to serialize response")
+    }
+
+
+    /// Handle proto-first vector batch from gRPC handlers
+    pub async fn handle_proto_vector_batch(
+        &self,
+        collection_id: &str,
+        proto_vectors: &[crate::proto::proximadb::VectorRecord],
+    ) -> Result<Vec<u8>> {
+        let _span = span!(Level::DEBUG, "handle_proto_vector_batch");
+        info!("🔧 [DEBUG] VectorService handling proto vector batch: collection={}, count={}", 
+               collection_id, proto_vectors.len());
+        
+        if proto_vectors.is_empty() {
+            return Err(anyhow!("Empty proto vector batch"));
+        }
+
+        let wal_start = std::time::Instant::now();
+        
+        // Proto-first: proto vectors ARE VectorRecord - use Arc for zero-copy
+        let arc_vectors = Arc::new(proto_vectors.to_vec());
+        let sequences = self.wal
+            .write_vector_batch_native_arc(collection_id, arc_vectors.clone())
+            .await?;
+        
+        let vector_count = arc_vectors.len();
+        let vector_ids = sequences;
+
+        let wal_time = wal_start.elapsed();
+        
+        // Create response
+        let response = crate::core::VectorInsertResponse {
+            success: true,
+            vector_ids: vector_ids.into_iter().map(|id| id.to_string()).collect(),
+            metrics: crate::core::VectorOperationMetrics {
+                total_processed: vector_count as i64,
+                successful_count: vector_count as i64,
+                failed_count: 0 as i64,
+                updated_count: 0 as i64,
+                processing_time_us: wal_time.as_micros() as i64,
+                wal_write_time_us: wal_time.as_micros() as i64,
+                index_update_time_us: 0 as i64,
+            },
+            error_message: None,
+            error_code: None,
+        };
+
+        // Serialize response to JSON for gRPC compatibility
+        let response_json = serde_json::to_vec(&response)?;
+        Ok(response_json)
+    }
+
+    /// Arc-based proto vector batch for truly zero-copy operations
+    pub async fn handle_vector_batch_proto_arc(
+        &self,
+        collection_id: &str,
+        proto_vectors: Arc<Vec<crate::proto::proximadb::VectorRecord>>,
+    ) -> Result<Vec<u8>> {
+        let _span = span!(Level::DEBUG, "handle_vector_batch_proto_arc");
+        info!("⚡ ZERO-COPY: VectorService handling Arc proto vector batch: collection={}, count={}", 
+               collection_id, proto_vectors.len());
+        
+        if proto_vectors.is_empty() {
+            return Err(anyhow!("Empty proto vector batch"));
+        }
+
+        let wal_start = std::time::Instant::now();
+        
+        // True zero-copy: Arc is passed directly without any cloning
+        let sequences = self.wal
+            .write_vector_batch_native_arc(collection_id, proto_vectors.clone())
+            .await?;
+        
+        let vector_count = proto_vectors.len();
+        let vector_ids = sequences;
+
+        let wal_time = wal_start.elapsed();
+        
+        // Create response
+        let response = crate::core::VectorInsertResponse {
+            success: true,
+            vector_ids: vector_ids.into_iter().map(|id| id.to_string()).collect(),
+            metrics: crate::core::VectorOperationMetrics {
+                total_processed: vector_count as i64,
+                successful_count: vector_count as i64,
+                failed_count: 0 as i64,
+                updated_count: 0 as i64,
+                processing_time_us: wal_time.as_micros() as i64,
+                wal_write_time_us: wal_time.as_micros() as i64,
+                index_update_time_us: 0 as i64,
+            },
+            error_message: None,
+            error_code: None,
+        };
+
+        // Serialize response to JSON for gRPC compatibility
+        let response_json = serde_json::to_vec(&response)?;
+        Ok(response_json)
+    }
+
+    /// Handle proto-first vector batch from Vec for maximum zero-copy performance
+    pub async fn handle_vector_batch_proto_vec(
+        &self,
+        collection_id: &str,
+        proto_vectors: Vec<crate::proto::proximadb::VectorRecord>,
+    ) -> Result<Vec<u8>> {
+        let _span = span!(Level::DEBUG, "handle_vector_batch_proto_vec");
+        info!("⚡ MAX_ZERO_COPY: VectorService handling Vec proto vector batch: collection={}, count={}", 
+               collection_id, proto_vectors.len());
+        
+        if proto_vectors.is_empty() {
+            return Err(anyhow!("Empty proto vector batch"));
+        }
+
+        let wal_start = std::time::Instant::now();
+        
+        // Maximum zero-copy: Arc wraps the provided Vec directly
+        let arc_vectors = Arc::new(proto_vectors);
+        let sequences = self.wal
+            .write_vector_batch_native_arc(collection_id, arc_vectors.clone())
+            .await?;
+        
+        let vector_count = arc_vectors.len();
+        let vector_ids = sequences;
+
+        let wal_time = wal_start.elapsed();
+        
+        // Create response
+        let response = crate::core::VectorInsertResponse {
+            success: true,
+            vector_ids: vector_ids.into_iter().map(|id| id.to_string()).collect(),
+            metrics: crate::core::VectorOperationMetrics {
+                total_processed: vector_count as i64,
+                successful_count: vector_count as i64,
+                failed_count: 0 as i64,
+                updated_count: 0 as i64,
+                processing_time_us: wal_time.as_micros() as i64,
+                wal_write_time_us: wal_time.as_micros() as i64,
+                index_update_time_us: 0 as i64,
+            },
+            error_message: None,
+            error_code: None,
+        };
+
+        // Serialize response to JSON for gRPC compatibility
+        let response_json = serde_json::to_vec(&response)?;
+        Ok(response_json)
+    }
+
+    /// Detect if payload is Proto or Avro format
+    fn detect_payload_format(payload: &[u8]) -> &'static str {
+        // Proto messages typically start with a field tag and wire type
+        // Avro typically starts with schema fingerprint or magic bytes
+        if payload.len() >= 4 {
+            // Check for Avro Object Container File magic bytes
+            if payload.starts_with(b"Obj\x01") {
+                return "avro";
+            }
+            // Check for typical Proto patterns (field 1 as string/bytes)
+            if payload[0] == 0x0a || payload[0] == 0x12 {
+                return "proto";
+            }
+        }
+        // Default to Avro for backward compatibility
+        "avro"
     }
 
     // Internal implementation - handles insert/upsert/delete based on VectorRecord contents
@@ -1472,6 +1711,56 @@ impl VectorService {
 
         // OPTIMIZED DESIGN: Strategy-specific handling for maximum performance
         let (vector_count, vector_ids) = match self.wal_strategy_type {
+            WalStrategyType::ProtoBatch => {
+                // PROTO STRATEGY: Auto-detect format and use appropriate path
+                let payload_format = Self::detect_payload_format(vectors_avro_payload);
+                info!("🔧 [DEBUG] PROTO STRATEGY: Detected {} format", payload_format);
+
+                match payload_format {
+                    "proto" => {
+                        // Native proto path - validate and get count
+                        let count = Self::quick_validate_proto_payload(vectors_avro_payload)?;
+                        let operation_type = format!("vector_batch_insert_{}", collection_id);
+                        match self
+                            .wal
+                            .append_proto_entry(collection_id, &operation_type, vectors_avro_payload)
+                            .await
+                        {
+                            Ok(seq) => {
+                                info!("🔧 [DEBUG] ✅ Proto WAL write succeeded with sequence {}", seq);
+                                (count, vec![format!("batch_{}_{}", collection_id, seq)])
+                            }
+                            Err(e) => {
+                                error!("🔧 [DEBUG] ❌ Proto WAL write failed: {}", e);
+                                return Err(anyhow::anyhow!("Proto WAL write failed: {}", e));
+                            }
+                        }
+                    }
+                    "avro" => {
+                        // Avro-to-Proto conversion path
+                        let count = Self::quick_validate_avro_payload(vectors_avro_payload)?;
+                        let operation_type = format!("vector_batch_insert_{}", collection_id);
+                        match self
+                            .wal
+                            .append_avro_entry(collection_id, &operation_type, vectors_avro_payload)
+                            .await
+                        {
+                            Ok(seq) => {
+                                info!("🔧 [DEBUG] ✅ Avro-to-Proto WAL write succeeded with sequence {}", seq);
+                                (count, vec![format!("batch_{}_{}", collection_id, seq)])
+                            }
+                            Err(e) => {
+                                error!("🔧 [DEBUG] ❌ Avro-to-Proto WAL write failed: {}", e);
+                                return Err(anyhow::anyhow!("Avro-to-Proto WAL write failed: {}", e));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!("Unsupported payload format"));
+                    }
+                }
+            }
+            
             WalStrategyType::AvroBatch => {
                 // AVRO STRATEGY: True zero-copy path
                 info!("🔧 [DEBUG] AVRO STRATEGY: Using TRUE ZERO-COPY path");
@@ -1559,6 +1848,7 @@ impl VectorService {
             match self.wal_strategy_type {
                 WalStrategyType::AvroBatch => "ZERO-COPY AVRO",
                 WalStrategyType::BincodeBatch => "BINCODE",
+                WalStrategyType::ProtoBatch => "PROTO",
             }
         );
 
@@ -1575,7 +1865,7 @@ impl VectorService {
             metrics: VectorOperationMetrics {
                 total_processed: vector_count as i64,
                 successful_count: vector_count as i64,
-                failed_count: 0,
+                failed_count: 0 as i64,
                 updated_count: vector_count as i64, // Always report as updates since we use upsert semantics
                 processing_time_us: processing_time,
                 wal_write_time_us: wal_write_time,
@@ -1586,33 +1876,26 @@ impl VectorService {
         Ok(serde_json::to_vec(&response)?)
     }
 
+    /// Quick Proto validation without full deserialization
+    /// Returns the number of vectors in the batch
+    fn quick_validate_proto_payload(proto_payload: &[u8]) -> Result<usize> {
+        use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
+        
+        // Attempt to deserialize as Proto vector batch
+        match deserialize_proto_vector_batch(proto_payload) {
+            Ok(records) => Ok(records.len()),
+            Err(_) => Err(anyhow!("Invalid Proto payload structure"))
+        }
+    }
+
     /// Quick Avro validation without full deserialization
     /// Returns the number of vectors in the batch
     fn quick_validate_avro_payload(avro_payload: &[u8]) -> Result<usize> {
-        use apache_avro::Schema;
-
-        // Parse schema
-        let schema =
-            Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
-                .context("Failed to parse vector batch schema")?;
-
-        // Just parse enough to validate structure and count vectors
-        let mut reader = std::io::Cursor::new(avro_payload);
-        let value = apache_avro::from_avro_datum(&schema, &mut reader, None)
-            .context("Invalid Avro datum format")?;
-
-        // Extract vector count without full deserialization
-        if let apache_avro::types::Value::Record(fields) = &value {
-            for (name, field_value) in fields {
-                if name == "vectors" {
-                    if let apache_avro::types::Value::Array(vectors) = field_value {
-                        return Ok(vectors.len());
-                    }
-                }
-            }
+        // Try to deserialize using the unified schema function
+        match crate::storage::persistence::wal::schema::deserialize_vector_batch(avro_payload) {
+            Ok(records) => Ok(records.len()),
+            Err(_) => Err(anyhow!("Invalid Avro payload structure"))
         }
-
-        Err(anyhow!("Invalid Avro payload structure"))
     }
 
     /// Handle flush completion notification from storage engines
@@ -1759,9 +2042,9 @@ impl VectorService {
                 owner: None,
             }),
             stats: Some(crate::proto::proximadb::CollectionStats {
-                vector_count: 0,
-                index_size_bytes: 0,
-                data_size_bytes: 0,
+                vector_count: 0 as i64,
+                index_size_bytes: 0 as i64,
+                data_size_bytes: 0 as i64,
             }),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
@@ -1950,7 +2233,7 @@ impl VectorService {
         Ok(VectorSearchResponse {
             success: true,
             results: search_results,
-            total_count: total_found,
+            total_count: total_found as i64,
             total_found,
             processing_time_us: processing_time,
             algorithm_used: "VIPER_PARQUET_COLUMN_PUSHDOWN".to_string(),
@@ -1962,7 +2245,7 @@ impl VectorService {
                     chrono::Utc::now().timestamp_millis()
                 )),
                 query_complexity: 0.5,
-                total_results: total_found,
+                total_results: total_found as i64,
                 search_time_ms: (processing_time / 1000) as f64,
                 performance_hint: if total_found > 100 {
                     Some("Consider adding more specific filters for better performance".to_string())

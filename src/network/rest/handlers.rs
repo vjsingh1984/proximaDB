@@ -30,17 +30,12 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::VectorRecord;
-use crate::services::collection_service::CollectionService;
-use crate::services::vector_service::VectorService;
-use crate::storage::persistence::wal::schema::create_avro_vector_batch;
-use crate::index::config::IndexConfig;
+use crate::handlers::{UnifiedHandlers, conversions};
 
 /// Shared application state for REST handlers
 #[derive(Clone)]
 pub struct AppState {
-    pub vector_service: Arc<VectorService>,
-    pub collection_service: Arc<CollectionService>,
+    pub unified_handlers: Arc<UnifiedHandlers>,
 }
 
 // ============================================================================
@@ -48,7 +43,7 @@ pub struct AppState {
 // ============================================================================
 
 /// Unified collection operation request - aligned with proto CollectionRequest
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CollectionOperationRequest {
     pub operation: String, // "create", "update", "get", "list", "delete"
     pub collection_id: Option<String>,
@@ -63,9 +58,9 @@ pub struct CollectionOperationRequest {
 pub struct CollectionConfig {
     pub name: String,
     pub dimension: i32,
-    pub distance_metric: String,            // "cosine", "euclidean", "dot_product"
-    pub storage_engine: String,             // "viper", "lsm"
-    pub primary_indexing_algorithm: String, // "hnsw", "ivf", "flat", "pq", "annoy"
+    pub distance_metric: Option<String>,            // "cosine", "euclidean", "dot_product" - defaults to "cosine"
+    pub storage_engine: Option<String>,             // "viper", "lsm" - defaults to "viper"
+    pub primary_indexing_algorithm: Option<String>, // "hnsw", "ivf", "flat", "pq", "annoy" - defaults to "hnsw"
     pub filterable_columns: Option<Vec<FilterableColumn>>,
     pub index_configs: Option<Vec<IndexConfiguration>>,
     pub quantization_config: Option<QuantizationConfig>,
@@ -271,7 +266,7 @@ pub struct CollectionStats {
 }
 
 /// Vector batch request - aligned with proto VectorBatchRequest
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VectorBatchRequest {
     pub collection_id: String,
     pub vectors: Vec<VectorData>,
@@ -280,7 +275,7 @@ pub struct VectorBatchRequest {
 }
 
 /// Vector data for batch operations
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VectorData {
     pub id: Option<String>,
     pub vector: Vec<f32>,
@@ -289,7 +284,7 @@ pub struct VectorData {
 }
 
 /// Vector search request - aligned with proto VectorSearchRequest
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VectorSearchRequest {
     pub collection_id: String,
     pub queries: Vec<SearchQuery>,
@@ -301,7 +296,7 @@ pub struct VectorSearchRequest {
 }
 
 /// Search query
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SearchQuery {
     pub vector: Vec<f32>,
     pub id: Option<String>,
@@ -309,14 +304,14 @@ pub struct SearchQuery {
 }
 
 /// Metadata filter
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub operator: String, // "and", "or", "not"
 }
 
 /// Filter condition
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FilterCondition {
     pub field_name: String,
     pub operation: String, // "equals", "greater_than", "less_than", "in", etc.
@@ -324,7 +319,7 @@ pub struct FilterCondition {
 }
 
 /// Search parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SearchParameters {
     pub ef_search: Option<i32>,
     pub max_connections: Option<i32>,
@@ -338,7 +333,7 @@ pub struct SearchParameters {
 }
 
 /// Include fields in search results
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct IncludeFields {
     pub vector: bool,
     pub metadata: bool,
@@ -347,7 +342,7 @@ pub struct IncludeFields {
 }
 
 /// Search optimization hints
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SearchOptimization {
     pub top_k: Option<u32>,
     pub filters: Option<HashMap<String, serde_json::Value>>,
@@ -362,7 +357,7 @@ pub struct SearchOptimization {
 }
 
 /// Quantization hint for search
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct QuantizationHint {
     pub hint_type: String, // "none", "binary", "scalar", "product", "uniform"
     pub parameters: Option<serde_json::Value>,
@@ -475,7 +470,7 @@ pub fn create_router(state: AppState) -> Router {
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    match state.vector_service.health_check().await {
+    match state.unified_handlers.vector_service.health_check().await {
         Ok(health_bytes) => {
             match serde_json::from_slice::<serde_json::Value>(&health_bytes) {
                 Ok(health_data) => {
@@ -513,539 +508,178 @@ pub async fn health_check(
     }
 }
 
-/// Unified collection operation handler
+/// Unified collection operation handler - thin adapter to UnifiedHandlers
 pub async fn collection_operation(
     State(state): State<AppState>,
     Json(request): Json<CollectionOperationRequest>,
 ) -> Result<JsonResponse<CollectionResponse>, StatusCode> {
-    let start_time = std::time::Instant::now();
+    // Convert REST request to proto request
+    let proto_request = conversions::CollectionRequestBuilder::from_json(serde_json::to_value(&request).unwrap())
+        .map_err(|e| {
+            tracing::error!("Failed to parse collection request: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     
-    let response = match request.operation.as_str() {
-        "create" => handle_create_collection(state, request).await?,
-        "get" => handle_get_collection(state, request).await?,
-        "list" => handle_list_collections(state, request).await?,
-        "update" => handle_update_collection(state, request).await?,
-        "delete" => handle_delete_collection(state, request).await?,
-        _ => {
-            return Ok(JsonResponse(CollectionResponse {
-                success: false,
-                operation: request.operation,
-                collection: None,
-                collections: None,
-                affected_count: 0,
-                total_count: None,
-                metadata: HashMap::new(),
-                error_message: Some("Invalid operation".to_string()),
-                error_code: Some("INVALID_OPERATION".to_string()),
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-            }));
-        }
+    // Delegate to unified handlers
+    let proto_response = state.unified_handlers
+        .handle_collection_operation(proto_request)
+        .await
+        .map_err(|e| {
+            tracing::error!("Collection operation failed: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    // Convert proto response to REST response
+    let response = CollectionResponse {
+        success: proto_response.success,
+        operation: conversions::collection_operation_to_string(proto_response.operation),
+        collection: proto_response.collection.map(|c| convert_from_proto_collection(c)),
+        collections: if proto_response.collections.is_empty() { 
+            None 
+        } else { 
+            Some(proto_response.collections.into_iter().map(convert_from_proto_collection).collect()) 
+        },
+        affected_count: proto_response.affected_count,
+        total_count: proto_response.total_count,
+        metadata: proto_response.metadata.into_iter().collect(),
+        error_message: proto_response.error_message,
+        error_code: proto_response.error_code,
+        processing_time_us: proto_response.processing_time_us,
     };
     
     Ok(JsonResponse(response))
 }
 
-/// Handle create collection
-async fn handle_create_collection(
-    state: AppState,
-    request: CollectionOperationRequest,
-) -> Result<CollectionResponse, StatusCode> {
-    let start_time = std::time::Instant::now();
-    
-    let config = request.config.ok_or(StatusCode::BAD_REQUEST)?;
-    
-    // Convert to proto types
-    let proto_config = convert_to_proto_config(config)?;
-    
-    // Create through collection service
-    match state.collection_service.create_collection(&proto_config).await {
-        Ok(response) => {
-            if response.success {
-                Ok(CollectionResponse {
-                    success: true,
-                    operation: "create".to_string(),
-                    collection: response.collection.map(convert_from_proto_collection),
-                    collections: None,
-                    affected_count: 1,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: None,
-                    error_code: None,
-                    processing_time_us: response.processing_time_us,
-                })
-            } else {
-                Ok(CollectionResponse {
-                    success: false,
-                    operation: "create".to_string(),
-                    collection: None,
-                    collections: None,
-                    affected_count: 0,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: response.error_message,
-                    error_code: response.error_code,
-                    processing_time_us: response.processing_time_us,
-                })
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to create collection: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Handle get collection
-async fn handle_get_collection(
-    state: AppState,
-    request: CollectionOperationRequest,
-) -> Result<CollectionResponse, StatusCode> {
-    let start_time = std::time::Instant::now();
-    
-    let collection_id = request.collection_id.or(request.collection_name)
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    
-    match state.collection_service.get_proto_collection(&collection_id).await {
-        Ok(Some(collection)) => {
-            Ok(CollectionResponse {
-                success: true,
-                operation: "get".to_string(),
-                collection: Some(convert_from_proto_collection(collection)),
-                collections: None,
-                affected_count: 1,
-                total_count: None,
-                metadata: HashMap::new(),
-                error_message: None,
-                error_code: None,
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-            })
-        }
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(e) => {
-            tracing::error!("Failed to get collection: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Handle list collections
-async fn handle_list_collections(
-    state: AppState,
-    _request: CollectionOperationRequest,
-) -> Result<CollectionResponse, StatusCode> {
-    let start_time = std::time::Instant::now();
-    
-    match state.collection_service.list_collections().await {
-        Ok(proto_collections) => {
-            let total = proto_collections.len();
-            let collections: Vec<Collection> = proto_collections.into_iter()
-                .map(convert_from_proto_collection)
-                .collect();
-            let affected_count = collections.len() as i64;
-            
-            Ok(CollectionResponse {
-                success: true,
-                operation: "list".to_string(),
-                collection: None,
-                collections: Some(collections),
-                affected_count,
-                total_count: Some(total as i64),
-                metadata: HashMap::new(),
-                error_message: None,
-                error_code: None,
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-            })
-        }
-        Err(e) => {
-            tracing::error!("Failed to list collections: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Handle update collection
-async fn handle_update_collection(
-    state: AppState,
-    request: CollectionOperationRequest,
-) -> Result<CollectionResponse, StatusCode> {
-    let start_time = std::time::Instant::now();
-    
-    let collection_id = request.collection_id.ok_or(StatusCode::BAD_REQUEST)?;
-    let config = request.config.ok_or(StatusCode::BAD_REQUEST)?;
-    
-    // Get existing collection
-    let existing = match state.collection_service.get_proto_collection(&collection_id).await {
-        Ok(Some(col)) => col,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
-    
-    // Update config fields
-    let mut updated_config = existing.config.unwrap_or_default();
-    if let Some(desc) = config.description {
-        updated_config.description = Some(desc);
-    }
-    if let Some(tags) = config.tags {
-        updated_config.tags = tags;
-    }
-    if let Some(owner) = config.owner {
-        updated_config.owner = Some(owner);
-    }
-    
-    // Update through collection service
-    match state.collection_service.update_collection(&collection_id, Some(updated_config)).await {
-        Ok(response) => {
-            if response.success {
-                Ok(CollectionResponse {
-                    success: true,
-                    operation: "update".to_string(),
-                    collection: response.collection.map(convert_from_proto_collection),
-                    collections: None,
-                    affected_count: 1,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: None,
-                    error_code: None,
-                    processing_time_us: response.processing_time_us,
-                })
-            } else {
-                Ok(CollectionResponse {
-                    success: false,
-                    operation: "update".to_string(),
-                    collection: None,
-                    collections: None,
-                    affected_count: 0,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: response.error_message,
-                    error_code: response.error_code,
-                    processing_time_us: response.processing_time_us,
-                })
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to update collection: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Handle delete collection
-async fn handle_delete_collection(
-    state: AppState,
-    request: CollectionOperationRequest,
-) -> Result<CollectionResponse, StatusCode> {
-    let start_time = std::time::Instant::now();
-    
-    let collection_id = request.collection_id.ok_or(StatusCode::BAD_REQUEST)?;
-    
-    match state.collection_service.delete_collection(&collection_id).await {
-        Ok(response) => {
-            if response.success {
-                Ok(CollectionResponse {
-                    success: true,
-                    operation: "delete".to_string(),
-                    collection: None,
-                    collections: None,
-                    affected_count: 1,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: None,
-                    error_code: None,
-                    processing_time_us: response.processing_time_us,
-                })
-            } else if response.error_code.as_deref() == Some("NOT_FOUND") {
-                Err(StatusCode::NOT_FOUND)
-            } else {
-                Ok(CollectionResponse {
-                    success: false,
-                    operation: "delete".to_string(),
-                    collection: None,
-                    collections: None,
-                    affected_count: 0,
-                    total_count: None,
-                    metadata: HashMap::new(),
-                    error_message: response.error_message,
-                    error_code: response.error_code,
-                    processing_time_us: response.processing_time_us,
-                })
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to delete collection: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Unified vector batch handler
+/// Unified vector batch handler - thin adapter to UnifiedHandlers
 pub async fn vector_batch(
     State(state): State<AppState>,
     Json(request): Json<VectorBatchRequest>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
-    let start_time = std::time::Instant::now();
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    // Convert REST request to proto request
+    let proto_request = conversions::VectorBatchRequestBuilder::from_json(serde_json::to_value(&request).unwrap())
+        .map_err(|e| {
+            tracing::error!("Failed to parse vector batch request: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     
-    // Convert to VectorRecord format
-    let vector_records: Vec<VectorRecord> = request.vectors.into_iter()
-        .map(|v| VectorRecord {
-            id: v.id.unwrap_or_default(),
-            collection_id: request.collection_id.clone(),
-            vector: v.vector,
-            metadata: v.metadata.unwrap_or_default(),
-            timestamp: now_ms,
-            created_at: now_ms,
-            updated_at: now_ms,
-            expires_at: v.expires_at,
-            version: 1,
-            rank: None,
-            score: None,
-            distance: None,
-        })
-        .collect();
+    // Delegate to unified handlers
+    let proto_response = state.unified_handlers
+        .handle_vector_batch(proto_request)
+        .await
+        .map_err(|e| {
+            tracing::error!("Vector batch operation failed: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     
-    let count = vector_records.len();
+    // Convert proto response to REST response  
+    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+        total_processed: 0,
+        successful_count: 0,
+        failed_count: 0,
+        updated_count: 0,
+        processing_time_us: 0,
+        wal_write_time_us: 0,
+        index_update_time_us: 0,
+    });
     
-    // Convert to Avro binary
-    let avro_payload = create_avro_vector_batch(&vector_records)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let response = VectorOperationResponse {
+        success: proto_response.success,
+        operation: conversions::vector_operation_to_string(proto_response.operation),
+        metrics: OperationMetrics {
+            total_processed: metrics.total_processed,
+            successful_count: metrics.successful_count,
+            failed_count: metrics.failed_count,
+            updated_count: metrics.updated_count,
+            processing_time_us: metrics.processing_time_us,
+            wal_write_time_us: metrics.wal_write_time_us,
+            index_update_time_us: metrics.index_update_time_us,
+        },
+        results: None,
+        vector_ids: proto_response.vector_ids,
+        error_message: proto_response.error_message,
+        error_code: proto_response.error_code,
+    };
     
-    // Process through vector service
-    match state.vector_service.handle_vector_batch(&request.collection_id, &avro_payload).await {
-        Ok(_) => {
-            let vector_ids: Vec<String> = vector_records.into_iter()
-                .map(|r| if r.id.is_empty() { "auto-generated".to_string() } else { r.id })
-                .collect();
-            
-            Ok(JsonResponse(VectorOperationResponse {
-                success: true,
-                operation: "batch".to_string(),
-                metrics: OperationMetrics {
-                    total_processed: count as i64,
-                    successful_count: count as i64,
-                    failed_count: 0,
-                    updated_count: 0,
-                    processing_time_us: start_time.elapsed().as_micros() as i64,
-                    wal_write_time_us: 0,
-                    index_update_time_us: 0,
-                },
-                results: None,
-                vector_ids,
-                error_message: None,
-                error_code: None,
-            }))
-        }
-        Err(e) => {
-            tracing::error!("Failed to process vector batch: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    Ok(JsonResponse(response))
 }
 
-/// Unified vector search handler
+/// Unified vector search handler - thin adapter to UnifiedHandlers
 pub async fn vector_search(
     State(state): State<AppState>,
     Json(request): Json<VectorSearchRequest>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
-    let start_time = std::time::Instant::now();
+    // Convert REST request to proto request
+    let proto_request = conversions::VectorSearchRequestBuilder::from_json(serde_json::to_value(&request).unwrap())
+        .map_err(|e| {
+            tracing::error!("Failed to parse vector search request: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
     
-    // Use search_vectors_polymorphic for direct search
-    let mut all_results = Vec::new();
+    // Delegate to unified handlers
+    let proto_response = state.unified_handlers
+        .handle_vector_search(proto_request)
+        .await
+        .map_err(|e| {
+            tracing::error!("Vector search operation failed: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     
-    // Build search params
-    let search_params = if let Some(opt) = &request.search_optimization {
-        let mut params = crate::core::search::SearchParams {
-            top_k: Some(request.top_k as usize),
-            filters: opt.filters.clone(),
-            accuracy_threshold: opt.accuracy_threshold,
-            include_expired: opt.include_expired,
-            timeout_ms: opt.timeout_ms,
-            enable_two_stage: opt.enable_two_stage,
-            quantization_hint: None,
-            enable_clustering_hint: opt.enable_clustering_hint,
-            enable_metadata_filtering_hint: opt.enable_metadata_filtering_hint,
-            custom_hints: opt.custom_hints.clone(),
-        };
-        
-        // Handle quantization hint
-        if let Some(hint) = &opt.quantization_hint {
-            // Convert REST quantization hint to proto quantization level
-            use crate::proto::proximadb::{quantization_level::LevelType, NoQuantization, 
-                                         UniformQuantization, ProductQuantization, 
-                                         ScalarQuantization, BinaryQuantization};
-            
-            let level_type = match hint.hint_type.as_str() {
-                "none" => Some(LevelType::None(NoQuantization {})),
-                "binary" => Some(LevelType::Binary(BinaryQuantization {
-                    threshold: None,
-                    sign_based: false,
-                })),
-                "scalar" => {
-                    let bits = hint.parameters.as_ref()
-                        .and_then(|p| p.get("bits"))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(8) as i32;
-                    Some(LevelType::Scalar(ScalarQuantization {
-                        bits,
-                        scale: 1.0,
-                        offset: 0.0,
-                        clamp_values: false,
-                    }))
-                }
-                "product" => {
-                    let params = hint.parameters.as_ref();
-                    let num_subvectors = params
-                        .and_then(|p| p.get("num_subvectors"))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(8) as i32;
-                    let bits_per_code = params
-                        .and_then(|p| p.get("bits_per_code"))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(8) as i32;
-                    Some(LevelType::Pq(ProductQuantization {
-                        bits_per_code,
-                        num_subvectors,
-                        codebook_id: None,
-                        adaptive_subvectors: false,
-                    }))
-                }
-                "uniform" => {
-                    let params = hint.parameters.as_ref();
-                    let scale = params
-                        .and_then(|p| p.get("scale"))
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(1.0) as f32;
-                    let offset = params
-                        .and_then(|p| p.get("offset"))
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32;
-                    Some(LevelType::Uniform(UniformQuantization {
-                        bits: 8,
-                        scale: Some(scale),
-                        offset: Some(offset),
-                    }))
-                }
-                _ => None,
-            };
-            
-            params.quantization_hint = Some(crate::proto::proximadb::QuantizationLevel {
-                level_type,
-            });
+    // Convert proto response to REST response
+    let results = if let Some(result_payload) = proto_response.result_payload {
+        match result_payload {
+            crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(compact) => {
+                compact.results.into_iter()
+                    .map(|r| SearchResult {
+                        id: r.id.unwrap_or_default(),
+                        score: r.score,
+                        vector: if r.vector.is_empty() { None } else { Some(r.vector) },
+                        metadata: if r.metadata.is_empty() { None } else { 
+                            Some(r.metadata.into_iter()
+                                .map(|item| (item.key, serde_json::Value::String(item.value)))
+                                .collect()) 
+                        },
+                        rank: r.rank,
+                    })
+                    .collect()
+            }
+            _ => vec![],
         }
-        
-        params
     } else {
-        let mut params = crate::core::search::SearchParams::default();
-        params.top_k = Some(request.top_k as usize);
-        params
+        vec![]
     };
     
-    let query_count = request.queries.len();
-    for query in request.queries {
-        // Build metadata filters if present
-        let metadata_filters = if let Some(filter) = &query.metadata_filter {
-            // Convert metadata filter conditions to HashMap<String, serde_json::Value>
-            // For now, we'll create a simple filter map from the first condition
-            // TODO: Implement proper complex filter logic
-            let mut filter_map = HashMap::new();
-            for condition in &filter.conditions {
-                if condition.operation == "equals" {
-                    filter_map.insert(condition.field_name.clone(), condition.value.clone());
-                }
-            }
-            if filter_map.is_empty() {
-                None
-            } else {
-                Some(filter_map)
-            }
-        } else {
-            None
-        };
-        
-        match state.vector_service.search_vectors_polymorphic(
-            &request.collection_id,
-            &query.vector,
-            request.top_k as usize,
-            &search_params,
-            metadata_filters.as_ref(),
-            request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false),
-            request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true),
-        ).await {
-            Ok(result_bytes) => {
-                // Parse the polymorphic search response
-                let response: serde_json::Value = serde_json::from_slice(&result_bytes)
-                    .map_err(|e| {
-                        tracing::error!("Failed to parse search response: {:?}", e);
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?;
-                
-                // Extract results from the response
-                if let Some(results) = response.get("results").and_then(|r| r.as_array()) {
-                    for result in results {
-                        all_results.push(SearchResult {
-                            id: result.get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            score: result.get("score")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0) as f32,
-                            vector: if request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false) {
-                                result.get("vector")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| arr.iter()
-                                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                        .collect())
-                            } else {
-                                None
-                            },
-                            metadata: if request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true) {
-                                result.get("metadata")
-                                    .and_then(|m| m.as_object())
-                                    .map(|m| m.iter()
-                                        .map(|(k, v)| (k.clone(), v.clone()))
-                                        .collect())
-                            } else {
-                                None
-                            },
-                            rank: if request.include_fields.as_ref().map(|f| f.rank).unwrap_or(false) {
-                                result.get("rank")
-                                    .and_then(|v| v.as_i64())
-                                    .map(|r| r as i32)
-                            } else {
-                                None
-                            },
-                        });
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Search failed: {:?}", e);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-        }
-    }
+    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+        total_processed: 0,
+        successful_count: 0,
+        failed_count: 0,
+        updated_count: 0,
+        processing_time_us: 0,
+        wal_write_time_us: 0,
+        index_update_time_us: 0,
+    });
     
-    Ok(JsonResponse(VectorOperationResponse {
-        success: true,
+    let response = VectorOperationResponse {
+        success: proto_response.success,
         operation: "search".to_string(),
         metrics: OperationMetrics {
-            total_processed: query_count as i64,
-            successful_count: query_count as i64,
+            total_processed: metrics.total_processed,
+            successful_count: metrics.successful_count,
             failed_count: 0,
             updated_count: 0,
-            processing_time_us: start_time.elapsed().as_micros() as i64,
+            processing_time_us: metrics.processing_time_us,
             wal_write_time_us: 0,
             index_update_time_us: 0,
         },
-        results: Some(all_results),
+        results: Some(results),
         vector_ids: vec![],
-        error_message: None,
-        error_code: None,
-    }))
+        error_message: proto_response.error_message,
+        error_code: proto_response.error_code,
+    };
+    
+    Ok(JsonResponse(response))
 }
 
-/// Get single vector by ID
+/// Get single vector by ID - thin adapter to UnifiedHandlers
 pub async fn get_vector(
     State(state): State<AppState>,
     Path((collection_id, vector_id)): Path<(String, String)>,
@@ -1058,7 +692,8 @@ pub async fn get_vector(
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
     
-    match state.vector_service.get_vector(
+    // Delegate to unified handlers
+    match state.unified_handlers.get_vector(
         &collection_id,
         &vector_id,
         include_vector,
@@ -1100,12 +735,13 @@ pub async fn get_vector(
     }
 }
 
-/// Delete single vector by ID
+/// Delete single vector by ID - thin adapter to UnifiedHandlers
 pub async fn delete_vector(
     State(state): State<AppState>,
     Path((collection_id, vector_id)): Path<(String, String)>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    match state.vector_service.delete_vector(&collection_id, &vector_id).await {
+    // Delegate to unified handlers
+    match state.unified_handlers.delete_vector(&collection_id, &vector_id).await {
         Ok(result_bytes) => {
             match serde_json::from_slice::<serde_json::Value>(&result_bytes) {
                 Ok(response) => {
@@ -1139,11 +775,12 @@ pub async fn delete_vector(
     }
 }
 
-/// Get metrics endpoint
+/// Get metrics endpoint - thin adapter to UnifiedHandlers
 pub async fn get_metrics(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
-    match state.vector_service.get_metrics().await {
+    // Delegate to unified handlers
+    match state.unified_handlers.get_metrics().await {
         Ok(metrics_bytes) => {
             match serde_json::from_slice::<serde_json::Value>(&metrics_bytes) {
                 Ok(metrics_data) => {
@@ -1163,34 +800,32 @@ pub async fn get_metrics(
 }
 
 
-/// Internal flush all collections (testing only)
+/// Internal flush all collections (testing only) - thin adapter to UnifiedHandlers
 pub async fn internal_flush_all(
     State(state): State<AppState>,
-) -> Result<JsonResponse<ApiResponse<String>>, StatusCode> {
+) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED - THIS IS FOR TESTING ONLY");
     
-    match state.vector_service.force_flush_all().await {
+    // Delegate to unified handlers
+    match state.unified_handlers.force_flush_all().await {
         Ok(stats) => {
-            Ok(JsonResponse(ApiResponse::success(
-                format!("Flush completed: {:?}", stats)
-            )))
+            Ok(JsonResponse(ApiResponse::success(stats)))
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
 
-/// Internal flush specific collection (testing only)
+/// Internal flush specific collection (testing only) - thin adapter to UnifiedHandlers
 pub async fn internal_flush_collection(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
-) -> Result<JsonResponse<ApiResponse<String>>, StatusCode> {
+) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED FOR {} - THIS IS FOR TESTING ONLY", collection_id);
     
-    match state.vector_service.force_flush_collection(&collection_id).await {
+    // Delegate to unified handlers
+    match state.unified_handlers.force_flush_collection(&collection_id).await {
         Ok(stats) => {
-            Ok(JsonResponse(ApiResponse::success(
-                format!("Flush completed for {}: {:?}", collection_id, stats)
-            )))
+            Ok(JsonResponse(ApiResponse::success(stats)))
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
     }
@@ -1374,20 +1009,24 @@ fn convert_quantization_level_to_proto(level: QuantizationLevel) -> crate::proto
 fn convert_to_proto_config(config: CollectionConfig) -> Result<crate::proto::proximadb::CollectionConfig, StatusCode> {
     use crate::proto::proximadb;
     
-    let distance_metric = match config.distance_metric.as_str() {
+    // Apply defaults for optional fields
+    let distance_metric_str = config.distance_metric.as_deref().unwrap_or("cosine");
+    let distance_metric = match distance_metric_str {
         "cosine" => proximadb::DistanceMetric::Cosine as i32,
         "euclidean" => proximadb::DistanceMetric::Euclidean as i32,
         "dot_product" => proximadb::DistanceMetric::DotProduct as i32,
         _ => proximadb::DistanceMetric::Cosine as i32,
     };
     
-    let storage_engine = match config.storage_engine.as_str() {
+    let storage_engine_str = config.storage_engine.as_deref().unwrap_or("viper");
+    let storage_engine = match storage_engine_str {
         "viper" => proximadb::StorageEngine::Viper as i32,
         "lsm" => proximadb::StorageEngine::Lsm as i32,
         _ => proximadb::StorageEngine::Viper as i32,
     };
     
-    let indexing_algorithm = match config.primary_indexing_algorithm.as_str() {
+    let indexing_algorithm_str = config.primary_indexing_algorithm.as_deref().unwrap_or("hnsw");
+    let indexing_algorithm = match indexing_algorithm_str {
         "hnsw" => proximadb::IndexingAlgorithm::Hnsw as i32,
         "ivf" => proximadb::IndexingAlgorithm::Ivf as i32,
         "flat" => proximadb::IndexingAlgorithm::Flat as i32,
@@ -1755,9 +1394,9 @@ fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> 
         config: CollectionConfig {
             name: config.name,
             dimension: config.dimension,
-            distance_metric,
-            storage_engine,
-            primary_indexing_algorithm: indexing_algorithm,
+            distance_metric: Some(distance_metric),
+            storage_engine: Some(storage_engine),
+            primary_indexing_algorithm: Some(indexing_algorithm),
             filterable_columns: Some(config.filterable_columns.into_iter().map(|col| {
                 FilterableColumn {
                     name: col.name,

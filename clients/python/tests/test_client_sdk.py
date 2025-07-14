@@ -24,11 +24,11 @@ class TestClientCreation:
     def test_unified_client_auto_detect(self):
         """Test unified client with protocol auto-detection"""
         # REST client (port 5678)
-        rest_client = ProximaDBClient("http://localhost:5678")
+        rest_client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.GRPC)
         assert rest_client is not None
         
         # gRPC client (port 5679)
-        grpc_client = ProximaDBClient("http://localhost:5679")
+        grpc_client = ProximaDBClient(url="http://localhost:5679", protocol=Protocol.GRPC)
         assert grpc_client is not None
     
     def test_explicit_protocol_clients(self):
@@ -56,7 +56,7 @@ class TestClientCreation:
     
     def test_direct_client_classes(self):
         """Test direct client class instantiation"""
-        rest_client = ProximaDBRestClient("http://localhost:5678")
+        rest_client = ProximaDBClient("http://localhost:5678", protocol=Protocol.REST)
         assert rest_client is not None
         assert hasattr(rest_client, 'config') or hasattr(rest_client, '_http_client')
         
@@ -197,7 +197,7 @@ class TestErrorHandling:
         """Test handling of connection errors"""
         # Test connection to non-existent server
         try:
-            client = ProximaDBClient("http://localhost:9999")  # Non-existent port
+            client = ProximaDBClient(url="http://localhost:9999", protocol=Protocol.GRPC)  # Non-existent port
             # Some operations might fail only when actually used
             client.list_collections()
         except Exception as e:
@@ -234,7 +234,10 @@ class TestErrorHandling:
         
         for invalid_name in invalid_names:
             with pytest.raises((ProximaDBError, ValueError, TypeError)):
-                config = CollectionConfig(dimension=128)
+                config = CollectionConfig(
+                    name=invalid_name,
+                    dimension=128,
+                    distance_metric=DistanceMetric.COSINE)
                 client.create_collection(invalid_name, config)
 
 
@@ -244,7 +247,7 @@ class TestContextManagers:
     def test_client_context_manager(self):
         """Test client context manager support"""
         try:
-            with ProximaDBClient("http://localhost:5678") as client:
+            with ProximaDBClient(url="http://localhost:5678", protocol=Protocol.GRPC) as client:
                 assert client is not None
                 # Test basic operation
                 try:
@@ -259,7 +262,7 @@ class TestContextManagers:
     def test_specific_client_context_managers(self):
         """Test context managers for specific client types"""
         try:
-            with ProximaDBRestClient("http://localhost:5678") as rest_client:
+            with ProximaDBClient("http://localhost:5678", protocol=Protocol.REST) as rest_client:
                 assert rest_client is not None
                 
         except (AttributeError, TypeError):
@@ -283,7 +286,7 @@ class TestAsyncSupport:
             # Try to import async client
             from proximadb import AsyncProximaDBClient
             
-            async with AsyncProximaDBClient("http://localhost:5678") as client:
+            async with AsyncProximaDBClient(url="http://localhost:5678", protocol=Protocol.GRPC) as client:
                 assert client is not None
                 
                 # Test async operations
@@ -309,7 +312,10 @@ class TestProtocolInteroperability:
         grpc_client = connect_grpc("http://localhost:5679")
         
         collection_name = f"interop_test_{int(time.time())}"
-        config = CollectionConfig(dimension=128, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=256,
+            distance_metric=DistanceMetric.COSINE)
         
         try:
             # Create collection with REST

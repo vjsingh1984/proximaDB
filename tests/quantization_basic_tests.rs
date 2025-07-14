@@ -43,10 +43,10 @@ mod tests {
         let vectors = generate_test_vectors(count, dimensions);
         vectors.into_iter().enumerate().map(|(i, vector)| {
             VectorRecord {
-                id: format!("vector_{}", i),
+                id: Some(format!("vector_{}", i)),
                 collection_id: "test_collection".to_string(),
                 vector,
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 created_at: chrono::Utc::now().timestamp_millis(),
                 updated_at: chrono::Utc::now().timestamp_millis(),
@@ -110,7 +110,8 @@ mod tests {
         
         // Distance to self should be smallest (approximately)
         let self_distance = distances[0];
-        assert!(self_distance <= distances.iter().fold(f32::INFINITY, |a, &b| a.min(b)) + 0.1);
+        let min_distance = distances.iter().fold(f32::INFINITY, |a, b| a.min(b.rank_value));
+        assert!(self_distance.rank_value <= min_distance + 0.1);
     }
 
     #[tokio::test]

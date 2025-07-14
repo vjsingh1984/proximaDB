@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::io::Error as IoError;
 use std::path::PathBuf;
 use url::Url;
+use tracing::{info, error};
 
 pub mod atomic_strategy;
 pub mod auth;
@@ -548,32 +549,54 @@ impl FilesystemFactory {
 
     /// Cross-storage atomic operations - handles full URLs for source and destination
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
+        info!("📋 copy_atomic START");
+        info!("    from_url: {}", from_url);
+        info!("    to_url: {}", to_url);
+        
         let from_fs = self.get_filesystem(from_url)?;
         let to_fs = self.get_filesystem(to_url)?;
 
         // Extract paths from URLs
         let from_path = self.extract_path_from_url(from_url)?;
         let to_path = self.extract_path_from_url(to_url)?;
+        
+        info!("    from_path: {}", from_path);
+        info!("    to_path: {}", to_path);
 
         // Read from source
+        info!("    📖 Reading source file...");
         let data = from_fs.read(&from_path).await?;
+        info!("    ✅ Read {} bytes", data.len());
 
         // Write to destination atomically
+        info!("    💾 Writing to destination atomically...");
         to_fs.write_atomic(&to_path, &data, None).await?;
+        info!("    ✅ Write complete");
 
+        info!("📋 copy_atomic COMPLETE");
         Ok(())
     }
 
     /// Move operation with atomic cross-storage support
     pub async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
+        info!("🚚 move_atomic START");
+        info!("    from_url: {}", from_url);
+        info!("    to_url: {}", to_url);
+        
         // Copy first
+        info!("    📋 Copying file atomically...");
         self.copy_atomic(from_url, to_url).await?;
+        info!("    ✅ Copy successful");
 
         // Delete source after successful copy
+        info!("    🗑️ Deleting source file...");
         let from_fs = self.get_filesystem(from_url)?;
         let from_path = self.extract_path_from_url(from_url)?;
+        info!("    from_path extracted: {}", from_path);
         from_fs.delete(&from_path).await?;
+        info!("    ✅ Delete successful");
 
+        info!("🚚 move_atomic COMPLETE");
         Ok(())
     }
 
@@ -701,12 +724,15 @@ impl FilesystemFactory {
 
     /// Extract relative path from URL (removes base path configured for the storage)
     pub fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
+        info!("🔍 extract_path_from_url: {}", url);
         let parsed_url = Url::parse(url)?;
         let path = parsed_url.path();
+        info!("    parsed path: {}", path);
 
         match parsed_url.scheme() {
             "file" => {
                 // For file URLs, return the full absolute path
+                info!("    scheme: file, returning path as-is");
                 Ok(path.to_string())
             }
             "s3" | "gcs" => {

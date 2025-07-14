@@ -559,7 +559,7 @@ impl VectorQuantizationEngine {
             if record.vector.len() != model.dimension {
                 warn!(
                     "Vector {} dimension mismatch: {} vs expected {}",
-                    record.id,
+                    record.id.as_deref().unwrap_or(""),
                     record.vector.len(),
                     model.dimension
                 );
@@ -608,7 +608,7 @@ impl VectorQuantizationEngine {
             total_reconstruction_error += reconstruction_error;
 
             quantized_vectors.push(QuantizedVector {
-                id: record.id.clone(),
+                id: record.id.as_deref().unwrap_or("").to_string(),
                 level: model.level,
                 data: quantized_data,
                 reconstruction_error,

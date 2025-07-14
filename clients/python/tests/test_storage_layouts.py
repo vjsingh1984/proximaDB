@@ -43,10 +43,11 @@ class TestVIPERStorageLayout:
         
         # Configure VIPER with low flush threshold
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="VIPER flush test collection",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=8.0)  # Low threshold to trigger flush
         )
         
@@ -288,6 +289,7 @@ class TestLSMStorageLayout:
         
         # Configure LSM with aggressive compaction settings
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="LSM compaction test collection",
@@ -529,14 +531,16 @@ class TestStorageLayoutComparison:
         
         # Identical configurations except storage layout
         viper_config = CollectionConfig(
+            name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="VIPER performance test",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=10.0)
         )
         
         lsm_config = CollectionConfig(
+            name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="LSM performance test",
@@ -739,10 +743,11 @@ class TestCrossStorageSearch:
         collection_name = f"unified_search_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="Unified search test across storage layers",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=5.0)
         )
         

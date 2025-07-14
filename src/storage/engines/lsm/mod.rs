@@ -53,13 +53,13 @@ pub struct LsmRecord {
 impl From<VectorRecord> for LsmRecord {
     fn from(record: VectorRecord) -> Self {
         Self {
-            id: record.id,
+            id: record.id.as_deref().unwrap_or("").to_string(),
             collection_id: record.collection_id,
             vector: record.vector,
-            metadata: record.metadata,
+            metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata),
             timestamp: record.timestamp,
-            created_at: record.created_at,
-            updated_at: record.updated_at,
+            created_at: record.timestamp,
+            updated_at: record.timestamp,
             expires_at: record.expires_at,
             version: record.version,
             is_tombstone: false,
@@ -72,13 +72,13 @@ impl From<VectorRecord> for LsmRecord {
 impl Into<VectorRecord> for LsmRecord {
     fn into(self) -> VectorRecord {
         VectorRecord {
-            id: self.id,
+            id: Some(self.id),  // Core VectorRecord expects Option<String>
             collection_id: self.collection_id,
             vector: self.vector,
-            metadata: self.metadata,
+            metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&self.metadata),
             timestamp: self.timestamp,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
+            created_at: self.timestamp,
+            updated_at: self.timestamp,
             expires_at: self.expires_at,
             version: self.version,
             rank: None,
@@ -203,16 +203,16 @@ impl LsmTree {
 
     // Collection service setter removed - indexing configuration handled by AXIS
 
-    pub async fn put(&self, id: VectorId, record: VectorRecord) -> Result<()> {
+    pub async fn put(&self, id: VectorId, record: &VectorRecord) -> Result<()> {
         // Write to WAL first for durability using new WAL system
         let _sequence = self
             .wal_manager
-            .insert(self.collection_id.clone(), id.clone(), record.clone())
+            .insert(self.collection_id.clone(), id.clone(), record)
             .await
             .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
 
         // Convert VectorRecord to LsmRecord for direct storage
-        let mut lsm_record = LsmRecord::from(record);
+        let mut lsm_record = LsmRecord::from(record.clone());
         lsm_record.sequence_number = chrono::Utc::now().timestamp_millis() as u64;
         lsm_record.level = 0; // New records start at level 0
         
@@ -766,7 +766,7 @@ impl LsmTree {
 
             for (index, vector_record) in chunk.iter().enumerate() {
                 // Filter by collection ID to only process records for this LSM tree's collection
-                if vector_record.collection_id == collection_id {
+                if &vector_record.collection_id == collection_id {
                     // Convert VectorRecord to LsmRecord for row-by-row storage
                     let mut lsm_record = LsmRecord::from(vector_record.clone());
                     
@@ -1339,7 +1339,7 @@ impl LsmTree {
                 record.id.len() + 
                 record.collection_id.len() + 
                 record.vector.len() * 4 + // f32 size
-                record.metadata.iter().map(|(k, v)| k.len() + 50).sum::<usize>(); // Estimate JSON size
+                record.metadata.iter().map(|(key, value)| key.len() + value.to_string().len() + 10).sum::<usize>(); // Estimate metadata size
 
             // If adding this record would exceed block size, finalize current block
             if current_block_size + record_size > block_size && !current_block_records.is_empty() {

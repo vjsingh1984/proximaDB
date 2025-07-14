@@ -17,4 +17,4 @@
 //! gRPC integration tests module
 
 pub mod test_grpc_vector_operations;
-pub mod collection_handler_tests;
+// pub mod collection_handler_tests; // Removed - obsolete API

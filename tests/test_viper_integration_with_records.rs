@@ -53,10 +53,10 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
     for i in 0..10 {
         let now = Utc::now().timestamp_millis();
         let vector_record = VectorRecord {
-            id: format!("viper_vector_{}", i),
+            id: Some(format!("viper_vector_{}", i)),
             collection_id: "test_collection".to_string(),
             vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -71,7 +71,7 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
 
     println!("📝 Created 10 test records for VIPER engine");
     println!("   - Records prepared: {}", test_records.len());
-    println!("   - Sample record ID: {}", test_records[0].id);
+    println!("   - Sample record ID: {:?}", test_records[0].id);
     println!("   - Sample vector: {:?}", test_records[0].vector);
 
     // Test collection-level flush (VIPER supports collection-level operations)
@@ -127,7 +127,7 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
     for i in 0..10 {
         let now = Utc::now().timestamp_millis();
         let vector_record = VectorRecord {
-            id: format!("compact_vector_{}", i),
+            id: Some(format!("compact_vector_{}", i)),
             collection_id: "test_collection".to_string(),
             vector: vec![
                 i as f32 + 20.0,
@@ -135,7 +135,7 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
                 (i + 2) as f32 + 20.0,
                 (i + 3) as f32 + 20.0,
             ],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,

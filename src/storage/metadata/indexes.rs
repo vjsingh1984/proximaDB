@@ -374,18 +374,14 @@ impl MetadataMemoryIndexes {
 
     /// Insert into secondary indexes
     async fn insert_into_secondary_indexes(&self, record: &Collection) {
-        // Name prefix index
+        // Name prefix index - Store full names only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            // Index all prefixes of the name (for efficient prefix search)
             let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            for i in 1..=name.len() {
-                let prefix = name[..i].to_string();
-                prefix_index
-                    .entry(prefix)
-                    .or_insert_with(Vec::new)
-                    .push(record.id.clone());
-            }
+            prefix_index
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(record.id.clone());
         }
 
         // Tag index
@@ -424,17 +420,14 @@ impl MetadataMemoryIndexes {
 
     /// Remove from secondary indexes
     async fn remove_from_secondary_indexes(&self, record: &Collection) {
-        // Name prefix index
+        // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
             let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            for i in 1..=name.len() {
-                let prefix = name[..i].to_string();
-                if let Some(uuids) = prefix_index.get_mut(&prefix) {
-                    uuids.retain(|uuid| uuid != &record.id);
-                    if uuids.is_empty() {
-                        prefix_index.remove(&prefix);
-                    }
+            if let Some(uuids) = prefix_index.get_mut(&name) {
+                uuids.retain(|uuid| uuid != &record.id);
+                if uuids.is_empty() {
+                    prefix_index.remove(&name);
                 }
             }
         }

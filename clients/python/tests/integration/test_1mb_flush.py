@@ -12,14 +12,14 @@ import numpy as np
 # Add the parent directory to Python path so we can import the client
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'clients', 'python', 'src'))
 
-from proximadb.rest_client import ProximaDBRestClient
+from proximadb import ProximaDBClient, Protocol
 from proximadb.models import CollectionConfig, DistanceMetric
 
 def main():
     print("🔥 1MB Flush Threshold Test")
     print("=" * 50)
     
-    client = ProximaDBRestClient(url="http://localhost:5678")
+    client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.REST)
     collection_name = f"flush_test_{int(time.time())}"
     
     # Use larger dimensions to increase data size per vector
@@ -39,9 +39,10 @@ def main():
         print(f"\n🔧 Creating collection: {collection_name}")
         try:
             config = CollectionConfig(
+                name="test_collection",
                 dimension=dimension,
                 distance_metric=DistanceMetric.COSINE,
-                storage_layout="viper"
+                storage_engine=StorageEngine.VIPER
             )
             result = client.create_collection(collection_name, config)
             print(f"✅ Collection created")

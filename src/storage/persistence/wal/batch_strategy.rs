@@ -58,8 +58,8 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             fs.validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
             
-            // Serialize batch to bytes
-            let batch_bytes = bincode::serialize(batch)
+            // Serialize vector records to bytes (deref Arc)
+            let batch_bytes = bincode::serialize(&*batch.vector_records)
                 .context("Failed to serialize batch for cloud storage")?;
             
             // Generate unique filename for the batch with timestamp
@@ -136,8 +136,35 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             let batch_bytes = filesystem.read(&path).await
                 .context("Failed to read batch from cloud storage")?;
             
-            let batch: WalVectorBatch = bincode::deserialize(&batch_bytes)
+            let vector_records: Vec<VectorRecord> = bincode::deserialize(&batch_bytes)
                 .context("Failed to deserialize batch from cloud storage")?;
+            
+            // Extract collection_id from the first vector record (all records in batch belong to same collection)
+            let collection_id = if let Some(first_record) = vector_records.first() {
+                first_record.collection_id.clone()
+            } else {
+                // Fallback: parse collection_id from cloud URL filename
+                // Expected format: wal_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
+                let path_parts: Vec<&str> = cloud_url.split('/').last()
+                    .unwrap_or("unknown")
+                    .split('_')
+                    .collect();
+                if path_parts.len() >= 3 && path_parts[0] == "wal" && path_parts[1] == "batch" {
+                    path_parts[2].to_string()
+                } else {
+                    "unknown".to_string()
+                }
+            };
+            
+            // Reconstruct WalVectorBatch from deserialized vector records with proper collection_id
+            use super::BatchId;
+            let batch = WalVectorBatch {
+                batch_id: BatchId::new(collection_id, 1, vector_records.len() as u64),
+                vector_records: Arc::new(vector_records),
+                created_at: std::time::SystemTime::now(),
+                total_size_bytes: batch_bytes.len(),
+                is_flushed: false,
+            };
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_url)
@@ -168,9 +195,38 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         avro_bytes: &[u8]
     ) -> Result<super::WalOperation>;
 
+    /// Write Proto bytes directly (zero-copy optimization for Proto format)
+    /// This is the new optimal write operation for Proto-first architecture
+    async fn write_proto_batch(
+        &self,
+        collection_id: &str,
+        proto_bytes: &[u8]
+    ) -> Result<super::WalOperation> {
+        // Default implementation: convert Proto to Avro for backward compatibility
+        // Strategies that support Proto natively should override this
+        use crate::storage::persistence::wal::schema::{deserialize_proto_vector_batch, serialize_vector_batch};
+        
+        let proto_records = deserialize_proto_vector_batch(proto_bytes)?;
+        let avro_records: Vec<crate::core::avro_unified::VectorRecord> = proto_records
+            .into_iter()
+            .map(|proto_record| crate::core::proto_to_avro(&proto_record, collection_id))
+            .collect();
+        
+        let avro_bytes = crate::storage::persistence::wal::schema::serialize_avro_vector_batch(&avro_records)?;
+        self.write_avro_batch(collection_id, &avro_bytes).await
+    }
+
     /// Write vector batch atomically (memory + disk) - Legacy interface
     /// This is kept for backward compatibility but write_avro_batch is preferred
     async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>>;
+
+    /// PROTO-FIRST: Write native WalVectorBatch directly (primary method)
+    /// Each strategy handles its own serialization: Proto->Proto, Proto->Bincode, Proto->Avro
+    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
+        // Default implementation delegates to existing write_vector_batch
+        // Strategies can override for optimized native handling
+        self.write_vector_batch(batch).await
+    }
 
     /// Write vector batch with immediate disk sync for durability
     async fn write_vector_batch_with_sync(
@@ -417,10 +473,10 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     async fn delete_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<u64> {
         // Create a tombstone vector record for deletion
         let tombstone = VectorRecord {
-            id: vector_id.clone(),
+            id: Some(vector_id.clone()),
             collection_id: collection_id.to_string(),
             vector: vec![], // Empty vector for tombstone
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
             created_at: chrono::Utc::now().timestamp_micros(),
             updated_at: chrono::Utc::now().timestamp_micros(),
@@ -429,14 +485,14 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             rank: None,
             score: None,
             distance: None,
-        };
+            };
 
         // Create single-vector batch for deletion
         use super::BatchId;
         let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
         let batch = WalVectorBatch {
             batch_id,
-            vector_records: vec![tombstone],
+            vector_records: Arc::new(vec![tombstone]),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: std::mem::size_of::<VectorRecord>(),
             is_flushed: false,
@@ -490,7 +546,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             let mut marked_sequences = Vec::new();
             
             for batch in &unflushed_batches {
-                all_vector_records.extend(batch.vector_records.clone());
+                all_vector_records.extend(batch.vector_records.iter().cloned());
                 batch_ids.push(batch.batch_id.clone());
                 marked_sequences.push(batch.batch_id.sequence_range);
             }
@@ -562,14 +618,14 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             Ok(super::FlushCompletionResult {
                 entries_removed: cleared_count,
                 segments_cleaned: flush_cycle.marked_segments.len(),
-                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| v.actual_size_bytes() as u64).sum(),
+                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| (v.vector.len() * 4 + 256) as u64).sum(),
             })
         } else {
             // Fallback for strategies without WAL behavior wrapper
             Ok(super::FlushCompletionResult {
                 entries_removed: flush_cycle.vector_records.len(),
                 segments_cleaned: 0,
-                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| v.actual_size_bytes() as u64).sum(),
+                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| (v.vector.len() * 4 + 256) as u64).sum(),
             })
         }
     }
@@ -620,11 +676,11 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         
         // Create single-vector batch
         let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
-        let total_size_bytes = vector_record.actual_size_bytes();
+        let total_size_bytes = vector_record.vector.len() * 4 + 256;
         
         let batch = WalVectorBatch {
             batch_id,
-            vector_records: vec![vector_record],
+            vector_records: Arc::new(vec![vector_record]),
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -648,7 +704,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         
         // Calculate total size
         let total_size_bytes: usize = vector_records.iter()
-            .map(|r| r.actual_size_bytes())
+            .map(|r| r.vector.len() * 4 + 256)
             .sum();
         
         // Create multi-vector batch
@@ -660,7 +716,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         
         let batch = WalVectorBatch {
             batch_id,
-            vector_records,
+            vector_records: Arc::new(vector_records),
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -688,12 +744,12 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
             );
             
             let total_size_bytes: usize = vector_records.iter()
-                .map(|r| r.actual_size_bytes())
+                .map(|r| r.vector.len() * 4 + 256)
                 .sum();
             
             let batch = WalVectorBatch {
                 batch_id,
-                vector_records,
+                vector_records: Arc::new(vector_records),
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes,
                 is_flushed: false,

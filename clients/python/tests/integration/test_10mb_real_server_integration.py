@@ -27,7 +27,7 @@ import asyncio
 # Add Python SDK to path
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 
 
@@ -35,7 +35,7 @@ class RealServerIntegrationTest:
     """Real server integration test with 10MB corpus"""
     
     def __init__(self):
-        self.client = ProximaDBClient("http://localhost:5678")
+        self.client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.GRPC)
         self.embedding_service = BERTEmbeddingService("all-MiniLM-L6-v2")
         self.collection_name = f"test_collection_{uuid.uuid4().hex[:8]}"
         self.corpus_data = []

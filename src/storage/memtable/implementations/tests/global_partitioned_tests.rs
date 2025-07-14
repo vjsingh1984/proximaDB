@@ -7,6 +7,7 @@ use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::wal::BatchId;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_global_partitioned_batch_operations() {
@@ -15,10 +16,10 @@ async fn test_global_partitioned_batch_operations() {
     // Create test vector records
     let now = chrono::Utc::now().timestamp_millis();
     let vector_record1 = VectorRecord {
-        id: "test_vector_1".to_string(),
+        id: Some("test_vector_1".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![0.1, 0.2, 0.3],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -30,10 +31,10 @@ async fn test_global_partitioned_batch_operations() {
     };
 
     let vector_record2 = VectorRecord {
-        id: "test_vector_2".to_string(),
+        id: Some("test_vector_2".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![0.4, 0.5, 0.6],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -47,7 +48,7 @@ async fn test_global_partitioned_batch_operations() {
     // Create a batch with multiple vectors
     let batch = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 1, 2),
-        vector_records: vec![vector_record1.clone(), vector_record2.clone()],
+        vector_records: Arc::new(vec![vector_record1.clone(), vector_record2.clone()]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
@@ -72,7 +73,7 @@ async fn test_global_partitioned_batch_operations() {
         .unwrap();
     
     assert!(!results.is_empty());
-    assert_eq!(results[0].1.id, "test_vector_1"); // Should match the first vector
+    assert_eq!(results[0].1.id, Some("test_vector_1".to_string())); // Should match the first vector
 }
 
 #[tokio::test]
@@ -85,11 +86,11 @@ async fn test_global_partitioned_multi_collection() {
     // Collection A batch
     let batch_a = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 1, 1),
-        vector_records: vec![VectorRecord {
-            id: "vec_a1".to_string(),
+        vector_records: Arc::new(vec![VectorRecord {
+            id: Some("vec_a1".to_string()),
             collection_id: "collection_a".to_string(),
             vector: vec![1.0, 0.0, 0.0],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -98,7 +99,7 @@ async fn test_global_partitioned_multi_collection() {
             rank: None,
             score: None,
             distance: None,
-        }],
+        }]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
@@ -107,11 +108,11 @@ async fn test_global_partitioned_multi_collection() {
     // Collection B batch
     let batch_b = WalVectorBatch {
         batch_id: BatchId::new("collection_b".to_string(), 2, 2),
-        vector_records: vec![VectorRecord {
-            id: "vec_b1".to_string(),
+        vector_records: Arc::new(vec![VectorRecord {
+            id: Some("vec_b1".to_string()),
             collection_id: "collection_b".to_string(),
             vector: vec![0.0, 1.0, 0.0],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -120,7 +121,7 @@ async fn test_global_partitioned_multi_collection() {
             rank: None,
             score: None,
             distance: None,
-        }],
+        }]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
@@ -149,8 +150,8 @@ async fn test_global_partitioned_multi_collection() {
 
     assert_eq!(results_a.len(), 1);
     assert_eq!(results_b.len(), 1);
-    assert_eq!(results_a[0].1.id, "vec_a1");
-    assert_eq!(results_b[0].1.id, "vec_b1");
+    assert_eq!(results_a[0].1.id, Some("vec_a1".to_string()));
+    assert_eq!(results_b[0].1.id, Some("vec_b1".to_string()));
 }
 
 #[tokio::test]
@@ -160,10 +161,10 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Version 1: Insert initial vector
     let vector_v1 = VectorRecord {
-        id: "test_vector".to_string(),
+        id: Some("test_vector".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![1.0, 0.0, 0.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -176,10 +177,10 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Version 2: Update vector with new data
     let vector_v2 = VectorRecord {
-        id: "test_vector".to_string(),
+        id: Some("test_vector".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![0.0, 1.0, 0.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -192,10 +193,10 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Version 3: Logical delete (expires_at in past)
     let vector_v3_delete = VectorRecord {
-        id: "test_vector".to_string(),
+        id: Some("test_vector".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![0.0, 0.0, 1.0], // Doesn't matter for deletes
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -209,7 +210,7 @@ async fn test_mvcc_and_logical_deletes() {
     // Insert all versions in separate batches
     let batch1 = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 1, 1),
-        vector_records: vec![vector_v1],
+        vector_records: Arc::new(vec![vector_v1]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
@@ -217,7 +218,7 @@ async fn test_mvcc_and_logical_deletes() {
 
     let batch2 = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 2, 2),
-        vector_records: vec![vector_v2],
+        vector_records: Arc::new(vec![vector_v2]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
@@ -225,7 +226,7 @@ async fn test_mvcc_and_logical_deletes() {
 
     let batch3 = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 3, 3),
-        vector_records: vec![vector_v3_delete],
+        vector_records: Arc::new(vec![vector_v3_delete]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
@@ -247,11 +248,11 @@ async fn test_mvcc_and_logical_deletes() {
         .unwrap();
     
     // Should not find any results with that ID
-    assert!(!search_results.iter().any(|(_, record)| record.id == "test_vector"));
+    assert!(!search_results.iter().any(|(_, record)| record.id == Some("test_vector".to_string())));
 
     // Test get_all_vectors - should not include the deleted vector
     let all_vectors = memtable.get_collection_vectors("collection_a").await.unwrap();
-    assert!(!all_vectors.iter().any(|record| record.id == "test_vector"));
+    assert!(!all_vectors.iter().any(|record| record.id == Some("test_vector".to_string())));
 }
 
 #[tokio::test]
@@ -262,10 +263,10 @@ async fn test_global_partitioned_deletion_via_expiry() {
 
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {
-        id: "expired_vec".to_string(),
+        id: Some("expired_vec".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now_millis,
         created_at: now_millis,
         updated_at: now_millis,
@@ -278,10 +279,10 @@ async fn test_global_partitioned_deletion_via_expiry() {
 
     // Create a valid vector
     let valid_vector = VectorRecord {
-        id: "valid_vec".to_string(),
+        id: Some("valid_vec".to_string()),
         collection_id: "collection_a".to_string(),
         vector: vec![4.0, 5.0, 6.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now_millis,
         created_at: now_millis,
         updated_at: now_millis,
@@ -294,7 +295,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
 
     let batch = WalVectorBatch {
         batch_id: BatchId::new("collection_a".to_string(), 1, 2),
-        vector_records: vec![expired_vector, valid_vector],
+        vector_records: Arc::new(vec![expired_vector, valid_vector]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024,
         is_flushed: false,
@@ -305,7 +306,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
     // Get all vectors (should filter out expired ones)
     let all_vectors = memtable.get_collection_vectors("collection_a").await.unwrap();
     assert_eq!(all_vectors.len(), 1);
-    assert_eq!(all_vectors[0].id, "valid_vec");
+    assert_eq!(all_vectors[0].id, Some("valid_vec".to_string()));
 
     // Search should also filter out expired vectors
     let search_results = memtable
@@ -313,7 +314,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
         .await
         .unwrap();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].1.id, "valid_vec");
+    assert_eq!(search_results[0].1.id, Some("valid_vec".to_string()));
 }
 
 #[tokio::test]
@@ -323,11 +324,11 @@ async fn test_global_partitioned_clear_operations() {
     // Add some test data
     let batch = WalVectorBatch {
         batch_id: BatchId::new("test_collection".to_string(), 1, 3),
-        vector_records: vec![
+        vector_records: Arc::new(vec![
             create_test_vector("vec1", "test_collection", vec![1.0, 0.0]),
             create_test_vector("vec2", "test_collection", vec![0.0, 1.0]),
             create_test_vector("vec3", "test_collection", vec![1.0, 1.0]),
-        ],
+        ]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1536,
         is_flushed: false,
@@ -349,10 +350,10 @@ async fn test_global_partitioned_clear_operations() {
 fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> VectorRecord {
     let now = chrono::Utc::now().timestamp_millis();
     VectorRecord {
-        id: id.to_string(),
+        id: Some(id.to_string()),
         collection_id: collection_id.to_string(),
         vector,
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,

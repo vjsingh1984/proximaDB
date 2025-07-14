@@ -50,6 +50,14 @@ pub trait CollectionMetadataProvider: Send + Sync {
     async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
         Ok(self.get_uuid(collection_id).await?.is_some())
     }
+    
+    /// Fast check if collection ID exists (for collision detection)
+    /// This should be optimized for speed, returning just bool
+    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
+        // Default implementation delegates to collection_exists
+        // Backends can override with more efficient implementation
+        self.collection_exists(collection_id).await
+    }
 }
 
 /// Unified storage engine trait implementing Strategy Pattern

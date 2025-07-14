@@ -20,12 +20,13 @@ use crate::storage::memtable::implementations::global_partitioned::GlobalPartiti
 use crate::storage::persistence::wal::{BatchId, WalOperation, WalStats};
 
 /// WAL-specific vector batch for tracking deserialized data
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WalVectorBatch {
     /// Batch coordination ID
     pub batch_id: BatchId,
-    /// Deserialized vector records (ready for search/flush)  
-    pub vector_records: Vec<VectorRecord>,
+    /// Deserialized vector records (ready for search/flush)
+    /// Using Arc for zero-copy sharing across WAL strategies
+    pub vector_records: Arc<Vec<VectorRecord>>,
     /// Batch metadata
     pub created_at: std::time::SystemTime,
     pub total_size_bytes: usize,
@@ -56,7 +57,7 @@ impl BatchCoordinator {
         // Update vector index
         for (index, vector_record) in batch.vector_records.iter().enumerate() {
             self.vector_index.insert(
-                vector_record.id.clone(),
+                vector_record.id.as_deref().unwrap_or("").to_string(),
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
@@ -100,17 +101,16 @@ impl BatchCoordinator {
 
         if let Some(collection_batches) = self.batches.get_mut(collection_id) {
             // OPTIMIZATION: Use retain instead of collect+remove to avoid extra allocation
+            // First collect IDs from flushed batches for index cleanup
             let mut cleared_batch_records = Vec::new();
-            let original_count = collection_batches.len();
-            collection_batches.retain(|_, batch| {
+            for batch in collection_batches.values() {
                 if batch.is_flushed {
-                    // Collect vector record IDs for index cleanup before removing
-                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.clone()));
-                    false // Remove this batch
-                } else {
-                    true // Keep this batch
+                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_deref().unwrap_or("").to_string()));
                 }
-            });
+            }
+            
+            let original_count = collection_batches.len();
+            collection_batches.retain(|_, batch| !batch.is_flushed);
 
             // Remove vector index entries for cleared batches
             for vector_id in cleared_batch_records {
@@ -231,7 +231,7 @@ impl WalBehaviorWrapper {
                 0, // Will be set by memtable
                 records_with_collection.len() as u64,
             ),
-            vector_records: records_with_collection,
+            vector_records: Arc::new(records_with_collection),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: operation.payload_data.len(),
             is_flushed: false,
@@ -374,7 +374,12 @@ impl WalBehaviorWrapper {
         eprintln!("🔍 WAL_SEARCH: Found {} unflushed results", results.len());
         tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", results.len());
 
-        Ok(results)
+        // Convert SimilarityResult back to f32 for compatibility with existing API
+        let converted_results: Vec<(f32, VectorRecord)> = results
+            .into_iter()
+            .map(|(result, record)| (result.rank_value, record))
+            .collect();
+        Ok(converted_results)
     }
 
     /// Get vector by ID within a specific collection (MODERN)
@@ -450,10 +455,16 @@ impl WalBehaviorWrapper {
         let coordinator = self.batch_coordinator.read().await;
         let unflushed_batch_refs = coordinator.get_unflushed_batches(collection_id);
         
-        // Clone the batches to return owned data
+        // ZERO-COPY: Share Arc references instead of cloning entire batches
         let unflushed_batches = unflushed_batch_refs
             .into_iter()
-            .cloned()
+            .map(|batch_ref| WalVectorBatch {
+                batch_id: batch_ref.batch_id.clone(),
+                vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
+                created_at: batch_ref.created_at,
+                total_size_bytes: batch_ref.total_size_bytes,
+                is_flushed: batch_ref.is_flushed,
+            })
             .collect();
         
         Ok(unflushed_batches)
@@ -656,8 +667,10 @@ impl WalBehaviorWrapper {
         if let Some(collection_batches) = coordinator.batches.get_mut(collection_id) {
             if let Some(removed_batch) = collection_batches.remove(batch_id) {
                 // Remove vector index entries for this batch
-                for vector_record in &removed_batch.vector_records {
-                    coordinator.vector_index.remove(&vector_record.id);
+                for vector_record in removed_batch.vector_records.iter() {
+                    if let Some(ref id) = vector_record.id {
+                        coordinator.vector_index.remove(id);
+                    }
                 }
                 
                 tracing::debug!(
@@ -857,10 +870,10 @@ mod tests {
         // Create test vector records using the new unified API
         let now = chrono::Utc::now().timestamp_millis();
         let vector_record1 = crate::core::VectorRecord {
-            id: "test_vector_1".to_string(),
+            id: Some("test_vector_1".to_string()),
             collection_id: "test_collection".to_string(),
             vector: vec![0.1, 0.2, 0.3],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -872,10 +885,10 @@ mod tests {
         };
 
         let vector_record2 = crate::core::VectorRecord {
-            id: "test_vector_2".to_string(),
+            id: Some("test_vector_2".to_string()),
             collection_id: "test_collection".to_string(),
             vector: vec![0.4, 0.5, 0.6],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now + 1,
             created_at: now + 1,
             updated_at: now + 1,
@@ -894,7 +907,7 @@ mod tests {
                 batch_uuid: uuid::Uuid::new_v4().to_string(),
                 created_at: chrono::Utc::now(),
             },
-            vector_records: vec![vector_record1],
+            vector_records: Arc::new(vec![vector_record1]),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
@@ -914,7 +927,7 @@ mod tests {
                 batch_uuid: uuid::Uuid::new_v4().to_string(),
                 created_at: chrono::Utc::now(),
             },
-            vector_records: vec![vector_record2],
+            vector_records: Arc::new(vec![vector_record2]),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
@@ -964,14 +977,15 @@ mod tests {
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
             let vector_record = crate::core::VectorRecord {
-                id: vector_id.to_string(),
+                id: Some(vector_id.to_string()),
                 collection_id: "test_collection".to_string(),
                 vector: vec![i as f32, (i + 1) as f32],
-                metadata: {
-                    let mut meta = std::collections::HashMap::new();
-                    meta.insert("version".to_string(), serde_json::Value::Number(serde_json::Number::from(i)));
-                    meta
-                },
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "version".to_string(),
+                        value: i.to_string(),
+                    }
+                ],
                 timestamp: now + i as i64,
                 created_at: now + i as i64,
                 updated_at: now + i as i64,
@@ -989,7 +1003,7 @@ mod tests {
                     batch_uuid: uuid::Uuid::new_v4().to_string(),
                     created_at: chrono::Utc::now(),
                 },
-                vector_records: vec![vector_record],
+                vector_records: Arc::new(vec![vector_record]),
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 1024,
                 is_flushed: false,
@@ -1008,7 +1022,7 @@ mod tests {
 
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors.iter()
-            .filter(|(_, record)| record.id == vector_id)
+            .filter(|(_, record)| record.id.as_deref().unwrap_or("") == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
     }

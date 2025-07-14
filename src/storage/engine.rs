@@ -77,6 +77,11 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
+    /// Get storage configuration
+    pub fn get_config(&self) -> &StorageConfig {
+        &self.config
+    }
+
     /// Create new storage engine without collection service dependency
     /// The metadata provider will be injected later via set_metadata_provider
     pub async fn new_without_collection_service(
@@ -221,14 +226,16 @@ impl StorageEngine {
         self.wal_manager.clone()
     }
 
-    pub async fn write(&self, record: VectorRecord) -> crate::storage::Result<()> {
-        let collection_id = record.collection_id.clone();
-        let vector_size =
-            std::mem::size_of_val(&record.vector[..]) + std::mem::size_of::<VectorRecord>();
+    pub async fn write(&self, record: &VectorRecord) -> crate::storage::Result<()> {
+        // Direct field access - no function call overhead, no match expressions
+        let collection_id = &record.collection_id;
+        let vector_ref = &record.vector[..];
+        let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
-
+        let vector_id = record.id.as_ref().map(|s| s.as_str()).unwrap_or("");
+        
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
-                       record.id, collection_id, record.vector.len(), vector_size);
+                       vector_id, collection_id, vector_ref.len(), vector_size);
 
         tracing::debug!(
             "🔒 Acquiring LSM trees write lock for collection {}",
@@ -240,13 +247,13 @@ impl StorageEngine {
             collection_id
         );
 
-        let tree = trees.entry(collection_id.clone()).or_insert_with(|| {
+        let tree = trees.entry(collection_id.to_string()).or_insert_with(|| {
             tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
             let default_dir = PathBuf::from("./data/storage");
             let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
             LsmTree::new(
                 &self.config.lsm_config,
-                collection_id.clone(),
+                collection_id.to_string(),
                 self.wal_manager.clone(),
                 data_dir.clone(),
                 Some(self.compaction_manager.clone()),
@@ -256,13 +263,13 @@ impl StorageEngine {
 
         tracing::debug!(
             "💾 Calling tree.put() for vector {} in collection {}",
-            record.id,
+            vector_id,
             collection_id
         );
-        tree.put(record.id.clone(), record.clone()).await?;
+        tree.put(vector_id.to_string(), record).await?;
         tracing::debug!(
             "✅ Completed tree.put() for vector {} in collection {}",
-            record.id,
+            vector_id,
             collection_id
         );
 
@@ -276,13 +283,13 @@ impl StorageEngine {
         // Add to search index
         tracing::debug!(
             "🔍 Adding vector {} to AXIS indexes for collection {}",
-            record.id,
+            vector_id,
             collection_id
         );
-        self.axis_index_manager.insert(record.clone()).await?;
+        self.axis_index_manager.insert(record).await?;
         tracing::debug!(
             "✅ Completed AXIS index insertion for vector {} in collection {}",
-            record.id,
+            vector_id,
             collection_id
         );
 
@@ -303,7 +310,7 @@ impl StorageEngine {
 
         let elapsed = start.elapsed();
         tracing::debug!("🎉 Successfully completed write operation for vector {} in collection {}, total_time={:?}", 
-                       record.id, collection_id, elapsed);
+                       vector_id, collection_id, elapsed);
         Ok(())
     }
 
@@ -610,8 +617,8 @@ impl StorageEngine {
                                     metadata.indexing_algorithm = "hnsw".to_string();
                                     metadata.vector_count = entries.len() as u64;
                                     metadata.total_size_bytes = entries.len() as u64 * record.vector.len() as u64 * 4;
-                                        metadata.created_at = chrono::Utc::now();
-                                        metadata.updated_at = chrono::Utc::now();
+                                    metadata.created_at = chrono::Utc::now();
+                                    metadata.updated_at = chrono::Utc::now();
                                         
                                         collections_metadata.push((collection_id.to_string(), metadata));
                                 }
@@ -696,8 +703,8 @@ impl StorageEngine {
         // Use unified distance computation which already provides
         // semantically consistent distances where lower = more similar
         let distance_compute = crate::compute::unified_distance::UnifiedDistanceCompute::default();
-        let distance = distance_compute.calculate_distance(query, vector, distance_metric);
-        Ok(distance)
+        let result = distance_compute.calculate_distance(query, vector, distance_metric);
+        Ok(result.rank_value)
     }
 
     /// Search for similar vectors
@@ -908,7 +915,7 @@ impl StorageEngine {
             if record.vector.len() != query.len() {
                 tracing::warn!(
                     "🔍 Dimension mismatch in memtable: expected {}, got {} - skipping vector {}",
-                    query.len(), record.vector.len(), record.id
+                    query.len(), record.vector.len(), record.id.as_deref().unwrap_or("")
                 );
                 continue;
             }
@@ -922,13 +929,13 @@ impl StorageEngine {
                 )?;
 
                 candidates.push(SearchResult {
-                    vector_id: if record.id.is_empty() {
+                    vector_id: if record.id.as_deref().unwrap_or("").is_empty() {
                         format!("mem_{}", record.timestamp)
                     } else {
-                        record.id.clone()
+                        record.id.clone().unwrap_or_default()
                     },
                     score: distance, // Note: score represents distance (lower = more similar)
-                    metadata: Some(record.metadata.clone()),
+                    metadata: Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)),
                 });
         }
 
@@ -1048,7 +1055,7 @@ impl StorageEngine {
 
         // Use existing write method for each record to ensure consistency
         for (index, record) in records.into_iter().enumerate() {
-            let record_id = record.id.clone();
+            let record_id = record.id.as_deref().unwrap_or("").to_string();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,
@@ -1057,7 +1064,7 @@ impl StorageEngine {
                 record.collection_id
             );
 
-            self.write(record).await?;
+            self.write(&record).await?;
             inserted_ids.push(record_id.clone());
 
             tracing::debug!(
@@ -1149,10 +1156,10 @@ impl StorageEngine {
         // Clear metadata store by deleting all collections
         for collection in collections {
             // TODO: Use SharedServices for metadata operations
-            // if let Err(e) = self.metadata_store.delete_collection(&collection.id).await {
+            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_deref().unwrap_or("")).await {
             //     tracing::warn!(
             //         "Failed to delete collection metadata {}: {}",
-            //         collection.id,
+            //         collection.id.as_deref().unwrap_or(""),
             //         e
             //     );
             // }

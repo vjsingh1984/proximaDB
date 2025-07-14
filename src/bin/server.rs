@@ -18,7 +18,7 @@
 
 use clap::Parser;
 use proximadb::compute::hardware_detection::HardwareCapabilities;
-use proximadb::{Config, ProximaDB};
+use proximadb::{ConfigLoader, ProximaDB};
 use std::path::PathBuf;
 use tracing::{error, info};
 
@@ -80,14 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let args = Args::parse();
 
-    // Load configuration
-    let mut config = if args.config.exists() {
-        let config_str = std::fs::read_to_string(&args.config)?;
-        toml::from_str::<Config>(&config_str)?
-    } else {
-        info!("Configuration file not found, using defaults");
-        Config::default()
-    };
+    // Load configuration with default merging and cloud support
+    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())?;
 
     // Override with CLI arguments
     if let Some(data_dir) = args.data_dir {

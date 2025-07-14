@@ -13,18 +13,9 @@
 //! - Cosmos DB (Azure) - For multi-model serverless database
 //! - Firestore (GCP) - For serverless NoSQL document store
 
-// Obsolete backends moved to obsolete/ directory
-// pub mod cosmosdb_backend;    // MOVED: obsolete/storage/metadata/backends/
-// pub mod dynamodb_backend;    // MOVED: obsolete/storage/metadata/backends/
-// pub mod firestore_backend;   // MOVED: obsolete/storage/metadata/backends/
-// pub mod mongodb_backend;     // MOVED: obsolete/storage/metadata/backends/
-// pub mod mysql_backend;       // MOVED: obsolete/storage/metadata/backends/
-// pub mod postgres_backend;    // MOVED: obsolete/storage/metadata/backends/
-// pub mod sqlite_backend;      // MOVED: obsolete/storage/metadata/backends/
 
 // Active backends used in metadata-first architecture
 pub mod filestore_backend; // Primary filestore-based backend with Avro and filesystem API (includes snapshot/checkpoint)
-pub mod memory_backend; // In-memory backend for testing
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb_backend; // High-performance RocksDB backend
 
@@ -60,25 +51,14 @@ pub struct MetadataBackendConfig {
     pub backup_config: Option<BackendBackupConfig>,
 }
 
-/// Supported metadata backend types (serverless and lightweight only)
+/// Supported metadata backend types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MetadataBackendType {
-    /// Disk-based filesystem storage with Avro (default) - Supports S3/GCS/ADLS
+    /// Disk-based filesystem storage (default) - Supports S3/GCS/ADLS
     Disk,
-    /// In-memory backend (for testing)
-    Memory,
-    /// PostgreSQL database (RDBMS) - OBSOLETE
-    PostgreSQL,
-    /// MySQL database (RDBMS) - OBSOLETE
-    MySQL,
-    /// SQLite embedded database (for development/testing) - OBSOLETE
-    SQLite,
-    /// Amazon DynamoDB (AWS serverless key-value) - OBSOLETE
-    DynamoDB,
-    /// Azure Cosmos DB (Azure serverless multi-model) - OBSOLETE
-    CosmosDB,
-    /// Google Firestore (GCP serverless NoSQL) - OBSOLETE
-    Firestore,
+    /// RocksDB embedded database (high performance)
+    #[cfg(feature = "rocksdb")]
+    RocksDB,
     /// Multi-backend with primary/fallback
     MultiBackend {
         primary: Box<MetadataBackendType>,
@@ -417,30 +397,11 @@ impl MetadataBackendFactory {
                 // This will be replaced with a proper wrapper that implements MetadataBackend trait
                 Err(anyhow::anyhow!("Disk backend is being migrated to filestore architecture. Use the filestore backend directly."))
             }
-            MetadataBackendType::Memory => {
-                let mut backend = Box::new(memory_backend::MemoryMetadataBackend::new());
-                backend.initialize(config).await?;
-                Ok(backend)
+            #[cfg(feature = "rocksdb")]
+            MetadataBackendType::RocksDB => {
+                // TODO: Implement RocksDB backend wrapper
+                Err(anyhow::anyhow!("RocksDB backend wrapper not yet implemented"))
             }
-            // Obsolete backends - return error for now, could be re-enabled if needed
-            MetadataBackendType::PostgreSQL => Err(anyhow::anyhow!(
-                "PostgreSQL backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
-            MetadataBackendType::MySQL => Err(anyhow::anyhow!(
-                "MySQL backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
-            MetadataBackendType::SQLite => Err(anyhow::anyhow!(
-                "SQLite backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
-            MetadataBackendType::DynamoDB => Err(anyhow::anyhow!(
-                "DynamoDB backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
-            MetadataBackendType::CosmosDB => Err(anyhow::anyhow!(
-                "CosmosDB backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
-            MetadataBackendType::Firestore => Err(anyhow::anyhow!(
-                "Firestore backend moved to obsolete/ directory. Use Disk backend instead."
-            )),
             MetadataBackendType::MultiBackend {
                 primary,
                 fallback: _,
@@ -454,16 +415,10 @@ impl MetadataBackendFactory {
 
     /// Get available backend types
     pub fn available_backends() -> Vec<MetadataBackendType> {
-        vec![
-            MetadataBackendType::Disk,
-            MetadataBackendType::Memory,
-            MetadataBackendType::PostgreSQL,
-            MetadataBackendType::MySQL,
-            MetadataBackendType::SQLite,
-            MetadataBackendType::DynamoDB,
-            MetadataBackendType::CosmosDB,
-            MetadataBackendType::Firestore,
-        ]
+        let mut backends = vec![MetadataBackendType::Disk];
+        #[cfg(feature = "rocksdb")]
+        backends.push(MetadataBackendType::RocksDB);
+        backends
     }
 
     /// Get backend capabilities
@@ -481,53 +436,18 @@ impl MetadataBackendFactory {
                 max_document_size_mb: 16,
                 max_connections: 1000,
             },
-            MetadataBackendType::Memory => BackendCapabilities {
-                supports_transactions: false,
+            #[cfg(feature = "rocksdb")]
+            MetadataBackendType::RocksDB => BackendCapabilities {
+                supports_transactions: true,
                 supports_schemas: false,
-                supports_secondary_indexes: false,
+                supports_secondary_indexes: true,
                 supports_full_text_search: false,
                 supports_geo_queries: false,
                 supports_auto_scaling: false,
                 supports_multi_region: false,
-                supports_encryption_at_rest: false,
-                max_document_size_mb: 1,
-                max_connections: 1,
-            },
-            MetadataBackendType::PostgreSQL => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: true,
-                supports_secondary_indexes: true,
-                supports_full_text_search: true,
-                supports_geo_queries: true,
-                supports_auto_scaling: false,
-                supports_multi_region: false,
                 supports_encryption_at_rest: true,
-                max_document_size_mb: 1024,
+                max_document_size_mb: 100,
                 max_connections: 10000,
-            },
-            MetadataBackendType::DynamoDB => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: false,
-                supports_secondary_indexes: true,
-                supports_full_text_search: false,
-                supports_geo_queries: false,
-                supports_auto_scaling: true,
-                supports_multi_region: true,
-                supports_encryption_at_rest: true,
-                max_document_size_mb: 400,
-                max_connections: 100000,
-            },
-            MetadataBackendType::SQLite => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: true,
-                supports_secondary_indexes: true,
-                supports_full_text_search: true,
-                supports_geo_queries: false,
-                supports_auto_scaling: false,
-                supports_multi_region: false,
-                supports_encryption_at_rest: true,
-                max_document_size_mb: 1024,
-                max_connections: 1,
             },
             MetadataBackendType::MultiBackend { .. } => BackendCapabilities {
                 supports_transactions: true,
@@ -540,42 +460,6 @@ impl MetadataBackendFactory {
                 supports_encryption_at_rest: true,
                 max_document_size_mb: 1024,
                 max_connections: 100000,
-            },
-            MetadataBackendType::MySQL => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: true,
-                supports_secondary_indexes: true,
-                supports_full_text_search: true,
-                supports_geo_queries: true,
-                supports_auto_scaling: true,
-                supports_multi_region: true,
-                supports_encryption_at_rest: true,
-                max_document_size_mb: 1024,
-                max_connections: 10000,
-            },
-            MetadataBackendType::CosmosDB => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: false,
-                supports_secondary_indexes: true,
-                supports_full_text_search: true,
-                supports_geo_queries: true,
-                supports_auto_scaling: true,
-                supports_multi_region: true,
-                supports_encryption_at_rest: true,
-                max_document_size_mb: 2,
-                max_connections: 1000,
-            },
-            MetadataBackendType::Firestore => BackendCapabilities {
-                supports_transactions: true,
-                supports_schemas: false,
-                supports_secondary_indexes: true,
-                supports_full_text_search: false,
-                supports_geo_queries: true,
-                supports_auto_scaling: true,
-                supports_multi_region: true,
-                supports_encryption_at_rest: true,
-                max_document_size_mb: 1,
-                max_connections: 1000,
             },
         }
     }

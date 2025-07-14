@@ -1,91 +1,63 @@
-# ProximaDB Production Configuration
-# 2-Disk Layout: Metadata on disk 1, WAL and Storage distributed across disks 1 and 2
+# ProximaDB Test Configuration
 
 [server]
-node_id = "proximadb-node-1"
+node_id = "test-node-1"
 bind_address = "0.0.0.0"
 port = 5678
-data_dir = "/workspace/data"
+data_dir = "./test_data"
 
 [storage]
-# Legacy fields (deprecated, use storage_layout instead)
-data_dirs = ["/workspace/data"]
-wal_dir = "/workspace/data/wal"
-# Storage engine configuration
+data_dirs = ["./test_data/storage"]
+wal_dir = "./test_data/wal"
 mmap_enabled = true
-cache_size_mb = 2048
-bloom_filter_bits = 12
+cache_size_mb = 512
+bloom_filter_bits = 10
 
-# Modern WAL configuration with multi-disk support
+[storage.lsm_config]
+memtable_size_mb = 32
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 32
+memory_flush_size_bytes = 10485760  # 10MB
+memtable_type = "BTree"
+compaction_strategy = "leveled"
+compression = "snappy"
+cache_size_mb = 128
+write_buffer_size_mb = 32
+max_files_per_level = 10
+level_size_multiplier = 10.0
+max_levels = 7
+background_thread_count = 4
+sync_mode = "perbatch"
+enable_wal = true
+wal_directory = "./test_data/lsm_wal"
+data_directory = "./test_data/lsm_data"
+mmap_enabled = true
+prefetch_enabled = true
+prefetch_size_kb = 64
+
+[storage.bloom_filter_config]
+bits_per_key = 10
+enabled = true
+
 [storage.wal_config]
-wal_urls = [
-    "file:///workspace/data/disk1/wal",
-    "file:///workspace/data/disk2/wal", 
-    "file:///workspace/data/disk3/wal"
-]
+wal_urls = ["file://./test_data/wal"]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 10485760  # 10MB flush trigger - recommended for collection-level flush
-global_flush_threshold = 4294967296  # 4GB global trigger - recommended for global memory threshold
-global_shrink_factor = 0.4  # 40% shrink factor - recommended for global threshold management
-
-# WAL durability and performance configuration
-strategy_type = "Bincode"  # Options: "Avro" (schema evolution), "Bincode" (performance)
-# Memtable strategy - choose based on your sync_mode and workload:
-# - "BTree": Best for PerBatch/Periodic sync (ordered flush, efficient storage)  
-# - "SkipList": Best for Always sync (concurrent reads during slow disk writes)
-# - "HashMap": Best for MemoryOnly sync (O(1) memory ops matter when no disk)
-# - "Art": Best for sparse collections with heavy metadata filtering
+memory_flush_size_bytes = 10485760  # 10MB
+global_flush_threshold = 1073741824  # 1GB
+global_shrink_factor = 0.5
+strategy_type = "Bincode"
 memtable_type = "BTree"
-
-# Durability vs Performance Tradeoff:
-# - "Always": fsync() on every write (~1-10ms latency, maximum durability)
-# - "PerBatch": fsync() after batch completion (balanced, recommended for production)
-# - "Periodic": fsync() on timer (good for high throughput)
-# - "Never": no fsync() (fastest, data loss risk on crash)
-# - "MemoryOnly": no disk WAL, flush directly to storage files (fastest writes)
 sync_mode = "PerBatch"
+batch_threshold = 250
+write_buffer_size_mb = 8
+concurrent_flushes = 2
 
-# Performance tuning
-batch_threshold = 250  # Number of operations per batch - reduced for more frequent flushes
-write_buffer_size_mb = 8  # Write buffer size for throughput
-concurrent_flushes = 4  # Max concurrent flush operations
-
-# LSM tree configuration  
-[storage.lsm_config]
-memtable_size_mb = 1  # 1MB memtable capacity - ensures flush for all test sizes
-level_count = 7
-compaction_threshold = 2  # Reduced from 4 to trigger compaction sooner
-block_size_kb = 64
-
-# ProximaDB hierarchical storage layout - Local Development Configuration
 [storage.storage_layout]
 node_instance = 1
 assignment_strategy = "HashBased"
 
-# Multi-disk configuration for development
-[[storage.storage_layout.base_paths]]
-base_dir = "/workspace/data/disk1/storage"
-instance_id = 1
-mount_point = "/workspace/disk1"
-disk_type = { NvmeSsd = { max_iops = 100000 } }
-capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/workspace/data/disk2/storage"
-instance_id = 2
-mount_point = "/workspace/disk2"
-disk_type = { NvmeSsd = { max_iops = 100000 } }
-capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/workspace/data/disk3/storage"
-instance_id = 3
-mount_point = "/workspace/disk3"
-disk_type = { NvmeSsd = { max_iops = 100000 } }
-capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
-
-# Temp directory configuration
 [storage.storage_layout.temp_config]
 use_same_directory = true
 temp_suffix = "___temp"
@@ -93,92 +65,50 @@ compaction_suffix = "___compaction"
 flush_suffix = "___flushed"
 cleanup_on_startup = true
 
-# Filesystem optimization settings
+[[storage.storage_layout.base_paths]]
+base_dir = "./test_data/storage"
+instance_id = 1
+mount_point = "./"
+disk_type = { SataSsd = { max_iops = 50000 } }
+
+[storage.storage_layout.base_paths.capacity_config]
+max_wal_size_mb = 1024
+metadata_reserved_mb = 256
+warning_threshold_percent = 85.0
+
 [storage.filesystem_config]
 enable_write_strategy_cache = true
 temp_strategy = "SameDirectory"
 
-# Atomic operations configuration
 [storage.filesystem_config.atomic_config]
 enable_local_atomic = true
-enable_object_store_atomic = true
+enable_object_store_atomic = false
 cleanup_temp_on_startup = true
 
-# Metadata backend configuration
-# Choose one of the following configurations based on your deployment
-
-# Option 1: Local filesystem (default)
 [storage.metadata_backend]
 backend_type = "filestore"
-storage_url = "file:///workspace/data/disk1/metadata"
-cache_size_mb = 128
-flush_interval_secs = 30
+storage_url = "file:///home/vsingh/code/proximaDB/test_data/metadata"
+cache_size_mb = 64
+flush_interval_secs = 10
+enable_compression = true
+enable_snapshots = true
+snapshot_threshold = 10
+keep_snapshots = 3
 
-# Option 2: AWS S3
-# [storage.metadata_backend]
-# backend_type = "filestore"
-# storage_url = "s3://my-bucket/proximadb/metadata"
-# cache_size_mb = 256
-# flush_interval_secs = 60
-# 
-# [storage.metadata_backend.cloud_config.s3_config]
-# region = "us-west-2"
-# bucket = "my-proximadb-bucket"
-# use_iam_role = true  # Use IAM role instead of access keys
-# # access_key_id = "AKIAIOSFODNN7EXAMPLE"     # Only if not using IAM role
-# # secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-
-# Option 3: Azure Blob Storage (ADLS Gen2)
-# [storage.metadata_backend]
-# backend_type = "filestore"
-# storage_url = "adls://myaccount.dfs.core.windows.net/mycontainer/proximadb/metadata"
-# cache_size_mb = 256
-# flush_interval_secs = 60
-#
-# [storage.metadata_backend.cloud_config.azure_config]
-# account_name = "myaccount"
-# container = "mycontainer"
-# use_managed_identity = true  # Use Managed Identity instead of keys
-# # access_key = "your-access-key"    # Only if not using Managed Identity
-# # sas_token = "?sv=2021-06-08&ss=..."  # Alternative to access key
-
-# Option 4: Google Cloud Storage
-# [storage.metadata_backend]
-# backend_type = "filestore"  
-# storage_url = "gcs://my-bucket/proximadb/metadata"
-# cache_size_mb = 256
-# flush_interval_secs = 60
-#
-# [storage.metadata_backend.cloud_config.gcs_config]
-# project_id = "my-project"
-# bucket = "my-proximadb-bucket"
-# use_workload_identity = true  # Use Workload Identity instead of service account
-# # service_account_path = "/path/to/service-account.json"  # Only if not using Workload Identity
-
-# API configuration - gRPC on 5679, REST on 5678
 [api]
 grpc_port = 5679
 rest_port = 5678
-max_request_size_mb = 64
+max_request_size_mb = 32
 timeout_seconds = 30
 enable_tls = false
 
-# Monitoring configuration
 [monitoring]
-metrics_enabled = true
+metrics_enabled = false
 log_level = "info"
 
-# Consensus configuration (for distributed setups)
 [consensus]
 node_id = 1
 cluster_peers = []
 election_timeout_ms = 5000
 heartbeat_interval_ms = 1000
-snapshot_threshold = 1000
-
-# TLS configuration (disabled by default)
-[tls]
-enabled = false
-# cert_file = "path/to/cert.pem"
-# key_file = "path/to/key.pem"
-# bind_interface = "0.0.0.0"
+snapshot_threshold = 10

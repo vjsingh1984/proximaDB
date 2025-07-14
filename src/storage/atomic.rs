@@ -354,19 +354,28 @@ impl UnifiedAtomicCoordinator {
     ) -> Result<AtomicOperationMetadata> {
         let operation_id = Uuid::new_v4().to_string();
 
-        debug!("🚀 Beginning atomic operation: {}", operation_id);
+        info!("🚀 Beginning atomic operation: {}", operation_id);
+        info!("📋 Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}", 
+            staging_config.base_url, staging_config.operation_type, staging_config.custom_staging_dir);
 
         // Build staging and final URLs
         let (staging_url, final_url) = self.build_operation_urls(staging_config, &operation_id)?;
 
-        debug!("📁 Staging URL: {}", staging_url);
-        debug!("🎯 Final URL: {}", final_url);
+        info!("📁 Staging URL: {}", staging_url);
+        info!("🎯 Final URL: {}", final_url);
 
-        // Create staging directory
+        // Create both staging and final directories upfront for robustness
+        info!("📂 Creating staging directory: {}", staging_url);
         self.filesystem
             .create_dir_all(&staging_url)
             .await
             .context("Failed to create staging directory")?;
+            
+        info!("📂 Creating final directory: {}", final_url);
+        self.filesystem
+            .create_dir_all(&final_url)
+            .await
+            .context("Failed to create final directory")?;
 
         // Create operation metadata
         let metadata = AtomicOperationMetadata {
@@ -396,6 +405,11 @@ impl UnifiedAtomicCoordinator {
         relative_path: &str,
         data: &[u8],
     ) -> Result<()> {
+        info!("📝 write_to_staging START");
+        info!("    operation_id: {}", operation_id);
+        info!("    relative_path: {}", relative_path);
+        info!("    data size: {} bytes", data.len());
+        
         // Get operation metadata
         let metadata = {
             let active_ops = self.active_operations.read().await;
@@ -404,6 +418,8 @@ impl UnifiedAtomicCoordinator {
                 .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
                 .clone()
         };
+
+        info!("    metadata.staging_url: {}", metadata.staging_url);
 
         // Update status to staging
         self.update_operation_status(operation_id, AtomicOperationStatus::Staging)
@@ -416,36 +432,44 @@ impl UnifiedAtomicCoordinator {
             relative_path
         );
 
-        debug!(
-            "📝 Writing to staging: {} ({} bytes)",
-            staging_file_url,
-            data.len()
-        );
+        info!("    staging_file_url: {}", staging_file_url);
 
         // Create file options using write strategy
         let fs = self.filesystem.get_filesystem(&staging_file_url)?;
+        info!("    filesystem type: {}", fs.filesystem_type());
+        
         let file_options = self
             .write_strategy
             .create_file_options(fs, &staging_file_url)?;
 
+        // Extract path for write
+        let staging_path = self.filesystem.extract_path(&staging_file_url)?;
+        info!("    staging_path extracted: {}", staging_path);
+
         // Write to staging using atomic executor
-        self.atomic_executor
+        info!("    Calling write_atomic...");
+        match self.atomic_executor
             .write_atomic(
                 fs,
-                &self.filesystem.extract_path(&staging_file_url)?,
+                &staging_path,
                 data,
                 Some(file_options),
             )
-            .await
-            .context("Failed to write to staging")?;
-
-        debug!("✅ Written to staging: {}", staging_file_url);
-        Ok(())
+            .await {
+            Ok(_) => {
+                info!("✅ Written to staging: {}", staging_file_url);
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ Failed to write to staging: {}", e);
+                Err(anyhow::anyhow!("Failed to write to staging: {}", e))
+            }
+        }
     }
 
     /// Finalize atomic operation - move from staging to final location
     pub async fn finalize_atomic_operation(&self, operation_id: &OperationId) -> Result<()> {
-        debug!("🔄 Finalizing atomic operation: {}", operation_id);
+        info!("🔄 Finalizing atomic operation: {}", operation_id);
 
         // Get operation metadata
         let metadata = {
@@ -456,20 +480,30 @@ impl UnifiedAtomicCoordinator {
                 .clone()
         };
 
+        info!("📋 Operation metadata:");
+        info!("    staging_url: {}", metadata.staging_url);
+        info!("    final_url: {}", metadata.final_url);
+        info!("    operation_type: {:?}", metadata.operation_type);
+
         // Update status to finalizing
         self.update_operation_status(operation_id, AtomicOperationStatus::Finalizing)
             .await?;
 
         // List all files in staging directory
+        info!("📂 Listing staging directory: {}", metadata.staging_url);
         let staging_entries = self
             .filesystem
             .list(&metadata.staging_url)
             .await
             .context("Failed to list staging directory")?;
 
-        debug!("📂 Found {} files in staging", staging_entries.len());
+        info!("📂 Found {} files in staging", staging_entries.len());
+        for (idx, entry) in staging_entries.iter().enumerate() {
+            info!("    [{}] {} (dir: {})", idx, entry.name, entry.metadata.is_directory);
+        }
 
         // Move each file atomically from staging to final location
+        // Note: Final directory was already created during begin_atomic_operation
         for entry in staging_entries {
             if !entry.metadata.is_directory && !entry.name.starts_with(".") {
                 let staging_file_url = format!(
@@ -483,16 +517,23 @@ impl UnifiedAtomicCoordinator {
                     entry.name
                 );
 
-                debug!("🔄 Moving: {} → {}", staging_file_url, final_file_url);
+                info!("🔄 Moving file:");
+                info!("    From: {}", staging_file_url);
+                info!("    To:   {}", final_file_url);
 
                 // Use FilesystemFactory's atomic move which handles cross-storage scenarios
-                self.filesystem
+                match self.filesystem
                     .move_atomic(&staging_file_url, &final_file_url)
-                    .await
-                    .context(format!(
-                        "Failed to move {} to {}",
-                        staging_file_url, final_file_url
-                    ))?;
+                    .await {
+                    Ok(_) => info!("    ✅ Move successful"),
+                    Err(e) => {
+                        error!("    ❌ Move failed: {}", e);
+                        return Err(anyhow::anyhow!(
+                            "Failed to move {} to {}: {}",
+                            staging_file_url, final_file_url, e
+                        ));
+                    }
+                }
 
                 debug!("✅ Moved: {}", entry.name);
             }
@@ -908,6 +949,12 @@ impl UnifiedAtomicCoordinator {
     ) -> Result<(String, String)> {
         let base_url = config.base_url.trim_end_matches('/');
 
+        info!("🔍 build_operation_urls START");
+        info!("    base_url: {}", base_url);
+        info!("    operation_type: {:?}", config.operation_type);
+        info!("    custom_staging_dir: {:?}", config.custom_staging_dir);
+        info!("    collection_id: {:?}", config.collection_id);
+
         // Build collection-specific path if provided
         let collection_path = if let Some(ref collection_id) = config.collection_id {
             format!("/collections/{}", collection_id)
@@ -922,13 +969,57 @@ impl UnifiedAtomicCoordinator {
             .map(|s| s.as_str())
             .unwrap_or_else(|| config.operation_type.staging_dir_name());
 
-        // Build URLs
-        let staging_url = format!(
-            "{}{}/{}/{}",
-            base_url, collection_path, staging_dir, operation_id
-        );
-        let final_url = format!("{}{}", base_url, collection_path);
+        info!("    staging_dir resolved to: '{}'", staging_dir);
+        info!("    collection_path: '{}'", collection_path);
 
+        // For metadata operations with custom staging dir containing path separators,
+        // we need special handling
+        let (staging_url, final_url) = if config.operation_type == StagingOperationType::Metadata 
+            && staging_dir.starts_with("../") {
+            info!("    Using metadata with relative staging path");
+            // For relative paths like "../staging", we need to resolve them properly
+            // base_url is like "file:///path/to/metadata/current"
+            // We want staging to be "file:///path/to/metadata/staging/{operation_id}"
+            
+            // Parse the base URL to extract scheme and path
+            if let Some((scheme, path)) = base_url.split_once("://") {
+                // Remove the last path component (e.g., "current")
+                let parent_path = if let Some(last_slash) = path.rfind('/') {
+                    &path[..last_slash]
+                } else {
+                    path
+                };
+                
+                // Extract the staging directory name (remove "../")
+                let staging_dirname = staging_dir.trim_start_matches("../");
+                
+                let staging_url = format!("{}://{}/{}/{}", scheme, parent_path, staging_dirname, operation_id);
+                let final_url = base_url.to_string();
+                
+                info!("    Resolved URLs: staging='{}', final='{}'", staging_url, final_url);
+                (staging_url, final_url)
+            } else {
+                // Fallback for non-URL paths
+                info!("    Fallback: simple staging dir");
+                let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
+                let final_url = base_url.to_string();
+                (staging_url, final_url)
+            }
+        } else if config.operation_type == StagingOperationType::Metadata {
+            info!("    Using simple metadata staging");
+            let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
+            let final_url = base_url.to_string();
+            (staging_url, final_url)
+        } else {
+            info!("    Using non-metadata staging");
+            let staging_url = format!("{}{}/{}/{}", base_url, collection_path, staging_dir, operation_id);
+            let final_url = format!("{}{}", base_url, collection_path);
+            (staging_url, final_url)
+        };
+
+        info!("🔍 build_operation_urls COMPLETE");
+        info!("    Final staging_url: {}", staging_url);
+        info!("    Final final_url: {}", final_url);
         Ok((staging_url, final_url))
     }
 

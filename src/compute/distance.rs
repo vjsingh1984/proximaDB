@@ -23,7 +23,7 @@
 //! 4. Zero compilation errors across platforms
 //! 5. Optimal performance per platform
 
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize}; // Unused imports
 use std::sync::OnceLock;
 use tracing::info;
 

@@ -74,10 +74,10 @@ async fn test_basic_wal_operations() -> Result<()> {
     // Create a test vector record
     let now = chrono::Utc::now().timestamp_millis();
     let test_record = proximadb::core::VectorRecord {
-        id: vector_id.clone(),
+        id: Some(vector_id.clone()),
         collection_id: collection_id.clone(),
         vector: vec![1.0, 2.0, 3.0, 4.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: now,
         created_at: now,
         updated_at: now,
@@ -91,7 +91,7 @@ async fn test_basic_wal_operations() -> Result<()> {
     // Write to WAL using the correct insert method
     println!("🔍 DEBUG: About to insert vector_id={} into collection_id={}", vector_id, collection_id);
     let sequence = wal_manager
-        .insert(collection_id.clone(), vector_id.clone(), test_record)
+        .insert(collection_id.clone(), vector_id.clone(), &test_record)
         .await?;
     println!("🔍 DEBUG: Insert completed with sequence={}", sequence);
 

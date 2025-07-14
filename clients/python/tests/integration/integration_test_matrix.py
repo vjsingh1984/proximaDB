@@ -308,7 +308,8 @@ class CollectionManagementTests:
             
             # Create collection config
             collection_config = CollectionConfig(
-                dimension=TEST_CONFIG["collections"]["dimension"],
+            name="test_collection",
+            dimension=TEST_CONFIG["collections"]["dimension"],
                 distance_metric=DistanceMetric.COSINE,
                 description="Integration test collection for OpenAI embeddings"
             )
@@ -556,7 +557,8 @@ class AlgorithmTests:
                 collection_name = f"test_{metric.value}_collection"
                 
                 collection_config = CollectionConfig(
-                    dimension=128,  # Smaller for faster testing
+            name=collection_name,
+            dimension=mension=128,  # Smaller for faster testing
                     distance_metric=metric,
                     description=f"Test collection for {metric.value} metric"
                 )
@@ -614,7 +616,8 @@ class WALPersistenceTests:
             
             # Create a collection for WAL testing
             collection_config = CollectionConfig(
-                dimension=256,
+            name=collection_name,
+            dimension=ion=256,
                 distance_metric=DistanceMetric.COSINE,
                 description="WAL flush test collection"
             )

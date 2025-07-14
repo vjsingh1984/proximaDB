@@ -110,10 +110,10 @@ impl ViperEngine {
     }
     
     /// Insert a vector record
-    pub async fn insert_vector(&self, record: VectorRecord) -> Result<()> {
+    pub async fn insert_vector(&self, record: &VectorRecord) -> Result<()> {
         info!(
             "🔥 VIPER Engine: Inserting vector {} with {} metadata fields in collection {}",
-            record.id,
+            record.id.as_deref().unwrap_or(""),
             record.metadata.len(),
             record.collection_id
         );
@@ -173,7 +173,7 @@ impl ViperEngine {
         collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
-        use arrow_array::{Array, Float32Array, ListArray, StringArray, Int64Array, BooleanArray, Float64Array, TimestampMicrosecondArray, StructArray};
+        use arrow_array::{Array, Float32Array, ListArray, StringArray, Int64Array, BooleanArray, Float64Array, StructArray};
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
         
@@ -275,7 +275,7 @@ impl ViperEngine {
                             .unwrap_or(timestamp);
                         
                         // Parse metadata from extra_meta list of key-value pairs
-                        let mut metadata = HashMap::new();
+                        let mut metadata_map = HashMap::new();
                         if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
                             if let Some(extra_meta_list) = extra_meta_col.as_any().downcast_ref::<ListArray>() {
                                 if !extra_meta_list.is_null(row_idx) {
@@ -288,7 +288,7 @@ impl ViperEngine {
                                             if !struct_array.is_null(kv_idx) {
                                                 let key = key_array.value(kv_idx).to_string();
                                                 let value = value_array.value(kv_idx).to_string();
-                                                metadata.insert(key, serde_json::Value::String(value));
+                                                metadata_map.insert(key, value);
                                             }
                                         }
                                     }
@@ -303,38 +303,41 @@ impl ViperEngine {
                             if !matches!(field_name.as_str(), "id" | "collection_id" | "vector" | "timestamp" | "created_at" | "updated_at" | "version" | "expires_at" | "extra_meta") {
                                 if let Some(column) = batch.column_by_name(field_name) {
                                     if !column.is_null(row_idx) {
-                                        // Convert Arrow value to JSON based on data type
-                                        let json_value = match field.data_type() {
+                                        // Convert Arrow value to String based on data type
+                                        let string_value = match field.data_type() {
                                             arrow_schema::DataType::Utf8 => {
                                                 if let Some(str_array) = column.as_any().downcast_ref::<StringArray>() {
-                                                    serde_json::Value::String(str_array.value(row_idx).to_string())
+                                                    str_array.value(row_idx).to_string()
                                                 } else { continue; }
                                             }
                                             arrow_schema::DataType::Int64 => {
                                                 if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>() {
-                                                    serde_json::Value::Number(serde_json::Number::from(int_array.value(row_idx)))
+                                                    int_array.value(row_idx).to_string()
                                                 } else { continue; }
                                             }
                                             arrow_schema::DataType::Float64 => {
                                                 if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
-                                                    serde_json::Value::Number(serde_json::Number::from_f64(float_array.value(row_idx)).unwrap_or(serde_json::Number::from(0)))
+                                                    float_array.value(row_idx).to_string()
                                                 } else { continue; }
                                             }
                                             arrow_schema::DataType::Boolean => {
                                                 if let Some(bool_array) = column.as_any().downcast_ref::<BooleanArray>() {
-                                                    serde_json::Value::Bool(bool_array.value(row_idx))
+                                                    bool_array.value(row_idx).to_string()
                                                 } else { continue; }
                                             }
                                             _ => continue, // Skip unsupported types
                                         };
-                                        metadata.insert(field_name.to_string(), json_value);
+                                        metadata_map.insert(field_name.to_string(), string_value);
                                     }
                                 }
                             }
                         }
                         
+                        // Convert HashMap to Vec<MetadataItem>
+                        let metadata = crate::core::proto_metadata_helper::hashmap_to_proto_metadata(&metadata_map);
+                        
                         let record = VectorRecord {
-                            id: vector_id.to_string(),
+                            id: Some(vector_id.to_string()),
                             collection_id: collection_id.to_string(),
                             vector,
                             metadata,
@@ -346,7 +349,7 @@ impl ViperEngine {
                             rank: None,
                             score: None,
                             distance: None,
-                        };
+            };
                         
                         // Check if this is a better match than what we have
                         match &best_match {

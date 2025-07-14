@@ -24,8 +24,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::handlers::{create_router, AppState};
-use crate::services::collection_service::CollectionService;
-use crate::services::vector_service::VectorService;
+use crate::handlers::UnifiedHandlers;
 
 /// REST server for ProximaDB
 pub struct RestServer {
@@ -37,12 +36,10 @@ impl RestServer {
     /// Create new REST server
     pub fn new(
         bind_addr: SocketAddr,
-        vector_service: Arc<VectorService>,
-        collection_service: Arc<CollectionService>,
+        unified_handlers: Arc<UnifiedHandlers>,
     ) -> Self {
         let state = AppState {
-            vector_service,
-            collection_service,
+            unified_handlers,
         };
 
         let router = create_router(state).layer(

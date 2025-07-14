@@ -221,6 +221,22 @@ pub struct SearchMetrics {
     pub engine_metrics: HashMap<String, serde_json::Value>,
 }
 
+impl Default for SearchMetrics {
+    fn default() -> Self {
+        Self {
+            total_searches: 0,
+            avg_latency_us: 0.0,
+            p95_latency_us: 0.0,
+            p99_latency_us: 0.0,
+            avg_vectors_scanned: 0.0,
+            cache_hit_rate: 0.0,
+            index_efficiency: HashMap::new(),
+            quantization_accuracy: None,
+            engine_metrics: HashMap::new(),
+        }
+    }
+}
+
 /// Quantization accuracy tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizationAccuracy {
@@ -426,14 +442,23 @@ impl SearchEngineFactory {
             tracing::debug!("🔍 WAL_SEARCH: Found {} unflushed batches in memtable", unflushed_batches.len());
             
             for batch in unflushed_batches {
-                for vector_record in &batch.vector_records {
+                for vector_record in batch.vector_records.iter() {
                     // Apply metadata filters
                     if let Some(filters) = filters {
                         let mut matches = true;
                         for (key, expected_value) in filters {
-                            match vector_record.metadata.get(key) {
+                            // Check metadata - find the item with matching key
+                            let metadata_match = vector_record.metadata.iter()
+                                .find(|item| &item.key == key)
+                                .map(|item| &item.value);
+                            match metadata_match {
                                 Some(actual_value) => {
-                                    if actual_value != expected_value {
+                                    // Convert expected_value to string for comparison
+                                    let expected_str = match expected_value {
+                                        serde_json::Value::String(s) => s.clone(),
+                                        other => other.to_string(),
+                                    };
+                                    if actual_value != &expected_str {
                                         matches = false;
                                         break;
                                     }
@@ -450,21 +475,9 @@ impl SearchEngineFactory {
                     }
 
                     let score = self.calculate_similarity(query_vector, &vector_record.vector);
+                    
                     results.push(TieredSearchResult {
-                        vector_record: VectorRecord {
-                            id: vector_record.id.clone(),
-                            collection_id: vector_record.collection_id.clone(),
-                            vector: vector_record.vector.clone(),
-                            metadata: vector_record.metadata.clone(),
-                            timestamp: vector_record.timestamp,
-                            created_at: vector_record.created_at,
-                            updated_at: vector_record.updated_at,
-                            expires_at: vector_record.expires_at,
-                            version: vector_record.version,
-                            rank: vector_record.rank,
-                            score: vector_record.score,
-                            distance: vector_record.distance,
-                        },
+                        vector_record: vector_record.clone(), // Must clone for owned result
                         score,
                         tier: StorageTier::Unflushed,
                         engine: DeduplicationStorageEngine::WAL,
@@ -509,9 +522,17 @@ impl SearchEngineFactory {
             if let Some(filters) = filters {
                 let mut matches = true;
                 for (key, expected_value) in filters {
-                    match vector_record.metadata.get(key) {
+                    // Check metadata - find the item with matching key
+                    match vector_record.metadata.iter()
+                        .find(|item| &item.key == key)
+                        .map(|item| &item.value) {
                         Some(actual_value) => {
-                            if actual_value != expected_value {
+                            // Convert expected_value to string for comparison
+                            let expected_str = match expected_value {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            if actual_value != &expected_str {
                                 matches = false;
                                 break;
                             }
@@ -594,15 +615,15 @@ impl SearchEngineFactory {
         search_results
             .into_iter()
             .map(|result| {
-                let id = result.id;
+                let id = &result.id;
                 let collection_id = result.collection_id.unwrap_or_default();
                 let vector = result.vector.unwrap_or_default();
-                let metadata = result.metadata;
+                let metadata = crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata);
                 let now = chrono::Utc::now().timestamp_millis();
                 
                 TieredSearchResult {
                     vector_record: VectorRecord {
-                        id: id.clone(),
+                        id: Some(id.clone()),
                         collection_id,
                         vector,
                         metadata,
@@ -631,7 +652,7 @@ impl SearchEngineFactory {
         tiered_results
             .into_iter()
             .map(|result| {
-                let id = result.vector_record.id;
+                let id = result.vector_record.id.clone().unwrap_or_default();
                 SearchResult {
                     id: id.clone(),
                     vector_id: Some(id),
@@ -639,7 +660,7 @@ impl SearchEngineFactory {
                     distance: None,
                     rank: None,
                     vector: Some(result.vector_record.vector),
-                    metadata: result.vector_record.metadata,
+                    metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&result.vector_record.metadata),
                     collection_id: Some(result.vector_record.collection_id),
                     created_at: Some(result.timestamp.timestamp_millis()),
                     algorithm_used: None,

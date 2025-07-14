@@ -19,9 +19,8 @@ limitations under the License.
 # Unified client interface (recommended)
 from .unified_client import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
 
-# Specialized clients (for advanced use cases)
-from .rest_client import ProximaDBRestClient
-from .grpc_client import ProximaDBClient as ProximaDBGrpcClient
+# For backward compatibility, ProximaDBClient is the main client
+Client = ProximaDBClient  # Alias for backward compatibility
 from .config import ClientConfig
 from .models import (
     Collection,
@@ -38,6 +37,9 @@ from .models import (
     VectorArray,
     MetadataDict,
     FilterDict,
+    QuantizationConfig,
+    QuantizationType,
+    SearchOptimization,
 )
 from .exceptions import (
     ProximaDBError,
@@ -68,14 +70,13 @@ __email__ = "singhvjd@gmail.com"
 __all__ = [
     # Unified client interface (recommended)
     "ProximaDBClient",
+    "Client",  # Alias for backward compatibility
     "connect", 
     "connect_grpc",
     "connect_rest",
     "Protocol",
     
-    # Specialized clients (for advanced use cases)
-    "ProximaDBRestClient",
-    "ProximaDBGrpcClient",
+    # Configuration
     "ClientConfig",
     
     # Models
@@ -93,6 +94,9 @@ __all__ = [
     "VectorArray",
     "MetadataDict",
     "FilterDict",
+    "QuantizationConfig",
+    "QuantizationType",
+    "SearchOptimization",
     
     # Exceptions
     "ProximaDBError",

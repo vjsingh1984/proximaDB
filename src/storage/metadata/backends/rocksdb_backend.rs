@@ -379,21 +379,8 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
     }
     
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
-        match self.get_collection_metadata(collection_id).await? {
-            Some(record) => Ok(Some(Collection {
-                id: String::from(record.uuid.clone()),
-                name: record.name,
-                dimension: record.dimension as usize,
-                distance_metric: record.distance_metric,
-                indexing_algorithm: record.indexing_algorithm,
-                storage_engine: record.storage_engine,
-                created_at: chrono::DateTime::from_timestamp(record.created_at, 0)
-                    .unwrap_or_else(chrono::Utc::now),
-                updated_at: chrono::DateTime::from_timestamp(record.updated_at, 0)
-                    .unwrap_or_else(chrono::Utc::now),
-            })),
-            None => Ok(None),
-        }
+        // get_collection_metadata already returns a Collection
+        self.get_collection_metadata(collection_id).await
     }
     
     async fn list_collections(&self) -> Result<Vec<Collection>> {
@@ -430,6 +417,24 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
     async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
         Ok(self.get_uuid(collection_id).await?.is_some())
     }
+    
+    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
+        // Fast check using RocksDB key existence without fetching value
+        let db = self.get_db().await?;
+        
+        match db {
+            DbHandle::Transactional(db) => {
+                let cf = self.get_cf(&db, CF_COLLECTIONS)?;
+                // RocksDB key_may_exist is faster than get for existence checks
+                Ok(db.key_may_exist_cf(&cf, collection_id.as_bytes()))
+            }
+            DbHandle::Regular(db) => {
+                let cf = db.cf_handle(CF_COLLECTIONS)
+                    .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
+                Ok(db.key_may_exist_cf(&cf, collection_id.as_bytes()))
+            }
+        }
+    }
 }
 
 impl RocksDbMetadataBackend {
@@ -445,28 +450,23 @@ impl RocksDbMetadataBackend {
                 
                 // Write to collections CF
                 let cf_collections = self.get_cf(&db, CF_COLLECTIONS)?;
-                batch.put_cf(&cf_collections, record.uuid.as_bytes(), &data);
+                batch.put_cf(&cf_collections, record.id.as_bytes(), &data);
                 
                 // Update name index
                 let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
-                batch.put_cf(&cf_name_index, record.name.as_bytes(), record.uuid.as_bytes());
+                let name = record.config.as_ref().map(|c| &c.name).unwrap_or(&record.id);
+                batch.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes());
                 
                 // Update UUID index (reverse lookup)
                 let cf_uuid_index = self.get_cf(&db, CF_UUID_INDEX)?;
-                batch.put_cf(&cf_uuid_index, record.uuid.as_bytes(), record.name.as_bytes());
-                
-                // Update tag indexes
-                let cf_tags = self.get_cf(&db, CF_TAGS)?;
-                for tag in &record.tags {
-                    let tag_key = format!("{}:{}", tag, record.uuid);
-                    batch.put_cf(&cf_tags, tag_key.as_bytes(), record.uuid.as_bytes());
-                }
+                batch.put_cf(&cf_uuid_index, record.id.as_bytes(), name.as_bytes());
                 
                 // Write batch atomically
                 db.write(batch)?;
                 self.update_stats(StatOp::Write(data_len)).await;
                 
-                info!("✅ Upserted collection {} ({})", record.name, record.uuid);
+                let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
+                info!("✅ Upserted collection {} ({})", name, record.id);
             }
             DbHandle::Regular(db) => {
                 let mut batch = WriteBatch::default();
@@ -474,31 +474,25 @@ impl RocksDbMetadataBackend {
                 // Write to collections CF
                 let cf_collections = db.cf_handle(CF_COLLECTIONS)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                batch.put_cf(&cf_collections, record.uuid.as_bytes(), &data);
+                batch.put_cf(&cf_collections, record.id.as_bytes(), &data);
                 
                 // Update name index
                 let cf_name_index = db.cf_handle(CF_NAME_INDEX)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                batch.put_cf(&cf_name_index, record.name.as_bytes(), record.uuid.as_bytes());
+                let name = record.config.as_ref().map(|c| &c.name).unwrap_or(&record.id);
+                batch.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes());
                 
                 // Update UUID index
                 let cf_uuid_index = db.cf_handle(CF_UUID_INDEX)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                batch.put_cf(&cf_uuid_index, record.uuid.as_bytes(), record.name.as_bytes());
-                
-                // Update tag indexes
-                let cf_tags = db.cf_handle(CF_TAGS)
-                    .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                for tag in &record.tags {
-                    let tag_key = format!("{}:{}", tag, record.uuid);
-                    batch.put_cf(&cf_tags, tag_key.as_bytes(), record.uuid.as_bytes());
-                }
+                batch.put_cf(&cf_uuid_index, record.id.as_bytes(), name.as_bytes());
                 
                 // Write batch atomically
                 db.write(batch)?;
                 self.update_stats(StatOp::Write(data_len)).await;
                 
-                info!("✅ Upserted collection {} ({})", record.name, record.uuid);
+                let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
+                info!("✅ Upserted collection {} ({})", name, record.id);
             }
         }
         
@@ -739,14 +733,14 @@ impl RocksDbMetadataBackend {
                 DbHandle::Transactional(ref db) => {
                     // Create checkpoint for transactional DB
                     let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)?;
-                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
+                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp());
                     checkpoint.create_checkpoint(&backup_dir)?;
                     info!("✅ Created RocksDB backup at: {:?}", backup_dir);
                 }
                 DbHandle::Regular(ref db) => {
                     // Create checkpoint for regular DB
                     let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)?;
-                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
+                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp());
                     checkpoint.create_checkpoint(&backup_dir)?;
                     info!("✅ Created RocksDB backup at: {:?}", backup_dir);
                 }
@@ -856,23 +850,17 @@ impl RocksDbMetadataBackend {
                     
                     // Delete from name index
                     let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
-                    batch.delete_cf(&cf_name_index, record.name.as_bytes());
+                    let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
+                    batch.delete_cf(&cf_name_index, name.as_bytes());
                     
                     // Delete from UUID index
                     let cf_uuid_index = self.get_cf(&db, CF_UUID_INDEX)?;
                     batch.delete_cf(&cf_uuid_index, uuid.as_bytes());
                     
-                    // Delete tag indexes
-                    let cf_tags = self.get_cf(&db, CF_TAGS)?;
-                    for tag in &record.tags {
-                        let tag_key = format!("{}:{}", tag, uuid);
-                        batch.delete_cf(&cf_tags, tag_key.as_bytes());
-                    }
-                    
                     db.write(batch)?;
                     self.update_stats(StatOp::Delete).await;
                     
-                    info!("🗑️ Deleted collection {} ({})", record.name, uuid);
+                    info!("🗑️ Deleted collection {} ({})", name, uuid);
                     Ok(true)
                 }
                 DbHandle::Regular(db) => {
@@ -886,25 +874,18 @@ impl RocksDbMetadataBackend {
                     // Delete from name index
                     let cf_name_index = db.cf_handle(CF_NAME_INDEX)
                         .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                    batch.delete_cf(&cf_name_index, record.name.as_bytes());
+                    let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
+                    batch.delete_cf(&cf_name_index, name.as_bytes());
                     
                     // Delete from UUID index
                     let cf_uuid_index = db.cf_handle(CF_UUID_INDEX)
                         .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
                     batch.delete_cf(&cf_uuid_index, uuid.as_bytes());
                     
-                    // Delete tag indexes
-                    let cf_tags = db.cf_handle(CF_TAGS)
-                        .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                    for tag in &record.tags {
-                        let tag_key = format!("{}:{}", tag, uuid);
-                        batch.delete_cf(&cf_tags, tag_key.as_bytes());
-                    }
-                    
                     db.write(batch)?;
                     self.update_stats(StatOp::Delete).await;
                     
-                    info!("🗑️ Deleted collection {} ({})", record.name, uuid);
+                    info!("🗑️ Deleted collection {} ({})", name, uuid);
                     Ok(true)
                 }
             }

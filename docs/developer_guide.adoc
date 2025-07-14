@@ -1825,25 +1825,54 @@ pytest tests/ -m "storage"            # Only storage tests
 pytest tests/ -k "collection"         # Tests with 'collection' in name
 ----
 
-=== Performance Testing
 
-The test suite includes comprehensive performance testing with large datasets:
+=== Documentation and Diagrams
 
+==== Generating Diagrams
+
+ProximaDB documentation uses PlantUML and Mermaid diagrams that must be converted to PNG images for rendering.
+
+**Prerequisites:**
 [source,bash]
 ----
-# Storage layout performance (15,000-20,000 vectors, 20MB+ data)
-pytest tests/test_storage_layouts.py::TestVIPERStorageLayout -v -s
-pytest tests/test_storage_layouts.py::TestLSMStorageLayout -v -s
+# Install PlantUML
+sudo apt-get install plantuml    # Ubuntu/Debian
+brew install plantuml             # macOS
 
-# Cross-storage search performance
-pytest tests/test_storage_layouts.py::TestCrossStorageSearch -v -s
+# Install Mermaid CLI
+npm install -g @mermaid-js/mermaid-cli
 ----
 
-**Performance Characteristics:**
-- Tests trigger multiple flushes and compaction operations
-- Verifies search across WAL, flushed, and compacted data layers
-- Measures insert rate (typically >1,758 vectors/second)
-- Validates ranking consistency across storage layers
+**Quick Generation:**
+[source,bash]
+----
+cd docs
+./generate_diagrams.sh
+----
+
+**Manual Generation:**
+[source,bash]
+----
+# PlantUML diagrams
+plantuml -tpng -o diagrams/images diagrams/plantuml/*.puml
+
+# Mermaid diagrams
+for f in diagrams/*.mmd; do
+  mmdc -i "$f" -o "diagrams/images/$(basename "$f" .mmd).png" -t dark -b transparent
+done
+----
+
+**Key Diagrams:**
+- `proximadb-component.png` - System architecture overview
+- `unified_memtable_architecture.png` - Memtable design
+- `unified_quantization_system.png` - Quantization architecture
+- `storage-aware-search.png` - Three-layer search flow
+
+**Adding New Diagrams:**
+1. Create source file in `docs/diagrams/plantuml/` or `docs/diagrams/`
+2. Follow naming convention: `proximadb-feature-name.puml`
+3. Generate PNG: `plantuml -tpng diagram.puml`
+4. Reference in AsciiDoc: `image::proximadb-feature-name.png[Description]`
 
 ---
 

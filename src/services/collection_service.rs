@@ -28,6 +28,7 @@ use tracing::{debug, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::proto::proximadb::{CollectionConfig, Collection};
+use crate::core::config::StorageConfig;
 // Using proto types directly - CollectionRecord is obsolete
 use crate::storage::assignment_service::{
     get_assignment_service, AssignmentService, StorageAssignmentConfig, StorageComponentType,
@@ -45,11 +46,15 @@ pub struct CollectionService {
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     index_config_cache: Arc<RwLock<HashMap<String, crate::index::config::IndexConfig>>>,
+    storage_config: StorageConfig,
 }
 
 impl CollectionService {
     /// Create new collection service with multi-disk coordination
-    pub async fn new(metadata_backend: Arc<FilestoreMetadataBackend>) -> Result<Self> {
+    pub async fn new(
+        metadata_backend: Arc<FilestoreMetadataBackend>,
+        storage_config: StorageConfig,
+    ) -> Result<Self> {
         let assignment_service = get_assignment_service();
 
         let filesystem_factory = Arc::new(
@@ -63,6 +68,7 @@ impl CollectionService {
             assignment_service,
             filesystem_factory,
             index_config_cache: Arc::new(RwLock::new(HashMap::new())),
+            storage_config,
         })
     }
 
@@ -108,7 +114,8 @@ impl CollectionService {
         }
 
         // Create proto collection directly - no Avro conversion needed!
-        let uuid = uuid::Uuid::new_v4().to_string();
+        // Generate base62 ID from microsecond timestamp with collision detection
+        let uuid = self.generate_unique_collection_id().await?;
         let now = chrono::Utc::now().timestamp_micros();
         
         // Create proto collection with stats
@@ -238,21 +245,21 @@ impl CollectionService {
         // No IndexConfig found, create smart defaults based on algorithm
         let config = proto.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
         let indexing_algorithm = match config.primary_indexing_algorithm {
-            1 => crate::core::avro_unified::IndexingAlgorithm::Hnsw,
-            2 => crate::core::avro_unified::IndexingAlgorithm::Ivf,
-            3 => crate::core::avro_unified::IndexingAlgorithm::Pq,
-            4 => crate::core::avro_unified::IndexingAlgorithm::Flat,
-            5 => crate::core::avro_unified::IndexingAlgorithm::Annoy,
-            _ => crate::core::avro_unified::IndexingAlgorithm::Hnsw,
+            1 => crate::core::IndexingAlgorithm::Hnsw,
+            2 => crate::core::IndexingAlgorithm::Ivf,
+            3 => crate::core::IndexingAlgorithm::Pq,
+            4 => crate::core::IndexingAlgorithm::Flat,
+            5 => crate::core::IndexingAlgorithm::Annoy,
+            _ => crate::core::IndexingAlgorithm::Hnsw,
         };
         
         let algorithm_str = match indexing_algorithm {
-            crate::core::avro_unified::IndexingAlgorithm::Hnsw => "HNSW",
-            crate::core::avro_unified::IndexingAlgorithm::Ivf => "IVF",
-            crate::core::avro_unified::IndexingAlgorithm::Pq => "PQ",
-            crate::core::avro_unified::IndexingAlgorithm::Flat => "FLAT",
-            crate::core::avro_unified::IndexingAlgorithm::Annoy => "ANNOY",
-            crate::core::avro_unified::IndexingAlgorithm::Unspecified => "HNSW", // Default to HNSW
+            crate::core::IndexingAlgorithm::Hnsw => "HNSW",
+            crate::core::IndexingAlgorithm::Ivf => "IVF",
+            crate::core::IndexingAlgorithm::Pq => "PQ",
+            crate::core::IndexingAlgorithm::Flat => "FLAT",
+            crate::core::IndexingAlgorithm::Annoy => "ANNOY",
+            crate::core::IndexingAlgorithm::Unspecified => "HNSW", // Default to HNSW
         };
         
         let smart_config = crate::index::config::IndexConfig::create_smart_default(
@@ -897,36 +904,25 @@ impl CollectionService {
 
     /// Get WAL assignment configuration from system config
     async fn get_wal_assignment_config(&self) -> Result<StorageAssignmentConfig> {
-        // Get configuration from environment or config file
-        let base_path = std::env::var("PROXIMADB_DATA_PATH")
-            .unwrap_or_else(|_| "/workspace/data".to_string());
-        
-        // Check for multi-disk configuration
-        let disk_count = std::env::var("PROXIMADB_DISK_COUNT")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(3);
-        
-        let mut storage_urls = Vec::new();
-        for i in 1..=disk_count {
-            storage_urls.push(format!("file://{}/disk{}/wal", base_path, i));
-        }
+        // Use WAL URLs from configuration
+        let storage_urls = self.storage_config.wal_config.wal_urls.clone();
         
         Ok(StorageAssignmentConfig {
             storage_urls,
             component_type: StorageComponentType::Wal,
-            collection_affinity: true,
+            collection_affinity: self.storage_config.wal_config.collection_affinity,
         })
     }
 
     /// Get storage assignment configuration (engine-agnostic)
     async fn get_storage_assignment_config(&self) -> Result<StorageAssignmentConfig> {
+        // Build storage URLs from base paths in configuration
+        let storage_urls: Vec<String> = self.storage_config.storage_layout.base_paths.iter()
+            .map(|base_path| format!("file://{}", base_path.base_dir.display()))
+            .collect();
+        
         Ok(StorageAssignmentConfig {
-            storage_urls: vec![
-                "file:///workspace/data/disk1/storage".to_string(),
-                "file:///workspace/data/disk2/storage".to_string(),
-                "file:///workspace/data/disk3/storage".to_string(),
-            ],
+            storage_urls,
             component_type: StorageComponentType::Storage,
             collection_affinity: true,
         })
@@ -934,16 +930,80 @@ impl CollectionService {
 
     /// Get Index assignment configuration
     async fn get_index_assignment_config(&self) -> Result<StorageAssignmentConfig> {
+        // Build index URLs from base paths in configuration
+        let storage_urls: Vec<String> = self.storage_config.storage_layout.base_paths.iter()
+            .map(|base_path| format!("file://{}/index", base_path.base_dir.display()))
+            .collect();
+        
         Ok(StorageAssignmentConfig {
-            storage_urls: vec![
-                "file:///workspace/data/disk1/storage/index".to_string(),
-                "file:///workspace/data/disk2/storage/index".to_string(),
-                "file:///workspace/data/disk3/storage/index".to_string(),
-            ],
+            storage_urls,
             component_type: StorageComponentType::Index,
             collection_affinity: true,
         })
     }
+    
+    /// Generate unique collection ID using base62-encoded seconds with random padding
+    /// Format: {base62(seconds)}{random_base62_char}
+    async fn generate_unique_collection_id(&self) -> Result<String> {
+        use crate::core::base62;
+        
+        const BASE62_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        let base_timestamp = chrono::Utc::now().timestamp() as u64;
+        let base_id = base62::encode(base_timestamp);
+        
+        // Generate initial ID with random padding using rand::random which is Send
+        let random_index: u8 = rand::random::<u8>() % 62;
+        let random_char = BASE62_CHARS[random_index as usize] as char;
+        let id = format!("{}{}", base_id, random_char);
+        
+        // Check if ID is available
+        if !self.metadata_backend.collection_id_exists(&id).await? {
+            return Ok(id);
+        }
+        
+        // If collision detected, try different random paddings
+        for _ in 0..62 {
+            let random_index: u8 = rand::random::<u8>() % 62;
+            let random_char = BASE62_CHARS[random_index as usize] as char;
+            let try_id = format!("{}{}", base_id, random_char);
+            if !self.metadata_backend.collection_id_exists(&try_id).await? {
+                return Ok(try_id);
+            }
+        }
+        
+        // If still colliding (very unlikely), try bidirectional search with padding
+        const MAX_ATTEMPTS: u64 = 100;
+        
+        for offset in 1..=MAX_ATTEMPTS {
+            // Try incrementing seconds
+            let inc_timestamp = base_timestamp + offset;
+            let inc_base = base62::encode(inc_timestamp);
+            let random_index: u8 = rand::random::<u8>() % 62;
+            let random_char = BASE62_CHARS[random_index as usize] as char;
+            let inc_id = format!("{}{}", inc_base, random_char);
+            if !self.metadata_backend.collection_id_exists(&inc_id).await? {
+                return Ok(inc_id);
+            }
+            
+            // Try decrementing seconds (if not underflow)
+            if base_timestamp > offset {
+                let dec_timestamp = base_timestamp - offset;
+                let dec_base = base62::encode(dec_timestamp);
+                let random_index: u8 = rand::random::<u8>() % 62;
+                let random_char = BASE62_CHARS[random_index as usize] as char;
+                let dec_id = format!("{}{}", dec_base, random_char);
+                if !self.metadata_backend.collection_id_exists(&dec_id).await? {
+                    return Ok(dec_id);
+                }
+            }
+        }
+        
+        // Extremely unlikely case: append another random character
+        let random_index: u8 = rand::random::<u8>() % 62;
+        let random_suffix = BASE62_CHARS[random_index as usize] as char;
+        Ok(format!("{}{}{}", base_id, random_char, random_suffix))
+    }
+    
 }
 
 impl std::fmt::Debug for CollectionService {
@@ -1029,7 +1089,9 @@ impl CollectionServiceBuilder {
             .metadata_backend
             .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
 
-        CollectionService::new(metadata_backend).await
+        // Use default storage config if not provided
+        // In production, this should be provided from the server config
+        CollectionService::new(metadata_backend, StorageConfig::default()).await
     }
 }
 
@@ -1074,7 +1136,8 @@ mod tests {
                 .unwrap(),
         );
 
-        let service = CollectionService::new(backend).await.unwrap();
+        let storage_config = StorageConfig::default();
+        let service = CollectionService::new(backend, storage_config).await.unwrap();
 
         // Valid config
         let valid_config = CollectionConfig {

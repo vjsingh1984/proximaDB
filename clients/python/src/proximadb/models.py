@@ -63,6 +63,8 @@ class IndexingAlgorithm(str, Enum):
     ANNOY = "annoy"
 
 
+
+
 class IndexUpdateMode(str, Enum):
     """Index update modes"""
     SYNCHRONOUS = "synchronous"
@@ -129,6 +131,16 @@ class FilterOperation(str, Enum):
 # QUANTIZATION MODELS
 # ============================================================================
 
+class QuantizationType(str, Enum):
+    """Quantization types for REST API"""
+    NONE = "none"
+    UNIFORM = "uniform"
+    PRODUCT = "pq"
+    SCALAR = "scalar"
+    BINARY = "binary"
+    CUSTOM = "custom"
+
+
 class QuantizationLevel(BaseModel):
     """Quantization level configuration"""
     level_type: str  # "none", "uniform", "pq", "scalar", "binary", "custom"
@@ -189,7 +201,32 @@ class QuantizationValidation(BaseModel):
 
 
 class QuantizationConfig(BaseModel):
-    """Comprehensive quantization configuration"""
+    """Quantization configuration"""
+    enabled: bool = False
+    type: QuantizationType = QuantizationType.NONE
+    progressive_quantization: bool = False
+    
+    # Product quantization params
+    bits_per_subvector: Optional[int] = None
+    num_subvectors: Optional[int] = None
+    
+    # Scalar quantization params
+    bits_per_vector: Optional[int] = None
+    
+    # Binary quantization params
+    threshold: Optional[float] = None
+    
+    # Common params
+    accuracy_threshold: Optional[float] = 0.95
+    compression_ratio_target: Optional[float] = None
+    validation_sample_size: Optional[int] = 1000
+    retraining_threshold: Optional[float] = 0.90
+    
+
+
+
+class ComprehensiveQuantizationConfig(BaseModel):
+    """Comprehensive quantization configuration matching proto structure"""
     enabled: bool = False
     storage_quantization: Optional[StorageQuantizationConfig] = None
     index_quantization: Optional[IndexQuantizationConfig] = None
@@ -288,9 +325,9 @@ class CollectionConfig(BaseModel):
     """Collection configuration for REST API"""
     name: str
     dimension: int = Field(ge=1, le=10000)
-    distance_metric: DistanceMetric = DistanceMetric.COSINE
-    storage_engine: StorageEngine = StorageEngine.VIPER
-    primary_indexing_algorithm: IndexingAlgorithm = IndexingAlgorithm.HNSW
+    distance_metric: Optional[DistanceMetric] = None
+    storage_engine: Optional[StorageEngine] = None
+    primary_indexing_algorithm: Optional[IndexingAlgorithm] = None
     filterable_columns: Optional[List[FilterableColumn]] = None
     index_configs: Optional[List[IndexConfiguration]] = None
     quantization_config: Optional[QuantizationConfig] = None
@@ -299,6 +336,8 @@ class CollectionConfig(BaseModel):
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     owner: Optional[str] = None
+    metadata_schema: Optional[Dict[str, Any]] = None
+    filterable_metadata_fields: Optional[List[str]] = None
 
 
 class CollectionStats(BaseModel):
@@ -469,6 +508,23 @@ class OperationMetrics(BaseModel):
     index_update_time_us: int = 0
 
 
+class DeleteResult(BaseModel):
+    """Delete operation result"""
+    deleted_count: int = 0
+    success: bool = True
+    message: Optional[str] = None
+    metrics: Optional[OperationMetrics] = None
+
+
+class BatchResult(BaseModel):
+    """Batch operation result"""
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    errors: List[str] = Field(default_factory=list)
+    duration_ms: float = 0.0
+
+
 class VectorOperationResponse(BaseModel):
     """Vector operation response"""
     success: bool
@@ -500,6 +556,32 @@ class ApiResponse(BaseModel):
 # ============================================================================
 # HEALTH AND MONITORING
 # ============================================================================
+
+class CompressionType(str, Enum):
+    """Compression types"""
+    NONE = "none"
+    LZ4 = "lz4" 
+    ZSTD = "zstd"
+    SNAPPY = "snappy"
+
+
+
+
+class StorageConfig(BaseModel):
+    """Storage configuration"""
+    compression: CompressionType = CompressionType.NONE
+    replication_factor: int = 1
+    enable_tiering: bool = False
+
+
+class FlushConfig(BaseModel):
+    """Flush configuration"""
+    force_flush: bool = False
+    timeout_ms: int = 5000
+    include_secondary_indexes: bool = True
+    include_metadata: bool = True
+    max_wal_size_mb: Optional[float] = None
+
 
 class HealthStatus(BaseModel):
     """Health check response"""

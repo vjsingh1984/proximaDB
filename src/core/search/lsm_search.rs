@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::core::indexing::{BloomFilter, BloomFilterCollection};
+use crate::compute::unified_distance::SimilarityResult;
 use crate::core::search::storage_aware::{
     QuantizationLevel, SearchCapabilities, SearchHints, SearchMetrics, StorageSearchEngine,
 };
@@ -224,38 +225,42 @@ impl LSMSearchEngine {
             _ => crate::compute::DistanceMetric::Cosine,
         };
         
-        let mut candidates: Vec<(f32, VectorRecord)> = memtable_vectors
+        let mut candidates: Vec<(SimilarityResult, VectorRecord)> = memtable_vectors
             .into_iter()
             .filter_map(|record| {
-                let distance = distance_compute.calculate_distance(query_vector, &record.vector, &metric);
-                if distance.is_finite() {
-                    Some((distance, record))
+                let result = distance_compute.calculate_distance(query_vector, &record.vector, &metric);
+                if result.rank_value.is_finite() {
+                    Some((result, record))
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Sort by distance (ascending - closer is better)
-        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by rank_value (ascending - lower is better)
+        candidates.sort_by(|a, b| a.0.rank_value.partial_cmp(&b.0.rank_value).unwrap_or(std::cmp::Ordering::Equal));
 
         // Convert to SearchResult and take top k
         let results: Vec<SearchResult> = candidates
             .into_iter()
             .take(k)
-            .map(|(distance, record)| {
-                let id = std::mem::take(&mut record.id.clone());
-                let collection_id = std::mem::take(&mut record.collection_id.clone());
+            .map(|(similarity_result, record)| {
+                // Proto-first: Handle optional ID and missing collection_id
+                let id = record.id.clone().unwrap_or_else(|| "unknown".to_string());
+                
+                // Convert proto metadata (Vec<MetadataItem>) to expected format
+                let metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
+                
                 SearchResult {
                     id: id.clone(),
                     vector_id: Some(id),
-                    score: 1.0 - distance, // Convert distance to similarity score
-                    distance: Some(distance),
+                    score: similarity_result.normalized_score, // Use semantic-aware score
+                    distance: Some(similarity_result.rank_value), // Use rank value for distance
                     rank: None,
                     vector: Some(record.vector),
-                    metadata: record.metadata,
-                    collection_id: Some(collection_id),
-                    created_at: Some(record.created_at),
+                    metadata,
+                    collection_id: Some(self.collection.id.clone()), // Use collection from struct
+                    created_at: Some(record.timestamp / 1_000_000), // Convert microseconds to seconds
                     algorithm_used: Some("LSM".to_string()),
                     processing_time_us: None,
                 }

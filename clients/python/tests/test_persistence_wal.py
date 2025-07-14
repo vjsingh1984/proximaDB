@@ -34,6 +34,7 @@ class TestDataPersistence:
         collection_name = f"persist_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.COSINE,
             description="Persistence test collection"
@@ -62,7 +63,10 @@ class TestDataPersistence:
     def test_vector_persistence(self, rest_client):
         """Test that vectors persist after insertion"""
         collection_name = f"vector_persist_{int(time.time())}"
-        config = CollectionConfig(dimension=128, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         try:
             # Create collection
@@ -109,7 +113,10 @@ class TestDataPersistence:
     def test_cross_protocol_persistence(self, rest_client, grpc_client):
         """Test persistence across REST and gRPC protocols"""
         collection_name = f"cross_persist_{int(time.time())}"
-        config = CollectionConfig(dimension=128, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         try:
             # Create with REST
@@ -187,6 +194,7 @@ class TestWALOperations:
         
         # Configure low flush threshold to trigger flush
         config = CollectionConfig(
+            name=collection_name,
             dimension=512,
             distance_metric=DistanceMetric.COSINE,
             description="WAL flush test collection",
@@ -250,6 +258,7 @@ class TestWALOperations:
         """Test WAL durability and recovery"""
         collection_name = f"wal_durability_{int(time.time())}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.COSINE,
             description="WAL durability test"
@@ -300,6 +309,7 @@ class TestWALOperations:
         """Test concurrent WAL operations from multiple clients"""
         collection_name = f"concurrent_wal_{int(time.time())}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Concurrent WAL test"
@@ -407,10 +417,11 @@ class TestRecoveryMechanisms:
         
         # Create collection with specific configuration
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.EUCLIDEAN,
             description="Recovery test collection with specific config",
-            storage_layout="viper"
+            storage_engine=StorageEngine.VIPER
         )
         
         try:
@@ -456,7 +467,10 @@ class TestRecoveryMechanisms:
     def test_data_consistency_check(self, rest_client):
         """Test data consistency after operations"""
         collection_name = f"consistency_test_{int(time.time())}"
-        config = CollectionConfig(dimension=128, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         try:
             collection = rest_client.create_collection(collection_name, config)
@@ -528,10 +542,11 @@ class TestStorageIntegration:
         
         # Configure for VIPER storage with flush
         config = CollectionConfig(
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.COSINE,
             description="WAL-VIPER integration test",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=4.0)  # Small threshold
         )
         

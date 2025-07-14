@@ -9,7 +9,7 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, info, span, Instrument, Level};
 
 use crate::proto::proximadb::proxima_db_server::ProximaDb;
-use crate::proto::proximadb::{metadata_value, 
+use crate::proto::proximadb::{
     CollectionOperation, CollectionRequest, CollectionResponse, HealthRequest, HealthResponse,
     MetricsRequest, MetricsResponse, OperationMetrics, ResultMetadata, SearchResult,
     SearchResultsCompact, VectorBatchRequest, VectorOperation,
@@ -141,7 +141,7 @@ impl ProximaDbGrpcService {
         );
 
         Arc::new(
-            CollectionService::new(filestore_backend)
+            CollectionService::new(filestore_backend, Default::default())
                 .await
                 .expect("Failed to create CollectionService"),
         )
@@ -196,55 +196,7 @@ impl ProximaDbGrpcService {
         versioned_payload
     }
 
-    /// Convert protobuf VectorRecord to schema types for zero-copy processing
-    fn convert_vector_record(
-        &self,
-        proto_record: &crate::proto::proximadb::VectorRecord,
-    ) -> SchemaVectorRecord {
-        SchemaVectorRecord {
-            id: proto_record.id.clone().unwrap_or_default(), // Optional client label, not primary key
-            collection_id: "unknown".to_string(),            // Set by caller
-            vector: proto_record.vector.clone(),
-            metadata: proto_record
-                .metadata
-                .as_ref()
-                .map(|m| {
-                    m.fields
-                        .iter()
-                        .map(|(k, v)| {
-                            let json_value = match &v.value {
-                                Some(metadata_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                Some(metadata_value::Value::IntValue(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-                                Some(metadata_value::Value::DoubleValue(d)) => serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0))),
-                                Some(metadata_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                                Some(metadata_value::Value::StringArray(array)) => {
-                                    serde_json::Value::Array(array.values.iter().map(|s| serde_json::Value::String(s.clone())).collect())
-                                }
-                                Some(metadata_value::Value::IntArray(array)) => {
-                                    serde_json::Value::Array(array.values.iter().map(|i| serde_json::Value::Number(serde_json::Number::from(*i))).collect())
-                                }
-                                Some(metadata_value::Value::DoubleArray(array)) => {
-                                    serde_json::Value::Array(array.values.iter().map(|d| serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)))).collect())
-                                }
-                                None => serde_json::Value::Null,
-                            };
-                            (k.clone(), json_value)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            timestamp: proto_record
-                .timestamp
-                .unwrap_or_else(|| Utc::now().timestamp_millis()),
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
-            expires_at: proto_record.expires_at,
-            version: proto_record.version,
-            rank: None,
-            score: None,
-            distance: None,
-        }
-    }
+    // No conversion needed - VectorRecord is already proto type (proto-first architecture)
 
     /// Convert schema operation metrics to protobuf
     fn convert_operation_metrics(
@@ -649,9 +601,9 @@ impl ProximaDb for ProximaDbGrpcService {
     ) -> Result<Response<VectorOperationResponse>, Status> {
         let req = request.into_inner();
         debug!(
-            "📦 gRPC vector_batch: collection={}, vectors_payload_size={}",
+            "📦 gRPC vector_batch: collection={}, vectors_count={}",
             req.collection_id,
-            req.vectors_avro_payload.len()
+            req.vectors.len()
         );
 
         let start_time = std::time::Instant::now();
@@ -664,15 +616,15 @@ impl ProximaDb for ProximaDbGrpcService {
         // ✅ Vector search: Enhanced with optimization flags
         // ✅ Response threshold: Lowered to 1KB for more zero-copy responses
         debug!(
-            "🚀 Using hybrid zero-copy path for ALL vectors ({}KB)",
-            req.vectors_avro_payload.len() / 1024
+            "🚀 Using proto-first path for {} vectors",
+            req.vectors.len()
         );
 
         let result = self
             .avro_service
-            .handle_vector_batch(
+            .handle_vector_batch_proto_vec(
                 &req.collection_id,
-                &req.vectors_avro_payload,
+                req.vectors,
             )
             .instrument(span!(Level::DEBUG, "grpc_vector_insert_zero_copy"))
             .await
@@ -1079,12 +1031,15 @@ impl ProximaDb for ProximaDbGrpcService {
                             .and_then(|m| m.as_object())
                             .map(|obj| {
                                 obj.iter()
-                                    .map(|(k, v)| (k.clone(), v.to_string()))
+                                    .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                                        key: k.clone(),
+                                        value: v.to_string(),
+                                    })
                                     .collect()
                             })
                             .unwrap_or_default()
                     } else {
-                        std::collections::HashMap::new()
+                        vec![]
                     },
                     rank: None,
                 })

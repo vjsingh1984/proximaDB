@@ -40,21 +40,19 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
         .map(|i| {
             let now = chrono::Utc::now().timestamp_millis();
             VectorRecord {
-                id: format!("test_vector_{}", i),
+                id: Some(format!("test_vector_{}", i)),
                 collection_id: collection_id.to_string(),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
-                metadata: {
-                    let mut meta = HashMap::new();
-                    meta.insert(
-                        "category".to_string(),
-                        serde_json::Value::String(format!("category_{}", i % 3)),
-                    );
-                    meta.insert(
-                        "priority".to_string(),
-                        serde_json::Value::Number(serde_json::Number::from(i)),
-                    );
-                    meta
-                },
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "category".to_string(),
+                        value: format!("category_{}", i % 3),
+                    },
+                    crate::proto::proximadb::MetadataItem {
+                        key: "priority".to_string(),
+                        value: i.to_string(),
+                    },
+                ],
                 timestamp: now,
                 created_at: now,
                 updated_at: now,

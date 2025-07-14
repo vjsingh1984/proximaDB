@@ -97,7 +97,7 @@ impl ColumnFamilyStorage {
     ) -> crate::Result<Vec<u8>> {
         // Encode just the vector with metadata for reconstruction
         let vector_data = serde_json::json!({
-            "id": record.id,
+            "id": record.id.as_deref().unwrap_or(""),
             "vector": record.vector,
             "timestamp": record.timestamp,
         });
@@ -113,7 +113,7 @@ impl ColumnFamilyStorage {
     ) -> crate::Result<Vec<u8>> {
         // Encode metadata with ID for joins
         let metadata_record = serde_json::json!({
-            "id": record.id,
+            "id": record.id.as_deref().unwrap_or(""),
             "collection_id": record.collection_id,
             "metadata": record.metadata,
             "timestamp": record.timestamp,

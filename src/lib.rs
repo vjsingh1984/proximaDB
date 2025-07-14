@@ -35,6 +35,7 @@ pub mod compute;
 // pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;
 // pub mod distributed;  // Temporarily disabled for single-node optimization
+pub mod handlers;
 pub mod index;
 pub mod monitoring;
 pub mod network;
@@ -110,7 +111,7 @@ impl ProximaDB {
                 .map_err(|e| format!("Failed to create filestore backend: {}", e))?,
         );
 
-        let collection_service = Arc::new(CollectionService::new(filestore_backend).await?);
+        let collection_service = Arc::new(CollectionService::new(filestore_backend, config.storage.clone()).await?);
 
         let storage_engine =
             storage::StorageEngine::new(config.storage.clone(), collection_service.clone()).await?;

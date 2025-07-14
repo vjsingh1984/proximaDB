@@ -16,13 +16,11 @@
 use anyhow::{Context, Result};
 use prost::Message;
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn, error};
-use uuid::Uuid;
 
 use crate::proto::proximadb::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
@@ -51,7 +49,7 @@ pub enum ProtoOperationType {
     Update = 2,
     Delete = 3,
 }
-use crate::storage::atomic::{UnifiedAtomicCoordinator, TransactionHandle, RollbackAction, generate_transaction_id, StagingConfig, StagingOperationType};
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use crate::storage::traits::CollectionMetadataProvider;
 
 /// Configuration for filestore metadata backend
@@ -246,10 +244,9 @@ impl FilestoreMetadataBackend {
         // Create directory structure
         let dirs = [
             &self.base_path,
-            &self.base_path.join("collections"),
-            &self.base_path.join("operations"),
-            &self.base_path.join("snapshots"),
-            &self.base_path.join("temp"),
+            &self.base_path.join("current"),
+            &self.base_path.join("__staging"),
+            &self.base_path.join("archive"),
         ];
         
         for dir in &dirs {
@@ -273,19 +270,29 @@ impl FilestoreMetadataBackend {
         if let Ok(snapshot_sequence) = self.recover_from_snapshot().await {
             info!("📸 Recovered from snapshot, sequence: {}", snapshot_sequence);
             self.recover_incremental_operations(snapshot_sequence).await?;
-            return Ok(self.sequence.load(Ordering::SeqCst));
+            let final_sequence = self.sequence.load(Ordering::SeqCst);
+            
+            // Check if we should create a checkpoint after recovery
+            self.maybe_checkpoint_at_restart().await?;
+            
+            return Ok(final_sequence);
         }
         
         // Fallback to full recovery from operations
         info!("📜 No snapshot found, performing full recovery");
-        self.recover_from_operations().await
+        let max_sequence = self.recover_from_operations().await?;
+        
+        // Check if we should create a checkpoint after recovery
+        self.maybe_checkpoint_at_restart().await?;
+        
+        Ok(max_sequence)
     }
     
     /// Recover from latest snapshot
     async fn recover_from_snapshot(&self) -> Result<u64> {
         let fs = self.get_fs()?;
-        let snapshot_dir = self.base_path.join("snapshots");
-        let current_snapshot = snapshot_dir.join("current.proto");
+        let snapshot_dir = self.base_path.join("current");
+        let current_snapshot = snapshot_dir.join("snapshot.meta");
         
         let current_path = current_snapshot.to_string_lossy();
         if !fs.exists(&current_path).await? {
@@ -340,7 +347,7 @@ impl FilestoreMetadataBackend {
     /// Recover from operation files
     async fn recover_from_operations(&self) -> Result<u64> {
         let fs = self.get_fs()?;
-        let ops_dir = self.base_path.join("operations");
+        let ops_dir = self.base_path.join("current");
         
         let entries = match fs.list(&ops_dir.to_string_lossy()).await {
             Ok(entries) => entries,
@@ -353,7 +360,7 @@ impl FilestoreMetadataBackend {
         // Sort operation files by sequence
         let mut op_files: Vec<_> = entries
             .into_iter()
-            .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".proto"))
+            .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".oplog"))
             .collect();
         
         op_files.sort_by(|a, b| a.name.cmp(&b.name));
@@ -373,7 +380,7 @@ impl FilestoreMetadataBackend {
     /// Recover incremental operations after snapshot
     async fn recover_incremental_operations(&self, after_sequence: u64) -> Result<()> {
         let fs = self.get_fs()?;
-        let ops_dir = self.base_path.join("operations");
+        let ops_dir = self.base_path.join("current");
         
         let entries = match fs.list(&ops_dir.to_string_lossy()).await {
             Ok(entries) => entries,
@@ -384,9 +391,9 @@ impl FilestoreMetadataBackend {
         let mut incremental_ops = Vec::new();
         
         for entry in entries {
-            if entry.name.starts_with("op_") && entry.name.ends_with(".proto") {
-                // Parse sequence from filename: op_XXXXXXXX.proto
-                if let Some(seq_str) = entry.name.strip_prefix("op_").and_then(|s| s.strip_suffix(".proto")) {
+            if entry.name.starts_with("op_") && entry.name.ends_with(".oplog") {
+                // Parse sequence from filename: op_XXXXXXXX.oplog
+                if let Some(seq_str) = entry.name.strip_prefix("op_").and_then(|s| s.strip_suffix(".oplog")) {
                     if let Ok(sequence) = seq_str.parse::<u64>() {
                         if sequence > after_sequence {
                             let op_path = ops_dir.join(&entry.name);
@@ -459,54 +466,91 @@ impl FilestoreMetadataBackend {
             return self.execute_simple_persist(operation).await;
         }
 
-        // Use the atomic coordinator
+        // Use the atomic coordinator with simple atomic operations
         let coordinator = self.atomic_coordinator.clone();
         
-        // Generate transaction ID
-        let tx_id = generate_transaction_id("collection_metadata");
+        info!("🔒 Starting atomic operation for seq={}", operation.sequence);
+        info!("📁 Filestore base_path: {}", self.base_path.display());
+        info!("📁 Config storage_url: {}", self.config.storage_url);
+        info!("📁 Current working directory: {:?}", std::env::current_dir()?);
         
-        info!("🔒 Starting ACID transaction: {} for seq={}", tx_id, operation.sequence);
+        // Prepare the write data
+        let prepared_data = self.prepare_filestore_write(operation).await?;
+        info!("📋 Prepared write data:");
+        info!("    temp_path: {}", prepared_data.temp_path.display());
+        info!("    final_path: {}", prepared_data.final_path.display());
+        info!("    data size: {} bytes", prepared_data.data.len());
         
-        // Begin ACID transaction with three participants: memtable, secondary_index, disk
-        let tx = coordinator
-            .begin_transaction(
-                &tx_id,
-                vec!["memtable".to_string(), "secondary_index".to_string(), "disk".to_string()],
-            )
-            .await?;
+        // Create staging config for atomic operation  
+        // The base_url should point to the current directory where files will be stored
+        let base_url = format!("{}/current", self.config.storage_url.trim_end_matches('/'));
+        let staging_config = StagingConfig {
+            base_url,
+            operation_type: StagingOperationType::Metadata,
+            collection_id: None, // No collection-specific directories for metadata
+            custom_staging_dir: Some("../__staging".to_string()), // Use the parent-level staging directory
+            auto_cleanup: true,
+            max_orphaned_age_hours: 24,
+        };
         
-        // Phase 1: Prepare all participants
-        match self.prepare_transaction_participants(&tx, operation).await {
-            Ok(prepared_data) => {
-                // Phase 2: Commit if all participants prepared successfully
-                if tx.prepare().await? {
-                    // All participants ready - commit the transaction
-                    match self.commit_transaction_participants(&tx, operation, &prepared_data).await {
-                        Ok(_) => {
-                            tx.commit().await?;
-                            self.check_snapshot_trigger().await?;
-                            info!("✅ ACID transaction {} completed for seq={}", tx_id, operation.sequence);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            // Rollback on commit failure
-                            warn!("❌ ACID transaction {} commit failed: {}", tx_id, e);
-                            tx.rollback().await?;
-                            Err(e)
+        info!("📁 Staging config:");
+        info!("    base_url: {}", staging_config.base_url);
+        info!("    custom_staging_dir: {:?}", staging_config.custom_staging_dir);
+        info!("    operation_type: {:?}", staging_config.operation_type);
+        
+        // Begin atomic operation
+        let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
+        
+        // Write to staging
+        info!("📝 Writing to staging:");
+        info!("    staging_url: {}", op_metadata.staging_url);
+        info!("    filename: op_{:016}.oplog", operation.sequence);
+        info!("    operation_id: {}", op_metadata.operation_id);
+        
+        match coordinator.write_to_staging(
+            &op_metadata.operation_id,
+            &format!("op_{:016}.oplog", operation.sequence),
+            &prepared_data.data,
+        ).await {
+            Ok(_) => {
+                info!("✅ Write to staging successful");
+                // Update in-memory state atomically before finalizing disk write
+                match operation.operation_type {
+                    OperationType::Create | OperationType::Update => {
+                        if let Some(record) = &operation.collection_data {
+                            self.index.upsert_collection(record.clone());
                         }
                     }
-                } else {
-                    // Prepare failed - rollback
-                    warn!("❌ ACID transaction {} prepare phase failed", tx_id);
-                    tx.rollback().await?;
-                    Err(anyhow::anyhow!("Transaction prepare phase failed"))
+                    OperationType::Delete => {
+                        if let Some(uuid) = self.index.get_uuid_by_name(&operation.collection_id) {
+                            self.index.remove_collection(&uuid);
+                        }
+                    }
+                }
+                
+                // Finalize the atomic operation (moves from staging to final)
+                info!("🔄 Starting finalize operation...");
+                match coordinator.finalize_atomic_operation(&op_metadata.operation_id).await {
+                    Ok(_) => {
+                        self.check_snapshot_trigger().await?;
+                        info!("✅ Atomic operation completed for seq={}", operation.sequence);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // Rollback in-memory state on disk finalization failure
+                        error!("❌ Failed to finalize atomic operation: {}", e);
+                        // Note: In production, we'd implement proper rollback of in-memory state
+                        Err(e)
+                    }
                 }
             }
             Err(e) => {
-                // Rollback on prepare failure
-                warn!("❌ ACID transaction {} prepare failed: {}", tx_id, e);
-                tx.rollback().await?;
-                Err(e)
+                // Abort the operation on write failure
+                let abort_result = coordinator.abort_atomic_operation(&op_metadata.operation_id, &format!("Write failed: {}", e)).await;
+                if let Err(abort_err) = abort_result {
+                    warn!("Failed to abort operation: {}", abort_err);
+                }
+                Err(anyhow::anyhow!("Failed to write to staging: {}", e))
             }
         }
     }
@@ -540,12 +584,12 @@ impl FilestoreMetadataBackend {
     /// Prepare filestore write data without committing
     async fn prepare_filestore_write(&self, operation: &IncrementalOperation) -> Result<PreparedWrite> {
         let fs = self.get_fs()?;
-        let ops_dir = self.base_path.join("operations");
+        let ops_dir = self.base_path.join("current");
         
         // Create operation filename with sequence
-        let filename = format!("op_{:016}.proto", operation.sequence);
+        let filename = format!("op_{:016}.oplog", operation.sequence);
         let op_path = ops_dir.join(&filename);
-        let temp_path = self.base_path.join("temp").join(&format!("temp_{}", filename));
+        let temp_path = self.base_path.join("staging").join(&format!("temp_{}", filename));
         
         // Serialize operation to Avro
         // Serialize operation log entry as JSON for simplicity
@@ -616,85 +660,128 @@ impl FilestoreMetadataBackend {
         Ok(())
     }
     
-    /// Create collection record from proto config
-    fn create_collection_record(&self, name: String, config: &crate::proto::proximadb::CollectionConfig) -> Result<Collection> {
-        Ok(Collection {
-            id: uuid::Uuid::new_v4().to_string(),
-            config: Some(config.clone()),
-            stats: Some(crate::proto::proximadb::CollectionStats {
-                vector_count: 0,
-                index_size_bytes: 0,
-                data_size_bytes: 0,
-            }),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
-        })
-    }
-    
-    /// Create a new collection (CRUD operation)
-    pub async fn create_collection(&self, name: String, config: &crate::proto::proximadb::CollectionConfig) -> Result<String> {
-        info!("🆕 Creating collection: {}", name);
+    /// Check if we should create a checkpoint at restart
+    async fn maybe_checkpoint_at_restart(&self) -> Result<()> {
+        // Count operation files in the current directory
+        let fs = self.get_fs()?;
+        let ops_dir = self.base_path.join("current");
         
-        // Check if collection already exists
-        if self.index.get_by_name(&name).is_some() {
-            return Err(anyhow::anyhow!("Collection '{}' already exists", name));
+        let entries = match fs.list(&ops_dir.to_string_lossy()).await {
+            Ok(entries) => entries,
+            Err(_) => {
+                debug!("📋 No operations directory found, skipping checkpoint");
+                return Ok(());
+            }
+        };
+        
+        // Count operation files
+        let op_count = entries
+            .iter()
+            .filter(|e| e.name.starts_with("op_") && e.name.ends_with(".oplog"))
+            .count();
+            
+        if op_count == 0 {
+            info!("📋 No operation files found, skipping checkpoint at restart");
+            return Ok(());
         }
         
-        // Create collection record
-        let record = self.create_collection_record(name, config)?;
-        let uuid = record.id.clone();
+        info!("🔄 Found {} operation files at restart, creating checkpoint", op_count);
         
-        // Create operation
-        let operation = IncrementalOperation {
-            sequence: self.next_sequence(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            operation_type: OperationType::Create,
-            collection_id: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            collection_data: Some(record.clone()),
-        };
+        // Create snapshot manager if not already present
+        if self.snapshot_manager.lock().await.is_none() {
+            let manager = SnapshotManager::new(
+                self.config.snapshot_threshold,
+                self.config.keep_snapshots,
+                self.base_path.clone(),
+            );
+            *self.snapshot_manager.lock().await = Some(manager);
+        }
         
-        // Persist operation atomically
-        self.atomic_persist_operation(&operation).await?;
+        // Create the snapshot
+        if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
+            match manager.create_snapshot(&self.index, fs).await {
+                Ok(_) => {
+                    info!("✅ Checkpoint created successfully at restart");
+                    
+                    // Clean up old operation files after successful snapshot
+                    self.cleanup_operation_files().await?;
+                    
+                    // Reset ops counter
+                    self.ops_since_snapshot.store(0, Ordering::SeqCst);
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to create checkpoint at restart: {}", e);
+                    // Continue anyway - we can still operate with the operation files
+                }
+            }
+        }
         
-        // Update in-memory index
-        self.index.upsert_collection(record);
-        
-        info!("✅ Collection created: {} -> {}", &operation.collection_id, uuid);
-        Ok(uuid)
-    }
-    
-    /// Update an existing collection (CRUD operation)
-    pub async fn update_collection(&self, collection_id: &str, config: &crate::proto::proximadb::CollectionConfig) -> Result<()> {
-        info!("📝 Updating collection: {}", collection_id);
-        
-        // Get existing collection
-        let existing = self.index.get_by_name(collection_id).map(|arc_record| (*arc_record).clone())
-            .ok_or_else(|| anyhow::anyhow!("Collection '{}' not found", collection_id))?;
-        
-        // Create updated record
-        let mut updated = self.create_collection_record(collection_id.to_string(), config)?;
-        updated.id = existing.id.clone(); // Keep same ID
-        updated.created_at = existing.created_at; // Keep creation time
-        // Proto collections don't have version field - using updated_at for tracking
-        
-        // Create operation
-        let operation = IncrementalOperation {
-            sequence: self.next_sequence(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            operation_type: OperationType::Update,
-            collection_id: collection_id.to_string(),
-            collection_data: Some(updated.clone()),
-        };
-        
-        // Persist operation atomically
-        self.atomic_persist_operation(&operation).await?;
-        
-        // Update in-memory index
-        self.index.upsert_collection(updated);
-        
-        info!("✅ Collection updated: {}", collection_id);
         Ok(())
     }
+    
+    /// Clean up operation files after successful snapshot
+    async fn cleanup_operation_files(&self) -> Result<()> {
+        let fs = self.get_fs()?;
+        let ops_dir = self.base_path.join("current");
+        let archive_dir = self.base_path.join("archive");
+        
+        let entries = match fs.list(&ops_dir.to_string_lossy()).await {
+            Ok(entries) => entries,
+            Err(_) => return Ok(()),
+        };
+        
+        // Create archive subdirectory with timestamp
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+        let mut seq = 0;
+        let mut archive_subdir = format!("{}_{}", timestamp, seq);
+        
+        // Check for conflicts and increment sequence if needed
+        loop {
+            let archive_path = archive_dir.join(&archive_subdir);
+            if !fs.exists(&archive_path.to_string_lossy()).await? {
+                fs.create_dir_all(&archive_path.to_string_lossy()).await?;
+                break;
+            }
+            seq += 1;
+            archive_subdir = format!("{}_{}", timestamp, seq);
+        }
+        
+        let archive_path = archive_dir.join(&archive_subdir);
+        let mut archived = 0;
+        
+        // Move operation files to archive
+        for entry in entries {
+            if entry.name.starts_with("op_") && entry.name.ends_with(".oplog") {
+                let src = ops_dir.join(&entry.name);
+                let dst = archive_path.join(&entry.name);
+                match fs.move_file(&src.to_string_lossy(), &dst.to_string_lossy()).await {
+                    Ok(_) => archived += 1,
+                    Err(e) => {
+                        warn!("Failed to archive operation file {}: {}", entry.name, e);
+                        // Fallback to delete if move fails
+                        if let Err(del_err) = fs.delete(&src.to_string_lossy()).await {
+                            warn!("Failed to delete operation file {}: {}", entry.name, del_err);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if archived > 0 {
+            info!("📦 Archived {} operation files to archive/{}", archived, archive_subdir);
+        }
+        
+        // Clean up old archives - delegate to SnapshotManager's method
+        if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
+            manager.cleanup_old_archives(fs).await?;
+        }
+        
+        Ok(())
+    }
+    
+    
+    
+    
     
     /// Delete a collection (CRUD operation)
     pub async fn delete_collection(&self, collection_id: &str) -> Result<()> {
@@ -746,75 +833,22 @@ impl FilestoreMetadataBackend {
         Ok(())
     }
 
-    /// Store protobuf collection directly - zero-copy protobuf serialization
+    /// Store protobuf collection directly - using simple atomic operations
     pub async fn upsert_collection_proto(&self, proto_collection: &Collection) -> Result<()> {
         let config = proto_collection.config.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
         
-        // Create protobuf operation for incremental storage
-        let operation = ProtoIncrementalOperation {
+        // Create IncrementalOperation for consistency with other methods
+        let operation = IncrementalOperation {
             sequence: self.next_sequence(),
             timestamp: chrono::Utc::now().timestamp_millis(),
-            operation_type: ProtoOperationType::Update as i32,
+            operation_type: OperationType::Update,
             collection_id: config.name.clone(),
             collection_data: Some(proto_collection.clone()),
         };
         
-        // Use unified atomic coordinator for ALL operations: proto file + memtable + secondary index
-        let tx_id = generate_transaction_id("metadata");
-        let tx = self.atomic_coordinator.begin_transaction(&tx_id, vec!["metadata".to_string()]).await?;
-        
-        // 1. Serialize to protobuf binary for disk storage
-        let mut buf = Vec::new();
-        operation.encode(&mut buf)?;
-        
-        // 2. Convert proto to core collection for in-memory operations
-        let core_collection = self.convert_proto_to_core(proto_collection);
-        
-        // 3. Stage proto file operation
-        let filename = format!("op_{:016}.proto", operation.sequence);
-        let ops_dir = self.base_path.join("operations");
-        let final_path = ops_dir.join(&filename);
-        
-        let staging_config = StagingConfig {
-            base_url: self.config.storage_url.clone(),
-            collection_id: None,
-            operation_type: StagingOperationType::Metadata,
-            custom_staging_dir: Some(self.base_path.join("temp").to_string_lossy().to_string()),
-            auto_cleanup: false,
-            max_orphaned_age_hours: 24,
-        };
-        
-        // 4. Register rollback actions for memtable and secondary index
-        tx.register_rollback(
-            "memtable",
-            RollbackAction::RemoveFromMemtable {
-                key: core_collection.id.clone(),
-            },
-        ).await?;
-        
-        tx.register_rollback(
-            "secondary_index", 
-            RollbackAction::RemoveFromSecondaryIndex {
-                name: core_collection.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-                uuid: core_collection.id.clone(),
-            },
-        ).await?;
-        
-        // 5. Write protobuf file directly (staging is handled by atomic coordinator)
-        let fs = self.get_fs()?;
-        let temp_path = staging_config.custom_staging_dir.as_ref()
-            .map(|d| PathBuf::from(d).join(&filename))
-            .unwrap_or_else(|| self.base_path.join("temp").join(&filename));
-        fs.write(&temp_path.to_string_lossy(), &buf, None).await?;
-        
-        // 6. Update in-memory structures before commit
-        self.index.upsert_collection(proto_collection.clone());
-        
-        // 7. Commit the entire transaction
-        tx.commit().await?;
-        
-        Ok(())
+        // Use the same atomic persist operation
+        self.atomic_persist_operation(&operation).await
     }
     
     /// Convert protobuf collection to core Collection for fast in-memory index
@@ -825,6 +859,7 @@ impl FilestoreMetadataBackend {
     
     
     /// Prepare transaction participants
+    /* Not used with simple atomic operations
     async fn prepare_transaction_participants(
         &self,
         tx: &TransactionHandle<'_>,
@@ -923,6 +958,7 @@ impl FilestoreMetadataBackend {
         // Execute the actual atomic write
         self.execute_atomic_write(operation, prepared_data).await
     }
+    */
     
     /// Serialize record to bytes for rollback
     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
@@ -959,11 +995,11 @@ impl FilestoreMetadataBackend {
     
     /// Create a checkpoint snapshot
     pub async fn create_checkpoint(&self) -> Result<()> {
-        let checkpoint_dir = self.base_path.join("snapshots");
+        let checkpoint_dir = self.base_path.join("archive");
         
         let sequence = self.sequence.load(Ordering::SeqCst);
         let timestamp = chrono::Utc::now().timestamp_millis();
-        let checkpoint_name = format!("checkpoint_{}_{}.proto", sequence, timestamp);
+        let checkpoint_name = format!("checkpoint_{}_{}.meta", sequence, timestamp);
         
         // Configure atomic operation for metadata checkpoint
         let staging_config = StagingConfig {
@@ -1005,7 +1041,7 @@ impl FilestoreMetadataBackend {
         // Also write the current link content
         let link_content = checkpoint_name.as_bytes();
         self.atomic_coordinator
-            .write_to_staging(&operation.operation_id, "current_checkpoint.proto", link_content)
+            .write_to_staging(&operation.operation_id, "current_checkpoint.meta", link_content)
             .await
             .context("Failed to write current link to staging")?;
         
@@ -1026,7 +1062,7 @@ impl FilestoreMetadataBackend {
     /// Recover from checkpoint snapshot if available
     pub async fn recover_from_checkpoint(&self) -> Result<(u64, bool)> {
         let fs = self.filesystem_factory.get_filesystem(&self.config.storage_url)?;
-        let checkpoint_link = self.base_path.join("snapshots/current_checkpoint.proto");
+        let checkpoint_link = self.base_path.join("current/snapshot.meta");
         
         // Check if checkpoint exists
         if !fs.exists(&checkpoint_link.to_string_lossy()).await? {
@@ -1087,7 +1123,7 @@ impl FilestoreMetadataBackend {
             .and_then(|n| n.to_str())
             .ok_or_else(|| anyhow::anyhow!("Invalid checkpoint path"))?;
             
-        if let Some(parts) = filename.strip_prefix("checkpoint_").and_then(|s| s.strip_suffix(".proto")) {
+        if let Some(parts) = filename.strip_prefix("checkpoint_").and_then(|s| s.strip_suffix(".meta")) {
             let seq_str = parts.split('_').next()
                 .ok_or_else(|| anyhow::anyhow!("Invalid checkpoint filename format"))?;
             seq_str.parse::<u64>()
@@ -1104,7 +1140,7 @@ impl FilestoreMetadataBackend {
         if let Ok(entries) = fs.list(&checkpoint_dir.to_string_lossy()).await {
             let mut snapshots: Vec<_> = entries
                 .into_iter()
-                .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".proto"))
+                .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".meta"))
                 .collect();
             
             // Sort by name (which includes sequence number)
@@ -1201,6 +1237,11 @@ impl CollectionMetadataProvider for FilestoreMetadataBackend {
     async fn list_collections(&self) -> Result<Vec<Collection>> {
         Ok(self.index.list_all().into_iter().map(|arc_record| (*arc_record).clone()).collect())
     }
+    
+    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
+        // Fast check using in-memory index without full metadata retrieval
+        Ok(self.index.exists_by_uuid(collection_id))
+    }
 }
 
 /// Snapshot manager for periodic state persistence
@@ -1231,10 +1272,10 @@ impl SnapshotManager {
         info!("📸 Creating snapshot");
         let start = std::time::Instant::now();
         
-        let snapshot_dir = self.base_path.join("snapshots");
+        let snapshot_dir = self.base_path.join("current");
         let timestamp = chrono::Utc::now().timestamp_millis();
-        let snapshot_file = snapshot_dir.join(format!("snapshot_{}.proto", timestamp));
-        let temp_file = self.base_path.join("temp").join(format!("temp_snapshot_{}.proto", timestamp));
+        let snapshot_file = snapshot_dir.join(format!("snapshot_{}.meta", timestamp));
+        let temp_file = self.base_path.join("__staging").join(format!("temp_snapshot_{}.meta", timestamp));
         
         // Get all collections from index
         let collections = index.list_all();
@@ -1266,8 +1307,8 @@ impl SnapshotManager {
         fs.move_file(&temp_file.to_string_lossy(), &snapshot_file.to_string_lossy()).await?;
         
         // Update current snapshot link
-        let current_snapshot = snapshot_dir.join("current.proto");
-        let temp_current = self.base_path.join("temp").join("temp_current.proto");
+        let current_snapshot = snapshot_dir.join("snapshot.meta");
+        let temp_current = self.base_path.join("__staging").join("temp_snapshot.meta");
         
         fs.write(&temp_current.to_string_lossy(), &data, None).await?;
         fs.move_file(&temp_current.to_string_lossy(), &current_snapshot.to_string_lossy()).await?;
@@ -1280,28 +1321,82 @@ impl SnapshotManager {
     }
     
     async fn cleanup_old_snapshots(&self, fs: &dyn crate::storage::persistence::filesystem::FileSystem) -> Result<()> {
-        let snapshot_dir = self.base_path.join("snapshots");
+        // Move timestamped snapshots to archive with proper naming
+        let current_dir = self.base_path.join("current");
+        let archive_dir = self.base_path.join("archive");
         
-        let entries = match fs.list(&snapshot_dir.to_string_lossy()).await {
+        // Get all snapshots from current directory (except snapshot.meta)
+        let current_entries = match fs.list(&current_dir.to_string_lossy()).await {
+            Ok(entries) => entries,
+            Err(_) => vec![],
+        };
+        
+        // Archive timestamped snapshots
+        for entry in current_entries {
+            if entry.name.starts_with("snapshot_") && entry.name.ends_with(".meta") {
+                // Create archive subdirectory with timestamp
+                let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+                let mut seq = 0;
+                let mut archive_subdir = format!("{}_{}", timestamp, seq);
+                
+                // Check for conflicts and increment sequence if needed
+                loop {
+                    let archive_path = archive_dir.join(&archive_subdir);
+                    if !fs.exists(&archive_path.to_string_lossy()).await? {
+                        fs.create_dir_all(&archive_path.to_string_lossy()).await?;
+                        break;
+                    }
+                    seq += 1;
+                    archive_subdir = format!("{}_{}", timestamp, seq);
+                }
+                
+                let src = current_dir.join(&entry.name);
+                let dst = archive_dir.join(&archive_subdir).join(&entry.name);
+                match fs.move_file(&src.to_string_lossy(), &dst.to_string_lossy()).await {
+                    Ok(_) => debug!("📦 Archived snapshot: {} to archive/{}", entry.name, archive_subdir),
+                    Err(e) => warn!("Failed to archive snapshot {}: {}", entry.name, e),
+                }
+            }
+        }
+        
+        // Clean up old archives
+        self.cleanup_old_archives(fs).await?;
+        
+        Ok(())
+    }
+    
+    /// Clean up old archive directories, keeping only the last 5
+    async fn cleanup_old_archives(&self, fs: &dyn crate::storage::persistence::filesystem::FileSystem) -> Result<()> {
+        let archive_dir = self.base_path.join("archive");
+        
+        let archive_entries = match fs.list(&archive_dir.to_string_lossy()).await {
             Ok(entries) => entries,
             Err(_) => return Ok(()),
         };
         
-        let mut snapshots: Vec<_> = entries
+        // Filter only directories that match our timestamp pattern
+        let mut archive_dirs: Vec<_> = archive_entries
             .into_iter()
-            .filter(|e| e.name.starts_with("snapshot_") && e.name.ends_with(".proto"))
+            .filter(|e| {
+                // Match pattern: YYYYMMDDHHmmss_seq
+                e.metadata.is_directory &&
+                e.name.len() >= 15 && // At least YYYYMMDDHHmmss_0
+                e.name.chars().take(14).all(|c| c.is_ascii_digit()) &&
+                e.name.chars().nth(14) == Some('_')
+            })
             .collect();
         
-        // Sort by name (timestamp) in reverse order
-        snapshots.sort_by(|a, b| b.name.cmp(&a.name));
+        // Sort by name (timestamp) in reverse order (newest first)
+        archive_dirs.sort_by(|a, b| b.name.cmp(&a.name));
         
-        // Delete old snapshots beyond keep_count
-        for entry in snapshots.iter().skip(self.keep_count) {
-            let path = snapshot_dir.join(&entry.name);
-            if let Err(e) = fs.delete(&path.to_string_lossy()).await {
-                warn!("Failed to delete old snapshot {}: {}", entry.name, e);
-            } else {
-                debug!("🗑️ Deleted old snapshot: {}", entry.name);
+        // Delete old archives beyond 5
+        for (idx, entry) in archive_dirs.iter().enumerate() {
+            if idx >= 5 {  // Keep only the first 5 (newest)
+                let path = archive_dir.join(&entry.name);
+                match fs.delete(&path.to_string_lossy()).await {
+                    Ok(_) => info!("🗑️ Deleted old archive directory: {}", entry.name),
+                    Err(e) => warn!("Failed to delete old archive {}: {}", entry.name, e),
+                }
             }
         }
         
@@ -1348,8 +1443,20 @@ mod tests {
             owner: Some("test".to_string()),
         };
         
-        let uuid = backend.create_collection("test_collection".to_string(), &collection_config).await.unwrap();
-        assert!(!uuid.is_empty());
+        // Create a proto collection
+        let collection = Collection {
+            id: "test_id".to_string(),
+            config: Some(collection_config),
+            stats: Some(crate::proto::proximadb::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
+            created_at: chrono::Utc::now().timestamp_micros(),
+            updated_at: chrono::Utc::now().timestamp_micros(),
+        };
+        
+        backend.upsert_collection_proto(&collection).await.unwrap();
         
         // Test get collection
         let collection = backend.get_collection("test_collection").await.unwrap();

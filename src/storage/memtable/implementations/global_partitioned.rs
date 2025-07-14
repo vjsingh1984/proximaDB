@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 use super::super::core::MemtableMetrics;
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{
-    DistanceComputeProvider, DistanceResultOrdering, UnifiedDistanceCompute,
+    DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
 };
 use crate::core::VectorRecord;
 // WalEntry removed - working directly with VectorRecord and WalVectorBatch
@@ -59,9 +59,9 @@ impl CollectionPartition {
         let vector_count = batch.vector_records.len();
 
         // Update vector ID index for fast lookups
-        for vector_record in &batch.vector_records {
-            if !vector_record.id.is_empty() {
-                self.vector_id_index.insert(vector_record.id.clone(), batch_id.clone());
+        for vector_record in batch.vector_records.iter() {
+            if !vector_record.id.as_deref().unwrap_or("").is_empty() {
+                self.vector_id_index.insert(vector_record.id.as_deref().unwrap_or("").to_string(), batch_id.clone());
             }
         }
 
@@ -88,8 +88,8 @@ impl CollectionPartition {
         
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
-            for vector_record in &batch.vector_records {
-                if !vector_record.id.is_empty() && vector_record.id == vector_id {
+            for vector_record in batch.vector_records.iter() {
+                if !vector_record.id.as_deref().unwrap_or("").is_empty() && vector_record.id.as_deref().unwrap_or("") == vector_id {
                     let sequence = batch.batch_id.sequence_range.0;
                     let version = vector_record.version;
                     
@@ -144,9 +144,9 @@ impl CollectionPartition {
         for batch_id in batch_ids_to_remove {
             if let Some(batch) = self.wal_batches.remove(&batch_id) {
                 // Remove vector IDs from index
-                for vector_record in &batch.vector_records {
-                    if !vector_record.id.is_empty() {
-                        self.vector_id_index.remove(&vector_record.id);
+                for vector_record in batch.vector_records.iter() {
+                    if !vector_record.id.as_deref().unwrap_or("").is_empty() {
+                        self.vector_id_index.remove(vector_record.id.as_deref().unwrap_or(""));
                     }
                 }
                 
@@ -178,13 +178,13 @@ impl CollectionPartition {
         
         // Collect latest versions for each ID
         for batch in self.wal_batches.values() {
-            for vector_record in &batch.vector_records {
+            for vector_record in batch.vector_records.iter() {
                 let sequence = batch.batch_id.sequence_range.0;
                 let version = vector_record.version;
                 
-                if !vector_record.id.is_empty() {
+                if !vector_record.id.as_deref().unwrap_or("").is_empty() {
                     // Check if this is the latest version
-                    let is_newer = match id_to_latest.get(&vector_record.id) {
+                    let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, existing_seq, existing_version)) => {
                             sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
                         }
@@ -193,7 +193,7 @@ impl CollectionPartition {
                     
                     if is_newer {
                         id_to_latest.insert(
-                            vector_record.id.clone(),
+                            vector_record.id.as_deref().unwrap_or("").to_string(),
                             (vector_record.clone(), sequence, version)
                         );
                     }
@@ -233,24 +233,24 @@ impl CollectionPartition {
         query_vector: &[f32],
         distance_metric: &CoreDistanceMetric,
         distance_compute: &UnifiedDistanceCompute,
-    ) -> Vec<(f32, VectorRecord)> {
+    ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
         
-        let mut id_to_latest: HashMap<String, (f32, VectorRecord, u64, i64)> = HashMap::new(); // (score, record, sequence, version)
-        let mut results_without_id = Vec::new();
+        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, i64)> = HashMap::new(); // (score, record, sequence, version)
+        let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
 
         // First pass: Find latest version of each ID by sequence and version (MVCC)
         for (batch_id, wal_batch) in &self.wal_batches {
             tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
             
-            for vector_record in &wal_batch.vector_records {
+            for vector_record in wal_batch.vector_records.iter() {
                 let sequence = wal_batch.batch_id.sequence_range.0;
                 let version = vector_record.version;
                 
-                if !vector_record.id.is_empty() {
+                if !vector_record.id.as_deref().unwrap_or("").is_empty() {
                     // Check if this is the latest version
-                    let is_newer = match id_to_latest.get(&vector_record.id) {
+                    let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, _, existing_seq, existing_version)) => {
                             sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
                         }
@@ -260,12 +260,12 @@ impl CollectionPartition {
                     if is_newer {
                         let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
                         id_to_latest.insert(
-                            vector_record.id.clone(),
+                            vector_record.id.as_deref().unwrap_or("").to_string(),
                             (score, vector_record.clone(), sequence, version)
                         );
                         
                         tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={}", 
-                                       vector_record.id, sequence, version);
+                                       vector_record.id.as_deref().unwrap_or(""), sequence, version);
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
@@ -282,7 +282,7 @@ impl CollectionPartition {
         }
 
         // Second pass: Filter out expired records (tombstones) from latest versions
-        let mut final_results = Vec::new();
+        let mut final_results: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let mut filtered_count = 0;
         let latest_versions_count = id_to_latest.len();
         
@@ -445,7 +445,7 @@ impl GlobalPartitionedMemtable {
         k: usize,
         collection_id: &str,
         distance_metric: CoreDistanceMetric,
-    ) -> Result<Vec<(f32, VectorRecord)>> {
+    ) -> Result<Vec<(SimilarityResult, VectorRecord)>> {
         let collections = self.collections.read().await;
         
         eprintln!("🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections", collection_id, collections.len());
@@ -460,13 +460,9 @@ impl GlobalPartitionedMemtable {
                 &self.distance_compute,
             );
 
-            // Sort and limit results using unified distance system
-            DistanceResultOrdering::sort_and_limit(
-                &mut results,
-                &distance_metric,
-                &self.distance_compute,
-                k,
-            );
+            // Sort by rank_value (lower = better) and limit to k
+            results.sort_by(|a, b| a.0.rank_value.partial_cmp(&b.0.rank_value).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(k);
 
             tracing::debug!("📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} vectors) using {:?}", 
                            results.len(), collection_id, partition.vector_count, distance_metric);

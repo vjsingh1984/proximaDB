@@ -14,7 +14,7 @@ import asyncio
 # Add the Python client to path
 sys.path.insert(0, '../clients/python/src')
 
-from proximadb.rest_client import ProximaDBRestClient
+from proximadb import ProximaDBClient, Protocol
 from proximadb.exceptions import ProximaDBError
 from proximadb.models import CollectionConfig, DistanceMetric
 
@@ -23,7 +23,7 @@ class VectorFormatTester:
     """Test harness for vector insertion format testing"""
     
     def __init__(self, base_url: str = "http://localhost:5678"):
-        self.client = ProximaDBRestClient(url=base_url)
+        self.client = ProximaDBClient(url=base_url, protocol=Protocol.REST)
         self.collection_name = f"test_vec_format_{int(time.time())}"
         self.dimension = 4  # Small dimension for testing
         self.passed_tests = 0
@@ -51,9 +51,10 @@ class VectorFormatTester:
         print(f"\n🔧 Setting up test collection: {self.collection_name}")
         try:
             config = CollectionConfig(
-                dimension=self.dimension,
+            name="test_collection",
+            dimension=self.dimension,
                 distance_metric=DistanceMetric.COSINE,
-                storage_layout="viper"
+                storage_engine=StorageEngine.VIPER
             )
             result = self.client.create_collection(self.collection_name, config)
             self.print_result("Collection creation", True)

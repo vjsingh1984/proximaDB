@@ -206,7 +206,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
                 0, // Will be set by memtable
                 vectors_with_collection.len() as u64,
             ),
-            vector_records: vectors_with_collection,
+            vector_records: Arc::new(vectors_with_collection),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: bincode_size,
             is_flushed: false,
@@ -220,6 +220,98 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         );
 
         Ok(wal_operation)
+    }
+
+    /// Proto-first implementation: Convert Proto → Bincode (clean, no legacy)
+    async fn write_proto_batch(
+        &self,
+        collection_id: &str,
+        proto_bytes: &[u8]
+    ) -> Result<super::WalOperation> {
+        let memtable = self
+            .memtable
+            .as_ref()
+            .context("Bincode WAL Batch Strategy not initialized")?;
+
+        tracing::debug!(
+            "🔄 BINCODE_BATCH: Proto→Bincode conversion for collection {} ({} bytes)",
+            collection_id,
+            proto_bytes.len()
+        );
+        
+        // Proto-first: Deserialize Proto records
+        let proto_records = super::schema::deserialize_proto_vector_batch(proto_bytes)?;
+        
+        // Convert Proto → Native VectorRecord for Bincode serialization
+        let native_records: Vec<crate::core::avro_unified::VectorRecord> = proto_records
+            .into_iter()
+            .map(|proto_record| crate::core::proto_to_avro(&proto_record, collection_id))
+            .collect();
+        
+        // Serialize to Bincode for optimal Rust performance
+        let bincode_bytes = bincode::serialize(&native_records)
+            .context("Failed to serialize vectors to Bincode")?;
+        
+        // Create WalOperation with Bincode payload
+        let wal_operation = super::WalOperation {
+            operation_type: "upsert_batch".to_string(),
+            payload_data: bincode_bytes,
+            payload_format: "bincode".to_string(),
+            vector_count: native_records.len(),
+        };
+
+        // Add to memtable
+        let sequences = memtable.add_wal_operation(collection_id, wal_operation.clone()).await?;
+        
+        tracing::debug!(
+            "✅ BINCODE_BATCH: Proto→Bincode conversion complete, sequences: {:?}",
+            sequences
+        );
+
+        Ok(wal_operation)
+    }
+
+    /// PROTO-FIRST OPTIMIZATION: Native proto vector handling with Proto→Bincode serialization
+    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
+        let memtable = self
+            .memtable
+            .as_ref()
+            .context("Bincode WAL Batch Strategy not initialized")?;
+
+        tracing::debug!(
+            "🚀 BINCODE_NATIVE: Proto→Bincode conversion for batch {} with {} vectors to collection {}",
+            batch.batch_id.batch_uuid,
+            batch.vector_records.len(),
+            batch.batch_id.collection_id
+        );
+
+        // Proto-first: serialize proto VectorRecords directly (deref Arc)
+        let bincode_bytes = bincode::serialize(&*batch.vector_records)
+            .context("Failed to serialize native records to Bincode")?;
+        
+        tracing::debug!(
+            "📊 BINCODE_NATIVE: Serialized {} vectors to {} bytes of Bincode data",
+            batch.vector_records.len(),
+            bincode_bytes.len()
+        );
+        
+        // Create WalOperation with Bincode payload
+        let wal_operation = super::WalOperation {
+            operation_type: "upsert_batch".to_string(),
+            payload_data: bincode_bytes,
+            payload_format: "bincode".to_string(),
+            vector_count: batch.vector_records.len(),
+        };
+
+        // Add to memtable
+        let sequences = memtable.add_wal_operation(&batch.batch_id.collection_id, wal_operation).await?;
+        
+        tracing::debug!(
+            "✅ BINCODE_NATIVE: Proto→Bincode conversion complete, sequences: {:?}",
+            sequences
+        );
+
+        Ok(sequences)
     }
 
     async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
@@ -353,7 +445,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         let mut converted_results = Vec::new();
         for (score, record) in results {
             // entry is already a VectorRecord, no extraction needed
-            converted_results.push((record.id.clone(), score, record));
+            converted_results.push((record.id.as_deref().unwrap_or("").to_string(), score, record));
         }
 
         Ok(converted_results)
@@ -371,7 +463,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         // Extract all vector records from batches
         let mut vectors = Vec::new();
         for batch in batches {
-            vectors.extend(batch.vector_records);
+            vectors.extend(batch.vector_records.iter().cloned());
         }
         
         Ok(vectors)
@@ -418,7 +510,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
                 entries_flushed: cleared as u64,
-                bytes_written: vectors.iter().map(|v| v.actual_size_bytes() as u64).sum(),
+                bytes_written: vectors.iter().map(|v| (v.vector.len() * 4 + 256) as u64).sum(),
                 files_created: 1,
                 duration_ms: duration.as_millis() as u64,
                 completed_at: chrono::Utc::now(),
@@ -561,8 +653,8 @@ impl BincodeWalBatchStrategy {
             
             let operation_id = &op_metadata.operation_id;
             
-            // Serialize batch data
-            let batch_data = bincode::serialize(&batch.vector_records)
+            // Serialize batch data directly - VectorRecord is now proto-based (deref Arc)
+            let batch_data = bincode::serialize(&*batch.vector_records)
                 .context("Failed to serialize batch for cloud write")?;
             
             // Write to staging

@@ -34,9 +34,185 @@ use tracing::debug;
 use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability, detect_platform_capability};
 use crate::services::collection_service::CollectionService;
 use std::sync::OnceLock;
+use std::cmp::Ordering;
 
 /// Global hardware capability cache - detected once at startup
 static UNIFIED_PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
+
+// ============================================================================
+// Metric-Aware Result Types
+// ============================================================================
+
+/// Rich result type that preserves semantic meaning across different metrics
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SimilarityResult {
+    /// Raw value as computed by the metric
+    pub raw_value: f32,
+    /// The metric used for computation
+    pub metric: DistanceMetric,
+    /// Normalized score in [0, 1] where 1 = most similar
+    pub normalized_score: f32,
+    /// Value optimized for ranking (lower = more similar)
+    pub rank_value: f32,
+}
+
+impl SimilarityResult {
+    /// Compare two results using metric-aware comparison
+    pub fn is_better_than(&self, other: &Self) -> bool {
+        match self.metric {
+            DistanceMetric::DotProduct => self.raw_value > other.raw_value,
+            DistanceMetric::Cosine => self.raw_value < other.raw_value,
+            _ => self.raw_value < other.raw_value,
+        }
+    }
+    
+    /// Get a human-readable similarity percentage
+    pub fn similarity_percentage(&self) -> f32 {
+        self.normalized_score * 100.0
+    }
+}
+
+impl Default for SimilarityResult {
+    fn default() -> Self {
+        Self {
+            raw_value: 0.0,
+            metric: DistanceMetric::Euclidean, // Default metric
+            normalized_score: 0.0,
+            rank_value: 0.0,
+        }
+    }
+}
+
+impl PartialEq for SimilarityResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank_value == other.rank_value
+    }
+}
+
+impl Eq for SimilarityResult {}
+
+impl PartialOrd for SimilarityResult {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        // For use in BinaryHeap - smaller rank_value = better match
+        other.rank_value.partial_cmp(&self.rank_value)
+    }
+}
+
+impl Ord for SimilarityResult {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+    }
+}
+
+/// Context for normalization
+#[derive(Debug, Clone)]
+pub struct NormalizationContext {
+    /// Norm of the first vector
+    pub vector_norm: Option<f32>,
+    /// Norm of the query vector
+    pub query_norm: Option<f32>,
+    /// Dimensionality of vectors
+    pub dimension: usize,
+    /// Expected value range for the metric
+    pub value_range: Option<(f32, f32)>,
+}
+
+/// Distance calculation mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceMode {
+    /// Return raw metric values
+    Raw,
+    /// Return [0,1] normalized scores
+    Normalized,
+    /// Return values optimized for ranking
+    RankOptimized,
+}
+
+impl Default for DistanceMode {
+    fn default() -> Self {
+        DistanceMode::RankOptimized
+    }
+}
+
+/// Validation result for metric-specific checks
+#[derive(Debug, Clone)]
+pub enum ValidationResult {
+    Ok,
+    Warning(String),
+    Error(String),
+}
+
+/// Trait for metric-specific properties
+pub trait MetricProperties {
+    /// Is this a similarity metric (higher = more similar)?
+    fn is_similarity(&self) -> bool;
+    /// Does this metric depend on vector magnitude?
+    fn is_magnitude_dependent(&self) -> bool;
+    /// Theoretical range of values
+    fn theoretical_range(&self) -> (f32, f32);
+    /// Does this metric require normalization for meaningful comparison?
+    fn requires_normalization(&self) -> bool;
+    /// Get a description of the metric behavior
+    fn behavior_description(&self) -> &'static str;
+}
+
+// ============================================================================
+// MetricProperties Implementation
+// ============================================================================
+
+impl MetricProperties for DistanceMetric {
+    fn is_similarity(&self) -> bool {
+        match self {
+            DistanceMetric::DotProduct => true,
+            DistanceMetric::Cosine => false, // We use cosine distance, not similarity
+            _ => false,
+        }
+    }
+    
+    fn is_magnitude_dependent(&self) -> bool {
+        match self {
+            DistanceMetric::DotProduct => true,
+            DistanceMetric::Cosine => false,
+            DistanceMetric::Euclidean => true,
+            DistanceMetric::Manhattan => true,
+            DistanceMetric::Hamming => false,
+            DistanceMetric::Jaccard => false,
+            _ => false,
+        }
+    }
+    
+    fn theoretical_range(&self) -> (f32, f32) {
+        match self {
+            DistanceMetric::Cosine => (0.0, 2.0),
+            DistanceMetric::Hamming => (0.0, f32::INFINITY), // Depends on dimension
+            DistanceMetric::Jaccard => (0.0, 1.0),
+            DistanceMetric::DotProduct => (f32::NEG_INFINITY, f32::INFINITY),
+            DistanceMetric::Euclidean => (0.0, f32::INFINITY),
+            DistanceMetric::Manhattan => (0.0, f32::INFINITY),
+            _ => (0.0, f32::INFINITY),
+        }
+    }
+    
+    fn requires_normalization(&self) -> bool {
+        match self {
+            DistanceMetric::DotProduct => true, // For meaningful comparison
+            _ => false,
+        }
+    }
+    
+    fn behavior_description(&self) -> &'static str {
+        match self {
+            DistanceMetric::Euclidean => "Euclidean Distance: Straight-line distance between points (lower = more similar)",
+            DistanceMetric::Manhattan => "Manhattan Distance: Sum of absolute differences (lower = more similar)",
+            DistanceMetric::Cosine => "Cosine Distance: 1 - cosine(angle), magnitude-independent (lower = more similar)",
+            DistanceMetric::DotProduct => "Dot Product: Inner product, magnitude-dependent (higher = more similar)",
+            DistanceMetric::Hamming => "Hamming Distance: Number of differing positions (lower = more similar)",
+            DistanceMetric::Jaccard => "Jaccard Distance: 1 - (intersection/union) for sets (lower = more similar)",
+            DistanceMetric::Custom => "Custom metric with application-specific behavior",
+            DistanceMetric::Unspecified => "Unspecified metric (defaults to cosine distance)",
+        }
+    }
+}
 
 // Note: Distributed distance computation was removed in favor of unified local computation
 
@@ -92,162 +268,224 @@ impl UnifiedDistanceCompute {
     pub fn platform_capability(&self) -> PlatformCapability {
         self.platform_capability
     }
-
-    /// Convert similarity values to distance values for consistent semantics
-    /// 
-    /// This ensures ALL metrics follow "lower = more similar" semantics:
-    /// - For Dot Product: Inverts positive values, handles negative appropriately
-    /// - For Cosine Similarity: Converts to Cosine Distance (1 - similarity)
-    fn invert_similarity_to_distance(&self, similarity_value: f32) -> f32 {
-        match similarity_value {
-            // For positive similarities, simple inversion works well
-            val if val >= 0.0 => {
-                // Convert similarity [0,1] to distance [1,0] or [0,∞] to [∞,0]
-                if val <= 1.0 {
-                    1.0 - val  // Standard cosine similarity to distance conversion
-                } else {
-                    1.0 / val  // For unbounded similarities like dot product
-                }
-            }
-            // For negative similarities (like negative cosine similarity),
-            // map to distance > 1.0 to maintain ordering
-            val => 1.0 - val  // -0.5 becomes 1.5, -1.0 becomes 2.0
-        }
-    }
-
-    /// Get the native behavior description for a metric (for debugging/logging)
-    pub fn metric_behavior_description(&self, metric: &DistanceMetric) -> &'static str {
-        match metric {
-            DistanceMetric::Euclidean => "Euclidean Distance (lower = more similar, native)",
-            DistanceMetric::Manhattan => "Manhattan Distance (lower = more similar, native)", 
-            DistanceMetric::Cosine => "Cosine Distance (lower = more similar, native)",
-            DistanceMetric::DotProduct => "Dot Product Similarity (higher = more similar, inverted to lower = more similar)",
-            DistanceMetric::Hamming => "Hamming Distance (lower = more similar, native)",
-            DistanceMetric::Jaccard => "Jaccard Distance (lower = more similar, native)",
-            DistanceMetric::Custom => "Custom metric (fallback to cosine distance)",
-            DistanceMetric::Unspecified => "Unspecified metric (defaults to cosine distance)",
-        }
-    }
-
-    /// Calculate normalized distance between two vectors using specified metric
-    /// 
-    /// **IMPORTANT**: This method normalizes ALL distance metrics so that:
-    /// **LOWER VALUES ALWAYS MEAN MORE SIMILAR**
-    /// 
-    /// This provides consistent semantics across all algorithms:
-    /// - Euclidean/Manhattan/Cosine Distance: Return native values (lower = more similar)
-    /// - Dot Product/Cosine Similarity: Return inverted values (higher similarity becomes lower distance)
-    /// 
-    /// **Dimension Mismatch Handling**:
-    /// - Returns appropriate fallback values when vector dimensions don't match
-    /// - Ensures calling code doesn't panic on dimension mismatches
-    pub fn calculate_distance(&self, vec_a: &[f32], vec_b: &[f32], metric: &DistanceMetric) -> f32 {
-        // Handle dimension mismatches gracefully
+    
+    /// Calculate distance with rich semantic result
+    pub fn calculate_distance_with_mode(
+        &self,
+        vec_a: &[f32],
+        vec_b: &[f32],
+        metric: &DistanceMetric,
+        mode: DistanceMode,
+    ) -> SimilarityResult {
+        // Handle dimension mismatches
         if vec_a.len() != vec_b.len() {
-            return self.handle_dimension_mismatch(metric, vec_a.len(), vec_b.len());
+            return self.handle_dimension_mismatch_result(metric, vec_a.len(), vec_b.len());
         }
         
+        // Validate vectors for the metric
+        let validation = self.validate_vectors_for_metric(vec_a, vec_b, metric);
+        if let ValidationResult::Error(msg) = validation {
+            return SimilarityResult {
+                raw_value: f32::INFINITY,
+                metric: metric.clone(),
+                normalized_score: 0.0,
+                rank_value: f32::INFINITY,
+            };
+        }
+        
+        // Calculate raw distance
         let calculator = create_distance_calculator(metric.clone());
         let raw_value = calculator.distance(vec_a, vec_b);
         
-        // Normalize so that LOWER values ALWAYS mean MORE SIMILAR
-        if calculator.is_similarity() {
-            // For similarity metrics (higher = more similar), invert to distance semantics
-            self.invert_similarity_to_distance(raw_value)
-        } else {
-            // For distance metrics (lower = more similar), return as-is
-            raw_value
+        // Create normalization context
+        let context = NormalizationContext {
+            vector_norm: Some(self.calculate_norm(vec_a)),
+            query_norm: Some(self.calculate_norm(vec_b)),
+            dimension: vec_a.len(),
+            value_range: Some(metric.theoretical_range()),
+        };
+        
+        // Generate all representations
+        let normalized_score = self.normalize_for_scoring(&raw_value, metric, &context);
+        let rank_value = self.normalize_for_ranking(&raw_value, metric, &context);
+        
+        SimilarityResult {
+            raw_value,
+            metric: metric.clone(),
+            normalized_score,
+            rank_value,
         }
     }
-
-    /// Handle dimension mismatches with appropriate fallback values
-    fn handle_dimension_mismatch(&self, metric: &DistanceMetric, len_a: usize, len_b: usize) -> f32 {
+    
+    /// Validate vectors for specific metric requirements
+    fn validate_vectors_for_metric(
+        &self,
+        vec_a: &[f32],
+        vec_b: &[f32],
+        metric: &DistanceMetric,
+    ) -> ValidationResult {
+        match metric {
+            DistanceMetric::DotProduct => {
+                let norm_a = self.calculate_norm(vec_a);
+                let norm_b = self.calculate_norm(vec_b);
+                
+                if norm_a == 0.0 || norm_b == 0.0 {
+                    return ValidationResult::Warning(
+                        "Zero-magnitude vector detected, dot product will be 0".to_string()
+                    );
+                }
+                
+                let ratio = norm_a / norm_b;
+                if ratio > 10.0 || ratio < 0.1 {
+                    ValidationResult::Warning(
+                        format!("Large magnitude difference (ratio: {:.2}), results may be skewed", ratio)
+                    )
+                } else {
+                    ValidationResult::Ok
+                }
+            }
+            DistanceMetric::Cosine => {
+                let norm_a = self.calculate_norm(vec_a);
+                let norm_b = self.calculate_norm(vec_b);
+                
+                if norm_a == 0.0 || norm_b == 0.0 {
+                    ValidationResult::Error("Zero-magnitude vector invalid for cosine distance".to_string())
+                } else {
+                    ValidationResult::Ok
+                }
+            }
+            _ => ValidationResult::Ok,
+        }
+    }
+    
+    /// Calculate vector norm (L2)
+    fn calculate_norm(&self, vec: &[f32]) -> f32 {
+        vec.iter().map(|x| x * x).sum::<f32>().sqrt()
+    }
+    
+    /// Normalize raw value for scoring (0-1 range where 1 = most similar)
+    fn normalize_for_scoring(&self, raw_value: &f32, metric: &DistanceMetric, context: &NormalizationContext) -> f32 {
+        match metric {
+            DistanceMetric::Cosine => {
+                // Cosine distance is in [0, 2], convert to similarity [0, 1]
+                1.0 - (raw_value / 2.0)
+            }
+            DistanceMetric::DotProduct => {
+                // Normalize by product of norms to get cosine similarity
+                if let (Some(norm_a), Some(norm_b)) = (context.vector_norm, context.query_norm) {
+                    let normalized = raw_value / (norm_a * norm_b);
+                    // Clamp to [-1, 1] then convert to [0, 1]
+                    (normalized.clamp(-1.0, 1.0) + 1.0) / 2.0
+                } else {
+                    0.0
+                }
+            }
+            DistanceMetric::Jaccard => {
+                // Jaccard distance is in [0, 1], convert to similarity
+                1.0 - raw_value
+            }
+            DistanceMetric::Euclidean | DistanceMetric::Manhattan => {
+                // Use exponential decay for unbounded distances
+                (-raw_value).exp()
+            }
+            DistanceMetric::Hamming => {
+                // Normalize by dimension
+                let max_distance = context.dimension as f32;
+                1.0 - (raw_value / max_distance)
+            }
+            _ => 0.0,
+        }
+    }
+    
+    /// Normalize raw value for ranking (consistent ordering, lower = better)
+    fn normalize_for_ranking(&self, raw_value: &f32, metric: &DistanceMetric, context: &NormalizationContext) -> f32 {
+        match metric {
+            DistanceMetric::DotProduct => {
+                // Invert so higher dot product = lower rank value
+                // Map from [-∞, +∞] to [0, +∞] where higher similarity = lower rank
+                if *raw_value > 0.0 {
+                    // Positive values: map [0, +∞) to (1, 0]
+                    1.0 / (1.0 + raw_value)
+                } else if *raw_value == 0.0 {
+                    // Zero (orthogonal): rank = 1.0
+                    1.0
+                } else {
+                    // Negative values: map (-∞, 0) to [1, +∞)
+                    1.0 - raw_value
+                }
+            }
+            _ => *raw_value, // Other metrics already have lower = better
+        }
+    }
+    
+    /// Handle dimension mismatch with rich result
+    fn handle_dimension_mismatch_result(&self, metric: &DistanceMetric, len_a: usize, len_b: usize) -> SimilarityResult {
         debug!(
             "⚠️ Dimension mismatch for {:?}: {} vs {} dimensions",
             metric, len_a, len_b
         );
         
-        match metric {
-            // For similarity-based metrics, return maximum distance (least similar)
-            DistanceMetric::Cosine | DistanceMetric::DotProduct => {
-                // Return maximum distance to indicate no similarity
-                2.0  // Worst case for cosine distance range [0,2]
-            }
-            // For distance-based metrics, return infinity to indicate infinite distance
-            DistanceMetric::Euclidean | DistanceMetric::Manhattan => {
-                f32::INFINITY
-            }
-            // For discrete metrics, return maximum discrete distance
-            DistanceMetric::Hamming | DistanceMetric::Jaccard => {
-                1.0  // Maximum discrete distance
-            }
-            // For custom or unspecified metrics, fall back to cosine behavior
-            DistanceMetric::Custom | DistanceMetric::Unspecified => 2.0,
+        SimilarityResult {
+            raw_value: f32::INFINITY,
+            metric: metric.clone(),
+            normalized_score: 0.0,
+            rank_value: f32::INFINITY,
         }
     }
+
+
+
+    /// Calculate distance between two vectors with rich semantic result
+    /// 
+    /// Returns a SimilarityResult that preserves metric semantics:
+    /// - Raw value: Original metric computation result
+    /// - Normalized score: [0,1] where 1 = most similar  
+    /// - Rank value: Optimized for sorting (lower = better)
+    pub fn calculate_distance(
+        &self,
+        vec_a: &[f32],
+        vec_b: &[f32],
+        metric: &DistanceMetric,
+    ) -> SimilarityResult {
+        self.calculate_distance_with_mode(vec_a, vec_b, metric, DistanceMode::default())
+    }
+
 
     /// Get system default distance metric
     pub fn system_default(&self) -> &DistanceMetric {
         &self.system_default
     }
 
-    /// Calculate normalized distances for batch processing with hardware acceleration
+    /// Calculate batch distances with rich semantic results
     /// 
-    /// **IMPORTANT**: This method normalizes ALL distance metrics so that:
-    /// **LOWER VALUES ALWAYS MEAN MORE SIMILAR**
+    /// Returns SimilarityResult for each vector with:
+    /// - Raw values preserving metric semantics
+    /// - Normalized scores for intuitive comparison
+    /// - Rank values optimized for sorting
     /// 
-    /// **Dimension Mismatch Handling**: Gracefully handles dimension mismatches in batch
-    /// **Hardware Acceleration**: Uses optimal SIMD implementation for current platform
+    /// **Hardware Acceleration**: Uses optimal SIMD implementation
     pub fn calculate_distance_batch(
         &self,
         query: &[f32],
         vectors: &[&[f32]],
         metric: &DistanceMetric,
-    ) -> Vec<f32> {
-        // Use hardware-accelerated calculator
-        let calculator = create_distance_calculator(metric.clone());
-        let is_similarity = calculator.is_similarity();
-        
-        // For performance, check if all vectors have the same dimension as query
-        let query_dim = query.len();
-        let uniform_dimensions = vectors.iter().all(|v| v.len() == query_dim);
-        
-        if uniform_dimensions && !vectors.is_empty() {
-            // Use optimized batch computation when dimensions are uniform
-            let raw_distances = calculator.distance_batch(query, vectors);
-            
-            if is_similarity {
-                // Invert similarity values to distance semantics
-                raw_distances
-                    .into_iter()
-                    .map(|val| self.invert_similarity_to_distance(val))
-                    .collect()
-            } else {
-                // Distance metrics - return as-is
-                raw_distances
-            }
-        } else {
-            // Fall back to individual distance calculations for dimension mismatches
-            vectors
-                .iter()
-                .map(|vector| {
-                    // Use the unified calculate_distance method which handles dimension mismatches
-                    self.calculate_distance(query, vector, metric)
-                })
-                .collect()
-        }
+    ) -> Vec<SimilarityResult> {
+        vectors
+            .iter()
+            .map(|vector| self.calculate_distance(query, vector, metric))
+            .collect()
     }
 
-    /// Calculate normalized distances for large batch processing with chunking
+    /// Calculate distances for large batch processing with chunking
     /// 
-    /// **Hardware Optimization**: Processes in chunks for optimal memory usage and SIMD efficiency
+    /// Processes in chunks for optimal memory usage and cache efficiency
     pub fn calculate_distance_batch_chunked(
         &self,
         query: &[f32],
         vectors: &[&[f32]],
         metric: &DistanceMetric,
         chunk_size: usize,
-    ) -> Vec<f32> {
+    ) -> Vec<SimilarityResult> {
         let mut results = Vec::with_capacity(vectors.len());
         
         for chunk in vectors.chunks(chunk_size) {
@@ -260,15 +498,14 @@ impl UnifiedDistanceCompute {
 
     /// Calculate distances using distributed computation if available
     /// 
-    /// **Distributed Computing**: Routes computation to multiple nodes if distributed manager is available
-    /// **Unified Semantics**: All results follow "lower = more similar" semantics
+    /// Returns semantic-aware results for each node's vectors
     pub async fn calculate_distance_distributed(
         &self,
         query: &[f32],
         node_vectors: &[(&str, &[&[f32]])], 
         metric: &DistanceMetric,
-    ) -> Result<Vec<(String, Vec<f32>)>> {
-        // Local computation for each node (distributed features removed)
+    ) -> Result<Vec<(String, Vec<SimilarityResult>)>> {
+        // Local computation for each node
         debug!("🖥️ Using local computation for {} node batches", node_vectors.len());
         let mut results = Vec::new();
         
@@ -280,25 +517,30 @@ impl UnifiedDistanceCompute {
         Ok(results)
     }
 
-    /// Aggregate distributed results with unified semantics
+    /// Aggregate distributed results with semantic-aware sorting
     /// 
-    /// **Unified Semantics**: Always sorts by ascending order (lower = more similar)
+    /// Properly sorts results based on metric semantics
     pub async fn aggregate_distributed_results(
         &self,
-        node_results: &[(String, Vec<(f32, String)>)],
-        metric: &DistanceMetric,
+        node_results: &[(String, Vec<(SimilarityResult, String)>)],
+        _metric: &DistanceMetric,
         k: usize,
-    ) -> Result<Vec<(f32, String)>> {
-        // Local aggregation using unified semantics (distributed features removed)
+    ) -> Result<Vec<(SimilarityResult, String)>> {
+        // Aggregate all results
         let mut all_results = Vec::new();
         for (_node_id, results) in node_results {
-            for (distance, vector_id) in results {
-                all_results.push((*distance, vector_id.clone()));
+            for (result, vector_id) in results {
+                all_results.push((result.clone(), vector_id.clone()));
             }
         }
         
-        // Sort and limit using unified semantics
-        DistanceResultOrdering::sort_and_limit(&mut all_results, metric, self, k);
+        // Sort by rank_value (lower = better) and limit to k
+        all_results.sort_by(|a, b| {
+            a.0.rank_value.partial_cmp(&b.0.rank_value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_results.truncate(k);
+        
         Ok(all_results)
     }
 
@@ -388,7 +630,7 @@ pub trait DistanceComputeProvider {
         collection_id: &str,
     ) -> f32 {
         let metric = self.resolve_metric(request_metric, collection_id).await;
-        self.distance_compute().calculate_distance(a, b, &metric)
+        self.distance_compute().calculate_distance(a, b, &metric).rank_value
     }
 
     /// Calculate batch distances with automatic metric resolution
@@ -402,6 +644,9 @@ pub trait DistanceComputeProvider {
         let metric = self.resolve_metric(request_metric, collection_id).await;
         self.distance_compute()
             .calculate_distance_batch(query, vectors, &metric)
+            .into_iter()
+            .map(|result| result.rank_value)
+            .collect()
     }
 }
 
@@ -429,55 +674,6 @@ impl Default for UnifiedDistanceConfig {
     }
 }
 
-/// Result ordering helper for search results with unified semantics
-pub struct DistanceResultOrdering;
-
-impl DistanceResultOrdering {
-    /// Sort results with unified semantics: LOWER values are ALWAYS MORE SIMILAR
-    /// 
-    /// Since the unified distance system normalizes all metrics to "lower = more similar",
-    /// we ALWAYS sort in ascending order regardless of the underlying metric type.
-    pub fn sort_results<T>(
-        results: &mut Vec<(f32, T)>,
-        metric: &DistanceMetric,
-        unified_compute: &UnifiedDistanceCompute,
-    ) {
-        // With unified semantics, we ALWAYS sort ascending (lower = more similar)
-        results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        
-        debug!(
-            "🔄 Sorted {} results for {} - using unified semantics (lower = more similar)", 
-            results.len(),
-            unified_compute.metric_behavior_description(metric)
-        );
-    }
-
-    /// Limit results to top-k
-    pub fn limit_results<T>(results: &mut Vec<(f32, T)>, k: usize) {
-        if results.len() > k {
-            results.truncate(k);
-        }
-    }
-
-    /// Sort and limit results to top-k with unified semantics
-    /// 
-    /// Always returns the k MOST SIMILAR results (lowest distance values)
-    pub fn sort_and_limit<T>(
-        results: &mut Vec<(f32, T)>,
-        metric: &DistanceMetric,
-        unified_compute: &UnifiedDistanceCompute,
-        k: usize,
-    ) {
-        Self::sort_results(results, metric, unified_compute);
-        Self::limit_results(results, k);
-        
-        debug!(
-            "✂️ Limited to top-{} most similar results for {}",
-            k,
-            unified_compute.metric_behavior_description(metric)
-        );
-    }
-}
 
 /// Distributed distance computation trait for multi-node support
 #[async_trait]
@@ -488,15 +684,15 @@ pub trait DistributedDistanceCompute: Send + Sync {
         query: &[f32],
         node_vectors: &[(&str, &[&[f32]])], // (node_id, vectors)
         metric: &DistanceMetric,
-    ) -> Result<Vec<(String, Vec<f32>)>>; // (node_id, distances)
+    ) -> Result<Vec<(String, Vec<SimilarityResult>)>>; // (node_id, results)
 
     /// Aggregate results from multiple nodes
     async fn aggregate_distributed_results(
         &self,
-        node_results: &[(String, Vec<(f32, String)>)], // (node_id, (distance, vector_id))
+        node_results: &[(String, Vec<(SimilarityResult, String)>)], // (node_id, (result, vector_id))
         metric: &DistanceMetric,
         k: usize,
-    ) -> Result<Vec<(f32, String)>>; // Final top-k results
+    ) -> Result<Vec<(SimilarityResult, String)>>; // Final top-k results
 }
 
 /// Implement distributed distance computation for UnifiedDistanceCompute
@@ -507,16 +703,16 @@ impl DistributedDistanceCompute for UnifiedDistanceCompute {
         query: &[f32],
         node_vectors: &[(&str, &[&[f32]])],
         metric: &DistanceMetric,
-    ) -> Result<Vec<(String, Vec<f32>)>> {
+    ) -> Result<Vec<(String, Vec<SimilarityResult>)>> {
         self.calculate_distance_distributed(query, node_vectors, metric).await
     }
 
     async fn aggregate_distributed_results(
         &self,
-        node_results: &[(String, Vec<(f32, String)>)],
+        node_results: &[(String, Vec<(SimilarityResult, String)>)],
         metric: &DistanceMetric,
         k: usize,
-    ) -> Result<Vec<(f32, String)>> {
+    ) -> Result<Vec<(SimilarityResult, String)>> {
         self.aggregate_distributed_results(node_results, metric, k).await
     }
 }
@@ -545,28 +741,33 @@ mod tests {
         let vec_b = vec![0.0, 1.0, 0.0]; // Orthogonal vectors
         let vec_c = vec![1.0, 0.0, 0.0]; // Identical to vec_a
 
-        // Test Cosine Distance (native distance metric)
-        let cosine_distance_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
-        let cosine_distance_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::Cosine);
-        assert!((cosine_distance_ab - 1.0).abs() < 1e-6); // Orthogonal = distance 1.0
-        assert!((cosine_distance_ac - 0.0).abs() < 1e-6); // Identical = distance 0.0
-        assert!(cosine_distance_ab > cosine_distance_ac); // More distance = less similar
+        // Test Cosine Distance with semantic results
+        let cosine_result_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
+        let cosine_result_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::Cosine);
+        
+        // Raw values should match expected cosine distances
+        assert!((cosine_result_ab.raw_value - 1.0).abs() < 1e-6); // Orthogonal = distance 1.0
+        assert!((cosine_result_ac.raw_value - 0.0).abs() < 1e-6); // Identical = distance 0.0
+        
+        // Ranking should work correctly (lower rank_value = better)
+        assert!(cosine_result_ac.rank_value < cosine_result_ab.rank_value);
+        
+        // Similarity scores should be intuitive (higher = more similar)
+        assert!(cosine_result_ac.normalized_score > cosine_result_ab.normalized_score);
 
-        // Test Euclidean Distance (native distance metric)
-        let euclidean_distance_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Euclidean);
-        let euclidean_distance_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::Euclidean);
-        assert!((euclidean_distance_ab - 1.414214).abs() < 1e-5); // sqrt(2)
-        assert!((euclidean_distance_ac - 0.0).abs() < 1e-6); // Identical = distance 0.0
-        assert!(euclidean_distance_ab > euclidean_distance_ac); // More distance = less similar
-
-        // Test Dot Product (similarity metric - should be inverted to distance)
-        let dot_product_distance_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::DotProduct);
-        let dot_product_distance_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::DotProduct);
-        // Orthogonal vectors have dot product 0.0 → inverted to distance 1.0
-        // Identical vectors have dot product 1.0 → inverted to distance 0.0  
-        assert!((dot_product_distance_ab - 1.0).abs() < 1e-6); // Orthogonal
-        assert!((dot_product_distance_ac - 0.0).abs() < 1e-6); // Identical
-        assert!(dot_product_distance_ab > dot_product_distance_ac); // Unified: lower = more similar
+        // Test Dot Product with semantic preservation
+        let dot_result_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::DotProduct);
+        let dot_result_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::DotProduct);
+        
+        // Raw values should preserve original dot product semantics
+        assert!((dot_result_ab.raw_value - 0.0).abs() < 1e-6); // Orthogonal dot product = 0
+        assert!((dot_result_ac.raw_value - 1.0).abs() < 1e-6); // Identical dot product = 1
+        
+        // Ranking should be consistent (ac is more similar, so lower rank_value)
+        assert!(dot_result_ac.rank_value < dot_result_ab.rank_value);
+        
+        // Test metric-aware comparison
+        assert!(dot_result_ac.is_better_than(&dot_result_ab));
     }
 
     #[test]
@@ -576,27 +777,19 @@ mod tests {
         let vec_a = vec![1.0, 0.0, 0.0];  // 3 dimensions
         let vec_b = vec![0.0, 1.0];       // 2 dimensions
 
-        // Test dimension mismatch handling for different metric types
+        // Test dimension mismatch handling
+        let result = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
         
-        // Cosine Distance: Should return maximum distance (2.0) for dimension mismatch
-        let cosine_distance = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
-        assert_eq!(cosine_distance, 2.0);
+        // Should return infinity for raw_value and rank_value
+        assert!(result.raw_value.is_infinite());
+        assert!(result.rank_value.is_infinite());
+        assert_eq!(result.normalized_score, 0.0); // Least similar
 
-        // Euclidean Distance: Should return infinity for dimension mismatch  
-        let euclidean_distance = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Euclidean);
-        assert!(euclidean_distance.is_infinite());
-        
-        // Dot Product: Should return maximum distance (2.0) for dimension mismatch
-        let dot_product_distance = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::DotProduct);
-        assert_eq!(dot_product_distance, 2.0);
-        
-        // Manhattan Distance: Should return infinity for dimension mismatch
-        let manhattan_distance = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Manhattan);
-        assert!(manhattan_distance.is_infinite());
-        
-        // Hamming Distance: Should return maximum discrete distance (1.0)
-        let hamming_distance = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Hamming);
-        assert_eq!(hamming_distance, 1.0);
+        // All metrics should handle dimension mismatch gracefully
+        let euclidean_result = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Euclidean);
+        assert!(euclidean_result.raw_value.is_infinite());
+        assert!(euclidean_result.rank_value.is_infinite());
+        assert_eq!(euclidean_result.normalized_score, 0.0);
     }
 
     #[test]
@@ -609,77 +802,26 @@ mod tests {
     }
 
     #[test]
-    fn test_unified_result_ordering() {
+    fn test_semantic_result_ordering() {
         let compute = UnifiedDistanceCompute::default();
 
-        // Test unified semantics: ALL metrics should sort by ascending order (lower = more similar)
-        
-        // Test with Cosine Distance (native distance metric)
-        let mut cosine_results = vec![
-            (0.5, "vec1".to_string()),  // Medium distance
-            (0.9, "vec2".to_string()),  // High distance (least similar)
-            (0.1, "vec3".to_string()),  // Low distance (most similar)
-        ];
+        // Test that SimilarityResult ordering works correctly with rank_value
+        let vec_a = vec![1.0, 0.0, 0.0];
+        let vec_b = vec![0.0, 1.0, 0.0]; // Orthogonal to vec_a
+        let vec_c = vec![1.0, 0.0, 0.0]; // Identical to vec_a
 
-        DistanceResultOrdering::sort_results(
-            &mut cosine_results,
-            &DistanceMetric::Cosine,
-            &compute,
-        );
+        // Calculate results for cosine distance
+        let result_ab = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
+        let result_ac = compute.calculate_distance(&vec_a, &vec_c, &DistanceMetric::Cosine);
 
-        // With unified semantics: ALWAYS sort ascending (lower = more similar)
-        assert_eq!(cosine_results[0].1, "vec3"); // 0.1 (most similar)
-        assert_eq!(cosine_results[1].1, "vec1"); // 0.5 (medium)
-        assert_eq!(cosine_results[2].1, "vec2"); // 0.9 (least similar)
+        // Create a vector of results and sort by rank_value
+        let mut results = vec![result_ab, result_ac];
+        results.sort_by(|a, b| a.rank_value.partial_cmp(&b.rank_value).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Test with normalized Dot Product (similarity metric converted to distance)
-        // Note: These should be the NORMALIZED distance values after inversion
-        let mut normalized_dot_product_results = vec![
-            (0.5, "vec1".to_string()),  // Normalized distance value
-            (0.1, "vec2".to_string()),  // Lower normalized distance (more similar)
-            (0.9, "vec3".to_string()),  // Higher normalized distance (less similar)
-        ];
-
-        DistanceResultOrdering::sort_results(
-            &mut normalized_dot_product_results,
-            &DistanceMetric::DotProduct,
-            &compute,
-        );
-
-        // With unified semantics: ALWAYS sort ascending (lower = more similar)
-        assert_eq!(normalized_dot_product_results[0].1, "vec2"); // 0.1 (most similar)
-        assert_eq!(normalized_dot_product_results[1].1, "vec1"); // 0.5 (medium)
-        assert_eq!(normalized_dot_product_results[2].1, "vec3"); // 0.9 (least similar)
-    }
-
-    #[test]
-    fn test_similarity_to_distance_inversion() {
-        let compute = UnifiedDistanceCompute::default();
-
-        // Test inversion behavior for similarity metrics
-        
-        // Test standard similarity values [0, 1]
-        assert_eq!(compute.invert_similarity_to_distance(1.0), 0.0); // Perfect similarity → zero distance
-        assert_eq!(compute.invert_similarity_to_distance(0.5), 0.5); // Medium similarity → medium distance  
-        assert_eq!(compute.invert_similarity_to_distance(0.0), 1.0); // Zero similarity → max standard distance
-        
-        // Test negative similarity values (like negative cosine similarity)
-        assert_eq!(compute.invert_similarity_to_distance(-0.5), 1.5); // Negative similarity → distance > 1
-        assert_eq!(compute.invert_similarity_to_distance(-1.0), 2.0); // Opposite vectors → max distance
-        
-        // Test unbounded similarity values (like large dot products)
-        assert_eq!(compute.invert_similarity_to_distance(2.0), 0.5); // High similarity → low distance
-        assert_eq!(compute.invert_similarity_to_distance(4.0), 0.25); // Very high similarity → very low distance
-    }
-
-    #[test]
-    fn test_metric_behavior_descriptions() {
-        let compute = UnifiedDistanceCompute::default();
-        
-        assert!(compute.metric_behavior_description(&DistanceMetric::Cosine).contains("native"));
-        assert!(compute.metric_behavior_description(&DistanceMetric::Euclidean).contains("native"));
-        assert!(compute.metric_behavior_description(&DistanceMetric::DotProduct).contains("inverted"));
-        assert!(compute.metric_behavior_description(&DistanceMetric::Custom).contains("Custom"));
+        // The identical vectors (ac) should have lower rank_value (better match)
+        assert!(results[0].rank_value < results[1].rank_value);
+        assert!((results[0].raw_value - 0.0).abs() < 1e-6); // Identical vectors have distance 0
+        assert!((results[1].raw_value - 1.0).abs() < 1e-6); // Orthogonal vectors have distance 1
     }
 
     #[tokio::test]

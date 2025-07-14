@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod tests {
     use crate::core::VectorRecord;
+    use crate::storage::BatchId;
+    use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::wal::{WalConfig, WalBatchFactory, WalManager, WalStrategyType};
     use crate::storage::persistence::wal::schema::create_avro_vector_batch;
@@ -38,13 +40,35 @@ mod tests {
     }
 
     /// Create a test vector record using Avro-unified VectorRecord
+    /// Create a test WAL vector batch
+    fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+        let total_size_bytes: usize = vectors.iter().map(|v| {
+            // Estimate size: vector data + metadata + overhead
+            v.vector.len() * 4 + v.metadata.len() * 64 + 256
+        }).sum();
+        let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
+
+        WalVectorBatch {
+            batch_id,
+            vector_records: Arc::new(vectors),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes,
+            is_flushed: false,
+        }
+    }
+
     fn create_test_vector_record(collection_id: &str, vector_id: &str) -> VectorRecord {
         let now = Utc::now().timestamp_micros();
         VectorRecord {
-            id: vector_id.to_string(),
+            id: Some(vector_id.to_string()),
             collection_id: collection_id.to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
-            metadata: HashMap::new(),
+            metadata: vec![
+                crate::proto::proximadb::MetadataItem {
+                    key: "test_key".to_string(),
+                    value: "test_value".to_string(),
+                },
+            ],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -70,11 +94,13 @@ mod tests {
         let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
         let record = create_test_vector_record("test_collection", "test_vector_1");
 
-        let result = manager.insert(collection_id, vector_id, record).await;
+        // Create a batch with single vector
+        let batch = create_test_wal_batch(&collection_id, vec![record]);
+        let result = manager.write_vector_batch(batch).await;
 
         assert!(result.is_ok());
-        let sequence = result.unwrap();
-        assert!(sequence >= 0); // Allow 0-based indexing
+        let sequences = result.unwrap();
+        assert!(!sequences.is_empty()); // Should have written one vector
     }
 
     // Note: create_collection is now handled by CollectionService, not WAL
@@ -86,10 +112,10 @@ mod tests {
         let collection_id = crate::core::String::from("test_collection".to_string());
         let now = chrono::Utc::now().timestamp_millis();
         let vector_record = crate::core::VectorRecord {
-            id: "test_vector".to_string(),
+            id: Some("test_vector".to_string()),
             collection_id: "test_collection".to_string(),
             vector: vec![0.1, 0.2, 0.3],
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -98,19 +124,22 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+            };
+
+        // Create a WAL batch with the vector
+        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id: crate::storage::BatchId::new("test_collection".to_string(), 1, 1),
+            vector_records: std::sync::Arc::new(vec![vector_record]),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
         };
 
-        let result = manager
-            .insert(
-                collection_id,
-                crate::core::VectorId::from("test_vector".to_string()),
-                vector_record,
-            )
-            .await;
-        assert!(result.is_ok());
-
-        let sequence = result.unwrap();
-        assert!(sequence > 0);
+        let sequences = manager.write_vector_batch(batch).await;
+        assert!(sequences.is_ok());
+        let sequences = sequences.unwrap();
+        assert_eq!(sequences.len(), 1);
+        assert!(sequences[0] > 0);
     }
 
     #[tokio::test]
@@ -144,27 +173,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wal_manager_avro_operations() {
+    async fn test_wal_manager_single_vector_batch() {
         let (manager, _temp_dir) = create_test_wal_manager().await;
-
-        let operation_type = "vector_batch";
         
-        // Create a valid Avro payload with vector records
+        // Create test vector record
         let vector_record = create_test_vector_record("test_collection", "test_vector");
-        let avro_payload = create_avro_vector_batch(&[vector_record])
-            .expect("Failed to create Avro payload");
-
-        let result = manager
-            .append_avro_entry("test_collection", operation_type, &avro_payload)
-            .await;
         
-        if let Err(e) = &result {
-            eprintln!("Append avro entry failed: {:?}", e);
-        }
-        assert!(result.is_ok());
+        // In proto-first architecture, use batch-oriented approach
+        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id: crate::storage::BatchId::new("test_collection".to_string(), 1, 1),
+            vector_records: std::sync::Arc::new(vec![vector_record]),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+        };
 
-        let sequence = result.unwrap();
-        assert!(sequence > 0);
+        let sequences = manager.write_vector_batch(batch).await;
+        
+        if let Err(e) = &sequences {
+            eprintln!("Write batch failed: {:?}", e);
+        }
+        assert!(sequences.is_ok());
+
+        let sequences = sequences.unwrap();
+        assert_eq!(sequences.len(), 1);
+        assert!(sequences[0] > 0);
     }
 
     #[tokio::test]
@@ -175,9 +208,9 @@ mod tests {
         let vector_id = crate::core::VectorId::from("test_vector_1".to_string());
         let record = create_test_vector_record("test_collection", "test_vector_1");
 
-        let _insert_result = manager
-            .insert(collection_id.clone(), vector_id, record)
-            .await;
+        // Create a batch with single vector
+        let batch = create_test_wal_batch(&collection_id, vec![record]);
+        let _insert_result = manager.write_vector_batch(batch).await;
 
         let stats_result = manager.stats().await;
         assert!(stats_result.is_ok());
@@ -195,11 +228,7 @@ mod tests {
 
         let collection_id = crate::core::String::from("test_collection".to_string());
         
-        // Create test vectors with metadata to verify re-serialization
-        let mut metadata = HashMap::new();
-        metadata.insert("key1".to_string(), json!("value1"));
-        metadata.insert("key2".to_string(), json!(42));
-        
+        // Create test vectors to verify re-serialization
         let vectors = vec![
             create_test_vector_record("test_collection", "vec1"),
             create_test_vector_record("test_collection", "vec2"),
@@ -209,15 +238,23 @@ mod tests {
         let avro_payload = create_avro_vector_batch(&vectors)
             .expect("Failed to create Avro batch");
         
-        // The BincodeBatch strategy will:
-        // 1. Deserialize Avro payload to VectorRecords
-        // 2. Re-serialize to Bincode format for storage
-        let result = manager.append_avro_entry(&collection_id, "vector_batch", &avro_payload).await;
+        // In proto-first architecture, use batch-oriented approach
+        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id: crate::storage::BatchId::new("test_collection".to_string(), 1, 2),
+            vector_records: std::sync::Arc::new(vectors),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+        };
         
-        if let Err(e) = &result {
-            eprintln!("Append failed with error: {:?}", e);
+        // Write the batch using proper batch API
+        let sequences = manager.write_vector_batch(batch).await;
+        
+        if let Err(e) = &sequences {
+            eprintln!("Write batch failed with error: {:?}", e);
         }
-        assert!(result.is_ok());
+        assert!(sequences.is_ok());
+        assert_eq!(sequences.unwrap().len(), 2);
         
         // Verify we can read back the vectors
         let collection_vectors = manager.get_collection_vectors(&collection_id).await
@@ -254,13 +291,20 @@ mod tests {
             create_test_vector_record("test_collection", "vec2"),
         ];
         
-        // Create Avro payload
-        let avro_payload = create_avro_vector_batch(&vectors)
-            .expect("Failed to create Avro batch");
+        // In proto-first architecture, use batch-oriented approach
+        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
+            batch_id: crate::storage::BatchId::new("test_collection".to_string(), 1, 2),
+            vector_records: std::sync::Arc::new(vectors),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+        };
         
-        // The AvroBatch strategy will store the Avro payload directly (zero-copy)
-        let result = manager.append_avro_entry(&collection_id, "vector_batch", &avro_payload).await;
-        assert!(result.is_ok());
+        // Write the batch using proper batch API
+        let sequences = manager.write_vector_batch(batch).await;
+        assert!(sequences.is_ok());
+        let sequences = sequences.unwrap();
+        assert_eq!(sequences.len(), 2);
         
         // Verify we can read back the vectors
         let collection_vectors = manager.get_collection_vectors(&collection_id).await
