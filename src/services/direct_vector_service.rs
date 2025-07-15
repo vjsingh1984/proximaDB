@@ -160,7 +160,7 @@ impl DirectVectorService {
         // Create global memtable with WAL behavior
         let memtable_config = crate::storage::memtable::core::MemtableConfig {
             max_size_bytes: wal_config.memtable.global_memory_limit,
-            flush_threshold_bytes: wal_config.memtable.global_memory_limit / 2,
+            flush_threshold_bytes: wal_config.performance.memory_flush_size_bytes, // Use collection-level flush size (2MB) for faster recovery
             enable_mvcc: wal_config.enable_mvcc,
             mvcc_cleanup_interval_secs: wal_config.performance.mvcc_cleanup_interval_secs,
             max_versions_per_key: wal_config.memtable.mvcc_versions_retained,

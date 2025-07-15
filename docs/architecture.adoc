@@ -12,6 +12,12 @@
 :imagesdir: diagrams/images
 :version: 2025.1
 
+[IMPORTANT]
+.Mermaid Diagram Rendering
+====
+This document contains inline Mermaid diagrams that render as visual diagrams when viewed in AsciiDoc processors that support Mermaid (such as GitHub, GitLab, or Asciidoctor with Mermaid plugin). The diagrams are embedded directly in `[mermaid]` blocks rather than using `include::` directives to ensure proper rendering.
+====
+
 [.lead]
 ProximaDB is an enterprise-grade vector database engineered with **DirectVectorService architecture**, delivering **40-60% insert latency reduction** through eliminated registry overhead, **90% duplicate code removal** via unified strategies, and **lock-free streaming search** for optimal throughput.
 
@@ -31,10 +37,9 @@ NOTE: See link:appendix_performance_metrics.adoc[Appendix: Performance Metrics] 
 
 == Proto-First Architecture Foundation
 
-[mermaid]
-----
-include::diagrams/proximadb-refactored-architecture.mmd[]
-----
+image::proximadb-refactored-architecture.png[Proto-First Architecture Foundation, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-refactored-architecture.mmd[View Mermaid source]_
 
 === Core Design Principles
 
@@ -45,10 +50,9 @@ include::diagrams/proximadb-refactored-architecture.mmd[]
 
 === Key Architectural Innovations
 
-[mermaid]
-----
-include::diagrams/two-stage-search.mmd[]
-----
+image::two-stage-search.png[Two-Stage Search Process, width=800, align=center]
+
+_Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 
 ==== 1. DirectVectorService Architecture
 - **40-60% latency reduction** by eliminating WAL Manager Registry overhead
@@ -57,10 +61,8 @@ include::diagrams/two-stage-search.mmd[]
 - **Lock-free streaming search** for non-blocking result delivery
 
 ==== 2. Unified Memtable Architecture
-[mermaid]
-----
-include::diagrams/unified_memtable_architecture.mmd[]
-----
+
+NOTE: Unified memtable architecture diagram shows the hierarchical organization of memtable implementations with specialized behavior wrappers.
 
 - **Polymorphic backends**: BTree, SkipList, HashMap, DashMap
 - **Specialized wrappers** for WAL and LSM behaviors
@@ -77,10 +79,9 @@ include::diagrams/unified_memtable_architecture.mmd[]
 
 === Handler Consolidation Layer
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 **UnifiedHandlers Design**::
 - **85% code reduction** through consolidated business logic
@@ -96,10 +97,9 @@ include::diagrams/proximadb-architecture-overview.mmd[]
 
 === Storage-Aware Engine Layer
 
-[mermaid]
-----
-include::diagrams/multi_disk_architecture.mmd[]
-----
+image::multi_disk_architecture.png[Multi-Disk Storage Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/multi_disk_architecture.mmd[View Mermaid source]_
 
 **Dual Storage Strategy**::
 - **VIPER Engine**: Parquet columnar storage with ML clustering
@@ -115,10 +115,9 @@ include::diagrams/multi_disk_architecture.mmd[]
 
 === Unified Quantization System
 
-[mermaid]
-----
-include::diagrams/unified_quantization_system.mmd[]
-----
+image::unified_quantization_system.png[Unified Quantization System, width=800, align=center]
+
+_Diagram source: link:diagrams/unified_quantization_system.mmd[View Mermaid source]_
 
 **Quantization Engine Features**::
 - **Hardware acceleration**: SIMD, AVX, NEON, CUDA, ROCm support
@@ -134,10 +133,9 @@ include::diagrams/unified_quantization_system.mmd[]
 
 === Proto-First Data Flow
 
-[mermaid]
-----
-include::diagrams/proximadb-proto-first-data-flow.mmd[]
-----
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
 **Migration Benefits**::
 - **Zero double serialization**: Direct proto → WAL → Storage pipeline
@@ -153,10 +151,9 @@ include::diagrams/proximadb-proto-first-data-flow.mmd[]
 
 === Storage-Aware Search Infrastructure
 
-[mermaid]
-----
-include::diagrams/two-stage-search.mmd[]
-----
+image::storage-aware-search.png[Storage-Aware Search Infrastructure, width=800, align=center]
+
+_Diagram source: link:diagrams/storage-aware-search.mmd[View Mermaid source]_
 
 **Storage-Aware Search Coordination**::
 - **Layer 1**: Unflushed WAL search with latest data
@@ -172,10 +169,9 @@ include::diagrams/two-stage-search.mmd[]
 
 == Production Deployment
 
-[mermaid]
-----
-include::diagrams/deployment-architecture.mmd[]
-----
+image::deployment-architecture.png[Production Deployment Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/deployment-architecture.mmd[View Mermaid source]_
 
 === Multi-Tier Storage Strategy
 

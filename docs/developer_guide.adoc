@@ -1869,10 +1869,9 @@ ProximaDB documentation uses Mermaid diagrams that can be embedded directly in A
 **Using Mermaid Diagrams:**
 [source,asciidoc]
 ----
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::diagram-name.png[Description, width=800, align=center]
+
+_Diagram source: link:diagrams/diagram-name.mmd[View Mermaid source]_
 ----
 
 **Key Diagrams:**
@@ -1890,10 +1889,9 @@ include::diagrams/proximadb-architecture-overview.mmd[]
 3. Use Mermaid syntax (flowchart, sequence, class diagrams)
 4. Reference in AsciiDoc:
    ```asciidoc
-   [mermaid]
-   ----
-   include::diagrams/proximadb-feature-name.mmd[]
-   ----
+   image::proximadb-feature-name.png[Feature Name, width=800, align=center]
+   
+   _Diagram source: link:diagrams/proximadb-feature-name.mmd[View Mermaid source]_
    ```
 
 ---

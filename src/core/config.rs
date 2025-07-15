@@ -372,7 +372,7 @@ fn default_collection_affinity() -> bool {
     true
 }
 fn default_memory_flush_size() -> usize {
-    10 * 1024 * 1024 // 10MB - recommended for collection-level flush
+    2 * 1024 * 1024 // 2MB - reduced for faster recovery as per CLAUDE.md
 }
 fn default_global_flush_threshold() -> usize {
     4 * 1024 * 1024 * 1024 // 4GB - recommended for global memory threshold

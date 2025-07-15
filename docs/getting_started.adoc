@@ -28,10 +28,9 @@ Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes 
 |Hardware Optimization |SIMD/GPU acceleration for quantization
 |===
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 == Quick Installation
 

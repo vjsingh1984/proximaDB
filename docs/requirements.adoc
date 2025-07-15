@@ -86,10 +86,9 @@ System requirements and acceptance criteria for ProximaDB, defining what the sys
 
 The ProximaDB architecture must deliver:
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 **Unified Storage Interface**:: Single memtable interface supporting multiple backends (SkipList, BTree, HashMap, DashMap)
 
@@ -555,10 +554,9 @@ Deliver a cloud-native vector database that provides:
 
 === WAL Flush Coordination Architecture
 
-[mermaid]
-----
-include::diagrams/wal_strategy_pattern.mmd[]
-----
+NOTE: WAL Strategy Pattern diagram shows the pluggable WAL batch strategies (Proto, Avro, Bincode) with unified interface.
+
+_Diagram source: link:diagrams/wal_strategy_pattern.mmd[View Mermaid source] (PNG generation pending due to syntax issues)_
 
 ==== WAL Durability Strategy Configuration
 

@@ -19,10 +19,9 @@ Comprehensive technical implementation details for ProximaDB's proto-first archi
 
 === Zero Double Serialization Pipeline
 
-[mermaid]
-----
-include::diagrams/proximadb-proto-first-data-flow.mmd[]
-----
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
 **Core Principle**: Protocol Buffers flow natively through the entire system without intermediate conversions.
 
@@ -68,10 +67,9 @@ impl UnifiedHandlers {
 
 === DirectVectorService Architecture
 
-[mermaid]
-----
-include::diagrams/direct-vector-service.mmd[]
-----
+image::direct-vector-service.png[DirectVectorService Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/direct-vector-service.mmd[View Mermaid source]_
 
 **Optimized Vector Operations**:
 

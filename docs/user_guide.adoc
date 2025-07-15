@@ -44,10 +44,9 @@ Comprehensive production workflows for ProximaDB's **DirectVectorService archite
 
 **Hardware Optimization**:: SIMD/GPU acceleration with intelligent quantization selection
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 == Core Concepts
 
@@ -65,10 +64,9 @@ include::diagrams/proximadb-architecture-overview.mmd[]
 
 === Step 1: Create Your First Proto-Native Collection
 
-[mermaid]
-----
-include::diagrams/proximadb-proto-first-data-flow.mmd[]
-----
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
 Collections in ProximaDB use proto-native metadata with automatic storage engine selection and quantization support.
 

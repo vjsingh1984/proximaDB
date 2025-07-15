@@ -18,10 +18,9 @@ ProximaDB is a **DirectVectorService-powered vector database** engineered for AI
 * **85% Code Reduction**: Handler consolidation through proto-first architecture
 * **Zero Double Serialization**: Direct Protocol Buffers throughout the entire pipeline
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 === ✨ Latest Achievements (2025)
 
@@ -133,22 +132,22 @@ include::diagrams/proximadb-architecture-overview.mmd[]
 == Key Architecture Diagrams
 
 === System Overview
-[mermaid]
-----
-include::diagrams/proximadb-refactored-architecture.mmd[]
-----
+
+image::proximadb-refactored-architecture.png[Proto-First Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-refactored-architecture.mmd[View Mermaid source]_
 
 === Data Flow
-[mermaid]
-----
-include::diagrams/proximadb-proto-first-data-flow.mmd[]
-----
+
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+
+_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
 === Storage Architecture
-[mermaid]
-----
-include::diagrams/unified_memtable_architecture.mmd[]
-----
+
+image::storage-tiers.png[Storage Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/storage-tiers.mmd[View Mermaid source]_
 
 == Quick Links
 
