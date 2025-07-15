@@ -6,11 +6,9 @@
 use super::super::two_stage_search::*;
 use crate::compute::{
     UnifiedDistanceCompute, UnifiedQuantizationEngine, 
-    InMemoryCodebookStore, DistanceMetric, UnifiedQuantizationLevel,
+    InMemoryCodebookStore, UnifiedQuantizationLevel,
 };
-use crate::core::search::SearchParams;
 
-use anyhow::Result;
 use std::sync::Arc;
 
 /// Helper to create test vectors

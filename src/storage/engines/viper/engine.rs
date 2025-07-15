@@ -803,3 +803,35 @@ impl UnifiedStorageEngine for ViperEngine {
         None
     }
 }
+
+impl ViperEngine {
+    /// Convenient compact_collection method for CompactionCoordinator integration
+    pub async fn compact_collection(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+        info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
+        
+        // Create empty compaction parameters
+        let params = crate::storage::traits::CompactionParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: false,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+        };
+        
+        // Use the existing do_compact implementation
+        let result = self.do_compact(&params).await?;
+        
+        Ok(EngineCompactionResult {
+            files_processed: result.output_files,
+            bytes_processed: result.bytes_written,
+        })
+    }
+}
+
+/// Simplified compaction result for CompactionCoordinator
+#[derive(Debug, Clone)]
+pub struct EngineCompactionResult {
+    pub files_processed: u64,
+    pub bytes_processed: u64,
+}

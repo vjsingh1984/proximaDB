@@ -40,7 +40,7 @@ pub mod semantic_distance_integration;
 // VIPER engine integration tests
 pub mod viper;
 
-// Storage-aware search integration tests
-pub mod storage_aware_search_tests;
+// Storage-aware search integration tests - REMOVED (obsolete APIs)
+// pub mod storage_aware_search_tests;
 
 // Middleware integration tests are at this level since they cross-cut concerns

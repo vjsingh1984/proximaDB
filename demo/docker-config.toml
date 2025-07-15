@@ -32,8 +32,8 @@ storage_pairing = [
 ]
 
 # Memory and performance settings optimized for containers
-memtable_size_mb = 32
-memory_flush_size_bytes = 16_777_216  # 16MB
+memtable_size_mb = 8
+memory_flush_size_bytes = 2_097_152  # 2MB
 mmap_enabled = true
 
 [logging]

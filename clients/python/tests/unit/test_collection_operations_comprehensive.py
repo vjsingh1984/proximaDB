@@ -12,8 +12,10 @@ from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
 from proximadb.models import (
     CollectionConfig, IndexConfiguration,
     DistanceMetric, StorageEngine, IndexingAlgorithm,
-    Collection, CollectionStats, HnswConfig
+    Collection, CollectionStats, StorageConfig, CompressionType,
+    FlushConfig
 )
+from proximadb import IndexConfig  # Import alias for IndexConfiguration
 from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
 from proximadb.config import ClientConfig
 
@@ -157,9 +159,10 @@ class TestCollectionConfiguration:
     
     def test_advanced_collection_config(self):
         """Test advanced collection configuration with all options"""
-        index_config = IndexConfig(
-            algorithm=IndexAlgorithm.HNSW,
-            parameters={"m": 16, "ef_construction": 200}
+        index_config = IndexConfiguration(
+            index_name="test_index",
+            algorithm=IndexingAlgorithm.HNSW,
+            # parameters={"m": 16, "ef_construction": 200}  # Not a field anymore
         )
         
         storage_config = StorageConfig(

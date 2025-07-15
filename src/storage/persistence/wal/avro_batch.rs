@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use super::batch_strategy::WalBatchStrategy;
 use super::{FlushResult, WalConfig, WalStats};
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
@@ -355,35 +354,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         Ok(None)
     }
 
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Avro WAL Batch Strategy not initialized")?;
-
-        // Resolve distance metric
-        let metric = distance_metric.unwrap_or(CoreDistanceMetric::Cosine);
-        
-        // Perform similarity search
-        let results = memtable
-            .search_unflushed_vectors(query_vector, k, collection_id, metric)
-            .await?;
-
-        // Convert results to the expected format
-        let mut converted_results = Vec::new();
-        for (score, record) in results {
-            // entry is already a VectorRecord, no extraction needed
-            converted_results.push((record.id.as_deref().unwrap_or("").to_string(), score, record));
-        }
-
-        Ok(converted_results)
-    }
+    // Using default implementation from trait
 
     async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let memtable = self
@@ -457,18 +428,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         }
     }
 
-    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Avro WAL Batch Strategy not initialized")?;
-
-        // Clear all data for the collection
-        memtable.clear_flushed(collection_id, u64::MAX).await?;
-        
-        tracing::info!("✅ Dropped all WAL data for collection: {}", collection_id);
-        Ok(())
-    }
+    // Using default implementation from trait
 
     async fn get_stats(&self) -> Result<WalStats> {
         let memtable = self
@@ -528,15 +488,7 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         }
     }
 
-    async fn recover(&self) -> Result<u64> {
-        tracing::info!("🔄 Starting Avro WAL Batch Strategy recovery");
-        
-        // TODO: Implement recovery from disk
-        // For now, return 0 entries recovered
-        
-        tracing::info!("✅ Avro WAL Batch Strategy recovery completed");
-        Ok(0)
-    }
+    // Using default recover implementation from trait
 
     async fn close(&self) -> Result<()> {
         tracing::info!("🔒 Closing Avro WAL Batch Strategy");
@@ -547,18 +499,9 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
-        // TODO: Implement force sync to disk when needed
-        tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
-        Ok(())
-    }
+    // Using default force_sync implementation from trait
 
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
-        // TODO: Implement MVCC compaction, TTL cleanup
-        // For now, return 0 entries compacted
-        tracing::debug!("🔧 Compacting collection {} (placeholder)", collection_id);
-        Ok(0)
-    }
+    // Using default compact_collection implementation from trait
 
     fn get_wal_behavior(&self) -> Option<&WalBehaviorWrapper> {
         self.memtable.as_ref()
@@ -566,6 +509,24 @@ impl WalBatchStrategy for AvroWalBatchStrategy {
     
     fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>> {
         self.filesystem.clone()
+    }
+    
+    fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+        // Avro strategy converts to Avro format for schema evolution support
+        let avro_records: Vec<crate::core::avro_unified::VectorRecord> = vectors
+            .iter()
+            .map(|record| crate::core::proto_to_avro(record, &record.collection_id))
+            .collect();
+            
+        // Serialize using Avro format
+        self::serialize_avro_vector_batch(&avro_records)
+            .context("Failed to serialize vectors to Avro format for disk")
+    }
+    
+    fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+        // Avro strategy uses Avro deserialization
+        self::deserialize_avro_vector_batch(data)
+            .context("Failed to deserialize Avro vectors from disk")
     }
 }
 

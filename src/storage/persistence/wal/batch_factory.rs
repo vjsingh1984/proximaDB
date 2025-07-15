@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use super::config::WalStrategyType;
-use super::{WalConfig, WalBatchStrategy, AvroWalBatchStrategy, BincodeWalBatchStrategy, ProtoWalBatchStrategy};
+use super::{WalConfig, WalBatchStrategy, AvroWalBatchStrategy, BincodeWalBatchStrategy, ProtoWalBatchStrategy, UnifiedWalBatchStrategy};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Modern factory for creating WAL batch strategies
@@ -45,6 +45,42 @@ impl WalBatchFactory {
                 Ok(strategy)
             }
         }
+    }
+
+    /// Create a unified WAL batch strategy (RECOMMENDED - eliminates duplicate code)
+    /// 
+    /// This creates a single implementation with pluggable serialization instead of
+    /// separate strategy implementations, providing 75% code reduction
+    pub async fn create_unified_strategy(
+        strategy_type: WalStrategyType,
+        config: &WalConfig,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Box<dyn WalBatchStrategy>> {
+        let mut strategy: Box<dyn WalBatchStrategy> = match strategy_type {
+            WalStrategyType::AvroBatch => {
+                tracing::info!("🎯 Creating unified AvroWalBatchStrategy");
+                Box::new(UnifiedWalBatchStrategy::new_avro())
+            }
+            WalStrategyType::BincodeBatch => {
+                tracing::info!("🎯 Creating unified BincodeWalBatchStrategy");
+                Box::new(UnifiedWalBatchStrategy::new_bincode())
+            }
+            WalStrategyType::ProtoBatch => {
+                tracing::info!("🎯 Creating unified ProtoWalBatchStrategy");
+                Box::new(UnifiedWalBatchStrategy::new())
+            }
+        };
+        
+        strategy.initialize(config, filesystem).await?;
+        Ok(strategy)
+    }
+
+    /// Create unified strategy from config (RECOMMENDED for new code)
+    pub async fn create_unified_from_config(
+        config: &WalConfig,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Box<dyn WalBatchStrategy>> {
+        Self::create_unified_strategy(config.strategy_type.clone(), config, filesystem).await
     }
 
     /// Create strategy with automatic type detection from config

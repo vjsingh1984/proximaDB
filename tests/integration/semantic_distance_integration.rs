@@ -25,9 +25,8 @@
 
 use proximadb::compute::distance::DistanceMetric;
 use proximadb::compute::unified_distance::{
-    UnifiedDistanceCompute, SimilarityResult, MetricProperties,
+    UnifiedDistanceCompute, MetricProperties,
 };
-use proximadb::compute::unified_quantization::UnifiedQuantizationEngine;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use proximadb::storage::persistence::wal::BatchId;

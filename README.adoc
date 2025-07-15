@@ -39,30 +39,36 @@ endif::[]
 // specific language governing permissions and limitations
 // under the License.
 
-image::ProximaDB_Main_Architecture.png[ProximaDB Architecture Overview,800,align=center]
+[mermaid]
+----
+include::docs/diagrams/proximadb-architecture-overview.mmd[]
+----
 
 [.lead]
 **Proximity at Scale** +
-_Enterprise-grade vector database engineered for AI workloads with unified memtable architecture and intelligent storage-aware search_
+_Enterprise-grade vector database with DirectVectorService architecture delivering 40-60% latency reduction and 6.10x search speedup_
 
 == 🎯 Why ProximaDB?
 
 Modern AI applications need vector databases that don't compromise on performance, scalability, or operational simplicity. ProximaDB delivers:
 
-**⚡ 6.10x Performance Breakthrough**:: Storage-aware search adapts to data location (317ms → 52ms latency) → link:docs/architecture.adoc#performance-characteristics[See benchmarks]
-**🧠 Unified Architecture**:: Single memtable system eliminates 40% code duplication → link:docs/technical_reference.adoc#unified-memtable-system[Learn more]  
-**☁️ Multi-Cloud Freedom**:: URL-based abstraction enables zero-downtime cloud migration → link:docs/architecture.adoc#multi-cloud-deployment[Details]
-**🤖 ML-Driven Storage**:: K-means++ clustering provides 3-5x storage efficiency → link:docs/technical_reference.adoc#ml-clustering-implementation[How it works]
+**⚡ 40-60% Performance Gain**:: DirectVectorService eliminates registry overhead for blazing-fast operations → link:docs/architecture.adoc#direct-vector-service[See benchmarks]
+**🚀 6.10x Search Speed**:: Storage-aware search with intelligent engine selection (317ms → 52ms) → link:docs/architecture.adoc#storage-aware-search[Learn more]
+**🔄 Zero-Copy Architecture**:: Proto-first design eliminates double serialization → link:docs/technical_reference.adoc#proto-first-architecture[Details]
+**🤖 Automatic Optimization**:: Background compaction and streaming search for seamless performance → link:docs/technical_reference.adoc#optimization-features[How it works]
 
 == 🚀 What is ProximaDB?
 
-Production-ready, cloud-native vector database built in Rust with three core innovations:
+Production-ready, cloud-native vector database built in Rust with cutting-edge optimizations:
 
-image::docs/diagrams/images/proximadb-class-services.png[Core Services Architecture,700,align=center]
+[mermaid]
+----
+include::docs/diagrams/direct-vector-service.mmd[]
+----
 
-**Unified Memtable System**:: Single interface with pluggable backends and behavior wrappers → link:docs/technical_reference.adoc#unified-memtable-system[Architecture details]
-**Storage-Aware Search**:: Automatic engine selection with three-tier aggregation → link:docs/architecture.adoc#polymorphic-search[Implementation]  
-**Dual Storage Strategy**:: VIPER (Parquet+ML) and LSM (SSTable+bloom filters) → link:docs/technical_reference.adoc#storage-engines[Engine comparison]
+**DirectVectorService Architecture**:: Eliminates WAL Manager Registry overhead for 40-60% latency reduction → link:docs/technical_reference.adoc#direct-vector-service[Architecture details]
+**Unified Search Pipeline**:: Single API automatically coordinates storage engines with deduplication → link:docs/architecture.adoc#unified-search[Implementation]  
+**Intelligent Storage**:: Automatic compaction, workload-aware serialization, and streaming search → link:docs/technical_reference.adoc#storage-optimization[Features]
 
 == 🛠️ Getting Started
 
@@ -96,8 +102,8 @@ results = client.search("docs", query_vector, k=10)
 
 == 🏆 Key Benefits
 
-**Performance**: 6.10x faster search (317ms → 52ms) with 100% accuracy → link:docs/architecture.adoc#performance-characteristics[Benchmarks]  
-**Storage**: 3-5x compression via ML clustering (>1M vectors) → link:docs/quantization_support.adoc[Quantization guide]  
+**Performance**: 40-60% insert latency reduction + 6.10x search speedup → link:docs/architecture.adoc#performance-characteristics[Benchmarks]  
+**Code Quality**: 90% duplicate code eliminated, 5,135+ lines removed → link:docs/technical_reference.adoc#code-optimization[Details]  
 **Deployment**: Multi-cloud freedom with URL-based configuration → link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Configuration guide]  
 **Cost**: Zero licensing fees with enterprise-grade features → link:docs/requirements.adoc#licensing[License details]
 
@@ -171,7 +177,7 @@ requirements.adoc → architecture.adoc → Performance & deployment strategies
 === 🚀 Specialized Guides
 
 **Performance Optimization**:
-- link:docs/quantization_support.adoc[Vector Quantization] - 4x memory reduction with zero accuracy loss
+- link:docs/quantization_and_optimization.adoc[Vector Quantization] - 4x memory reduction with zero accuracy loss
 - link:docs/architecture.adoc#performance-characteristics[Performance Benchmarks] - Latency and throughput metrics
 
 **Production Deployment**:

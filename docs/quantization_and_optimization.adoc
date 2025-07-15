@@ -22,7 +22,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-**ProximaDB's unified quantization engine** delivers hardware-accelerated vector compression with **proto-first optimization hints**, achieving **32x compression** and **6.10x search acceleration** while maintaining production-grade accuracy.
+**ProximaDB's unified quantization engine** with **DirectVectorService integration** delivers hardware-accelerated vector compression, achieving **32x compression** and **6.10x search acceleration** while maintaining production-grade accuracy through the optimized architecture.
 
 [NOTE]
 ====
@@ -43,17 +43,23 @@ ProximaDB's **unified quantization engine** integrates seamlessly with the proto
 * **Search Acceleration**: Two-stage search with 3-6x speedup guarantee
 * **Progressive Deployment**: Add quantization to existing collections without downtime
 
-image::unified_quantization_system.png[Proto-First Unified Quantization System,width=100%]
+[mermaid]
+----
+include::diagrams/unified_quantization_system.mmd[]
+----
 
 === System Architecture
 
 The quantization and optimization flow traverses all layers of ProximaDB:
 
-image::quantization-flow.png[Quantization Flow,width=100%,align=center]
+[mermaid]
+----
+include::diagrams/unified_quantization_system.mmd[]
+----
 
 === Component Interactions
 
-image::quantization-components.png[Component Interactions,width=100%,align=center]
+// Component interactions are shown in the unified quantization system diagram above
 
 == Quantization Methods
 
@@ -63,7 +69,7 @@ ProximaDB supports multiple quantization techniques, each optimized for differen
 
 Product Quantization divides high-dimensional vectors into subvectors, quantizing each independently using learned codebooks.
 
-image::product-quantization.png[Product Quantization,width=100%,align=center]
+// Product quantization is illustrated in the unified quantization system diagram
 
 ==== How PQ Works
 
@@ -178,7 +184,7 @@ quantization_config = QuantizationConfig(
 
 Binary quantization provides maximum compression using 1 bit per dimension:
 
-image::binary-quantization.png[Binary Quantization,width=80%,align=center]
+// Binary quantization reduces vectors to 1-bit representations
 
 ==== Binary Methods
 
@@ -243,7 +249,10 @@ Flexible bit-width quantization with configurable precision:
 
 ProximaDB's two-stage search leverages quantization for fast candidate selection followed by precise reranking:
 
-image::two-stage-search.png[Two-Stage Search,width=100%,align=center]
+[mermaid]
+----
+include::diagrams/two-stage-search.mmd[]
+----
 
 === Algorithm Overview
 
@@ -270,7 +279,7 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
 
 === Performance Analysis
 
-image::performance-comparison.png[Performance Comparison,width=100%,align=center]
+// Performance comparisons show 6.10x search improvement with quantization
 
 .Two-Stage Search Performance Metrics
 [width="100%",cols="2,2,2,2",options="header"]
@@ -407,7 +416,10 @@ pub struct RestSearchOptimizationHints {
 
 The vector service orchestrates search strategies:
 
-image::vector-service-flow.png[Vector Service Flow,width=100%,align=center]
+[mermaid]
+----
+include::diagrams/direct-vector-service.mmd[]
+----
 
 [source,rust]
 ----
@@ -425,7 +437,7 @@ match (enable_two_stage, quantization_hint) {
 
 VIPER leverages Parquet's columnar format:
 
-image::viper-quantization.png[VIPER Quantization,width=100%,align=center]
+// VIPER engine integrates quantization with Parquet columnar storage
 
 .VIPER Quantization Features
 * Separate columns for quantized/full vectors
@@ -697,7 +709,7 @@ results = client.search_vectors(
 
 === Choosing Quantization Type
 
-image::quantization-decision-tree.png[Decision Tree,width=100%,align=center]
+// Quantization selection decision tree helps choose optimal configuration
 
 === Optimization Strategies
 

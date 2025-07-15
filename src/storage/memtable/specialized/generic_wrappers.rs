@@ -374,7 +374,7 @@ mod tests {
     async fn test_metrics_wrapper() {
         let config = MemtableConfig::default();
         let btree = BTreeMemtable::new(false);
-        let mut wrapped = MetricsWrapper::new(btree, config);
+        let wrapped = MetricsWrapper::new(btree, config);
 
         // Test operations
         wrapped
@@ -398,7 +398,7 @@ mod tests {
     async fn test_caching_wrapper() {
         let config = MemtableConfig::default();
         let btree = BTreeMemtable::new(false);
-        let mut wrapped = CachingWrapper::new(btree, config, 100);
+        let wrapped = CachingWrapper::new(btree, config, 100);
 
         // Test caching
         wrapped

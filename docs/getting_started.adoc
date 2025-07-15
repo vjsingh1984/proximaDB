@@ -13,7 +13,7 @@
 :version: 2025.1
 
 [.lead]
-Get ProximaDB's **proto-first vector database** running in under 5 minutes with **6.10x search performance**, **zero double serialization**, and **unified Python SDK**.
+Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes with **40-60% insert latency reduction**, **6.10x search performance**, and **unified Python SDK**.
 
 == What Makes ProximaDB Different
 
@@ -21,14 +21,17 @@ Get ProximaDB's **proto-first vector database** running in under 5 minutes with 
 |===
 |**Innovation** |**Benefit**
 
-|Proto-First Architecture |Zero double serialization overhead
+|DirectVectorService |40-60% insert latency reduction, no registry overhead
 |Storage-Aware Search |6.10x performance with automatic engine selection
-|Handler Consolidation |85% code reduction, unified business logic
+|Proto-First Architecture |Zero double serialization throughout pipeline
 |Unified Python SDK |87% smaller (6,467 → 800 lines)
 |Hardware Optimization |SIMD/GPU acceleration for quantization
 |===
 
-image::proximadb-architecture-overview.png[Proto-First Architecture,width=100%]
+[mermaid]
+----
+include::diagrams/proximadb-architecture-overview.mmd[]
+----
 
 == Quick Installation
 

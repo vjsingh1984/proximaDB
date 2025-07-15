@@ -401,7 +401,7 @@ mod wal_config_tests {
         assert!(config.performance.global_shrink_factor > 0.0);
         assert!(config.performance.global_shrink_factor <= 1.0);
         assert!(config.memtable.mvcc_versions_retained >= 1);
-        assert!(config.compression.min_compress_size >= 0);
+        // min_compress_size is always >= 0 as it's unsigned
     }
 
     #[test]

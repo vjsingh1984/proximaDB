@@ -109,14 +109,14 @@ impl SkipListMemTable {
 pub struct VectorService {
     /// Storage engine with filesystem abstraction
     storage: Arc<RwLock<StorageEngine>>,
-    /// Write-ahead log manager
-    wal: Arc<WalManager>,
-    /// Vector storage coordinator
-    vector_coordinator: Arc<VectorStorageCoordinator>,
+    /// Direct vector service for optimized operations
+    direct_vector_service: Arc<DirectVectorService>,
+    /// Compaction coordinator for background optimization
+    compaction_coordinator: Arc<CompactionCoordinator>,
     /// Collection service for lifecycle management
     collection_service: Arc<CollectionService>,
-    /// Schema service for evolution
-    schema_service: Arc<SchemaService>,
+    /// Streaming search service for non-blocking results
+    streaming_service: Arc<StreamingSearchService>,
     /// Background task scheduler
     scheduler: Arc<TaskScheduler>,
 }
@@ -126,7 +126,7 @@ pub struct VectorService {
 
 [source,rust]
 ----
-/// Vector insertion with coordinated operations
+/// Optimized vector insertion with DirectVectorService
 pub async fn insert_vector(&self, request: InsertVectorRequest) -> Result<InsertVectorResponse> {
     // 1. Validate request
     let collection = self.collection_service
@@ -136,16 +136,15 @@ pub async fn insert_vector(&self, request: InsertVectorRequest) -> Result<Insert
         
     self.validate_vector(&request.vector, &collection)?;
     
-    // 2. Write to WAL
-    let sequence = self.wal.insert(
+    // 2. Direct insertion (no registry overhead)
+    let result = self.direct_vector_service.insert_vectors_direct(
         &request.collection_id,
-        request.vector_id.clone(),
-        VectorRecord {
-            id: request.vector_id.clone(),
+        Arc::new(vec![VectorRecord {
+            id: Some(request.vector_id.clone()),
             vector: request.vector.clone(),
             metadata: request.metadata.clone(),
-            timestamp: Utc::now(),
-        },
+            timestamp: Utc::now().timestamp_millis(),
+        }]),
     ).await?;
     
     // 3. Delegate to vector coordinator
@@ -270,18 +269,21 @@ pub struct HybridSearchCoordinator {
     storage_engine: Arc<dyn UnifiedStorageEngine>,
 }
 
-impl HybridSearchCoordinator {
-    pub async fn hybrid_vector_search(&self, collection_id: &CollectionId, query_vector: &[f32], k: usize) -> Result<Vec<VectorRecord>> {
-        // 1. Search in storage files (flushed data)
-        let storage_results = self.storage_engine.search_vectors(collection_id, query_vector, k, None).await?;
+impl DirectVectorService {
+    pub async fn search_vectors_unified(&self, collection_id: &str, query_vector: &[f32], k: usize) -> Result<Vec<SearchResult>> {
+        // 1. Unified search across WAL + Storage (automatic coordination)
+        let all_results = self.search_all_layers(collection_id, query_vector, k).await?;
         
-        // 2. Search in unflushed WAL data  
-        let unflushed_results = self.wal_search.search_unflushed_vectors(collection_id, None, None, None).await?;
+        // 2. Automatic deduplication by vector ID
+        let deduped_results = self.deduplicate_by_id(all_results);
         
-        // 3. Combine with MVCC semantics (latest versions win)
-        let final_results = self.merge_results_with_mvcc(storage_results, unflushed_results);
-        
-        Ok(final_results)
+        // 3. Return top-k results (already sorted by score)
+        Ok(deduped_results.into_iter().take(k).collect())
+    }
+    
+    pub async fn search_vectors_streaming(&self, query: SearchQuery) -> StreamingSearchResult {
+        // Lock-free streaming search for non-blocking results
+        self.streaming_service.search_stream(query).await
     }
 }
 ----

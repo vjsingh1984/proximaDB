@@ -590,3 +590,7 @@ class HealthStatus(BaseModel):
     uptime_seconds: int
     services: Dict[str, str]
     timestamp: int
+
+
+# Simple alias
+Vector = VectorRecord

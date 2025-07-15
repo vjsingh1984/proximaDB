@@ -2,9 +2,8 @@
 
 use proximadb::core::search::storage_aware::{
     SearchHints, QuantizationLevel, SearchCapabilities, SearchMetrics,
-    ClusteringHints, ClusterDistanceMetric, StorageSearchEngine
+    ClusteringHints, ClusterDistanceMetric
 };
-use proximadb::proto::proximadb::StorageEngine as StorageEngineType;
 use std::collections::HashMap;
 use serde_json::json;
 
@@ -24,7 +23,7 @@ fn test_search_hints_default_values() {
 
 #[test]
 fn test_search_hints_custom_configuration() {
-    let mut hints = SearchHints {
+    let hints = SearchHints {
         predicate_pushdown: false,
         use_bloom_filters: false,
         clustering_hints: Some(ClusteringHints::default()),

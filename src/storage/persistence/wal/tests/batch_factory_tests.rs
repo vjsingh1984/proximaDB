@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
+    
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::wal::{WalBatchFactory, WalStrategyType};
     use crate::storage::WalConfig;

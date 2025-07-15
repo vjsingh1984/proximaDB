@@ -1,27 +1,26 @@
-//! Unit tests for VectorService operations
+//! Unit tests for DirectVectorService operations
 
-use proximadb::services::vector_service::VectorService;
-use proximadb::core::{VectorInsertResponse, VectorSearchResponse};
-use proximadb::services::collection_service::CollectionService;
-use proximadb::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine as ProtoStorageEngine};
-use proximadb::core::{VectorRecord, VectorId};
-use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
-use proximadb::core::config::StorageConfig;
-use std::sync::Arc;
-use std::collections::HashMap;
-use tempfile::TempDir;
-use serde_json::json;
+use proximadb::services::direct_vector_service::{OptimizedFormat, WorkloadType};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[tokio::test]
-    async fn test_vector_service_basic_operations() {
-        // For now, just a placeholder test
-        // The vector service has been significantly refactored
-        // and requires proper integration test setup
+    async fn test_direct_vector_service_basic() {
+        // DirectVectorService provides optimized vector operations
+        // with eliminated WAL Manager Registry overhead
+        // This is a placeholder test - full integration tests require
+        // proper storage engine setup
         assert_eq!(2 + 2, 4);
+    }
+    
+    #[test]
+    fn test_optimized_format_selection() {
+        // Test workload-based format selection
+        assert_eq!(OptimizedFormat::for_workload(WorkloadType::WriteHeavy), OptimizedFormat::Proto);
+        assert_eq!(OptimizedFormat::for_workload(WorkloadType::ReadHeavy), OptimizedFormat::Bincode);
+        assert_eq!(OptimizedFormat::for_workload(WorkloadType::SchemaEvolution), OptimizedFormat::Avro);
+        assert_eq!(OptimizedFormat::for_workload(WorkloadType::Balanced), OptimizedFormat::Proto);
     }
 }

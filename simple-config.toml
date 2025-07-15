@@ -35,6 +35,7 @@ level_count = 7
 compaction_threshold = 4
 compaction_strategy = "Leveled"
 block_size_kb = 64
+compression = "snappy"
 
 [storage.storage_layout]
 node_instance = 1

@@ -427,7 +427,7 @@ impl FilestoreMetadataBackend {
         let sequence = op_json["sequence"].as_u64().unwrap_or(0);
         let op_type_str = op_json["operation_type"].as_str().unwrap_or("");
         
-        let mut max_sequence = sequence;
+        let max_sequence = sequence;
         
         match op_type_str {
             "Create" | "Update" => {

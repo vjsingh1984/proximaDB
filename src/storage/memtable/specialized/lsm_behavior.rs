@@ -549,7 +549,7 @@ mod tests {
     async fn test_lsm_behavior_wrapper() {
         let config = MemtableConfig::default();
         let skiplist = SkipListMemtable::new();
-        let mut lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
+        let lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
 
         // Create test LSM entry
         let lsm_entry = LsmEntry {
@@ -589,7 +589,7 @@ mod tests {
     async fn test_lsm_compaction_logic() {
         let config = MemtableConfig::default();
         let skiplist = SkipListMemtable::new();
-        let mut lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
+        let lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
 
         // Insert multiple entries
         for i in 0..10 {

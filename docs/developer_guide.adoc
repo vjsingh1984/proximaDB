@@ -1859,49 +1859,42 @@ pytest tests/ -k "collection"         # Tests with 'collection' in name
 
 ==== Generating Diagrams
 
-ProximaDB documentation uses PlantUML and Mermaid diagrams that must be converted to PNG images for rendering.
+ProximaDB documentation uses Mermaid diagrams that can be embedded directly in AsciiDoc files.
 
-**Prerequisites:**
-[source,bash]
-----
-# Install PlantUML
-sudo apt-get install plantuml    # Ubuntu/Debian
-brew install plantuml             # macOS
+**Key Benefits:**
+- **Inline Rendering**: Diagrams render directly in AsciiDoc without pre-processing
+- **Version Control**: Text-based diagrams are easy to diff and review
+- **No External Tools**: No need for PlantUML Java runtime or image generation
 
-# Install Mermaid CLI
-npm install -g @mermaid-js/mermaid-cli
+**Using Mermaid Diagrams:**
+[source,asciidoc]
 ----
-
-**Quick Generation:**
-[source,bash]
+[mermaid]
 ----
-cd docs
-./generate_diagrams.sh
+include::diagrams/proximadb-architecture-overview.mmd[]
 ----
-
-**Manual Generation:**
-[source,bash]
-----
-# PlantUML diagrams
-plantuml -tpng -o diagrams/images diagrams/plantuml/*.puml
-
-# Mermaid diagrams
-for f in diagrams/*.mmd; do
-  mmdc -i "$f" -o "diagrams/images/$(basename "$f" .mmd).png" -t dark -b transparent
-done
 ----
 
 **Key Diagrams:**
-- `proximadb-component.png` - System architecture overview
-- `unified_memtable_architecture.png` - Memtable design
-- `unified_quantization_system.png` - Quantization architecture
-- `storage-aware-search.png` - Three-layer search flow
+- `proximadb-architecture-overview.mmd` - System architecture with DirectVectorService
+- `direct-vector-service.mmd` - DirectVectorService 40-60% latency reduction
+- `unified_memtable_architecture.mmd` - Memtable design with behavior wrappers
+- `unified_quantization_system.mmd` - Hardware-accelerated quantization
+- `two-stage-search.mmd` - Binary quantization + FP32 refinement flow
+- `proximadb-proto-first-data-flow.mmd` - Zero double serialization pipeline
+- `python-sdk-architecture.mmd` - Unified Python SDK (87% code reduction)
 
 **Adding New Diagrams:**
-1. Create source file in `docs/diagrams/plantuml/` or `docs/diagrams/`
-2. Follow naming convention: `proximadb-feature-name.puml`
-3. Generate PNG: `plantuml -tpng diagram.puml`
-4. Reference in AsciiDoc: `image::proximadb-feature-name.png[Description]`
+1. Create source file in `docs/diagrams/` with `.mmd` extension
+2. Follow naming convention: `proximadb-feature-name.mmd`
+3. Use Mermaid syntax (flowchart, sequence, class diagrams)
+4. Reference in AsciiDoc:
+   ```asciidoc
+   [mermaid]
+   ----
+   include::diagrams/proximadb-feature-name.mmd[]
+   ----
+   ```
 
 ---
 

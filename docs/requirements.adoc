@@ -86,7 +86,10 @@ System requirements and acceptance criteria for ProximaDB, defining what the sys
 
 The ProximaDB architecture must deliver:
 
-image::proximadb-component.png[Complete System Architecture,width=100%]
+[mermaid]
+----
+include::diagrams/proximadb-architecture-overview.mmd[]
+----
 
 **Unified Storage Interface**:: Single memtable interface supporting multiple backends (SkipList, BTree, HashMap, DashMap)
 
@@ -255,7 +258,7 @@ Deliver a cloud-native vector database that provides:
 |VR-028
 |Storage-aware polymorphic search with engine-specific optimizations
 |Critical
-|✅ IMPLEMENTED (6.10x performance improvement, three-layer search)
+|✅ IMPLEMENTED (6.10x performance improvement, storage-aware search)
 
 |VR-029
 |VIPER search optimizations: predicate pushdown, ML clustering, quantization
@@ -552,7 +555,10 @@ Deliver a cloud-native vector database that provides:
 
 === WAL Flush Coordination Architecture
 
-image::WAL_Flush_Coordination_Simple.png[WAL Architecture,width=100%]
+[mermaid]
+----
+include::diagrams/wal_strategy_pattern.mmd[]
+----
 
 ==== WAL Durability Strategy Configuration
 

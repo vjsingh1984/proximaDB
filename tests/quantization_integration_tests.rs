@@ -4,13 +4,10 @@
 //! and search scenarios, validating both accuracy and performance.
 
 use anyhow::Result;
-use std::collections::HashMap;
-use tokio::test;
 
 use proximadb::compute::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,
-    ProductQuantization, BinaryQuantization, UnifiedDistanceCompute, InMemoryCodebookStore,
-    DistanceMetric
+    ProductQuantization, BinaryQuantization, UnifiedDistanceCompute, InMemoryCodebookStore
 };
 use std::sync::Arc;
 use proximadb::storage::engines::viper::quantization::{
@@ -295,7 +292,7 @@ async fn test_quantization_quality_metrics() -> Result<()> {
     // Verify quality metrics
     assert!(model.quality_metrics.search_quality_retention > 0.7); // Lower threshold for test
     assert!(model.quality_metrics.compression_ratio > 1.0); // Any compression is good
-    assert!(model.quality_metrics.quantization_time_ms >= 0); // Time can be 0 for fast operations
+    // quantization_time_ms is always >= 0 as it's unsigned
     
     // Calculate reconstruction error
     for (i, qv) in quantized.iter().enumerate() {

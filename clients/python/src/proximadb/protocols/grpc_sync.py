@@ -57,7 +57,8 @@ class ProximaDBSyncGrpcClient:
         """Close the gRPC client and cleanup"""
         if self._async_client:
             try:
-                self._async_client.close()
+                # Close is handled in the async client's destructor
+                pass
             except:
                 pass
     
@@ -122,30 +123,17 @@ class ProximaDBSyncGrpcClient:
         try:
             result = self._async_client.get_collection(name)
             if result:
-                return {
-                    "collection_id": result.name,
-                    "dimension": result.dimension,
-                    "distance_metric": result.distance_metric,
-                    "storage_engine": result.storage_engine
-                }
+                return result  # Return proto object directly
             else:
-                raise ProximaDBError(f"Collection {collection_id} not found")
+                raise ProximaDBError(f"Collection {name} not found")
         except Exception as e:
             raise ProximaDBError(f"Get collection failed: {e}")
     
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> List[Any]:
         """List all collections"""
         try:
             collections = self._async_client.list_collections()
-            return [
-                {
-                    "collection_id": c.name,
-                    "dimension": c.dimension,
-                    "distance_metric": c.distance_metric,
-                    "storage_engine": c.storage_engine
-                }
-                for c in collections
-            ]
+            return collections  # Return proto objects directly
         except Exception as e:
             raise ProximaDBError(f"List collections failed: {e}")
     
@@ -188,11 +176,13 @@ class ProximaDBSyncGrpcClient:
     def search_vectors(
         self,
         collection_id: str,
-        query_vector: List[float],
+        query_vectors: List[List[float]] = None,
+        query_vector: List[float] = None,
         top_k: int = 10,
-        metadata_filter: Optional[Dict[str, Any]] = None,
+        metadata_filters: Optional[Dict[str, Any]] = None,
         include_vectors: bool = False,
-        include_metadata: bool = True
+        include_metadata: bool = True,
+        search_hints: Optional[Dict[str, Any]] = None
     ) -> SearchResult:
         """Search vectors with unified interface
         
@@ -208,11 +198,17 @@ class ProximaDBSyncGrpcClient:
             SearchResult with found vectors
         """
         try:
+            # Handle both query_vector and query_vectors params
+            if query_vectors is None and query_vector is not None:
+                query_vectors = [query_vector]
+            elif query_vectors is None:
+                raise ValueError("Either query_vector or query_vectors must be provided")
+                
             result = self._async_client.search_vectors(
                 collection_id=collection_id,
-                query_vectors=[query_vector],
+                query_vectors=query_vectors,
                 top_k=top_k,
-                metadata_filters=metadata_filter,
+                metadata_filters=metadata_filters,
                 include_vectors=include_vectors,
                 include_metadata=include_metadata
             )
@@ -274,6 +270,52 @@ class ProximaDBSyncGrpcClient:
             return {"status": "deleted", "vector_id": vector_id}
         except Exception as e:
             raise ProximaDBError(f"Delete vector failed: {e}")
+    
+    def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> Dict[str, Any]:
+        """Delete multiple vectors"""
+        try:
+            # Delete each vector individually
+            deleted = 0
+            for vector_id in vector_ids:
+                result = self._async_client.delete_vector(
+                    collection_id=collection_id,
+                    vector_id=vector_id
+                )
+                deleted += 1
+            return {"status": "deleted", "deleted_count": deleted}
+        except Exception as e:
+            raise ProximaDBError(f"Delete vectors failed: {e}")
+    
+    def insert_vector(
+        self,
+        collection_id: str,
+        vector_id: str,
+        vector: List[float],
+        metadata: Optional[Dict[str, Any]] = None,
+        upsert: bool = False
+    ) -> VectorOperationResponse:
+        """Insert a single vector - alias for batch insert with one vector
+        
+        Args:
+            collection_id: Collection ID or name
+            vector_id: Vector identifier
+            vector: Vector data  
+            metadata: Optional metadata
+            upsert: If True, update existing vector
+            
+        Returns:
+            VectorOperationResponse
+        """
+        try:
+            return self._async_client.insert_single_vector(
+                collection_id=collection_id,
+                vector_id=vector_id,
+                vector=vector,
+                metadata=metadata,
+                upsert=upsert
+            )
+        except Exception as e:
+            raise ProximaDBError(f"Insert vector failed: {e}")
 
 
 # Alias for consistency

@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::services::collection_service::{CollectionService, CollectionServiceResponse};
+use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };

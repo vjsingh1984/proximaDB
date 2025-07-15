@@ -9,6 +9,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 import numpy as np
 from proximadb import connect_rest, CollectionConfig, DistanceMetric
+import logging
+
+# Enable debug logging
+logging.basicConfig(level=logging.DEBUG)
 
 def test_basic_functionality():
     """Test basic SDK functionality"""
@@ -34,6 +38,7 @@ def test_basic_functionality():
         print("🗂️ Creating test collection...")
         collection_name = f"basic_test_{int(np.random.random() * 10000)}"
         config = CollectionConfig(
+            name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Basic functionality test collection"
@@ -44,16 +49,24 @@ def test_basic_functionality():
         
         # Insert some vectors
         print("📝 Inserting test vectors...")
-        vectors = [np.random.random(128).astype(np.float32).tolist() for _ in range(5)]
-        ids = [f"vec_{i}" for i in range(5)]
+        from proximadb.models import VectorRecord
         
-        result = client.insert_vectors(collection_name, vectors, ids)
+        vectors = []
+        for i in range(5):
+            vec = VectorRecord(
+                id=f"vec_{i}",
+                vector=np.random.random(128).astype(np.float32).tolist(),
+                metadata={"index": i, "category": f"test_{i % 2}"}
+            )
+            vectors.append(vec)
+        
+        result = client.insert_vectors(collection_name, vectors)
         print(f"✅ Inserted vectors: {result}")
         
         # Search for similar vectors
         print("🔍 Searching for similar vectors...")
         query_vector = np.random.random(128).astype(np.float32).tolist()
-        search_results = client.search(collection_name, query_vector, k=3)
+        search_results = client.search(collection_name, query_vector, top_k=3)
         print(f"✅ Search results: {len(search_results)} results")
         
         # Get collection info

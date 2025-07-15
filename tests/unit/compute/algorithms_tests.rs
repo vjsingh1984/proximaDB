@@ -4,7 +4,7 @@
 //! implementations, including HNSW and BruteForce algorithms.
 
 use proximadb::compute::algorithms::{
-    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex, SearchResult, MemoryUsage
+    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex, SearchResult
 };
 use proximadb::compute::DistanceMetric;
 use std::collections::HashMap;

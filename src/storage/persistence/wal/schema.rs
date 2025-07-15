@@ -438,7 +438,7 @@ pub fn create_proto_vector_batch(vector_records: &[VectorRecord], _collection_id
 /// Deserialize Proto vector batch to VectorRecord list (Phase 2 implementation)
 /// This function deserializes protobuf and converts back to Avro VectorRecords for compatibility
 pub fn deserialize_proto_vector_batch(proto_payload: &[u8]) -> Result<Vec<VectorRecord>> {
-    use crate::core::proto_to_avro;
+    
     
     // Deserialize protobuf
     let batch = ProtoVectorBatch::decode(proto_payload)
@@ -617,7 +617,7 @@ mod tests {
     
     #[test]
     fn test_proto_native_functions() {
-        use crate::proto::proximadb::{VectorRecord as ProtoVectorRecord, MetadataMap, MetadataValue, metadata_value};
+        use crate::proto::proximadb::{VectorRecord as ProtoVectorRecord, MetadataValue, metadata_value};
         
         let mut metadata_fields = HashMap::new();
         metadata_fields.insert("test".to_string(), MetadataValue {

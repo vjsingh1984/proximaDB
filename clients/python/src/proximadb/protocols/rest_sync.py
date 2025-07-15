@@ -237,38 +237,51 @@ class ProximaDBClient:
                 UserWarning
             )
         
-        request_data = {
+        # Build config object as expected by server
+        config_data = {
             "name": name,
             "dimension": config.dimension,
             "distance_metric": config.distance_metric,
-            "indexing_algorithm": config.primary_indexing_algorithm if hasattr(config, 'primary_indexing_algorithm') else "hnsw",
-            "storage_layout": getattr(config, 'storage_layout', 'viper'),  # Default to VIPER storage
+            "primary_indexing_algorithm": config.primary_indexing_algorithm if hasattr(config, 'primary_indexing_algorithm') else "hnsw",
+            "storage_engine": getattr(config, 'storage_engine', 'viper'),  # Default to VIPER storage
         }
+        
+        request_data = {
+            "operation": "create",
+            "config": config_data
+        }
+        
+        # Debug print
+        logger.debug(f"Collection create request: {request_data}")
         
         # Add VIPER-specific optimization fields
         if config.filterable_metadata_fields:
-            request_data["filterable_metadata_fields"] = config.filterable_metadata_fields
+            config_data["filterable_columns"] = [
+                {"name": field, "data_type": "string", "indexed": True} 
+                for field in config.filterable_metadata_fields
+            ]
         
         # Add WAL flush configuration
         if hasattr(config, 'flush_config') and config.flush_config:
             if hasattr(config.flush_config, 'max_wal_size_mb'):
-                request_data["max_wal_size_mb"] = config.flush_config.max_wal_size_mb
+                config_data["max_wal_size_mb"] = config.flush_config.max_wal_size_mb
         
         if config.description:
-            request_data["config"] = {"description": config.description}
+            config_data["description"] = config.description
         
-        # Use unified API endpoint
-        unified_request = {
-            "operation": "create",
-            "config": request_data
-        }
-        response = self._make_request("POST", "/api/v1/collection", json=unified_request)
+        response = self._make_request("POST", "/api/v1/collection", json=request_data)
         response_data = response.json()
         
         # Handle unified API response format
         if "collection" in response_data:
             # Response contains collection object
             coll_data = response_data["collection"]
+            if coll_data is None:
+                # Check if we have an error response
+                if "error" in response_data:
+                    raise ProximaDBError(f"Collection creation failed: {response_data['error']}")
+                else:
+                    raise ProximaDBError(f"Unexpected response format: {response_data}")
             return Collection(
                 id=coll_data.get("id", name),
                 config=CollectionConfig(
@@ -294,10 +307,25 @@ class ProximaDBClient:
         }
         response = self._make_request("POST", "/api/v1/collection", json=unified_request)
         response_data = response.json()
-        # Handle wrapped response format: {"success": True, "data": {...}}
-        if "data" in response_data and isinstance(response_data["data"], dict):
+        
+        # Handle unified API response format
+        if "collection" in response_data and response_data["collection"]:
+            coll_data = response_data["collection"]
+            return Collection(
+                id=coll_data.get("id"),
+                config=CollectionConfig(
+                    name=coll_data["config"]["name"],
+                    dimension=coll_data["config"]["dimension"],
+                    distance_metric=coll_data["config"].get("distance_metric", "cosine"),
+                    storage_engine=coll_data["config"].get("storage_engine", "viper"),
+                    primary_indexing_algorithm=coll_data["config"].get("primary_indexing_algorithm", "hnsw")
+                ),
+                created_at=coll_data.get("created_at"),
+                updated_at=coll_data.get("updated_at")
+            )
+        elif "data" in response_data and isinstance(response_data["data"], dict):
+            # Legacy format
             collection_data = response_data["data"]
-            # Map server response format to Collection model
             return Collection(
                 id=collection_data.get("uuid", collection_data.get("name")),
                 name=collection_data.get("name"),
@@ -305,10 +333,10 @@ class ProximaDBClient:
                 metric=collection_data.get("distance_metric", "").lower(),
                 vector_count=collection_data.get("vector_count", 0),
                 status="active",
-                config=None  # Server returns config as string, we'll skip it for now
+                config=None
             )
         else:
-            return Collection(**response_data)
+            raise ProximaDBError(f"Unexpected response format: {response_data}")
     
     def list_collections(self) -> List[Collection]:
         """List all collections"""
@@ -316,6 +344,7 @@ class ProximaDBClient:
         unified_request = {
             "operation": "list"
         }
+        logger.debug(f"Collection list request: {unified_request}")
         response = self._make_request("POST", "/api/v1/collection", json=unified_request)
         response_data = response.json()
         # Handle wrapped response format: {"success": True, "data": {"collections": [...]}}
@@ -362,22 +391,37 @@ class ProximaDBClient:
         Returns:
             Insert operation result
         """
+        import time
+        
         # Normalize vector format
         if isinstance(vector, np.ndarray):
             if vector.dtype != np.float32:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
         
-        # For single vector, use the single vector endpoint directly
-        response = self._make_request(
-            "POST",
-            f"/collections/{collection_id}/vectors",
-            json={
-                "id": vector_id,
-                "vector": vector,
-                "metadata": metadata or {}
-            }
-        )
+        # Convert metadata to server format
+        metadata_items = []
+        if metadata:
+            metadata_items = [{"key": k, "value": str(v)} for k, v in metadata.items()]
+        
+        # Use batch API with single vector
+        vector_record = {
+            "id": vector_id,
+            "collection_id": collection_id,
+            "vector": vector,
+            "metadata": metadata_items,
+            "timestamp": int(time.time() * 1000),
+            "created_at": int(time.time() * 1000),
+            "updated_at": int(time.time() * 1000),
+            "version": 1
+        }
+        
+        request_data = {
+            "collection_id": collection_id,
+            "vectors": [vector_record]
+        }
+        
+        response = self._make_request("POST", "/api/v1/vector/batch", json=request_data)
         
         # Convert response to BatchResult
         resp_data = response.json()
@@ -441,7 +485,7 @@ class ProximaDBClient:
             }
             response = self._make_request(
                 "POST",
-                "/api/v1/vector",
+                "/api/v1/vector/batch",
                 json=unified_request
             )
             
@@ -483,7 +527,7 @@ class ProximaDBClient:
                     }
                     response = self._make_request(
                         "POST",
-                        "/api/v1/vector",
+                        "/api/v1/vector/batch",
                         json=unified_request
                     )
                     
@@ -548,57 +592,70 @@ class ProximaDBClient:
                 query = query.astype(np.float32)
             query = query.tolist()
         
-        # Enhanced request data with storage-aware optimizations
+        # Proto-aligned request data with storage-aware optimizations
         request_data = {
-            "vector": query,
-            "k": k,
-            "filters": filter or {},
-            "threshold": 0.0,
-            "include_vectors": include_vectors,
-            "include_metadata": include_metadata,
-            "search_hints": {
-                "predicate_pushdown": True,
-                "use_bloom_filters": True,
-                "use_clustering": True,
-                "quantization_level": quantization_level,
-                "parallel_search": True,
-                "engine_specific": {
-                    "optimization_level": optimization_level,
-                    "enable_simd": enable_simd,
-                    "prefer_indices": True,
-                    "storage_aware": use_storage_aware
+            "collection_id": collection_id,
+            "queries": [{
+                "vector": query,
+                "id": None,
+                "metadata_filter": None  # TODO: Convert filter format when needed
+            }],
+            "top_k": k,
+            "distance_metric_override": None,
+            "search_parameters": {
+                "batch_size": 1,
+                "timeout_ms": int(timeout * 1000) if timeout else None,
+                "enable_parallel_search": True,
+            },
+            "include_fields": {
+                "vector": include_vectors,
+                "metadata": include_metadata,
+                "score": True,
+                "rank": True
+            },
+            "search_optimization": {
+                "top_k": k,
+                "filters": filter or {},
+                "accuracy_threshold": 0.95 if optimization_level == "high" else 0.85,
+                "include_expired": False,
+                "timeout_ms": int(timeout * 1000) if timeout else None,
+                "enable_two_stage": optimization_level != "low",
+                "enable_clustering_hint": use_storage_aware,
+                "enable_metadata_filtering_hint": bool(filter),
+                "quantization_hint": {
+                    "hint_type": quantization_level.lower().replace("fp32", "none"),
+                    "parameters": None
                 }
             }
         }
         
-        # ef parameter is not supported in this client version
-        
         response = self._make_request(
             "POST",
-            f"/collections/{collection_id}/search",
+            "/api/v1/vector/search",
             json=request_data,
             timeout=timeout or self.config.timeout,
         )
         
         response_data = response.json()
-        # Handle server response format: {"success": true, "data": [...]}
-        if "data" in response_data and "success" in response_data:
-            # Extract search results from data field
-            results_data = response_data["data"]
-            if isinstance(results_data, list):
-                # Convert each result to SearchResult
-                search_results = []
-                for result in results_data:
-                    search_results.append(SearchResult(**result))
-                return search_results
-            else:
-                return []
+        # Handle proto-aligned response format
+        if "results" in response_data:
+            # Extract search results from results field
+            search_results = []
+            for result in response_data["results"]:
+                # Convert proto-aligned result to SearchResult
+                search_results.append(SearchResult(
+                    id=result.get("id", ""),
+                    score=result.get("score", 0.0),
+                    distance=result.get("distance", 0.0),
+                    rank=result.get("rank", 0),
+                    vector=result.get("vector", []) if include_vectors else [],
+                    metadata=result.get("metadata", {}) if include_metadata else {},
+                    collection_id=collection_id
+                ))
+            return search_results
         else:
-            # Extract results from response
-            if isinstance(response_data.get('results'), list):
-                return [SearchResult(**r) for r in response_data['results']]
-            else:
-                return []
+            # Fallback for other response formats
+            return []
     
     def search_batch(
         self,

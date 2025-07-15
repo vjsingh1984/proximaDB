@@ -508,7 +508,7 @@ impl AxisManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    
 
     fn create_test_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
         let metadata = vec![

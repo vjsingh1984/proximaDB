@@ -137,6 +137,9 @@ pub struct CollectionRequestBuilder;
 
 impl CollectionRequestBuilder {
     pub fn from_json(json: serde_json::Value) -> Result<CollectionRequest, String> {
+        // Debug log the incoming JSON
+        tracing::debug!("CollectionRequestBuilder::from_json received: {:?}", json);
+        
         let operation = json.get("operation")
             .and_then(|v| v.as_str())
             .ok_or("Missing operation")?;
@@ -152,9 +155,22 @@ impl CollectionRequestBuilder {
             migration_config: Default::default(),
         };
         
-        // Parse config if present
+        // Parse config if present and required for the operation
         if let Some(config_json) = json.get("config") {
-            request.collection_config = Some(Self::parse_collection_config(config_json)?);
+            tracing::debug!("Parsing config JSON: {:?}", config_json);
+            // Only parse config for operations that require it
+            match operation_enum {
+                CollectionOperation::CollectionCreate | CollectionOperation::CollectionUpdate => {
+                    request.collection_config = Some(Self::parse_collection_config(config_json)?);
+                }
+                CollectionOperation::CollectionList | CollectionOperation::CollectionGet | CollectionOperation::CollectionDelete => {
+                    // These operations don't require config, so ignore it even if present
+                }
+                _ => {
+                    // For unknown operations, try to parse config if present
+                    request.collection_config = Some(Self::parse_collection_config(config_json)?);
+                }
+            }
         }
         
         Ok(request)
@@ -330,12 +346,25 @@ impl VectorSearchRequestBuilder {
             .ok_or("Missing collection_id")?
             .to_string();
             
-        let queries = json.get("queries")
-            .and_then(|v| v.as_array())
-            .ok_or("Missing queries")?
-            .iter()
-            .map(|q| Self::parse_search_query(q))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Support both old format (single vector) and new format (queries array)
+        let queries = if let Some(queries_array) = json.get("queries").and_then(|v| v.as_array()) {
+            // New proto-aligned format
+            queries_array.iter()
+                .map(|q| Self::parse_search_query(q))
+                .collect::<Result<Vec<_>, _>>()?
+        } else if let Some(vector) = json.get("vector").and_then(|v| v.as_array()) {
+            // Old format - convert single vector to queries array
+            let query = SearchQuery {
+                vector: vector.iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect(),
+                id: None,
+                metadata_filter: None,
+            };
+            vec![query]
+        } else {
+            return Err("Missing queries or vector field".to_string());
+        };
             
         let top_k = json.get("top_k")
             .and_then(|v| v.as_i64())
@@ -348,7 +377,7 @@ impl VectorSearchRequestBuilder {
             None
         };
         
-        // Parse include fields
+        // Parse include fields - support both new and old formats
         let include_fields = if let Some(fields_json) = json.get("include_fields") {
             Some(crate::proto::proximadb::IncludeFields {
                 vector: fields_json.get("vector").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -357,7 +386,13 @@ impl VectorSearchRequestBuilder {
                 rank: fields_json.get("rank").and_then(|v| v.as_bool()).unwrap_or(true),
             })
         } else {
-            None
+            // Fallback to old format fields
+            Some(crate::proto::proximadb::IncludeFields {
+                vector: json.get("include_vectors").and_then(|v| v.as_bool()).unwrap_or(false),
+                metadata: json.get("include_metadata").and_then(|v| v.as_bool()).unwrap_or(true),
+                score: true,
+                rank: true,
+            })
         };
             
         Ok(VectorSearchRequest {

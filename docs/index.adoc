@@ -23,7 +23,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-*ProximaDB Documentation Portal* provides comprehensive navigation and quick access to all documentation resources for the production-ready vector database built with Rust.
+*ProximaDB Documentation Portal* provides comprehensive navigation and quick access to all documentation resources for the **DirectVectorService-powered** vector database delivering **40-60% insert latency reduction** and **6.10x search performance**.
 
 == 🚀 Quick Start Guide
 
@@ -40,7 +40,7 @@ endif::[]
 |2 hours
 
 |🔴 **Architects**
-|link:requirements.adoc[Requirements] → link:architecture.adoc[Architecture] → link:quantization_support.adoc[Advanced Features]
+|link:requirements.adoc[Requirements] → link:architecture.adoc[Architecture] → link:quantization_and_optimization.adoc[Advanced Features]
 |4+ hours
 |===
 
@@ -99,7 +99,7 @@ endif::[]
 |===
 |**Document** |**Description** |**Audience**
 
-|link:quantization_support.adoc[Vector Quantization]
+|link:quantization_and_optimization.adoc[Vector Quantization]
 |Comprehensive quantization implementation and performance tuning
 |ML Engineers
 
@@ -130,7 +130,7 @@ endif::[]
 3. link:requirements.adoc[Requirements and acceptance criteria]
 
 === ⚡ "I want to optimize performance"
-1. link:quantization_support.adoc[Vector quantization guide]
+1. link:quantization_and_optimization.adoc[Vector quantization guide]
 2. link:architecture.adoc#performance-characteristics[Performance benchmarks]
 3. link:technical_reference.adoc#performance-optimization[Optimization techniques]
 

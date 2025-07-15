@@ -10,9 +10,8 @@ use tracing::{debug, info, instrument};
 
 use super::batch_strategy::WalBatchStrategy;
 use super::{FlushResult, WalConfig, WalStats};
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::VectorRecord;
 use crate::proto::proximadb::VectorRecord as ProtoVectorRecord;
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
 use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
@@ -289,51 +288,11 @@ impl WalBatchStrategy for ProtoWalBatchStrategy {
         Ok(filtered_batches)
     }
 
-    async fn search_vector_by_id(
-        &self,
-        collection_id: &str,
-        vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Proto WAL Batch Strategy not initialized")?;
+    // Using default implementation from trait
 
-        memtable.get_vector_by_id(collection_id, vector_id).await
-    }
+    // Using default implementation from trait
 
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Proto WAL Batch Strategy not initialized")?;
-
-        let metric = distance_metric.unwrap_or(CoreDistanceMetric::Cosine);
-        let results = memtable.search_unflushed_vectors(query_vector, k, collection_id, metric).await?;
-        
-        // Convert results to the expected format
-        let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
-            .into_iter()
-            .map(|(score, record)| (record.id.as_deref().unwrap_or("").to_string(), score, record))
-            .collect();
-            
-        Ok(converted_results)
-    }
-
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Proto WAL Batch Strategy not initialized")?;
-
-        memtable.get_all_vectors(&collection_id.to_string()).await
-    }
+    // Using default implementation from trait
 
     async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
         let storage_engine = self.storage_engine.read().await;
@@ -358,15 +317,7 @@ impl WalBatchStrategy for ProtoWalBatchStrategy {
         storage_engine.flush(flush_params).await
     }
 
-    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Proto WAL Batch Strategy not initialized")?;
-
-        memtable.drop_collection(&collection_id.to_string()).await?;
-        Ok(())
-    }
+    // Using default implementation from trait
 
     async fn get_stats(&self) -> Result<WalStats> {
         let memtable = self
@@ -404,12 +355,7 @@ impl WalBatchStrategy for ProtoWalBatchStrategy {
         }
     }
 
-    async fn recover(&self) -> Result<u64> {
-        // Proto strategy doesn't support disk recovery yet
-        // TODO: Implement disk persistence for Proto format
-        info!("🔄 Proto WAL recovery: No disk persistence yet, returning 0");
-        Ok(0)
-    }
+    // Using default recover implementation from trait
 
     async fn close(&self) -> Result<()> {
         info!("🔒 Closing Proto WAL Batch Strategy");
@@ -422,26 +368,34 @@ impl WalBatchStrategy for ProtoWalBatchStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
-        // Proto strategy doesn't have disk sync yet
-        // TODO: Implement when disk persistence is added
-        debug!("⚡ Proto WAL force sync: No disk persistence yet");
-        Ok(())
-    }
+    // Using default force_sync implementation from trait
 
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Proto WAL Batch Strategy not initialized")?;
-
-        // For now, just clear old entries
-        // TODO: Implement proper compaction
-        memtable.clear_flushed(collection_id, u64::MAX).await
-            .map(|count| count as u64)
-    }
+    // Using default compact_collection implementation from trait
 
     fn get_wal_behavior(&self) -> Option<&WalBehaviorWrapper> {
         self.memtable.as_ref()
+    }
+    
+    fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+        // Proto strategy uses native protobuf serialization
+        use crate::storage::persistence::wal::schema::create_proto_vector_batch_native;
+        
+        // Convert to proto records (already in proto format in proto-first architecture)
+        let proto_records: Vec<crate::proto::proximadb::VectorRecord> = vectors
+            .iter()
+            .cloned()
+            .collect();
+            
+        // Serialize using native proto format
+        create_proto_vector_batch_native(&proto_records, "")
+            .context("Failed to serialize vectors to Proto format for disk")
+    }
+    
+    fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+        // Proto strategy uses native protobuf deserialization
+        use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
+        
+        deserialize_proto_vector_batch(data)
+            .context("Failed to deserialize Proto vectors from disk")
     }
 }

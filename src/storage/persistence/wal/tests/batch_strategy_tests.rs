@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
+    
     use crate::core::VectorRecord;
     use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
     use crate::storage::BatchId;
@@ -11,7 +11,7 @@ mod tests {
     use crate::storage::WalConfig;
     use crate::compute::distance::DistanceMetric;
     use chrono::Utc;
-    use std::collections::HashMap;
+    
     use std::sync::Arc;
     use tempfile::TempDir;
 

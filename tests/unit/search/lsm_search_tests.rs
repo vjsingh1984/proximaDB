@@ -7,7 +7,7 @@ use proximadb::core::search::storage_aware::{
 use proximadb::core::search::multi_tier_deduplication::{
     MultiTierDeduplicator, TieredSearchResult, StorageTier, DeduplicationStorageEngine
 };
-use proximadb::core::{VectorRecord, SearchResult};
+use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
 use std::collections::HashMap;
 use serde_json::json;
@@ -205,7 +205,7 @@ fn test_multi_tier_deduplication_lsm() {
 
 #[test]
 fn test_lsm_search_hints_validation() {
-    use proximadb::core::search::storage_aware::StorageSearchEngine;
+    
     
     // Test vector dimension validation
     let query_vector = vec![1.0; 768]; // 768-dimensional vector

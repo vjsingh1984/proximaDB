@@ -14,11 +14,11 @@ cache_size_mb = 512
 bloom_filter_bits = 10
 
 [storage.lsm_config]
-memtable_size_mb = 32
+memtable_size_mb = 8
 level_count = 7
 compaction_threshold = 4
 block_size_kb = 32
-memory_flush_size_bytes = 10485760  # 10MB
+memory_flush_size_bytes = 2097152  # 2MB
 memtable_type = "BTree"
 compaction_strategy = "leveled"
 compression = "snappy"
@@ -44,7 +44,7 @@ enabled = true
 wal_urls = ["file://./test_data/wal"]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 10485760  # 10MB
+memory_flush_size_bytes = 2097152  # 2MB
 global_flush_threshold = 1073741824  # 1GB
 global_shrink_factor = 0.5
 strategy_type = "Bincode"
@@ -112,3 +112,6 @@ cluster_peers = []
 election_timeout_ms = 5000
 heartbeat_interval_ms = 1000
 snapshot_threshold = 10
+
+[performance]
+sync_mode = "PerBatch"

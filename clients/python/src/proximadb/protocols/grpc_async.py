@@ -9,7 +9,7 @@ Copyright 2025 ProximaDB
 
 import logging
 import time
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 import json
 from datetime import datetime, timezone
 import io
@@ -526,7 +526,7 @@ class ProximaDBClient:
         collection_id: str,
         query_vectors: List[List[float]],
         top_k: int = 10,
-        metadata_filters: Optional[Dict[str, Any]] = None,
+        metadata_filters: Optional[Union[Dict[str, Any], Any]] = None,  # Dict or FilterBuilder
         include_metadata: bool = True,
         include_vectors: bool = False,
         search_params: Optional[pb2.SearchParameters] = None
@@ -554,18 +554,24 @@ class ProximaDBClient:
                 
                 # Add metadata filter if provided
                 if metadata_filters:
-                    # Convert dict to MetadataFilter proto
-                    meta_filter = pb2.MetadataFilter(
-                        operator=pb2.FilterOperator.AND
-                    )
-                    for key, value in metadata_filters.items():
-                        condition = pb2.FilterCondition(
-                            field_name=key,
-                            operation=pb2.FilterOperation.EQUALS,
-                            value=self._value_to_metadata_value(value)
+                    # Check if it's a FilterBuilder instance
+                    if hasattr(metadata_filters, 'to_proto_filter'):
+                        # Use the FilterBuilder's proto conversion
+                        meta_filter = metadata_filters.to_proto_filter()
+                        query.metadata_filter.CopyFrom(meta_filter)
+                    else:
+                        # Legacy dict support - convert dict to MetadataFilter proto
+                        meta_filter = pb2.MetadataFilter(
+                            operator=pb2.FilterOperator.AND
                         )
-                        meta_filter.conditions.append(condition)
-                    query.metadata_filter.CopyFrom(meta_filter)
+                        for key, value in metadata_filters.items():
+                            condition = pb2.FilterCondition(
+                                field_name=key,
+                                operation=pb2.FilterOperation.EQUALS,
+                                value=self._value_to_metadata_value(value)
+                            )
+                            meta_filter.conditions.append(condition)
+                        query.metadata_filter.CopyFrom(meta_filter)
                 
                 queries.append(query)
             
@@ -1049,7 +1055,7 @@ class ProximaDBClient:
                     
                     # Debug first vector
                     if i == 0:
-                        logger.debug(f"First vector proto format: id={proto_vector.id}, vector_len={len(proto_vector.vector)}, has_metadata={proto_vector.HasField('metadata')}")
+                        logger.debug(f"First vector proto format: id={proto_vector.id}, vector_len={len(proto_vector.vector)}, metadata_count={len(proto_vector.metadata)}")
                     
                 except Exception as e:
                     logger.error(f"Failed to process vector {i}: {e}")

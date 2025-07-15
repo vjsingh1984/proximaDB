@@ -1,0 +1,50 @@
+graph TB
+    subgraph "Client Layer"
+        Python[Python SDK]
+        REST[REST Client]
+        gRPC[gRPC Client]
+    end
+
+    subgraph "Network Layer"
+        UH[UnifiedHandlers<br/>85% Code Reduction<br/>Protocol-agnostic]
+    end
+
+    subgraph "Optimized Service Layer"
+        DVS[DirectVectorService<br/>40-60% Latency Reduction<br/>No Registry Overhead]
+        CC[CompactionCoordinator<br/>Automatic Optimization<br/>Threshold-based]
+        SSS[StreamingSearchService<br/>Lock-Free Search<br/>Non-blocking]
+    end
+
+    subgraph "Storage Layer"
+        UBS[UnifiedBatchStrategy<br/>90% Code Reduction<br/>Proto/Bincode/Avro]
+        
+        subgraph "Storage Engines"
+            VIPER[ViperEngine<br/>Parquet columnar<br/>ML clustering]
+            LSM[LsmTree<br/>SSTable row-based<br/>Bloom filters]
+        end
+    end
+
+    Python --> UH
+    REST --> UH
+    gRPC --> UH
+    
+    UH --> DVS
+    DVS --> CC
+    DVS --> SSS
+    DVS --> UBS
+    
+    UBS --> VIPER
+    UBS --> LSM
+    
+    CC --> VIPER
+    CC --> LSM
+
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef network fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef service fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    
+    class Python,REST,gRPC client
+    class UH network
+    class DVS,CC,SSS service
+    class UBS,VIPER,LSM storage

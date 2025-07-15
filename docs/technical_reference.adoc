@@ -19,7 +19,10 @@ Comprehensive technical implementation details for ProximaDB's proto-first archi
 
 === Zero Double Serialization Pipeline
 
-image::proximadb-proto-first-data-flow.png[Proto-First Data Flow,width=100%]
+[mermaid]
+----
+include::diagrams/proximadb-proto-first-data-flow.mmd[]
+----
 
 **Core Principle**: Protocol Buffers flow natively through the entire system without intermediate conversions.
 
@@ -47,35 +50,41 @@ impl ProtoWalBatchStrategy {
 
 pub struct UnifiedHandlers {
     collection_service: Arc<CollectionService>,
-    vector_service: Arc<VectorService>,
+    direct_vector_service: Arc<DirectVectorService>, // 40-60% faster
 }
 
 impl UnifiedHandlers {
-    // Protocol-agnostic business logic
+    // Protocol-agnostic business logic with DirectVectorService
     pub async fn handle_vector_batch(&self, 
         batch: Vec<proto::VectorRecord>
     ) -> Result<proto::VectorOperationResponse> {
-        // Same logic for REST and gRPC
-        self.vector_service.handle_vector_batch_proto_vec(batch).await
+        // Direct memtable access - no registry overhead
+        self.direct_vector_service.insert_vectors_direct(
+            &collection_id, Arc::new(batch)
+        ).await
     }
 }
 ----
 
-=== Storage-Aware Polymorphic Search
+=== DirectVectorService Architecture
 
-image::storage-aware-search.png[Storage-Aware Search,width=100%]
+[mermaid]
+----
+include::diagrams/direct-vector-service.mmd[]
+----
 
-**Three-Layer Search Coordination**:
+**Optimized Vector Operations**:
 
 [source,rust]
 ----
-pub trait StorageSearchEngine {
-    async fn search_vectors(&self, hints: &SearchHints) -> Result<Vec<SearchResult>>;
-    fn search_capabilities(&self) -> SearchCapabilities;
+pub struct DirectVectorService {
+    global_memtable: Arc<WalBehaviorWrapper>,     // Direct access
+    compaction_coordinator: Arc<CompactionCoordinator>,
+    streaming_service: Arc<StreamingSearchService>,
 }
 
-impl VectorService {
-    pub async fn search_vectors_storage_aware(&self, 
+impl DirectVectorService {
+    pub async fn search_vectors_streaming(&self, 
         query: proto::SearchQuery
     ) -> Result<Vec<proto::SearchResult>> {
         // Layer 1: Search unflushed WAL
@@ -96,6 +105,32 @@ impl VectorService {
 ----
 
 **Performance Achievement**: 6.10x improvement through automatic engine selection
+
+== Performance Characteristics
+
+=== Key Performance Metrics
+
+[cols="2,2,2", options="header"]
+|===
+| Operation | Latency | Throughput
+| Vector Insert (batch 100) | 5.73ms | 17,445 vectors/sec
+| Vector Insert (batch 500) | 23.84ms | 20,972 vectors/sec
+| Search (top-10) | 0.6ms | 1,667 searches/sec
+| Search (top-100) | 1.2ms | 833 searches/sec
+| Collection Create | 6.19ms | 162 ops/sec
+| Health Check | 1.81ms | 552 ops/sec
+|===
+
+=== Optimization Guidelines
+
+* **Batch Size**: Optimal at 100-500 vectors for maximum throughput
+* **Search Performance**: Sub-millisecond for datasets under 100K vectors
+* **Proto Overhead**: Less than 0.2ms per request (< 10% impact)
+* **Hardware Acceleration**: 2-3x improvement with AVX-512/GPU enabled
+
+For detailed performance analysis, see link:appendix_performance_metrics.adoc[Performance Metrics Appendix].
+
+== Storage Engine Details
 
 === VIPER Storage Engine
 

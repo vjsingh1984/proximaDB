@@ -9,9 +9,12 @@
 
 == Overview
 
-ProximaDB's **proto-first REST API** delivers **zero double serialization** with automatic JSON ↔ Proto conversion, **85% code reduction** through unified handlers, and **64MB batch support** for high-throughput operations.
+ProximaDB's **DirectVectorService-powered REST API** delivers **40-60% insert latency reduction**, **zero double serialization** with automatic JSON ↔ Proto conversion, **85% code reduction** through unified handlers, and **64MB batch support** for high-throughput operations.
 
-image::proximadb-proto-first-data-flow.png[Proto-First API Architecture,width=80%]
+[mermaid]
+----
+include::../diagrams/proximadb-proto-first-data-flow.mmd[]
+----
 
 === Proto-First Advantages
 

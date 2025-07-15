@@ -164,21 +164,72 @@ impl ConfigLoader {
         Ok(Config::default())
     }
     
-    /// Load configuration from local filesystem
+    /// Load configuration from local filesystem with proper merging
     fn load_local_config(config_path: &str) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
         let path = Path::new(config_path);
         
-        // If user config exists, use it
+        // Start with default configuration
+        let base_config = Config::default();
+        
         if path.exists() {
             debug!("📄 Reading local config file: {}", config_path);
             let config_str = fs::read_to_string(path)?;
-            let config: Config = toml::from_str(&config_str)?;
-            info!("✅ Successfully loaded config from: {}", config_path);
-            Ok(config)
+            
+            // Parse as a raw TOML value first for selective merging
+            let user_toml: toml::Value = toml::from_str(&config_str)?;
+            
+            // Merge user configuration with defaults
+            let merged_config = Self::merge_config_with_defaults(base_config, user_toml)?;
+            
+            info!("✅ Successfully loaded and merged config from: {}", config_path);
+            Ok(merged_config)
         } else {
             // Return default config if file doesn't exist
             warn!("⚠️ Config file not found: {}, using defaults", config_path);
-            Ok(Config::default())
+            Ok(base_config)
+        }
+    }
+    
+    /// Merge user configuration with defaults intelligently
+    fn merge_config_with_defaults(base_config: Config, user_toml: toml::Value) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
+        // Convert base config to TOML for merging
+        let base_toml_str = toml::to_string(&base_config)?;
+        let mut base_toml: toml::Value = toml::from_str(&base_toml_str)?;
+        
+        // Recursively merge user values into base
+        Self::merge_toml_values(&mut base_toml, user_toml);
+        
+        // Convert back to Config struct
+        let merged_toml_str = toml::to_string(&base_toml)?;
+        let merged_config: Config = toml::from_str(&merged_toml_str)?;
+        
+        info!("🔧 Configuration merged successfully - user overrides applied to defaults");
+        Ok(merged_config)
+    }
+    
+    /// Recursively merge two TOML values, with user values taking precedence
+    fn merge_toml_values(base: &mut toml::Value, user: toml::Value) {
+        match user {
+            toml::Value::Table(user_table) => {
+                if let toml::Value::Table(base_table) = base {
+                    for (key, user_value) in user_table {
+                        if let Some(base_value) = base_table.get_mut(&key) {
+                            // Recursively merge if both are tables
+                            Self::merge_toml_values(base_value, user_value);
+                        } else {
+                            // Add new key from user config
+                            base_table.insert(key, user_value);
+                        }
+                    }
+                } else {
+                    // Replace base with user table
+                    *base = toml::Value::Table(user_table);
+                }
+            }
+            _ => {
+                // For non-table values, user value completely replaces base value
+                *base = user;
+            }
         }
     }
     

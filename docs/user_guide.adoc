@@ -25,7 +25,7 @@ endif::[]
 [abstract]
 == Abstract
 
-Comprehensive production workflows for ProximaDB's **proto-first vector database**, delivering **6.10x search performance**, **zero double serialization**, and **unified SDK experience** for modern AI applications.
+Comprehensive production workflows for ProximaDB's **DirectVectorService architecture**, delivering **40-60% insert latency reduction**, **6.10x search performance**, and **unified SDK experience** for modern AI applications.
 
 [NOTE]
 ====
@@ -44,7 +44,10 @@ Comprehensive production workflows for ProximaDB's **proto-first vector database
 
 **Hardware Optimization**:: SIMD/GPU acceleration with intelligent quantization selection
 
-image::proximadb-architecture-overview.png[Proto-First Architecture,width=100%]
+[mermaid]
+----
+include::diagrams/proximadb-architecture-overview.mmd[]
+----
 
 == Core Concepts
 
@@ -62,7 +65,10 @@ image::proximadb-architecture-overview.png[Proto-First Architecture,width=100%]
 
 === Step 1: Create Your First Proto-Native Collection
 
-image::proximadb-proto-first-data-flow.png[Proto-First Collection Creation,width=100%]
+[mermaid]
+----
+include::diagrams/proximadb-proto-first-data-flow.mmd[]
+----
 
 Collections in ProximaDB use proto-native metadata with automatic storage engine selection and quantization support.
 
@@ -1401,6 +1407,64 @@ async def health_check():
 # Run health check
 asyncio.run(health_check())
 ----
+
+== Python SDK Migration Guide
+
+=== SDK Consolidation Benefits
+
+The ProximaDB Python SDK has been consolidated from 7 separate client implementations down to a single unified client, achieving:
+
+* **87% code reduction**: From ~6,467 lines to ~800 lines
+* **Unified API**: Single client for both REST and gRPC protocols
+* **Better performance**: Automatic protocol selection for optimal speed
+* **Backward compatibility**: Existing code continues to work with deprecation warnings
+
+=== Recommended Migration
+
+**New Unified Client Approach:**
+[source,python]
+----
+# New way - automatic protocol selection for best performance
+from proximadb import ProximaDBClient
+
+client = ProximaDBClient(url="localhost")
+
+# Force specific protocol if needed
+client = ProximaDBClient(url="localhost", protocol=Protocol.GRPC)  # For max performance
+client = ProximaDBClient(url="localhost", protocol=Protocol.REST)  # For compatibility
+----
+
+**Legacy Code (Still Works):**
+[source,python]
+----
+# Old way - still works but shows deprecation warning
+from proximadb.rest_client import ProximaDBRestClient
+client = ProximaDBRestClient()
+
+# Old way - gRPC
+from proximadb.grpc_client import ProximaDBClient
+client = ProximaDBClient("localhost:5679")
+----
+
+=== New Features in Unified Client
+
+1. **Automatic Protocol Selection**: Prefers gRPC for performance, falls back to REST
+2. **Enhanced Connection Management**: HTTP/2, connection pooling, keepalive
+3. **Better Error Handling**: Unified error types across protocols
+4. **TLS/mTLS Support**: Client certificates for secure connections
+5. **Storage-Aware Search**: 6.10x performance improvement with optimizations
+
+=== Performance Guidelines
+
+**Protocol Selection:**
+* **Use gRPC** for high-throughput batch processing (3.4x faster than REST)
+* **Use REST** for simple integrations and web applications
+* **Use AUTO** (default) for automatic selection based on workload
+
+**Batch Size Optimization:**
+* **gRPC optimal**: 3,000 vectors per batch (77,872 vectors/second)
+* **REST optimal**: 1,500 vectors per batch (21,273 vectors/second)
+* **Small batches**: Use 100-500 vectors for low latency
 
 == Best Practices
 

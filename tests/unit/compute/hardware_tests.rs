@@ -5,7 +5,7 @@ use proximadb::compute::hardware::{
     HardwareInfo, HardwareAccelerator, RocmAccelerator, CpuAccelerator,
 };
 use proximadb::compute::hardware_detection::{
-    HardwareCapabilities, CpuCapabilities, GpuCapabilities, MemoryInfo,
+    HardwareCapabilities,
     SimdLevel, ComputeBackend, BatchSizeConfig, MemoryStrategy,
 };
 

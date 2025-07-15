@@ -1,7 +1,6 @@
 //! Unit tests for AXIS Collection Analyzer
 
 use super::analyzer::*;
-use super::*;
 use crate::core::{avro_unified::VectorRecord, String};
 use chrono::Utc;
 use std::collections::HashMap;

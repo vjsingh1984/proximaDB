@@ -823,38 +823,6 @@ impl LsmTree {
         Ok(lsm_records)
     }
 
-    /// Extract vector records from WAL entries (deprecated - replaced by batch extraction)
-    async fn extract_vector_records_from_wal_entries(
-        &self,
-        _entries_json: &[serde_json::Value],
-    ) -> Result<Vec<LsmRecord>> {
-        // This method is deprecated in favor of extract_records_from_wal_vector_batches
-        // which works with the new global partitioned memtable with WAL behavior
-        tracing::warn!("⚠️ LSM: Using deprecated extract_vector_records_from_wal_entries method");
-        Ok(vec![])
-    }
-
-    /// Convert vector records to LSM records for row-based storage
-    async fn convert_vector_records_to_lsm_records(
-        &self,
-        vector_records: &[VectorRecord],
-        sequence_start: u64,
-    ) -> Result<Vec<LsmRecord>> {
-        let mut lsm_records = Vec::new();
-
-        for (index, record) in vector_records.iter().enumerate() {
-            let mut lsm_record = LsmRecord::from(record.clone());
-            lsm_record.sequence_number = sequence_start + index as u64;
-            lsm_record.level = 0; // New records start at level 0
-            lsm_records.push(lsm_record);
-        }
-
-        tracing::debug!(
-            "🔄 LSM: Converted {} vector records to row-based LSM records",
-            lsm_records.len()
-        );
-        Ok(lsm_records)
-    }
 
     /// Flush memtable data to SSTable files using LSM's row-based architecture
     async fn flush_lsm_records_to_sstable(
@@ -1192,9 +1160,19 @@ impl LsmTree {
 
         // Convert VectorRecords to LsmRecords with proper sequencing
         let sequence_start = chrono::Utc::now().timestamp_millis() as u64;
-        let lsm_records = self
-            .convert_vector_records_to_lsm_records(vector_records, sequence_start)
-            .await?;
+        let mut lsm_records = Vec::new();
+
+        for (index, record) in vector_records.iter().enumerate() {
+            let mut lsm_record = LsmRecord::from(record.clone());
+            lsm_record.sequence_number = sequence_start + index as u64;
+            lsm_record.level = 0; // New records start at level 0
+            lsm_records.push(lsm_record);
+        }
+
+        tracing::debug!(
+            "🔄 LSM: Converted {} vector records to row-based LSM records",
+            lsm_records.len()
+        );
 
         // Sort records by ID for SSTable format
         let mut sorted_records = lsm_records;
@@ -1456,4 +1434,39 @@ impl LsmTree {
         Ok(compressed)
     }
 
+    /// Convenient compact_collection method for CompactionCoordinator integration
+    pub async fn compact_collection(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+        info!("🗜️ LSM Engine: Starting collection compaction for {}", collection_id);
+        
+        // Check if this is the correct collection
+        if collection_id != &self.collection_id {
+            return Err(anyhow::anyhow!("Collection ID mismatch: expected {}, got {}", self.collection_id, collection_id));
+        }
+        
+        // Create empty compaction parameters
+        let params = crate::storage::traits::CompactionParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: false,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+        };
+        
+        // Use the existing do_compact implementation
+        let result = self.do_compact(&params).await?;
+        
+        Ok(EngineCompactionResult {
+            files_processed: result.output_files,
+            bytes_processed: result.bytes_written,
+        })
+    }
+
+}
+
+/// Simplified compaction result for CompactionCoordinator
+#[derive(Debug, Clone)]
+pub struct EngineCompactionResult {
+    pub files_processed: u64,
+    pub bytes_processed: u64,
 }

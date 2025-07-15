@@ -1,1 +1,0 @@
-@startuml test\ncomponent A\ncomponent B\nA --> B\n@enduml

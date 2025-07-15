@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use serde_json::json;
-use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_quantization_config_creation() -> Result<()> {

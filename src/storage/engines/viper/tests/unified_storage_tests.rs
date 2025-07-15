@@ -6,12 +6,11 @@
 //! Comprehensive unit tests for VIPER UnifiedStorageEngine implementation and atomic operations
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use crate::core::{String, VectorRecord};
+use crate::core::VectorRecord;
 use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
 use crate::storage::engines::viper::{ViperEngine, types::ViperConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -127,7 +126,7 @@ async fn test_viper_flush_with_high_level_trait_method() -> Result<()> {
 
     // Verify the high-level flush includes timing and logging
     assert!(result.success);
-    assert!(result.duration_ms >= 0);
+    // duration_ms is always >= 0 as it's unsigned
     assert!(result.completed_at > chrono::Utc::now() - chrono::Duration::minutes(1));
 
     Ok(())
@@ -213,15 +212,15 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     assert!(metrics.contains_key("memory_usage_bytes"));
     assert!(metrics.contains_key("collection_count"));
 
-    // Verify metric values are reasonable
+    // Verify metric values exist (u64 values are always >= 0)
     if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
-        assert!(ops.as_u64().unwrap_or(0) >= 0);
+        let _ = ops.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
     if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
-        assert!(mem.as_u64().unwrap_or(0) >= 0);
+        let _ = mem.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
     if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
-        assert!(cols.as_u64().unwrap_or(0) >= 0);
+        let _ = cols.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
 
     Ok(())

@@ -11,14 +11,17 @@
 
 **Production-Ready**: 520+ tests passing, zero critical issues, gcc-14 optimized builds
 
-ProximaDB is a **proto-first vector database** engineered for AI-first applications with breakthrough performance:
+ProximaDB is a **DirectVectorService-powered vector database** engineered for AI-first applications with breakthrough performance:
 
+* **40-60% Insert Latency Reduction**: DirectVectorService eliminates registry overhead
 * **6.10x Search Performance**: Storage-aware polymorphic search with automatic engine selection
 * **85% Code Reduction**: Handler consolidation through proto-first architecture
 * **Zero Double Serialization**: Direct Protocol Buffers throughout the entire pipeline
-* **87% SDK Reduction**: Unified Python client (6,467 → 800 lines)
 
-image::proximadb-architecture-overview.png[Proto-First Architecture Overview, align="center"]
+[mermaid]
+----
+include::diagrams/proximadb-architecture-overview.mmd[]
+----
 
 === ✨ Latest Achievements (2025)
 
@@ -130,13 +133,22 @@ image::proximadb-architecture-overview.png[Proto-First Architecture Overview, al
 == Key Architecture Diagrams
 
 === System Overview
-image::proximadb-component.png[Component Architecture, width=800, align="center"]
+[mermaid]
+----
+include::diagrams/proximadb-refactored-architecture.mmd[]
+----
 
 === Data Flow
-image::proximadb-data-flow.png[Data Flow Architecture, width=800, align="center"]
+[mermaid]
+----
+include::diagrams/proximadb-proto-first-data-flow.mmd[]
+----
 
 === Storage Architecture
-image::unified_memtable_architecture.png[Unified Memtable Architecture, width=800, align="center"]
+[mermaid]
+----
+include::diagrams/unified_memtable_architecture.mmd[]
+----
 
 == Quick Links
 
@@ -162,21 +174,16 @@ image::unified_memtable_architecture.png[Unified Memtable Architecture, width=80
 === Prerequisites
 
 .Required Tools
-* **PlantUML**: For UML diagrams (requires Java)
-* **Mermaid CLI**: For flowcharts and graphs  
-* **AsciiDoctor**: For converting AsciiDoc to HTML/PDF
+* **AsciiDoctor**: For converting AsciiDoc to HTML/PDF with inline Mermaid support
+* **AsciiDoctor-Diagram**: For rendering Mermaid diagrams inline
 
 .Installation Commands
 [source,bash]
 ----
 # Ubuntu/Debian
-sudo apt-get install plantuml
-npm install -g @mermaid-js/mermaid-cli
 gem install asciidoctor asciidoctor-pdf asciidoctor-diagram
 
 # macOS
-brew install plantuml
-npm install -g @mermaid-js/mermaid-cli
 gem install asciidoctor asciidoctor-pdf asciidoctor-diagram
 ----
 
@@ -214,47 +221,38 @@ asciidoctor -r asciidoctor-diagram quantization_support.adoc
 asciidoctor-pdf quantization_support.adoc
 ----
 
-== Diagram Types
-
-=== PlantUML Diagrams
+== Mermaid Diagrams
 
 [cols="2,3", options="header"]
 |===
 |Diagram |Description
 
-|`quantization-flow.puml`
-|Complete request flow from client through storage
+|`proximadb-architecture-overview.mmd`
+|Complete system architecture with DirectVectorService
 
-|`product-quantization.puml`
-|Visual explanation of PQ algorithm
+|`direct-vector-service.mmd`
+|DirectVectorService architecture (40-60% latency reduction)
 
-|`two-stage-search.puml`
-|Two-stage search algorithm flowchart
+|`proximadb-proto-first-data-flow.mmd`
+|Zero double serialization data flow
 
-|`vector-service-flow.puml`
-|Vector service class relationships
+|`python-sdk-architecture.mmd`
+|Unified Python SDK (87% code reduction)
 
-|`quantization-decision-tree.puml`
-|Decision tree for selecting quantization type
-|===
+|`unified_memtable_architecture.mmd`
+|Unified memtable with behavior wrappers
 
-=== Mermaid Diagrams
+|`two-stage-search.mmd`
+|Two-stage search algorithm flow
 
-[cols="2,3", options="header"]
-|===
-|Diagram |Description
+|`multi_disk_architecture.mmd`
+|Multi-disk persistence architecture
 
-|`quantization-components.mmd`
-|System component interaction graph
+|`unified_quantization_system.mmd`
+|Hardware-accelerated quantization system
 
-|`binary-quantization.mmd`
-|Binary quantization example
-
-|`performance-comparison.mmd`
-|Performance comparison flowchart
-
-|`viper-quantization.mmd`
-|VIPER storage layout visualization
+|`compaction-triggers.mmd`
+|Automatic compaction coordination
 |===
 
 == Writing Guidelines

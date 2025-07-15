@@ -2332,6 +2332,20 @@ impl VectorService {
         tracing::info!("🔗 VectorService: Collection service injected into VIPER engine for schema generation");
     }
 
+    /// Get VIPER engine for DirectVectorService optimization
+    /// 
+    /// **Used by**: DirectVectorService to eliminate WAL Manager Registry overhead
+    pub fn get_viper_engine(&self) -> Arc<crate::storage::engines::viper::ViperEngine> {
+        self.viper_engine.clone()
+    }
+
+    /// Get LSM engine for DirectVectorService optimization
+    /// 
+    /// **Used by**: DirectVectorService to eliminate WAL Manager Registry overhead
+    pub fn get_lsm_engine(&self) -> Arc<crate::storage::engines::lsm::LsmTree> {
+        self.lsm_engine.clone()
+    }
+
     /// Convert Avro payload to Bincode batch for aligned storage
     fn convert_avro_to_bincode_batch(&self, avro_payload: &[u8]) -> Result<Vec<u8>> {
         // Deserialize Avro to get vector records
@@ -2430,16 +2444,16 @@ impl VectorService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::core::search::SearchParams;
-    use crate::compute::{UnifiedQuantizationLevel, UnifiedDistanceCompute};
+    use crate::compute::UnifiedQuantizationLevel;
     use crate::proto::proximadb::{DistanceMetric, SearchParams as ProtoSearchParams};
     use std::collections::HashMap;
 
     #[test]
     fn test_search_params_conversion() {
         // Test converting proto SearchParams to native SearchParams
-        let mut proto_params = ProtoSearchParams {
+        let proto_params = ProtoSearchParams {
             top_k: Some(20),
             filters: HashMap::new(),
             accuracy_threshold: Some(0.95),

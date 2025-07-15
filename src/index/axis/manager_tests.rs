@@ -3,7 +3,6 @@
 use super::*;
 use crate::core::VectorRecord;
 use chrono::Utc;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Helper function to create test vector records

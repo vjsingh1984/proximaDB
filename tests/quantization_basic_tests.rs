@@ -2,11 +2,10 @@
 //!
 //! Tests core quantization functionality to ensure it works correctly.
 
-use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use std::sync::Arc;
     use proximadb::compute::{
         UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,

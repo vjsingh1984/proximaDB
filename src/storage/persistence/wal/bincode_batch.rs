@@ -11,7 +11,6 @@ use super::batch_strategy::WalBatchStrategy;
 // use super::atomicity_manager::{UnifiedAtomicityManager, UnifiedAtomicityConfig}; // Module removed
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use super::{FlushResult, WalConfig, WalStats};
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::assignment_service::{get_assignment_service, AssignmentService};
@@ -24,6 +23,7 @@ use crate::storage::traits::UnifiedStorageEngine;
 
 /// Modern Bincode WAL batch strategy with native batch operations
 /// Optimized for maximum native Rust performance while using the streamlined architecture
+#[derive(Clone)]
 pub struct BincodeWalBatchStrategy {
     /// WAL behavior wrapper (contains GlobalPartitionedMemtable)
     memtable: Option<WalBehaviorWrapper>,
@@ -155,123 +155,11 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         self.filesystem.clone()
     }
 
-    /// 🔄 OPTIMAL BINCODE IMPLEMENTATION - Single deserialization in WalBehavior
-    async fn write_avro_batch(
-        &self, 
-        collection_id: &str,
-        avro_bytes: &[u8]
-    ) -> Result<super::WalOperation> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Bincode WAL Batch Strategy not initialized")?;
+    // ✅ USING UNIFIED WRITE METHOD - No longer need strategy-specific write methods
 
-        tracing::debug!(
-            "🔄 BINCODE_BATCH: Optimal Avro→Bincode for collection {} with {} bytes",
-            collection_id,
-            avro_bytes.len()
-        );
+    // ✅ REMOVED: Proto/Avro write methods - using unified write_vector_batch_unified
 
-        // Deserialize Avro once to get vector count and for conversion
-        let vectors = super::schema::deserialize_vector_batch(avro_bytes)?;
-        
-        tracing::debug!(
-            "📊 BINCODE_BATCH: Deserialized {} vectors from Avro",
-            vectors.len()
-        );
-
-        // Serialize to Bincode for optimal Rust performance
-        let bincode_bytes = bincode::serialize(&vectors)
-            .context("Failed to serialize vectors to Bincode")?;
-        
-        let bincode_size = bincode_bytes.len();
-
-        let wal_operation = super::WalOperation {
-            operation_type: "upsert_batch".to_string(),
-            payload_data: bincode_bytes,
-            payload_format: "bincode".to_string(),
-            vector_count: vectors.len(),
-        };
-
-        // Set collection_id for all records (since it's not stored in payload)
-        let mut vectors_with_collection = vectors;
-        for record in &mut vectors_with_collection {
-            record.collection_id = collection_id.to_string();
-        }
-
-        // OPTIMIZATION: Since we already deserialized, create WalVectorBatch directly to avoid double deserialize
-        let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
-            batch_id: crate::storage::persistence::wal::BatchId::new(
-                collection_id.to_string(),
-                0, // Will be set by memtable
-                vectors_with_collection.len() as u64,
-            ),
-            vector_records: Arc::new(vectors_with_collection),
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes: bincode_size,
-            is_flushed: false,
-        };
-
-        let sequences = memtable.add_vector_batch(batch).await?;
-
-        tracing::debug!(
-            "✅ BINCODE_BATCH: Single deserialization complete, sequences: {:?}",
-            sequences
-        );
-
-        Ok(wal_operation)
-    }
-
-    /// Proto-first implementation: Convert Proto → Bincode (clean, no legacy)
-    async fn write_proto_batch(
-        &self,
-        collection_id: &str,
-        proto_bytes: &[u8]
-    ) -> Result<super::WalOperation> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Bincode WAL Batch Strategy not initialized")?;
-
-        tracing::debug!(
-            "🔄 BINCODE_BATCH: Proto→Bincode conversion for collection {} ({} bytes)",
-            collection_id,
-            proto_bytes.len()
-        );
-        
-        // Proto-first: Deserialize Proto records
-        let proto_records = super::schema::deserialize_proto_vector_batch(proto_bytes)?;
-        
-        // Convert Proto → Native VectorRecord for Bincode serialization
-        let native_records: Vec<crate::core::avro_unified::VectorRecord> = proto_records
-            .into_iter()
-            .map(|proto_record| crate::core::proto_to_avro(&proto_record, collection_id))
-            .collect();
-        
-        // Serialize to Bincode for optimal Rust performance
-        let bincode_bytes = bincode::serialize(&native_records)
-            .context("Failed to serialize vectors to Bincode")?;
-        
-        // Create WalOperation with Bincode payload
-        let wal_operation = super::WalOperation {
-            operation_type: "upsert_batch".to_string(),
-            payload_data: bincode_bytes,
-            payload_format: "bincode".to_string(),
-            vector_count: native_records.len(),
-        };
-
-        // Add to memtable
-        let sequences = memtable.add_wal_operation(collection_id, wal_operation.clone()).await?;
-        
-        tracing::debug!(
-            "✅ BINCODE_BATCH: Proto→Bincode conversion complete, sequences: {:?}",
-            sequences
-        );
-
-        Ok(wal_operation)
-    }
-
-    /// PROTO-FIRST OPTIMIZATION: Native proto vector handling with Proto→Bincode serialization
+    /// ✅ CORE METHOD: Write native WalVectorBatch with threshold-based flushing  
     async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
         let memtable = self
             .memtable
@@ -279,35 +167,43 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
             .context("Bincode WAL Batch Strategy not initialized")?;
 
         tracing::debug!(
-            "🚀 BINCODE_NATIVE: Proto→Bincode conversion for batch {} with {} vectors to collection {}",
+            "🚀 BINCODE: Writing batch {} with {} vectors to collection {}",
             batch.batch_id.batch_uuid,
             batch.vector_records.len(),
             batch.batch_id.collection_id
         );
 
-        // Proto-first: serialize proto VectorRecords directly (deref Arc)
-        let bincode_bytes = bincode::serialize(&*batch.vector_records)
-            .context("Failed to serialize native records to Bincode")?;
+        // Write batch to memtable (unified across all strategies)
+        let sequences = memtable.add_vector_batch(batch.clone()).await?;
+        
+        // ✅ THRESHOLD-BASED FLUSH COORDINATION (automatic)
+        if memtable.should_flush().await {
+            tracing::info!(
+                "🚨 Collection {} exceeds threshold, triggering coordinated flush",
+                batch.batch_id.collection_id
+            );
+            
+            let flush_data = super::flush_coordinator::FlushDataSource::Memory;
+            match self.flush_coordinator.execute_coordinated_flush(
+                &batch.batch_id.collection_id,
+                flush_data,
+                None, // Use default storage engine
+                Some(Arc::new(self.clone()) as Arc<dyn super::WalBatchStrategy>),
+            ).await {
+                Ok(flush_result) => {
+                    tracing::info!(
+                        "✅ Coordinated flush completed: {} entries, {} bytes",
+                        flush_result.entries_flushed, flush_result.bytes_written
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Coordinated flush failed: {}", e);
+                }
+            }
+        }
         
         tracing::debug!(
-            "📊 BINCODE_NATIVE: Serialized {} vectors to {} bytes of Bincode data",
-            batch.vector_records.len(),
-            bincode_bytes.len()
-        );
-        
-        // Create WalOperation with Bincode payload
-        let wal_operation = super::WalOperation {
-            operation_type: "upsert_batch".to_string(),
-            payload_data: bincode_bytes,
-            payload_format: "bincode".to_string(),
-            vector_count: batch.vector_records.len(),
-        };
-
-        // Add to memtable
-        let sequences = memtable.add_wal_operation(&batch.batch_id.collection_id, wal_operation).await?;
-        
-        tracing::debug!(
-            "✅ BINCODE_NATIVE: Proto→Bincode conversion complete, sequences: {:?}",
+            "✅ BINCODE: Batch written with sequences: {:?}",
             sequences
         );
 
@@ -421,35 +317,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         Ok(None)
     }
 
-    async fn search_vectors_similarity(
-        &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Bincode WAL Batch Strategy not initialized")?;
-
-        // Resolve distance metric
-        let metric = distance_metric.unwrap_or(CoreDistanceMetric::Cosine);
-        
-        // Perform similarity search
-        let results = memtable
-            .search_unflushed_vectors(query_vector, k, collection_id, metric)
-            .await?;
-
-        // Convert results to the expected format
-        let mut converted_results = Vec::new();
-        for (score, record) in results {
-            // entry is already a VectorRecord, no extraction needed
-            converted_results.push((record.id.as_deref().unwrap_or("").to_string(), score, record));
-        }
-
-        Ok(converted_results)
-    }
+    // Using default implementation from trait
 
     async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let memtable = self
@@ -523,18 +391,7 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         }
     }
 
-    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
-        let memtable = self
-            .memtable
-            .as_ref()
-            .context("Bincode WAL Batch Strategy not initialized")?;
-
-        // Clear all data for the collection
-        memtable.clear_flushed(collection_id, u64::MAX).await?;
-        
-        tracing::info!("✅ Dropped all WAL data for collection: {}", collection_id);
-        Ok(())
-    }
+    // Using default implementation from trait
 
     async fn get_stats(&self) -> Result<WalStats> {
         let memtable = self
@@ -594,14 +451,79 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         }
     }
 
+    
     async fn recover(&self) -> Result<u64> {
-        tracing::info!("🔄 Starting Bincode WAL Batch Strategy recovery");
+        tracing::info!("🔄 Starting Bincode WAL Batch Strategy recovery from disk");
         
-        // TODO: Implement recovery from disk
-        // For now, return 0 entries recovered
+        let mut total_recovered = 0u64;
         
-        tracing::info!("✅ Bincode WAL Batch Strategy recovery completed");
-        Ok(0)
+        if let Some(filesystem) = &self.filesystem {
+            // Use assignment service to discover collections with WAL data
+            use crate::storage::assignment_service::{StorageComponentType};
+            
+            let all_assignments = self.assignment_service
+                .get_all_assignments(StorageComponentType::Wal)
+                .await;
+            
+            tracing::info!("📁 Found {} collections with WAL assignments", all_assignments.len());
+            
+            for (collection_id, assignment) in all_assignments {
+                // Construct WAL logs path for this collection
+                let wal_logs_dir = format!("{}/{}/wal/logs", assignment.storage_url, collection_id);
+                
+                // Get filesystem for this assignment
+                let fs = filesystem.get_filesystem(&assignment.storage_url)?;
+                
+                // Check if WAL logs directory exists
+                if !fs.exists(&wal_logs_dir).await? {
+                    tracing::debug!("No WAL logs directory for collection '{}', skipping", collection_id);
+                    continue;
+                }
+                
+                // List all WAL files for this collection
+                let wal_files = fs.list(&wal_logs_dir).await?;
+                let mut wal_batch_files: Vec<_> = wal_files
+                    .into_iter()
+                    .filter(|f| f.name.starts_with("batch_") && f.name.ends_with(".wal"))
+                    .collect();
+                
+                // Sort by name to process in sequence order
+                wal_batch_files.sort_by(|a, b| a.name.cmp(&b.name));
+                
+                tracing::info!("📄 Found {} WAL files for collection '{}'", wal_batch_files.len(), collection_id);
+                
+                for file_entry in wal_batch_files {
+                    let file_path = format!("{}/{}", wal_logs_dir, file_entry.name);
+                    
+                    match self.recover_wal_file(&file_path, &collection_id, fs).await {
+                        Ok(count) => {
+                            total_recovered += count;
+                            tracing::debug!("✅ Recovered {} vectors from {}", count, file_path);
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️ Failed to recover WAL file {}: {}", file_path, e);
+                            // Continue with other files
+                        }
+                    }
+                }
+            }
+            
+            tracing::info!("✅ Bincode WAL recovery complete: recovered {} total vectors from disk", total_recovered);
+        } else {
+            tracing::info!("🔄 Bincode WAL recovery: No filesystem available, checking memtable only");
+            
+            // Fall back to checking memtable state
+            if let Some(memtable) = &self.memtable {
+                if let Ok(stats) = memtable.get_stats().await {
+                    let total_vectors: usize = stats.values().map(|s| s.total_entries as usize).sum();
+                    tracing::info!("📊 Found {} vectors in {} collections in memtable", 
+                          total_vectors, stats.len());
+                    return Ok(total_vectors as u64);
+                }
+            }
+        }
+        
+        Ok(total_recovered)
     }
 
     async fn close(&self) -> Result<()> {
@@ -613,25 +535,102 @@ impl WalBatchStrategy for BincodeWalBatchStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
-        // TODO: Implement force sync to disk when needed
-        tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
-        Ok(())
-    }
+    // Using default force_sync implementation from trait
 
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
-        // TODO: Implement MVCC compaction, TTL cleanup
-        // For now, return 0 entries compacted
-        tracing::debug!("🔧 Compacting collection {} (placeholder)", collection_id);
-        Ok(0)
-    }
+    // Using default compact_collection implementation from trait
 
     fn get_wal_behavior(&self) -> Option<&WalBehaviorWrapper> {
         self.memtable.as_ref()
     }
+    
+    fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+        // Bincode strategy uses direct binary serialization for maximum performance
+        bincode::serialize(vectors)
+            .context("Failed to serialize vectors to Bincode format for disk")
+    }
+    
+    fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+        // Bincode strategy uses direct binary deserialization
+        bincode::deserialize(data)
+            .context("Failed to deserialize Bincode vectors from disk")
+    }
+    
+    // ✅ CONSOLIDATED: Using unified methods from trait
+    // Only need to implement serialize_vectors_for_disk and deserialize_vectors_from_disk
 }
 
+// Implementation block removed - using AtomicWalSync for disk persistence
+
 impl BincodeWalBatchStrategy {
+    /// Recover vectors from a single WAL file
+    async fn recover_wal_file(
+        &self, 
+        file_path: &str, 
+        collection_id: &str,
+        fs: &dyn crate::storage::persistence::filesystem::FileSystem
+    ) -> Result<u64> {
+        // Read the WAL file
+        let data = fs.read(file_path).await?;
+            
+            // Since only Bincode strategy is active for the lifecycle, we know the format
+            // AtomicWalSync writes a WalOperation containing serialized vector records
+            let wal_operation: super::WalOperation = bincode::deserialize(&data)
+                .context("Failed to deserialize WAL operation")?;
+            
+            // Deserialize the vector records using strategy-specific method
+            let vector_records = self.deserialize_vectors_from_disk(&wal_operation.payload_data)
+                .context("Failed to deserialize vector records from disk")?;
+            
+            let vector_count = vector_records.len();
+            
+            // Add vectors back to memtable
+            if let Some(memtable) = &self.memtable {
+                // Extract sequence range from filename
+                // Format: batch_SSSSSSSSSS_EEEEEEEEEE.wal
+                let (seq_start, seq_end) = if let Some(filename) = file_path.split('/').last() {
+                    if let Some(parts) = filename.strip_prefix("batch_").and_then(|s| s.strip_suffix(".wal")) {
+                        let seqs: Vec<&str> = parts.split('_').collect();
+                        if seqs.len() == 2 {
+                            let start = seqs[0].parse::<u64>().unwrap_or(0);
+                            let end = seqs[1].parse::<u64>().unwrap_or(start);
+                            (start, end)
+                        } else {
+                            (0, vector_count as u64)
+                        }
+                    } else {
+                        (0, vector_count as u64)
+                    }
+                } else {
+                    (0, vector_count as u64)
+                };
+                
+                // Create batch for recovery
+                let batch = WalVectorBatch {
+                    batch_id: crate::storage::persistence::wal::BatchId::new(
+                        collection_id.to_string(),
+                        seq_start,
+                        seq_end - seq_start + 1,
+                    ),
+                    vector_records: Arc::new(vector_records),
+                    created_at: std::time::SystemTime::now(),
+                    total_size_bytes: wal_operation.payload_data.len(),
+                    is_flushed: false,
+                };
+                
+                // Add the recovered batch to memtable
+                memtable.add_vector_batch(batch).await?;
+                
+                tracing::debug!(
+                    "🔄 Recovered {} vectors from WAL file: {} (sequences {}-{})",
+                    vector_count, file_path, seq_start, seq_end
+                );
+                
+                Ok(vector_count as u64)
+            } else {
+                Err(anyhow::anyhow!("Memtable not available for recovery"))
+            }
+    }
+    
     /// Execute atomic cloud write
     pub async fn atomic_write_batch_to_cloud(
         &self,

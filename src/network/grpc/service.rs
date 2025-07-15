@@ -17,14 +17,13 @@ use crate::proto::proximadb::{
 };
 use crate::services::collection_service::CollectionService;
 use crate::services::vector_service::VectorService;
-use chrono::Utc;
 // Removed uuid import - no longer auto-generating vector IDs
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
 // Note: schema_types module has been removed, types moved to crate::core
 use crate::core::{
     VectorInsertResponse as SchemaVectorInsertResponse,
-    VectorOperationMetrics as SchemaVectorOperationMetrics, VectorRecord as SchemaVectorRecord,
+    VectorOperationMetrics as SchemaVectorOperationMetrics,
 };
 
 /// ProximaDB gRPC service implementing optimized zero-copy patterns

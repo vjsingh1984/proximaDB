@@ -588,7 +588,7 @@ impl FlushManager {
         
         // Check if we have enough small files to compact
         if file_count >= MIN_FILES_FOR_COMPACTION {
-            let mut small_file_count = 0;
+            let small_file_count = 0;
             // TODO: Check file sizes when filesystem is available
             /*for file_info in &collection_files {
                 if let Some(size) = file_info.size {

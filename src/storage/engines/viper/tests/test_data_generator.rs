@@ -6,12 +6,11 @@
 
 use anyhow::Result;
 use arrow_array::{
-    ArrayRef, Float32Array, Int64Array, ListArray, RecordBatch, StringArray, UInt8Array,
-    TimestampMicrosecondArray, StructArray, Float64Array, BooleanArray,
+    ArrayRef, Int64Array, ListArray, RecordBatch, StringArray, Float64Array,
 };
-use arrow_array::builder::{Float32Builder, ListBuilder, StringBuilder, StructBuilder};
-use arrow_array::types::{Float32Type, UInt8Type};
-use arrow_schema::{DataType, Field, Fields, Schema};
+use arrow_array::builder::{Float32Builder, ListBuilder};
+use arrow_array::types::UInt8Type;
+use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use rand::{Rng, SeedableRng};
@@ -21,12 +20,6 @@ use std::fs::File;
 use std::sync::Arc;
 use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_quantization::{
-    UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,
-    ProductQuantization, ScalarQuantization, BinaryQuantization, UniformQuantization,
-    InMemoryCodebookStore, QuantizedVector, Codebook, CodebookData, TrainingConfig,
-    CodebookStore
-};
 // Note: apache_avro imports removed - add to Cargo.toml if needed for Avro tests
 
 /// Configuration for test data generation

@@ -299,7 +299,7 @@ impl Default for MultiTierDeduplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     #[test]
     fn test_multi_tier_deduplication() {

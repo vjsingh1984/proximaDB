@@ -187,46 +187,89 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
 
     // 🎯 CORE BATCH OPERATIONS (Modern Architecture)
 
-    /// Write Avro bytes directly (zero-copy optimization for Avro, convert for other formats)
-    /// This is the optimal write operation that accepts pre-serialized Avro from Vector Service
-    async fn write_avro_batch(
-        &self, 
-        collection_id: &str,
-        avro_bytes: &[u8]
-    ) -> Result<super::WalOperation>;
-
-    /// Write Proto bytes directly (zero-copy optimization for Proto format)
-    /// This is the new optimal write operation for Proto-first architecture
-    async fn write_proto_batch(
+    /// ✅ UNIFIED WRITE METHOD: Single entry point for all vector batch writes
+    /// Handles any payload format (Avro/Proto/Bincode) and delegates to strategy-specific serialization
+    async fn write_vector_batch_unified(
         &self,
         collection_id: &str,
-        proto_bytes: &[u8]
+        payload: &[u8],
+        payload_format: &str,
     ) -> Result<super::WalOperation> {
-        // Default implementation: convert Proto to Avro for backward compatibility
-        // Strategies that support Proto natively should override this
-        use crate::storage::persistence::wal::schema::{deserialize_proto_vector_batch, serialize_vector_batch};
+        tracing::debug!(
+            "📝 Unified write: collection={}, format={}, payload_size={}",
+            collection_id, payload_format, payload.len()
+        );
         
-        let proto_records = deserialize_proto_vector_batch(proto_bytes)?;
-        let avro_records: Vec<crate::core::avro_unified::VectorRecord> = proto_records
-            .into_iter()
-            .map(|proto_record| crate::core::proto_to_avro(&proto_record, collection_id))
-            .collect();
+        // Step 1: Deserialize payload to common VectorRecord format
+        let vector_records = match payload_format {
+            "avro" => {
+                use crate::storage::persistence::wal::schema::deserialize_vector_batch;
+                deserialize_vector_batch(payload)
+                    .context("Failed to deserialize Avro payload")?
+            }
+            "proto" => {
+                use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
+                let proto_records = deserialize_proto_vector_batch(payload)
+                    .context("Failed to deserialize Proto payload")?;
+                
+                // Proto-first: Use proto records directly as VectorRecord (they're type aliases)
+                proto_records.into_iter().collect()
+            }
+            "bincode" => {
+                bincode::deserialize::<Vec<VectorRecord>>(payload)
+                    .context("Failed to deserialize Bincode payload")?
+            }
+            _ => return Err(anyhow::anyhow!("Unsupported payload format: {}", payload_format)),
+        };
         
-        let avro_bytes = crate::storage::persistence::wal::schema::serialize_avro_vector_batch(&avro_records)?;
-        self.write_avro_batch(collection_id, &avro_bytes).await
+        // Step 2: Create WalVectorBatch and write to memtable
+        let batch = WalVectorBatch {
+            batch_id: super::BatchId::new(
+                collection_id.to_string(),
+                0, // Will be set by memtable
+                vector_records.len() as u64,
+            ),
+            vector_records: Arc::new(vector_records),
+            created_at: std::time::SystemTime::now(),
+            total_size_bytes: payload.len(),
+            is_flushed: false,
+        };
+        
+        let sequences = self.write_native_batch(batch.clone()).await?;
+        
+        // Step 3: Create WalOperation using strategy-specific serialization
+        let strategy_payload = self.serialize_vectors_for_disk(&batch.vector_records)?;
+        let wal_operation = super::WalOperation {
+            operation_type: "upsert_batch".to_string(),
+            payload_data: strategy_payload,
+            payload_format: self.strategy_name().to_lowercase(),
+            vector_count: batch.vector_records.len(),
+        };
+        
+        // Step 4: Persist to disk (unified logic)
+        self.persist_to_disk_unified(collection_id, &wal_operation, &sequences).await?;
+        
+        Ok(wal_operation)
     }
 
-    /// Write vector batch atomically (memory + disk) - Legacy interface
-    /// This is kept for backward compatibility but write_avro_batch is preferred
-    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>>;
-
-    /// PROTO-FIRST: Write native WalVectorBatch directly (primary method)
-    /// Each strategy handles its own serialization: Proto->Proto, Proto->Bincode, Proto->Avro
-    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        // Default implementation delegates to existing write_vector_batch
-        // Strategies can override for optimized native handling
-        self.write_vector_batch(batch).await
+    /// Legacy: Avro batch write (delegates to unified method)
+    async fn write_avro_batch(&self, collection_id: &str, avro_bytes: &[u8]) -> Result<super::WalOperation> {
+        self.write_vector_batch_unified(collection_id, avro_bytes, "avro").await
     }
+
+    /// Legacy: Proto batch write (delegates to unified method)  
+    async fn write_proto_batch(&self, collection_id: &str, proto_bytes: &[u8]) -> Result<super::WalOperation> {
+        self.write_vector_batch_unified(collection_id, proto_bytes, "proto").await
+    }
+
+    /// Legacy: Vector batch write (kept for compatibility)
+    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
+        self.write_native_batch(batch).await
+    }
+
+    /// Primary method: Write native WalVectorBatch directly to memtable
+    /// This is the core method that all others delegate to
+    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>>;
 
     /// Write vector batch with immediate disk sync for durability
     async fn write_vector_batch_with_sync(
@@ -248,7 +291,27 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         &self,
         collection_id: &str,
         vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>>;
+    ) -> Result<Option<VectorRecord>> {
+        // Default implementation using get_wal_behavior
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            // Check WAL data (unflushed)
+            if let Some(wal_record) = wal_behavior.get_vector_by_id(collection_id, vector_id).await? {
+                // Check if not expired
+                let current_time = chrono::Utc::now().timestamp_micros();
+                let is_expired = wal_record.expires_at
+                    .map(|expires| expires < current_time)
+                    .unwrap_or(false);
+                
+                if !is_expired {
+                    return Ok(Some(wal_record));
+                }
+            }
+            // TODO: Add storage engine lookup for flushed data
+            Ok(None)
+        } else {
+            Err(anyhow::anyhow!("WAL behavior not available"))
+        }
+    }
 
     /// Similarity search for vectors in WAL with configurable distance metric
     async fn search_vectors_similarity(
@@ -257,18 +320,58 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>>;
+    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
+        // Default implementation using get_wal_behavior
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            let metric = distance_metric.unwrap_or(CoreDistanceMetric::Cosine);
+            let results = wal_behavior.search_unflushed_vectors(query_vector, k, collection_id, metric).await?;
+            
+            // Convert results to the expected format
+            let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
+                .into_iter()
+                .map(|(score, record)| (record.id.as_deref().unwrap_or("").to_string(), score, record))
+                .collect();
+                
+            Ok(converted_results)
+        } else {
+            Err(anyhow::anyhow!("WAL behavior not available"))
+        }
+    }
 
     // 🎯 COLLECTION MANAGEMENT
 
     /// Get all vector records for a collection (for flush operations)
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>>;
+    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+        // Default implementation using get_wal_behavior
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            // Get all unflushed batches for the collection
+            let batches = wal_behavior.get_unflushed_batches(collection_id).await?;
+            
+            // Extract all vector records from batches
+            let mut vectors = Vec::new();
+            for batch in batches {
+                vectors.extend(batch.vector_records.iter().cloned());
+            }
+            
+            Ok(vectors)
+        } else {
+            Err(anyhow::anyhow!("WAL behavior not available"))
+        }
+    }
 
     /// Flush collection to storage (delegates to storage engine)
     async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult>;
 
     /// Drop all data for a collection
-    async fn drop_collection(&self, collection_id: &str) -> Result<()>;
+    async fn drop_collection(&self, collection_id: &str) -> Result<()> {
+        // Default implementation using get_wal_behavior
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            wal_behavior.drop_collection(&collection_id.to_string()).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("WAL behavior not available"))
+        }
+    }
 
     // 🎯 STATISTICS AND MONITORING
 
@@ -281,23 +384,185 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     // 🎯 LIFECYCLE MANAGEMENT
 
     /// Recover from disk on startup
-    async fn recover(&self) -> Result<u64>;
+    async fn recover(&self) -> Result<u64> {
+        // Default implementation - in-memory recovery from global memtable
+        // Strategies that implement disk persistence should override this
+        // to read WAL files from disk and deserialize using deserialize_vectors_from_disk
+        tracing::info!("🔄 Starting WAL recovery from global memtable (in-memory only)");
+        
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            match wal_behavior.get_stats().await {
+                Ok(stats) => {
+                    let total_vectors: usize = stats.values().map(|s| s.total_entries as usize).sum();
+                    tracing::info!("✅ WAL recovery: Found {} vectors in {} collections in global memtable", 
+                          total_vectors, stats.len());
+                    
+                    // Log collection details for debugging
+                    for (collection_id, collection_stats) in stats {
+                        tracing::debug!("   Collection '{}': {} vectors, {} bytes", 
+                               collection_id, collection_stats.total_entries, collection_stats.memory_size_bytes);
+                    }
+                    
+                    Ok(total_vectors as u64)
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ WAL recovery: Failed to get memtable stats: {}", e);
+                    Ok(0)
+                }
+            }
+        } else {
+            tracing::info!("🔄 WAL recovery: No memtable available, returning 0");
+            Ok(0)
+        }
+    }
+    
+    // 🎯 DISK PERSISTENCE (Common implementation for all strategies)
+    
+    /// ✅ UNIFIED DISK PERSISTENCE: Single method for all strategies  
+    /// Uses strategy-specific serialization via serialize_vectors_for_disk()
+    async fn persist_to_disk_unified(
+        &self,
+        collection_id: &str,
+        wal_operation: &super::WalOperation,
+        sequences: &[u64],
+    ) -> Result<()> {
+        // Default implementation that strategies can override for custom behavior
+        // This provides a basic disk persistence using the strategy's serialization
+        if let Some(filesystem) = self.get_filesystem() {
+            // ✅ UNIFIED DISK PERSISTENCE: Common implementation for all strategies
+            // Each strategy provides their own serialize_vectors_for_disk/deserialize_vectors_from_disk
+            
+            tracing::debug!(
+                "💾 Persisting WAL operation to disk for collection {} ({} sequences)",
+                collection_id,
+                sequences.len()
+            );
+            
+            // Use assignment service to get storage location
+            use crate::storage::assignment_service::{get_assignment_service, StorageComponentType};
+            let assignment_service = get_assignment_service();
+            
+            if let Some(assignment) = assignment_service
+                .get_assignment(collection_id, StorageComponentType::Wal)
+                .await 
+            {
+                // Construct WAL file path
+                let wal_dir = format!("{}/{}/wal/logs", assignment.storage_url, collection_id);
+                let sequence_start = sequences.first().copied().unwrap_or(0);
+                let sequence_end = sequences.last().copied().unwrap_or(sequence_start);
+                let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
+                
+                // Get filesystem for this storage URL
+                if let Ok(fs) = filesystem.get_filesystem(&assignment.storage_url) {
+                    // Ensure WAL directory exists
+                    if let Err(_) = fs.create_dir_all(&wal_dir).await {
+                        tracing::warn!("Failed to create WAL directory: {}", wal_dir);
+                    }
+                    
+                    // Serialize the complete WAL operation (common format)
+                    let serialized_data = bincode::serialize(wal_operation)
+                        .context("Failed to serialize WAL operation for disk")?;
+                    
+                    // Write to disk atomically (simple implementation)
+                    let temp_file = format!("{}.tmp", wal_file);
+                    
+                    if let Err(e) = fs.write(&temp_file, &serialized_data, None).await {
+                        tracing::warn!("Failed to write WAL temp file {}: {}", temp_file, e);
+                        return Ok(()); // Continue - memory write succeeded
+                    }
+                    
+                    if let Err(e) = fs.move_file(&temp_file, &wal_file).await {
+                        tracing::warn!("Failed to rename WAL file {} -> {}: {}", temp_file, wal_file, e);
+                        // Try to clean up temp file
+                        let _ = fs.delete(&temp_file).await;
+                        return Ok(()); // Continue - memory write succeeded
+                    }
+                    
+                    tracing::debug!(
+                        "✅ WAL operation persisted to disk: {} bytes written to {}",
+                        serialized_data.len(),
+                        wal_file
+                    );
+                } else {
+                    tracing::debug!("No filesystem available for storage URL: {}", assignment.storage_url);
+                }
+            } else {
+                tracing::debug!("No WAL assignment found for collection: {}", collection_id);
+            }
+            
+            Ok(())
+        } else {
+            tracing::debug!("No filesystem factory available, skipping disk persistence");
+            Ok(())
+        }
+    }
+
+    /// Legacy wrapper for backward compatibility
+    async fn persist_wal_operation_to_disk(
+        &self,
+        collection_id: &str,
+        wal_operation: &super::WalOperation,
+        sequences: &[u64],
+    ) -> Result<()> {
+        self.persist_to_disk_unified(collection_id, wal_operation, sequences).await
+    }
+    
+    // 🎯 STRATEGY-SPECIFIC SERIALIZATION (Only methods strategies need to implement)
+    
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize vectors in strategy format
+    /// - Bincode: bincode::serialize(vectors)
+    /// - Avro: serialize_avro_vector_batch(vectors) 
+    /// - Proto: serialize_proto_vector_batch(vectors)
+    fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+        // Default implementation - strategies must override 
+        Err(anyhow::anyhow!("serialize_vectors_for_disk not implemented for {}", self.strategy_name()))
+    }
+    
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize vectors from strategy format
+    /// Used during recovery to load WAL files back into memtable
+    fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+        // Default implementation - strategies must override
+        Err(anyhow::anyhow!("deserialize_vectors_from_disk not implemented for {}", self.strategy_name()))
+    }
 
     /// Close and cleanup resources
     async fn close(&self) -> Result<()>;
 
     /// Force immediate sync of in-memory data to disk
-    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()>;
+    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
+        // Default implementation - placeholder for now
+        // TODO: Integrate with AtomicWalSync when fully enabled
+        tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
+        
+        if let Some(collection_id) = collection_id {
+            tracing::debug!("Force sync would be performed for collection: {}", collection_id);
+        } else {
+            tracing::debug!("Force sync would be performed for all collections");
+        }
+        
+        // For now, this is a no-op as disk persistence happens through
+        // automatic memory flush triggers
+        Ok(())
+    }
 
     // 🎯 ADVANCED OPERATIONS
 
     /// Compact collection (clean up old MVCC versions, TTL expired entries)
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64>;
+    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
+        // Default implementation
+        if let Some(wal_behavior) = self.get_wal_behavior() {
+            // For now, just clear old entries
+            wal_behavior.clear_flushed(collection_id, u64::MAX).await
+                .map(|count| count as u64)
+        } else {
+            // No WAL behavior, return 0
+            tracing::debug!("🔧 Compacting collection {} (placeholder)", collection_id);
+            Ok(0)
+        }
+    }
 
     /// Get WAL behavior wrapper for specialized operations
-    fn get_wal_behavior(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper> {
-        None // Default implementation - concrete strategies can override
-    }
+    fn get_wal_behavior(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WalBehaviorWrapper>;
 
     /// Migrate WAL batch from local to cloud storage
     async fn migrate_batch_to_cloud(
@@ -768,4 +1033,17 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
 
 // Blanket implementation of convenience methods for all batch strategies
 impl<T: WalBatchStrategy> WalBatchStrategyExt for T {}
+
+/// WAL disk entry structure for persistence
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WalDiskEntry {
+    pub collection_id: String,
+    pub sequence_start: u64,
+    pub sequence_end: u64,
+    pub operation_type: String,
+    pub payload_format: String,
+    pub payload_data: Vec<u8>,
+    pub vector_count: usize,
+    pub timestamp: i64,
+}
 

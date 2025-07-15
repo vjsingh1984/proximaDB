@@ -431,7 +431,7 @@ impl ViperSearchEngine {
             // Parallel cluster search for better performance
             let search_tasks: Vec<_> = relevant_clusters.into_iter().map(|cluster_id| {
                 let viper_engine = viper_engine;
-                let collection_id = collection_id.clone();
+                let collection_id = collection_id;
                 let query_vector = query_vector.to_vec();
                 let search_params = search_params.clone();
                 
@@ -774,7 +774,7 @@ impl ViperSearchEngine {
         debug!("📊 Parquet file has {} row groups", metadata.num_row_groups());
         
         // Build reader with column projection
-        let mut reader_builder = file_reader;
+        let reader_builder = file_reader;
         
         // Select only needed columns for efficiency
         let mut projection = vec![

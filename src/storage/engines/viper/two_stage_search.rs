@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 use crate::compute::{
     UnifiedDistanceCompute, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-    DistanceMetric, unified_distance::SimilarityResult,
+    DistanceMetric,
 };
 use crate::core::{String, SearchResult, search::SearchParams};
 use super::column_projection::ColumnProjection;

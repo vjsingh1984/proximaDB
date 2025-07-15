@@ -3,8 +3,8 @@
 #[cfg(test)]
 pub mod config_tests;
 
-#[cfg(test)]
-pub mod manager_tests;
+// #[cfg(test)]
+// pub mod manager_tests; // Removed - obsolete WalManager tests
 
 #[cfg(test)]
 // pub mod wal_manager_tests; // Removed - uses obsolete insert API

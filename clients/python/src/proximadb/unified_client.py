@@ -532,7 +532,7 @@ class ProximaDBClient:
         collection_id: str,
         vector: Union[List[float], np.ndarray],
         top_k: int = 10,
-        metadata_filter: Optional[Dict[str, Any]] = None,
+        metadata_filter: Optional[Union[Dict[str, Any], 'FilterBuilder']] = None,
         optimization_level: str = "high",
         use_storage_aware: bool = True,
         quantization_level: str = "FP32",
@@ -582,8 +582,8 @@ class ProximaDBClient:
                 top_k=top_k,
                 metadata_filters=metadata_filter,
                 include_metadata=kwargs.get('include_metadata', True),
-                include_vectors=kwargs.get('include_vectors', False),
-                search_hints=search_hints
+                include_vectors=kwargs.get('include_vectors', False)
+                # Note: search_hints would need to be converted to SearchParameters proto
             )
             
             # Extract results from proto response
@@ -620,7 +620,7 @@ class ProximaDBClient:
         collection_id: str,
         vectors: Union[List[List[float]], np.ndarray],
         top_k: int = 10,
-        metadata_filter: Optional[Dict[str, Any]] = None,
+        metadata_filter: Optional[Union[Dict[str, Any], 'FilterBuilder']] = None,
         **kwargs
     ) -> List[List[SearchResult]]:
         """Search multiple queries in batch with optimizations
@@ -701,6 +701,52 @@ class ProximaDBClient:
             if pydantic_result:
                 return VectorRecord(**pydantic_result)
             return None
+    
+    def insert_vector(
+        self,
+        collection_id: str,
+        vector_id: str,
+        vector: Union[List[float], np.ndarray],
+        metadata: Optional[Dict[str, Any]] = None,
+        upsert: bool = False
+    ) -> VectorOperationResponse:
+        """Insert a single vector - alias for batch insert with one vector
+        
+        Args:
+            collection_id: Collection ID or name
+            vector_id: Vector identifier  
+            vector: Vector data
+            metadata: Optional metadata
+            upsert: If True, update existing vector
+            
+        Returns:
+            VectorOperationResponse
+        """
+        record = VectorRecord(
+            id=vector_id,
+            vector=vector,
+            metadata=metadata or {}
+        )
+        if upsert:
+            return self.upsert_vectors(collection_id, [record])
+        else:
+            return self.insert_vectors(collection_id, [record])
+    
+    def delete_vector(
+        self,
+        collection_id: str,
+        vector_id: str
+    ) -> VectorOperationResponse:
+        """Delete a single vector - alias for batch delete with one vector
+        
+        Args:
+            collection_id: Collection ID or name
+            vector_id: Vector identifier to delete
+            
+        Returns:
+            VectorOperationResponse
+        """
+        return self.delete_vectors(collection_id, [vector_id])
     
     def close(self):
         """Close the client and cleanup resources"""
