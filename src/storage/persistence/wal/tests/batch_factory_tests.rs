@@ -31,31 +31,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_avro_batch_strategy() {
+    async fn test_create_avro_serialization_strategy() {
         let (filesystem, temp_dir) = create_test_filesystem().await;
         let config = create_test_config(&temp_dir);
 
-        let strategy = WalBatchFactory::create_strategy(
+        let strategy = WalBatchFactory::create_batch_serialization_strategy(
             WalStrategyType::AvroBatch,
             &config,
             filesystem
-        ).await.expect("Failed to create Avro batch strategy");
+        ).await.expect("Failed to create Avro serialization strategy");
 
         assert_eq!(strategy.strategy_name(), "AvroBatch");
     }
 
     #[tokio::test]
-    async fn test_create_bincode_batch_strategy() {
+    async fn test_create_bincode_serialization_strategy() {
         let (filesystem, temp_dir) = create_test_filesystem().await;
         let config = create_test_config(&temp_dir);
 
-        let strategy = WalBatchFactory::create_strategy(
+        let strategy = WalBatchFactory::create_batch_serialization_strategy(
             WalStrategyType::BincodeBatch,
             &config,
             filesystem
-        ).await.expect("Failed to create Bincode batch strategy");
+        ).await.expect("Failed to create Bincode serialization strategy");
 
         assert_eq!(strategy.strategy_name(), "BincodeBatch");
+    }
+
+    #[tokio::test]
+    async fn test_create_proto_serialization_strategy() {
+        let (filesystem, temp_dir) = create_test_filesystem().await;
+        let config = create_test_config(&temp_dir);
+
+        let strategy = WalBatchFactory::create_batch_serialization_strategy(
+            WalStrategyType::ProtoBatch,
+            &config,
+            filesystem
+        ).await.expect("Failed to create Proto serialization strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
     }
 
     #[tokio::test]
@@ -150,20 +164,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_strategy_initialization_and_operation() {
+    async fn test_serialization_strategy_initialization() {
         let (filesystem, temp_dir) = create_test_filesystem().await;
         let config = create_test_config(&temp_dir);
 
-        // Test both strategies can be created and used
-        for strategy_type in &[WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch] {
-            let strategy = WalBatchFactory::create_strategy(
+        // Test all serialization strategies can be created
+        for strategy_type in &[WalStrategyType::AvroBatch, WalStrategyType::BincodeBatch, WalStrategyType::ProtoBatch] {
+            let strategy = WalBatchFactory::create_batch_serialization_strategy(
                 strategy_type.clone(),
                 &config,
                 filesystem.clone()
-            ).await.expect("Failed to create strategy");
+            ).await.expect("Failed to create serialization strategy");
 
-            // Verify the strategy has a WAL behavior wrapper
-            assert!(strategy.get_wal_behavior().is_some());
+            // Serialization strategies don't expose WAL behavior directly
+            assert!(strategy.get_wal_behavior().is_none());
             
             // Verify basic operations work
             let stats = strategy.get_stats().await.expect("Failed to get stats");
@@ -183,7 +197,7 @@ mod tests {
             let strategy_type = if i % 2 == 0 { WalStrategyType::AvroBatch } else { WalStrategyType::BincodeBatch };
             
             tokio::spawn(async move {
-                WalBatchFactory::create_strategy(strategy_type, &cfg, fs).await
+                WalBatchFactory::create_batch_serialization_strategy(strategy_type, &cfg, fs).await
             })
         }).collect();
 
@@ -193,7 +207,12 @@ mod tests {
         // All should succeed
         for result in results {
             let strategy = result.expect("Task failed").expect("Strategy creation failed");
-            assert!(strategy.strategy_name() == "AvroBatch" || strategy.strategy_name() == "BincodeBatch");
+            let name = strategy.strategy_name();
+            assert!(
+                name == "AvroBatch" || 
+                name == "BincodeBatch" ||
+                name == "ProtoBatch"
+            );
         }
     }
 

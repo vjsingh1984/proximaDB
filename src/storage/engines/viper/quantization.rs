@@ -282,8 +282,8 @@ impl QuantizationLevel {
                         bits_per_element
                     ))
                 } else if let Some(size) = codebook_size {
-                    if *size == 0 || *size > 65535 {
-                        Err(anyhow!("Codebook size must be 1-65535, got {}", size))
+                    if *size == 0 {
+                        Err(anyhow!("Codebook size must be at least 1, got {}", size))
                     } else {
                         Ok(())
                     }

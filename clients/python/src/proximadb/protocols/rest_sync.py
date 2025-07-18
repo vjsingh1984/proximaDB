@@ -300,12 +300,9 @@ class ProximaDBClient:
     
     def get_collection(self, collection_id: str) -> Collection:
         """Get collection metadata"""
-        # Use unified API endpoint
-        unified_request = {
-            "operation": "get",
-            "collection_id": collection_id
-        }
-        response = self._make_request("POST", "/api/v1/collection", json=unified_request)
+        # Use the updated GET endpoint
+        logger.debug(f"Collection get request to GET /api/v1/collection/{collection_id}")
+        response = self._make_request("GET", f"/api/v1/collection/{collection_id}")
         response_data = response.json()
         
         # Handle unified API response format
@@ -340,12 +337,9 @@ class ProximaDBClient:
     
     def list_collections(self) -> List[Collection]:
         """List all collections"""
-        # Use unified API endpoint
-        unified_request = {
-            "operation": "list"
-        }
-        logger.debug(f"Collection list request: {unified_request}")
-        response = self._make_request("POST", "/api/v1/collection", json=unified_request)
+        # Use the updated GET endpoint
+        logger.debug(f"Collection list request to GET /api/v1/collections")
+        response = self._make_request("GET", "/api/v1/collections")
         response_data = response.json()
         # Handle wrapped response format: {"success": True, "data": {"collections": [...]}}
         if "data" in response_data and "collections" in response_data["data"]:
@@ -358,12 +352,9 @@ class ProximaDBClient:
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
-        # Use unified API endpoint
-        unified_request = {
-            "operation": "delete",
-            "collection_id": collection_id
-        }
-        response = self._make_request("POST", "/api/v1/collection", json=unified_request)
+        # Use standard REST DELETE endpoint
+        logger.debug(f"Collection delete request to DELETE /api/v1/collection/{collection_id}")
+        response = self._make_request("DELETE", f"/api/v1/collection/{collection_id}")
         return response.json().get("success", False)
     
     def get_collection_stats(self, collection_id: str) -> CollectionStats:
@@ -426,8 +417,8 @@ class ProximaDBClient:
         # Convert response to BatchResult
         resp_data = response.json()
         return BatchResult(
-            total=resp_data.get('total', len(vectors)),
-            success=resp_data.get('success', len(vectors)),
+            total=resp_data.get('total', 1),
+            success=resp_data.get('success', 1),
             failed=resp_data.get('failed', 0),
             errors=resp_data.get('errors', []),
             duration_ms=resp_data.get('duration_ms', 0.0)
@@ -707,11 +698,22 @@ class ProximaDBClient:
     
     def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
         """Delete a single vector"""
+        # Use batch delete endpoint with single vector ID
+        request_data = {"ids": [vector_id]}
+        
         response = self._make_request(
             "DELETE",
-            f"/collections/{collection_id}/vectors/{vector_id}"
+            f"/api/v1/vectors/{collection_id}",
+            json=request_data
         )
-        return DeleteResult(**response.json())
+        response_data = response.json()
+        
+        # Convert VectorOperationResponse to DeleteResult
+        return DeleteResult(
+            success=response_data.get("success", False),
+            deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
+            errors=[]
+        )
     
     def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
         """Delete multiple vectors"""
@@ -719,10 +721,17 @@ class ProximaDBClient:
         
         response = self._make_request(
             "DELETE",
-            f"/collections/{collection_id}/vectors",
+            f"/api/v1/vectors/{collection_id}",
             json=request_data
         )
-        return DeleteResult(**response.json())
+        response_data = response.json()
+        
+        # Convert VectorOperationResponse to DeleteResult
+        return DeleteResult(
+            success=response_data.get("success", False),
+            deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
+            errors=[]
+        )
     
     def get_vector(
         self,
@@ -740,7 +749,7 @@ class ProximaDBClient:
         try:
             response = self._make_request(
                 "GET",
-                f"/collections/{collection_id}/vectors/{vector_id}",
+                f"/api/v1/vector/get/{collection_id}/{vector_id}",
                 params=params
             )
             return response.json()

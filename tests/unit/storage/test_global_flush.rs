@@ -59,7 +59,7 @@ async fn populate_memtable_with_collections(
     for (collection_id, count, size_per_vector) in collection_configs {
         let vectors = create_sized_vector_records(collection_id, count, size_per_vector);
         let batch = create_test_wal_batch(collection_id, vectors);
-        memtable.add_wal_batch(batch).await?;
+        memtable.add_wal_batch("test_collection", batch).await?;
     }
     Ok(())
 }
@@ -191,7 +191,7 @@ async fn test_global_flush_many_small_collections() -> Result<()> {
         let collection_id = format!("small_collection_{}", i);
         let vectors = create_sized_vector_records(&collection_id, 100, 500);
         let batch = create_test_wal_batch(&collection_id, vectors);
-        memtable.add_wal_batch(batch).await?;
+        memtable.add_wal_batch("test_collection", batch).await?;
         collections.push(collection_id);
     }
     

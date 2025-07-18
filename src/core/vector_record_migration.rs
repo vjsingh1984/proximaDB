@@ -48,7 +48,6 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, collection_id: &str) -> Pro
 
     ProtoVectorRecord {
         id: if avro_record.id.is_empty() { None } else { Some(avro_record.id.clone()) },
-        collection_id: collection_id.to_string(),
         vector: avro_record.vector.clone(),
         metadata,
         timestamp: avro_record.timestamp,
@@ -156,7 +155,6 @@ mod tests {
 
         let proto_record = ProtoVectorRecord {
             id: Some("test-vector-1".to_string()),
-            collection_id: "test-collection".to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata,
             timestamp: 1640995200000000,

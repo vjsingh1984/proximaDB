@@ -12,7 +12,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm, SearchResult as AlgoSearchResult};
 use crate::compute::DistanceMetric;
 use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
-use crate::index::axis::strategy::IndexType;
+use crate::index::axis::types::{DataType, IndexSpecification, IndexAlgorithm};
 use super::manager::AxisManager;
 
 /// HNSW configuration for AXIS integration
@@ -350,7 +350,6 @@ impl PartitionedHnswIndex {
                     // TODO: Add method to HNSWIndex to get vector by ID
                     let vector_record = VectorRecord {
                         id: Some(result.vector_id),
-                        collection_id: "".to_string(), // TODO: Track collection
                         vector: vec![], // TODO: Get actual vector
                         metadata: result.metadata
                             .unwrap_or_default()
@@ -479,11 +478,28 @@ impl AxisManager {
     ) -> Result<()> {
         tracing::info!("Enabling HNSW indexing for collection {}", collection_id);
         
-        // Update collection strategy to include HNSW
+        // Update collection strategy to include HNSW index
         let collection_id_str = collection_id.to_string();
         if let Ok(mut strategy) = self.get_collection_strategy(&collection_id_str).await {
-            if !strategy.secondary_indexes.contains(&IndexType::HNSW) {
-                strategy.secondary_indexes.push(IndexType::HNSW);
+            // Check if we already have a dense vector index
+            let has_vector_index = strategy.indexes.iter()
+                .any(|spec| matches!(spec.data_type, DataType::DenseVector { .. }));
+            
+            if !has_vector_index {
+                use crate::index::axis::types::{IndexSpecification, IndexAlgorithm};
+                // Add HNSW index for dense vectors
+                strategy.indexes.push(IndexSpecification {
+                    data_type: DataType::DenseVector { dimension: 128 }, // Default dimension
+                    algorithm: IndexAlgorithm::HNSW {
+                        m: 16,
+                        ef_construction: 200,
+                        ef_search: 50,
+                        max_elements: 1_000_000,
+                    },
+                    name: Some("hnsw_vector".to_string()),
+                    is_primary: true,
+                    selectivity_threshold: None,
+                });
                 self.update_collection_strategy(&collection_id_str, strategy).await?;
             }
         }
@@ -520,7 +536,6 @@ mod tests {
         
         VectorRecord {
             id: Some(id.to_string()),
-            collection_id: "test_collection".to_string(),
             vector,
             metadata,
             timestamp: chrono::Utc::now().timestamp_millis(),

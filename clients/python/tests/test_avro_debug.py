@@ -121,24 +121,22 @@ def test_avro_serialization():
             "metadata": {"test": "value"}
         }]
         
-        # Call the internal method directly to see the Avro data
-        avro_data = client._create_avro_vector_batch(vectors, collection_name)
-        print(f"✅ Avro data created: {len(avro_data)} bytes")
-        
-        # Try to deserialize what we created
-        bytes_reader = BytesIO(avro_data)
-        decoder = avro.io.BinaryDecoder(bytes_reader)
-        reader = avro.io.DatumReader(schema)
-        
+        # Modern proto-first approach: create proto vector batch
         try:
-            result = reader.read(decoder)
-            print(f"✅ Our Avro data deserializes correctly")
-            vec = result['vectors'][0]
-            print(f"   ID: {vec['id']}")
-            print(f"   Collection: {vec['collection_id']}")
-            print(f"   Timestamp: {vec['timestamp']} (type: {type(vec['timestamp'])})")
+            proto_vectors = client._create_proto_vector_batch(vectors, collection_name)
+            print(f"✅ Proto vectors created: {len(proto_vectors)} records")
+            
+            # Inspect the proto structure
+            if proto_vectors:
+                first_vec = proto_vectors[0]
+                print(f"   ID: {first_vec.id}")
+                print(f"   Collection: {first_vec.collection_id}")
+                print(f"   Vector length: {len(first_vec.vector)}")
+                print(f"   Timestamp: {first_vec.timestamp}")
+                print(f"   Proto type: {type(first_vec)}")
+                
         except Exception as e:
-            print(f"❌ Our Avro data doesn't deserialize: {e}")
+            print(f"❌ Exception during proto creation: {e}")
         
         # Now try the actual insert
         response = client.insert_vectors(collection_name, vectors)

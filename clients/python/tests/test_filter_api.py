@@ -4,6 +4,7 @@ Test the enhanced filter API for complex metadata queries
 
 import pytest
 import numpy as np
+import time
 from proximadb import (
     ProximaDBClient, 
     FilterBuilder,

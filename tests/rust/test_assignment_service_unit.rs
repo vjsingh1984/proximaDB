@@ -102,7 +102,7 @@ mod assignment_service_tests {
         
         // Create test collection directories with files
         let collection_dirs = vec![
-            (format!("{}/test_collection_1", base_path), vec!["data.avro", "checkpoint.bincode"]),
+            (format!("{}/test_collection_1", base_path), vec!["data.avwal", "checkpoint.bcwal"]),
             (format!("{}/test_collection_2", base_path), vec!["vectors.parquet", "index.sst"]),
             (format!("{}/invalid_collection", base_path), vec!["readme.txt"]), // Should be ignored
         ];
@@ -162,7 +162,7 @@ mod assignment_service_tests {
         
         // Create test collections for each component type
         let test_data = vec![
-            ("wal_collection", vec!["log1.avro", "log2.bincode"]),
+            ("wal_collection", vec!["log1.avwal", "log2.bcwal"]),
             ("storage_collection", vec!["data1.parquet", "data2.sst"]),
             ("index_collection", vec!["index1.idx", "index2.hnsw"]),
         ];

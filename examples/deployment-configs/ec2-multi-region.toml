@@ -6,48 +6,57 @@ port = 8080
 data_dir = "/opt/vectordb/data"
 
 [storage]
-# Multi-disk data storage using URL-based approach
-data_dirs = ["/mnt/nvme0/hot", "/mnt/ssd0/warm", "/mnt/hdd0/cold"]
-wal_dir = "/mnt/nvme0/wal"
+# Single metadata URL on fast NVMe
+metadata_url = "file:///mnt/nvme0/metadata"
+
+# Multi-tier storage locations
+[[storage.storage_locations]]
+url = "file:///mnt/nvme0/hot"
+weight = 10  # Highest weight for ultra-fast NVMe
+tags = ["hot", "nvme", "tier1"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/ssd0/warm"
+weight = 5   # Medium weight for SSD storage
+tags = ["warm", "ssd", "tier2"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/hdd0/cold"
+weight = 1   # Low weight for cold HDD storage
+tags = ["cold", "hdd", "tier3", "archive"]
+
+# Cross-region replication storage (optional)
+[[storage.storage_locations]]
+url = "s3://vectordb-dr-bucket/us-west-2"
+weight = 1   # Disaster recovery
+tags = ["dr", "s3", "cross-region"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "weighted"  # Weighted based on storage tiers
+affinity = true       # Keep collection data together
+
+# High-performance settings for EC2
 mmap_enabled = true
 cache_size_mb = 8192
 bloom_filter_bits = 12
 
-# URL-based WAL configuration with multi-disk distribution
-[storage.wal_config]
-wal_urls = [
-    "file:///mnt/nvme0/wal",      # Ultra-fast NVMe for primary WAL
-    "file:///mnt/ssd0/wal",       # SSD for backup WAL
-    "file:///mnt/hdd0/wal"        # HDD for archive WAL
-]
-distribution_strategy = "LoadBalanced"
-collection_affinity = true
-memory_flush_size_bytes = 1048576
-global_flush_threshold = 2097152
+[storage.lsm_config]
+memtable_size_mb = 256
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+memory_flush_size_bytes = 2097152  # 2MB
+compression = "lz4"  # Fast compression for hot data
 
-# URL-based storage layout
-[storage.storage_layout]
-[[storage.storage_layout.base_paths]]
-base_dir = "file:///mnt/nvme0/storage"
-instance_id = 1
-mount_point = "/mnt/nvme0"
-[storage.storage_layout.base_paths.disk_type]
-NvmeSsd = { max_iops = 400000 }
-[storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 2048
-metadata_reserved_mb = 512
-warning_threshold_percent = 85.0
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
 
-[[storage.storage_layout.base_paths]]
-base_dir = "file:///mnt/ssd0/storage"
-instance_id = 2
-mount_point = "/mnt/ssd0"
-[storage.storage_layout.base_paths.disk_type]
-SataSsd = { max_iops = 16000 }
-[storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 1024
-metadata_reserved_mb = 256
-warning_threshold_percent = 85.0
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
 
 [[storage.storage_layout.base_paths]]
 base_dir = "file:///mnt/hdd0/storage"

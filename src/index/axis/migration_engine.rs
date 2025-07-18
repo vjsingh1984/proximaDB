@@ -11,7 +11,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 
-use super::{IndexStrategy, IndexType, MigrationPriority};
+use super::{
+    MigrationPriority,
+    types::{IndexSelectionStrategy, IndexSpecification, DataType},
+};
 
 
 /// Engine for performing zero-downtime index migrations
@@ -43,8 +46,8 @@ impl std::fmt::Debug for IndexMigrationEngine {
 pub struct MigrationPlan {
     pub migration_id: uuid::Uuid,
     pub collection_id: String,
-    pub from_strategy: IndexStrategy,
-    pub to_strategy: IndexStrategy,
+    pub from_strategy: IndexSelectionStrategy,
+    pub to_strategy: IndexSelectionStrategy,
     pub steps: Vec<MigrationStep>,
     pub estimated_duration: Duration,
     pub priority: MigrationPriority,
@@ -65,7 +68,7 @@ pub struct MigrationStep {
 #[derive(Debug, Clone)]
 pub enum MigrationStepType {
     /// Create new index structure
-    CreateNewIndex { index_type: IndexType },
+    CreateNewIndex { index_spec: IndexSpecification },
 
     /// Copy data from old to new index
     CopyData {
@@ -75,7 +78,7 @@ pub enum MigrationStepType {
 
     /// Build new index (e.g., HNSW graph construction)
     BuildIndex {
-        index_type: IndexType,
+        index_spec: IndexSpecification,
         build_params: IndexBuildParams,
     },
 
@@ -151,7 +154,7 @@ pub struct StateSnapshot {
 /// Index state information
 #[derive(Debug, Clone)]
 pub struct IndexState {
-    pub index_type: IndexType,
+    pub index_spec: IndexSpecification,
     pub vector_count: u64,
     pub last_updated: DateTime<Utc>,
     pub is_active: bool,
@@ -160,8 +163,8 @@ pub struct IndexState {
 /// Traffic distribution between indexes
 #[derive(Debug, Clone)]
 pub struct TrafficDistribution {
-    pub read_distribution: Vec<(IndexType, f32)>,
-    pub write_distribution: Vec<(IndexType, f32)>,
+    pub read_distribution: Vec<(DataType, f32)>,
+    pub write_distribution: Vec<(DataType, f32)>,
 }
 
 /// Migration result
@@ -169,7 +172,7 @@ pub struct TrafficDistribution {
 pub struct MigrationResult {
     pub migration_id: uuid::Uuid,
     pub success: bool,
-    pub new_strategy: IndexStrategy,
+    pub new_strategy: IndexSelectionStrategy,
     pub duration_ms: u64,
     pub vectors_migrated: u64,
     pub performance_improvement: f32,
@@ -213,8 +216,8 @@ pub trait StepExecutor {
 pub struct MigrationContext {
     pub collection_id: String,
     pub migration_id: uuid::Uuid,
-    pub from_strategy: IndexStrategy,
-    pub to_strategy: IndexStrategy,
+    pub from_strategy: IndexSelectionStrategy,
+    pub to_strategy: IndexSelectionStrategy,
     pub progress: Arc<RwLock<MigrationProgress>>,
 }
 
@@ -287,8 +290,8 @@ pub enum MigrationPhase {
 pub struct MigrationHistory {
     pub migration_id: uuid::Uuid,
     pub collection_id: String,
-    pub from_strategy: IndexStrategy,
-    pub to_strategy: IndexStrategy,
+    pub from_strategy: IndexSelectionStrategy,
+    pub to_strategy: IndexSelectionStrategy,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub result: MigrationResult,
@@ -312,8 +315,8 @@ impl IndexMigrationEngine {
     pub async fn execute_migration(
         &self,
         collection_id: &str,
-        from: IndexStrategy,
-        to: IndexStrategy,
+        from: IndexSelectionStrategy,
+        to: IndexSelectionStrategy,
     ) -> Result<MigrationResult> {
         // Acquire resource permit
         let _permit = self.resource_limiter.acquire().await?;
@@ -396,8 +399,8 @@ impl IndexMigrationEngine {
         history.push(MigrationHistory {
             migration_id: plan.migration_id,
             collection_id: collection_id.to_string(),
-            from_strategy: from,
-            to_strategy: to,
+            from_strategy: from.clone(),
+            to_strategy: to.clone(),
             start_time: Utc::now()
                 - chrono::Duration::milliseconds(total_duration.as_millis() as i64),
             end_time: Utc::now(),
@@ -417,20 +420,26 @@ impl IndexMigrationEngine {
     fn create_migration_plan(
         &self,
         collection_id: &str,
-        from: IndexStrategy,
-        to: IndexStrategy,
+        from: IndexSelectionStrategy,
+        to: IndexSelectionStrategy,
     ) -> Result<MigrationPlan> {
         let migration_id = uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
 
         // Step 1: Create new index structures
-        for index_type in &to.secondary_indexes {
-            if !from.secondary_indexes.contains(index_type) {
+        for index_spec in &to.indexes {
+            // Check if this index doesn't exist in the from strategy
+            let exists_in_from = from.indexes.iter().any(|from_spec| {
+                from_spec.data_type == index_spec.data_type && 
+                from_spec.algorithm == index_spec.algorithm
+            });
+            
+            if !exists_in_from {
                 steps.push(MigrationStep {
-                    step_id: format!("create_index_{:?}", index_type),
+                    step_id: format!("create_index_{:?}_{:?}", index_spec.data_type, index_spec.algorithm),
                     step_type: MigrationStepType::CreateNewIndex {
-                        index_type: *index_type,
+                        index_spec: index_spec.clone(),
                     },
                     estimated_duration: Duration::from_secs(10),
                     resource_requirements: ResourceRequirements {
@@ -462,26 +471,34 @@ impl IndexMigrationEngine {
         });
 
         // Step 3: Build new indexes
-        if to.primary_index_type != from.primary_index_type {
-            steps.push(MigrationStep {
-                step_id: "build_primary_index".to_string(),
-                step_type: MigrationStepType::BuildIndex {
-                    index_type: to.primary_index_type,
-                    build_params: IndexBuildParams {
-                        parallel_threads: 8,
-                        memory_limit_mb: 8192,
-                        optimization_level: OptimizationLevel::Balanced,
-                    },
-                },
-                estimated_duration: Duration::from_secs(600),
-                resource_requirements: ResourceRequirements {
-                    cpu_cores: 8.0,
-                    memory_mb: 8192,
-                    disk_mb: 2000,
-                    io_bandwidth_mbps: 50.0,
-                },
-                can_rollback: true,
+        for index_spec in &to.indexes {
+            // Check if we need to build this index (doesn't exist in from strategy)
+            let exists_in_from = from.indexes.iter().any(|from_spec| {
+                from_spec.data_type == index_spec.data_type && 
+                from_spec.algorithm == index_spec.algorithm
             });
+            
+            if !exists_in_from {
+                steps.push(MigrationStep {
+                    step_id: format!("build_index_{:?}_{:?}", index_spec.data_type, index_spec.algorithm),
+                    step_type: MigrationStepType::BuildIndex {
+                        index_spec: index_spec.clone(),
+                        build_params: IndexBuildParams {
+                            parallel_threads: 8,
+                            memory_limit_mb: 8192,
+                            optimization_level: OptimizationLevel::Balanced,
+                        },
+                    },
+                    estimated_duration: Duration::from_secs(600),
+                    resource_requirements: ResourceRequirements {
+                        cpu_cores: 8.0,
+                        memory_mb: 8192,
+                        disk_mb: 2000,
+                        io_bandwidth_mbps: 50.0,
+                    },
+                    can_rollback: true,
+                });
+            }
         }
 
         // Step 4: Verify consistency
@@ -526,8 +543,8 @@ impl IndexMigrationEngine {
         Ok(MigrationPlan {
             migration_id,
             collection_id: collection_id.to_string(),
-            from_strategy: from,
-            to_strategy: to,
+            from_strategy: from.clone(),
+            to_strategy: to.clone(),
             steps,
             estimated_duration,
             priority: MigrationPriority::Medium,
@@ -610,7 +627,7 @@ impl StepExecutor for CreateIndexExecutor {
         step: &MigrationStep,
         _context: &MigrationContext,
     ) -> Result<StepResult> {
-        if let MigrationStepType::CreateNewIndex { index_type: _ } = &step.step_type {
+        if let MigrationStepType::CreateNewIndex { index_spec: _ } = &step.step_type {
             // TODO: Implement actual index creation
             tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -679,7 +696,7 @@ impl StepExecutor for BuildIndexExecutor {
         _context: &MigrationContext,
     ) -> Result<StepResult> {
         if let MigrationStepType::BuildIndex {
-            index_type: _,
+            index_spec: _,
             build_params: _,
         } = &step.step_type
         {

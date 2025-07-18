@@ -3812,6 +3812,7 @@ dependencies = [
  "bincode",
  "blake3",
  "bplustree",
+ "bytes",
  "chrono",
  "clap",
  "config",

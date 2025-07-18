@@ -17,7 +17,6 @@ async fn test_global_partitioned_batch_operations() {
     let now = chrono::Utc::now().timestamp_millis();
     let vector_record1 = VectorRecord {
         id: Some("test_vector_1".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![0.1, 0.2, 0.3],
         metadata: vec![],
         timestamp: now,
@@ -32,7 +31,6 @@ async fn test_global_partitioned_batch_operations() {
 
     let vector_record2 = VectorRecord {
         id: Some("test_vector_2".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![0.4, 0.5, 0.6],
         metadata: vec![],
         timestamp: now,
@@ -47,28 +45,29 @@ async fn test_global_partitioned_batch_operations() {
 
     // Create a batch with multiple vectors
     let batch = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 1, 2),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_record1.clone(), vector_record2.clone()]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
     };
 
-    // Test batch insertion
-    let sequences = memtable.add_wal_batch(batch).await.unwrap();
+    // Test batch insertion with realistic base62 collection ID
+    let collection_id = "1uctd3b"; // 7-char base62 ID (realistic)
+    let sequences = memtable.add_wal_batch(collection_id, batch).await.unwrap();
     assert_eq!(sequences.len(), 2);
     assert_eq!(sequences[0], 1);
     assert_eq!(sequences[1], 2);
 
     // Test collection statistics
-    let (vector_count, size) = memtable.get_collection_stats("collection_a").await;
+    let (vector_count, size) = memtable.get_collection_stats(collection_id).await;
     assert_eq!(vector_count, 2);
     assert!(size > 0);
 
     // Test vector search
     let query_vector = vec![0.1, 0.2, 0.3];
     let results = memtable
-        .search_vectors(&query_vector, 5, "collection_a", CoreDistanceMetric::Cosine)
+        .search_vectors(&query_vector, 5, collection_id, CoreDistanceMetric::Cosine)
         .await
         .unwrap();
     
@@ -85,10 +84,9 @@ async fn test_global_partitioned_multi_collection() {
     
     // Collection A batch
     let batch_a = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 1, 1),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
             id: Some("vec_a1".to_string()),
-            collection_id: "collection_a".to_string(),
             vector: vec![1.0, 0.0, 0.0],
             metadata: vec![],
             timestamp: now,
@@ -107,10 +105,9 @@ async fn test_global_partitioned_multi_collection() {
 
     // Collection B batch
     let batch_b = WalVectorBatch {
-        batch_id: BatchId::new("collection_b".to_string(), 2, 2),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
             id: Some("vec_b1".to_string()),
-            collection_id: "collection_b".to_string(),
             vector: vec![0.0, 1.0, 0.0],
             metadata: vec![],
             timestamp: now,
@@ -127,24 +124,26 @@ async fn test_global_partitioned_multi_collection() {
         is_flushed: false,
     };
 
-    // Insert batches
-    let _seq_a = memtable.add_wal_batch(batch_a).await.unwrap();
-    let _seq_b = memtable.add_wal_batch(batch_b).await.unwrap();
+    // Insert batches into different collections (realistic base62 IDs)
+    let collection_a = "1uctd3a"; // 7-char base62 ID
+    let collection_b = "1uctd3b"; // 7-char base62 ID
+    let _seq_a = memtable.add_wal_batch(collection_a, batch_a).await.unwrap();
+    let _seq_b = memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
 
     // Verify isolation between collections
-    let (count_a, _) = memtable.get_collection_stats("collection_a").await;
-    let (count_b, _) = memtable.get_collection_stats("collection_b").await;
+    let (count_a, _) = memtable.get_collection_stats(collection_a).await;
+    let (count_b, _) = memtable.get_collection_stats(collection_b).await;
     assert_eq!(count_a, 1);
     assert_eq!(count_b, 1);
 
     // Search should only find vectors in the specified collection
     let query = vec![1.0, 1.0, 1.0];
     let results_a = memtable
-        .search_vectors(&query, 10, "collection_a", CoreDistanceMetric::Euclidean)
+        .search_vectors(&query, 10, collection_a, CoreDistanceMetric::Euclidean)
         .await
         .unwrap();
     let results_b = memtable
-        .search_vectors(&query, 10, "collection_b", CoreDistanceMetric::Euclidean)
+        .search_vectors(&query, 10, collection_b, CoreDistanceMetric::Euclidean)
         .await
         .unwrap();
 
@@ -162,7 +161,6 @@ async fn test_mvcc_and_logical_deletes() {
     // Version 1: Insert initial vector
     let vector_v1 = VectorRecord {
         id: Some("test_vector".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![],
         timestamp: now,
@@ -178,7 +176,6 @@ async fn test_mvcc_and_logical_deletes() {
     // Version 2: Update vector with new data
     let vector_v2 = VectorRecord {
         id: Some("test_vector".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![0.0, 1.0, 0.0],
         metadata: vec![],
         timestamp: now,
@@ -194,7 +191,6 @@ async fn test_mvcc_and_logical_deletes() {
     // Version 3: Logical delete (expires_at in past)
     let vector_v3_delete = VectorRecord {
         id: Some("test_vector".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![0.0, 0.0, 1.0], // Doesn't matter for deletes
         metadata: vec![],
         timestamp: now,
@@ -209,7 +205,7 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Insert all versions in separate batches
     let batch1 = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 1, 1),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v1]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -217,7 +213,7 @@ async fn test_mvcc_and_logical_deletes() {
     };
 
     let batch2 = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 2, 2),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v2]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -225,7 +221,7 @@ async fn test_mvcc_and_logical_deletes() {
     };
 
     let batch3 = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 3, 3),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v3_delete]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -233,17 +229,18 @@ async fn test_mvcc_and_logical_deletes() {
     };
 
     // Add batches
-    let _seq1 = memtable.add_wal_batch(batch1).await.unwrap();
-    let _seq2 = memtable.add_wal_batch(batch2).await.unwrap();
-    let _seq3 = memtable.add_wal_batch(batch3).await.unwrap();
+    let collection_id = "1uctd3d"; // 7-char base62 ID (realistic)
+    let _seq1 = memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+    let _seq2 = memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+    let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Test get_vector_by_id - should return None due to logical delete
-    let result = memtable.get_vector_by_id("collection_a", "test_vector").await.unwrap();
+    let result = memtable.get_vector_by_id(collection_id, "test_vector").await.unwrap();
     assert!(result.is_none(), "Vector should be logically deleted");
 
     // Test search - should not find the vector
     let search_results = memtable
-        .search_vectors(&[1.0, 1.0, 1.0], 10, "collection_a", CoreDistanceMetric::Euclidean)
+        .search_vectors(&[1.0, 1.0, 1.0], 10, collection_id, CoreDistanceMetric::Euclidean)
         .await
         .unwrap();
     
@@ -251,7 +248,7 @@ async fn test_mvcc_and_logical_deletes() {
     assert!(!search_results.iter().any(|(_, record)| record.id == Some("test_vector".to_string())));
 
     // Test get_all_vectors - should not include the deleted vector
-    let all_vectors = memtable.get_collection_vectors("collection_a").await.unwrap();
+    let all_vectors = memtable.get_collection_vectors(collection_id).await.unwrap();
     assert!(!all_vectors.iter().any(|record| record.id == Some("test_vector".to_string())));
 }
 
@@ -264,7 +261,6 @@ async fn test_global_partitioned_deletion_via_expiry() {
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {
         id: Some("expired_vec".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![1.0, 2.0, 3.0],
         metadata: vec![],
         timestamp: now_millis,
@@ -280,7 +276,6 @@ async fn test_global_partitioned_deletion_via_expiry() {
     // Create a valid vector
     let valid_vector = VectorRecord {
         id: Some("valid_vec".to_string()),
-        collection_id: "collection_a".to_string(),
         vector: vec![4.0, 5.0, 6.0],
         metadata: vec![],
         timestamp: now_millis,
@@ -294,23 +289,24 @@ async fn test_global_partitioned_deletion_via_expiry() {
     };
 
     let batch = WalVectorBatch {
-        batch_id: BatchId::new("collection_a".to_string(), 1, 2),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![expired_vector, valid_vector]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024,
         is_flushed: false,
     };
 
-    let _sequences = memtable.add_wal_batch(batch).await.unwrap();
+    let collection_id = "1uctd3e"; // 7-char base62 ID (realistic)
+    let _sequences = memtable.add_wal_batch(collection_id, batch).await.unwrap();
 
     // Get all vectors (should filter out expired ones)
-    let all_vectors = memtable.get_collection_vectors("collection_a").await.unwrap();
+    let all_vectors = memtable.get_collection_vectors(collection_id).await.unwrap();
     assert_eq!(all_vectors.len(), 1);
     assert_eq!(all_vectors[0].id, Some("valid_vec".to_string()));
 
     // Search should also filter out expired vectors
     let search_results = memtable
-        .search_vectors(&[1.0, 1.0, 1.0], 10, "collection_a", CoreDistanceMetric::Euclidean)
+        .search_vectors(&[1.0, 1.0, 1.0], 10, collection_id, CoreDistanceMetric::Euclidean)
         .await
         .unwrap();
     assert_eq!(search_results.len(), 1);
@@ -323,7 +319,7 @@ async fn test_global_partitioned_clear_operations() {
     
     // Add some test data
     let batch = WalVectorBatch {
-        batch_id: BatchId::new("test_collection".to_string(), 1, 3),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vec![
             create_test_vector("vec1", "test_collection", vec![1.0, 0.0]),
             create_test_vector("vec2", "test_collection", vec![0.0, 1.0]),
@@ -334,12 +330,16 @@ async fn test_global_partitioned_clear_operations() {
         is_flushed: false,
     };
 
-    let sequences = memtable.add_wal_batch(batch).await.unwrap();
+    let sequences = memtable.add_wal_batch("test_collection", batch).await.unwrap();
     assert_eq!(sequences.len(), 3);
 
-    // Test clear up to sequence
-    let cleared = memtable.clear_collection_up_to("test_collection", 2).await.unwrap();
-    assert_eq!(cleared, 3); // Should clear all 3 since batch sequence range includes up to 3
+    // Mark batches as flushed (simulate successful storage engine flush)
+    // In real usage, this would be done after storage engine confirms flush
+    memtable.mark_all_batches_flushed("test_collection").await.unwrap();
+
+    // Test clear flushed batches
+    let cleared = memtable.clear_flushed_batches("test_collection").await.unwrap();
+    assert_eq!(cleared, 3); // Should clear all 3 vectors from the flushed batch
 
     // Verify collection is now empty
     let (count, _) = memtable.get_collection_stats("test_collection").await;
@@ -351,7 +351,6 @@ fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> Vector
     let now = chrono::Utc::now().timestamp_millis();
     VectorRecord {
         id: Some(id.to_string()),
-        collection_id: collection_id.to_string(),
         vector,
         metadata: vec![],
         timestamp: now,

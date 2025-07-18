@@ -254,11 +254,65 @@ pub struct FilesystemPerformanceConfig {
     pub max_concurrent_ops: usize,
 }
 
+/// File handle trait for streaming operations on large files
+/// Provides async read/write capabilities similar to tokio::fs::File
+#[async_trait]
+pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
+    /// Read data from current position
+    async fn read(&mut self, buf: &mut [u8]) -> FsResult<usize>;
+    
+    /// Write data at current position
+    async fn write(&mut self, buf: &[u8]) -> FsResult<usize>;
+    
+    /// Flush any buffered writes
+    async fn flush(&mut self) -> FsResult<()>;
+    
+    /// Seek to position (if supported)
+    async fn seek(&mut self, pos: u64) -> FsResult<u64>;
+    
+    /// Get current position
+    async fn position(&self) -> FsResult<u64>;
+    
+    /// Get file size
+    async fn file_size(&self) -> FsResult<u64>;
+    
+    /// Sync data to underlying storage
+    async fn sync_all(&mut self) -> FsResult<()>;
+}
+
 /// Abstract filesystem trait for strategy pattern
 #[async_trait]
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Read file contents
     async fn read(&self, path: &str) -> FsResult<Vec<u8>>;
+
+    /// Read specific byte range from file (for efficient cloud storage access)
+    /// Returns the requested bytes. Default implementation reads entire file and slices.
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        // Default implementation for backwards compatibility
+        let data = self.read(path).await?;
+        let start = offset as usize;
+        let end = (offset + length) as usize;
+        
+        if start >= data.len() {
+            return Ok(vec![]);
+        }
+        
+        let end = end.min(data.len());
+        Ok(data[start..end].to_vec())
+    }
+
+    /// Read multiple byte ranges from file in a single operation
+    /// Optimizes for cloud storage by batching requests
+    async fn read_ranges(&self, path: &str, ranges: Vec<std::ops::Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+        // Default implementation calls read_range for each range
+        let mut results = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let length = range.end - range.start;
+            results.push(self.read_range(path, range.start, length).await?);
+        }
+        Ok(results)
+    }
 
     /// Write file contents
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
@@ -391,6 +445,38 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 
     /// Sync/flush operations to storage
     async fn sync(&self) -> FsResult<()>;
+
+    /// Read file as string (UTF-8) - convenience method for text files
+    async fn read_to_string(&self, path: &str) -> FsResult<String> {
+        let bytes = self.read(path).await?;
+        String::from_utf8(bytes)
+            .map_err(|e| FilesystemError::InvalidOperation(format!("Invalid UTF-8: {}", e)))
+    }
+
+    /// Write string to file - convenience method for text files
+    async fn write_string(&self, path: &str, content: &str, options: Option<FileOptions>) -> FsResult<()> {
+        self.write(path, content.as_bytes(), options).await
+    }
+
+    /// Remove directory and all contents recursively
+    async fn remove_dir_all(&self, path: &str) -> FsResult<()> {
+        // Default implementation using list and delete
+        let entries = self.list(path).await?;
+        
+        for entry in entries {
+            if entry.metadata.is_directory {
+                self.remove_dir_all(&entry.path).await?;
+            } else {
+                self.delete(&entry.path).await?;
+            }
+        }
+        
+        self.delete(path).await
+    }
+
+    /// Create a file handle for streaming operations (for large files)
+    /// Returns a file handle that implements AsyncRead + AsyncWrite
+    async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>>;
 }
 
 /// Filesystem factory configuration
@@ -422,6 +508,9 @@ pub struct FilesystemConfig {
 
     /// Performance optimization settings
     pub performance_config: FilesystemPerformanceConfig,
+
+    /// Scheme mapping for URL scheme overrides (e.g., "gs" -> "gcs")
+    pub scheme_mapping: HashMap<String, String>,
 }
 
 impl Default for FilesystemPerformanceConfig {
@@ -456,6 +545,11 @@ impl Default for FilesystemConfig {
             global_options: FileOptions::default(),
             auth_config: None,
             performance_config: FilesystemPerformanceConfig::default(),
+            scheme_mapping: {
+                let mut mapping = HashMap::new();
+                mapping.insert("gs".to_string(), "gcs".to_string()); // Support Google Cloud gs:// scheme
+                mapping
+            },
         }
     }
 }
@@ -523,8 +617,12 @@ impl FilesystemFactory {
 
         // Initialize GCS filesystem
         if let Some(gcs_config) = &self.config.gcs {
-            let gcs_fs = GcsFileSystem::new(gcs_config.clone()).await?;
-            self.filesystems.insert("gcs".to_string(), Box::new(gcs_fs));
+            // Create two instances for both schemes
+            let gcs_fs1 = GcsFileSystem::new(gcs_config.clone()).await?;
+            let gcs_fs2 = GcsFileSystem::new(gcs_config.clone()).await?;
+            // Register under both "gcs" and "gs" schemes for compatibility
+            self.filesystems.insert("gcs".to_string(), Box::new(gcs_fs1));
+            self.filesystems.insert("gs".to_string(), Box::new(gcs_fs2));
         }
 
         // Initialize HDFS filesystem
@@ -621,7 +719,7 @@ impl FilesystemFactory {
                     ));
                 }
             }
-            "gcs" => {
+            "gcs" | "gs" => {
                 // GCS URLs must have bucket name
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
@@ -669,7 +767,7 @@ impl FilesystemFactory {
         let parsed_url = Url::parse(url)?;
         
         match parsed_url.scheme() {
-            "s3" | "gcs" => {
+            "s3" | "gcs" | "gs" => {
                 // Bucket is the hostname
                 Ok(parsed_url.host_str().map(|s| s.to_string()))
             }
@@ -735,7 +833,7 @@ impl FilesystemFactory {
                 info!("    scheme: file, returning path as-is");
                 Ok(path.to_string())
             }
-            "s3" | "gcs" => {
+            "s3" | "gcs" | "gs" => {
                 // For object stores, remove the bucket from path
                 let path_without_bucket = path.trim_start_matches('/');
                 
@@ -798,12 +896,26 @@ impl FilesystemFactory {
     fn extract_scheme(&self, url: &str) -> FsResult<String> {
         if url.contains("://") {
             let parsed = Url::parse(url)?;
-            Ok(parsed.scheme().to_string())
+            let raw_scheme = parsed.scheme().to_string();
+            
+            // Check for scheme mapping (e.g., gs -> gcs)
+            let mapped_scheme = self.config.scheme_mapping
+                .get(&raw_scheme)
+                .unwrap_or(&raw_scheme);
+            
+            Ok(mapped_scheme.clone())
         } else {
             // Use default filesystem for unqualified paths
             if let Some(default_fs) = &self.config.default_fs {
                 let parsed = Url::parse(default_fs)?;
-                Ok(parsed.scheme().to_string())
+                let raw_scheme = parsed.scheme().to_string();
+                
+                // Check for scheme mapping on default filesystem too
+                let mapped_scheme = self.config.scheme_mapping
+                    .get(&raw_scheme)
+                    .unwrap_or(&raw_scheme);
+                
+                Ok(mapped_scheme.clone())
             } else {
                 Ok("file".to_string()) // Default to local filesystem
             }
@@ -1035,6 +1147,11 @@ mod tests {
             factory.extract_scheme("gcs://bucket/object").unwrap(),
             "gcs"
         );
+        // Test gs:// scheme mapping to gcs
+        assert_eq!(
+            factory.extract_scheme("gs://bucket/object").unwrap(),
+            "gcs"
+        );
         assert_eq!(
             factory.extract_scheme("hdfs://namenode:9000/path").unwrap(),
             "hdfs"
@@ -1054,3 +1171,6 @@ mod tests {
         assert_eq!(factory.extract_path("/local/path").unwrap(), "/local/path");
     }
 }
+
+#[cfg(test)]
+mod comprehensive_tests;

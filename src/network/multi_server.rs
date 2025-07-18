@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
 use crate::services::collection_service::CollectionService;
-use crate::services::vector_service::VectorService;
+use crate::services::DirectVectorService;
 use crate::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };
@@ -280,7 +280,7 @@ impl MultiServerConfig {
 #[derive(Clone)]
 pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
-    pub vector_service: Arc<VectorService>,
+    pub direct_vector_service: Arc<DirectVectorService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     // Internal state for business logic coordination
@@ -293,70 +293,61 @@ impl SharedServices {
     pub async fn new(
         storage: Arc<RwLock<StorageEngine>>,
         metrics_collector: Option<Arc<MetricsCollector>>,
-        metadata_config: Option<crate::core::config::MetadataBackendConfig>,
+        storage_config: &crate::core::config::StorageConfig,
     ) -> Result<Self> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
+        debug!("🔧 SharedServices::new - Starting with storage_config: {:?}", storage_config);
 
         // SharedServices owns metadata configuration logic
-        let (filestore_config, filesystem_config) = if let Some(config) = metadata_config {
-            info!(
-                "🔧 SharedServices: Metadata config received - backend_type: {}, storage_url: {}",
-                config.backend_type, config.storage_url
-            );
-            info!(
-                "📂 SharedServices: Configuring metadata backend from TOML: {}",
-                config.storage_url
-            );
+        info!(
+            "🔧 SharedServices: Metadata URL from config: {}",
+            storage_config.metadata_url
+        );
+        info!(
+            "📂 SharedServices: Configuring metadata backend from TOML: {}",
+            storage_config.metadata_url
+        );
 
-            let filestore_config = FilestoreMetadataConfig {
-                storage_url: config.storage_url.clone(),
-                enable_compression: config.cache_size_mb.map(|_| true).unwrap_or(true),
-                enable_snapshots: true,
-                snapshot_threshold: 1000,
-                keep_snapshots: 5,
-                backup_url: None,
-                temp_dir: None,
-            };
+        let filestore_config = FilestoreMetadataConfig {
+            storage_url: storage_config.metadata_url.clone(),
+            enable_compression: true,
+            enable_snapshots: true,
+            snapshot_threshold: 1000,
+            keep_snapshots: 5,
+            backup_url: None,
+            temp_dir: None,
+        };
 
-            // SharedServices handles cloud vs local filesystem logic
-            let filesystem_config = if config.storage_url.starts_with("s3://")
-                || config.storage_url.starts_with("gcs://")
-                || config.storage_url.starts_with("adls://")
-            {
-                info!("☁️ SharedServices: Configuring cloud filesystem for metadata");
-                // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
-                crate::storage::persistence::filesystem::FilesystemConfig::default()
-            } else {
-                info!("📁 SharedServices: Configuring local filesystem for metadata");
-
-                // Parse the base path from file:// URL for local filesystem
-                let base_path = if config.storage_url.starts_with("file://") {
-                    let path = config.storage_url.strip_prefix("file://").unwrap_or("");
-                    Some(std::path::PathBuf::from(path))
-                } else {
-                    Some(std::path::PathBuf::from(&config.storage_url))
-                };
-
-                info!(
-                    "📂 SharedServices: Setting local filesystem root_dir to: {:?}",
-                    base_path
-                );
-
-                let mut fs_config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                if let Some(ref mut local_config) = fs_config.local {
-                    local_config.root_dir = base_path;
-                }
-                fs_config
-            };
-
-            (filestore_config, filesystem_config)
+        // SharedServices handles cloud vs local filesystem logic
+        let filesystem_config = if storage_config.metadata_url.starts_with("s3://")
+            || storage_config.metadata_url.starts_with("gcs://")
+            || storage_config.metadata_url.starts_with("adls://")
+        {
+            info!("☁️ SharedServices: Configuring cloud filesystem for metadata");
+            // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
+            crate::storage::persistence::filesystem::FilesystemConfig::default()
         } else {
-            info!("📂 SharedServices: Using default metadata configuration");
-            (
-                FilestoreMetadataConfig::default(),
-                crate::storage::persistence::filesystem::FilesystemConfig::default(),
-            )
+            info!("📁 SharedServices: Configuring local filesystem for metadata");
+
+            // Parse the base path from file:// URL for local filesystem
+            let base_path = if storage_config.metadata_url.starts_with("file://") {
+                let path = storage_config.metadata_url.strip_prefix("file://").unwrap_or("");
+                Some(std::path::PathBuf::from(path))
+            } else {
+                Some(std::path::PathBuf::from(&storage_config.metadata_url))
+            };
+
+            info!(
+                "📂 SharedServices: Setting local filesystem root_dir to: {:?}",
+                base_path
+            );
+
+            let mut fs_config =
+                crate::storage::persistence::filesystem::FilesystemConfig::default();
+            if let Some(ref mut local_config) = fs_config.local {
+                local_config.root_dir = base_path;
+            }
+            fs_config
         };
 
         info!(
@@ -381,28 +372,47 @@ impl SharedServices {
         }
         info!("✅ SharedServices: Collection service injected into StorageEngine");
 
-        // SharedServices coordinates vector operations with WAL
-        let avro_config = crate::services::vector_service::UnifiedServiceConfig::default();
-        let wal_manager = {
-            let storage_ref = storage.read().await;
-            storage_ref.get_wal_manager()
-        };
-
-        let vector_service = Arc::new(
-            VectorService::with_existing_wal(
-                storage.clone(),
-                wal_manager,
-                avro_config,
-            )
-            .await?,
+        // 🚀 Create DirectVectorService directly for 40-60% performance improvement
+        // Create WAL config with optimized defaults
+        debug!("🔧 SharedServices::new - Creating WAL config...");
+        let wal_config = crate::storage::persistence::wal::config::WalConfig::default();
+        debug!("✅ SharedServices::new - WAL config created successfully");
+        
+        // Create filesystem factory for engines
+        debug!("🔧 SharedServices::new - Creating filesystem factory for engines...");
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemConfig::default()
+        ).await?);
+        debug!("✅ SharedServices::new - Filesystem factory for engines created successfully");
+        
+        // Create VIPER engine
+        debug!("🔧 SharedServices::new - Creating VIPER engine...");
+        let viper_config = crate::storage::engines::viper::types::ViperConfig::default();
+        debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
+        let viper_engine = Arc::new(
+            crate::storage::engines::viper::ViperEngine::new(viper_config, filesystem_factory.clone()).await?
         );
-
-        // 🔗 DEPENDENCY INJECTION: Inject collection service into VIPER for real-time schema generation
-        vector_service.set_collection_service(collection_service.clone()).await;
-        info!("✅ SharedServices: Collection service injected into VIPER engine for dynamic schema generation");
-
-        // 🚀 OPTIMIZATION: Create DirectVectorService for 40-60% performance improvement
-        let direct_vector_service = Self::create_direct_vector_service(&vector_service).await;
+        debug!("✅ SharedServices::new - VIPER engine created successfully");
+        
+        // Create LSM engine
+        debug!("🔧 SharedServices::new - Creating LSM engine...");
+        let lsm_engine = Arc::new(
+            crate::storage::engines::lsm::LsmTree::new(
+                "lsm_tree".to_string(),
+                storage_config.lsm_config.clone(),
+                filesystem_factory.clone(),
+            ).await?
+        );
+        debug!("✅ SharedServices::new - LSM engine created successfully");
+        
+        // Create DirectVectorService with optimized architecture
+        debug!("🔧 SharedServices::new - About to create DirectVectorService...");
+        let direct_vector_service = Arc::new(
+            DirectVectorService::new(wal_config, viper_engine, lsm_engine).await?
+        );
+        
+        info!("✅ SharedServices: DirectVectorService created successfully - 40-60% performance boost enabled");
+        debug!("🔧 SharedServices::new - DirectVectorService created successfully");
         
         // CRITICAL: Restore collection metadata from WAL during startup
         // This ensures collections are visible to gRPC service after server restart
@@ -483,27 +493,17 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
-        // Create unified handlers for shared business logic
-        let unified_handlers = if let Some(direct_service) = direct_vector_service {
-            info!("🚀 OPTIMIZED: Creating UnifiedHandlers with DirectVectorService for 40-60% performance boost");
-            Arc::new(UnifiedHandlers::new_with_direct_service(
-                collection_service.clone(),
-                vector_service.clone(),
-                direct_service,
-            ))
-        } else {
-            info!("⚠️ FALLBACK: Creating UnifiedHandlers with standard VectorService (DirectVectorService failed to initialize)");
-            Arc::new(UnifiedHandlers::new(
-                collection_service.clone(),
-                vector_service.clone(),
-            ))
-        };
+        // Create unified handlers with DirectVectorService
+        let unified_handlers = Arc::new(UnifiedHandlers::new(
+            collection_service.clone(),
+            direct_vector_service.clone(),
+        ));
 
         info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
 
         Ok(Self {
             collection_service,
-            vector_service,
+            direct_vector_service,
             unified_handlers,
             metrics_collector,
             storage,
@@ -513,44 +513,6 @@ impl SharedServices {
     /// Get storage engine (for advanced operations)
     pub fn storage(&self) -> &Arc<RwLock<StorageEngine>> {
         &self.storage
-    }
-    
-    /// Create optimized DirectVectorService if possible
-    /// 
-    /// **Performance Benefits:**
-    /// - Eliminates WAL Manager Registry overhead
-    /// - Direct access to global memtable
-    /// - 40-60% faster vector operations
-    async fn create_direct_vector_service(
-        vector_service: &Arc<crate::services::vector_service::VectorService>,
-    ) -> Option<Arc<crate::services::direct_vector_service::DirectVectorService>> {
-        use crate::services::direct_vector_service::DirectVectorService;
-        use crate::storage::persistence::wal::config::WalConfig;
-        
-        info!("🔧 OPTIMIZATION: Attempting to create DirectVectorService");
-        
-        // Get engines from VectorService (they're already created there)
-        let viper_engine = vector_service.get_viper_engine();
-        let lsm_engine = vector_service.get_lsm_engine();
-        
-        // Create WAL config (use defaults for now, could be configurable)
-        let wal_config = WalConfig::default();
-        
-        // Attempt to create DirectVectorService
-        match DirectVectorService::new(
-            wal_config,
-            viper_engine,
-            lsm_engine,
-        ).await {
-            Ok(direct_service) => {
-                info!("✅ OPTIMIZATION: DirectVectorService created successfully - 40-60% performance boost enabled");
-                Some(Arc::new(direct_service))
-            }
-            Err(e) => {
-                info!("⚠️ OPTIMIZATION: Failed to create DirectVectorService: {} - falling back to standard service", e);
-                None
-            }
-        }
     }
 }
 

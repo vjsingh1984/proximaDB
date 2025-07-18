@@ -17,9 +17,14 @@ import io
 import grpc
 # Removed Avro imports - using pure proto messages for proto-first architecture
 
-from ..proximadb_pb2 import *
-from .. import proximadb_pb2 as pb2
-from .. import proximadb_pb2_grpc as pb2_grpc
+try:
+    from ..proximadb_pb2 import *
+    from .. import proximadb_pb2 as pb2
+    from .. import proximadb_pb2_grpc as pb2_grpc
+except ImportError as e:
+    pb2 = None
+    pb2_grpc = None
+    # Will try again in _connect() method
 from ..exceptions import ProximaDBError
 from ..models import DeleteResult, BatchResult  # Import Pydantic models for return types
 # Note: gRPC client uses proto-generated classes directly - no Pydantic models
@@ -68,6 +73,24 @@ class ProximaDBClient:
     
     def _connect(self):
         """Establish gRPC connection"""
+        global pb2, pb2_grpc
+        
+        # Import proto modules dynamically
+        try:
+            from .. import proximadb_pb2 as pb2_local
+            from .. import proximadb_pb2_grpc as pb2_grpc_local
+            
+            # Check if imports actually contain the expected classes
+            if not hasattr(pb2_grpc_local, 'ProximaDBStub'):
+                raise ProximaDBError(f"pb2_grpc_local is missing ProximaDBStub: {pb2_grpc_local}")
+            if not hasattr(pb2_local, 'DistanceMetric'):
+                raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
+                
+            logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
+        except ImportError as e:
+            logger.error(f"Failed to import proto modules: {e}")
+            raise ProximaDBError(f"Failed to import proto modules: {e}")
+        
         try:
             # Configure message size limits for bulk vector operations (64MB)
             max_message_size = 64 * 1024 * 1024
@@ -82,7 +105,7 @@ class ProximaDBClient:
             else:
                 self.channel = grpc.insecure_channel(self.endpoint, options=options)
             
-            self.stub = pb2_grpc.ProximaDBStub(self.channel)
+            self.stub = pb2_grpc_local.ProximaDBStub(self.channel)
             logger.info(f"Connected to ProximaDB gRPC service at {self.endpoint} (64MB message limit)")
             
         except Exception as e:
@@ -182,14 +205,30 @@ class ProximaDBClient:
         self,
         name: str,
         dimension: int,
-        distance_metric: int = pb2.DistanceMetric.COSINE,
-        indexing_algorithm: int = pb2.IndexingAlgorithm.HNSW,
-        storage_engine: int = pb2.StorageEngine.VIPER,
-        filterable_columns: List[pb2.FilterableColumnSpec] = None,
-        index_configs: List[pb2.IndexConfig] = None,
-        quantization_config: pb2.QuantizationConfig = None
-    ) -> pb2.Collection:
+        distance_metric: int = None,
+        indexing_algorithm: int = None,
+        storage_engine: int = None,
+        filterable_columns: List = None,
+        index_configs: List = None,
+        quantization_config = None
+    ):
         """Create a new collection"""
+        
+        # Ensure pb2 is available
+        if pb2 is None:
+            from .. import proximadb_pb2 as pb2
+        
+        # Set default values if not provided
+        if distance_metric is None:
+            distance_metric = pb2.DistanceMetric.COSINE
+        if indexing_algorithm is None:
+            indexing_algorithm = pb2.IndexingAlgorithm.HNSW
+        if storage_engine is None:
+            storage_engine = pb2.StorageEngine.VIPER
+        if filterable_columns is None:
+            filterable_columns = []
+        if index_configs is None:
+            index_configs = []
         
         # Build CollectionConfig using proto types
         config = pb2.CollectionConfig(
@@ -219,7 +258,7 @@ class ProximaDBClient:
         else:
             raise ProximaDBError("No collection returned in response")
     
-    def get_collection(self, name: str) -> Optional[pb2.Collection]:
+    def get_collection(self, name: str):
         """Get collection by name"""
         
         request = pb2.CollectionRequest(
@@ -238,7 +277,7 @@ class ProximaDBClient:
             return response.collection  # Return proto object directly
         return None
     
-    def list_collections(self) -> List[pb2.Collection]:
+    def list_collections(self):
         """List all collections"""
         
         request = pb2.CollectionRequest(
@@ -269,7 +308,7 @@ class ProximaDBClient:
         
         return True
     
-    async def update_collection(self, name: str, config: pb2.CollectionConfig) -> pb2.Collection:
+    async def update_collection(self, name: str, config):
         """Update collection configuration"""
         
         # Use provided config directly (it's already a proto object)
@@ -293,7 +332,7 @@ class ProximaDBClient:
     
     # Health Check
     
-    def health_check(self) -> pb2.HealthResponse:
+    def health_check(self):
         """Check server health"""
         
         request = pb2.HealthRequest()
@@ -312,7 +351,7 @@ class ProximaDBClient:
         timestamp: Optional[int] = None,
         version: int = 0,
         expires_at: Optional[int] = None
-    ) -> pb2.VectorRecord:
+    ):
         """Create a VectorRecord proto object"""
         record = pb2.VectorRecord(
             vector=vector,
@@ -330,7 +369,7 @@ class ProximaDBClient:
         
         return record
     
-    def _dict_to_metadata_map(self, metadata: Dict[str, Any]) -> pb2.MetadataMap:
+    def _dict_to_metadata_map(self, metadata: Dict[str, Any]):
         """Convert Python dict to proto MetadataMap"""
         meta_map = pb2.MetadataMap()
         
@@ -365,7 +404,7 @@ class ProximaDBClient:
         ids: Optional[List[str]] = None,
         metadata: Optional[List[Dict[str, Any]]] = None,
         upsert: bool = False
-    ) -> pb2.VectorOperationResponse:
+    ):
         """
         Unified vector insertion interface - handles single vectors or batches
         
@@ -454,11 +493,19 @@ class ProximaDBClient:
         
         # Case 1: Already in correct format (List[Dict])
         if isinstance(vectors, list) and vectors and isinstance(vectors[0], dict):
-            if "id" in vectors[0] and "vector" in vectors[0]:
+            if "vector" in vectors[0]:  # Only require "vector" key, "id" is optional
+                # Ensure all dicts have an "id" field (generate if missing)
+                import uuid
+                for i, vector_dict in enumerate(vectors):
+                    if "id" not in vector_dict or not vector_dict["id"]:
+                        vector_dict["id"] = f"vec_{uuid.uuid4().hex[:8]}"
                 return vectors
         
         # Case 2: Single dict vector
-        if isinstance(vectors, dict) and "id" in vectors and "vector" in vectors:
+        if isinstance(vectors, dict) and "vector" in vectors:
+            # Ensure it has an "id" field (generate if missing)
+            if "id" not in vectors or not vectors["id"]:
+                vectors["id"] = f"vec_{uuid.uuid4().hex[:8]}"
             return [vectors]
         
         # Case 3: Raw vector data - List[List[float]] or List[float]
@@ -499,7 +546,7 @@ class ProximaDBClient:
         vector: List[float],
         metadata: Optional[Dict[str, Any]] = None,
         upsert: bool = False
-    ) -> pb2.VectorOperationResponse:
+    ):
         """
         Insert a single vector (convenience method)
         
@@ -529,8 +576,8 @@ class ProximaDBClient:
         metadata_filters: Optional[Union[Dict[str, Any], Any]] = None,  # Dict or FilterBuilder
         include_metadata: bool = True,
         include_vectors: bool = False,
-        search_params: Optional[pb2.SearchParameters] = None
-    ) -> pb2.VectorOperationResponse:
+        search_params = None
+    ):
         """
         Search for similar vectors
         
@@ -634,7 +681,7 @@ class ProximaDBClient:
         
         return self.insert_vectors(collection_id, [vector_dict], upsert=True)
     
-    def delete_vector(self, collection_id: str, vector_id: str) -> pb2.VectorOperationResponse:
+    def delete_vector(self, collection_id: str, vector_id: str):
         """
         Delete a vector using expires_at mechanism
         
@@ -661,9 +708,9 @@ class ProximaDBClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True
-    ) -> Optional[pb2.SearchResult]:
+    ):
         """
-        Get a single vector by ID using search
+        Get a single vector by ID using VectorGet RPC
         
         Args:
             collection_id: Collection name/ID
@@ -674,9 +721,6 @@ class ProximaDBClient:
         Returns:
             SearchResult proto or None if not found
         """
-        # Create search query by ID
-        query = pb2.SearchQuery(id=vector_id)
-        
         # Create include fields
         include_fields = pb2.IncludeFields(
             vector=include_vector,
@@ -685,35 +729,29 @@ class ProximaDBClient:
             rank=True
         )
         
-        # Create search request
-        request = pb2.VectorSearchRequest(
+        # Create vector get request
+        request = pb2.VectorGetRequest(
             collection_id=collection_id,
-            queries=[query],
-            top_k=1,
+            vector_id=vector_id,
             include_fields=include_fields
         )
         
         try:
-            response = self._call_with_timeout(self.stub.VectorSearch, request)
+            response = self._call_with_timeout(self.stub.VectorGet, request)
             
             if response.success:
-                # Check for results
-                if hasattr(response, 'compact_results') and response.compact_results.results:
-                    return response.compact_results.results[0]
-                # Could also handle avro_results if needed
+                # Check for results in compact format
+                if hasattr(response, 'result_payload') and response.result_payload:
+                    if hasattr(response.result_payload, 'compact_results'):
+                        compact_results = response.result_payload.compact_results
+                        if compact_results.results:
+                            return compact_results.results[0]
                 
             return None
             
         except grpc.RpcError as e:
             logger.error(f"gRPC error during vector get: {e}")
             return None
-            return {
-                "id": result.id,
-                "vector": result.vector,
-                "metadata": result.metadata,
-                "score": result.score
-            }
-        return None
     
     async def update_collection(
         self,
@@ -970,7 +1008,8 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Transactions not implemented on server yet")
 
-    def _create_proto_vector_batch(self, vectors: List[Dict[str, Any]], collection_id: str) -> List[pb2.VectorRecord]:
+    
+    def _create_proto_vector_batch(self, vectors: List[Dict[str, Any]], collection_id: str):
         """
         Create pure proto VectorRecord messages for proto-first architecture
         

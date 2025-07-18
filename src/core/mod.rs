@@ -17,6 +17,9 @@ pub mod storage_layout;
 // vector_record_adapter removed - proto-first architecture everywhere
 pub mod proto_metadata_helper;
 
+#[cfg(test)]
+mod config_tests;
+
 // Legacy modules removed - using avro_unified as single source of truth
 
 pub use config::*;
@@ -35,7 +38,7 @@ pub use avro_unified::{
     CollectionResponse, CompactionConfig, CompactionStrategy, CompressionAlgorithm,
     DistanceMetric, FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm,
     MetadataFilter, MetricsResponse, NodeId, OperationResponse, SearchContext,
-    SearchDebugInfo, SearchMetadata, SearchResult, SearchResultsBinary, SearchStrategy,
+    SearchDebugInfo, SearchMetadata, SearchResultsBinary, SearchStrategy,
     ServiceMetrics,
     StorageEngine, String, Vector, VectorId, VectorInsertRequest, VectorInsertResponse,
     VectorOperation, VectorOperationMetrics, VectorSearchRequest, VectorSearchResponse,

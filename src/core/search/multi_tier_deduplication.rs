@@ -311,7 +311,6 @@ mod tests {
         let compacted_result = TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],
                 timestamp: now.timestamp_millis(),
@@ -335,7 +334,6 @@ mod tests {
         let flushed_result = TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.1, 2.1, 3.1],
                 metadata: vec![],
                 timestamp: now.timestamp_millis(),
@@ -359,7 +357,6 @@ mod tests {
         let unflushed_result = TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.2, 2.2, 3.2],
                 metadata: vec![],
                 timestamp: now.timestamp_millis(),
@@ -400,7 +397,6 @@ mod tests {
         let unflushed_v1 = TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],
                 timestamp: now.timestamp_millis(),
@@ -423,7 +419,6 @@ mod tests {
         let unflushed_v2 = TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.1, 2.1, 3.1],
                 metadata: vec![],
                 timestamp: now.timestamp_millis(),

@@ -43,7 +43,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_rest(self, rest_client, collection_name):
         """Test complete collection lifecycle via REST"""
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_rest",  # Minimum 8 characters
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="REST test collection"
@@ -73,7 +73,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_grpc(self, grpc_client, collection_name):
         """Test complete collection lifecycle via gRPC"""
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_grpc",  # Minimum 8 characters
             dimension=256,
             distance_metric=DistanceMetric.DOT_PRODUCT,
             description="gRPC test collection"
@@ -97,7 +97,7 @@ class TestCollectionCRUD:
     def test_cross_protocol_operations(self, rest_client, grpc_client, collection_name):
         """Test collection operations across REST and gRPC protocols"""
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_rest",  # Minimum 8 characters
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Cross-protocol test collection"
@@ -142,7 +142,7 @@ class TestCollectionConfiguration:
     def test_basic_collection_config(self):
         """Test basic collection configuration"""
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_basic",  # Minimum 8 characters
             dimension=768,
             distance_metric=DistanceMetric.COSINE)
         assert config.dimension == 768
@@ -157,7 +157,7 @@ class TestCollectionConfiguration:
         )
         
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_advanced",  # Minimum 8 characters
             dimension=384,
             distance_metric=DistanceMetric.EUCLIDEAN,
             storage_engine=StorageEngine.VIPER,
@@ -229,7 +229,7 @@ class TestCollectionConfiguration:
         }
         
         config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_metadata",  # Minimum 8 characters
             dimension=512,
             metadata_schema=metadata_schema,
             filterable_metadata_fields=["category", "timestamp"]
@@ -273,7 +273,7 @@ class TestCollectionValidation:
         """Test dimension validation"""
         # Valid dimensions
         valid_config = CollectionConfig(
-            name="test_collection",
+            name="test_collection_valid",  # Minimum 8 characters
             dimension=128,
             distance_metric=DistanceMetric.COSINE)
         assert valid_config.dimension == 128
@@ -281,13 +281,13 @@ class TestCollectionValidation:
         # Invalid dimensions should raise validation errors
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
-                name="test_collection",
+                name="test_collection_invalid",  # Minimum 8 characters
                 dimension=0,  # Invalid dimension
                 distance_metric=DistanceMetric.COSINE)
         
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
-                name="test_collection",
+                name="test_collection_toolarge",  # Minimum 8 characters
                 dimension=10001,  # Too large
                 distance_metric=DistanceMetric.COSINE)
     

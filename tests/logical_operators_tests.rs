@@ -37,7 +37,6 @@ mod tests {
         
         VectorRecord {
             id: Some(id.to_string()),
-            collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: metadata_items,
             timestamp: Utc::now().timestamp_millis(),

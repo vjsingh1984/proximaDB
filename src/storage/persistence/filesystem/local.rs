@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult};
+use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// Local filesystem configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,5 +359,12 @@ impl FileSystem for LocalFileSystem {
         // For local filesystem, sync is handled at the file level
         // This is a no-op for the filesystem as a whole
         Ok(())
+    }
+
+    async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }

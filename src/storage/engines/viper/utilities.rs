@@ -339,8 +339,8 @@ pub struct DataPartitioner {
     /// Partitioning configuration
     config: PartitioningConfig,
 
-    /// ML models for clustering
-    clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
+    // ML models for clustering moved to AXIS
+    // clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
 
     /// Partition metadata
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
@@ -384,17 +384,17 @@ pub enum ClusteringAlgorithm {
     AdaptiveKMeans,
 }
 
-/// ML model for clustering
-#[derive(Debug)]
-pub struct ClusteringModel {
-    pub model_id: String,
-    pub collection_id: String,
-    pub algorithm: ClusteringAlgorithm,
-    pub cluster_count: usize,
-    pub centroids: Vec<Vec<f32>>,
-    pub accuracy: f32,
-    pub trained_at: DateTime<Utc>,
-}
+// ML model for clustering moved to AXIS
+// #[derive(Debug)]
+// pub struct ClusteringModel {
+//     pub model_id: String,
+//     pub collection_id: String,
+//     pub algorithm: ClusteringAlgorithm,
+//     pub cluster_count: usize,
+//     pub centroids: Vec<Vec<f32>>,
+//     pub accuracy: f32,
+//     pub trained_at: DateTime<Utc>,
+// }
 
 /// Partition metadata
 #[derive(Debug, Clone)]
@@ -792,7 +792,7 @@ impl DataPartitioner {
     async fn new(_config: PartitioningConfig) -> Result<Self> {
         Ok(Self {
             config: _config,
-            clustering_models: Arc::new(RwLock::new(HashMap::new())),
+            // clustering_models: Arc::new(RwLock::new(HashMap::new())), // Moved to AXIS
             partition_metadata: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(PartitioningStats::default())),
         })

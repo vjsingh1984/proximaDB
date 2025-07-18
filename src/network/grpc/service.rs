@@ -13,10 +13,10 @@ use crate::proto::proximadb::{
     CollectionOperation, CollectionRequest, CollectionResponse, HealthRequest, HealthResponse,
     MetricsRequest, MetricsResponse, OperationMetrics, ResultMetadata, SearchResult,
     SearchResultsCompact, VectorBatchRequest, VectorOperation,
-    VectorOperationResponse, VectorSearchRequest,
+    VectorOperationResponse, VectorSearchRequest, VectorGetRequest,
 };
 use crate::services::collection_service::CollectionService;
-use crate::services::vector_service::VectorService;
+use crate::services::direct_vector_service::DirectVectorService;
 // Removed uuid import - no longer auto-generating vector IDs
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
@@ -32,51 +32,23 @@ use crate::core::{
 /// - Vector mutations: Regular gRPC for flexibility
 /// - Vector search: Smart payload selection (compact gRPC vs Avro binary)
 pub struct ProximaDbGrpcService {
-    avro_service: Arc<VectorService>,
+    direct_vector_service: Arc<DirectVectorService>,
     collection_service: Arc<CollectionService>,
 }
 
 impl ProximaDbGrpcService {
-    pub async fn new(storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>) -> Self {
-        info!("🚀 Creating ProximaDbGrpcService v1 with zero-copy optimization (default config)");
-
-        // Use default configuration for backward compatibility
-        let metadata_config = None;
-        Self::new_with_config(storage, metadata_config).await
+    // Legacy constructors - deprecated in favor of new_with_services
+    // These constructors are kept for backward compatibility but should not be used
+    // All services should be created via SharedServices in multi_server.rs
+    pub async fn new(_storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>) -> Self {
+        panic!("ProximaDbGrpcService::new is deprecated. Use new_with_services with SharedServices instead");
     }
 
     pub async fn new_with_config(
-        storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>,
-        metadata_config: Option<crate::core::config::MetadataBackendConfig>,
+        _storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>,
+        _metadata_config: Option<crate::core::config::MetadataBackendConfig>,
     ) -> Self {
-        info!("🚀 Creating ProximaDbGrpcService v1 with configurable metadata backend");
-
-        let avro_config = crate::services::vector_service::UnifiedServiceConfig::default();
-
-        // Extract WAL manager from storage to ensure both insertion and search use the same WAL
-        let wal_manager = {
-            let storage_ref = storage.read().await;
-            storage_ref.get_wal_manager()
-        };
-
-        // Create CollectionService with configured metadata backend
-        let collection_service = Self::create_collection_service(metadata_config).await;
-
-        // Create VectorService with shared WAL manager
-        let avro_service = Arc::new(
-            crate::services::vector_service::VectorService::with_existing_wal(
-                storage,
-                wal_manager,
-                avro_config,
-            )
-            .await
-            .expect("Failed to create VectorService"),
-        );
-
-        Self {
-            avro_service,
-            collection_service,
-        }
+        panic!("ProximaDbGrpcService::new_with_config is deprecated. Use new_with_services with SharedServices instead");
     }
 
     async fn create_collection_service(
@@ -146,12 +118,15 @@ impl ProximaDbGrpcService {
         )
     }
 
+    // Removed create_direct_vector_service - DirectVectorService is now created in SharedServices
+    // This ensures consistent service creation across all protocols
+
     /// Create gRPC service with pre-initialized shared services (multi-server pattern)
     pub async fn new_with_services(services: crate::network::multi_server::SharedServices) -> Self {
         info!("🚀 Creating ProximaDbGrpcService with shared services (multi-server pattern)");
 
         Self {
-            avro_service: services.vector_service,
+            direct_vector_service: services.direct_vector_service,
             collection_service: services.collection_service,
         }
     }
@@ -620,7 +595,7 @@ impl ProximaDb for ProximaDbGrpcService {
         );
 
         let result = self
-            .avro_service
+            .direct_vector_service
             .handle_vector_batch_proto_vec(
                 &req.collection_id,
                 req.vectors,
@@ -804,20 +779,59 @@ impl ProximaDb for ProximaDbGrpcService {
                 None
             };
             
-            info!("🚀 gRPC: Using native typed search with quantization={:?}", search_params.quantization_hint);
-            self.avro_service
-                .search_vectors_polymorphic(
+            info!("🚀 gRPC: Using DirectVectorService unified search");
+            
+            // Use DirectVectorService with full capabilities: metadata filtering, distance metrics, unified distance
+            
+            // Create search params with distance metric override if provided
+            let search_params = if req.distance_metric_override.is_some() {
+                let dm = req.distance_metric_override.unwrap();
+                let distance_metric = match dm {
+                    1 => Some(crate::compute::distance::DistanceMetric::Euclidean),
+                    2 => Some(crate::compute::distance::DistanceMetric::DotProduct),
+                    _ => Some(crate::compute::distance::DistanceMetric::Cosine),
+                };
+                Some(crate::core::search::SearchParams {
+                    top_k: Some(req.top_k as usize),
+                    distance_metric,
+                    filters: metadata_filters.clone(),
+                    ..Default::default()
+                })
+            } else {
+                None // Will use collection's default
+            };
+            
+            // Enhanced DirectVectorService search with metadata predicates and unified distance
+            // Pass Cosine as fallback, but search_params will override if present
+            let search_results = self.direct_vector_service
+                .search_vectors_unified(
                     &req.collection_id,
                     &req.queries[0].vector,
                     req.top_k as usize,
-                    &search_params,
+                    crate::compute::distance::DistanceMetric::Cosine, // Fallback, will be overridden
+                    search_params.as_ref(),
                     metadata_filters.as_ref(),
                     include_vectors,
                     include_metadata,
                 )
-                .instrument(span!(Level::DEBUG, "grpc_polymorphic_search"))
+                .instrument(span!(Level::DEBUG, "grpc_enhanced_search"))
                 .await
-                .map_err(|e| Status::internal(format!("Search failed: {}", e)))?
+                .map_err(|e| Status::internal(format!("Enhanced search failed: {}", e)))?;
+            
+            // Convert to bytes format preserving unified distance scores
+            serde_json::to_vec(&serde_json::json!({
+                "results": search_results.iter().map(|result| {
+                    serde_json::json!({
+                        "id": result.id,
+                        "score": result.score, // Unified distance score
+                        "distance": result.distance, // Raw distance value
+                        "vector": if include_vectors { Some(&result.vector) } else { None },
+                        "metadata": if include_metadata { Some(&result.metadata) } else { None },
+                        "rank": result.rank,
+                        "algorithm_used": result.debug_info.as_ref().map(|d| d.algorithm.as_str())
+                    })
+                }).collect::<Vec<_>>()
+            })).map_err(|e| Status::internal(format!("Serialization failed: {}", e)))?
         } else {
             // Multi-query - process each query with optimized search and combine
             info!("🚀 gRPC: Using storage-aware search for multi-query request");
@@ -890,7 +904,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     index + 1, req.queries.len(), query_params.quantization_hint);
                 
                 // Extract metadata filters from this specific query
-                let metadata_filters = if let Some(metadata_filter) = &query.metadata_filter {
+                let metadata_filters: Option<std::collections::HashMap<String, serde_json::Value>> = if let Some(metadata_filter) = &query.metadata_filter {
                     // Convert MetadataFilter to HashMap<String, Value>
                     // For now, just return None as proper conversion is complex
                     None
@@ -898,13 +912,45 @@ impl ProximaDb for ProximaDbGrpcService {
                     None
                 };
                 
-                let query_result = self
-                    .avro_service
-                    .search_vectors_polymorphic(
+                // Extract metadata filters from query
+                let metadata_filters = if query.metadata_filter.as_ref().map_or(true, |f| f.conditions.is_empty()) {
+                    None
+                } else {
+                    // Convert proto MetadataFilter to HashMap
+                    let mut filters = std::collections::HashMap::new();
+                    if let Some(metadata_filter) = &query.metadata_filter {
+                        for condition in &metadata_filter.conditions {
+                        if let Some(value) = &condition.value {
+                            match &value.value {
+                                Some(crate::proto::proximadb::metadata_value::Value::StringValue(s)) => {
+                                    filters.insert(condition.field_name.clone(), serde_json::Value::String(s.clone()));
+                                }
+                                Some(crate::proto::proximadb::metadata_value::Value::IntValue(i)) => {
+                                    filters.insert(condition.field_name.clone(), serde_json::Value::Number(serde_json::Number::from(*i)));
+                                }
+                                Some(crate::proto::proximadb::metadata_value::Value::DoubleValue(d)) => {
+                                    filters.insert(condition.field_name.clone(), serde_json::json!(*d));
+                                }
+                                Some(crate::proto::proximadb::metadata_value::Value::BoolValue(b)) => {
+                                    filters.insert(condition.field_name.clone(), serde_json::Value::Bool(*b));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    }
+                    if filters.is_empty() { None } else { Some(filters) }
+                };
+
+                // Use DirectVectorService unified search with full capabilities
+                let search_results = self
+                    .direct_vector_service
+                    .search_vectors_unified(
                         &req.collection_id,
                         &query.vector,
                         req.top_k as usize,
-                        &query_params,
+                        crate::proto::proximadb::DistanceMetric::Cosine, // Default to cosine
+                        None, // search_params
                         metadata_filters.as_ref(),
                         include_vectors,
                         include_metadata,
@@ -919,7 +965,22 @@ impl ProximaDb for ProximaDbGrpcService {
                         Status::internal(format!("Multi-query search {} failed: {}", index, e))
                     })?;
 
-                all_results.push(query_result);
+                // Convert search results to JSON format for compatibility
+                let query_json = serde_json::json!({
+                    "results": search_results.iter().map(|result| {
+                        serde_json::json!({
+                            "id": result.id,
+                            "score": result.score,
+                            "vector": if include_vectors { Some(&result.vector) } else { None },
+                            "metadata": if include_metadata { Some(&result.metadata) } else { None },
+                            "rank": result.rank
+                        })
+                    }).collect::<Vec<_>>()
+                });
+                
+                all_results.push(serde_json::to_vec(&query_json).map_err(|e| {
+                    Status::internal(format!("Failed to serialize query {} results: {}", index, e))
+                })?);
             }
 
             // Combine all query results into a single response
@@ -1079,6 +1140,59 @@ impl ProximaDb for ProximaDbGrpcService {
         }
     }
 
+    /// Get single vector by ID
+    async fn vector_get(
+        &self,
+        request: Request<VectorGetRequest>,
+    ) -> Result<Response<VectorOperationResponse>, Status> {
+        let req = request.into_inner();
+        debug!(
+            "📦 gRPC vector_get: collection={}, vector_id={}",
+            req.collection_id,
+            req.vector_id
+        );
+
+        let start_time = std::time::Instant::now();
+
+        // Extract include fields
+        let include_fields = req.include_fields.as_ref();
+        let include_vectors = include_fields.map_or(true, |f| f.vector);
+        let include_metadata = include_fields.map_or(true, |f| f.metadata);
+
+        // Use UnifiedHandlers for the actual get operation
+        let unified_handlers = crate::handlers::UnifiedHandlers::new(
+            self.collection_service.clone(),
+            self.direct_vector_service.clone(),
+        );
+
+        match unified_handlers.handle_get_vector(
+            &req.collection_id,
+            &req.vector_id,
+            include_vectors,
+            include_metadata,
+        ).await {
+            Ok(response) => {
+                debug!(
+                    "✅ gRPC vector_get successful: collection={}, vector_id={}, found={}",
+                    req.collection_id,
+                    req.vector_id,
+                    response.success
+                );
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                let status = Status::internal(format!("Failed to get vector: {}", e));
+                debug!(
+                    "❌ gRPC vector_get failed: collection={}, vector_id={}, error={}",
+                    req.collection_id,
+                    req.vector_id,
+                    e
+                );
+                Err(status)
+            }
+        }
+    }
+
     /// Health check endpoint
     async fn health(
         &self,
@@ -1120,3 +1234,9 @@ impl ProximaDb for ProximaDbGrpcService {
         }))
     }
 }
+
+// #[cfg(test)]
+// mod tests;
+// Note: Tests are currently disabled because ProximaDbGrpcService requires
+// real DirectVectorService and CollectionService instances, not mocks.
+// TODO: Refactor to use trait abstractions or integration tests.

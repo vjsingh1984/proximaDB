@@ -29,16 +29,15 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Legacy fields (deprecated, use storage_layout instead)
-    pub data_dirs: Vec<PathBuf>,
-    pub wal_dir: PathBuf,
+    /// Storage locations - each can host WAL, data, and indexes
+    pub storage_locations: Vec<StorageLocation>,
+    
+    /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata")
+    pub metadata_url: String,
 
-    /// Modern WAL configuration with multi-disk support
+    /// Assignment configuration
     #[serde(default)]
-    pub wal_config: WalStorageConfig,
-
-    /// ProximaDB hierarchical storage layout configuration
-    pub storage_layout: crate::core::storage_layout::StorageLayoutConfig,
+    pub assignment_config: AssignmentConfig,
 
     /// Storage engine configuration
     pub mmap_enabled: bool,
@@ -49,9 +48,54 @@ pub struct StorageConfig {
 
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemConfig,
+}
 
-    /// Metadata backend configuration
-    pub metadata_backend: Option<MetadataBackendConfig>,
+/// Storage location configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLocation {
+    /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
+    pub url: String,
+    
+    /// Weight for weighted distribution (default: 1)
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    
+    /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_weight() -> u32 {
+    1
+}
+
+/// Assignment configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignmentConfig {
+    /// Assignment strategy: "hash", "round-robin", "weighted"
+    #[serde(default = "default_assignment_strategy")]
+    pub strategy: String,
+    
+    /// Keep all collection data together (WAL, data, index on same location)
+    #[serde(default = "default_affinity")]
+    pub affinity: bool,
+}
+
+fn default_assignment_strategy() -> String {
+    "hash".to_string()
+}
+
+fn default_affinity() -> bool {
+    true
+}
+
+impl Default for AssignmentConfig {
+    fn default() -> Self {
+        Self {
+            strategy: default_assignment_strategy(),
+            affinity: default_affinity(),
+        }
+    }
 }
 
 /// Metadata backend configuration for cloud and local storage
@@ -173,16 +217,51 @@ impl Default for AtomicOperationsConfig {
     }
 }
 
+impl StorageConfig {
+    /// Get storage URLs from locations
+    pub fn get_storage_urls(&self) -> Vec<String> {
+        self.storage_locations.iter().map(|loc| loc.url.clone()).collect()
+    }
+    
+    /// Get WAL URLs derived from storage URLs
+    pub fn get_wal_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/wal", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+    
+    /// Get data URLs derived from storage URLs
+    pub fn get_data_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/data", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+    
+    /// Get index URLs derived from storage URLs
+    pub fn get_index_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+}
+
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            data_dirs: vec![
-                PathBuf::from("/data/proximadb/1"),
-                PathBuf::from("/data/proximadb/2"),
+            storage_locations: vec![
+                StorageLocation {
+                    url: "file:///data/proximadb/disk1".to_string(),
+                    weight: 1,
+                    tags: vec!["local".to_string()],
+                },
+                StorageLocation {
+                    url: "file:///data/proximadb/disk2".to_string(),
+                    weight: 1,
+                    tags: vec!["local".to_string()],
+                },
             ],
-            wal_dir: PathBuf::from("/data/proximadb/1/wal"),
-            wal_config: WalStorageConfig::default(),
-            storage_layout: crate::core::storage_layout::StorageLayoutConfig::default_2_disk(),
+            metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
+            assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
             lsm_config: LsmConfig::default(),
             cache_size_mb: 2048,
@@ -192,7 +271,6 @@ impl Default for StorageConfig {
                 enabled: true,
             }),
             filesystem_config: FilesystemConfig::default(),
-            metadata_backend: None, // Use default filestore backend
         }
     }
 }
@@ -351,7 +429,7 @@ impl Default for WalDistributionStrategy {
 impl Default for WalStorageConfig {
     fn default() -> Self {
         Self {
-            wal_urls: vec!["file:///workspace/data/wal".to_string()],
+            wal_urls: vec!["file://./data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
             memory_flush_size_bytes: 10 * 1024 * 1024,  // 10MB - recommended for collection-level flush

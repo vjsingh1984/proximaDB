@@ -177,17 +177,18 @@ class TestCollectionConfiguration:
             name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.EUCLIDEAN,
-            index_config=index_config,
-            storage_config=storage_config,
+            index_configs=[index_config],  # Use plural form
+            # storage_config=storage_config,  # This field doesn't exist in the model
             storage_engine=StorageEngine.VIPER,
             description="Advanced test collection",
-            filterable_metadata_fields=["category", "timestamp"],
-            flush_config=flush_config
+            filterable_metadata_fields=["category", "timestamp"]
+            # flush_config=flush_config  # This field doesn't exist in the model
         )
         
         assert config.dimension == 384
         assert config.distance_metric == DistanceMetric.EUCLIDEAN
-        assert config.index_config.algorithm == IndexAlgorithm.HNSW
+        # The model has index_configs (plural) but we added a backward compatibility property
+        assert config.index_config.algorithm == IndexingAlgorithm.HNSW
         assert config.storage_config.compression == CompressionType.LZ4
     
     def test_distance_metrics(self):

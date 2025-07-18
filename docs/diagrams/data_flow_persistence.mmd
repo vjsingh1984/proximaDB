@@ -75,7 +75,7 @@ sequenceDiagram
             Strategy->>Strategy: trigger_background_flush()
             Strategy->>FS: write_wal_segment(assignment.storage_url, serialized_data)
             activate FS
-            FS->>D2: write /data/disk2/wal/collection_id/segment_001.avro
+            FS->>D2: write /data/disk2/wal/collection_id/segment_001.avwal
             D2-->>FS: written
             deactivate FS
             Strategy->>Memtable: clear_flushed_entries(collection_id, sequence)
@@ -104,7 +104,7 @@ sequenceDiagram
         Strategy->>Strategy: serialize_entries(entries, Avro)
         Strategy->>FS: write_wal_segment(disk2, serialized_data)
         activate FS
-        FS->>D2: atomic_write(segment.avro)
+        FS->>D2: atomic_write(segment.avwal)
         D2-->>FS: committed
         deactivate FS
         Strategy->>VIPER: delegate_to_storage_engine_flush(collection_id)

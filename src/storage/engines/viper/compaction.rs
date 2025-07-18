@@ -10,18 +10,23 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
+use bytes::Bytes;
 use parquet::arrow::ArrowWriter;
 use std::collections::HashMap;
-use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::storage::persistence::filesystem::{
+    FilesystemFactory, FileSystem, FileOptions,
+    atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory}
+};
+
 
 use super::schema::SchemaManager;
 
-/// Compaction manager for VIPER storage engine
+/// Compaction manager for VIPER storage engine with atomic writes
 #[derive(Debug)]
 pub struct CompactionManager {
     /// Schema manager for dynamic schema generation
@@ -29,15 +34,20 @@ pub struct CompactionManager {
     
     /// Collection service for metadata access
     collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
+    
+    /// Filesystem factory for cross-cloud atomic writes
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl CompactionManager {
     pub fn new(
-        collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>
+        collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
+        filesystem_factory: Arc<FilesystemFactory>,
     ) -> Self {
         Self {
             schema_manager: SchemaManager::new(),
             collection_service,
+            filesystem_factory,
         }
     }
 
@@ -112,18 +122,7 @@ impl CompactionManager {
             return Err(anyhow::anyhow!("No input files provided for compaction"));
         };
         
-        // Create atomic staging directory: {basedir}/{collection_id}/__compact/
-        let staging_dir = base_storage_dir.join("__compact");
-        if staging_dir.exists() {
-            debug!("🧹 Cleaning existing staging directory: {:?}", staging_dir);
-            fs::remove_dir_all(&staging_dir)
-                .with_context(|| format!("Failed to clean staging directory: {:?}", staging_dir))?;
-        }
-        
-        fs::create_dir_all(&staging_dir)
-            .with_context(|| format!("Failed to create staging directory: {:?}", staging_dir))?;
-        
-        info!("🏗️ Using atomic staging directory: {:?}", staging_dir);
+        // Atomic write will handle staging internally
         
         // Generate dynamic schema with caching using pre-fetched collection config
         let schema = self.schema_manager.get_or_generate_cached_schema(collection_id, &collection_config).await?;
@@ -131,10 +130,12 @@ impl CompactionManager {
         // COMPACTION FIX: Validate schema compatibility before processing
         // This prevents column alignment issues during compaction
         info!("🔍 Validating schema compatibility for {} input files", input_files.len());
+        let fs = self.filesystem_factory.get_filesystem("file:///")?;
         let mut input_schemas = Vec::new();
         for input_file in &input_files {
-            if let Ok(file) = std::fs::File::open(input_file) {
-                if let Ok(builder) = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file) {
+            if let Ok(file_data) = fs.read(input_file).await {
+                let parquet_bytes = bytes::Bytes::from(file_data);
+                if let Ok(builder) = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(parquet_bytes) {
                     input_schemas.push(builder.schema().clone());
                 }
             }
@@ -168,10 +169,11 @@ impl CompactionManager {
         for (file_idx, input_file) in input_files.iter().enumerate() {
             info!("📂 Processing file {}/{}: {}", file_idx + 1, input_files.len(), input_file);
             
-            let file = File::open(input_file)
-                .with_context(|| format!("Failed to open input file: {}", input_file))?;
+            let file_data = fs.read(input_file).await
+                .with_context(|| format!("Failed to read input file: {}", input_file))?;
+            let parquet_bytes = bytes::Bytes::from(file_data);
             
-            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
+            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(parquet_bytes)
                 .with_context(|| format!("Failed to create Parquet reader for: {}", input_file))?;
             
             let reader = builder.build()
@@ -262,56 +264,53 @@ impl CompactionManager {
         
         info!("📊 MVCC resolution completed: {} unique records after merging", latest_records.len());
         
-        // Create output file in staging directory
-        let staging_output_file = staging_dir.join(format!(
-            "collection_{}_compacted_{}.parquet", 
-            collection_id, 
-            chrono::Utc::now().timestamp_millis()
-        ));
+        info!("📝 Writing compacted file: {} records", latest_records.len());
         
-        info!("📝 Writing compacted file to staging: {:?} ({} records)", staging_output_file, latest_records.len());
-        
-        // Write compacted data to staging file
-        let output_file_handle = File::create(&staging_output_file)
-            .with_context(|| format!("Failed to create staging output file: {:?}", staging_output_file))?;
-        
-        let mut writer = ArrowWriter::try_new(output_file_handle, schema.clone(), None)
-            .with_context(|| format!("Failed to create Arrow writer for: {:?}", staging_output_file))?;
-        
-        // Combine and write all records
-        if !latest_records.is_empty() {
-            let combined_batch = self.combine_record_batches(schema.clone(), latest_records.values().collect(), vector_dimensions)?;
-            writer.write(&combined_batch)?;
+        // Build Parquet data in memory
+        let mut parquet_data = Vec::new();
+        {
+            let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), None)
+                .with_context(|| "Failed to create Arrow writer")?;
+            
+            // Combine and write all records
+            if !latest_records.is_empty() {
+                let combined_batch = self.combine_record_batches(schema.clone(), latest_records.values().collect(), vector_dimensions)?;
+                writer.write(&combined_batch)?;
+            }
+            
+            writer.close()?;
         }
         
-        writer.close()?;
-        
-        // ATOMIC OPERATIONS: Move from staging to final location and cleanup
-        let final_output_file = base_storage_dir.join(staging_output_file.file_name().unwrap());
+        // Generate final output filename
+        let output_filename = format!("compacted_{}_{}.parquet", 
+            collection_id, 
+            chrono::Utc::now().timestamp_millis()
+        );
+        let final_output_file = base_storage_dir.join(&output_filename);
         
         info!(
-            "🔄 [ATOMIC MOVE] Moving compacted file from staging {:?} to final location {:?}",
-            staging_output_file, final_output_file
+            "🔄 [ATOMIC WRITE] Writing compacted file atomically: {:?}",
+            final_output_file
         );
         
-        // Atomic move from staging to final location (same mount point)
-        fs::rename(&staging_output_file, &final_output_file)
-            .with_context(|| format!("Failed to move compacted file from {:?} to {:?}", staging_output_file, final_output_file))?;
+        // Use atomic writer for safe file creation
+        let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
+        atomic_writer.write_atomic(
+            fs,
+            final_output_file.to_str().unwrap(),
+            &parquet_data,
+            None
+        ).await?;
+        
+        let final_path = final_output_file.to_str().unwrap().to_string();
         
         // Remove input files that were compacted (cleanup)
         for input_file in &input_files {
-            if Path::new(input_file).exists() {
+            if fs.exists(input_file).await? {
                 debug!("🧹 Removing compacted input file: {}", input_file);
-                fs::remove_file(input_file)
+                fs.delete(input_file).await
                     .with_context(|| format!("Failed to remove input file: {}", input_file))?;
             }
-        }
-        
-        // Cleanup staging directory
-        if staging_dir.exists() {
-            debug!("🧹 Cleaning up staging directory: {:?}", staging_dir);
-            fs::remove_dir_all(&staging_dir)
-                .with_context(|| format!("Failed to cleanup staging directory: {:?}", staging_dir))?;
         }
         
         // Log cleanup statistics
@@ -325,10 +324,10 @@ impl CompactionManager {
             latest_records.len(),
             expired_records_count,
             input_files.len(),
-            final_output_file
+            final_path
         );
         
-        Ok(vec![final_output_file.to_string_lossy().to_string()])
+        Ok(vec![final_path])
     }
 
     /// Extract a single record batch from a larger batch

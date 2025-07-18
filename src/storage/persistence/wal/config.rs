@@ -74,6 +74,15 @@ pub struct PerformanceConfig {
 
     /// Cloud backup configuration
     pub cloud_backup: Option<CloudBackupConfig>,
+    
+    /// Enable optimized WAL writer for high-performance writes
+    pub enable_optimized_wal_writer: Option<bool>,
+    
+    /// Number of background writer threads for optimized WAL writer
+    pub background_writer_threads: Option<usize>,
+    
+    /// Batch size for optimized WAL writer
+    pub wal_batch_size: Option<usize>,
 }
 
 impl Default for PerformanceConfig {
@@ -91,6 +100,9 @@ impl Default for PerformanceConfig {
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
             global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
             cloud_backup: None, // Cloud backup disabled by default
+            enable_optimized_wal_writer: Some(false), // Disabled by default for gradual rollout
+            background_writer_threads: None, // Will use 2 by default in optimized writer
+            wal_batch_size: None, // Will use 100 by default in optimized writer
         }
     }
 }
@@ -123,8 +135,13 @@ pub enum WalStrategyType {
 
 impl Default for WalStrategyType {
     fn default() -> Self {
-        // Default to AvroBatch for schema evolution, robust recovery, and bulk insert efficiency
-        Self::AvroBatch
+        // Default to BincodeBatch for maximum performance with vector workloads
+        // Bincode provides:
+        // - Fastest serialization/deserialization (critical for high-throughput ingestion)
+        // - Most compact format (20-40% space savings vs Proto)
+        // - Zero-copy deserialization potential
+        // - Native Rust types with no conversion overhead
+        Self::BincodeBatch
     }
 }
 
@@ -170,7 +187,7 @@ pub enum DiskDistributionStrategy {
 impl Default for MultiDiskConfig {
     fn default() -> Self {
         Self {
-            data_directories: vec!["file:///workspace/data/wal".to_string()],
+            data_directories: vec!["file://./data/wal".to_string()],
             distribution_strategy: DiskDistributionStrategy::LoadBalanced, // Optimal for bulk inserts
             collection_affinity: true, // Keep collection on one disk for sequential I/O
         }
@@ -253,12 +270,27 @@ pub struct WalConfig {
 
     /// Collection-specific overrides
     pub collection_overrides: std::collections::HashMap<String, CollectionWalConfig>,
+    
+    /// Enable optimized WAL writer (feature flag)
+    pub enable_optimized_writer: bool,
+    
+    /// Optimized writer batch size
+    pub optimized_writer_batch_size: Option<usize>,
+    
+    /// Optimized writer batch timeout in milliseconds
+    pub optimized_writer_batch_timeout_ms: Option<u64>,
+    
+    /// Number of writer threads for optimized writer
+    pub optimized_writer_threads: Option<usize>,
+    
+    /// Enable write combining for same collection
+    pub optimized_writer_enable_combining: Option<bool>,
 }
 
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
-            strategy_type: WalStrategyType::default(), // Avro for schema evolution and recovery
+            strategy_type: WalStrategyType::default(), // Bincode for maximum vector ingestion performance
             memtable: MemTableConfig::default(),       // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(),    // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
@@ -267,6 +299,11 @@ impl Default for WalConfig {
             enable_ttl: true,  // Enable for data lifecycle management
             enable_background_compaction: true, // Enable for maintenance and space reclamation
             collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false, // Disabled by default for gradual rollout
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         }
     }
 }
@@ -480,7 +517,7 @@ impl Default for CloudBackupConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            backup_url: "file:///workspace/data/wal_backup".to_string(),
+            backup_url: "file://./data/wal_backup".to_string(),
             strategy: CloudBackupStrategy::OnFlush,
             frequency: BackupFrequency::default(),
             cleanup_policy: Some(CloudCleanupPolicy::default()),

@@ -19,8 +19,10 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use super::LsmRecord;
-use crate::core::{String, LsmConfig, VectorId};
+use super::{LsmRecord, SstableWriter};
+use super::readers::unified_sstable_reader::UnifiedSstableReader;
+use crate::core::{String, LsmConfig, VectorId, VectorRecord};
+use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -354,11 +356,20 @@ impl CompactionManager {
             task.level
         );
 
-        // Read and merge all input files
+        // Read and merge all input files using plugin filesystem
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        let fs = filesystem_factory.get_filesystem("file:///")
+            .map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?;
+        
         for input_file in &task.input_files {
-            let file_data = tokio::fs::read(input_file)
+            let input_path = input_file.to_string_lossy();
+            let file_data = fs.read(&input_path)
                 .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
             bytes_read += file_data.len() as u64;
 
@@ -417,8 +428,8 @@ impl CompactionManager {
 
         debug!("Merged {} unique records", merged_data.len());
 
-        // Write merged data to output file, filtering out old tombstones and expired records
-        let mut output_data = Vec::new();
+        // Convert merged data to vectors for sorting
+        let mut vector_records = Vec::new();
         let current_time = chrono::Utc::now().timestamp_millis();
         let mut expired_records_count = 0;
         let mut tombstones_removed_count = 0;
@@ -457,10 +468,9 @@ impl CompactionManager {
             };
 
             if should_keep {
-                let entry = bincode::serialize(lsm_record)
-                    .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
-                output_data.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-                output_data.extend_from_slice(&entry);
+                // Convert LsmRecord to VectorRecord for sorting
+                let vector_record: VectorRecord = lsm_record.clone().into();
+                vector_records.push(vector_record);
             }
         }
         
@@ -470,24 +480,41 @@ impl CompactionManager {
                   expired_records_count, tombstones_removed_count);
         }
 
-        // Ensure output directory exists
-        if let Some(parent) = task.output_file.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+        // Sort records by metadata for optimal encoding
+        info!("🔄 LSM COMPACTION: Sorting {} records by metadata for optimal encoding", vector_records.len());
+        let (sorted_vectors, sort_stats) = Self::sort_vectors_for_compaction(vector_records).await?;
+        info!("✅ LSM COMPACTION: Sorted records (estimated compression improvement: {:.1}%)", 
+              sort_stats.compression_estimate * 100.0);
+
+        // Convert back to LsmRecord format with preserved metadata sorting
+        let mut sorted_lsm_records: BTreeMap<String, LsmRecord> = BTreeMap::new();
+        for (seq, vector) in sorted_vectors.into_iter().enumerate() {
+            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+            let mut lsm_record = LsmRecord::from_vector_record(vector, &task.collection_id);
+            lsm_record.sequence_number = seq as u64; // Update sequence for compacted order
+            lsm_record.level = task.level + 1; // Increment level after compaction
+            sorted_lsm_records.insert(vector_id, lsm_record);
         }
 
-        // Write output file atomically (write to temp file, then rename)
-        let temp_file = task.output_file.with_extension("tmp");
-        tokio::fs::write(&temp_file, &output_data)
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+        // Use optimized SSTable writer for compacted output with atomic writes
+        let block_size = (_config.block_size_kb * 1024) as usize;
+        
+        // TODO: Pass filesystem from compaction manager - for now create a new factory
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        
+        let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
+        writer.write_records(sorted_lsm_records).await
+            .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
 
-        tokio::fs::rename(&temp_file, &task.output_file)
+        let output_path = task.output_file.to_string_lossy();
+        let metadata = fs.metadata(&output_path)
             .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-
-        let bytes_written = output_data.len() as u64;
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        let bytes_written = metadata.size;
 
         debug!(
             "Wrote {} bytes to output file {}",
@@ -495,9 +522,10 @@ impl CompactionManager {
             task.output_file.display()
         );
 
-        // Remove input files after successful compaction
+        // Remove input files after successful compaction using plugin filesystem
         for input_file in &task.input_files {
-            if let Err(e) = tokio::fs::remove_file(input_file).await {
+            let input_path = input_file.to_string_lossy();
+            if let Err(e) = fs.delete(&input_path).await {
                 warn!(
                     "Failed to remove input file {}: {}",
                     input_file.display(),
@@ -594,31 +622,39 @@ impl CompactionManager {
             return Ok(files_by_level);
         }
 
-        let mut dir = tokio::fs::read_dir(collection_dir)
+        // Use plugin filesystem for directory listing
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        let fs = filesystem_factory.get_filesystem("file:///")
+            .map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?;
+        
+        let collection_path = collection_dir.to_string_lossy();
+        let entries = fs.list(&collection_path)
             .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
-        while let Some(entry) = dir
-            .next_entry()
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?
-        {
-            let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                if filename.starts_with("sst_") && filename.ends_with(".db") {
-                    // Parse level from filename format: sst_L{level}_{timestamp}.db
-                    let level = if let Some(level_str) = filename.strip_prefix("sst_L") {
-                        level_str.chars()
-                            .take_while(|c| c.is_numeric())
-                            .collect::<String>()
-                            .parse::<u8>()
-                            .unwrap_or(0)
-                    } else {
-                        // Legacy format without level, assume level 0
-                        0
-                    };
-                    
-                    files_by_level.entry(level).or_insert_with(Vec::new).push(path);
+        for entry in entries {
+            if !entry.metadata.is_directory {
+                if let Some(filename) = std::path::Path::new(&entry.name).file_name().and_then(|f| f.to_str()) {
+                    if filename.starts_with("sst_") && filename.ends_with(".db") {
+                        // Parse level from filename format: sst_L{level}_{timestamp}.db
+                        let level = if let Some(level_str) = filename.strip_prefix("sst_L") {
+                            level_str.chars()
+                                .take_while(|c| c.is_numeric())
+                                .collect::<String>()
+                                .parse::<u8>()
+                                .unwrap_or(0)
+                        } else {
+                            // Legacy format without level, assume level 0
+                            0
+                        };
+                        
+                        let path = PathBuf::from(&entry.path);
+                        files_by_level.entry(level).or_insert_with(Vec::new).push(path);
+                    }
                 }
             }
         }
@@ -631,6 +667,32 @@ impl CompactionManager {
         let timestamp = Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let filename = format!("sst_l{}_t{}.db", level, timestamp);
         collection_dir.join(filename)
+    }
+
+    /// Sort vector records by metadata for optimal compaction encoding
+    /// Uses same sorting strategy as flush operations to maintain consistency
+    async fn sort_vectors_for_compaction(
+        mut vector_records: Vec<VectorRecord>,
+    ) -> Result<(Vec<VectorRecord>, SortingStats)> {
+        debug!("🔄 Sorting {} vectors for optimal SSTable compaction encoding", vector_records.len());
+        
+        if vector_records.is_empty() {
+            return Ok((vector_records, SortingStats::default()));
+        }
+
+        // Create metadata sorter for optimal SSTable encoding
+        let sorter = MetadataSorter::new(Default::default());
+        
+        // Sort records to optimize for:
+        // 1. Sequential access patterns in SSTable blocks
+        // 2. Better compression ratios in block-based storage
+        // 3. Improved bloom filter effectiveness
+        let (sorted_records, sort_stats) = sorter.sort_for_encoding(vector_records)?;
+        
+        debug!("✅ LSM compaction sorting complete: {} records sorted for optimal SSTable encoding", 
+               sorted_records.len());
+        
+        Ok((sorted_records, sort_stats))
     }
 }
 

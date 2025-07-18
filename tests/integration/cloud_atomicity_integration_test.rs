@@ -33,7 +33,6 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
     (0..count)
         .map(|i| VectorRecord {
             id: format!("test_vector_{}", i),
-            collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 128], // 128-dimensional vector
             metadata: HashMap::new(),
             timestamp: now,

@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir("src/proto")
         .file_descriptor_set_path("src/proto/proximadb_descriptor.bin")
         .protoc_arg("--experimental_allow_proto3_optional") // Allow proto3 optional fields
-        // Add serde derives to all generated types for seamless JSON serialization
+        // Add serde derives to messages only (not enums - they get prost::Enumeration)
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Skip serde for fields containing prost_types::Value since it doesn't implement serde
         .field_attribute("SearchParams.filters", "#[serde(skip)]")

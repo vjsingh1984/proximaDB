@@ -1,0 +1,73 @@
+# ProximaDB Filesystem Configuration for Local Cloud Emulators
+# This configuration demonstrates the enhanced filesystem API with:
+# - Custom endpoints for S3 (MinIO) and GCS (fake-gcs-server)  
+# - Scheme mapping to support gs:// URLs mapped to gcs://
+# - Environment variable-based authentication
+
+[filesystem]
+default_fs = "file:///tmp/proximadb"
+
+# Scheme mapping - allows gs:// URLs to be mapped to gcs backend
+[filesystem.scheme_mapping]
+gs = "gcs"  # Maps gs:// URLs to GCS backend
+
+# S3 Configuration with MinIO emulator
+[filesystem.s3]
+region = "us-east-1"
+default_bucket = "proximadb-data"
+endpoint_url = "http://localhost:9000"    # MinIO endpoint
+force_path_style = true                   # Required for MinIO
+timeout_seconds = 30
+max_retries = 3
+multipart_threshold = 5242880  # 5MB
+multipart_chunk_size = 1048576 # 1MB
+
+[filesystem.s3.credentials]
+provider = "Environment"  # Uses AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+refresh_interval = 3600
+
+# Alternative static credentials for testing:
+# provider = "Static"
+# access_key_id = "minioadmin"
+# secret_access_key = "minioadmin"
+
+# GCS Configuration with fake-gcs-server emulator
+[filesystem.gcs]
+project_id = "test-project"
+default_bucket = "proximadb-data"
+endpoint_url = "http://localhost:4443"    # fake-gcs-server endpoint
+timeout_seconds = 30
+max_retries = 3
+resumable_threshold = 2097152  # 2MB
+upload_chunk_size = 262144     # 256KB
+
+[filesystem.gcs.credentials]
+provider = "Environment"  # Uses GOOGLE_APPLICATION_CREDENTIALS
+
+# Azure Configuration with Azurite emulator (optional)
+[filesystem.azure]
+account_name = "devstoreaccount1"
+endpoint_url = "http://localhost:10000"   # Azurite blob endpoint
+timeout_seconds = 30
+max_retries = 3
+
+# Performance configuration
+[filesystem.performance_config]
+connection_pool_size = 10
+enable_keep_alive = true
+request_timeout_seconds = 30
+enable_compression = false
+buffer_size = 8192
+enable_parallel_ops = true
+max_concurrent_ops = 10
+
+[filesystem.performance_config.retry_config]
+max_retries = 3
+initial_delay_ms = 100
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+# Global file options
+[filesystem.global_options]
+create_parents = true
+overwrite_existing = true

@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance::DistanceMetric;
 use crate::compute::unified_distance::UnifiedDistanceCompute;
-use crate::core::SearchResult;
+use crate::core::search::{SearchResult, SearchDebugInfo};
 use crate::services::direct_vector_service::DirectVectorService;
 
 /// Configuration for streaming search
@@ -220,7 +220,7 @@ impl StreamingSearchService {
         })
     }
     
-    /// Execute the streaming search
+    /// Execute the streaming search with proper multi-tier deduplication
     async fn execute_streaming_search(
         &self,
         collection_id: String,
@@ -234,46 +234,110 @@ impl StreamingSearchService {
         let mut batch_id = 0u64;
         let mut total_results = 0usize;
         
+        // Track seen IDs for deduplication across tiers (if enabled)
+        let mut seen_ids = if self.config.enable_deduplication {
+            Some(std::collections::HashSet::<String>::new())
+        } else {
+            None
+        };
+        
         debug!(
-            "🚀 STREAMING_TASK: Starting execution for request {}",
-            request_id
+            "🚀 STREAMING_TASK: Starting execution for request {} (dedup: {})",
+            request_id, self.config.enable_deduplication
         );
         
         // Phase 1: Stream results from WAL (unflushed data)
         let wal_results = self.search_wal_streaming(&collection_id, &query_vector, k, distance_metric).await?;
+        let mut deduped_wal_results = Vec::new();
+        
         if !wal_results.is_empty() {
-            batch_id += 1;
-            total_results += wal_results.len();
+            // Deduplicate WAL results if enabled
+            for result in wal_results {
+                let should_include = if let Some(ref mut seen) = seen_ids {
+                    result.id.is_empty() || seen.insert(result.id.clone())
+                } else {
+                    true // No deduplication
+                };
+                
+                if should_include {
+                    deduped_wal_results.push(result);
+                }
+            }
             
-            let batch = SearchResultBatch {
-                results: wal_results,
-                is_final: false,
-                batch_id,
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
-            
-            if tx.send(batch).await.is_err() {
-                debug!("🔚 STREAMING_TASK: Receiver dropped, stopping");
-                return Ok(());
+            if !deduped_wal_results.is_empty() {
+                batch_id += 1;
+                total_results += deduped_wal_results.len();
+                
+                let batch = SearchResultBatch {
+                    results: deduped_wal_results,
+                    is_final: false,
+                    batch_id,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                
+                if tx.send(batch).await.is_err() {
+                    debug!("🔚 STREAMING_TASK: Receiver dropped, stopping");
+                    return Ok(());
+                }
             }
         }
         
-        // Phase 2: Stream results from storage engines
+        // Phase 2: Stream results from storage engines with deduplication
         if total_results < k {
             let remaining_k = k - total_results;
             
-            // For now, use unified search from DirectVectorService
-            // In a full implementation, this would stream results from storage engines
-            let storage_results = self.direct_service
-                .search_vectors_unified(&collection_id, &query_vector, remaining_k, distance_metric)
-                .await?;
+            // Request more results to account for potential duplicates
+            let search_k = ((remaining_k as f32) * 1.5).ceil() as usize;
+            
+            // Search using unified method
+            let results = self.direct_service.search_vectors_unified(
+                &collection_id,
+                &query_vector,
+                search_k,
+                distance_metric,
+                None,  // search_params
+                None,  // metadata_filters
+                false, // include_vectors
+                false  // include_metadata
+            ).await?;
+            
+            // Split results for compatibility
+            let viper_results = results.clone();
+            let lsm_results = Vec::new();
+            
+            // Merge and sort storage results
+            let mut storage_results = Vec::new();
+            storage_results.extend(viper_results);
+            storage_results.extend(lsm_results);
+            
+            // Sort by score descending
+            storage_results.sort_by(|a, b| {
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            
+            // Deduplicate storage results against WAL results if enabled
+            let mut deduped_storage_results = Vec::new();
+            for result in storage_results {
+                let should_include = if let Some(ref mut seen) = seen_ids {
+                    result.id.is_empty() || seen.insert(result.id.clone())
+                } else {
+                    true // No deduplication
+                };
                 
-            if !storage_results.is_empty() {
+                if should_include {
+                    deduped_storage_results.push(result);
+                    if deduped_storage_results.len() >= remaining_k {
+                        break;
+                    }
+                }
+            }
+            
+            if !deduped_storage_results.is_empty() {
                 batch_id += 1;
-                total_results += storage_results.len();
+                total_results += deduped_storage_results.len();
                 
                 let batch = SearchResultBatch {
-                    results: storage_results,
+                    results: deduped_storage_results,
                     is_final: false,
                     batch_id,
                     timestamp: chrono::Utc::now().timestamp_millis(),
@@ -353,10 +417,17 @@ impl StreamingSearchService {
                         metadata: record.metadata.iter().map(|item| {
                             (item.key.clone(), serde_json::Value::String(item.value.clone()))
                         }).collect(),
+                        debug_info: Some(SearchDebugInfo {
+                            algorithm: format!("StreamingWAL::{:?}", distance_metric),
+                            candidates_evaluated: 0,
+                            processing_time_us: 0, // TODO: Add timing
+                        }),
+                        semantic_distance: Some(similarity),
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
                         collection_id: Some(collection_id.to_string()),
-                        created_at: Some(record.created_at),
-                        algorithm_used: Some(format!("StreamingWAL::{:?}", distance_metric)),
-                        processing_time_us: Some(0),
+                        created_at: Some(chrono::DateTime::from_timestamp_micros(record.created_at).unwrap_or_else(chrono::Utc::now)),
                     };
                     
                     results.push(result);

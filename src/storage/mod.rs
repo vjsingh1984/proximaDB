@@ -18,12 +18,13 @@ pub mod persistence;
 pub mod atomic;
 
 // Core modules
-pub mod encoding;
 pub mod engine;
 pub mod mmap;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
+// Storage optimization utilities
+pub mod optimization;
 // Strategy module for collection lifecycle configuration
 pub mod strategy;
 

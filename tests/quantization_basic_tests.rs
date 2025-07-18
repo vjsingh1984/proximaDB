@@ -43,7 +43,6 @@ mod tests {
         vectors.into_iter().enumerate().map(|(i, vector)| {
             VectorRecord {
                 id: Some(format!("vector_{}", i)),
-                collection_id: "test_collection".to_string(),
                 vector,
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_millis(),

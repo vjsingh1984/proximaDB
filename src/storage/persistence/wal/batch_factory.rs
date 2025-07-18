@@ -7,88 +7,52 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use super::config::WalStrategyType;
-use super::{WalConfig, WalBatchStrategy, AvroWalBatchStrategy, BincodeWalBatchStrategy, ProtoWalBatchStrategy, UnifiedWalBatchStrategy};
+use super::{WalConfig, WalBatchStrategy, ProtoSerializationStrategy, BincodeSerializationStrategy, AvroSerializationStrategy};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Modern factory for creating WAL batch strategies
 pub struct WalBatchFactory;
 
 impl WalBatchFactory {
-    /// Create a modern WAL batch strategy based on configuration
+
+    
+    /// Create a batch serialization strategy (HIGHLY RECOMMENDED - best separation of concerns)
     /// 
-    /// This is the modern replacement for WalFactory::create_strategy that provides:
-    /// - Native batch operations for better performance
-    /// - Streamlined architecture using GlobalPartitionedMemtable
-    /// - Unified interface across all serialization strategies
-    pub async fn create_strategy(
+    /// This creates strategies using the new clean architecture with:
+    /// - Separated serialization, memtable, and disk components
+    /// - Direct recovery to storage engines
+    /// - Parallel recovery support
+    pub async fn create_batch_serialization_strategy(
         strategy_type: WalStrategyType,
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WalBatchStrategy>> {
         match strategy_type {
+            WalStrategyType::ProtoBatch => {
+                tracing::info!("🎯 Creating ProtoSerializationStrategy with separated components");
+                let strategy = ProtoSerializationStrategy::new(config, filesystem).await?;
+                Ok(Box::new(strategy))
+            }
             WalStrategyType::AvroBatch => {
-                tracing::info!("🎯 Creating modern AvroWalBatchStrategy");
-                let mut strategy = Box::new(AvroWalBatchStrategy::new());
-                strategy.initialize(config, filesystem).await?;
-                Ok(strategy)
+                tracing::info!("🎯 Creating AvroSerializationStrategy with separated components");
+                let strategy = AvroSerializationStrategy::new(config, filesystem).await?;
+                Ok(Box::new(strategy))
             }
             WalStrategyType::BincodeBatch => {
-                tracing::info!("🎯 Creating modern BincodeWalBatchStrategy");
-                let mut strategy = Box::new(BincodeWalBatchStrategy::new());
-                strategy.initialize(config, filesystem).await?;
-                Ok(strategy)
-            }
-            WalStrategyType::ProtoBatch => {
-                tracing::info!("🎯 Creating modern ProtoWalBatchStrategy");
-                let mut strategy = Box::new(ProtoWalBatchStrategy::new());
-                strategy.initialize(config, filesystem).await?;
-                Ok(strategy)
+                tracing::info!("🎯 Creating BincodeSerializationStrategy with separated components");
+                let strategy = BincodeSerializationStrategy::new(config, filesystem).await?;
+                Ok(Box::new(strategy))
             }
         }
     }
 
-    /// Create a unified WAL batch strategy (RECOMMENDED - eliminates duplicate code)
-    /// 
-    /// This creates a single implementation with pluggable serialization instead of
-    /// separate strategy implementations, providing 75% code reduction
-    pub async fn create_unified_strategy(
-        strategy_type: WalStrategyType,
-        config: &WalConfig,
-        filesystem: Arc<FilesystemFactory>,
-    ) -> Result<Box<dyn WalBatchStrategy>> {
-        let mut strategy: Box<dyn WalBatchStrategy> = match strategy_type {
-            WalStrategyType::AvroBatch => {
-                tracing::info!("🎯 Creating unified AvroWalBatchStrategy");
-                Box::new(UnifiedWalBatchStrategy::new_avro())
-            }
-            WalStrategyType::BincodeBatch => {
-                tracing::info!("🎯 Creating unified BincodeWalBatchStrategy");
-                Box::new(UnifiedWalBatchStrategy::new_bincode())
-            }
-            WalStrategyType::ProtoBatch => {
-                tracing::info!("🎯 Creating unified ProtoWalBatchStrategy");
-                Box::new(UnifiedWalBatchStrategy::new())
-            }
-        };
-        
-        strategy.initialize(config, filesystem).await?;
-        Ok(strategy)
-    }
-
-    /// Create unified strategy from config (RECOMMENDED for new code)
-    pub async fn create_unified_from_config(
-        config: &WalConfig,
-        filesystem: Arc<FilesystemFactory>,
-    ) -> Result<Box<dyn WalBatchStrategy>> {
-        Self::create_unified_strategy(config.strategy_type.clone(), config, filesystem).await
-    }
 
     /// Create strategy with automatic type detection from config
     pub async fn create_from_config(
         config: &WalConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WalBatchStrategy>> {
-        Self::create_strategy(config.strategy_type.clone(), config, filesystem).await
+        Self::create_batch_serialization_strategy(config.strategy_type.clone(), config, filesystem).await
     }
 
     /// List available strategy types
@@ -141,15 +105,6 @@ impl WalBatchFactory {
         }
     }
 
-    // 🚫 REMOVED: Legacy adapter no longer available - WalStrategy trait removed
-    // All code must use native WalBatchStrategy with single-entry batches for individual operations
-    /*
-    pub async fn from_legacy_strategy(
-        legacy_strategy: Box<dyn super::WalStrategy>,
-    ) -> Result<Box<dyn WalBatchStrategy>> {
-        // Removed - use create_strategy() for native batch strategies
-    }
-    */
 
     /// Compare strategies for selection guidance
     pub fn compare_strategies() -> StrategyComparison {

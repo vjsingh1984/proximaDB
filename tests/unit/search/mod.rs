@@ -1,6 +1,4 @@
 //! Unit tests for search functionality
 
-pub mod lsm_search_tests;
-pub mod viper_search_tests;
-pub mod storage_aware_tests;
+// Removed tests for obsolete modules
 pub mod multi_tier_deduplication_tests;

@@ -21,8 +21,8 @@ use anyhow::Result;
 use axum::{
     extract::{Json, Path, State, Query},
     http::StatusCode,
-    response::Json as JsonResponse,
-    routing::{delete, get, post},
+    response::{Json as JsonResponse, IntoResponse, Response},
+    routing::{delete, get, post, MethodRouter},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,25 @@ pub struct AppState {
     pub unified_handlers: Arc<UnifiedHandlers>,
 }
 
+/// Error response for REST API
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub status: u16,
+    pub message: String,
+    pub error_code: String,
+}
+
+impl IntoResponse for ErrorResponse {
+    fn into_response(self) -> Response {
+        let body = Json(json!({
+            "error": self.message,
+            "error_code": self.error_code
+        }));
+        
+        (StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body).into_response()
+    }
+}
+
 // ============================================================================
 // UNIFIED API REQUEST/RESPONSE TYPES - Aligned with Proto
 // ============================================================================
@@ -45,7 +64,7 @@ pub struct AppState {
 /// Unified collection operation request - aligned with proto CollectionRequest
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CollectionOperationRequest {
-    pub operation: String, // "create", "update", "get", "list", "delete"
+    pub operation: String, // "create", "update" (get/list/delete now use dedicated HTTP verbs)
     pub collection_id: Option<String>,
     pub collection_name: Option<String>,
     pub config: Option<CollectionConfig>,
@@ -232,6 +251,24 @@ pub struct QuantizationValidation {
     pub retraining_threshold: f32,
 }
 
+/// Get vector query parameters
+#[derive(Debug, Deserialize)]
+pub struct GetVectorParams {
+    pub include_vector: Option<bool>,
+    pub include_metadata: Option<bool>,
+}
+
+/// Vector get response
+#[derive(Debug, Serialize)]
+pub struct VectorGetResponse {
+    pub id: String,
+    pub collection_id: String,
+    pub vector: Option<Vec<f32>>,
+    pub metadata: Option<HashMap<String, String>>,
+    pub score: Option<f32>,
+    pub rank: Option<i32>,
+}
+
 /// Collection response - aligned with proto CollectionResponse
 #[derive(Debug, Serialize)]
 pub struct CollectionResponse {
@@ -255,6 +292,26 @@ pub struct Collection {
     pub stats: CollectionStats,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Collection info for list response
+#[derive(Debug, Serialize)]
+pub struct CollectionInfo {
+    pub id: String,
+    pub name: String,
+    pub dimension: i32,
+    pub metric: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub vector_count: Option<i64>,
+    pub indexed: bool,
+}
+
+/// List collections response
+#[derive(Debug, Serialize)]
+pub struct ListCollectionsResponse {
+    pub collections: Vec<CollectionInfo>,
+    pub total_count: i32,
 }
 
 /// Collection statistics
@@ -448,17 +505,23 @@ pub fn create_router(state: AppState) -> Router {
         // Health and metrics
         .route("/health", get(health_check))
         .route("/metrics", get(get_metrics))
-        // Unified collection endpoint (proto-aligned)
-        .route("/api/v1/collection", post(collection_operation))
-        // Unified vector endpoints (proto-aligned)
-        .route("/api/v1/vector/batch", post(vector_batch))
-        .route("/api/v1/vector/search", post(vector_search))
+        // Collection endpoints with proper REST verbs
+        .route("/api/v1/collection", post(collection_operation))  // create/update operations
+        .route("/api/v1/collections", get(list_collections))       // list all collections
+        .route("/api/v1/collection/:collection_id", get(get_collection).delete(delete_collection))  // get/delete single collection
+        // Vector endpoints with proper REST verbs
+        .route("/api/v1/vector/batch", post(vector_batch))        // insert/update operations
+        .route("/api/v1/vector/search", post(vector_search))      // search operations
+        .route("/api/v1/vector/get/:collection_id/:vector_id", get(get_vector))  // get single vector
+        .route("/api/v1/vectors/:collection_id", delete(delete_vectors))         // delete vectors
         // Convenience endpoints for common operations
-        .route("/api/v1/vector/:collection_id/:vector_id", get(get_vector))
-        .route("/api/v1/vector/:collection_id/:vector_id", delete(delete_vector))
+        // Single vector endpoints removed - use batch operations instead
+        // Legacy single-vector APIs don't exist in proto-first architecture
         // Internal testing endpoints (WARNING: NOT FOR PRODUCTION USE)
         .route("/internal/flush", post(internal_flush_all))
         .route("/internal/flush/:collection_id", post(internal_flush_collection))
+        // Debug endpoints (TEMPORARY - FOR DEBUGGING ONLY)
+        .route("/debug/vectors/:collection_id", get(debug_list_unflushed_vectors))
         .with_state(state)
 }
 
@@ -470,7 +533,7 @@ pub fn create_router(state: AppState) -> Router {
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    match state.unified_handlers.vector_service.health_check().await {
+    match state.unified_handlers.direct_vector_service.health_check().await {
         Ok(health_bytes) => {
             match serde_json::from_slice::<serde_json::Value>(&health_bytes) {
                 Ok(health_data) => {
@@ -679,101 +742,73 @@ pub async fn vector_search(
     Ok(JsonResponse(response))
 }
 
-/// Get single vector by ID - thin adapter to UnifiedHandlers
+/// Get a single vector by ID
 pub async fn get_vector(
     State(state): State<AppState>,
     Path((collection_id, vector_id)): Path<(String, String)>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
-    let include_vector = params.get("include_vector")
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
-    let include_metadata = params.get("include_metadata")
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
+    Query(params): Query<GetVectorParams>,
+) -> Result<JsonResponse<VectorGetResponse>, ErrorResponse> {
+    let include_vector = params.include_vector.unwrap_or(true);
+    let include_metadata = params.include_metadata.unwrap_or(true);
     
-    // Delegate to unified handlers
-    match state.unified_handlers.get_vector(
+    match state.unified_handlers.handle_get_vector(
         &collection_id,
         &vector_id,
         include_vector,
         include_metadata,
     ).await {
-        Ok(result_bytes) => {
-            match serde_json::from_slice::<serde_json::Value>(&result_bytes) {
-                Ok(response) => {
-                    if response.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-                        if let Some(results) = response.get("results").and_then(|r| r.as_array()) {
-                            if let Some(first_result) = results.first() {
-                                return Ok(JsonResponse(ApiResponse::success(first_result.clone())));
-                            }
-                        }
-                        Ok(JsonResponse(ApiResponse::error(
-                            "Vector not found".to_string(),
-                            "NOT_FOUND".to_string(),
-                        )))
+        Ok(response) => {
+            if response.success {
+                // Extract the single result from compact results
+                if let Some(crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(results)) = response.result_payload {
+                    if let Some(result) = results.results.first() {
+                        let vector_response = VectorGetResponse {
+                            id: result.id.clone().unwrap_or_default(),
+                            collection_id: collection_id.clone(),
+                            vector: if include_vector { Some(result.vector.clone()) } else { None },
+                            metadata: if include_metadata { 
+                                Some(result.metadata.iter().map(|item| {
+                                    (item.key.clone(), item.value.clone())
+                                }).collect())
+                            } else { None },
+                            score: Some(result.score),
+                            rank: result.rank,
+                        };
+                        Ok(Json(vector_response))
                     } else {
-                        Ok(JsonResponse(ApiResponse::error(
-                            response.get("error_message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Vector not found")
-                                .to_string(),
-                            "NOT_FOUND".to_string(),
-                        )))
+                        Err(ErrorResponse {
+                            status: StatusCode::NOT_FOUND.as_u16(),
+                            message: format!("Vector '{}' not found in collection '{}'", vector_id, collection_id),
+                            error_code: "NOT_FOUND".to_string(),
+                        })
                     }
+                } else {
+                    Err(ErrorResponse {
+                        status: StatusCode::NOT_FOUND.as_u16(),
+                        message: format!("Vector '{}' not found in collection '{}'", vector_id, collection_id),
+                        error_code: "NOT_FOUND".to_string(),
+                    })
                 }
-                Err(e) => {
-                    tracing::error!("Failed to parse get vector response: {:?}", e);
-                    Err(StatusCode::INTERNAL_SERVER_ERROR)
-                }
+            } else {
+                Err(ErrorResponse {
+                    status: StatusCode::NOT_FOUND.as_u16(),
+                    message: response.error_message.unwrap_or_else(|| format!("Vector '{}' not found", vector_id)),
+                    error_code: response.error_code.unwrap_or_else(|| "NOT_FOUND".to_string()),
+                })
             }
         }
         Err(e) => {
-            tracing::error!("Get vector failed: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(ErrorResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                message: format!("Failed to get vector: {}", e),
+                error_code: "INTERNAL_ERROR".to_string(),
+            })
         }
     }
 }
 
-/// Delete single vector by ID - thin adapter to UnifiedHandlers
-pub async fn delete_vector(
-    State(state): State<AppState>,
-    Path((collection_id, vector_id)): Path<(String, String)>,
-) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    // Delegate to unified handlers
-    match state.unified_handlers.delete_vector(&collection_id, &vector_id).await {
-        Ok(result_bytes) => {
-            match serde_json::from_slice::<serde_json::Value>(&result_bytes) {
-                Ok(response) => {
-                    let mut result_data = HashMap::new();
-                    result_data.insert("deleted".to_string(), json!(response.get("success").and_then(|v| v.as_bool()).unwrap_or(false)));
-                    result_data.insert("vector_id".to_string(), json!(vector_id));
-                    result_data.insert("collection_id".to_string(), json!(collection_id));
-                    
-                    if response.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-                        Ok(JsonResponse(ApiResponse::success(result_data)))
-                    } else {
-                        Ok(JsonResponse(ApiResponse::error(
-                            response.get("error_message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Failed to delete vector")
-                                .to_string(),
-                            "DELETE_FAILED".to_string(),
-                        )))
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse delete response: {:?}", e);
-                    Err(StatusCode::INTERNAL_SERVER_ERROR)
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Delete vector failed: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
+// Legacy single-vector endpoints removed - use batch operations instead
+// These APIs don't exist in proto-first architecture
 
 /// Get metrics endpoint - thin adapter to UnifiedHandlers
 pub async fn get_metrics(
@@ -781,16 +816,8 @@ pub async fn get_metrics(
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     // Delegate to unified handlers
     match state.unified_handlers.get_metrics().await {
-        Ok(metrics_bytes) => {
-            match serde_json::from_slice::<serde_json::Value>(&metrics_bytes) {
-                Ok(metrics_data) => {
-                    Ok(JsonResponse(ApiResponse::success(metrics_data)))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse metrics: {:?}", e);
-                    Err(StatusCode::INTERNAL_SERVER_ERROR)
-                }
-            }
+        Ok(metrics_data) => {
+            Ok(JsonResponse(ApiResponse::success(metrics_data)))
         }
         Err(e) => {
             tracing::error!("Get metrics failed: {:?}", e);
@@ -1433,4 +1460,281 @@ fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> 
         updated_at: proto.updated_at,
     }
 }
+
+/// List all collections
+pub async fn list_collections(
+    State(state): State<AppState>,
+) -> Result<JsonResponse<ListCollectionsResponse>, ErrorResponse> {
+    tracing::info!("📋 REST API: Listing all collections");
+    
+    let collections = state.unified_handlers
+        .list_collections()
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to list collections: {:?}", e);
+            ErrorResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                message: "Failed to list collections".to_string(),
+                error_code: "LIST_FAILED".to_string(),
+            }
+        })?;
+    
+    // Convert proto Collections to REST response
+    let collection_responses: Vec<CollectionInfo> = collections
+        .into_iter()
+        .map(|c| {
+            let config = c.config.unwrap_or_default();
+            let stats = c.stats.as_ref();
+            
+            CollectionInfo {
+                id: c.id,
+                name: config.name,
+                dimension: config.dimension,
+                metric: match config.distance_metric {
+                    x if x == crate::proto::proximadb::DistanceMetric::Cosine as i32 => "cosine",
+                    x if x == crate::proto::proximadb::DistanceMetric::Euclidean as i32 => "euclidean",
+                    x if x == crate::proto::proximadb::DistanceMetric::DotProduct as i32 => "dot_product",
+                    _ => "cosine",
+                }.to_string(),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+                vector_count: stats.map(|s| s.vector_count),
+                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
+            }
+        })
+        .collect();
+    
+    let total_count = collection_responses.len() as i32;
+    
+    Ok(JsonResponse(ListCollectionsResponse {
+        collections: collection_responses,
+        total_count,
+    }))
+}
+
+/// Get a specific collection by ID
+pub async fn get_collection(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+) -> Result<JsonResponse<CollectionInfo>, ErrorResponse> {
+    tracing::info!("🔍 REST API: Getting collection: {}", collection_id);
+    
+    let collection = state.unified_handlers
+        .get_collection(&collection_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get collection: {:?}", e);
+            ErrorResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                message: "Failed to get collection".to_string(),
+                error_code: "GET_FAILED".to_string(),
+            }
+        })?;
+    
+    match collection {
+        Some(c) => {
+            let config = c.config.unwrap_or_default();
+            let stats = c.stats.as_ref();
+            
+            let collection_info = CollectionInfo {
+                id: c.id,
+                name: config.name,
+                dimension: config.dimension,
+                metric: match config.distance_metric {
+                    x if x == crate::proto::proximadb::DistanceMetric::Cosine as i32 => "cosine",
+                    x if x == crate::proto::proximadb::DistanceMetric::Euclidean as i32 => "euclidean",
+                    x if x == crate::proto::proximadb::DistanceMetric::DotProduct as i32 => "dot_product",
+                    _ => "cosine",
+                }.to_string(),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+                vector_count: stats.map(|s| s.vector_count),
+                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
+            };
+            Ok(JsonResponse(collection_info))
+        }
+        None => {
+            Err(ErrorResponse {
+                status: StatusCode::NOT_FOUND.as_u16(),
+                message: format!("Collection with ID '{}' does not exist", collection_id),
+                error_code: "NOT_FOUND".to_string(),
+            })
+        }
+    }
+}
+
+/// Delete a collection using standard REST DELETE verb
+pub async fn delete_collection(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+) -> Result<JsonResponse<CollectionResponse>, StatusCode> {
+    tracing::info!("🗑️ REST API: Deleting collection: {}", collection_id);
+    
+    // Create a proto request for delete operation
+    let proto_request = crate::proto::proximadb::CollectionRequest {
+        operation: crate::proto::proximadb::CollectionOperation::CollectionDelete as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        migration_config: std::collections::HashMap::new(),
+        query_params: std::collections::HashMap::new(),
+        options: std::collections::HashMap::new(),
+    };
+    
+    // Delegate to unified handlers
+    let proto_response = state.unified_handlers
+        .handle_collection_operation(proto_request)
+        .await
+        .map_err(|e| {
+            tracing::error!("Collection deletion failed: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    // Convert proto response to REST response
+    let response = CollectionResponse {
+        success: proto_response.success,
+        operation: "delete".to_string(),
+        collection: proto_response.collection.map(|c| convert_from_proto_collection(c)),
+        collections: None,
+        affected_count: proto_response.affected_count,
+        total_count: proto_response.total_count,
+        metadata: proto_response.metadata.into_iter().collect(),
+        error_message: proto_response.error_message,
+        error_code: proto_response.error_code,
+        processing_time_us: proto_response.processing_time_us,
+    };
+    
+    Ok(JsonResponse(response))
+}
+
+/// Delete vectors using standard REST DELETE verb with JSON body (supports single or multiple)
+pub async fn delete_vectors(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+    Json(request): Json<serde_json::Value>,
+) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
+    tracing::info!("🗑️ REST API: Batch deleting vectors from collection {}", collection_id);
+    
+    // Extract vector IDs from request body
+    let vector_ids: Vec<String> = match request.get("ids") {
+        Some(ids_value) => {
+            serde_json::from_value(ids_value.clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+        None => return Err(StatusCode::BAD_REQUEST),
+    };
+    
+    // Create tombstone vector records with expires_at set to mark for deletion
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    
+    let tombstone_vectors: Vec<crate::proto::proximadb::VectorRecord> = vector_ids
+        .into_iter()
+        .map(|id| crate::proto::proximadb::VectorRecord {
+            id: Some(id),
+            vector: vec![], // Empty vector for tombstone
+            metadata: vec![],
+            timestamp: current_time,
+            created_at: current_time,
+            updated_at: current_time,
+            expires_at: Some(current_time), // Mark for deletion
+            version: 1,
+            distance: Some(0.0),
+            rank: Some(0),
+            score: Some(0.0),
+        })
+        .collect();
+    
+    // Create a proto request for batch operation with tombstone vectors
+    let proto_request = crate::proto::proximadb::VectorBatchRequest {
+        collection_id: collection_id.clone(),
+        vectors: tombstone_vectors,
+        batch_timeout_ms: None,
+        request_id: None,
+    };
+    
+    // Delegate to unified handlers
+    let proto_response = state.unified_handlers
+        .handle_vector_batch(proto_request)
+        .await
+        .map_err(|e| {
+            tracing::error!("Batch vector deletion failed: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    // Convert proto response to REST response
+    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+        total_processed: 0,
+        successful_count: 0,
+        failed_count: 0,
+        updated_count: 0,
+        processing_time_us: 0,
+        wal_write_time_us: 0,
+        index_update_time_us: 0,
+    });
+    
+    let response = VectorOperationResponse {
+        success: proto_response.success,
+        operation: "delete".to_string(),
+        metrics: OperationMetrics {
+            total_processed: metrics.total_processed,
+            successful_count: metrics.successful_count,
+            failed_count: metrics.failed_count,
+            updated_count: metrics.updated_count,
+            processing_time_us: metrics.processing_time_us,
+            wal_write_time_us: metrics.wal_write_time_us,
+            index_update_time_us: metrics.index_update_time_us,
+        },
+        results: None,
+        vector_ids: proto_response.vector_ids,
+        error_message: proto_response.error_message,
+        error_code: proto_response.error_code,
+    };
+    
+    Ok(JsonResponse(response))
+}
+
+/// 🛠️ TEMPORARY DEBUG: List all unflushed vectors for a collection
+pub async fn debug_list_unflushed_vectors(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+) -> Result<JsonResponse<serde_json::Value>, ErrorResponse> {
+    tracing::info!("🔍 DEBUG REST: Listing unflushed vectors for collection: {}", collection_id);
+    
+    match state.unified_handlers.direct_vector_service.debug_list_all_unflushed_vectors(&collection_id).await {
+        Ok(vectors) => {
+            let debug_info = serde_json::json!({
+                "collection_id": collection_id,
+                "unflushed_vector_count": vectors.len(),
+                "vectors": vectors.iter().map(|v| serde_json::json!({
+                    "id": v.id,
+                    "vector_length": v.vector.len(),
+                    "metadata_count": v.metadata.len(),
+                    "vector_preview": v.vector.iter().take(4).cloned().collect::<Vec<f32>>(),
+                    "metadata": v.metadata.iter().map(|m| serde_json::json!({
+                        "key": m.key,
+                        "value": m.value
+                    })).collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            });
+            
+            Ok(JsonResponse(debug_info))
+        }
+        Err(e) => {
+            tracing::error!("🔍 DEBUG REST: Failed to list unflushed vectors: {:?}", e);
+            Err(ErrorResponse {
+                status: 500,
+                message: format!("Failed to list unflushed vectors: {}", e),
+                error_code: "INTERNAL_ERROR".to_string(),
+            })
+        }
+    }
+}
+
+// #[cfg(test)]
+// mod tests;
+// Note: Tests are currently disabled because REST handlers require
+// real UnifiedHandlers instance, not mocks.
+// TODO: Refactor to use trait abstractions or integration tests.
 

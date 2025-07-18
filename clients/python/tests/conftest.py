@@ -98,7 +98,7 @@ def unique_collection_name(test_config) -> str:
 def basic_collection_config() -> CollectionConfig:
     """Basic collection configuration for tests"""
     return CollectionConfig(
-        name="test_collection",
+        name="test_collection_basic",  # Minimum 8 characters
         dimension=128,
         distance_metric=DistanceMetric.COSINE,
         description="Test collection created by pytest"
@@ -109,7 +109,7 @@ def basic_collection_config() -> CollectionConfig:
 def advanced_collection_config() -> CollectionConfig:
     """Advanced collection configuration for tests"""
     return CollectionConfig(
-        name="test_collection",
+        name="test_collection_advanced",  # Minimum 8 characters
         dimension=384,
         distance_metric=DistanceMetric.COSINE,
         description="Advanced test collection with BERT dimensions",
@@ -143,7 +143,7 @@ class TestCollectionManager:
         """Create a test collection with automatic tracking"""
         if config is None:
             config = CollectionConfig(
-                name="test_collection",
+                name="test_collection_default",  # Minimum 8 characters
                 dimension=128,
                 distance_metric=DistanceMetric.COSINE)
         

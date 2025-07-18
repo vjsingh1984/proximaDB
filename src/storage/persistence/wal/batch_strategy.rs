@@ -68,7 +68,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
                 "wal_batch_{}_{}_{}.bin",
                 collection_id,
                 timestamp,
-                batch.batch_id.batch_uuid
+                batch.batch_id.to_base62()
             );
             
             // Construct full cloud URL
@@ -105,7 +105,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             
             tracing::info!(
                 "☁️ CLOUD_WRITE: Wrote batch {} ({} bytes) to {} [bucket: {}]",
-                batch.batch_id.batch_uuid,
+                batch.batch_id.to_base62(),
                 batch_bytes.len(),
                 full_url,
                 bucket
@@ -139,12 +139,9 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             let vector_records: Vec<VectorRecord> = bincode::deserialize(&batch_bytes)
                 .context("Failed to deserialize batch from cloud storage")?;
             
-            // Extract collection_id from the first vector record (all records in batch belong to same collection)
-            let collection_id = if let Some(first_record) = vector_records.first() {
-                first_record.collection_id.clone()
-            } else {
-                // Fallback: parse collection_id from cloud URL filename
-                // Expected format: wal_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
+            // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
+            // Expected format: wal_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
+            let collection_id = {
                 let path_parts: Vec<&str> = cloud_url.split('/').last()
                     .unwrap_or("unknown")
                     .split('_')
@@ -159,7 +156,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             // Reconstruct WalVectorBatch from deserialized vector records with proper collection_id
             use super::BatchId;
             let batch = WalVectorBatch {
-                batch_id: BatchId::new(collection_id, 1, vector_records.len() as u64),
+                batch_id: BatchId::new(),
                 vector_records: Arc::new(vector_records),
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: batch_bytes.len(),
@@ -173,7 +170,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             
             tracing::info!(
                 "☁️ CLOUD_READ: Read batch {} ({} bytes) from {} [bucket: {}]",
-                batch.batch_id.batch_uuid,
+                batch.batch_id.to_base62(),
                 batch_bytes.len(),
                 cloud_url,
                 bucket
@@ -203,17 +200,16 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         // Step 1: Deserialize payload to common VectorRecord format
         let vector_records = match payload_format {
             "avro" => {
-                use crate::storage::persistence::wal::schema::deserialize_vector_batch;
-                deserialize_vector_batch(payload)
+                use crate::storage::persistence::wal::serialization::{AvroSerializer, VectorBatchSerializer};
+                let serializer = AvroSerializer::new();
+                serializer.deserialize_batch(payload)
                     .context("Failed to deserialize Avro payload")?
             }
             "proto" => {
-                use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
-                let proto_records = deserialize_proto_vector_batch(payload)
-                    .context("Failed to deserialize Proto payload")?;
-                
-                // Proto-first: Use proto records directly as VectorRecord (they're type aliases)
-                proto_records.into_iter().collect()
+                use crate::storage::persistence::wal::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                let serializer = ProtocolBuffersSerializer::new();
+                serializer.deserialize_batch(payload)
+                    .context("Failed to deserialize Proto payload")?
             }
             "bincode" => {
                 bincode::deserialize::<Vec<VectorRecord>>(payload)
@@ -224,11 +220,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         
         // Step 2: Create WalVectorBatch and write to memtable
         let batch = WalVectorBatch {
-            batch_id: super::BatchId::new(
-                collection_id.to_string(),
-                0, // Will be set by memtable
-                vector_records.len() as u64,
-            ),
+            batch_id: super::BatchId::new(),
             vector_records: Arc::new(vector_records),
             created_at: std::time::SystemTime::now(),
             total_size_bytes: payload.len(),
@@ -278,11 +270,10 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         immediate_sync: bool
     ) -> Result<Vec<u64>>;
 
-    /// Read vector batches for a collection starting from sequence
-    async fn read_vector_batches(
+    /// Read all vector batches for a collection
+    async fn read_all_batches(
         &self,
         collection_id: &str,
-        from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<WalVectorBatch>>;
 
@@ -443,17 +434,17 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             let assignment_service = get_assignment_service();
             
             if let Some(assignment) = assignment_service
-                .get_assignment(collection_id, StorageComponentType::Wal)
+                .get_assignment(collection_id)
                 .await 
             {
-                // Construct WAL file path
-                let wal_dir = format!("{}/{}/wal/logs", assignment.storage_url, collection_id);
+                // Use WAL URL directly - it already includes collection_id/wal
+                let wal_dir = format!("{}/logs", assignment.wal_url);
                 let sequence_start = sequences.first().copied().unwrap_or(0);
                 let sequence_end = sequences.last().copied().unwrap_or(sequence_start);
                 let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
                 
                 // Get filesystem for this storage URL
-                if let Ok(fs) = filesystem.get_filesystem(&assignment.storage_url) {
+                if let Ok(fs) = filesystem.get_filesystem(&assignment.location_url) {
                     // Ensure WAL directory exists
                     if let Err(_) = fs.create_dir_all(&wal_dir).await {
                         tracing::warn!("Failed to create WAL directory: {}", wal_dir);
@@ -484,7 +475,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
                         wal_file
                     );
                 } else {
-                    tracing::debug!("No filesystem available for storage URL: {}", assignment.storage_url);
+                    tracing::debug!("No filesystem available for storage URL: {}", assignment.location_url);
                 }
             } else {
                 tracing::debug!("No WAL assignment found for collection: {}", collection_id);
@@ -552,7 +543,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         // Default implementation
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // For now, just clear old entries
-            wal_behavior.clear_flushed(collection_id, u64::MAX).await
+            wal_behavior.clear_flushed(collection_id).await
                 .map(|count| count as u64)
         } else {
             // No WAL behavior, return 0
@@ -589,7 +580,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             
             tracing::info!(
                 "🔄 MIGRATION: Migrated batch {} from {} to {}",
-                batch.batch_id.batch_uuid,
+                batch.batch_id.to_base62(),
                 local_path,
                 cloud_batch_url
             );
@@ -739,7 +730,6 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         // Create a tombstone vector record for deletion
         let tombstone = VectorRecord {
             id: Some(vector_id.clone()),
-            collection_id: collection_id.to_string(),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -754,7 +744,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
 
         // Create single-vector batch for deletion
         use super::BatchId;
-        let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
+        let batch_id = BatchId::new();
         let batch = WalVectorBatch {
             batch_id,
             vector_records: Arc::new(vec![tombstone]),
@@ -813,7 +803,8 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             for batch in &unflushed_batches {
                 all_vector_records.extend(batch.vector_records.iter().cloned());
                 batch_ids.push(batch.batch_id.clone());
-                marked_sequences.push(batch.batch_id.sequence_range);
+                // CompactBatchId doesn't have sequence_range, use a placeholder
+                marked_sequences.push((0, 0));
             }
             
             tracing::info!(
@@ -858,14 +849,14 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     async fn complete_flush_cycle(&self, flush_cycle: super::FlushCycle) -> Result<super::FlushCompletionResult> {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Atomically clear flushed batches from GlobalPartitionedMemtable
-            let cleared_count = wal_behavior.clear_flushed(&flush_cycle.collection_id, u64::MAX).await?;
+            let cleared_count = wal_behavior.clear_flushed(&flush_cycle.collection_id).await?;
             
             // Cleanup disk WAL files for the flushed batches
             if let Some(fs) = self.get_filesystem() {
                 for batch_id in &flush_cycle.batch_ids {
                     // Try to clean up local WAL files if they exist
                     let local_wal_path = format!("wal_batch_{}_{}.bin", 
-                        flush_cycle.collection_id, batch_id.batch_uuid);
+                        flush_cycle.collection_id, batch_id.to_base62());
                     
                     if let Ok(local_fs) = fs.get_filesystem(&format!("file://{}", local_wal_path)) {
                         let _ = local_fs.delete(&local_wal_path).await; // Ignore errors - file might not exist
@@ -940,7 +931,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         use super::BatchId;
         
         // Create single-vector batch
-        let batch_id = BatchId::new(collection_id.to_string(), 1, 1);
+        let batch_id = BatchId::new();
         let total_size_bytes = vector_record.vector.len() * 4 + 256;
         
         let batch = WalVectorBatch {
@@ -973,11 +964,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
             .sum();
         
         // Create multi-vector batch
-        let batch_id = BatchId::new(
-            collection_id.clone(), 
-            1, 
-            vector_records.len() as u64
-        );
+        let batch_id = BatchId::new();
         
         let batch = WalVectorBatch {
             batch_id,
@@ -1002,11 +989,7 @@ pub trait WalBatchStrategyExt: WalBatchStrategy {
         
         // If cloud backup is enabled, also write to cloud
         if let Some(cloud_url) = cloud_backup_url {
-            let batch_id = super::BatchId::new(
-                collection_id.clone(), 
-                1, 
-                vector_records.len() as u64
-            );
+            let batch_id = super::BatchId::new();
             
             let total_size_bytes: usize = vector_records.iter()
                 .map(|r| r.vector.len() * 4 + 256)

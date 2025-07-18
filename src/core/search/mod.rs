@@ -1,9 +1,11 @@
 //! Search module for ProximaDB storage-aware search implementations
 
-pub mod lsm_search;
+// pub mod lsm_search; // Obsolete - uses old storage_aware interface
 pub mod multi_tier_deduplication;
-pub mod storage_aware;
-pub mod viper_search;
+pub mod results;
+// pub mod storage_aware; // Obsolete - replaced by unified search
+pub mod unified_interface;
+// pub mod viper_search; // Obsolete - uses old storage_aware interface
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -11,12 +13,21 @@ use serde::{Deserialize, Serialize};
 /// Unified search parameters for all storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchParams {
-    // Required parameters
+    // Core search parameters
+    /// Query vectors for similarity search (supports single or batch search)
+    pub query_vectors: Option<Vec<Vec<f32>>>,
+    
     /// Number of results to return
     pub top_k: Option<usize>,
     
-    /// Metadata filters to apply
+    /// Distance metric to use for similarity calculation
+    pub distance_metric: Option<crate::compute::distance::DistanceMetric>,
+    
+    /// Simple metadata filters (for backward compatibility)
     pub filters: Option<HashMap<String, serde_json::Value>>,
+    
+    /// Complex filter expression supporting AND, OR, NOT operators
+    pub filter_expression: Option<FilterExpression>,
     
     /// Accuracy threshold for search (0.0-1.0)
     pub accuracy_threshold: Option<f32>,
@@ -47,8 +58,11 @@ pub struct SearchParams {
 impl Default for SearchParams {
     fn default() -> Self {
         Self {
+            query_vectors: None,
             top_k: Some(10),
+            distance_metric: Some(crate::compute::distance::DistanceMetric::Cosine),
             filters: None,
+            filter_expression: None,
             accuracy_threshold: Some(0.95),
             include_expired: Some(false),
             timeout_ms: Some(5000),
@@ -61,12 +75,84 @@ impl Default for SearchParams {
     }
 }
 
+impl SearchParams {
+    /// Create search params for a single vector query
+    pub fn single_vector(query_vector: Vec<f32>) -> Self {
+        Self {
+            query_vectors: Some(vec![query_vector]),
+            ..Default::default()
+        }
+    }
+    
+    /// Create search params for batch vector query
+    pub fn batch_vectors(query_vectors: Vec<Vec<f32>>) -> Self {
+        Self {
+            query_vectors: Some(query_vectors),
+            ..Default::default()
+        }
+    }
+    
+    /// Get the first query vector (for single vector search)
+    pub fn first_query_vector(&self) -> Option<&Vec<f32>> {
+        self.query_vectors.as_ref()?.first()
+    }
+    
+    /// Check if this is a batch search
+    pub fn is_batch_search(&self) -> bool {
+        self.query_vectors.as_ref().map_or(false, |v| v.len() > 1)
+    }
+}
+
+/// Complex filter expression for advanced metadata filtering
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FilterExpression {
+    /// Single comparison operation
+    Comparison {
+        field: String,
+        operator: ComparisonOperator,
+        value: serde_json::Value,
+    },
+    /// Logical AND of multiple expressions
+    And(Vec<FilterExpression>),
+    /// Logical OR of multiple expressions
+    Or(Vec<FilterExpression>),
+    /// Logical NOT of an expression
+    Not(Box<FilterExpression>),
+}
+
+/// Comparison operators for metadata filtering
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ComparisonOperator {
+    Equals,
+    NotEquals,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    In,
+    NotIn,
+    Contains,
+    StartsWith,
+    EndsWith,
+    Between,
+    IsNull,
+    IsNotNull,
+}
+
 // Re-export main types
 pub use multi_tier_deduplication::{
     DeduplicationStats, MultiTierDeduplicator, StorageTier, TieredSearchResult, 
     DeduplicationStorageEngine, MetadataFilter,
 };
-pub use storage_aware::{
-    ClusteringHints, QuantizationLevel, SearchCapabilities, SearchEngineFactory,
-    SearchMetrics, SearchValidator, StorageSearchEngine,
+
+// Filter types are already defined above, no need to re-export
+// Obsolete storage_aware exports - replaced by unified search
+// pub use storage_aware::{
+//     ClusteringHints, QuantizationLevel, SearchCapabilities, SearchEngineFactory,
+//     SearchMetrics, SearchValidator, StorageSearchEngine,
+// };
+pub use results::{SearchResult, SearchResultSet, SearchDebugInfo, QuantizationInfo, EngineStats};
+pub use unified_interface::{
+    UnifiedSearchEngine, UnifiedSearchOrchestrator, UnifiedSearchContext,
+    CollectionConfig, FilterableColumn, ColumnDataType, StorageInfo, OptimizationHint,
 };

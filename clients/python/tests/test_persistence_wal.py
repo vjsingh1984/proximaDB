@@ -10,7 +10,7 @@ import numpy as np
 from typing import List, Dict, Any
 
 from proximadb import connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, FlushConfig, DistanceMetric
+from proximadb.models import CollectionConfig, FlushConfig, DistanceMetric, StorageEngine
 from proximadb.exceptions import ProximaDBError
 
 

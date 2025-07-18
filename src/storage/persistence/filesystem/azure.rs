@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
 
 use super::auth::{AzureCredentialProvider, AzureCredentials};
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult};
+use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// Azure blob tier options
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +274,17 @@ impl AzureClient {
         blob_path: &str,
         credentials: &AzureCredentials,
     ) -> FsResult<Vec<u8>> {
+        self.get_object_range(container, blob_path, credentials, None).await
+    }
+
+    /// Get Azure blob with optional byte range
+    async fn get_object_range(
+        &self,
+        container: &str,
+        blob_path: &str,
+        credentials: &AzureCredentials,
+        range: Option<&str>,
+    ) -> FsResult<Vec<u8>> {
         let url = if self.config.hierarchical_namespace {
             // Data Lake Gen2 API
             format!(
@@ -288,33 +299,62 @@ impl AzureClient {
             )
         };
 
-        let response = self
+        let mut request = self
             .http_client
             .get(&url)
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
             )
-            .header("x-ms-version", "2020-04-08")
+            .header("x-ms-version", "2020-04-08");
+
+        // Add Range header if specified
+        if let Some(range_value) = range {
+            request = request.header("Range", range_value);
+            tracing::debug!("Azure range request: {} for adls://{}/{}", range_value, container, blob_path);
+        }
+
+        let response = request
             .send()
             .await
-            .map_err(|e| FilesystemError::Network(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!("❌ Azure GET request failed: {}", e);
+                FilesystemError::Network(e.to_string())
+            })?;
 
-        if response.status().is_success() {
-            response
+        // Handle both 200 OK (full content) and 206 Partial Content (range request)
+        let status = response.status();
+        if status.is_success() || status.as_u16() == 206 {
+            let is_range_response = status.as_u16() == 206;
+            let data = response
                 .bytes()
                 .await
                 .map(|b| b.to_vec())
-                .map_err(|e| FilesystemError::Network(e.to_string()))
-        } else if response.status().as_u16() == 404 {
+                .map_err(|e| FilesystemError::Network(e.to_string()))?;
+
+            if is_range_response {
+                tracing::debug!("✅ Azure range response: {} bytes received", data.len());
+            } else {
+                tracing::debug!("✅ Successfully retrieved {} bytes from Azure", data.len());
+            }
+            Ok(data)
+        } else if status.as_u16() == 404 {
+            tracing::warn!("🔍 Azure object not found: adls://{}/{}", container, blob_path);
             Err(FilesystemError::NotFound(format!(
                 "adls://{}/{}",
                 container, blob_path
             )))
+        } else if status.as_u16() == 416 {
+            // Range not satisfiable
+            Err(FilesystemError::Config(format!(
+                "Invalid range request for adls://{}/{}",
+                container, blob_path
+            )))
         } else {
+            tracing::error!("❌ Azure GET error: {}", status);
             Err(FilesystemError::Network(format!(
-                "Azure error: {}",
-                response.status()
+                "Azure error: {} for adls://{}/{}",
+                status, container, blob_path
             )))
         }
     }
@@ -386,11 +426,38 @@ impl AzureClient {
 #[async_trait]
 impl FileSystem for AzureFileSystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
+        tracing::debug!("📖 Azure read: {}", path);
         let (container, blob_path) = self.parse_azure_url(path)?;
         let credentials = self.credential_provider.get_credentials().await?;
         self.client
             .get_blob(&container, &blob_path, &credentials)
             .await
+    }
+
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        tracing::debug!("📖 Azure range read: {} (offset: {}, length: {})", path, offset, length);
+        let (container, blob_path) = self.parse_azure_url(path)?;
+        let credentials = self.credential_provider.get_credentials().await?;
+        
+        // Azure supports byte-range requests using the Range header
+        // Format: "bytes=start-end" (inclusive)
+        let end = offset + length - 1;
+        let range_header = format!("bytes={}-{}", offset, end);
+        
+        self.client
+            .get_object_range(&container, &blob_path, &credentials, Some(&range_header))
+            .await
+    }
+
+    async fn read_ranges(&self, path: &str, ranges: Vec<std::ops::Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+        // Azure doesn't support multipart range requests as efficiently as S3
+        // Fall back to individual range requests
+        let mut results = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let length = range.end - range.start;
+            results.push(self.read_range(path, range.start, length).await?);
+        }
+        Ok(results)
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
@@ -559,6 +626,13 @@ impl FileSystem for AzureFileSystem {
     async fn sync(&self) -> FsResult<()> {
         // Azure operations are immediately durable
         Ok(())
+    }
+
+    async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }
 

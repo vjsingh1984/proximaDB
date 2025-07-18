@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::core::foundation::BaseResult;
+use crate::compute::unified_distance::SimilarityResult;
+use crate::compute::unified_quantization::UnifiedQuantizationLevel;
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -24,6 +25,14 @@ pub struct SearchResult {
     /// Debug information for result
     pub debug_info: Option<SearchDebugInfo>,
     
+    // Unified search pipeline integration
+    /// Semantic distance information with metric awareness (replaces multiple adapters)
+    pub semantic_distance: Option<SimilarityResult>,
+    /// Quantization information if applicable
+    pub quantization_info: Option<QuantizationInfo>,
+    /// Engine-specific optimization stats (replaces multiple result types)
+    pub engine_stats: Option<EngineStats>,
+    
     // Additional fields for compatibility with existing code
     /// Index path for result tracking
     pub index_path: Option<String>,
@@ -44,6 +53,37 @@ pub struct SearchDebugInfo {
     pub processing_time_us: u64,
 }
 
+/// Quantization information for search results
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QuantizationInfo {
+    /// Quantization level used
+    pub level: UnifiedQuantizationLevel,
+    /// Compression ratio achieved
+    pub compression_ratio: f32,
+    /// Accuracy retained (percentage)
+    pub accuracy_retained: f32,
+    /// Column name in Parquet file
+    pub column_name: Option<String>,
+}
+
+/// Engine-specific optimization statistics
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EngineStats {
+    /// Strategy used (DirectArrow, MetadataFiltered, QuantizedTwoStage, Hybrid)
+    pub strategy_used: String,
+    /// Bytes read from storage
+    pub bytes_read: usize,
+    /// Number of seek operations
+    pub seek_operations: usize,
+    /// Number of HTTP range requests (cloud storage)
+    pub range_requests: usize,
+    /// Cache hit/miss statistics
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+    /// Deduplication savings
+    pub deduplication_savings: usize,
+}
+
 impl SearchResult {
     /// Create a basic search result
     pub fn new(id: String, score: f32) -> Self {
@@ -56,6 +96,9 @@ impl SearchResult {
             vector: None,
             metadata: HashMap::new(),
             debug_info: None,
+            semantic_distance: None,
+            quantization_info: None,
+            engine_stats: None,
             index_path: None,
             collection_id: None,
             created_at: None,
@@ -77,6 +120,9 @@ impl SearchResult {
             vector: None,
             metadata,
             debug_info: None,
+            semantic_distance: None,
+            quantization_info: None,
+            engine_stats: None,
             index_path: None,
             collection_id: None,
             created_at: None,
@@ -93,6 +139,53 @@ impl SearchResult {
     pub fn with_debug_info(mut self, debug_info: SearchDebugInfo) -> Self {
         self.debug_info = Some(debug_info);
         self
+    }
+    
+    /// Add semantic distance information (eliminates adapter conversions)
+    pub fn with_semantic_distance(mut self, semantic_distance: SimilarityResult) -> Self {
+        self.semantic_distance = Some(semantic_distance);
+        // Update core score/distance fields for compatibility
+        self.score = semantic_distance.normalized_score;
+        self.distance = Some(semantic_distance.rank_value);
+        self
+    }
+    
+    /// Add quantization information for Parquet column integration
+    pub fn with_quantization_info(mut self, quantization_info: QuantizationInfo) -> Self {
+        self.quantization_info = Some(quantization_info);
+        self
+    }
+    
+    /// Add engine-specific optimization statistics (eliminates multiple result types)
+    pub fn with_engine_stats(mut self, engine_stats: EngineStats) -> Self {
+        self.engine_stats = Some(engine_stats);
+        self
+    }
+    
+    /// Create search result directly from semantic distance computation
+    pub fn from_semantic_distance(
+        id: String,
+        vector_id: Option<String>,
+        semantic_distance: SimilarityResult,
+        vector: Option<Vec<f32>>,
+        metadata: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            id,
+            vector_id,
+            score: semantic_distance.normalized_score,
+            distance: Some(semantic_distance.rank_value),
+            rank: None,
+            vector,
+            metadata,
+            debug_info: None,
+            semantic_distance: Some(semantic_distance),
+            quantization_info: None,
+            engine_stats: None,
+            index_path: None,
+            collection_id: None,
+            created_at: None,
+        }
     }
 }
 
@@ -113,20 +206,4 @@ pub struct SearchResultSet {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-impl BaseResult<Vec<SearchResult>> for SearchResultSet {
-    fn is_success(&self) -> bool {
-        true // SearchResultSet represents successful search
-    }
-    
-    fn data(&self) -> Option<&Vec<SearchResult>> {
-        Some(&self.results)
-    }
-    
-    fn error(&self) -> Option<&str> {
-        None // SearchResultSet doesn't contain errors
-    }
-    
-    fn processing_time_us(&self) -> Option<u64> {
-        Some(self.processing_time_us)
-    }
-}
+// BaseResult trait implementation removed - not needed for unified architecture

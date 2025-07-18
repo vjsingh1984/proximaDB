@@ -222,17 +222,13 @@ impl MetadataWalManager {
         if let Some(behavior_wrapper) = self.wal_strategy.get_wal_behavior_wrapper() {
             // Create WalVectorBatch for the metadata
             let batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
-                batch_id: crate::storage::persistence::wal::BatchId::new(
-                    collection_id.clone(),
-                    1, // sequence
-                    batch_records.len() as u64,
-                ),
+                batch_id: crate::storage::persistence::wal::BatchId::new(),
                 vector_records: Arc::new(batch_records),
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 1024, // Approximate for metadata
                 is_flushed: false,
             };
-            let _sequence = behavior_wrapper.add_vector_batch(batch).await?;
+            let _sequence = behavior_wrapper.add_vector_batch(&collection_id, batch).await?;
         } else {
             return Err(anyhow::anyhow!("WAL behavior wrapper not available"));
         }
@@ -489,7 +485,6 @@ impl MetadataWalManager {
             
             let delete_record = crate::core::VectorRecord {
                 id: Some(vector_id),
-                collection_id: collection_id.to_string(),
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: Vec::new(),
                 timestamp: current_time,
@@ -509,17 +504,13 @@ impl MetadataWalManager {
                 let vector_count = delete_batch_records.len() as u64;
                 let end_sequence = if vector_count > 0 { 2 + vector_count - 1 } else { 2 };
                 let delete_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
-                    batch_id: crate::storage::persistence::wal::BatchId::new(
-                        collection_id.to_string(),
-                        2, // start sequence
-                        end_sequence, // end sequence
-                    ),
+                    batch_id: crate::storage::persistence::wal::BatchId::new(),
                     vector_records: Arc::new(delete_batch_records),
                     created_at: std::time::SystemTime::now(),
                     total_size_bytes: 1024, // Approximate for metadata
                     is_flushed: false,
                 };
-                let _sequence = behavior_wrapper.add_vector_batch(delete_batch).await?;
+                let _sequence = behavior_wrapper.add_vector_batch(collection_id, delete_batch).await?;
             } else {
                 return Err(anyhow::anyhow!("WAL behavior wrapper not available for delete"));
             }
@@ -611,7 +602,6 @@ impl MetadataWalManager {
         let timestamp = metadata.updated_at.timestamp_millis();
         Ok(crate::core::VectorRecord {
             id: Some(format!("metadata_{}", metadata.id)),
-            collection_id: metadata.id.clone(),
             vector,
             metadata: vec![],
             timestamp,

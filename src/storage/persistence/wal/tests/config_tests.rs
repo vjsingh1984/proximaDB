@@ -48,7 +48,7 @@ mod tests {
     async fn test_performance_config_default() {
         let config = PerformanceConfig::default();
 
-        assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024); // Updated to 10MB
+        assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // Updated to 2MB for faster recovery
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
         assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);
         assert_eq!(
@@ -61,7 +61,7 @@ mod tests {
     async fn test_wal_config_default() {
         let config = WalConfig::default();
 
-        assert_eq!(config.strategy_type, WalStrategyType::AvroBatch);
+        assert_eq!(config.strategy_type, WalStrategyType::BincodeBatch);
         assert_eq!(config.memtable.memtable_type, MemTableType::Art);
         assert_eq!(
             config.multi_disk.distribution_strategy,
@@ -106,11 +106,19 @@ mod tests {
                 global_shrink_factor: 0.8,
                 ttl_cleanup_interval_secs: 600,
                 sync_mode: crate::storage::persistence::wal::config::SyncMode::Always,
+                enable_optimized_wal_writer: None,
+                background_writer_threads: None,
+                wal_batch_size: None,
             },
             enable_mvcc: true,
             enable_ttl: true,
             enable_background_compaction: true,
             collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         };
 
         assert_eq!(config.strategy_type, WalStrategyType::BincodeBatch);
@@ -154,6 +162,11 @@ mod tests {
             enable_ttl: true,
             enable_background_compaction: true,
             collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         };
 
         let serialized = serde_json::to_string(&config);

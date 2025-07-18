@@ -180,7 +180,6 @@ async fn test_memtable_semantic_search() {
     let test_vectors = vec![
         VectorRecord {
             id: Some("identical".to_string()),
-            collection_id: collection_id.to_string(),
             vector: vec![1.0, 0.0, 0.0],
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -194,7 +193,6 @@ async fn test_memtable_semantic_search() {
         },
         VectorRecord {
             id: Some("similar".to_string()),
-            collection_id: collection_id.to_string(),
             vector: vec![0.9, 0.1, 0.0],
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -208,7 +206,6 @@ async fn test_memtable_semantic_search() {
         },
         VectorRecord {
             id: Some("orthogonal".to_string()),
-            collection_id: collection_id.to_string(),
             vector: vec![0.0, 1.0, 0.0],
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -224,12 +221,7 @@ async fn test_memtable_semantic_search() {
     
     // Create WAL batch
     let batch = WalVectorBatch {
-        batch_id: BatchId {
-            collection_id: collection_id.to_string(),
-            batch_uuid: "test-batch".to_string(),
-            sequence_range: (1, 3),
-            created_at: chrono::Utc::now(),
-        },
+        batch_id: BatchId::new(),
         vector_records: Arc::new(test_vectors),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024,
@@ -237,7 +229,7 @@ async fn test_memtable_semantic_search() {
     };
     
     // Add batch to memtable
-    memtable.add_wal_batch(batch).await.unwrap();
+    memtable.add_wal_batch("test_collection", batch).await.unwrap();
     
     // Test search with different metrics
     let query = vec![1.0, 0.0, 0.0]; // Should match "identical" best

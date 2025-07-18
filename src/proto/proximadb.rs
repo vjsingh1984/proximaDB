@@ -16,40 +16,37 @@ pub struct VectorRecord {
     /// Auto-generated if null
     #[prost(string, optional, tag = "1")]
     pub id: ::core::option::Option<::prost::alloc::string::String>,
-    /// Collection this vector belongs to
-    #[prost(string, tag = "2")]
-    pub collection_id: ::prost::alloc::string::String,
     /// REQUIRED for inserts
-    #[prost(float, repeated, tag = "3")]
+    #[prost(float, repeated, tag = "2")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
     /// Efficient key-value metadata (no JSON parsing)
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag = "3")]
     pub metadata: ::prost::alloc::vec::Vec<MetadataItem>,
     /// Milliseconds since epoch
-    #[prost(int64, tag = "5")]
+    #[prost(int64, tag = "4")]
     pub timestamp: i64,
     /// Creation timestamp (milliseconds)
-    #[prost(int64, tag = "6")]
+    #[prost(int64, tag = "5")]
     pub created_at: i64,
     /// Last update timestamp (milliseconds)
-    #[prost(int64, tag = "7")]
+    #[prost(int64, tag = "6")]
     pub updated_at: i64,
     /// TTL support
-    #[prost(int64, optional, tag = "8")]
+    #[prost(int64, optional, tag = "7")]
     pub expires_at: ::core::option::Option<i64>,
     /// For optimistic concurrency
-    #[prost(int64, tag = "9")]
+    #[prost(int64, tag = "8")]
     pub version: i64,
     /// Search result fields (only populated in search responses)
     ///
     /// Search result rank (1-based)
-    #[prost(int32, optional, tag = "10")]
+    #[prost(int32, optional, tag = "9")]
     pub rank: ::core::option::Option<i32>,
     /// Similarity score
-    #[prost(float, optional, tag = "11")]
+    #[prost(float, optional, tag = "10")]
     pub score: ::core::option::Option<f32>,
     /// Distance value
-    #[prost(float, optional, tag = "12")]
+    #[prost(float, optional, tag = "11")]
     pub distance: ::core::option::Option<f32>,
 }
 /// Native typed metadata supporting multiple value types
@@ -729,6 +726,17 @@ pub struct VectorSearchRequest {
     #[prost(message, optional, tag = "7")]
     pub search_optimization: ::core::option::Option<SearchParams>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorGetRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub vector_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub include_fields: ::core::option::Option<IncludeFields>,
+}
 /// Native typed search parameters - no more string maps!
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1251,6 +1259,8 @@ pub enum VectorOperation {
     VectorBatch = 1,
     /// Vector search operation
     VectorSearch = 2,
+    /// Get single vector by ID
+    VectorGet = 3,
 }
 impl VectorOperation {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1262,6 +1272,7 @@ impl VectorOperation {
             VectorOperation::Unspecified => "VECTOR_OPERATION_UNSPECIFIED",
             VectorOperation::VectorBatch => "VECTOR_BATCH",
             VectorOperation::VectorSearch => "VECTOR_SEARCH",
+            VectorOperation::VectorGet => "VECTOR_GET",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1270,6 +1281,7 @@ impl VectorOperation {
             "VECTOR_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
             "VECTOR_BATCH" => Some(Self::VectorBatch),
             "VECTOR_SEARCH" => Some(Self::VectorSearch),
+            "VECTOR_GET" => Some(Self::VectorGet),
             _ => None,
         }
     }
@@ -1649,6 +1661,31 @@ pub mod proxima_db_client {
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorSearch"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn vector_get(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VectorGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/VectorGet",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorGet"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Health and monitoring
         pub async fn health(
             &mut self,
@@ -1725,6 +1762,13 @@ pub mod proxima_db_server {
         async fn vector_search(
             &self,
             request: tonic::Request<super::VectorSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
+        async fn vector_get(
+            &self,
+            request: tonic::Request<super::VectorGetRequest>,
         ) -> std::result::Result<
             tonic::Response<super::VectorOperationResponse>,
             tonic::Status,
@@ -1942,6 +1986,52 @@ pub mod proxima_db_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = VectorSearchSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.ProximaDB/VectorGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct VectorGetSvc<T: ProximaDb>(pub Arc<T>);
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::VectorGetRequest>
+                    for VectorGetSvc<T> {
+                        type Response = super::VectorOperationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VectorGetRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDb>::vector_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VectorGetSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

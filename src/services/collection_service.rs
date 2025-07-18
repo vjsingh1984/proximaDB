@@ -90,6 +90,15 @@ impl CollectionService {
             ));
         }
         
+        // Validate collection name length to prevent collision with IDs
+        if config.name.len() < 8 {
+            return Ok(CollectionServiceResponse::error(
+                "Collection name must be at least 8 characters long".to_string(),
+                "INVALID_NAME_LENGTH".to_string(),
+                start_time.elapsed().as_micros() as i64,
+            ));
+        }
+        
         if config.dimension == 0 || config.dimension > 1_000_000 {
             return Ok(CollectionServiceResponse::error(
                 "Invalid dimension: must be between 1 and 1,000,000".to_string(),
@@ -178,6 +187,38 @@ impl CollectionService {
     async fn get_native_proto(&self, identifier: &str) -> Result<Option<Collection>> {
         // Use the metadata backend's get_collection_metadata which handles both name and UUID
         self.metadata_backend.get_collection_metadata(identifier).await
+    }
+    
+    /// ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
+    /// This is the key method for collection identifier resolution
+    /// - Input: Collection name OR collection ID
+    /// - Output: Collection ID (base62) for internal use
+    /// - Used by WAL, storage, and index path resolution
+    pub async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>> {
+        tracing::debug!("🔍 Resolving collection identifier: '{}'", identifier);
+        
+        // Check if this looks like a base62 collection ID (short alphanumeric)
+        let is_likely_id = identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
+        
+        if let Some(collection) = self.get_proto_collection(identifier).await? {
+            let collection_id = collection.id;
+            tracing::debug!("✅ Resolved '{}' -> collection_id: '{}'", identifier, collection_id);
+            Ok(Some(collection_id))
+        } else {
+            tracing::debug!("❌ Collection not found: '{}'", identifier);
+            Ok(None)
+        }
+    }
+    
+    /// ✅ RESOLVE COLLECTION ID TO COLLECTION NAME  
+    /// Reverse resolution for user-friendly displays
+    pub async fn resolve_collection_name(&self, collection_id: &str) -> Result<Option<String>> {
+        if let Some(collection) = self.get_proto_collection(collection_id).await? {
+            if let Some(config) = &collection.config {
+                return Ok(Some(config.name.clone()));
+            }
+        }
+        Ok(None)
     }
     
     /// Convert Collection to core Collection - direct proto to core mapping
@@ -462,7 +503,7 @@ impl CollectionService {
             ] {
                 if let Err(e) = self
                     .assignment_service
-                    .remove_assignment(&collection_name, *component_type)
+                    .remove_assignment(&collection_name)
                     .await
                 {
                     warn!(
@@ -707,7 +748,7 @@ impl CollectionService {
         Ok(())
     }
 
-    /// Create storage directories for a new collection using assignment service
+    /// Create storage directories for a new collection using unified assignment
     async fn create_storage_directories(
         &self,
         collection_name: &str,
@@ -718,96 +759,73 @@ impl CollectionService {
             collection_name, collection_uuid
         );
 
+        // Get unified assignment for the collection (only need to do this once)
+        let assignment = self
+            .assignment_service
+            .assign_collection(
+                collection_name,
+                &self.storage_config.storage_locations,
+                &self.storage_config.assignment_config.strategy,
+            )
+            .await?;
+
         let mut created_components = Vec::new();
 
-        // Define storage components that need assignment service
-        // Only assign: WAL, Storage (unified for any engine), and Index
-        // Metadata has dedicated storage URL from config
-        let storage_components = vec![
-            (
-                StorageComponentType::Wal,
-                self.get_wal_assignment_config().await?,
-            ),
-            (
-                StorageComponentType::Storage,
-                self.get_storage_assignment_config().await?,
-            ), // Engine-agnostic storage
-            (
-                StorageComponentType::Index,
-                self.get_index_assignment_config().await?,
-            ),
-        ];
-
-        for (component_type, config) in storage_components {
-            match self
-                .assignment_service
-                .assign_storage_url(&String::from(collection_name), &config)
-                .await
-            {
-                Ok(assignment) => {
-                    // Create the directory structure
-                    let collection_dir = format!("{}/{}", assignment.storage_url, collection_name);
-
-                    match self
-                        .filesystem_factory
-                        .get_filesystem(&assignment.storage_url)
-                    {
-                        Ok(filesystem) => {
-                            // Create collection directory (with parent directories)
-                            if let Err(e) = filesystem.create_dir_all(&collection_dir).await {
-                                warn!(
-                                    "⚠️ Failed to create {} directory {}: {}",
-                                    component_type, collection_dir, e
-                                );
-                                continue;
-                            }
-
-                            // Create component-specific subdirectories
-                            let subdirs = match component_type {
-                                StorageComponentType::Wal => vec!["logs", "checkpoints"],
-                                StorageComponentType::Storage => {
-                                    vec!["data", "indexes", "metadata"]
-                                }
-                                StorageComponentType::Index => vec!["axis", "hnsw", "ivf"],
-                            };
-
-                            for subdir in subdirs {
-                                let full_subdir = format!("{}/{}", collection_dir, subdir);
-                                if let Err(e) = filesystem.create_dir_all(&full_subdir).await {
-                                    warn!(
-                                        "⚠️ Failed to create {} subdirectory {}: {}",
-                                        component_type, full_subdir, e
-                                    );
-                                }
-                            }
-
-                            info!(
-                                "✅ Created {} storage directory: {}",
-                                component_type, collection_dir
-                            );
-                            created_components.push(component_type);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "⚠️ Failed to get filesystem for {}: {}",
-                                assignment.storage_url, e
-                            );
-                        }
+        // Create WAL directories
+        if let Ok(filesystem) = self.filesystem_factory.get_filesystem(&assignment.location_url) {
+            // Create WAL directory and subdirectories
+            if let Err(e) = filesystem.create_dir_all(&assignment.wal_url).await {
+                warn!("⚠️ Failed to create WAL directory {}: {}", assignment.wal_url, e);
+            } else {
+                for subdir in &["logs", "checkpoints"] {
+                    let full_path = format!("{}/{}", assignment.wal_url, subdir);
+                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
+                        warn!("⚠️ Failed to create WAL subdirectory {}: {}", full_path, e);
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        "⚠️ Failed to assign storage for {} component: {}",
-                        component_type, e
-                    );
-                }
+                info!("✅ Created WAL storage directory: {}", assignment.wal_url);
+                created_components.push(StorageComponentType::Wal);
             }
+
+            // Create data directories
+            if let Err(e) = filesystem.create_dir_all(&assignment.data_url).await {
+                warn!("⚠️ Failed to create data directory {}: {}", assignment.data_url, e);
+            } else {
+                for subdir in &["data", "indexes", "metadata"] {
+                    let full_path = format!("{}/{}", assignment.data_url, subdir);
+                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
+                        warn!("⚠️ Failed to create data subdirectory {}: {}", full_path, e);
+                    }
+                }
+                info!("✅ Created data storage directory: {}", assignment.data_url);
+                created_components.push(StorageComponentType::Storage);
+            }
+
+            // Create index directories  
+            if let Err(e) = filesystem.create_dir_all(&assignment.index_url).await {
+                warn!("⚠️ Failed to create index directory {}: {}", assignment.index_url, e);
+            } else {
+                for subdir in &["axis", "hnsw", "ivf"] {
+                    let full_path = format!("{}/{}", assignment.index_url, subdir);
+                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
+                        warn!("⚠️ Failed to create index subdirectory {}: {}", full_path, e);
+                    }
+                }
+                info!("✅ Created index storage directory: {}", assignment.index_url);
+                created_components.push(StorageComponentType::Index);
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "Failed to get filesystem for location: {}",
+                assignment.location_url
+            ));
         }
 
         info!(
-            "🏗️ Created {} storage components for collection {}",
+            "🏗️ Created {} storage components for collection {} at location {}",
             created_components.len(),
-            collection_name
+            collection_name,
+            assignment.location_url
         );
         Ok(created_components)
     }
@@ -835,56 +853,65 @@ impl CollectionService {
         for component_type in component_types {
             if let Some(assignment) = self
                 .assignment_service
-                .get_assignment(&String::from(collection_name), component_type)
+                .get_assignment(collection_name)
                 .await
             {
-                let collection_dir = format!("{}/{}", assignment.storage_url, collection_name);
+                // With collection-first structure, we only need to delete once
+                if component_type == StorageComponentType::Wal {
+                    // Delete the entire collection directory (includes wal/, data/, index/)
+                    let collection_dir = format!("{}/{}", 
+                        assignment.location_url.trim_end_matches('/'), 
+                        collection_name
+                    );
 
-                match self
-                    .filesystem_factory
-                    .get_filesystem(&assignment.storage_url)
-                {
-                    Ok(filesystem) => {
-                        // Check if directory exists before attempting to delete
-                        match filesystem.exists(&collection_dir).await {
-                            Ok(true) => {
-                                // Recursively delete the entire collection directory
-                                match filesystem.delete(&collection_dir).await {
-                                    Ok(_) => {
-                                        info!(
-                                            "✅ Deleted {} storage directory: {}",
-                                            component_type, collection_dir
-                                        );
-                                        cleaned_components += 1;
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "⚠️ Failed to delete {} directory {}: {}",
-                                            component_type, collection_dir, e
-                                        );
+                    match self
+                        .filesystem_factory
+                        .get_filesystem(&assignment.location_url)
+                    {
+                        Ok(filesystem) => {
+                            // Check if directory exists before attempting to delete
+                            match filesystem.exists(&collection_dir).await {
+                                Ok(true) => {
+                                    // Recursively delete the entire collection directory
+                                    match filesystem.delete(&collection_dir).await {
+                                        Ok(_) => {
+                                            info!(
+                                                "✅ Deleted entire collection directory: {}",
+                                                collection_dir
+                                            );
+                                            cleaned_components = 3; // All components deleted
+                                            break; // No need to continue loop
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "⚠️ Failed to delete collection directory {}: {}",
+                                                collection_dir, e
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                            Ok(false) => {
-                                debug!(
-                                    "📂 {} directory {} does not exist (already cleaned up)",
-                                    component_type, collection_dir
-                                );
-                                cleaned_components += 1; // Count as cleaned
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "⚠️ Failed to check existence of {} directory {}: {}",
-                                    component_type, collection_dir, e
-                                );
+                                Ok(false) => {
+                                    debug!(
+                                        "📂 Collection directory {} does not exist (already cleaned up)",
+                                        collection_dir
+                                    );
+                                    cleaned_components = 3; // Count as all cleaned
+                                    break; // No need to continue loop
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "⚠️ Failed to check existence of collection directory {}: {}",
+                                        collection_dir, e
+                                    );
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ Failed to get filesystem for {}: {}",
-                            assignment.storage_url, e
-                        );
+                        Err(e) => {
+                            warn!(
+                                "⚠️ Failed to get filesystem for {}: {}",
+                                assignment.location_url, e
+                            );
+                        }
                     }
                 }
             } else {
@@ -902,45 +929,7 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    /// Get WAL assignment configuration from system config
-    async fn get_wal_assignment_config(&self) -> Result<StorageAssignmentConfig> {
-        // Use WAL URLs from configuration
-        let storage_urls = self.storage_config.wal_config.wal_urls.clone();
-        
-        Ok(StorageAssignmentConfig {
-            storage_urls,
-            component_type: StorageComponentType::Wal,
-            collection_affinity: self.storage_config.wal_config.collection_affinity,
-        })
-    }
-
-    /// Get storage assignment configuration (engine-agnostic)
-    async fn get_storage_assignment_config(&self) -> Result<StorageAssignmentConfig> {
-        // Build storage URLs from base paths in configuration
-        let storage_urls: Vec<String> = self.storage_config.storage_layout.base_paths.iter()
-            .map(|base_path| format!("file://{}", base_path.base_dir.display()))
-            .collect();
-        
-        Ok(StorageAssignmentConfig {
-            storage_urls,
-            component_type: StorageComponentType::Storage,
-            collection_affinity: true,
-        })
-    }
-
-    /// Get Index assignment configuration
-    async fn get_index_assignment_config(&self) -> Result<StorageAssignmentConfig> {
-        // Build index URLs from base paths in configuration
-        let storage_urls: Vec<String> = self.storage_config.storage_layout.base_paths.iter()
-            .map(|base_path| format!("file://{}/index", base_path.base_dir.display()))
-            .collect();
-        
-        Ok(StorageAssignmentConfig {
-            storage_urls,
-            component_type: StorageComponentType::Index,
-            collection_affinity: true,
-        })
-    }
+    // Removed old assignment config methods - no longer needed with unified assignment
     
     /// Generate unique collection ID using base62-encoded seconds with random padding
     /// Format: {base62(seconds)}{random_base62_char}
@@ -1104,6 +1093,7 @@ impl Default for CollectionServiceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb::CollectionConfig;
 
     #[tokio::test]
     async fn test_collection_validation() {
@@ -1155,22 +1145,133 @@ mod tests {
             tags: vec![],
             owner: Some("test".to_string()),
         };
-        assert!(service.validate_collection_config(&valid_config).is_ok());
 
-        // Invalid configs
+        // Test create with valid config
+        let result = service.create_collection(&valid_config).await.unwrap();
+        assert!(result.success);
+        
+        // Test empty name
         let empty_name = CollectionConfig {
             name: "".to_string(),
             ..valid_config.clone()
         };
-        assert!(service.validate_collection_config(&empty_name).is_err());
-
+        let result = service.create_collection(&empty_name).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error_code, Some("INVALID_NAME".to_string()));
+        
+        // Test short name (less than 8 characters)
+        let short_name = CollectionConfig {
+            name: "short".to_string(),
+            ..valid_config.clone()
+        };
+        let result = service.create_collection(&short_name).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error_code, Some("INVALID_NAME_LENGTH".to_string()));
+        assert!(result.error_message.unwrap().contains("at least 8 characters"));
+        
+        // Test exactly 8 characters (should pass)
+        let eight_chars = CollectionConfig {
+            name: "exactly8".to_string(),
+            ..valid_config.clone()
+        };
+        let result = service.create_collection(&eight_chars).await.unwrap();
+        assert!(result.success);
+        
+        // Test invalid dimension
         let invalid_dimension = CollectionConfig {
+            name: "valid_dimension_test".to_string(),
             dimension: 0,
             ..valid_config.clone()
         };
-        assert!(service
-            .validate_collection_config(&invalid_dimension)
-            .is_err());
+        let result = service.create_collection(&invalid_dimension).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error_code, Some("INVALID_DIMENSION".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_collection_name_length_validation() {
+        // Create a minimal test setup
+        use crate::storage::metadata::backends::filestore_backend::{
+            FilestoreMetadataBackend, FilestoreMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+        
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        
+        let filestore_config = FilestoreMetadataConfig {
+            storage_url: temp_path.clone(),
+            enable_compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+        
+        let filesystem_config = FilesystemConfig::default();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        
+        let backend = Arc::new(
+            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .unwrap(),
+        );
+        
+        let storage_config = StorageConfig::default();
+        let service = CollectionService::new(backend, storage_config).await.unwrap();
+        
+        // Test cases for collection name length
+        let test_cases = vec![
+            ("", false, "INVALID_NAME"),                    // Empty name
+            ("a", false, "INVALID_NAME_LENGTH"),           // 1 char
+            ("abc", false, "INVALID_NAME_LENGTH"),         // 3 chars
+            ("seven77", false, "INVALID_NAME_LENGTH"),     // 7 chars
+            ("exactly8", true, ""),                        // 8 chars (valid)
+            ("ninechars", true, ""),                       // 9 chars (valid)
+            ("this_is_a_long_collection_name", true, ""),  // Long name (valid)
+        ];
+        
+        for (name, should_succeed, expected_error_code) in test_cases {
+            let config = CollectionConfig {
+                name: name.to_string(),
+                dimension: 128,
+                distance_metric: 1,
+                storage_engine: 1,
+                primary_indexing_algorithm: 1,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization_config: None,
+                primary_index_name: "default".to_string(),
+                enable_automatic_index_selection: false,
+                description: Some("Test collection".to_string()),
+                tags: vec![],
+                owner: Some("test".to_string()),
+            };
+            
+            let result = service.create_collection(&config).await.unwrap();
+            
+            assert_eq!(
+                result.success, should_succeed,
+                "Name '{}' validation failed: expected success={}, got success={}",
+                name, should_succeed, result.success
+            );
+            
+            if !should_succeed {
+                assert_eq!(
+                    result.error_code.as_deref(), Some(expected_error_code),
+                    "Name '{}' error code mismatch", name
+                );
+                
+                if expected_error_code == "INVALID_NAME_LENGTH" {
+                    assert!(
+                        result.error_message.as_ref().unwrap().contains("at least 8 characters"),
+                        "Error message should mention 8 character requirement"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

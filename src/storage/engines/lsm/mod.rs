@@ -3,21 +3,34 @@
 //! Log-Structured Merge Tree implementation providing an alternative
 //! to VIPER for performance comparison and standard SSTable storage.
 
+pub mod bloom_filter;
 pub mod compaction;
+pub mod readers;
+pub mod sstable_writer;
+pub mod unified_search_engine;
+
+// Test modules
+#[cfg(test)]
+pub mod bloom_filter_tests;
 
 // Re-export main types
+pub use bloom_filter::{BloomFilter, BloomFilterBuilder, BloomFilterConfig};
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
+pub use readers::UnifiedSstableReader;
+
+// Additional exports for unified reader (SstableHeader is already defined below)
+pub use sstable_writer::SstableWriter;
 
 // Main LSM Tree implementation (contents from original lsm/mod.rs)
 use crate::core::{LsmConfig, VectorId, VectorRecord};
-use crate::storage::memtable::core::MemtableCore;
-use crate::storage::memtable::specialized::LsmMemtable;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::core::search::SearchParams;
+use crate::storage::optimization::{MetadataSorter, SortingStats};
+use self::readers::unified_sstable_reader;
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem, FileOptions};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,
 };
-use crate::storage::WalManager;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -25,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info};
 
 // Remove dummy filesystem factory - LSM will use fallback methods
 
@@ -50,11 +63,12 @@ pub struct LsmRecord {
     pub level: u8,                 // SSTable level this record belongs to
 }
 
-impl From<VectorRecord> for LsmRecord {
-    fn from(record: VectorRecord) -> Self {
+impl LsmRecord {
+    /// Create LsmRecord from VectorRecord with explicit collection_id
+    pub fn from_vector_record(record: VectorRecord, collection_id: &str) -> Self {
         Self {
             id: record.id.as_deref().unwrap_or("").to_string(),
-            collection_id: record.collection_id,
+            collection_id: collection_id.to_string(),
             vector: record.vector,
             metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata),
             timestamp: record.timestamp,
@@ -73,7 +87,6 @@ impl Into<VectorRecord> for LsmRecord {
     fn into(self) -> VectorRecord {
         VectorRecord {
             id: Some(self.id),  // Core VectorRecord expects Option<String>
-            collection_id: self.collection_id,
             vector: self.vector,
             metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&self.metadata),
             timestamp: self.timestamp,
@@ -106,6 +119,15 @@ pub struct SstableHeader {
     pub block_size: u32,
     #[serde(default)]
     pub batch_size: u32,
+    // Additional fields for SSTable reader
+    #[serde(default)]
+    pub header_size: u32,
+    #[serde(default)]
+    pub index_size: u32,
+    #[serde(default)]
+    pub data_size: u32,
+    #[serde(default)]
+    pub block_count: u32,
 }
 
 /// Index entry for fast key lookups in SSTable with block organization
@@ -136,13 +158,7 @@ pub struct DataBlock {
     pub uncompressed_size: u32,
 }
 
-/// Simple bloom filter for key existence checks
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BloomFilter {
-    pub bits: Vec<u8>,
-    pub num_hashes: u32,
-    pub num_bits: u32,
-}
+// Removed - using bloom_filter::BloomFilter instead
 
 /// Batch extraction statistics for performance monitoring
 #[derive(Debug, Default)]
@@ -163,8 +179,9 @@ impl BatchExtractionStats {
 pub struct LsmTree {
     config: LsmConfig,
     collection_id: String,
-    memtable: LsmMemtable<String, LsmRecord>,
-    wal_manager: Arc<WalManager>,
+    // REMOVED: memtable - LSM is now pure SSTable storage
+    // Global WAL memtable handles all in-memory buffering
+    // REMOVED: wal_manager - Not needed for pure SSTable storage
     data_dir: PathBuf,
     compaction_manager: Option<Arc<CompactionManager>>,
     filesystem: Arc<FilesystemFactory>,
@@ -172,28 +189,30 @@ pub struct LsmTree {
 }
 
 impl LsmTree {
-    pub fn new(
-        config: &LsmConfig,
+    pub async fn new(
         collection_id: String,
-        wal_manager: Arc<WalManager>,
-        data_dir: PathBuf,
-        compaction_manager: Option<Arc<CompactionManager>>,
+        config: LsmConfig,
         filesystem: Arc<FilesystemFactory>,
-    ) -> Self {
-        // Create memtable with default configuration for LSM
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let memtable = crate::storage::memtable::MemtableFactory::create_for_lsm(memtable_config);
+    ) -> Result<Self> {
+        info!("🌲 Creating LSM tree (pure SSTable storage) for collection: {}", collection_id);
+        
+        // Create collection-specific directory for SSTables using plugin filesystem
+        let data_dir = PathBuf::from(format!("{}/{}", config.data_directory, collection_id));
+        
+        // Use plugin filesystem for directory creation
+        let fs = filesystem.get_filesystem("file:///")?;
+        let data_dir_str = data_dir.to_string_lossy();
+        
+        // Create directory asynchronously
+        fs.create_dir_all(&data_dir_str).await?;
 
-        Self {
-            config: config.clone(),
+        Ok(Self {
+            config,
             collection_id,
-            memtable,
-            wal_manager,
             data_dir,
-            compaction_manager,
+            compaction_manager: None,
             filesystem,
-            // Collection service removed - indexing configuration handled by AXIS
-        }
+        })
     }
 
     /// Get the data directory for this LSM tree
@@ -201,136 +220,80 @@ impl LsmTree {
         &self.data_dir
     }
 
+
     // Collection service setter removed - indexing configuration handled by AXIS
 
-    pub async fn put(&self, id: VectorId, record: &VectorRecord) -> Result<()> {
-        // Write to WAL first for durability using new WAL system
-        let _sequence = self
-            .wal_manager
-            .insert(self.collection_id.clone(), id.clone(), record)
-            .await
-            .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
+    // REMOVED: put, get, delete, exists methods - LSM is now pure SSTable storage
+    // All writes go through WAL → Flush → SSTable directly
+    // No intermediate memtable needed
 
-        // Convert VectorRecord to LsmRecord for direct storage
-        let mut lsm_record = LsmRecord::from(record.clone());
-        lsm_record.sequence_number = chrono::Utc::now().timestamp_millis() as u64;
-        lsm_record.level = 0; // New records start at level 0
-        
-        // Store directly in memtable without wrapper overhead
-        self.memtable.insert(id.clone(), lsm_record).await?;
-
-        // Check if memtable size exceeds threshold and flush to SST
-        if self.memtable.size_bytes().await > (self.config.memtable_size_mb as usize * 1024 * 1024)
-        {
-            self.flush().await?;
+    /// Direct flush vectors to LSM storage from WAL
+    /// This is called by the flush coordinator when WAL memtable needs to flush
+    pub async fn flush_vectors_direct(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<FlushResult> {
+        if vectors.is_empty() {
+            return Ok(FlushResult::default());
         }
 
-        Ok(())
-    }
-
-    pub async fn get(&self, id: &VectorId) -> Result<Option<VectorRecord>> {
-        match self.memtable.get(id).await? {
-            Some(lsm_record) => {
-                // Check if it's a tombstone (deleted record)
-                if lsm_record.is_tombstone {
-                    Ok(None)
-                } else {
-                    // Convert LsmRecord back to VectorRecord
-                    Ok(Some(lsm_record.into()))
-                }
-            }
-            None => Ok(None), // Record not found
-        }
-    }
-
-    /// Mark a vector as deleted by inserting a tombstone
-    pub async fn delete(&self, id: VectorId) -> Result<bool> {
-        // Write to WAL first for durability using new WAL system
-        let _sequence = self
-            .wal_manager
-            .delete(self.collection_id.clone(), id.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
-
-        // Check if the record currently exists
-        let exists = match self.memtable.get(&id).await? {
-            Some(lsm_record) => !lsm_record.is_tombstone,
-            None => false,
-        };
-
-        // Create tombstone record with minimal data
-        let tombstone = LsmRecord {
-            id: id.clone(),
-            collection_id: self.collection_id.clone(),
-            vector: Vec::new(), // Empty vector for tombstone
-            metadata: HashMap::new(), // Empty metadata for tombstone
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
-            expires_at: None,
-            version: 0,
-            is_tombstone: true, // Mark as tombstone
-            sequence_number: chrono::Utc::now().timestamp_millis() as u64,
-            level: 0,
-        };
-        
-        self.memtable.insert(id, tombstone).await?;
-
-        // Check if memtable size exceeds threshold and flush to SST
-        if self.memtable.size_bytes().await > (self.config.memtable_size_mb as usize * 1024 * 1024)
-        {
-            self.flush().await?;
-        }
-
-        Ok(exists)
-    }
-
-    /// Check if a vector exists (including checking for tombstones)
-    pub async fn exists(&self, id: &VectorId) -> Result<bool> {
-        Ok(match self.memtable.get(id).await? {
-            Some(lsm_record) => !lsm_record.is_tombstone,
-            None => false,
-        })
-    }
-
-    /// Force flush memtable to SST files
-    pub async fn flush(&self) -> Result<()> {
-        if self.memtable.size_bytes().await == 0 {
-            return Ok(());
-        }
+        // Sort vectors by metadata for better SSTable organization and compression
+        info!(
+            "🔄 LSM: Sorting {} vectors by metadata for optimal SSTable encoding",
+            vectors.len()
+        );
+        let (sorted_vectors, sort_stats) = self.sort_vectors_for_sstable_encoding(vectors).await?;
+        info!(
+            "✅ LSM: Sorted {} vectors (estimated compression improvement: {:.1}%)",
+            sort_stats.records_sorted,
+            sort_stats.compression_estimate * 100.0
+        );
 
         // Create SST file path
         let sst_filename = format!("sst_{}_{}.sst", self.collection_id, Utc::now().timestamp());
         let sst_path = self.data_dir.join(&self.collection_id).join(sst_filename);
 
-        // Ensure directory exists
+        // Ensure directory exists using plugin filesystem
         if let Some(parent) = sst_path.parent() {
-            tokio::fs::create_dir_all(parent)
+            let fs = self.filesystem.get_filesystem("file:///")?;
+            let parent_str = parent.to_string_lossy();
+            fs.create_dir_all(&parent_str)
                 .await
-                .map_err(|e| anyhow::anyhow!("Disk IO error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Filesystem error: {}", e))?;
         }
 
-        // Get all entries for serialization - now using LsmRecord directly
-        let entries: BTreeMap<String, LsmRecord> =
-            self.memtable.get_all_ordered().await?.into_iter().collect();
+        // Convert sorted vectors to LsmRecord format with sequence numbers
+        let mut entries: BTreeMap<String, LsmRecord> = BTreeMap::new();
+        let mut sequence_number = 0u64;
+        
+        for vector in sorted_vectors {
+            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+            let mut lsm_record = LsmRecord::from_vector_record(vector, &self.collection_id);
+            lsm_record.sequence_number = sequence_number;
+            lsm_record.level = 0; // New SSTables start at level 0
+            entries.insert(vector_id, lsm_record);
+            sequence_number += 1;
+        }
 
-        // Serialize memtable to file using efficient row-by-row format
-        let data = bincode::serialize(&entries)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize memtable: {}", e))?;
-
-        tokio::fs::write(&sst_path, data)
+        // Use optimized SSTable writer with bloom filters and atomic writes
+        let block_size = (self.config.block_size_kb * 1024) as usize;
+        let writer = SstableWriter::new(&sst_path, block_size, Arc::clone(&self.filesystem));
+        writer.write_records(entries.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
+        
+        let fs = self.filesystem.get_filesystem("file:///")?;
+        let sst_path_str = sst_path.to_string_lossy();
+        let metadata = fs.metadata(&sst_path_str)
             .await
-            .map_err(|e| anyhow::anyhow!("Disk IO error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to get file size: {}", e))?;
+        let data_len = metadata.size;
 
-        // Clear memtable
-        self.memtable.clear().await?;
-
-        // Force flush WAL to ensure durability
-        let _flush_result = self
-            .wal_manager
-            .flush(Some(&self.collection_id))
-            .await
-            .map_err(|e| anyhow::anyhow!("WAL error: {}", e))?;
+        info!(
+            "✅ LSM: Flushed {} vectors to SSTable: {}",
+            entries.len(),
+            sst_path.display()
+        );
 
         // Trigger compaction if manager is available
         if let Some(_compaction_manager) = &self.compaction_manager {
@@ -349,38 +312,123 @@ impl LsmTree {
             // compaction_manager.add_task(task).await?;
         }
 
-        Ok(())
+        // Return flush result with statistics
+        Ok(FlushResult {
+            success: true,
+            collections_affected: vec![collection_id.to_string()],
+            entries_flushed: entries.len() as u64,
+            bytes_written: data_len as u64,
+            files_created: 1,
+            duration_ms: 0, // Will be set by caller
+            completed_at: Utc::now(),
+            engine_metrics: {
+                let mut metrics = HashMap::new();
+                metrics.insert("sstable_path".to_string(), serde_json::Value::String(sst_path.display().to_string()));
+                metrics.insert("level".to_string(), serde_json::Value::Number(serde_json::Number::from(0)));
+                metrics
+            },
+            compaction_triggered: self.compaction_manager.is_some(),
+            flushed_batch_ids: vec![], // Would be provided by caller if needed
+        })
     }
 
-    /// Get approximate size of the memtable in bytes
-    pub async fn memtable_size(&self) -> usize {
-        self.memtable.size_bytes().await
-    }
-
-    /// Get number of entries in memtable
-    pub async fn memtable_len(&self) -> usize {
-        self.memtable.len().await
-    }
-
-    /// Iterate over all vector records in the memtable
-    /// Returns only active records (filters out tombstones)
-    pub async fn iter_all(&self) -> Result<Vec<VectorRecord>> {
-        let entries = self.memtable.get_all_ordered().await?;
-        let mut records = Vec::new();
-
-        for (_, lsm_record) in entries {
-            if !lsm_record.is_tombstone {
-                // Convert LsmRecord directly to VectorRecord
-                records.push(lsm_record.into());
-            }
-            // Skip tombstones - they represent deleted records
+    // REMOVED: memtable_size, memtable_len, iter_all methods
+    // LSM is now pure SSTable storage - no memtable to query
+    
+    /// Helper method to search SSTable for all vectors matching filters
+    async fn search_sstable_for_vectors(
+        &self,
+        sstable_data: &[u8],
+        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+    ) -> Result<Vec<VectorRecord>> {
+        let mut results = Vec::new();
+        
+        if sstable_data.len() < 8 {
+            return Ok(results);
         }
-
-        tracing::debug!(
-            "LsmTree::iter_all found {} active records in memtable",
-            records.len()
-        );
-        Ok(records)
+        
+        let mut offset = 0;
+        
+        // Read header
+        let header_len = u32::from_le_bytes([
+            sstable_data[offset],
+            sstable_data[offset + 1],
+            sstable_data[offset + 2],
+            sstable_data[offset + 3],
+        ]) as usize;
+        offset += 4;
+        
+        if offset + header_len > sstable_data.len() {
+            return Ok(results);
+        }
+        
+        offset += header_len; // Skip header
+        
+        // Read index
+        if offset + 4 > sstable_data.len() {
+            return Ok(results);
+        }
+        
+        let index_len = u32::from_le_bytes([
+            sstable_data[offset],
+            sstable_data[offset + 1],
+            sstable_data[offset + 2],
+            sstable_data[offset + 3],
+        ]) as usize;
+        offset += 4;
+        
+        if offset + index_len > sstable_data.len() {
+            return Ok(results);
+        }
+        
+        offset += index_len; // Skip index
+        
+        // Read data blocks
+        while offset + 4 <= sstable_data.len() {
+            let block_len = u32::from_le_bytes([
+                sstable_data[offset],
+                sstable_data[offset + 1],
+                sstable_data[offset + 2],
+                sstable_data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            
+            if offset + block_len > sstable_data.len() {
+                break;
+            }
+            
+            let block_data = &sstable_data[offset..offset + block_len];
+            if let Ok(data_block) = bincode::deserialize::<DataBlock>(block_data) {
+                for lsm_record in data_block.records {
+                    // Skip tombstones
+                    if lsm_record.is_tombstone {
+                        continue;
+                    }
+                    
+                    // Apply metadata filter if present
+                    if let Some(filters) = metadata_filters {
+                        let mut passes_filter = true;
+                        for (key, expected_value) in filters {
+                            let record_value = lsm_record.metadata.get(key);
+                            if record_value != Some(expected_value) {
+                                passes_filter = false;
+                                break;
+                            }
+                        }
+                        if !passes_filter {
+                            continue;
+                        }
+                    }
+                    
+                    // Convert to VectorRecord
+                    let vector_record: VectorRecord = lsm_record.into();
+                    results.push(vector_record);
+                }
+            }
+            offset += block_len;
+        }
+        
+        Ok(results)
     }
 }
 
@@ -610,22 +658,16 @@ impl UnifiedStorageEngine for LsmTree {
         Ok(result)
     }
 
-    /// Retrieve vector by ID from LSM storage (memtable + SSTable lookup)
+    /// Retrieve vector by ID from LSM storage (Pure SSTable lookup with bloom filter optimization)
     async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
         // First check if this is the correct collection
         if collection_id != &self.collection_id {
             return Ok(None);
         }
 
-        tracing::debug!("🔍 LSM: Looking up vector {} in collection {}", vector_id, collection_id);
+        tracing::debug!("🔍 LSM: Looking up vector {} in collection {} SSTables (with bloom filter optimization)", vector_id, collection_id);
 
-        // Step 1: Check memtable first (most recent data)
-        if let Some(record) = self.get(&VectorId::from(vector_id.to_string())).await? {
-            tracing::debug!("✅ LSM: Found vector {} in memtable", vector_id);
-            return Ok(Some(record));
-        }
-
-        // Step 2: Search through SSTable files (on-disk data)
+        // LSM is now pure SSTable storage - search only SSTable files
         // LSM files are stored in collection-specific directories
         let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
         let collection_dir = std::path::PathBuf::from(collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url));
@@ -644,34 +686,150 @@ impl UnifiedStorageEngine for LsmTree {
             }
         };
 
+        let mut sstables_checked = 0;
+        let mut bloom_filter_hits = 0;
+
         while let Ok(Some(entry)) = dir_entries.next_entry().await {
             if let Some(filename) = entry.file_name().to_str() {
                 if filename.ends_with(".sst") {
-                    tracing::debug!("🔍 LSM: Searching SSTable file: {}", filename);
+                    sstables_checked += 1;
                     
-                    // Read and deserialize SSTable file
-                    if let Ok(sstable_data) = tokio::fs::read(entry.path()).await {
-                        if let Ok(record) = self.search_sstable_for_vector(&sstable_data, vector_id).await {
-                            if record.is_some() {
-                                tracing::debug!("✅ LSM: Found vector {} in SSTable {}", vector_id, filename);
-                                return Ok(record);
+                    // Use unified SSTable reader with bloom filter
+                    let reader = UnifiedSstableReader::new(self.filesystem.clone());
+                    
+                    // Load metadata (includes bloom filter)
+                    let path_str = entry.path().to_string_lossy().to_string();
+                    if reader.load_metadata(&path_str).await.is_ok() {
+                        // Check bloom filter first
+                        if reader.might_contain_key(&path_str, vector_id).await {
+                            bloom_filter_hits += 1;
+                            tracing::trace!("🌸 LSM: Bloom filter hit for {} in {}", vector_id, filename);
+                            
+                            // Actually search the SSTable
+                            if let Ok(Some(record)) = reader.get_vector(&path_str, vector_id).await {
+                                tracing::debug!(
+                                    "✅ LSM: Found vector {} in SSTable {} (checked {}/{} SSTables, {} bloom hits)",
+                                    vector_id, filename, bloom_filter_hits, sstables_checked, bloom_filter_hits
+                                );
+                                return Ok(Some(record));
                             }
+                        } else {
+                            tracing::trace!("🌸 LSM: Bloom filter miss for {} in {} - skipping", vector_id, filename);
                         }
                     }
                 }
             }
         }
 
-        tracing::debug!("❌ LSM: Vector {} not found in collection {}", vector_id, collection_id);
+        tracing::debug!(
+            "❌ LSM: Vector {} not found in collection {} (checked {} SSTables, {} bloom hits)",
+            vector_id, collection_id, sstables_checked, bloom_filter_hits
+        );
         Ok(None)
+    }
+
+    /// LSM ENGINE OPTIMIZATION: Unified search with bloom filter hints and range scans
+    async fn search_vectors_unified(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: &crate::compute::distance::DistanceMetric,
+        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        use crate::compute::unified_distance::UnifiedDistanceCompute;
+        
+        // Check if this is the correct collection
+        if collection_id != &self.collection_id {
+            return Ok(Vec::new());
+        }
+        
+        debug!("🔍 LSM: Searching collection {} - Pure SSTable search (no memtable)", collection_id);
+        
+        let mut all_results = Vec::new();
+        
+        // LSM is now pure SSTable storage - search only SSTables
+        // All data comes from flushed SSTables, no memtable to search
+        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        let collection_dir = std::path::PathBuf::from(
+            collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+        );
+        
+        if collection_dir.exists() {
+            let mut dir_entries = tokio::fs::read_dir(&collection_dir).await?;
+            let mut sstables_scanned = 0;
+            let mut records_evaluated = 0;
+            
+            while let Ok(Some(entry)) = dir_entries.next_entry().await {
+                if let Some(filename) = entry.file_name().to_str() {
+                    if filename.ends_with(".sst") {
+                        sstables_scanned += 1;
+                        
+                        // Use unified SSTable reader for optimized access
+                        let reader = UnifiedSstableReader::new(self.filesystem.clone());
+                        
+                        // Load metadata and search vectors
+                        let path_str = entry.path().to_string_lossy().to_string();
+                        if reader.load_metadata(&path_str).await.is_ok() {
+                            // Note: For vector search, we can't use bloom filter as we need all vectors
+                            // But we still benefit from block-based reading and index
+                            
+                            // Create a collection context for the search
+                            let context = unified_sstable_reader::CollectionContext {
+                                collection_id: self.collection_id.clone(),
+                                file_path: path_str.clone(),
+                                sstable_files: vec![path_str.clone()],
+                                total_vectors: 0, // Will be populated during search
+                                metadata_columns: vec![],
+                                level: 0,
+                                creation_time: chrono::Utc::now(),
+                            };
+                            
+                            // Create search params for the reader
+                            let search_params = SearchParams {
+                                query_vectors: Some(vec![query_vector.to_vec()]),
+                                filters: metadata_filters.map(|f| f.clone()),
+                                filter_expression: None,
+                                top_k: Some(1000), // Use a large k to get all results
+                                distance_metric: Some(*distance_metric),
+                                ..Default::default()
+                            };
+                            
+                            if let Ok(search_results) = reader.search_vectors(&search_params, &context).await {
+                                records_evaluated += search_results.len();
+                                
+                                // Results from reader are already search::SearchResult type
+                                all_results.extend(search_results);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            debug!(
+                "📊 LSM: Scanned {} SSTables, evaluated {} records for search",
+                sstables_scanned, records_evaluated
+            );
+        }
+        
+        // Sort by score (descending) and take top k
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(k);
+        
+        // Set ranks
+        for (i, result) in all_results.iter_mut().enumerate() {
+            result.rank = Some(i as i32 + 1);
+        }
+        
+        debug!("✅ LSM: Found {} results (top {} requested)", all_results.len(), k);
+        Ok(all_results)
     }
 
     /// LSM-specific engine metrics
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
-
-        let memtable_size = self.memtable_size().await;
-        let memtable_entries = self.memtable_len().await;
 
         metrics.insert(
             "engine_type".to_string(),
@@ -682,16 +840,8 @@ impl UnifiedStorageEngine for LsmTree {
             serde_json::Value::String(self.collection_id.clone()),
         );
         metrics.insert(
-            "memtable_size_bytes".to_string(),
-            serde_json::Value::Number((memtable_size as u64).into()),
-        );
-        metrics.insert(
-            "memtable_entries".to_string(),
-            serde_json::Value::Number((memtable_entries as u64).into()),
-        );
-        metrics.insert(
-            "memtable_threshold_mb".to_string(),
-            serde_json::Value::Number((self.config.memtable_size_mb as u64).into()),
+            "storage_type".to_string(),
+            serde_json::Value::String("Pure SSTable".to_string()),
         );
         metrics.insert(
             "compaction_threshold".to_string(),
@@ -710,19 +860,11 @@ impl UnifiedStorageEngine for LsmTree {
             serde_json::Value::Bool(self.compaction_manager.is_some()),
         );
 
-        // Calculate utilization percentage
-        let max_entries = (self.config.memtable_size_mb as usize * 1024 * 1024)
-            / std::mem::size_of::<LsmRecord>();
-        let utilization = if max_entries > 0 {
-            (memtable_entries as f64 / max_entries as f64) * 100.0
-        } else {
-            0.0
-        };
+        // Count SSTable files instead of memtable utilization
+        let sstable_count = self.count_sstables_at_level(0).await.unwrap_or(0);
         metrics.insert(
-            "memtable_utilization_percent".to_string(),
-            serde_json::Value::Number(
-                serde_json::Number::from_f64(utilization).unwrap_or(0.into()),
-            ),
+            "sstable_count".to_string(),
+            serde_json::Value::Number((sstable_count as u64).into()),
         );
 
         Ok(metrics)
@@ -765,24 +907,20 @@ impl LsmTree {
             let mut chunk_matches = 0;
 
             for (index, vector_record) in chunk.iter().enumerate() {
-                // Filter by collection ID to only process records for this LSM tree's collection
-                if &vector_record.collection_id == collection_id {
-                    // Convert VectorRecord to LsmRecord for row-by-row storage
-                    let mut lsm_record = LsmRecord::from(vector_record.clone());
-                    
-                    // Set LSM-specific fields for proper ordering and level management
-                    let global_index = chunk_idx * CHUNK_SIZE + index;
-                    lsm_record.sequence_number = sequence_start + global_index as u64;
-                    lsm_record.level = 0; // New records from WAL start at level 0
-                    lsm_record.is_tombstone = false; // WAL records are active (not tombstones)
-                    
-                    lsm_records.push(lsm_record);
-                    chunk_matches += 1;
-                    
-                    batch_stats.total_extracted += 1;
-                } else {
-                    batch_stats.total_skipped += 1;
-                }
+                // All records should already be filtered for this collection
+                // Convert VectorRecord to LsmRecord for row-by-row storage
+                let mut lsm_record = LsmRecord::from_vector_record(vector_record.clone(), collection_id);
+                
+                // Set LSM-specific fields for proper ordering and level management
+                let global_index = chunk_idx * CHUNK_SIZE + index;
+                lsm_record.sequence_number = sequence_start + global_index as u64;
+                lsm_record.level = 0; // New records from WAL start at level 0
+                lsm_record.is_tombstone = false; // WAL records are active (not tombstones)
+                
+                lsm_records.push(lsm_record);
+                chunk_matches += 1;
+                
+                batch_stats.total_extracted += 1;
             }
 
             let chunk_time = chunk_start.elapsed().as_micros() as u64;
@@ -991,8 +1129,7 @@ impl LsmTree {
         // LSM Level 0: Recent entries (direct from memtable)
         // Level 1+: Compacted entries (would come from compaction process)
 
-        let records_per_level = (self.config.memtable_size_mb as usize * 1024 * 1024)
-            / std::mem::size_of::<LsmRecord>();
+        let records_per_level = 10000; // Fixed number of records per level for pure SSTable storage
 
         for (i, record) in sorted_records.iter().enumerate() {
             let level = if i < records_per_level {
@@ -1037,6 +1174,11 @@ impl LsmTree {
             has_bloom_filter: true,
             block_size: 4096, // 4KB blocks for better cache locality
             batch_size: records.len() as u32,
+            // Additional fields (will be updated later)
+            header_size: 0,
+            index_size: 0,
+            data_size: 0,
+            block_count: 0,
         };
 
         // Step 2: Build bloom filter for fast key existence checks
@@ -1163,7 +1305,7 @@ impl LsmTree {
         let mut lsm_records = Vec::new();
 
         for (index, record) in vector_records.iter().enumerate() {
-            let mut lsm_record = LsmRecord::from(record.clone());
+            let mut lsm_record = LsmRecord::from_vector_record(record.clone(), &self.collection_id);
             lsm_record.sequence_number = sequence_start + index as u64;
             lsm_record.level = 0; // New records start at level 0
             lsm_records.push(lsm_record);
@@ -1263,32 +1405,120 @@ impl LsmTree {
 
     /// Build bloom filter for fast key existence checks
     async fn build_bloom_filter(&self, records: &[LsmRecord]) -> Result<BloomFilter> {
-        // Simple bloom filter implementation
-        let num_elements = records.len() as u32;
-        let false_positive_rate: f64 = 0.01; // 1% false positive rate
-        
-        // Calculate optimal bloom filter size
-        let num_bits = ((-1.0 * num_elements as f64 * false_positive_rate.ln()) / (2.0_f64.ln().powi(2))).ceil() as u32;
-        let num_hashes = ((num_bits as f64 / num_elements as f64) * 2.0_f64.ln()).ceil() as u32;
-        
-        let mut bits = vec![0u8; (num_bits / 8 + 1) as usize];
+        let config = BloomFilterConfig::default();
+        let mut filter = BloomFilter::new(records.len(), &config);
         
         // Add all keys to bloom filter
         for record in records {
-            for hash_num in 0..num_hashes {
-                let hash = self.hash_key(&record.id, hash_num);
-                let bit_index = hash % num_bits;
-                let byte_index = (bit_index / 8) as usize;
-                let bit_offset = bit_index % 8;
-                bits[byte_index] |= 1 << bit_offset;
+            filter.insert(&record.id);
+        }
+        
+        debug!(
+            "📊 LSM: Built bloom filter with {} bits for {} keys (FPR: {:.2}%)",
+            filter.num_bits,
+            records.len(),
+            filter.false_positive_rate() * 100.0
+        );
+        
+        Ok(filter)
+    }
+
+    /// Sort vector records by metadata for optimal SSTable encoding
+    async fn sort_vectors_for_sstable_encoding(
+        &self,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<(Vec<VectorRecord>, SortingStats)> {
+        // For LSM, we don't have direct access to collection config here
+        // So we implement a simple but effective sorting strategy:
+        // 1. Sort by first metadata key alphabetically
+        // 2. Then by vector ID for stable ordering
+        
+        let mut sorted_vectors = vectors;
+        
+        // Find the most common metadata key for primary sorting
+        let mut key_frequency: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for vector in &sorted_vectors {
+            for metadata_item in &vector.metadata {
+                *key_frequency.entry(metadata_item.key.clone()).or_insert(0) += 1;
             }
         }
         
-        Ok(BloomFilter {
-            bits,
-            num_hashes,
-            num_bits,
-        })
+        let primary_sort_key = key_frequency
+            .iter()
+            .max_by_key(|(_, &count)| count)
+            .map(|(key, _)| key.clone());
+        
+        let sort_start = std::time::Instant::now();
+        
+        sorted_vectors.sort_by(|a, b| {
+            // Primary sort: most common metadata key
+            if let Some(ref sort_key) = primary_sort_key {
+                let empty_string = String::new();
+                let a_value = a.metadata.iter()
+                    .find(|item| item.key == *sort_key)
+                    .map(|item| &item.value)
+                    .unwrap_or(&empty_string);
+                let b_value = b.metadata.iter()
+                    .find(|item| item.key == *sort_key)
+                    .map(|item| &item.value)
+                    .unwrap_or(&empty_string);
+                
+                match a_value.cmp(b_value) {
+                    std::cmp::Ordering::Equal => {
+                        // Secondary sort: vector ID for stable ordering
+                        let empty_id = String::new();
+                        let a_id = a.id.as_deref().unwrap_or(&empty_id);
+                        let b_id = b.id.as_deref().unwrap_or(&empty_id);
+                        a_id.cmp(b_id)
+                    }
+                    other => other,
+                }
+            } else {
+                // Fallback: sort by vector ID only
+                let empty_id = String::new();
+                let a_id = a.id.as_deref().unwrap_or(&empty_id);
+                let b_id = b.id.as_deref().unwrap_or(&empty_id);
+                a_id.cmp(b_id)
+            }
+        });
+        
+        let sort_time_us = sort_start.elapsed().as_micros() as u64;
+        
+        // Calculate compression estimate based on metadata distribution
+        let compression_estimate = if let Some(ref sort_key) = primary_sort_key {
+            let distinct_values: std::collections::HashSet<String> = sorted_vectors
+                .iter()
+                .filter_map(|v| {
+                    v.metadata.iter()
+                        .find(|item| item.key == *sort_key)
+                        .map(|item| item.value.clone())
+                })
+                .collect();
+            
+            // Lower cardinality = better compression
+            1.0 - (distinct_values.len() as f64 / sorted_vectors.len() as f64)
+        } else {
+            0.05 // Small improvement from ID sorting
+        };
+        
+        let stats = SortingStats {
+            records_sorted: sorted_vectors.len(),
+            sort_keys_used: if let Some(key) = primary_sort_key {
+                vec![key, "vector_id".to_string()]
+            } else {
+                vec!["vector_id".to_string()]
+            },
+            compression_estimate,
+            sort_time_us,
+            ..Default::default()
+        };
+        
+        debug!(
+            "🎯 LSM: Sorted {} vectors by metadata key for SSTable optimization",
+            stats.records_sorted
+        );
+        
+        Ok((sorted_vectors, stats))
     }
 
     /// Hash function for bloom filter

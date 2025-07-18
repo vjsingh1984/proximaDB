@@ -644,13 +644,19 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
     fn generate_schema(&self) -> Result<Arc<Schema>> {
         let mut fields = Vec::new();
 
-        // Core required fields
-        fields.push(Field::new("id", DataType::Utf8, false));
+        // Core fields - id can be null for immutable vectors
+        fields.push(Field::new("id", DataType::Utf8, true));
         fields.push(Field::new(
             "vectors",
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-            false,
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            true,  // Nullable for sparse vectors
         ));
+        
+        // Version field for MVCC - using tinyint
+        fields.push(Field::new("version", DataType::Int8, true));
+        
+        // Audit field - stores creation or update time
+        fields.push(Field::new("updated_at", DataType::Int64, true));
 
         // Dynamic filterable metadata columns
         for field_name in &self.filterable_fields {
@@ -693,18 +699,6 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
             ));
         }
 
-        // Timestamps
-        fields.push(Field::new(
-            "created_at",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false,
-        ));
-        fields.push(Field::new(
-            "updated_at",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false,
-        ));
-
         Ok(Arc::new(Schema::new(fields)))
     }
 
@@ -741,16 +735,18 @@ impl LegacySchemaStrategy {
 impl SchemaGenerationStrategy for LegacySchemaStrategy {
     fn generate_schema(&self) -> Result<Arc<Schema>> {
         let fields = vec![
-            Field::new("id", DataType::Utf8, false),
+            Field::new("id", DataType::Utf8, true),  // Nullable for legacy compatibility
             Field::new(
                 "vectors",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-                false,
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                true,  // Nullable for sparse vectors
             ),
+            Field::new("version", DataType::Int8, true), // Version field for MVCC
+            Field::new("updated_at", DataType::Int64, true), // Audit field
             Field::new(
-                "created_at",
+                "expires_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
-                false,
+                true,  // Can be null for TTL support
             ),
         ];
 

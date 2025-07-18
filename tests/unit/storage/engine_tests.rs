@@ -108,7 +108,6 @@ async fn test_vector_operations() {
     // Add vectors
     let vector1 = VectorRecord {
         id: Some("vec1".to_string()),
-        collection_id: "vector_test".to_string(),
         vector: vec![1.0, 0.0, 0.0, 0.0],
         metadata: vec![
             ("key1".to_string(), "value1".to_string()),
@@ -126,7 +125,6 @@ async fn test_vector_operations() {
     
     let vector2 = VectorRecord {
         id: Some("vec2".to_string()),
-        collection_id: "vector_test".to_string(),
         vector: vec![0.0, 1.0, 0.0, 0.0],
         metadata: vec![],
         timestamp: chrono::Utc::now().timestamp_micros(),
@@ -222,7 +220,6 @@ async fn test_search_operations() {
         for (id, vector) in vectors {
             let record = VectorRecord {
                 id: Some(id.to_string()),
-                collection_id: "search_test".to_string(),
                 vector,
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_micros(),
@@ -289,7 +286,6 @@ async fn test_flush_operations() {
         for i in 0..10 {
             let record = VectorRecord {
                 id: Some(format!("flush_vec_{}", i)),
-                collection_id: "flush_test".to_string(),
                 vector: vec![i as f32, 0.0],
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_micros(),
@@ -350,7 +346,6 @@ async fn test_statistics() {
         for i in 0..5 {
             let record = VectorRecord {
                 id: Some(format!("stats_vec_{}", i)),
-                collection_id: "stats_test".to_string(),
                 vector: vec![i as f32, 0.0],
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_micros(),
@@ -392,7 +387,6 @@ async fn test_error_handling() {
         let mut write_guard = engine.write().await;
         let record = VectorRecord {
             id: Some("test".to_string()),
-            collection_id: "non_existent".to_string(),
             vector: vec![1.0, 0.0],
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -475,7 +469,6 @@ async fn test_batch_operations() {
     for i in 0..100 {
         vectors.push(VectorRecord {
             id: Some(format!("batch_{}", i)),
-            collection_id: "batch_test".to_string(),
             vector: vec![i as f32, 0.0],
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp_micros(),
@@ -530,7 +523,6 @@ async fn test_concurrent_access() {
         let handle = tokio::spawn(async move {
             let record = VectorRecord {
                 id: Some(format!("concurrent_{}", i)),
-                collection_id: "concurrent_test".to_string(),
                 vector: vec![i as f32, 0.0],
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp_micros(),

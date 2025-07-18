@@ -147,7 +147,7 @@ class TestSearchOperations:
         """Ingest test data into the collection"""
         for doc in test_data:
             grpc_client.insert_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id=doc["id"],
                 vector=doc["embedding"],
                 metadata={
@@ -170,7 +170,7 @@ class TestSearchOperations:
         
         for vector_id in existing_ids:
             result = grpc_client.get_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id=vector_id,
                 include_vector=False,
                 include_metadata=True
@@ -183,7 +183,7 @@ class TestSearchOperations:
         # Test non-existent ID
         with pytest.raises(ProximaDBError):
             grpc_client.get_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id="non_existent_id",
                 include_vector=False,
                 include_metadata=True
@@ -196,7 +196,7 @@ class TestSearchOperations:
         
         # Search without filter first
         all_results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=10,
             include_metadata=True,
@@ -247,7 +247,7 @@ class TestSearchOperations:
             
             # Perform similarity search
             results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=3,
                 include_metadata=True,
@@ -272,7 +272,7 @@ class TestSearchOperations:
         source_doc = next(d for d in test_data if d['id'] == 'tech_001')
         
         results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=source_doc['embedding'],
             k=5,
             include_metadata=True,
@@ -299,7 +299,7 @@ class TestSearchOperations:
         
         # Search via gRPC
         grpc_results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=5,
             include_metadata=True
@@ -307,7 +307,7 @@ class TestSearchOperations:
         
         # Search via REST
         rest_results = rest_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=5,
             include_metadata=True
@@ -331,7 +331,7 @@ class TestSearchOperations:
         
         # Test search with k larger than collection size
         results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=100,  # Much larger than our 7 documents
             include_metadata=True
@@ -348,7 +348,7 @@ class TestSearchOperations:
         # Test search with k=0
         with pytest.raises(ProximaDBError):
             grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=0
             )
@@ -356,7 +356,7 @@ class TestSearchOperations:
         # Test search with negative k
         with pytest.raises(ProximaDBError):
             grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=-1
             )
@@ -368,7 +368,7 @@ class TestSearchOperations:
         try:
             # Attempt server-side filtering
             filtered_results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=10,
                 filter={"category": "technology"},
@@ -382,7 +382,7 @@ class TestSearchOperations:
         except Exception as e:
             # Server-side filtering not yet implemented - test client-side fallback
             all_results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=10,
                 include_metadata=True

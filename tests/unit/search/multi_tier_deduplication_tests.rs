@@ -29,7 +29,6 @@ fn test_basic_deduplication() {
     // Create a base vector record
     let base_record = VectorRecord {
         id: Some("vec1".to_string()),
-        collection_id: "test-collection".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![MetadataItem {
             key: "type".to_string(),
@@ -88,7 +87,6 @@ fn test_deduplication_without_ids() {
         TieredSearchResult {
             vector_record: VectorRecord {
                 id: None,
-                collection_id: "test-collection".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp_micros(),
@@ -110,7 +108,6 @@ fn test_deduplication_without_ids() {
         TieredSearchResult {
             vector_record: VectorRecord {
                 id: None,
-                collection_id: "test-collection".to_string(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp_micros(),
@@ -152,7 +149,6 @@ fn test_metadata_filtering() {
     let records = vec![
         VectorRecord {
             id: Some("doc1".to_string()),
-            collection_id: "test".to_string(),
             vector: vec![1.0, 0.0],
             metadata: vec![
                 MetadataItem { key: "category".to_string(), value: "science".to_string() },
@@ -169,7 +165,6 @@ fn test_metadata_filtering() {
         },
         VectorRecord {
             id: Some("doc2".to_string()),
-            collection_id: "test".to_string(),
             vector: vec![0.0, 1.0],
             metadata: vec![
                 MetadataItem { key: "category".to_string(), value: "history".to_string() },
@@ -218,7 +213,6 @@ fn test_simple_metadata_query() {
     let records = vec![
         VectorRecord {
             id: Some("doc1".to_string()),
-            collection_id: "test".to_string(),
             vector: vec![1.0, 0.0],
             metadata: vec![
                 MetadataItem { key: "language".to_string(), value: "en".to_string() },
@@ -235,7 +229,6 @@ fn test_simple_metadata_query() {
         },
         VectorRecord {
             id: Some("doc2".to_string()),
-            collection_id: "test".to_string(),
             vector: vec![0.0, 1.0],
             metadata: vec![
                 MetadataItem { key: "language".to_string(), value: "fr".to_string() },
@@ -278,7 +271,6 @@ fn test_mixed_engine_deduplication() {
     
     let base_record = VectorRecord {
         id: Some("vec1".to_string()),
-        collection_id: "test-collection".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![],
         timestamp: Utc::now().timestamp_micros(),
@@ -349,7 +341,6 @@ fn test_k_limit_enforcement() {
         results.push(TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some(format!("vec{}", i)),
-                collection_id: "test-collection".to_string(),
                 vector: vec![i as f32, 0.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp_micros(),
@@ -397,7 +388,6 @@ fn test_complex_deduplication_scenario() {
         results.push(TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vecA".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![MetadataItem { key: "version".to_string(), value: version.to_string() }],
                 timestamp: Utc::now().timestamp_micros(),
@@ -426,7 +416,6 @@ fn test_complex_deduplication_scenario() {
         results.push(TieredSearchResult {
             vector_record: VectorRecord {
                 id: Some("vecB".to_string()),
-                collection_id: "test".to_string(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![MetadataItem { key: "version".to_string(), value: version.to_string() }],
                 timestamp: Utc::now().timestamp_micros(),
@@ -451,7 +440,6 @@ fn test_complex_deduplication_scenario() {
     results.push(TieredSearchResult {
         vector_record: VectorRecord {
             id: None,
-            collection_id: "test".to_string(),
             vector: vec![0.0, 0.0, 1.0],
             metadata: vec![],
             timestamp: Utc::now().timestamp_micros(),

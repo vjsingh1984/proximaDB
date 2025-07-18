@@ -322,6 +322,13 @@ impl FileSystem for ManagedFilesystem {
     fn supports_atomic_writes(&self) -> bool {
         self.filesystem.supports_atomic_writes()
     }
+
+    async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn super::FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
+    }
 }
 
 /// Advanced filesystem manager with URL-based instances and authentication

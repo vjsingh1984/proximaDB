@@ -1,4 +1,4 @@
-use crate::compute::algorithms::SearchResult;
+use crate::core::search::SearchResult;
 use crate::core::{BatchSearchRequest, String, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::services::collection_service::CollectionService;
@@ -103,19 +103,24 @@ impl StorageEngine {
         config: StorageConfig,
         metadata_provider: Option<Arc<dyn CollectionMetadataProvider>>,
     ) -> crate::storage::Result<Self> {
-        let disk_manager = Arc::new(DiskManager::new(config.data_dirs.clone())?);
+        // Extract data directories from storage locations
+        let data_dirs: Vec<PathBuf> = config.storage_locations.iter()
+            .filter_map(|loc| {
+                if loc.url.starts_with("file://") {
+                    Some(PathBuf::from(loc.url.strip_prefix("file://").unwrap_or(&loc.url)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        let disk_manager = Arc::new(DiskManager::new(data_dirs.clone())?);
 
-        // Initialize comprehensive WAL manager using new configuration structure
-        let wal_config = if !config.wal_config.wal_urls.is_empty() {
-            // Use new multi-directory WAL configuration
-            WalConfig::from(&config.wal_config)
-        } else {
-            // Fallback to legacy single directory for backward compatibility
-            let mut wal_config = WalConfig::default();
-            wal_config.multi_disk.data_directories =
-                vec![format!("file://{}", config.wal_dir.display())];
-            wal_config
-        };
+        // Initialize WAL configuration from storage locations
+        let mut wal_config = WalConfig::default();
+        wal_config.multi_disk.data_directories = config.storage_locations.iter()
+            .map(|loc| loc.url.clone())
+            .collect();
 
         // Create filesystem factory for WAL
         let filesystem = Arc::new(
@@ -147,8 +152,7 @@ impl StorageEngine {
         tracing::info!("📂 StorageEngine: Metadata operations delegated to SharedServices");
 
         // Initialize search index manager
-        let _data_dir = config
-            .data_dirs
+        let _data_dir = data_dirs
             .first()
             .cloned()
             .unwrap_or_else(|| PathBuf::from("./data"));
@@ -185,11 +189,17 @@ impl StorageEngine {
     }
 
     pub async fn start(&mut self) -> crate::storage::Result<()> {
+        tracing::info!("🚀 STORAGE_ENGINE: Starting storage engine");
+        
         // Replay WAL to recover state
+        tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
         self.recover_from_wal().await?;
+        tracing::info!("✅ STORAGE_ENGINE: WAL recovery completed, moving to load_collections()");
 
         // Initialize existing collections
+        tracing::info!("📊 STORAGE_ENGINE: About to call load_collections()");
         self.load_collections().await?;
+        tracing::info!("✅ STORAGE_ENGINE: Collections loaded, starting compaction workers");
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
@@ -197,6 +207,7 @@ impl StorageEngine {
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
 
+        tracing::info!("✅ STORAGE_ENGINE: Storage engine started successfully");
         Ok(())
     }
 
@@ -206,11 +217,8 @@ impl StorageEngine {
             manager.stop().await?;
         }
 
-        // Flush all LSM trees
-        let trees = self.lsm_trees.read().await;
-        for (_, tree) in trees.iter() {
-            tree.flush().await?;
-        }
+        // LSM is pure SSTable storage - no memtable to flush
+        // All data is already persisted through WAL → Flush → SSTable pipeline
 
         // Force WAL flush during shutdown
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
@@ -226,9 +234,9 @@ impl StorageEngine {
         self.wal_manager.clone()
     }
 
-    pub async fn write(&self, record: &VectorRecord) -> crate::storage::Result<()> {
+    #[deprecated(note = "Use DirectVectorService for writes. LSM is pure SSTable storage.")]
+    pub async fn write(&self, collection_id: &str, record: &VectorRecord) -> crate::storage::Result<()> {
         // Direct field access - no function call overhead, no match expressions
-        let collection_id = &record.collection_id;
         let vector_ref = &record.vector[..];
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
@@ -247,26 +255,26 @@ impl StorageEngine {
             collection_id
         );
 
-        let tree = trees.entry(collection_id.to_string()).or_insert_with(|| {
+        // Check if tree exists, create if needed
+        if !trees.contains_key(collection_id) {
             tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
-            let default_dir = PathBuf::from("./data/storage");
-            let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
-            LsmTree::new(
-                &self.config.lsm_config,
+            let new_tree = LsmTree::new(
                 collection_id.to_string(),
-                self.wal_manager.clone(),
-                data_dir.clone(),
-                Some(self.compaction_manager.clone()),
+                self.config.lsm_config.clone(),
                 self.filesystem.clone(),
-            )
-        });
+            ).await.expect("Failed to create LSM tree");
+            trees.insert(collection_id.to_string(), new_tree);
+        }
+        let tree = trees.get_mut(collection_id).unwrap();
 
         tracing::debug!(
             "💾 Calling tree.put() for vector {} in collection {}",
             vector_id,
             collection_id
         );
-        tree.put(vector_id.to_string(), record).await?;
+        // LSM is pure SSTable storage - no direct put operation
+        // tree.put(vector_id.to_string(), record).await?;
+        return Err(anyhow::anyhow!("Direct writes to LSM not supported. Use WAL → Flush → SSTable pipeline.").into());
         tracing::debug!(
             "✅ Completed tree.put() for vector {} in collection {}",
             vector_id,
@@ -286,7 +294,7 @@ impl StorageEngine {
             vector_id,
             collection_id
         );
-        self.axis_index_manager.insert(record).await?;
+        self.axis_index_manager.insert(collection_id, record).await?;
         tracing::debug!(
             "✅ Completed AXIS index insertion for vector {} in collection {}",
             vector_id,
@@ -314,6 +322,7 @@ impl StorageEngine {
         Ok(())
     }
 
+    #[deprecated(note = "Use search API for LSM data access")]
     pub async fn read(
         &self,
         collection_id: &str,
@@ -322,9 +331,9 @@ impl StorageEngine {
         // First check LSM tree (recent writes)
         let trees = self.lsm_trees.read().await;
         if let Some(tree) = trees.get(collection_id) {
-            if let Some(record) = tree.get(id).await? {
-                return Ok(Some(record));
-            }
+            // LSM is pure SSTable storage - no direct get operation
+            // Use search API to retrieve vectors from LSM
+            return Err(anyhow::anyhow!("Direct gets from LSM not supported. Use search API.").into());
         }
 
         // Then check MMAP readers (historical data)
@@ -364,7 +373,9 @@ impl StorageEngine {
         if exists {
             let trees = self.lsm_trees.read().await;
             if let Some(tree) = trees.get(collection_id) {
-                tree.delete(id.clone()).await?;
+                // LSM is pure SSTable storage - no direct delete operation
+                // Deletes should be handled through WAL tombstones
+                return Err(anyhow::anyhow!("Direct deletes from LSM not supported. Use WAL tombstones.").into());
             }
         }
 
@@ -408,27 +419,25 @@ impl StorageEngine {
 
         // Create LSM tree
         let mut trees = self.lsm_trees.write().await;
-        let default_dir = PathBuf::from("./data/storage");
-        let data_dir = self.config.data_dirs.first().unwrap_or(&default_dir);
-        trees.insert(
+        let new_tree = LsmTree::new(
             collection_id.clone(),
-            LsmTree::new(
-                &self.config.lsm_config,
-                collection_id.clone(),
-                self.wal_manager.clone(),
-                data_dir.clone(),
-                Some(self.compaction_manager.clone()),
-                self.filesystem.clone(),
-            ),
-        );
+            self.config.lsm_config.clone(),
+            self.filesystem.clone(),
+        ).await.expect("Failed to create LSM tree");
+        trees.insert(collection_id.clone(), new_tree);
 
         // Create MMAP reader
         let mut readers = self.mmap_readers.write().await;
-        let data_dir = self
-            .config
-            .data_dirs
-            .first()
-            .cloned()
+        // Extract first local filesystem path for MMAP reader
+        let data_dir = self.config.storage_locations
+            .iter()
+            .find_map(|loc| {
+                if loc.url.starts_with("file://") {
+                    Some(PathBuf::from(loc.url.strip_prefix("file://").unwrap_or(&loc.url)))
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| PathBuf::from("./data/storage"));
         let reader = MmapReader::new(collection_id.clone(), data_dir)?;
         reader.initialize().await?;
@@ -445,13 +454,20 @@ impl StorageEngine {
     }
 
     async fn load_collections(&self) -> crate::storage::Result<()> {
-        // Scan data directories for existing collections
-        for data_dir in &self.config.data_dirs {
+        // Scan storage locations for existing collections
+        for location in &self.config.storage_locations {
+            if !location.url.starts_with("file://") {
+                continue; // Skip non-local storage for now
+            }
+            
+            let path = location.url.strip_prefix("file://").unwrap_or(&location.url);
+            let data_dir = PathBuf::from(path);
+            
             if !data_dir.exists() {
                 continue;
             }
 
-            let mut entries = tokio::fs::read_dir(data_dir)
+            let mut entries = tokio::fs::read_dir(&data_dir)
                 .await
                 .map_err(|e| crate::core::StorageError::DiskIO(e))?;
 
@@ -468,17 +484,12 @@ impl StorageEngine {
                         // Initialize LSM tree for this collection
                         let mut trees = self.lsm_trees.write().await;
                         if !trees.contains_key(&collection_id) {
-                            trees.insert(
+                            let new_tree = LsmTree::new(
                                 collection_id.clone(),
-                                LsmTree::new(
-                                    &self.config.lsm_config,
-                                    collection_id.clone(),
-                                    self.wal_manager.clone(),
-                                    data_dir.clone(),
-                                    Some(self.compaction_manager.clone()),
-                                    self.filesystem.clone(),
-                                ),
-                            );
+                                self.config.lsm_config.clone(),
+                                self.filesystem.clone(),
+                            ).await.expect("Failed to create LSM tree");
+                            trees.insert(collection_id.clone(), new_tree);
                         }
 
                         // Initialize MMAP reader
@@ -503,47 +514,49 @@ impl StorageEngine {
     }
 
     async fn recover_from_wal(&self) -> crate::storage::Result<()> {
-        tracing::info!("🔄 Starting WAL recovery");
+        tracing::info!("🔄 STORAGE_ENGINE: Starting WAL recovery");
 
         // First, get all existing collections from the metadata provider
-        tracing::info!("📋 WAL RECOVERY: Getting collection list from metadata provider");
+        tracing::info!("📋 STORAGE_ENGINE: Getting collection list from metadata provider");
         let existing_collections = if let Some(provider) = self.get_metadata_provider().await {
+            tracing::info!("📋 STORAGE_ENGINE: Metadata provider available, calling list_collections()");
             match provider.list_collections().await {
                 Ok(collections) => {
                     tracing::info!(
-                        "📋 WAL RECOVERY: Found {} existing collections from metadata provider",
+                        "📋 STORAGE_ENGINE: Found {} existing collections from metadata provider",
                         collections.len()
                     );
                     tracing::debug!(
-                        "📋 WAL RECOVERY: Existing collections: {:?}",
+                        "📋 STORAGE_ENGINE: Existing collections: {:?}",
                         collections.iter().map(|c| &c.id).collect::<Vec<_>>()
                     );
                     collections
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "⚠️ WAL RECOVERY: Failed to get collections from metadata provider: {}",
+                        "⚠️ STORAGE_ENGINE: Failed to get collections from metadata provider: {}",
                         e
                     );
                     Vec::new()
                 }
             }
         } else {
-            tracing::info!("📋 WAL RECOVERY: No metadata provider available yet");
+            tracing::info!("📋 STORAGE_ENGINE: No metadata provider available yet");
             Vec::new()
         };
 
         // Use the new WAL interface to recover
+        tracing::info!("📊 STORAGE_ENGINE: About to call wal_manager.recover()");
         match self.wal_manager.recover().await {
             Ok(recovered_entries) => {
                 tracing::info!(
-                    "✅ WAL recovery completed successfully, recovered {} entries",
+                    "✅ STORAGE_ENGINE: WAL recovery completed successfully, recovered {} entries",
                     recovered_entries
                 );
 
                 // Add debug info about which collections had WAL entries vs those that didn't
                 if existing_collections.len() > 0 && recovered_entries == 0 {
-                    tracing::warn!("🔍 WAL RECOVERY: Found {} existing collections but recovered 0 WAL entries. This might indicate:", existing_collections.len());
+                    tracing::warn!("🔍 STORAGE_ENGINE: Found {} existing collections but recovered 0 WAL entries. This might indicate:", existing_collections.len());
                     tracing::warn!(
                         "   - Collections were created but no vectors were inserted yet"
                     );
@@ -554,7 +567,7 @@ impl StorageEngine {
                 Ok(())
             }
             Err(e) => {
-                tracing::warn!("⚠️ WAL recovery failed: {}", e);
+                tracing::warn!("⚠️ STORAGE_ENGINE: WAL recovery failed: {}", e);
                 // Continue startup even if recovery fails
                 Ok(())
             }
@@ -833,9 +846,9 @@ impl StorageEngine {
         match self.axis_index_manager.query(hybrid_query).await {
             Ok(query_result) => {
                 tracing::debug!(
-                    "🔍 Found {} results from AXIS indexes using {:?} strategy",
+                    "🔍 Found {} results from AXIS indexes using {} indexes",
                     query_result.results.len(),
-                    query_result.strategy_used.primary_index_type
+                    query_result.strategy_used.indexes.len()
                 );
                 // Convert AXIS ScoredResult to SearchResult
                 let search_results: Vec<SearchResult> = query_result
@@ -843,9 +856,20 @@ impl StorageEngine {
                     .into_iter()
                     .map(|scored| {
                         SearchResult {
-                            vector_id: scored.vector_id,
+                            id: scored.vector_id.clone(),
+                            vector_id: Some(scored.vector_id.clone()),
                             score: scored.score,
-                            metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                            distance: None,
+                            rank: None,
+                            vector: None, // TODO: Populate from vector store
+                            metadata: std::collections::HashMap::new(), // TODO: Populate from vector store
+                            debug_info: None,
+                            semantic_distance: None,
+                            quantization_info: None,
+                            engine_stats: None,
+                            index_path: None,
+                            collection_id: Some(collection_id.to_string()),
+                            created_at: None, // TODO: Populate from vector store
                         }
                     })
                     .collect();
@@ -928,14 +952,27 @@ impl StorageEngine {
                         .unwrap_or(crate::compute::distance::DistanceMetric::Cosine),
                 )?;
 
+                let vector_id = if record.id.as_deref().unwrap_or("").is_empty() {
+                    format!("mem_{}", record.timestamp)
+                } else {
+                    record.id.clone().unwrap_or_default()
+                };
+                
                 candidates.push(SearchResult {
-                    vector_id: if record.id.as_deref().unwrap_or("").is_empty() {
-                        format!("mem_{}", record.timestamp)
-                    } else {
-                        record.id.clone().unwrap_or_default()
-                    },
+                    id: vector_id.clone(),
+                    vector_id: Some(vector_id),
                     score: distance, // Note: score represents distance (lower = more similar)
-                    metadata: Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)),
+                    distance: Some(distance),
+                    rank: None, // Will be set after sorting
+                    vector: Some(record.vector.clone()),
+                    metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata),
+                    debug_info: None,
+                    semantic_distance: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    collection_id: Some(collection_id.to_string()),
+                    created_at: Some(chrono::DateTime::from_timestamp_micros(record.created_at).unwrap_or_else(chrono::Utc::now)),
                 });
         }
 
@@ -993,9 +1030,20 @@ impl StorageEngine {
                     .into_iter()
                     .map(|scored| {
                         SearchResult {
-                            vector_id: scored.vector_id,
+                            id: scored.vector_id.clone(),
+                            vector_id: Some(scored.vector_id.clone()),
                             score: scored.score,
-                            metadata: Some(std::collections::HashMap::new()), // TODO: Populate from vector store
+                            distance: None,
+                            rank: None,
+                            vector: None, // TODO: Populate from vector store
+                            metadata: std::collections::HashMap::new(), // TODO: Populate from vector store
+                            debug_info: None,
+                            semantic_distance: None,
+                            quantization_info: None,
+                            engine_stats: None,
+                            index_path: None,
+                            collection_id: Some(collection_id.to_string()),
+                            created_at: None, // TODO: Populate from vector store
                         }
                     })
                     .collect()
@@ -1048,6 +1096,7 @@ impl StorageEngine {
     /// Batch insert multiple vectors into a collection
     pub async fn batch_write(
         &self,
+        collection_id: &str,
         records: Vec<VectorRecord>,
     ) -> crate::storage::Result<Vec<VectorId>> {
         tracing::debug!("🚀 Starting batch_write for {} records", records.len());
@@ -1061,10 +1110,10 @@ impl StorageEngine {
                 index + 1,
                 inserted_ids.capacity(),
                 record_id,
-                record.collection_id
+                collection_id
             );
 
-            self.write(&record).await?;
+            self.write(collection_id, &record).await?;
             inserted_ids.push(record_id.clone());
 
             tracing::debug!(
@@ -1187,27 +1236,13 @@ impl StorageEngine {
     ) -> crate::storage::Result<Vec<VectorRecord>> {
         let mut vectors = Vec::new();
 
-        // Get vectors from LSM tree (recent writes)
-        let trees = self.lsm_trees.read().await;
-        if let Some(tree) = trees.get(collection_id) {
-            match tree.iter_all().await {
-                Ok(mut lsm_vectors) => {
-                    tracing::debug!(
-                        "Found {} vectors in LSM tree for collection {}",
-                        lsm_vectors.len(),
-                        collection_id
-                    );
-                    vectors.append(&mut lsm_vectors);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to iterate LSM tree for collection {}: {}",
-                        collection_id,
-                        e
-                    );
-                }
-            }
-        }
+        // LSM is now pure SSTable storage - no vectors to get from memtable
+        // All LSM data is in SSTables which should be accessed via the search API
+        // This method is deprecated for LSM - use search API instead
+        tracing::debug!(
+            "LSM is pure SSTable storage - vectors for collection {} must be accessed via search API",
+            collection_id
+        );
 
         // Get vectors from MMAP readers (historical data)
         let readers = self.mmap_readers.read().await;

@@ -7,8 +7,21 @@ port = 5678
 data_dir = "./test_data"
 
 [storage]
-data_dirs = ["./test_data/storage"]
-wal_dir = "./test_data/wal"
+# Single metadata URL for consistency
+metadata_url = "file:///home/vsingh/code/proximaDB/test_data/metadata"
+
+# Storage locations
+[[storage.storage_locations]]
+url = "file:///home/vsingh/code/proximaDB/test_data/storage"
+weight = 1
+tags = ["local", "test"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+# Storage engine settings
 mmap_enabled = true
 cache_size_mb = 512
 bloom_filter_bits = 10
@@ -40,41 +53,10 @@ prefetch_size_kb = 64
 bits_per_key = 10
 enabled = true
 
-[storage.wal_config]
-wal_urls = ["file://./test_data/wal"]
-distribution_strategy = "LoadBalanced"
-collection_affinity = true
-memory_flush_size_bytes = 2097152  # 2MB
-global_flush_threshold = 1073741824  # 1GB
-global_shrink_factor = 0.5
-strategy_type = "Bincode"
-memtable_type = "BTree"
-sync_mode = "PerBatch"
-batch_threshold = 250
-write_buffer_size_mb = 8
-concurrent_flushes = 2
+# WAL configuration - URLs now derived from storage_locations
+# WAL settings moved to appropriate sections
 
-[storage.storage_layout]
-node_instance = 1
-assignment_strategy = "HashBased"
-
-[storage.storage_layout.temp_config]
-use_same_directory = true
-temp_suffix = "___temp"
-compaction_suffix = "___compaction"
-flush_suffix = "___flushed"
-cleanup_on_startup = true
-
-[[storage.storage_layout.base_paths]]
-base_dir = "./test_data/storage"
-instance_id = 1
-mount_point = "./"
-disk_type = { SataSsd = { max_iops = 50000 } }
-
-[storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 1024
-metadata_reserved_mb = 256
-warning_threshold_percent = 85.0
+# Storage layout configuration removed - now part of storage_locations
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true
@@ -85,15 +67,7 @@ enable_local_atomic = true
 enable_object_store_atomic = false
 cleanup_temp_on_startup = true
 
-[storage.metadata_backend]
-backend_type = "filestore"
-storage_url = "file:///home/vsingh/code/proximaDB/test_data/metadata"
-cache_size_mb = 64
-flush_interval_secs = 10
-enable_compression = true
-enable_snapshots = true
-snapshot_threshold = 10
-keep_snapshots = 3
+# Metadata backend configuration removed - metadata_url is now in main storage section
 
 [api]
 grpc_port = 5679

@@ -35,7 +35,6 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
 
         vectors.push(VectorRecord {
             id: Some(Uuid::new_v4().to_string()),
-            collection_id: collection_id.to_string(),
             vector: vector_data,
             metadata,
             timestamp: now,
@@ -63,7 +62,7 @@ async fn test_axis_large_scale_insertion() {
         let test_vectors = create_test_vectors(1000, 128, &collection_id);
 
         for vector in test_vectors {
-            let result = axis_manager.insert(&vector).await;
+            let result = axis_manager.insert("test_collection", &vector).await;
             assert!(
                 result.is_ok(),
                 "Large-scale vector insertion should succeed"
@@ -98,7 +97,7 @@ async fn test_axis_concurrent_operations() {
         let handle = tokio::spawn(async move {
             let vectors = create_test_vectors(200, 64, &collection_id);
             for vector in vectors {
-                let _ = manager.insert(&vector).await;
+                let _ = manager.insert("test_collection", &vector).await;
             }
         });
 
@@ -134,7 +133,7 @@ async fn test_axis_adaptive_optimization() {
     // Dense collection (low sparsity)
     let dense_vectors = create_test_vectors(500, 256, dense_collection);
     for vector in dense_vectors {
-        let _ = axis_manager.insert(&vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Sparse collection (simulated high sparsity via metadata)
@@ -146,7 +145,7 @@ async fn test_axis_adaptive_optimization() {
         });
     }
     for vector in sparse_vectors {
-        let _ = axis_manager.insert(&vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Trigger optimization analysis for both collections
@@ -192,7 +191,7 @@ async fn test_axis_complex_hybrid_queries() {
     }
 
     for vector in test_vectors {
-        let _ = axis_manager.insert(&vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Execute complex hybrid query
@@ -240,7 +239,7 @@ async fn test_axis_system_recovery() {
         let vectors = create_test_vectors(100, 64, &collection_id);
 
         for vector in vectors {
-            let _ = axis_manager.insert(&vector).await;
+            let _ = axis_manager.insert("test_collection", &vector).await;
         }
     }
 
@@ -278,13 +277,13 @@ async fn test_axis_collection_lifecycle() {
     // Phase 1: Collection creation and initial data
     let initial_vectors = create_test_vectors(50, 128, collection_id);
     for vector in initial_vectors {
-        let _ = axis_manager.insert(&vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Phase 2: Collection growth
     let growth_vectors = create_test_vectors(100, 128, collection_id);
     for vector in growth_vectors {
-        let _ = axis_manager.insert(&vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Phase 3: Analysis and optimization

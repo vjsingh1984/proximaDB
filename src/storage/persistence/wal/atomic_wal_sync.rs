@@ -20,7 +20,7 @@ use crate::storage::atomic::{
 };
 use crate::storage::persistence::wal::{
     BatchId, WalOperation,
-    schema::{serialize_vector_batch},
+    serialization::{AvroSerializer, VectorBatchSerializer},
 };
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::wal::optimized_path_resolver::{
@@ -108,8 +108,8 @@ impl AtomicWalSync {
         let operation_id = format!("wal_sync_{}_{}", collection_id, Uuid::new_v4());
 
         debug!(
-            "Starting atomic WAL sync for collection '{}', batch {}-{}, operation '{}'",
-            collection_id, batch.batch_id.sequence_range.0, batch.batch_id.sequence_range.1, operation_id
+            "Starting atomic WAL sync for collection '{}', batch {}, operation '{}'",
+            collection_id, batch.batch_id.to_base62(), operation_id
         );
 
         // Get collection paths from assignment service
@@ -214,8 +214,7 @@ impl AtomicWalSync {
         };
 
         // Generate final WAL batch file name
-        let batch_filename = format!("batch_{:010}_{:010}.wal", 
-            batch.batch_id.sequence_range.0, batch.batch_id.sequence_range.1);
+        let batch_filename = format!("batch_{}.wal", batch.batch_id.to_base62());
         let _final_path = format!("{}/{}", paths.wal_logs, batch_filename);
 
         // Use unified atomic coordinator for staging → final atomic operation
@@ -292,7 +291,8 @@ impl AtomicWalSync {
             }
             SerializationStrategy::Avro => {
                 // Use the avro serializer which expects &[VectorRecord]
-                let data = serialize_vector_batch(&*batch.vector_records)
+                let serializer = AvroSerializer::new();
+                let data = serializer.serialize_batch(&*batch.vector_records)
                     .context("Failed to serialize avro vector batch")?;
                 (data, "avro".to_string())
             }
@@ -325,7 +325,7 @@ impl AtomicWalSync {
     ) -> Result<()> {
         let checkpoint_data = serde_json::json!({
             "collection_id": paths.collection_id,
-            "last_sequence": batch.batch_id.sequence_range.1,
+            "last_batch_id": batch.batch_id.to_base62(),
             "last_updated": Utc::now().to_rfc3339(),
             "batch_count": 1,
         });
@@ -369,8 +369,8 @@ impl AtomicWalSync {
             .context("Failed to finalize checkpoint update")?;
 
         debug!(
-            "Updated WAL checkpoint for collection '{}' to sequence {}",
-            paths.collection_id, batch.batch_id.sequence_range.1
+            "Updated WAL checkpoint for collection '{}' to batch {}",
+            paths.collection_id, batch.batch_id.to_base62()
         );
 
         Ok(())

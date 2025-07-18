@@ -34,13 +34,12 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
 }
 
 /// Create test vector records for testing
-fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRecord> {
+fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| {
             let now = chrono::Utc::now().timestamp_millis();
             VectorRecord {
                 id: Some(format!("test_vector_{}", i)),
-                collection_id: collection_id.to_string(),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
                 metadata: vec![
                     crate::proto::proximadb::MetadataItem {

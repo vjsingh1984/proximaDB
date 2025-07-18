@@ -161,7 +161,7 @@ mod wal_config_tests {
         let config = PerformanceConfig::default();
         
         // Verify size-based flush defaults
-        assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024); // 10MB
+        assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // 2MB - reduced for faster recovery
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);     // 512MB
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
         assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);       // 8MB
@@ -191,6 +191,9 @@ mod wal_config_tests {
             sync_mode: SyncMode::Always,
             global_shrink_factor: 0.6,
             cloud_backup: None,
+            enable_optimized_wal_writer: None,
+            background_writer_threads: None,
+            wal_batch_size: None,
         };
         
         let json = serde_json::to_string(&custom_config).unwrap();
@@ -272,11 +275,19 @@ mod wal_config_tests {
                 sync_mode: SyncMode::Periodic,
                 global_shrink_factor: 0.5,
                 cloud_backup: None,
+                enable_optimized_wal_writer: None,
+                background_writer_threads: None,
+                wal_batch_size: None,
             },
             enable_mvcc: true,
             enable_ttl: true,
             enable_background_compaction: true,
             collection_overrides,
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         };
         
         // Test serialization
@@ -374,11 +385,19 @@ mod wal_config_tests {
                 sync_mode: SyncMode::Never,
                 global_shrink_factor: 0.0, // Aggressive shrinking
                 cloud_backup: None,
+                enable_optimized_wal_writer: None,
+                background_writer_threads: None,
+                wal_batch_size: None,
             },
             enable_mvcc: false,
             enable_ttl: false,
             enable_background_compaction: false,
             collection_overrides: HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         };
         
         // Should still serialize/deserialize correctly

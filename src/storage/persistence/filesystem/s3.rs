@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
 use super::auth::{AwsCredentials, CredentialProvider};
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult};
+use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// S3 storage classes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +80,12 @@ pub struct S3Config {
 
     /// Multipart chunk size
     pub multipart_chunk_size: u64, // bytes
+
+    /// Custom endpoint URL (for MinIO, LocalStack, etc.)
+    pub endpoint_url: Option<String>,
+
+    /// Force path-style addressing (required for MinIO)
+    pub force_path_style: bool,
 }
 
 /// S3 encryption configuration
@@ -160,6 +166,8 @@ impl Default for S3Config {
             max_retries: 3,
             multipart_threshold: 5 * 1024 * 1024,  // 5MB
             multipart_chunk_size: 5 * 1024 * 1024, // 5MB
+            endpoint_url: None,
+            force_path_style: false,
         }
     }
 }
@@ -299,6 +307,17 @@ impl S3Client {
         key: &str,
         credentials: &AwsCredentials,
     ) -> FsResult<Vec<u8>> {
+        self.get_object_range(bucket, key, credentials, None).await
+    }
+
+    /// Get S3 object with optional byte range
+    async fn get_object_range(
+        &self,
+        bucket: &str,
+        key: &str,
+        credentials: &AwsCredentials,
+        range: Option<&str>,
+    ) -> FsResult<Vec<u8>> {
         // In production, use aws-sdk-s3
         // This is a simplified implementation for demonstration
         let url = format!(
@@ -306,32 +325,55 @@ impl S3Client {
             bucket, self.config.region, key
         );
 
-        let response = self
+        let mut request = self
             .http_client
             .get(&url)
             .header(
                 "Authorization",
                 self.create_auth_header(credentials, "GET", bucket, key),
-            )
+            );
+
+        // Add Range header if specified
+        if let Some(range_value) = range {
+            request = request.header("Range", range_value);
+            tracing::debug!("S3 range request: {} for s3://{}/{}", range_value, bucket, key);
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
-        if response.status().is_success() {
-            response
+        // Handle both 200 OK (full content) and 206 Partial Content (range request)
+        let status = response.status();
+        if status.is_success() || status.as_u16() == 206 {
+            let is_range_response = status.as_u16() == 206;
+            let bytes = response
                 .bytes()
                 .await
                 .map(|b| b.to_vec())
-                .map_err(|e| FilesystemError::Network(e.to_string()))
-        } else if response.status().as_u16() == 404 {
+                .map_err(|e| FilesystemError::Network(e.to_string()))?;
+            
+            if is_range_response {
+                tracing::debug!("S3 range response: {} bytes received", bytes.len());
+            }
+            
+            Ok(bytes)
+        } else if status.as_u16() == 404 {
             Err(FilesystemError::NotFound(format!(
                 "s3://{}/{}",
                 bucket, key
             )))
+        } else if status.as_u16() == 416 {
+            // Range not satisfiable
+            Err(FilesystemError::Config(format!(
+                "Invalid range request for s3://{}/{}",
+                bucket, key
+            )))
         } else {
             Err(FilesystemError::Network(format!(
-                "S3 error: {}",
-                response.status()
+                "S3 error: {} for s3://{}/{}",
+                status, bucket, key
             )))
         }
     }
@@ -415,6 +457,62 @@ impl FileSystem for S3FileSystem {
         let (bucket, key) = self.parse_s3_url(path)?;
         let credentials = self.credential_provider.get_credentials().await?;
         self.client.get_object(&bucket, &key, &credentials).await
+    }
+
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        let (bucket, key) = self.parse_s3_url(path)?;
+        let credentials = self.credential_provider.get_credentials().await?;
+        
+        // S3 supports byte-range requests using the Range header
+        // Format: "bytes=start-end" (inclusive)
+        let end = offset + length - 1;
+        let range_header = format!("bytes={}-{}", offset, end);
+        
+        tracing::debug!("S3 range read: {} with range {}", path, range_header);
+        
+        // Use S3Client's range support
+        self.client.get_object_range(&bucket, &key, &credentials, Some(&range_header)).await
+    }
+
+    async fn read_ranges(&self, path: &str, ranges: Vec<std::ops::Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+        let (bucket, key) = self.parse_s3_url(path)?;
+        let credentials = self.credential_provider.get_credentials().await?;
+        
+        if ranges.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // For single range, use simple range request
+        if ranges.len() == 1 {
+            let range = &ranges[0];
+            let length = range.end - range.start;
+            let result = self.read_range(path, range.start, length).await?;
+            return Ok(vec![result]);
+        }
+        
+        // S3 supports multipart range requests with comma-separated ranges
+        // Format: "bytes=0-1023,2048-3071,4096-5119"
+        let range_specs: Vec<String> = ranges.iter()
+            .map(|r| format!("{}-{}", r.start, r.end - 1))
+            .collect();
+        let range_header = format!("bytes={}", range_specs.join(","));
+        
+        tracing::debug!("S3 multipart range read: {} with {} ranges", path, ranges.len());
+        
+        // Make multipart range request
+        let response_data = self.client.get_object_range(&bucket, &key, &credentials, Some(&range_header)).await?;
+        
+        // Parse multipart response
+        // TODO: Implement proper multipart response parsing
+        // For now, fall back to individual requests
+        tracing::warn!("Multipart range parsing not yet implemented, falling back to individual requests");
+        
+        let mut results = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let length = range.end - range.start;
+            results.push(self.read_range(path, range.start, length).await?);
+        }
+        Ok(results)
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
@@ -596,6 +694,13 @@ impl FileSystem for S3FileSystem {
     async fn sync(&self) -> FsResult<()> {
         // S3 operations are immediately durable
         Ok(())
+    }
+
+    async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }
 

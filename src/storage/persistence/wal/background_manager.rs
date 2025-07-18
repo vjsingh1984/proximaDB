@@ -16,7 +16,8 @@ use tracing::{debug, info, warn};
 
 use super::WalConfig;
 
-use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, MIN_VECTORS_FOR_CLUSTERING};
+// use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, MIN_VECTORS_FOR_CLUSTERING}; // Moved to AXIS
+const MIN_VECTORS_FOR_CLUSTERING: usize = 1000; // Local constant since clustering moved to AXIS
 
 /// Configuration for dynamic schema generation
 #[derive(Debug, Clone)]
@@ -98,8 +99,8 @@ pub struct BackgroundMaintenanceManager {
     /// Storage engine registry for polymorphic compaction delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn crate::storage::traits::UnifiedStorageEngine>>>>,
 
-    /// Clustering model manager for intelligent model training
-    clustering_model_manager: Option<Arc<ClusteringModelManager>>,
+    // Clustering model manager moved to AXIS
+    // clustering_model_manager: Option<Arc<ClusteringModelManager>>,
     
     /// Collection vector counts at last model training
     last_training_vector_counts: Arc<RwLock<HashMap<String, usize>>>,
@@ -131,7 +132,7 @@ impl BackgroundMaintenanceManager {
             axis_manager: None,
             flush_coordinator: None,
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
-            clustering_model_manager: None,
+            // clustering_model_manager: None, // Moved to AXIS
             last_training_vector_counts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -162,11 +163,12 @@ impl BackgroundMaintenanceManager {
         );
     }
 
-    /// Set clustering model manager for intelligent model training
-    pub fn set_clustering_model_manager(&mut self, model_manager: Arc<ClusteringModelManager>) {
-        self.clustering_model_manager = Some(model_manager);
-        info!("🧠 BackgroundManager: Clustering model manager registered for intelligent training");
-    }
+    // Clustering model manager moved to AXIS
+    // /// Set clustering model manager for intelligent model training
+    // pub fn set_clustering_model_manager(&mut self, model_manager: Arc<ClusteringModelManager>) {
+    //     self.clustering_model_manager = Some(model_manager);
+    //     info!("🧠 BackgroundManager: Clustering model manager registered for intelligent training");
+    // }
 
     /// **INTELLIGENT RETRAINING LOGIC**: Check if model should be retrained based on vector growth
     /// 
@@ -175,88 +177,15 @@ impl BackgroundMaintenanceManager {
     /// 2. Vector count has grown by >20% since last training
     /// 3. At least 6 hours have passed since last training
     async fn should_retrain_model(&self, collection_id: &str, current_vectors: usize) -> bool {
-        // Rule 1: Only train for large collections (>1M vectors)
-        if current_vectors < MIN_VECTORS_FOR_CLUSTERING {
-            let mut stats = self.stats.lock().await;
-            stats.model_training_skipped_small += 1;
-            debug!(
-                "🧠 Model training skipped for collection {} ({} vectors < {})",
-                collection_id, current_vectors, MIN_VECTORS_FOR_CLUSTERING
-            );
-            return false;
-        }
-
-        // Rule 2: Check if model exists and get stats
-        let has_existing_model = if let Some(ref model_manager) = self.clustering_model_manager {
-            model_manager.get_model_stats(&collection_id.to_string()).await.is_some()
-        } else {
-            false
-        };
-
-        // Rule 3: Check vector growth threshold (20% increase)
-        let last_training_count = {
-            let counts = self.last_training_vector_counts.read().await;
-            counts.get(collection_id).copied()
-        };
-
-        if let Some(last_count) = last_training_count {
-            let growth_ratio = (current_vectors as f64) / (last_count as f64);
-            let growth_threshold = 1.20; // 20% growth threshold
-            
-            if growth_ratio < growth_threshold {
-                let mut stats = self.stats.lock().await;
-                stats.model_training_skipped_recent += 1;
-                
-                info!(
-                    "🧠 Model training skipped for collection {} (growth: {:.1}% < 20%)",
-                    collection_id, (growth_ratio - 1.0) * 100.0
-                );
-                return false;
-            }
-            
-            info!(
-                "🧠 Model retraining triggered for collection {} (growth: {:.1}% >= 20%)",
-                collection_id, (growth_ratio - 1.0) * 100.0
-            );
-        } else if has_existing_model {
-            // Has model but no training count recorded - skip to be conservative
-            let mut stats = self.stats.lock().await;
-            stats.model_training_skipped_recent += 1;
-            
-            debug!(
-                "🧠 Model training skipped for collection {} (no training count recorded)",
-                collection_id
-            );
-            return false;
-        } else {
-            // No existing model - first time training
-            info!(
-                "🧠 Initial model training triggered for collection {} ({} vectors)",
-                collection_id, current_vectors
-            );
-        }
-
-        // Rule 4: Check minimum time interval (6 hours)
-        if let Some(ref model_manager) = self.clustering_model_manager {
-            if let Some(model_stats) = model_manager.get_model_stats(&collection_id.to_string()).await {
-                let hours_since_training = chrono::Utc::now()
-                    .signed_duration_since(model_stats.last_trained)
-                    .num_hours();
-                
-                if hours_since_training < 6 {
-                    let mut stats = self.stats.lock().await;
-                    stats.model_training_skipped_recent += 1;
-                    
-                    info!(
-                        "🧠 Model training skipped for collection {} (only {} hours since last training)",
-                        collection_id, hours_since_training
-                    );
-                    return false;
-                }
-            }
-        }
-
-        true
+        // Clustering functionality moved to AXIS
+        // Always return false as model training is now handled by AXIS
+        let mut stats = self.stats.lock().await;
+        stats.model_training_skipped_small += 1;
+        debug!(
+            "🧠 Model training skipped for collection {} - clustering moved to AXIS",
+            collection_id
+        );
+        false
     }
 
     /// Trigger async flush for collection if not already running
@@ -326,7 +255,7 @@ impl BackgroundMaintenanceManager {
         let flush_coordinator = self.flush_coordinator.clone();
         let axis_manager = self.axis_manager.clone();
         let storage_engines_clone = self.storage_engines.clone();
-        let clustering_model_manager = self.clustering_model_manager.clone();
+        // let clustering_model_manager = self.clustering_model_manager.clone(); // Moved to AXIS
         let last_training_vector_counts = self.last_training_vector_counts.clone();
 
         tokio::spawn(async move {
@@ -470,7 +399,7 @@ impl BackgroundMaintenanceManager {
 
             // CRITICAL: IndexConfig-based indexing AFTER complete flush-compaction cycle
             if let (Some(ref axis), Some(ref flush_result)) = (&axis_manager, &flush_result) {
-                if flush_result.success && !final_files_created.is_empty() {
+                if !final_files_created.is_empty() {
                     info!(
                         "🔄 [INDEXING] Starting IndexConfig-based indexing for collection {} after flush-compaction cycle",
                         collection_id_clone
@@ -515,90 +444,7 @@ impl BackgroundMaintenanceManager {
                 );
             }
 
-            // INTELLIGENT MODEL TRAINING: Check if retraining needed after flush-compaction-indexing cycle
-            if let (Some(ref model_manager), Some(ref flush_result)) = (&clustering_model_manager, &flush_result) {
-                if flush_result.success && flush_result.entries_flushed > 0 {
-                    let vectors_processed = flush_result.entries_flushed as usize;
-                    
-                    // Check if training is needed (inline the should_retrain_model logic)
-                    let should_train = if vectors_processed < MIN_VECTORS_FOR_CLUSTERING {
-                        false
-                    } else {
-                        let last_counts = last_training_vector_counts.read().await;
-                        if let Some(last_count) = last_counts.get(&collection_id_clone) {
-                            let growth_ratio = vectors_processed as f64 / *last_count as f64;
-                            growth_ratio >= 1.20 // 20% growth threshold
-                        } else {
-                            true // First training
-                        }
-                    };
-                    
-                    if should_train {
-                        info!(
-                            "🧠 [MODEL_TRAINING] Starting async model training for collection {} ({} vectors processed)",
-                            collection_id_clone, vectors_processed
-                        );
-                        
-                        // Trigger async model training (non-blocking)
-                        let model_manager_clone = Arc::clone(model_manager);
-                        let collection_id_train = collection_id_clone.clone();
-                        let stats_clone_train = Arc::clone(&stats_clone);
-                        let last_counts_clone = Arc::clone(&last_training_vector_counts);
-                        
-                        tokio::spawn(async move {
-                            let training_start = std::time::Instant::now();
-                            
-                            // Update last training vector count
-                            {
-                                let mut counts = last_counts_clone.write().await;
-                                counts.insert(collection_id_train.clone(), vectors_processed);
-                            }
-                            
-                            // TODO: Get actual vectors for training from flush result
-                            // For now, we'll simulate the training process
-                            info!("🧠 [MODEL_TRAINING] Training clustering model for collection {} (async)", collection_id_train);
-                            
-                            // Simulate model training time based on vector count
-                            let training_duration_secs = (vectors_processed / 100_000).max(5) as u64;
-                            tokio::time::sleep(tokio::time::Duration::from_secs(training_duration_secs)).await;
-                            
-                            let training_duration = training_start.elapsed();
-                            
-                            // Update training stats
-                            {
-                                let mut stats = stats_clone_train.lock().await;
-                                stats.total_model_training_operations += 1;
-                                let total_ops = stats.total_model_training_operations;
-                                Self::update_average_duration(
-                                    &mut stats.average_model_training_duration_ms,
-                                    training_duration.as_millis() as f64,
-                                    total_ops,
-                                );
-                            }
-                            
-                            info!(
-                                "✅ [MODEL_TRAINING] Async model training completed for collection {} in {}ms",
-                                collection_id_train, training_duration.as_millis()
-                            );
-                        });
-                    } else {
-                        info!(
-                            "📋 [MODEL_TRAINING] Skipping model training for collection {} (insufficient change or too recent)",
-                            collection_id_clone
-                        );
-                    }
-                } else {
-                    debug!(
-                        "📋 [MODEL_TRAINING] Skipping model training for collection {} (flush failed or no entries)",
-                        collection_id_clone
-                    );
-                }
-            } else {
-                debug!(
-                    "📋 [MODEL_TRAINING] No model manager or flush result available for collection {}, skipping training",
-                    collection_id_clone
-                );
-            }
+            // INTELLIGENT MODEL TRAINING moved to AXIS
 
             // Reset status to idle
             {

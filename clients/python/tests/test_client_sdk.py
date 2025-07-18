@@ -15,7 +15,7 @@ from proximadb import (
 )
 from proximadb.models import CollectionConfig, DistanceMetric
 from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
-from proximadb.config import ClientConfig
+from proximadb.config import ClientConfig, RetryConfig
 
 
 class TestClientCreation:
@@ -51,8 +51,10 @@ class TestClientCreation:
         rest_client = connect_rest("http://localhost:5678")
         assert rest_client is not None
         
+        # gRPC client might fall back to REST if gRPC is unavailable
         grpc_client = connect_grpc("http://localhost:5679")
         assert grpc_client is not None
+        # Note: Due to import dependencies, gRPC might fall back to REST
     
     def test_direct_client_classes(self):
         """Test direct client class instantiation"""
@@ -69,7 +71,7 @@ class TestClientCreation:
         config = ClientConfig(
             url="http://localhost:5678",
             timeout=30.0,
-            retry_attempts=3,
+            retry=RetryConfig(max_retries=3),
             enable_debug_logging=False
         )
         
@@ -108,13 +110,13 @@ class TestClientConfiguration:
         advanced_config = ClientConfig(
             url="http://localhost:5678",
             timeout=10.0,
-            retry_attempts=5,
+            retry=RetryConfig(max_retries=5),
             enable_debug_logging=True,
-            max_connections=100
+            max_concurrent_requests=100
         )
         
         assert advanced_config.timeout == 10.0
-        assert advanced_config.retry_attempts == 5
+        assert advanced_config.retry.max_retries == 5
         assert advanced_config.enable_debug_logging is True
     
     def test_config_serialization(self):
@@ -122,7 +124,7 @@ class TestClientConfiguration:
         config = ClientConfig(
             url="http://localhost:5678",
             timeout=15.0,
-            retry_attempts=3
+            retry=RetryConfig(max_retries=3)
         )
         
         # Test dict conversion
@@ -133,11 +135,12 @@ class TestClientConfiguration:
     
     def test_config_defaults(self):
         """Test configuration default values"""
-        config = ClientConfig()
+        # URL is required, so provide a default for testing defaults
+        config = ClientConfig(url="http://localhost:5678")
         
         # Should have reasonable defaults
         assert hasattr(config, 'timeout')
-        assert hasattr(config, 'retry_attempts')
+        assert hasattr(config, 'retry') and hasattr(config.retry, 'max_retries')
         assert hasattr(config, 'enable_debug_logging')
 
 

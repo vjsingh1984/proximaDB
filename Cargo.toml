@@ -62,8 +62,7 @@ memmap2 = "0.9"
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 parquet = { version = "51.0", default-features = false, features = ["arrow"] }
-# arrow = { version = "51.0", default-features = false }  # Full Arrow pulls in arrow-arith
-# Use only the specific Arrow sub-crates we need to avoid arrow-arith
+# arrow = { version = "51.0" }  # Removed - arrow-arith has compilation issues
 arrow-array = "51.0"
 arrow-schema = "51.0" 
 arrow-data = "51.0"
@@ -81,6 +80,7 @@ sysinfo = "0.30"
 # Avro serialization with schema evolution
 apache-avro = "0.16"
 serde_bytes = "0.11"
+bytes = "1.5"
 
 # Cloud storage SDKs (optional for testing)
 aws-config = { version = "1.0", optional = true }

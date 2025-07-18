@@ -1,59 +1,35 @@
 # Simple ProximaDB Configuration for Testing
 
 [server]
-node_id = "proximadb-node-1"
+node_id = "test-node-1"
 bind_address = "0.0.0.0"
 port = 5678
 data_dir = "/tmp/proximadb-test"
 
 [storage]
-data_dirs = ["/tmp/proximadb-test"]
-wal_dir = "/tmp/proximadb-test/wal"
-mmap_enabled = true
-cache_size_mb = 512
-bloom_filter_bits = 10
+# Single metadata URL
+metadata_url = "file:///tmp/proximadb-test/metadata"
 
-[storage.wal_config]
-wal_urls = ["file:///tmp/proximadb-test/wal"]
-distribution_strategy = "RoundRobin"
-collection_affinity = false
-memory_flush_size_bytes = 10485760  # 10MB
-global_flush_threshold = 1073741824  # 1GB
-global_shrink_factor = 0.5
-strategy_type = "Bincode"
-memtable_type = "BTree"
-sync_mode = "PerBatch"
-batch_threshold = 100
-write_buffer_size_mb = 8
-concurrent_flushes = 2
+# Single storage location for simple setup
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb-test"
+weight = 1
+tags = ["local", "test"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+# Storage engine settings
+mmap_enabled = true
+cache_size_mb = 256
+bloom_filter_bits = 10
 
 [storage.lsm_config]
 memtable_size_mb = 8
-memory_flush_size_bytes = 8388608  # 8MB
-memtable_type = "BTree"
-level_count = 7
-compaction_threshold = 4
-compaction_strategy = "Leveled"
-block_size_kb = 64
+memory_flush_size_bytes = 2097152  # 2MB
 compression = "snappy"
-
-[storage.storage_layout]
-node_instance = 1
-assignment_strategy = "RoundRobin"
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/tmp/proximadb-test/storage"
-instance_id = 1
-mount_point = "/tmp"
-disk_type = { Ssd = { max_iops = 50000 } }
-capacity_config = { max_wal_size_mb = 1024, metadata_reserved_mb = 256, warning_threshold_percent = 85.0 }
-
-[storage.storage_layout.temp_config]
-use_same_directory = true
-temp_suffix = "___temp"
-compaction_suffix = "___compaction"
-flush_suffix = "___flushed"
-cleanup_on_startup = true
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true
@@ -64,18 +40,11 @@ enable_local_atomic = true
 enable_object_store_atomic = false
 cleanup_temp_on_startup = true
 
-[storage.metadata_backend]
-backend_type = "filestore"
-storage_url = "file:///tmp/proximadb-test/metadata"
-cache_size_mb = 64
-flush_interval_secs = 30
-
 [api]
 grpc_port = 5679
 rest_port = 5678
-max_request_size_mb = 10
+max_request_size_mb = 32
 timeout_seconds = 30
-enable_tls = false
 
 [monitoring]
 metrics_enabled = true
@@ -84,9 +53,11 @@ log_level = "debug"
 [consensus]
 node_id = 1
 cluster_peers = []
-election_timeout_ms = 5000
-heartbeat_interval_ms = 1000
-snapshot_threshold = 1000
 
-[tls]
-enabled = false
+# Example directory structure:
+# /tmp/proximadb-test/
+# ├── metadata/           # Metadata storage
+# └── collection1/        # Example collection
+#     ├── wal/           # WAL data
+#     ├── data/          # Storage engine data
+#     └── index/         # Index data

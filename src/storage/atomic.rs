@@ -365,6 +365,7 @@ impl UnifiedAtomicCoordinator {
         info!("🎯 Final URL: {}", final_url);
 
         // Create both staging and final directories upfront for robustness
+        // Note: staging_url and final_url are directory URLs, not file URLs
         info!("📂 Creating staging directory: {}", staging_url);
         self.filesystem
             .create_dir_all(&staging_url)

@@ -247,11 +247,11 @@ impl TestDataGenerator {
         
         // Create schema
         let mut fields = vec![
-            Field::new("id", DataType::Utf8, false),
+            Field::new("id", DataType::Utf8, true),  // Nullable for test flexibility
             Field::new("collection_id", DataType::Utf8, false),
-            Field::new("vector", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), false), // item is nullable
-            Field::new("timestamp", DataType::Int64, false),
-            Field::new("version", DataType::Int64, false),
+            Field::new("vector", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true), // Both field and items are nullable
+            Field::new("timestamp", DataType::Int64, true),
+            Field::new("version", DataType::Int64, true),
             Field::new("expires_at", DataType::Int64, true),
         ];
         

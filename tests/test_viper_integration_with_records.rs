@@ -54,7 +54,6 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
         let now = Utc::now().timestamp_millis();
         let vector_record = VectorRecord {
             id: Some(format!("viper_vector_{}", i)),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32],
             metadata: vec![],
             timestamp: now,
@@ -128,7 +127,6 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
         let now = Utc::now().timestamp_millis();
         let vector_record = VectorRecord {
             id: Some(format!("compact_vector_{}", i)),
-            collection_id: "test_collection".to_string(),
             vector: vec![
                 i as f32 + 20.0,
                 (i + 1) as f32 + 20.0,

@@ -159,16 +159,16 @@ impl ParallelRecoverySystem {
     async fn discover_collections_by_assignment(&self) -> Result<HashMap<String, Vec<String>>> {
         debug!("🔍 Discovering collections using assignment service");
 
-        // Get all WAL assignments from the assignment service
+        // Get all assignments from the assignment service
         let all_assignments = self.assignment_service
-            .get_all_assignments(StorageComponentType::Wal)
+            .get_all_assignments()
             .await;
 
         // Group collections by their assigned disk
         let mut collections_by_disk: HashMap<String, Vec<String>> = HashMap::new();
 
         for (collection_id, assignment) in all_assignments {
-            let disk_id = self.extract_disk_id(&assignment.storage_url);
+            let disk_id = self.extract_disk_id(&assignment.location_url);
             collections_by_disk
                 .entry(disk_id)
                 .or_insert_with(Vec::new)
@@ -231,17 +231,17 @@ impl ParallelRecoverySystem {
 
         // Get collection assignment
         let assignment = self.assignment_service
-            .get_assignment(collection_id, StorageComponentType::Wal)
+            .get_assignment(collection_id)
             .await
-            .context("Failed to get WAL assignment for collection")?;
+            .context("Failed to get assignment for collection")?;
 
-        // Construct collection WAL paths
-        let collection_wal_path = format!("{}/{}/wal", assignment.storage_url, collection_id);
+        // Use the WAL URL directly - it already includes collection_id/wal
+        let collection_wal_path = &assignment.wal_url;
         let logs_path = format!("{}/logs", collection_wal_path);
         let checkpoints_path = format!("{}/checkpoints", collection_wal_path);
 
         let filesystem = self.filesystem_factory
-            .get_filesystem(&assignment.storage_url)
+            .get_filesystem(&assignment.location_url)
             .context("Failed to get filesystem for collection")?;
 
         // Check if WAL directories exist
@@ -376,11 +376,7 @@ impl ParallelRecoverySystem {
         // For now, create a placeholder batch
         use crate::storage::persistence::wal::BatchId;
         
-        let batch_id = BatchId::new(
-            "recovered_collection".to_string(),
-            0,
-            1,
-        );
+        let batch_id = BatchId::new();
 
         let batch = WalVectorBatch {
             batch_id,

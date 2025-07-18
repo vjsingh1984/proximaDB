@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from . import proximadb_pb2 as proximadb__pb2
+import proximadb_pb2 as proximadb__pb2
 
 GRPC_GENERATED_VERSION = '1.73.1'
 GRPC_VERSION = grpc.__version__
@@ -56,6 +56,11 @@ class ProximaDBStub(object):
                 request_serializer=proximadb__pb2.VectorSearchRequest.SerializeToString,
                 response_deserializer=proximadb__pb2.VectorOperationResponse.FromString,
                 _registered_method=True)
+        self.VectorGet = channel.unary_unary(
+                '/proximadb.ProximaDB/VectorGet',
+                request_serializer=proximadb__pb2.VectorGetRequest.SerializeToString,
+                response_deserializer=proximadb__pb2.VectorOperationResponse.FromString,
+                _registered_method=True)
         self.Health = channel.unary_unary(
                 '/proximadb.ProximaDB/Health',
                 request_serializer=proximadb__pb2.HealthRequest.SerializeToString,
@@ -100,6 +105,13 @@ class ProximaDBServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def VectorGet(self, request, context):
+        """Get single vector by ID
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Health(self, request, context):
         """Health and monitoring
         """
@@ -129,6 +141,11 @@ def add_ProximaDBServicer_to_server(servicer, server):
             'VectorSearch': grpc.unary_unary_rpc_method_handler(
                     servicer.VectorSearch,
                     request_deserializer=proximadb__pb2.VectorSearchRequest.FromString,
+                    response_serializer=proximadb__pb2.VectorOperationResponse.SerializeToString,
+            ),
+            'VectorGet': grpc.unary_unary_rpc_method_handler(
+                    servicer.VectorGet,
+                    request_deserializer=proximadb__pb2.VectorGetRequest.FromString,
                     response_serializer=proximadb__pb2.VectorOperationResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
@@ -229,6 +246,33 @@ class ProximaDB(object):
             target,
             '/proximadb.ProximaDB/VectorSearch',
             proximadb__pb2.VectorSearchRequest.SerializeToString,
+            proximadb__pb2.VectorOperationResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def VectorGet(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.ProximaDB/VectorGet',
+            proximadb__pb2.VectorGetRequest.SerializeToString,
             proximadb__pb2.VectorOperationResponse.FromString,
             options,
             channel_credentials,

@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
     use crate::storage::BatchId;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::persistence::wal::{AvroWalBatchStrategy, BincodeWalBatchStrategy, WalBatchStrategy};
+    use crate::storage::persistence::wal::{AvroSerializationStrategy, BincodeSerializationStrategy, WalBatchStrategy};
     use crate::storage::WalConfig;
     use crate::compute::distance::DistanceMetric;
     use chrono::Utc;
@@ -16,7 +16,7 @@ mod tests {
     use tempfile::TempDir;
 
     /// Create a test Avro batch strategy with temporary directory
-    async fn create_test_avro_batch_strategy() -> (AvroWalBatchStrategy, TempDir) {
+    async fn create_test_avro_batch_strategy() -> (AvroSerializationStrategy, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
@@ -29,14 +29,13 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let mut strategy = AvroWalBatchStrategy::new();
-        strategy.initialize(&config, filesystem).await.expect("Failed to initialize strategy");
+        let strategy = AvroSerializationStrategy::new(&config, filesystem).await.expect("Failed to create strategy");
 
         (strategy, temp_dir)
     }
 
     /// Create a test Bincode batch strategy with temporary directory
-    async fn create_test_bincode_batch_strategy() -> (BincodeWalBatchStrategy, TempDir) {
+    async fn create_test_bincode_batch_strategy() -> (BincodeSerializationStrategy, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
@@ -49,18 +48,16 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let mut strategy = BincodeWalBatchStrategy::new();
-        strategy.initialize(&config, filesystem).await.expect("Failed to initialize strategy");
+        let strategy = BincodeSerializationStrategy::new(&config, filesystem).await.expect("Failed to create strategy");
 
         (strategy, temp_dir)
     }
 
     /// Create a test vector record
-    fn create_test_vector_record(collection_id: &str, vector_id: &str, vector_data: Vec<f32>) -> VectorRecord {
+    fn create_test_vector_record(_collection_id: &str, vector_id: &str, vector_data: Vec<f32>) -> VectorRecord {
         let now = Utc::now().timestamp_micros();
         VectorRecord {
             id: Some(vector_id.to_string()),
-            collection_id: collection_id.to_string(),
             vector: vector_data,
             metadata: vec![],
             timestamp: now,
@@ -80,7 +77,7 @@ mod tests {
             // Estimate size: vector data + metadata + overhead
             v.vector.len() * 4 + v.metadata.len() * 64 + 256
         }).sum();
-        let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
+        let batch_id = BatchId::new();
 
         WalVectorBatch {
             batch_id,
@@ -97,8 +94,8 @@ mod tests {
         
         assert_eq!(strategy.strategy_name(), "AvroBatch");
         
-        // Test that the strategy has the WAL behavior wrapper
-        assert!(strategy.get_wal_behavior().is_some());
+        // Test that the strategy follows clean architecture (no direct WAL behavior exposure)
+        assert!(strategy.get_wal_behavior().is_none());
     }
 
     #[tokio::test]
@@ -107,8 +104,8 @@ mod tests {
         
         assert_eq!(strategy.strategy_name(), "BincodeBatch");
         
-        // Test that the strategy has the WAL behavior wrapper
-        assert!(strategy.get_wal_behavior().is_some());
+        // Test that the strategy follows clean architecture (no direct WAL behavior exposure)
+        assert!(strategy.get_wal_behavior().is_none());
     }
 
     #[tokio::test]
@@ -430,7 +427,7 @@ mod tests {
         let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
 
         // Read batches
-        let batches = strategy.read_vector_batches(&collection_id.to_string(), 0, Some(10))
+        let batches = strategy.read_all_batches(&collection_id.to_string(), Some(10))
             .await.expect("Failed to read vector batches");
 
         assert_eq!(batches.len(), 1);

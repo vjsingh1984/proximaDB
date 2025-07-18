@@ -13,7 +13,6 @@ use std::sync::Arc;
 /// Helper function to create a vector record with specific parameters
 fn create_vector_record(
     id: &str,
-    collection_id: &str,
     vector: Vec<f32>,
     version: i64,
     expires_at: Option<i64>,
@@ -21,7 +20,6 @@ fn create_vector_record(
     let now = chrono::Utc::now().timestamp_millis();
     VectorRecord {
         id: Some(id.to_string()),
-        collection_id: collection_id.to_string(),
         vector,
         metadata: vec![],
         timestamp: now,
@@ -48,7 +46,7 @@ fn create_wal_batch(
         sequence
     };
     WalVectorBatch {
-        batch_id: BatchId::new(collection_id.to_string(), sequence, end_sequence),
+        batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
@@ -59,19 +57,18 @@ fn create_wal_batch(
 #[tokio::test]
 async fn test_three_layer_search_consistency_basic() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3f"; // 7-char base62 ID (realistic)
     let vector_id = "vector_1";
 
     // Layer 1: Initial vector in WAL
     let vector_v1 = create_vector_record(
         vector_id,
-        collection_id,
         vec![1.0, 0.0, 0.0],
         1,
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
-    let _seq1 = memtable.add_wal_batch(batch1).await.unwrap();
+    let _seq1 = memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
     // Verify WAL layer search finds the vector
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -81,13 +78,12 @@ async fn test_three_layer_search_consistency_basic() {
     // Layer 2: Update vector (simulating flush to storage)
     let vector_v2 = create_vector_record(
         vector_id,
-        collection_id,
         vec![0.0, 1.0, 0.0],
         2,
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
-    let _seq2 = memtable.add_wal_batch(batch2).await.unwrap();
+    let _seq2 = memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Verify latest version is returned (MVCC)
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -100,13 +96,12 @@ async fn test_three_layer_search_consistency_basic() {
     let current_time = chrono::Utc::now().timestamp_micros();
     let vector_v3_delete = create_vector_record(
         vector_id,
-        collection_id,
         vec![0.0, 0.0, 1.0], // Vector content doesn't matter for deletes
         3,
         Some(current_time - 1000), // Expired 1ms ago
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3_delete]);
-    let _seq3 = memtable.add_wal_batch(batch3).await.unwrap();
+    let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Verify logical delete is respected (should return None)
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -123,19 +118,18 @@ async fn test_three_layer_search_consistency_basic() {
 #[tokio::test]
 async fn test_get_before_delete_update_consistency() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3g"; // 7-char base62 ID (realistic)
     let vector_id = "vector_1";
 
     // Initial vector
     let original_vector = create_vector_record(
         vector_id,
-        collection_id,
         vec![1.0, 2.0, 3.0],
         1,
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![original_vector.clone()]);
-    memtable.add_wal_batch(batch1).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
     // CRITICAL: Client must get_vector_by_id before issuing delete/update
     let current_vector = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -150,13 +144,12 @@ async fn test_get_before_delete_update_consistency() {
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
         current_vector.id.as_deref().unwrap_or(""), // Use same ID
-        collection_id,
         vec![4.0, 5.0, 6.0], // New vector
         current_vector.version + 1, // Increment version
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![updated_vector.clone()]);
-    memtable.add_wal_batch(batch2).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Verify update is successful and latest version is returned
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -170,13 +163,12 @@ async fn test_get_before_delete_update_consistency() {
     let current_time = chrono::Utc::now().timestamp_micros();
     let delete_vector = create_vector_record(
         current_vector.id.as_deref().unwrap_or(""), // Use same ID
-        collection_id,
         vec![0.0, 0.0, 0.0], // Vector content irrelevant for delete
         found_vector.version + 1, // Increment version
         Some(current_time - 1000), // Mark as expired
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![delete_vector]);
-    memtable.add_wal_batch(batch3).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Verify delete is successful
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -186,7 +178,7 @@ async fn test_get_before_delete_update_consistency() {
 #[tokio::test]
 async fn test_version_ordering_across_layers() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3h"; // 7-char base62 ID (realistic)
     let vector_id = "vector_1";
 
     // Add multiple versions out of order to test version resolution
@@ -194,35 +186,32 @@ async fn test_version_ordering_across_layers() {
     // Version 3 (highest)
     let vector_v3 = create_vector_record(
         vector_id,
-        collection_id,
         vec![3.0, 3.0, 3.0],
         3,
         None,
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3.clone()]);
-    memtable.add_wal_batch(batch3).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Version 1 (lowest)
     let vector_v1 = create_vector_record(
         vector_id,
-        collection_id,
         vec![1.0, 1.0, 1.0],
         1,
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
-    memtable.add_wal_batch(batch1).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
     // Version 2 (middle)
     let vector_v2 = create_vector_record(
         vector_id,
-        collection_id,
         vec![2.0, 2.0, 2.0],
         2,
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
-    memtable.add_wal_batch(batch2).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Should return version 3 (highest)
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -243,13 +232,12 @@ async fn test_version_ordering_across_layers() {
 #[tokio::test]
 async fn test_expired_records_vs_active_records() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3i"; // 7-char base62 ID (realistic)
     let current_time = chrono::Utc::now().timestamp_micros();
 
     // Active vector
     let active_vector = create_vector_record(
         "active_vector",
-        collection_id,
         vec![1.0, 0.0, 0.0],
         1,
         Some(current_time + 3600_000_000), // Expires in 1 hour
@@ -258,7 +246,6 @@ async fn test_expired_records_vs_active_records() {
     // Expired vector
     let expired_vector = create_vector_record(
         "expired_vector",
-        collection_id,
         vec![0.0, 1.0, 0.0],
         1,
         Some(current_time - 1000), // Expired 1ms ago
@@ -269,7 +256,7 @@ async fn test_expired_records_vs_active_records() {
         1,
         vec![active_vector.clone(), expired_vector.clone()],
     );
-    memtable.add_wal_batch(batch).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch).await.unwrap();
 
     // Active vector should be found
     let active_result = memtable.get_vector_by_id(collection_id, "active_vector").await.unwrap();
@@ -292,30 +279,28 @@ async fn test_expired_records_vs_active_records() {
 #[tokio::test]
 async fn test_same_id_different_vector_values() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3j"; // 7-char base62 ID (realistic)
     let vector_id = "vector_1";
 
     // First version with specific vector values
     let vector_v1 = create_vector_record(
         vector_id,
-        collection_id,
         vec![1.0, 0.0, 0.0],
         1,
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
-    memtable.add_wal_batch(batch1).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
     // Second version with completely different vector values
     let vector_v2 = create_vector_record(
         vector_id,
-        collection_id,
         vec![0.0, 0.0, 1.0], // Completely different vector
         2,
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
-    memtable.add_wal_batch(batch2).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Should return the latest version with the new vector values
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
@@ -340,42 +325,39 @@ async fn test_same_id_different_vector_values() {
 #[tokio::test]
 async fn test_multi_collection_mvcc_isolation() {
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_a = "collection_a";
-    let collection_b = "collection_b";
+    // Realistic base62 collection IDs (7-char format)
+    let collection_a = "1uctd3x"; // 7-char base62 ID 
+    let collection_b = "1uctd3y"; // 7-char base62 ID
     let vector_id = "vector_1"; // Same ID in both collections
-
-    // Add same vector ID to both collections
+    
     let vector_a = create_vector_record(
         vector_id,
-        collection_a,
         vec![1.0, 0.0, 0.0],
         1,
         None,
     );
     let batch_a = create_wal_batch(collection_a, 1, vec![vector_a.clone()]);
-    memtable.add_wal_batch(batch_a).await.unwrap();
+    memtable.add_wal_batch(collection_a, batch_a).await.unwrap();
 
     let vector_b = create_vector_record(
         vector_id,
-        collection_b,
         vec![0.0, 1.0, 0.0],
         1,
         None,
     );
     let batch_b = create_wal_batch(collection_b, 2, vec![vector_b.clone()]);
-    memtable.add_wal_batch(batch_b).await.unwrap();
+    memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
 
     // Delete from collection A only
     let current_time = chrono::Utc::now().timestamp_micros();
     let delete_a = create_vector_record(
         vector_id,
-        collection_a,
         vec![0.0, 0.0, 0.0],
         2,
         Some(current_time - 1000), // Expired
     );
     let batch_delete = create_wal_batch(collection_a, 3, vec![delete_a]);
-    memtable.add_wal_batch(batch_delete).await.unwrap();
+    memtable.add_wal_batch(collection_a, batch_delete).await.unwrap();
 
     // Collection A should not find the vector (deleted)
     let result_a = memtable.get_vector_by_id(collection_a, vector_id).await.unwrap();
@@ -393,16 +375,16 @@ async fn test_flush_compaction_atomic_consistency() {
     // to ensure no search inconsistencies occur during the process
     
     let memtable = GlobalPartitionedMemtable::new();
-    let collection_id = "test_collection";
+    let collection_id = "1uctd3k"; // 7-char base62 ID (realistic)
 
     // Add initial data
     let vectors = vec![
-        create_vector_record("vec1", collection_id, vec![1.0, 0.0, 0.0], 1, None),
-        create_vector_record("vec2", collection_id, vec![0.0, 1.0, 0.0], 1, None),
-        create_vector_record("vec3", collection_id, vec![0.0, 0.0, 1.0], 1, None),
+        create_vector_record("vec1", vec![1.0, 0.0, 0.0], 1, None),
+        create_vector_record("vec2", vec![0.0, 1.0, 0.0], 1, None),
+        create_vector_record("vec3", vec![0.0, 0.0, 1.0], 1, None),
     ];
     let batch = create_wal_batch(collection_id, 1, vectors);
-    memtable.add_wal_batch(batch).await.unwrap();
+    memtable.add_wal_batch(collection_id, batch).await.unwrap();
 
     // Verify all vectors are searchable before flush
     let search_results = memtable
@@ -420,7 +402,7 @@ async fn test_flush_compaction_atomic_consistency() {
     // are still searchable across WAL + Storage layers
     
     // For now, test that clearing doesn't affect search consistency
-    let cleared = memtable.clear_collection_up_to(collection_id, 0).await.unwrap();
+    let cleared = memtable.clear_flushed_batches(collection_id).await.unwrap();
     assert_eq!(cleared, 0); // Should not clear anything since sequence is 0
 
     // All vectors should still be searchable

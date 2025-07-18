@@ -8,7 +8,7 @@
 //! This module handles dynamic Parquet schema generation based on collection configuration
 //! and provides schema caching and evolution capabilities.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -73,22 +73,24 @@ impl SchemaManager {
         
         let mut schema_fields = Vec::new();
         
-        // Core fields (always present)
-        schema_fields.push(Field::new("id", DataType::Utf8, false));
-        schema_fields.push(Field::new("collection_id", DataType::Utf8, false));
+        // Core fields - id can be null for immutable/append-only vectors
+        schema_fields.push(Field::new("id", DataType::Utf8, true));
+        // Collection ID is not stored - derived from directory structure
         
-        // Vector field - native Parquet List<Float32>
+        // Vector field - native Parquet List<Float32> with nullable items for sparse vectors
         schema_fields.push(Field::new(
             "vector",
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-            false,
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            true,  // Vector field itself can be nullable
         ));
         
-        // MVCC fields
-        schema_fields.push(Field::new("timestamp", DataType::Int64, false));
-        schema_fields.push(Field::new("created_at", DataType::Int64, false));
-        schema_fields.push(Field::new("updated_at", DataType::Int64, false));
-        schema_fields.push(Field::new("version", DataType::Int64, false));
+        // Version field for MVCC support - using Int8 (tinyint) for efficiency
+        schema_fields.push(Field::new("version", DataType::Int8, true));
+        
+        // Audit field - stores creation time initially, updated on modifications
+        schema_fields.push(Field::new("updated_at", DataType::Int64, true));
+        
+        // Only include expires_at if TTL is enabled
         schema_fields.push(Field::new("expires_at", DataType::Int64, true)); // Nullable for TTL
         
         // Quantization fields (optional) - optimized for performance
@@ -171,19 +173,20 @@ impl SchemaManager {
             }
         }
         
-        // Filterable metadata columns as native Parquet columns
+        // Filterable metadata columns as native Parquet columns - use proto definition directly
         if let Some(ref collection) = collection_config {
-            // Convert config HashMap to JSON string for parsing
-            let config_json = serde_json::to_string(&collection.config)
-                .context("Failed to serialize collection config")?;
-            let filterable_columns = self.parse_filterable_columns(&config_json)?;
-            for column in filterable_columns {
-                let field_type = self.convert_filterable_type_to_arrow(&column.data_type)?;
-                schema_fields.push(Field::new(
-                    &column.name,
-                    field_type,
-                    true, // Filterable metadata is always nullable
-                ));
+            if let Some(ref config) = collection.config {
+                // Pre-allocate capacity for better performance
+                schema_fields.reserve(config.filterable_columns.len());
+                
+                for filterable_column in &config.filterable_columns {
+                    let field_type = self.convert_proto_type_to_arrow(filterable_column.data_type)?;
+                    schema_fields.push(Field::new(
+                        &filterable_column.name,
+                        field_type,
+                        true, // Filterable metadata is always nullable
+                    ));
+                }
             }
         }
         
@@ -226,6 +229,8 @@ impl SchemaManager {
     }
     
     /// Parse filterable columns from collection config JSON (legacy)
+    /// This method is deprecated and only kept for backward compatibility
+    #[allow(dead_code)]
     pub fn parse_filterable_columns(&self, config: &str) -> Result<Vec<FilterableColumn>> {
         let config: serde_json::Value = serde_json::from_str(config)
             .unwrap_or_else(|_| serde_json::json!({}));

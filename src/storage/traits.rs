@@ -88,6 +88,22 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
     async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
 
+    /// Engine-specific unified search with optimization capabilities (required)
+    /// Each engine implements its own optimizations:
+    /// - VIPER: Columnar predicate pushdown, Parquet filtering, ML clustering
+    /// - LSM: Bloom filter hints, range scans, SSTable optimizations
+    /// This abstraction allows each engine to leverage its unique capabilities
+    async fn search_vectors_unified(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: &crate::compute::distance::DistanceMetric,
+        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>>;
+
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided
     // =============================================================================
@@ -134,12 +150,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
         };
 
         match assignment_service.get_assignment(
-            &crate::core::String::from(collection_id.to_string()), 
-            component_type
+            &crate::core::String::from(collection_id.to_string())
         ).await {
             Some(assignment) => {
-                // Return the assigned storage URL with collection subdirectory
-                Ok(format!("{}/{}", assignment.storage_url, collection_id))
+                // Return the assigned data URL (already includes collection id)
+                Ok(assignment.data_url)
             },
             None => {
                 Err(anyhow::anyhow!(
@@ -168,12 +183,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         match assignment_service
             .get_assignment(
-                &crate::core::String::from(collection_id.to_string()),
-                component_type,
+                &crate::core::String::from(collection_id.to_string())
             )
             .await
         {
-            Some(assignment) => Ok(assignment.storage_url),
+            Some(assignment) => Ok(assignment.data_url),
             None => Err(anyhow::anyhow!(
                 "No storage assignment found for collection {} in {} component",
                 collection_id,
@@ -199,8 +213,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         assignment_service
             .get_assignment(
-                &crate::core::String::from(collection_id.to_string()),
-                component_type,
+                &crate::core::String::from(collection_id.to_string())
             )
             .await
             .is_some()

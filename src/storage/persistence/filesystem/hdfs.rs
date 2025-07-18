@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult};
+use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// HDFS authentication types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -665,6 +665,13 @@ impl FileSystem for HdfsFileSystem {
         tracing::trace!("🔄 HDFS sync (no-op)");
         // HDFS operations are immediately durable due to replication
         Ok(())
+    }
+
+    async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }
 

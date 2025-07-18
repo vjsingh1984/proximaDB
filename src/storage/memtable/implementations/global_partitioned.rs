@@ -54,7 +54,7 @@ impl CollectionPartition {
 
     /// Add WAL batch to this collection partition
     fn add_batch(&mut self, batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<()> {
-        let batch_id = batch.batch_id.batch_uuid.clone();
+        let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
 
@@ -90,7 +90,7 @@ impl CollectionPartition {
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() && vector_record.id.as_deref().unwrap_or("") == vector_id {
-                    let sequence = batch.batch_id.sequence_range.0;
+                    let sequence = batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     let version = vector_record.version;
                     
                     // Check if this is a newer version
@@ -127,17 +127,14 @@ impl CollectionPartition {
     }
 
     /// Clear batches up to sequence number within this collection
-    fn clear_up_to(&mut self, up_to_seq: u64) -> usize {
+    fn clear_flushed(&mut self) -> usize {
         let mut cleared_count = 0;
         let mut removed_size = 0;
 
-        // Find batches to remove based on sequence range
+        // Find batches to remove that are marked as flushed
         let batch_ids_to_remove: Vec<String> = self.wal_batches
             .iter()
-            .filter(|(_, batch)| {
-                // Remove if batch is flushed or if all sequences are <= up_to_seq
-                batch.is_flushed || batch.batch_id.sequence_range.0 <= up_to_seq
-            })
+            .filter(|(_, batch)| batch.is_flushed)
             .map(|(id, _)| id.clone())
             .collect();
         
@@ -158,7 +155,7 @@ impl CollectionPartition {
 
         self.vector_count = self.vector_count.saturating_sub(cleared_count);
         self.total_size = self.total_size.saturating_sub(removed_size);
-        self.last_flush_sequence = up_to_seq;
+        // No longer tracking sequences
 
         cleared_count
     }
@@ -179,7 +176,7 @@ impl CollectionPartition {
         // Collect latest versions for each ID
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                let sequence = batch.batch_id.sequence_range.0;
+                let sequence = batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
@@ -245,7 +242,7 @@ impl CollectionPartition {
             tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
             
             for vector_record in wal_batch.vector_records.iter() {
-                let sequence = wal_batch.batch_id.sequence_range.0;
+                let sequence = wal_batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
@@ -350,9 +347,8 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Add native WAL batch to the appropriate collection partition (STREAMLINED ARCHITECTURE)
-    pub async fn add_wal_batch(&self, wal_batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<Vec<u64>> {
-        let collection_id = wal_batch.batch_id.collection_id.clone();
-        let batch_id = wal_batch.batch_id.batch_uuid.clone();
+    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<Vec<u64>> {
+        let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;
         
@@ -371,9 +367,9 @@ impl GlobalPartitionedMemtable {
 
         // Get or create collection partition
         let mut collections = self.collections.write().await;
-        let partition_exists = collections.contains_key(&collection_id);
+        let partition_exists = collections.contains_key(collection_id);
         let partition = collections
-            .entry(collection_id.clone())
+            .entry(collection_id.to_string())
             .or_insert_with(CollectionPartition::new);
 
         tracing::debug!(
@@ -413,22 +409,19 @@ impl GlobalPartitionedMemtable {
 
     // Legacy append() method removed - use add_wal_batch() with modern WalVectorBatch architecture
 
-    /// Get vector by global sequence number (MODERN - returns VectorRecord directly)
-    pub async fn get_vector_by_sequence(&self, sequence: u64) -> Result<Option<VectorRecord>> {
+    /// Get any vector from the memtable (useful for testing/debugging)
+    pub async fn get_any_vector(&self) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
         // Linear search through all collections (could be optimized with sequence->collection mapping)
         for partition in collections.values() {
             // Search through native WAL batches
             for batch in partition.wal_batches.values() {
-                if batch.batch_id.sequence_range.0 <= sequence && sequence <= batch.batch_id.sequence_range.1 {
-                    // Find vector record at this sequence within the batch
-                    for (index, vector_record) in batch.vector_records.iter().enumerate() {
-                        let entry_sequence = batch.batch_id.sequence_range.0 + index as u64;
-                        if entry_sequence == sequence {
-                            return Ok(Some(vector_record.clone()));
-                        }
-                    }
+                // With CompactBatchId, we don't track individual sequences
+                // Just return the first vector as a placeholder
+                // TODO: Implement proper sequence tracking if needed
+                if let Some(vector) = batch.vector_records.first() {
+                    return Ok(Some(vector.clone()));
                 }
             }
         }
@@ -518,15 +511,14 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Clear entries for a specific collection up to sequence number
-    pub async fn clear_collection_up_to(
+    pub async fn clear_flushed_batches(
         &self,
         collection_id: &str,
-        up_to_seq: u64,
     ) -> Result<usize> {
         let mut collections = self.collections.write().await;
 
         if let Some(partition) = collections.get_mut(collection_id) {
-            let cleared_count = partition.clear_up_to(up_to_seq);
+            let cleared_count = partition.clear_flushed();
 
             // Update global metrics
             let mut metrics = self.metrics.write().await;
@@ -534,10 +526,9 @@ impl GlobalPartitionedMemtable {
             // Note: size_bytes will be recalculated in next size_bytes() call
 
             tracing::debug!(
-                "📊 GLOBAL_PARTITIONED: Cleared {} entries from collection {} up to sequence {}",
+                "📊 GLOBAL_PARTITIONED: Cleared {} flushed entries from collection {}",
                 cleared_count,
-                collection_id,
-                up_to_seq
+                collection_id
             );
 
             Ok(cleared_count)
@@ -750,9 +741,8 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get vectors from sequence number onwards (for recovery) - MODERN
-    pub async fn get_vectors_from_sequence(
+    pub async fn get_all_vectors(
         &self,
-        from_seq: u64,
         limit: Option<usize>,
     ) -> Result<Vec<(u64, VectorRecord)>> {
         let collections = self.collections.read().await;
@@ -762,10 +752,9 @@ impl GlobalPartitionedMemtable {
         for partition in collections.values() {
             for batch in partition.wal_batches.values() {
                 for (index, vector_record) in batch.vector_records.iter().enumerate() {
-                    let vector_sequence = batch.batch_id.sequence_range.0 + index as u64;
-                    if vector_sequence >= from_seq {
-                        all_vectors.push((vector_sequence, vector_record.clone()));
-                    }
+                    // With CompactBatchId, we use index as pseudo-sequence
+                    let vector_sequence = index as u64;
+                    all_vectors.push((vector_sequence, vector_record.clone()));
                 }
             }
         }
@@ -782,12 +771,12 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Clear entries up to sequence number (global operation)
-    pub async fn clear_up_to(&self, up_to_seq: u64) -> Result<usize> {
+    pub async fn clear_all_flushed(&self) -> Result<usize> {
         let mut collections = self.collections.write().await;
         let mut total_cleared = 0;
 
         for partition in collections.values_mut() {
-            total_cleared += partition.clear_up_to(up_to_seq);
+            total_cleared += partition.clear_flushed();
         }
 
         // Update global metrics
@@ -795,6 +784,17 @@ impl GlobalPartitionedMemtable {
         metrics.entry_count = metrics.entry_count.saturating_sub(total_cleared);
 
         Ok(total_cleared)
+    }
+    
+    /// Mark all batches as flushed (for flush operations)
+    pub async fn mark_all_batches_as_flushed(&self) -> Result<()> {
+        let mut collections = self.collections.write().await;
+        for partition in collections.values_mut() {
+            for batch in partition.wal_batches.values_mut() {
+                batch.is_flushed = true;
+            }
+        }
+        Ok(())
     }
 
     /// Clear all vectors and batches
@@ -843,9 +843,9 @@ impl GlobalPartitionedMemtable {
 // MemtableCore trait removed - GlobalPartitionedMemtable works directly with VectorRecord/WalVectorBatch
 
 impl GlobalPartitionedMemtable {
-    /// Get all vectors (for flush operations) - MODERN
-    pub async fn get_all_vectors(&self) -> Result<Vec<VectorRecord>> {
-        let vectors_with_sequences = self.get_vectors_from_sequence(0, None).await?;
+    /// Get all vectors without sequences (for flush operations) - MODERN
+    pub async fn get_all_vectors_flat(&self) -> Result<Vec<VectorRecord>> {
+        let vectors_with_sequences = self.get_all_vectors(None).await?;
         Ok(vectors_with_sequences.into_iter().map(|(_, vector)| vector).collect())
     }
 }
@@ -905,5 +905,21 @@ fn calculate_age_score(created_at: std::time::SystemTime) -> f64 {
 impl DistanceComputeProvider for GlobalPartitionedMemtable {
     fn distance_compute(&self) -> &UnifiedDistanceCompute {
         &self.distance_compute
+    }
+}
+
+#[cfg(test)]
+impl GlobalPartitionedMemtable {
+    /// Test-only method to mark all batches in a collection as flushed
+    pub async fn mark_all_batches_flushed(&self, collection_id: &str) -> Result<()> {
+        let mut collections = self.collections.write().await;
+        if let Some(partition) = collections.get_mut(collection_id) {
+            for batch in partition.wal_batches.values_mut() {
+                batch.is_flushed = true;
+            }
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Collection not found"))
+        }
     }
 }

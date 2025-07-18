@@ -448,9 +448,47 @@ class ProximaDBClient:
     def insert_vectors(
         self,
         collection_id: str,
-        records: List[VectorRecord]
+        # Backward compatibility: support old calling style
+        vectors: Optional[Union[List[List[float]], List[VectorRecord], np.ndarray]] = None,
+        ids: Optional[List[str]] = None,
+        metadata: Optional[List[Dict[str, Any]]] = None,
+        # New API parameter  
+        records: Optional[List[VectorRecord]] = None,
+        **kwargs
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection"""
+        """Insert vectors into a collection
+        
+        Supports both new API (VectorRecord objects) and old API (separate vectors/ids/metadata)
+        """
+        # Handle backward compatibility: convert old API to new API
+        if vectors is not None:
+            # Handle numpy arrays first
+            if hasattr(vectors, 'tolist'):
+                vectors = vectors.tolist()
+            
+            # Check if vectors is a list of VectorRecord objects (new API called with vectors param)
+            if (hasattr(vectors, '__len__') and len(vectors) > 0 and 
+                hasattr(vectors[0], 'vector') and hasattr(vectors[0], 'id')):
+                records = vectors
+            else:
+                # Old API: convert vectors/ids/metadata to VectorRecord objects
+                records = []
+                
+                for i, vector in enumerate(vectors):
+                    record = VectorRecord(
+                        id=ids[i] if ids and i < len(ids) else None,
+                        vector=vector if isinstance(vector, list) else vector.tolist() if hasattr(vector, 'tolist') else list(vector),
+                        metadata=metadata[i] if metadata and i < len(metadata) else {}
+                    )
+                    records.append(record)
+        elif records is None:
+            # Neither vectors nor records provided
+            pass
+        
+        # Handle numpy arrays and other array-like objects
+        if records is None or (hasattr(records, '__len__') and len(records) == 0) or (not hasattr(records, '__len__') and not records):
+            raise ValueError("Either 'records' or 'vectors' must be provided")
+        
         if self._active_protocol == Protocol.GRPC:
             # Convert Pydantic VectorRecord to dict format for gRPC client
             vector_dicts = []
@@ -469,14 +507,26 @@ class ProximaDBClient:
             
             proto_response = self._client.insert_vectors(collection_id, vector_dicts)
             # Convert proto response to Pydantic (simplified for now)
+            # Handle case where metrics might not be present in the response
+            metrics = None
+            if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                metrics = OperationMetrics(
+                    total_processed=proto_response.metrics.total_processed,
+                    successful_count=proto_response.metrics.successful_count,
+                    failed_count=proto_response.metrics.failed_count
+                )
+            else:
+                # Default metrics if not provided
+                metrics = OperationMetrics(
+                    total_processed=len(vector_dicts),
+                    successful_count=len(vector_dicts) if proto_response.success else 0,
+                    failed_count=0 if proto_response.success else len(vector_dicts)
+                )
+            
             return VectorOperationResponse(
                 success=proto_response.success,
                 operation="insert",
-                metrics=OperationMetrics(
-                    total_processed=proto_response.metrics.total_processed if proto_response.metrics else 0,
-                    successful_count=proto_response.metrics.successful_count if proto_response.metrics else 0,
-                    failed_count=proto_response.metrics.failed_count if proto_response.metrics else 0
-                )
+                metrics=metrics
             )
         else:
             # REST client expects separate arrays
@@ -514,19 +564,62 @@ class ProximaDBClient:
             
             proto_response = self._client.insert_vectors(collection_id, vector_dicts, upsert=True)
             # Convert proto response to Pydantic (simplified for now)
+            # Handle case where metrics might not be present in the response
+            metrics = None
+            if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                metrics = OperationMetrics(
+                    total_processed=proto_response.metrics.total_processed,
+                    successful_count=proto_response.metrics.successful_count,
+                    failed_count=proto_response.metrics.failed_count,
+                    updated_count=proto_response.metrics.updated_count if hasattr(proto_response.metrics, 'updated_count') else 0
+                )
+            else:
+                # Default metrics if not provided
+                metrics = OperationMetrics(
+                    total_processed=len(vector_dicts),
+                    successful_count=len(vector_dicts) if proto_response.success else 0,
+                    failed_count=0 if proto_response.success else len(vector_dicts),
+                    updated_count=len(vector_dicts) if proto_response.success else 0
+                )
+            
             return VectorOperationResponse(
                 success=proto_response.success,
                 operation="upsert",
-                metrics=OperationMetrics(
-                    total_processed=proto_response.metrics.total_processed if proto_response.metrics else 0,
-                    successful_count=proto_response.metrics.successful_count if proto_response.metrics else 0,
-                    failed_count=proto_response.metrics.failed_count if proto_response.metrics else 0,
-                    updated_count=proto_response.metrics.updated_count if proto_response.metrics else 0
-                )
+                metrics=metrics
             )
         else:
             return self._client.upsert_vectors(collection_id, records)
     
+    def search(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        metadata_filter: Optional[Union[Dict[str, Any], 'FilterBuilder']] = None,
+        optimization_level: str = "high",
+        optimization_hints: Optional[Dict[str, Any]] = None,
+        use_storage_aware: bool = True,
+        quantization_level: str = "FP32",
+        enable_simd: bool = True,
+        **kwargs
+    ) -> List[SearchResult]:
+        """Generic search method that forwards to search_single"""
+        # Merge optimization_hints into kwargs if provided
+        if optimization_hints:
+            kwargs.update(optimization_hints)
+            
+        return self.search_single(
+            collection_id=collection_id,
+            vector=vector,
+            top_k=top_k,
+            metadata_filter=metadata_filter,
+            optimization_level=optimization_level,
+            use_storage_aware=use_storage_aware,
+            quantization_level=quantization_level,
+            enable_simd=enable_simd,
+            **kwargs
+        )
+
     def search_single(
         self,
         collection_id: str,
@@ -599,7 +692,13 @@ class ProximaDBClient:
                     results.append(search_result)
             return results
         else:
-            # For REST, use search method
+            # For REST, use search method (filter out unsupported parameters)
+            # Remove optimization_hints and other parameters not supported by REST client
+            filtered_kwargs = {k: v for k, v in kwargs.items() 
+                             if k not in {'optimization_hints', 'enable_two_stage_search', 
+                                         'quantization_hint', 'candidate_multiplier',
+                                         'enable_parallel_search'}}
+            
             return self._client.search(
                 collection_id=collection_id,
                 query=vector,
@@ -609,11 +708,10 @@ class ProximaDBClient:
                 use_storage_aware=use_storage_aware,
                 quantization_level=quantization_level,
                 enable_simd=enable_simd,
-                **kwargs
+                **filtered_kwargs
             )
     
-    # Alias for backward compatibility
-    search = search_single
+    # The generic search method is defined above and forwards to search_single
     
     def search_batch(
         self,
@@ -661,14 +759,26 @@ class ProximaDBClient:
         """Delete vectors from a collection"""
         if self._active_protocol == Protocol.GRPC:
             proto_response = self._client.delete_vectors(collection_id, vector_ids)
+            # Handle case where metrics might not be present in the response
+            metrics = None
+            if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                metrics = OperationMetrics(
+                    total_processed=proto_response.metrics.total_processed,
+                    successful_count=proto_response.metrics.successful_count,
+                    failed_count=proto_response.metrics.failed_count
+                )
+            else:
+                # Default metrics if not provided
+                metrics = OperationMetrics(
+                    total_processed=len(vector_ids),
+                    successful_count=len(vector_ids) if proto_response.success else 0,
+                    failed_count=0 if proto_response.success else len(vector_ids)
+                )
+            
             return VectorOperationResponse(
                 success=proto_response.success,
                 operation="delete",
-                metrics=OperationMetrics(
-                    total_processed=proto_response.metrics.total_processed if proto_response.metrics else 0,
-                    successful_count=proto_response.metrics.successful_count if proto_response.metrics else 0,
-                    failed_count=proto_response.metrics.failed_count if proto_response.metrics else 0
-                )
+                metrics=metrics
             )
         else:
             return self._client.delete_vectors(collection_id, vector_ids)
@@ -861,7 +971,15 @@ def connect_grpc(
     **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using gRPC protocol (good performance, ecosystem compatibility)"""
-    return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
+    try:
+        return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
+    except ProximaDBError as e:
+        # If gRPC fails due to import issues, fall back to AUTO (which will use REST)
+        if "import" in str(e).lower() or "pb2" in str(e).lower():
+            logger.warning(f"gRPC client failed due to import issues, falling back to AUTO mode: {e}")
+            return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.AUTO, **kwargs)
+        else:
+            raise
 
 
 def connect_rest(

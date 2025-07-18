@@ -18,6 +18,7 @@ service ProximaDB {
   // Vector operations - optimized batch operations
   rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);         // Unified batch: insert/upsert/delete
   rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);       // Search via gRPC
+  rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);             // Get single vector by ID
   
   // Health and monitoring
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -71,6 +72,7 @@ enum VectorOperation {
   VECTOR_OPERATION_UNSPECIFIED = 0;
   VECTOR_BATCH = 1;      // Unified batch operation (insert/upsert/delete via expires_at)
   VECTOR_SEARCH = 2;     // Vector search operation
+  VECTOR_GET = 3;        // Get single vector by ID
 }
 
 // MutationType removed - using unified batch operations with expires_at for deletes
@@ -87,19 +89,18 @@ message MetadataItem {
 
 message VectorRecord {
   optional string id = 1;                    // Auto-generated if null
-  string collection_id = 2;                  // Collection this vector belongs to
-  repeated float vector = 3;                 // REQUIRED for inserts
-  repeated MetadataItem metadata = 4;        // Efficient key-value metadata (no JSON parsing)
-  int64 timestamp = 5;                       // Milliseconds since epoch
-  int64 created_at = 6;                      // Creation timestamp (milliseconds)
-  int64 updated_at = 7;                      // Last update timestamp (milliseconds)
-  optional int64 expires_at = 8;             // TTL support
-  int64 version = 9;                         // For optimistic concurrency
+  repeated float vector = 2;                 // REQUIRED for inserts
+  repeated MetadataItem metadata = 3;        // Efficient key-value metadata (no JSON parsing)
+  int64 timestamp = 4;                       // Milliseconds since epoch
+  int64 created_at = 5;                      // Creation timestamp (milliseconds)
+  int64 updated_at = 6;                      // Last update timestamp (milliseconds)
+  optional int64 expires_at = 7;             // TTL support
+  int64 version = 8;                         // For optimistic concurrency
   
   // Search result fields (only populated in search responses)
-  optional int32 rank = 10;                  // Search result rank (1-based)
-  optional float score = 11;                 // Similarity score
-  optional float distance = 12;              // Distance value
+  optional int32 rank = 9;                   // Search result rank (1-based)
+  optional float score = 10;                 // Similarity score
+  optional float distance = 11;              // Distance value
 }
 
 // Native typed metadata supporting multiple value types
@@ -437,6 +438,12 @@ message VectorSearchRequest {
   SearchParameters search_params = 5;       // Algorithm-specific search parameters (HNSW, IVF, etc)
   IncludeFields include_fields = 6;
   optional SearchParams search_optimization = 7; // Unified search params aligned with native types
+}
+
+message VectorGetRequest {
+  string collection_id = 1;
+  string vector_id = 2;
+  IncludeFields include_fields = 3;
 }
 
 // Native typed search parameters - no more string maps!

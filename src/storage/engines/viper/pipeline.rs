@@ -29,7 +29,7 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use super::ml_clustering::{KMeansConfig, MLClusteringEngine};
+// use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 use super::quantization::{QuantizationConfig, VectorQuantizationEngine};
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -235,7 +235,7 @@ pub struct VectorRecordProcessor {
     pub schema_adapter: Arc<SchemaAdapter>,
 
     /// ML clustering engine for intelligent data organization
-    pub ml_clustering: Arc<Mutex<MLClusteringEngine>>,
+    // pub ml_clustering: Arc<Mutex<MLClusteringEngine>>, // Moved to AXIS
 
     /// Vector quantization engine for storage optimization
     pub quantization: Arc<Mutex<VectorQuantizationEngine>>,
@@ -595,7 +595,7 @@ impl ViperPipeline {
         );
 
         // Step 1: Process records using template method pattern
-        let processed_batch = self.processor.process_records(records).await?;
+        let processed_batch = self.processor.process_records(collection_id, records).await?;
 
         // Step 2: Flush processed batch to storage
         let flush_result = self
@@ -659,19 +659,19 @@ impl ViperPipeline {
 
 impl VectorRecordProcessor {
     async fn new(config: ProcessingConfig, schema_adapter: Arc<SchemaAdapter>) -> Result<Self> {
-        // Initialize ML clustering engine with sensible defaults
-        let kmeans_config = KMeansConfig {
-            max_iterations: 100,
-            convergence_threshold: 0.01,
-            min_cluster_size: 1,
-            random_seed: Some(42), // Reproducible clustering
-        };
-        let ml_clustering = Arc::new(Mutex::new(MLClusteringEngine::new(kmeans_config)));
+        // ML clustering moved to AXIS
+        // let kmeans_config = KMeansConfig {
+        //     max_iterations: 100,
+        //     convergence_threshold: 0.01,
+        //     min_cluster_size: 1,
+        //     random_seed: Some(42), // Reproducible clustering
+        // };
+        // let ml_clustering = Arc::new(Mutex::new(MLClusteringEngine::new(kmeans_config)));
 
         Ok(Self {
             config,
             schema_adapter,
-            ml_clustering,
+            // ml_clustering, // Moved to AXIS
             quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(
                 QuantizationConfig::default(),
             ))),
@@ -680,7 +680,7 @@ impl VectorRecordProcessor {
     }
 
     /// Process records using template method pattern
-    pub async fn process_records(&self, mut records: Vec<VectorRecord>) -> Result<RecordBatch> {
+    pub async fn process_records(&self, collection_id: &str, mut records: Vec<VectorRecord>) -> Result<RecordBatch> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("No records to process"));
         }
@@ -693,7 +693,6 @@ impl VectorRecordProcessor {
         let preprocess_time = preprocess_start.elapsed().as_millis() as u64;
 
         // Step 2: Generate schema
-        let collection_id = &records[0].collection_id;
         let schema = self
             .schema_adapter
             .get_or_generate_schema(collection_id, &records)
@@ -905,61 +904,9 @@ impl VectorRecordProcessor {
             effective_clusters
         );
 
-        // Use async block to handle the async ML clustering
-        let cluster_assignment = {
-            // Check if we have a trained model, if not train one
-            let mut ml_engine = self.ml_clustering.lock().await;
-                
-                // Check if model needs training or retraining
-                let needs_training = match ml_engine.get_model() {
-                    Some(model) => {
-                        // Retrain if dimension mismatch or significant cluster count change
-                        model.dimension != records[0].vector.len() ||
-                        (model.centroids.len() as f32 - effective_clusters as f32).abs() / effective_clusters as f32 > 0.3
-                    }
-                    None => true,
-                };
-                
-                if needs_training {
-                    debug!("🧠 Training new K-means model for {} vectors", records.len());
-                    
-                    // Extract vectors for training (sample if too many for efficiency)
-                    let training_vectors: Vec<Vec<f32>> = if records.len() > 1000 {
-                        // Sample every nth record for training to maintain efficiency
-                        let step = records.len() / 1000;
-                        records.iter().step_by(step).map(|r| r.vector.to_vec()).collect()
-                    } else {
-                        records.iter().map(|r| r.vector.to_vec()).collect()
-                    };
-                    
-                    match ml_engine.train_model(&training_vectors, effective_clusters) {
-                        Ok(model) => {
-                            info!("✅ K-means model trained: silhouette={:.3}, clusters={}", 
-                                  model.quality_metrics.silhouette_score, effective_clusters);
-                        }
-                        Err(e) => {
-                            warn!("⚠️ K-means training failed: {}, falling back to hash-based clustering", e);
-                            return self.fallback_hash_clustering(records, effective_clusters);
-                        }
-                    }
-                }
-                
-                // Assign vectors to clusters using trained model
-                match ml_engine.assign_clusters(records) {
-                    Ok(assignment) => {
-                        debug!("✅ K-means assignment complete: {} clusters, avg confidence={:.3}",
-                               assignment.clusters.len(),
-                               assignment.confidence_scores.iter().sum::<f32>() / assignment.confidence_scores.len() as f32);
-                        Ok(assignment.clusters)
-                    }
-                    Err(e) => {
-                        warn!("⚠️ K-means assignment failed: {}, falling back to hash-based clustering", e);
-                        self.fallback_hash_clustering(records, effective_clusters)
-                    }
-                }
-        };
-
-        cluster_assignment
+        // ML clustering moved to AXIS - use simple hash-based clustering
+        debug!("Using hash-based clustering (ML clustering moved to AXIS)");
+        self.fallback_hash_clustering(records, effective_clusters)
     }
 
     /// Fallback hash-based clustering when ML clustering fails
@@ -1104,6 +1051,7 @@ impl VectorRecordProcessor {
     /// Process vector records with quantization for hybrid storage
     pub async fn process_records_with_quantization(
         &self,
+        collection_id: &str,
         records: &[VectorRecord],
     ) -> Result<(
         RecordBatch,
@@ -1172,10 +1120,7 @@ impl VectorRecordProcessor {
             records.iter().map(|r| r.id.as_deref().unwrap_or("")).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
-            records
-                .iter()
-                .map(|r| r.collection_id.as_str())
-                .collect::<Vec<_>>(),
+            vec![collection_id; records.len()]
         );
 
         // Simplified vector column (would be properly implemented with List array)
@@ -1282,13 +1227,8 @@ impl VectorRecordProcessor {
             }
 
             CustomComparisonType::CollectionGrouped => {
+                // Since all records are from the same collection, just sort by timestamp
                 records.sort_by(|a, b| {
-                    // Primary: group by collection_id
-                    let coll_cmp = a.collection_id.cmp(&b.collection_id);
-                    if coll_cmp != std::cmp::Ordering::Equal {
-                        return coll_cmp;
-                    }
-                    // Secondary: maintain insertion order within collection
                     a.timestamp.cmp(&b.timestamp)
                 });
             }
@@ -3032,7 +2972,6 @@ impl CompactionEngine {
             let timestamp = chrono::Utc::now().timestamp_millis();
             let record = VectorRecord {
                 id: Some(format!("vec_{:06}", i)),
-                collection_id: collection_id.to_string(),
                 vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
                 metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
                 timestamp,
@@ -3070,7 +3009,7 @@ impl CompactionEngine {
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
-            ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            // ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))), // Moved to AXIS
             quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(
                 QuantizationConfig::default(),
             ))),

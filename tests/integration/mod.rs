@@ -37,6 +37,12 @@ pub mod vector;
 // Semantic distance integration tests - NEW unified system
 pub mod semantic_distance_integration;
 
+// Unified search integration tests - NEW unified search interface
+pub mod unified_search_integration;
+
+// WAL optimization integration tests - NEW optimized WAL writer
+pub mod wal_optimization_integration_test;
+
 // VIPER engine integration tests
 pub mod viper;
 

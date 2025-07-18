@@ -12,8 +12,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::{
-    AdaptiveIndexEngine, AxisConfig, IndexMigrationEngine, IndexStrategy, IndexType,
-    MigrationDecision, PerformanceMonitor,
+    AdaptiveIndexEngine, AxisClusteringEngine, AxisConfig, ClusteringConfig,
+    IndexMigrationEngine, MigrationDecision, PerformanceMonitor,
+    types::{IndexSelectionStrategy, DataType},
 };
 use crate::core::{VectorRecord, String, VectorId};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
@@ -31,9 +32,10 @@ pub struct AxisManager {
     adaptive_engine: Arc<AdaptiveIndexEngine>,
     migration_engine: Arc<IndexMigrationEngine>,
     performance_monitor: Arc<PerformanceMonitor>,
+    clustering_engine: Arc<AxisClusteringEngine>,
 
     /// Collection-specific configurations
-    collection_strategies: Arc<RwLock<HashMap<String, IndexStrategy>>>,
+    collection_strategies: Arc<RwLock<HashMap<String, IndexSelectionStrategy>>>,
 
     /// Active migrations
     active_migrations: Arc<RwLock<HashMap<String, MigrationStatus>>>,
@@ -50,8 +52,8 @@ pub struct AxisManager {
 #[derive(Debug, Clone)]
 pub struct MigrationStatus {
     pub migration_id: uuid::Uuid,
-    pub from_strategy: IndexStrategy,
-    pub to_strategy: IndexStrategy,
+    pub from_strategy: IndexSelectionStrategy,
+    pub to_strategy: IndexSelectionStrategy,
     pub start_time: DateTime<Utc>,
     pub progress_percentage: f64,
     pub estimated_completion: Option<DateTime<Utc>>,
@@ -83,6 +85,10 @@ impl AxisManager {
         let adaptive_engine = Arc::new(AdaptiveIndexEngine::new(config.clone()).await?);
         let migration_engine = Arc::new(IndexMigrationEngine::new(config.clone()).await?);
         let performance_monitor = Arc::new(PerformanceMonitor::new(config.clone()).await?);
+        
+        // Initialize clustering engine with default config
+        let clustering_config = ClusteringConfig::default();
+        let clustering_engine = Arc::new(AxisClusteringEngine::new(clustering_config));
 
         Ok(Self {
             global_id_index,
@@ -93,6 +99,7 @@ impl AxisManager {
             adaptive_engine,
             migration_engine,
             performance_monitor,
+            clustering_engine,
             collection_strategies: Arc::new(RwLock::new(HashMap::new())),
             active_migrations: Arc::new(RwLock::new(HashMap::new())),
             config,
@@ -137,9 +144,7 @@ impl AxisManager {
     }
 
     /// Insert a vector with adaptive indexing
-    pub async fn insert(&self, vector: &VectorRecord) -> Result<()> {
-        // Direct field access - zero overhead
-        let collection_id = &vector.collection_id;
+    pub async fn insert(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
 
         // Ensure we have a strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
@@ -162,18 +167,18 @@ impl AxisManager {
             .await?;
 
         // Insert into other indexes based on strategy
-        for index_type in &strategy.secondary_indexes {
-            match index_type {
-                IndexType::Metadata => {
+        for index_spec in &strategy.indexes {
+            match index_spec.data_type {
+                DataType::Metadata => {
                     self.metadata_index.insert(&vector).await?;
                 }
-                IndexType::DenseVector => {
+                DataType::DenseVector { .. } => {
                     self.dense_vector_index.insert(&vector).await?;
                 }
-                IndexType::SparseVector => {
+                DataType::SparseVector { .. } => {
                     self.sparse_vector_index.insert(&vector).await?;
                 }
-                _ => {} // Handle other index types
+                _ => {} // Handle other data types
             }
         }
 
@@ -200,15 +205,15 @@ impl AxisManager {
 
         self.global_id_index.remove(&vector_id).await?;
 
-        for index_type in &strategy.secondary_indexes {
-            match index_type {
-                IndexType::Metadata => {
+        for index_spec in &strategy.indexes {
+            match index_spec.data_type {
+                DataType::Metadata => {
                     self.metadata_index.remove(&vector_id).await?;
                 }
-                IndexType::DenseVector => {
+                DataType::DenseVector { .. } => {
                     self.dense_vector_index.remove(&vector_id).await?;
                 }
-                IndexType::SparseVector => {
+                DataType::SparseVector { .. } => {
                     self.sparse_vector_index.remove(&vector_id).await?;
                 }
                 _ => {}
@@ -288,8 +293,8 @@ impl AxisManager {
                 estimated_improvement,
                 ..
             } => {
-                println!("AXIS: Initiating migration for collection {} from {:?} to {:?} (estimated improvement: {:.2}%)",
-                    collection_id, from.primary_index_type, to.primary_index_type, estimated_improvement * 100.0);
+                println!("AXIS: Initiating migration for collection {} from {} to {} indexes (estimated improvement: {:.2}%)",
+                    collection_id, from.indexes.len(), to.indexes.len(), estimated_improvement * 100.0);
 
                 // Start migration
                 self.start_migration(collection_id, from, to).await?;
@@ -309,8 +314,8 @@ impl AxisManager {
     async fn start_migration(
         &self,
         collection_id: &str,
-        from: IndexStrategy,
-        to: IndexStrategy,
+        from: IndexSelectionStrategy,
+        to: IndexSelectionStrategy,
     ) -> Result<()> {
         let migration_id = uuid::Uuid::new_v4();
 
@@ -411,7 +416,7 @@ impl AxisManager {
 
 
     /// Get current strategy for collection
-    pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexStrategy> {
+    pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexSelectionStrategy> {
         let strategies = self.collection_strategies.read().await;
         strategies
             .get(collection_id)
@@ -420,7 +425,7 @@ impl AxisManager {
     }
 
     /// Update collection strategy
-    pub async fn update_collection_strategy(&self, collection_id: &str, strategy: IndexStrategy) -> Result<()> {
+    pub async fn update_collection_strategy(&self, collection_id: &str, strategy: IndexSelectionStrategy) -> Result<()> {
         let mut strategies = self.collection_strategies.write().await;
         strategies.insert(collection_id.to_string(), strategy);
         Ok(())
@@ -495,7 +500,9 @@ impl AxisManager {
 
         Ok(CollectionStats {
             collection_id: collection_id.to_string(),
-            strategy_type: strategy.primary_index_type,
+            strategy_type: strategy.indexes.first()
+                .map(|idx| idx.data_type)
+                .unwrap_or(DataType::DenseVector { dimension: 0 }),
             total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
             last_updated: Utc::now(),
@@ -526,19 +533,19 @@ impl AxisManager {
 
         // Update file references in secondary indexes based on strategy
         let strategy = self.get_collection_strategy(collection_id).await?;
-        for index_type in &strategy.secondary_indexes {
-            match index_type {
-                IndexType::Metadata => {
+        for index_spec in &strategy.indexes {
+            match index_spec.data_type {
+                DataType::Metadata => {
                     self.metadata_index
                         .update_file_reference(vector_id, file_path)
                         .await?;
                 }
-                IndexType::DenseVector => {
+                DataType::DenseVector { .. } => {
                     self.dense_vector_index
                         .update_file_reference(vector_id, file_path)
                         .await?;
                 }
-                IndexType::SparseVector => {
+                DataType::SparseVector { .. } => {
                     self.sparse_vector_index
                         .update_file_reference(vector_id, file_path)
                         .await?;
@@ -679,7 +686,7 @@ impl AxisManager {
         
         let start_time = std::time::Instant::now();
         for vector in vectors {
-            self.insert(&vector).await?;
+            self.insert(collection_id, &vector).await?;
         }
         let duration = start_time.elapsed();
         
@@ -707,7 +714,7 @@ impl AxisManager {
         let mut indexed_count = 0;
         
         for vector in vectors {
-            match self.insert(&vector).await {
+            match self.insert(collection_id, &vector).await {
                 Ok(()) => indexed_count += 1,
                 Err(e) => {
                     tracing::error!("❌ AXIS: Failed to index vector in collection {}: {}", collection_id, e);
@@ -760,7 +767,7 @@ impl AxisManager {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CollectionStats {
     pub collection_id: String,
-    pub strategy_type: super::IndexType,
+    pub strategy_type: DataType,
     pub total_vectors: u64,
     pub index_size_bytes: u64,
     pub last_updated: DateTime<Utc>,
@@ -813,7 +820,7 @@ pub enum FilterOperator {
 #[derive(Debug, Clone)]
 pub struct QueryResult {
     pub results: Vec<ScoredResult>,
-    pub strategy_used: IndexStrategy,
+    pub strategy_used: IndexSelectionStrategy,
     pub execution_time_ms: u64,
 }
 

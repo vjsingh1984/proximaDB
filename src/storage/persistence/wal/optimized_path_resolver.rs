@@ -82,34 +82,22 @@ impl OptimizedWalPathResolver {
             }
         }
 
-        // Get assignments from assignment service
-        let wal_assignment = self.assignment_service
-            .assign_storage_url(collection_id, &self.wal_assignment_config)
+        // Get unified assignment from assignment service
+        let assignment = self.assignment_service
+            .get_assignment(collection_id)
             .await
-            .map_err(|e| anyhow!("Failed to assign WAL storage for collection {}: {}", collection_id, e))?;
+            .ok_or_else(|| anyhow!("No assignment found for collection {}", collection_id))?;
 
-        let storage_assignment = self.assignment_service
-            .assign_storage_url(collection_id, &self.storage_assignment_config)
-            .await
-            .map_err(|e| anyhow!("Failed to assign storage for collection {}: {}", collection_id, e))?;
-
-        // Ensure components are co-located on same disk for I/O locality
-        let wal_disk = self.extract_disk_id(&wal_assignment.storage_url);
-        let storage_disk = self.extract_disk_id(&storage_assignment.storage_url);
-        
-        if wal_disk != storage_disk {
-            return Err(anyhow!(
-                "Collection {} components must be co-located: WAL on disk '{}', Storage on disk '{}'",
-                collection_id, wal_disk, storage_disk
-            ));
-        }
+        // With unified assignment, WAL and data are always co-located
+        let wal_url = &assignment.wal_url;
+        let storage_url = &assignment.data_url;
 
         // Build comprehensive path structure
         let collection_paths = self.build_collection_paths(
             collection_id,
-            &wal_assignment.storage_url,
-            &storage_assignment.storage_url,
-            wal_assignment.assigned_at,
+            wal_url,
+            storage_url,
+            assignment.assigned_at,
         );
 
         // Cache the resolved paths

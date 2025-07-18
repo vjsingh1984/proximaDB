@@ -322,7 +322,6 @@ impl VectorBatchRequestBuilder {
         Ok(VectorRecord {
             id: json.get("id").and_then(|v| v.as_str()).map(String::from),
             vector,
-            collection_id: String::new(), // Will be set later
             metadata,
             timestamp: chrono::Utc::now().timestamp_millis(),
             created_at: chrono::Utc::now().timestamp_millis(),

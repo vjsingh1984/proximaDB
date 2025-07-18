@@ -22,10 +22,9 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
     
     (0..count)
         .map(|i| VectorRecord {
-            id: format!("vector_{}", i),
-            collection_id: collection_id.to_string(),
+            id: Some(format!("vector_{}", i)),
             vector: vector_data.clone(),
-            metadata: std::collections::HashMap::new(),
+            metadata: vec![],
             timestamp: now,
             created_at: now,
             updated_at: now,
@@ -62,7 +61,7 @@ async fn test_collection_flush_threshold_trigger() -> Result<()> {
     // Test 1: Below threshold - should not need flush
     let small_vectors = create_test_vector_records(collection_id, 10, 100); // ~4KB total
     let small_batch = create_test_wal_batch(collection_id, small_vectors);
-    memtable.add_wal_batch(small_batch).await?;
+    memtable.add_wal_batch("test_collection", small_batch).await?;
     
     let (vector_count, total_size) = memtable.get_collection_stats(collection_id).await;
     assert_eq!(vector_count, 10);
@@ -71,7 +70,7 @@ async fn test_collection_flush_threshold_trigger() -> Result<()> {
     // Test 2: Above threshold - should need flush
     let large_vectors = create_test_vector_records(collection_id, 1000, 3000); // ~12MB total
     let large_batch = create_test_wal_batch(collection_id, large_vectors);
-    memtable.add_wal_batch(large_batch).await?;
+    memtable.add_wal_batch("test_collection", large_batch).await?;
     
     let (vector_count, total_size) = memtable.get_collection_stats(collection_id).await;
     assert_eq!(vector_count, 1010); // 10 + 1000
@@ -100,7 +99,7 @@ async fn test_multiple_collections_flush_selection() -> Result<()> {
     for (collection_id, count, size_per_vector) in collections {
         let vectors = create_test_vector_records(collection_id, count, size_per_vector);
         let batch = create_test_wal_batch(collection_id, vectors);
-        memtable.add_wal_batch(batch).await?;
+        memtable.add_wal_batch("test_collection", batch).await?;
     }
     
     // Test with 10MB threshold - should only trigger large and huge collections
@@ -141,7 +140,7 @@ async fn test_global_memory_threshold_calculation() -> Result<()> {
         let vectors = create_test_vector_records(collection_id, count, size_per_vector);
         let batch = create_test_wal_batch(collection_id, vectors);
         total_expected_size += batch.total_size_bytes;
-        memtable.add_wal_batch(batch).await?;
+        memtable.add_wal_batch("test_collection", batch).await?;
     }
     
     // Test total memory usage
@@ -271,7 +270,7 @@ async fn test_memtable_clear_functionality() -> Result<()> {
     // Add some data
     let vectors = create_test_vector_records(collection_id, 100, 1000);
     let batch = create_test_wal_batch(collection_id, vectors);
-    memtable.add_wal_batch(batch).await?;
+    memtable.add_wal_batch("test_collection", batch).await?;
     
     // Verify data is there
     let (vector_count, total_size) = memtable.get_collection_stats(collection_id).await;
@@ -309,7 +308,7 @@ async fn test_flush_threshold_edge_cases() -> Result<()> {
     let collection_id = "test_collection";
     let vectors = create_test_vector_records(collection_id, 1, 100);
     let batch = create_test_wal_batch(collection_id, vectors);
-    memtable.add_wal_batch(batch).await?;
+    memtable.add_wal_batch("test_collection", batch).await?;
     
     let zero_threshold_collections = memtable.collections_needing_flush(0).await?;
     assert_eq!(zero_threshold_collections.len(), 1);

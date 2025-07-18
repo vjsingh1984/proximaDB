@@ -27,16 +27,21 @@ use crate::storage::assignment_service::{AssignmentService, StorageAssignmentCon
 use crate::storage::atomic::UnifiedAtomicCoordinator;
 
 // Sub-modules
-pub mod avro_batch;
 pub mod background_manager;
 pub mod batch_strategy;
 pub mod batch_factory;
-pub mod bincode_batch;
+pub mod compact_batch_id;
 pub mod config;
-pub mod proto_batch;
-pub mod schema;
+pub mod proto_serialization_strategy;  // Clean architecture proto implementation
+pub mod bincode_serialization_strategy;  // Clean architecture bincode implementation
+pub mod avro_serialization_strategy;  // Clean architecture avro implementation
+pub mod serialization;  // New pure serialization layer
+pub mod memtable_manager;  // New centralized memtable operations
+pub mod disk_manager;  // New centralized disk operations
+pub mod recovery_manager;  // New centralized recovery operations
+pub mod recovery_thread_pool;  // Thread pool for parallel recovery
 pub mod flush_coordinator;
-pub mod unified_batch_strategy;
+pub mod optimized_wal_writer;
 pub mod compaction_coordinator;
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WalManager
@@ -44,6 +49,7 @@ pub mod simple_atomic_sync;
 pub mod optimized_path_resolver;
 pub mod atomic_wal_sync;
 pub mod parallel_recovery;
+
 
 // Unit tests
 #[cfg(test)]
@@ -53,10 +59,9 @@ mod tests;
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,
 };
-pub use avro_batch::AvroWalBatchStrategy;
-pub use bincode_batch::BincodeWalBatchStrategy;
-pub use proto_batch::ProtoWalBatchStrategy;
-pub use unified_batch_strategy::{UnifiedWalBatchStrategy, VectorSerializer, ProtoSerializer, AvroSerializer, BincodeSerializer};
+pub use proto_serialization_strategy::ProtoSerializationStrategy;
+pub use bincode_serialization_strategy::BincodeSerializationStrategy;
+pub use avro_serialization_strategy::AvroSerializationStrategy;
 pub use batch_strategy::{WalBatchStrategy, WalBatchStrategyExt};
 pub use batch_factory::{WalBatchFactory, StrategyInfo, StrategyComparison};
 pub use config::WalStrategyType;
@@ -69,20 +74,15 @@ pub use compaction_coordinator::{
     CompactionCoordinator, CompactionConfig, CompactionResult, CollectionCompactionState,
     CompactionStats, CompactionTask,
 };
+pub use memtable_manager::{MemtableManager, MemtableStats};
+pub use disk_manager::{WalDiskManager, DiskStats, WalFileInfo};
+pub use recovery_manager::{RecoveryManager, RecoveryStats, ParallelRecoveryManager, RecoveryMode};
+pub use recovery_thread_pool::{RecoveryThreadPool, RecoveryPoolStats, get_recovery_thread_pool, initialize_recovery_thread_pool};
 
 // Batch coordination exports - BatchId defined below
 
-// Re-export schema functions from centralized module
-// Proto-first re-exports (Avro functions available through specific strategies)
-pub use schema::{
-    create_proto_vector_batch, deserialize_proto_vector_batch, ProtoVectorBatch
-};
-
-// Legacy Avro support - only used by AvroWalBatchStrategy
-pub use schema::{
-    deserialize_vector_batch, serialize_vector_batch, create_avro_vector_batch,
-    AvroVector, AvroVectorBatch, VECTOR_BATCH_SCHEMA_V1
-};
+// Re-export serialization module
+pub use serialization::{SerializationFormat, VectorBatchSerializer, SerializerFactory};
 
 /// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -97,46 +97,9 @@ pub struct WalOperation {
     pub vector_count: usize,
 }
 
-/// Batch coordination identifier for WAL disk ↔ Memtable mapping
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BatchId {
-    /// Collection ID this batch belongs to
-    pub collection_id: String,
-    /// Sequence range this batch covers
-    pub sequence_range: (u64, u64), // (start_seq, end_seq)
-    /// Unique batch identifier
-    pub batch_uuid: String,
-    /// Timestamp when batch was created
-    pub created_at: DateTime<Utc>,
-}
+// Re-export CompactBatchId as BatchId - it's globally unique, no need for collection_id
+pub use compact_batch_id::CompactBatchId as BatchId;
 
-impl std::fmt::Display for BatchId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}-{}", self.collection_id, self.sequence_range.0, self.sequence_range.1)
-    }
-}
-
-impl BatchId {
-    /// Create new batch ID
-    pub fn new(collection_id: String, start_seq: u64, end_seq: u64) -> Self {
-        Self {
-            collection_id,
-            sequence_range: (start_seq, end_seq),
-            batch_uuid: uuid::Uuid::new_v4().to_string(),
-            created_at: Utc::now(),
-        }
-    }
-
-    /// Check if sequence is within this batch range
-    pub fn contains_sequence(&self, sequence: u64) -> bool {
-        sequence >= self.sequence_range.0 && sequence <= self.sequence_range.1
-    }
-
-    /// Get batch size (number of sequences)
-    pub fn batch_size(&self) -> u64 {
-        self.sequence_range.1 - self.sequence_range.0 + 1
-    }
-}
 
 // WalEntry removed - use WalVectorBatch for batch-oriented operations instead
 
@@ -161,14 +124,17 @@ impl WalOperation {
             match self.payload_format.as_str() {
                 "proto" => {
                     // Deserialize from proto bytes
-                    use crate::storage::persistence::wal::schema::deserialize_proto_vector_batch;
-                    let records = deserialize_proto_vector_batch(&self.payload_data)?;
+                    use crate::storage::persistence::wal::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                    let serializer = ProtocolBuffersSerializer::new();
+                    let records = serializer.deserialize_batch(&self.payload_data)?;
                     records.into_iter().next()
                         .ok_or_else(|| anyhow::anyhow!("Empty vector batch in proto payload"))
                 }
                 "avro" => {
-                    // Delegate to Avro-specific deserialization (only for AvroWalBatchStrategy)
-                    let records = deserialize_vector_batch(&self.payload_data)
+                    // Delegate to Avro-specific deserialization
+                    use crate::storage::persistence::wal::serialization::{AvroSerializer, VectorBatchSerializer};
+                    let serializer = AvroSerializer::new();
+                    let records = serializer.deserialize_batch(&self.payload_data)
                         .map_err(|e| anyhow::anyhow!("Failed to deserialize Avro payload: {}", e))?;
                     records.into_iter().next()
                         .ok_or_else(|| anyhow::anyhow!("Empty vector batch in Avro payload"))
@@ -569,7 +535,7 @@ impl WalManagerRegistry {
         for i in 0..self.pool_config.initial_pool_size {
             let manager_id = format!("wal_manager_pool_{}", i + 1);
             
-            let strategy = WalBatchFactory::create_strategy(strategy_type.clone(), config, filesystem.clone()).await?;
+            let strategy = WalBatchFactory::create_batch_serialization_strategy(strategy_type.clone(), config, filesystem.clone()).await?;
             let manager = Arc::new(WalManager::new_pool_manager(strategy, config.clone(), manager_id.clone()).await?);
             
             let entry = WalManagerPoolEntry {
@@ -669,7 +635,7 @@ impl WalManagerRegistry {
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?); // TODO: Pass proper filesystem
         
-        let strategy = WalBatchFactory::create_strategy(strategy_type, config, filesystem).await?;
+        let strategy = WalBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem).await?;
         let manager = Arc::new(WalManager::new_pool_manager(strategy, config.clone(), manager_id.clone()).await?);
         
         let entry = WalManagerPoolEntry {
@@ -996,7 +962,8 @@ impl WalManager {
         config: WalConfig,
         filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Result<Self> {
-        let strategy = WalBatchFactory::create_strategy(strategy_type, &config, filesystem).await?;
+        // Use the new batch serialization strategies for better separation of concerns
+        let strategy = WalBatchFactory::create_batch_serialization_strategy(strategy_type, &config, filesystem).await?;
         Self::new(strategy, config).await
     }
 
@@ -1052,7 +1019,7 @@ impl WalManager {
         use crate::storage::persistence::wal::BatchId;
         use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
         
-        let batch_id = BatchId::new(collection_id.clone(), 1, 1); // Single vector batch
+        let batch_id = BatchId::new(); // Single vector batch
         
         // Calculate actual size - approximate based on vector dimensions and metadata
         let total_size_bytes = record.vector.len() * 4 + 256; // 4 bytes per f32 + metadata overhead
@@ -1110,7 +1077,7 @@ impl WalManager {
         let total_size_bytes: usize = vector_records.iter()
             .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
             .sum();
-        let batch_id = BatchId::new(collection_id.clone(), 1, vector_records.len() as u64);
+        let batch_id = BatchId::new();
         
         let batch = WalVectorBatch {
             batch_id,
@@ -1274,7 +1241,10 @@ impl WalManager {
         immediate_sync: bool,
     ) -> Result<u64> {
         // Proto-first: try proto deserialization first, then fall back to strategy-specific handling
-        if let Ok(records) = crate::storage::persistence::wal::schema::deserialize_proto_vector_batch(payload) {
+        // Try proto deserialization using the serializer
+        use crate::storage::persistence::wal::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+        let proto_serializer = ProtocolBuffersSerializer::new();
+        if let Ok(records) = proto_serializer.deserialize_batch(payload) {
             // Use the modern batch API with sync option
             if immediate_sync {
                 self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().unwrap_or_default(), r)).collect(), true).await
@@ -1366,11 +1336,7 @@ impl WalManager {
                       native_vectors.len(), collection_id);
         
         // Create native WalVectorBatch with Arc (zero-copy)
-        let batch_id = crate::storage::persistence::wal::BatchId::new(
-            collection_id.to_string(),
-            1, // Start sequence (will be updated by strategy)
-            native_vectors.len() as u64,
-        );
+        let batch_id = crate::storage::persistence::wal::BatchId::new();
         
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WalVectorBatch {
             batch_id,
@@ -1411,7 +1377,7 @@ impl WalManager {
         let total_size_bytes: usize = records.iter()
             .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
             .sum();
-        let batch_id = BatchId::new(collection_id.clone(), 1, records.len() as u64);
+        let batch_id = BatchId::new();
         
         let batch = WalVectorBatch {
             batch_id,
@@ -1421,7 +1387,19 @@ impl WalManager {
             is_flushed: false,
         };
 
-        self.write_vector_batch(batch).await
+        // Write to memory first
+        let sequences = self.write_vector_batch(batch).await?;
+        
+        // Check if we should sync to disk based on sync mode
+        if self.should_sync_to_disk(&collection_id).await? {
+            debug!("🔄 PerBatch sync mode - triggering disk persistence for collection: {}", collection_id);
+            if let Err(e) = self.force_sync(Some(&collection_id)).await {
+                tracing::warn!("Failed to sync WAL to disk: {}", e);
+                // Continue - data is in memory, sync failure shouldn't fail the insert
+            }
+        }
+
+        Ok(sequences)
     }
 
     /// Search vector by ID (modern API)
@@ -1449,14 +1427,13 @@ impl WalManager {
         self.strategy.get_collection_vectors(collection_id).await
     }
 
-    /// Read vector batches for a collection (modern API)
-    pub async fn read_vector_batches(
+    /// Read all vector batches for a collection (modern API)
+    pub async fn read_all_batches(
         &self,
         collection_id: &str,
-        from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WalVectorBatch>> {
-        self.strategy.read_vector_batches(collection_id, from_sequence, limit).await
+        self.strategy.read_all_batches(collection_id, limit).await
     }
 
     /// Register storage engine with the WAL strategy
@@ -1600,18 +1577,14 @@ impl WalManager {
         // Get the batch from the strategy's memory
         if let Some(wal_behavior) = self.strategy.get_wal_behavior() {
             let collection_vectors = wal_behavior
-                .get_all_vectors(&collection_id.to_string())
+                .get_collection_vectors(&collection_id.to_string())
                 .await
                 .context("Failed to get collection vectors from memtable")?;
             
             // Filter vectors by sequences (for now, just take all vectors since we don't have reliable sequence mapping)
             let batch_vectors: Vec<VectorRecord> = collection_vectors;
             
-            let batch_id = BatchId::new(
-                collection_id.to_string(),
-                *sequences.first().unwrap_or(&0),
-                *sequences.last().unwrap_or(&0),
-            );
+            let batch_id = BatchId::new();
             
             use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
             let total_size_bytes: usize = batch_vectors.iter()
@@ -1661,15 +1634,37 @@ impl WalManager {
 
     /// Recovery method using parallel recovery system if available
     pub async fn recover(&self) -> Result<u64> {
-        info!("Starting WAL recovery for {} strategy", self.get_strategy_name());
+        info!("🔄 WAL_MANAGER: Starting WAL recovery for {} strategy", self.get_strategy_name());
         
-        // For now, just use the strategy recovery (which now reads from global memtable)
-        // TODO: Re-enable parallel recovery once compilation issues are resolved
-        let recovered_count = self.strategy.recover().await
-            .context("WAL strategy recovery failed")?;
+        // Add timeout to prevent indefinite hanging
+        let recovery_timeout = std::time::Duration::from_secs(30);
         
-        info!("WAL recovery completed: {} entries recovered", recovered_count);
-        Ok(recovered_count)
+        let recovery_result = tokio::time::timeout(recovery_timeout, async {
+            info!("📊 WAL_MANAGER: About to call strategy.recover()");
+            
+            // For now, just use the strategy recovery (which now reads from global memtable)
+            // TODO: Re-enable parallel recovery once compilation issues are resolved
+            let recovered_count = self.strategy.recover().await
+                .context("WAL strategy recovery failed")?;
+            
+            info!("📊 WAL_MANAGER: Strategy recovery returned: {} entries", recovered_count);
+            Ok::<u64, anyhow::Error>(recovered_count)
+        }).await;
+        
+        match recovery_result {
+            Ok(Ok(recovered_count)) => {
+                info!("✅ WAL_MANAGER: WAL recovery completed successfully: {} entries recovered", recovered_count);
+                Ok(recovered_count)
+            }
+            Ok(Err(e)) => {
+                tracing::error!("❌ WAL_MANAGER: WAL recovery failed: {}", e);
+                Err(e)
+            }
+            Err(_) => {
+                tracing::error!("⏰ WAL_MANAGER: WAL recovery timed out after {} seconds", recovery_timeout.as_secs());
+                Err(anyhow::anyhow!("WAL recovery timed out"))
+            }
+        }
     }
 
     /// Check if assignment service integration is enabled

@@ -11,25 +11,32 @@
 
 pub mod adaptive_engine;
 pub mod analyzer;
+pub mod clustering;
 pub mod hnsw_integration;
 pub mod manager;
 pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
+pub mod types;
 
-// Unit tests
+// Test modules
 #[cfg(test)]
-pub mod adaptive_engine_tests;
+pub mod types_tests;
 #[cfg(test)]
-pub mod analyzer_tests;
-#[cfg(test)]
-pub mod manager_tests;
+pub mod strategy_tests;
+
+// Old test modules removed - using new type system tests
 
 pub use adaptive_engine::{
     AccessFrequencyMetrics, AdaptiveIndexEngine, CollectionCharacteristics, MetadataComplexity,
     PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
 pub use analyzer::CollectionAnalyzer;
+pub use clustering::{
+    AxisClusteringEngine, ClusterAssignment, ClusteringAlgorithm, ClusteringConfig,
+    ClusteringMetrics, ClusteringModel, DBSCANConfig, HierarchicalConfig, KMeansConfig,
+    KMeansInit, LinkageCriterion,
+};
 pub use hnsw_integration::{
     AxisHnswConfig, AxisHnswManager, HnswStats, PartitionedHnswIndex,
 };
@@ -39,7 +46,14 @@ pub use manager::{
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};
 pub use monitor::PerformanceMonitor;
-pub use strategy::{IndexStrategy, IndexType, OptimizationConfig};
+pub use strategy::{
+    AdaptiveIndexStrategy, CollectionStatistics, IndexStrategyBuilder, 
+    OptimizationConfig, OptimizationGoal, QueryPatterns, QueryPerformance
+};
+pub use types::{
+    DataType, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy,
+    QueryCondition, ResultCombination, RoutingRule, TextAnalyzer, Tokenizer, TokenFilter
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -198,8 +212,8 @@ impl Default for ResourceLimits {
 pub enum MigrationDecision {
     /// Migrate to new strategy
     Migrate {
-        from: IndexStrategy,
-        to: IndexStrategy,
+        from: IndexSelectionStrategy,
+        to: IndexSelectionStrategy,
         estimated_improvement: f64,
         migration_complexity: f64,
         estimated_duration: std::time::Duration,

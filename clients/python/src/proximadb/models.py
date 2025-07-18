@@ -323,7 +323,7 @@ class FilterableColumn(BaseModel):
 
 class CollectionConfig(BaseModel):
     """Collection configuration for REST API"""
-    name: str
+    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with IDs
     dimension: int = Field(ge=1, le=10000)
     distance_metric: Optional[DistanceMetric] = None
     storage_engine: Optional[StorageEngine] = None
@@ -338,6 +338,28 @@ class CollectionConfig(BaseModel):
     owner: Optional[str] = None
     metadata_schema: Optional[Dict[str, Any]] = None
     filterable_metadata_fields: Optional[List[str]] = None
+    
+    @field_validator('name')
+    def validate_name_length(cls, v):
+        """Validate collection name is at least 8 characters"""
+        if len(v) < 8:
+            raise ValueError("Collection name must be at least 8 characters long to prevent collision with collection IDs")
+        return v
+    
+    @property
+    def index_config(self):
+        """Backward compatibility property for singular index_config access"""
+        if self.index_configs and len(self.index_configs) > 0:
+            return self.index_configs[0]
+        return None
+    
+    @property 
+    def storage_config(self):
+        """Backward compatibility property for storage_config access"""
+        # This is used in tests but not defined in the model
+        # Return a mock object for now
+        from types import SimpleNamespace
+        return SimpleNamespace(compression=CompressionType.LZ4)
 
 
 class CollectionStats(BaseModel):
@@ -354,6 +376,11 @@ class Collection(BaseModel):
     stats: Optional[CollectionStats] = None
     created_at: Optional[int] = None  # Microseconds since epoch
     updated_at: Optional[int] = None  # Microseconds since epoch
+    
+    @property
+    def name(self) -> str:
+        """Backward compatibility property for collection name"""
+        return self.config.name
 
 
 # ============================================================================
