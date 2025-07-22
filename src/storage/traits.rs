@@ -690,6 +690,9 @@ pub struct FlushParameters {
 
     /// Batch IDs involved in this flush operation (for coordination)
     pub batch_ids: Vec<crate::storage::persistence::wal::BatchId>,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
 }
 
 /// Flexible compaction parameters that work for both engine types
@@ -712,6 +715,9 @@ pub struct CompactionParameters {
 
     /// Priority level for the operation
     pub priority: OperationPriority,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
 }
 
 /// Operation priority levels
@@ -722,6 +728,37 @@ pub enum OperationPriority {
     Medium = 1,
     High = 2,
     Critical = 3,
+}
+
+/// Search parameters with collection configuration
+#[derive(Debug, Clone, Default)]
+pub struct SearchParams {
+    /// Target collection ID
+    pub collection_id: String,
+    
+    /// Query vector
+    pub query_vector: Vec<f32>,
+    
+    /// Number of results to return
+    pub k: usize,
+    
+    /// Distance metric to use
+    pub distance_metric: crate::compute::distance::DistanceMetric,
+    
+    /// Optional metadata filters
+    pub metadata_filters: Option<HashMap<String, serde_json::Value>>,
+    
+    /// Include vectors in results
+    pub include_vectors: bool,
+    
+    /// Include metadata in results
+    pub include_metadata: bool,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
+    
+    /// Engine-specific hints
+    pub hints: HashMap<String, serde_json::Value>,
 }
 
 /// Unified flush result that accommodates different engine types

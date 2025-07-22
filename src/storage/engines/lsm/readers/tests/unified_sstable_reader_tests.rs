@@ -8,8 +8,9 @@ mod tests {
         UnifiedSstableReader, CollectionContext,
     };
     use crate::storage::engines::lsm::bloom_filter::{
-        BloomFilterConfig, MetadataBloomFilter,
+        MetadataBloomFilter,
     };
+    use crate::core::config::BloomFilterConfig;
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
     use crate::compute::distance::DistanceMetric;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -81,32 +82,29 @@ mod tests {
     // Metadata Bloom Filter Tests
     #[tokio::test]
     async fn test_metadata_bloom_filter() {
-        let config = BloomFilterConfig::default();
-        let mut filter = MetadataBloomFilter::new(config);
+        let config = BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::Composite,
+            expected_items: 100,
+            ..Default::default()
+        };
+        let mut builder = crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(config);
         
         // Add metadata values
-        filter.add_column("category".to_string(), vec![
-            "electronics".to_string(),
-            "books".to_string(),
-        ]);
+        builder.add_metadata_value("category".to_string(), "electronics".to_string());
+        builder.add_metadata_value("category".to_string(), "books".to_string());
+        builder.add_metadata_value("status".to_string(), "active".to_string());
+        builder.add_metadata_value("status".to_string(), "inactive".to_string());
         
-        filter.add_column("status".to_string(), vec![
-            "active".to_string(),
-            "pending".to_string(),
-        ]);
+        let filter = builder.build();
         
-        // Test single condition
-        let conditions = HashMap::from([
-            ("category".to_string(), "electronics".to_string()),
-        ]);
-        assert!(filter.might_match_conditions(&conditions));
+        // Test single condition using MetadataBloomFilter trait
+        use crate::core::bloom::MetadataBloomFilter;
+        assert!(filter.might_match_metadata("category", "electronics"));
+        assert!(filter.might_match_metadata("status", "active"));
         
-        // Test multiple conditions
-        let conditions = HashMap::from([
-            ("category".to_string(), "books".to_string()),
-            ("status".to_string(), "active".to_string()),
-        ]);
-        assert!(filter.might_match_conditions(&conditions));
+        // Test non-existent values
+        assert!(!filter.might_match_metadata("category", "furniture"));
+        assert!(!filter.might_match_metadata("status", "deleted"));
     }
 
     // Block Range Calculation Tests

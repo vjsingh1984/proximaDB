@@ -210,17 +210,17 @@ impl ProximaDb for ProximaDbGrpcService {
                 })?;
 
                 // Parse proto types to native types - using proto enum directly
-                let distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
+                let _distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
                     Ok(metric) => metric,
                     _ => crate::proto::proximadb::DistanceMetric::Cosine,
                 };
                 
-                let storage_engine = match crate::proto::proximadb::StorageEngine::try_from(config.storage_engine) {
+                let _storage_engine = match crate::proto::proximadb::StorageEngine::try_from(config.storage_engine) {
                     Ok(engine) => engine,
                     _ => crate::proto::proximadb::StorageEngine::Viper,
                 };
                 
-                let indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_indexing_algorithm) {
+                let _indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_indexing_algorithm) {
                     Ok(algo) => algo,
                     _ => crate::proto::proximadb::IndexingAlgorithm::Hnsw,
                 };
@@ -562,7 +562,7 @@ impl ProximaDb for ProximaDbGrpcService {
             }
 
             _ => {
-                let processing_time = start_time.elapsed().as_micros() as i64;
+                let _processing_time = start_time.elapsed().as_micros() as i64;
                 Err(Status::unimplemented("Operation not yet implemented"))
             }
         }
@@ -580,7 +580,7 @@ impl ProximaDb for ProximaDbGrpcService {
             req.vectors.len()
         );
 
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
 
         // Use ONLY the ultra-fast zero-copy path for ALL vector operations
         // No thresholds, no complexity - just maximum performance
@@ -676,7 +676,7 @@ impl ProximaDb for ProximaDbGrpcService {
             .map_err(|e| Status::internal(format!("Failed to serialize search request: {}", e)))?;
 
         // Create versioned payload for optimized search
-        let avro_payload = Self::create_versioned_payload("vector_search", &json_data);
+        let _avro_payload = Self::create_versioned_payload("vector_search", &json_data);
 
         // Extract search optimization from proto request
         let search_optimization = req.search_optimization.as_ref();
@@ -768,7 +768,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
             // Extract metadata filters from the first query (for now)
             let metadata_filters = if let Some(first_query) = req.queries.first() {
-                if let Some(metadata_filter) = &first_query.metadata_filter {
+                if let Some(_metadata_filter) = &first_query.metadata_filter {
                     // Convert MetadataFilter to HashMap<String, Value> 
                     // For now, just return None as proper conversion is complex
                     None
@@ -904,7 +904,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     index + 1, req.queries.len(), query_params.quantization_hint);
                 
                 // Extract metadata filters from this specific query
-                let metadata_filters: Option<std::collections::HashMap<String, serde_json::Value>> = if let Some(metadata_filter) = &query.metadata_filter {
+                let _metadata_filters: Option<std::collections::HashMap<String, serde_json::Value>> = if let Some(_metadata_filter) = &query.metadata_filter {
                     // Convert MetadataFilter to HashMap<String, Value>
                     // For now, just return None as proper conversion is complex
                     None
@@ -1152,7 +1152,7 @@ impl ProximaDb for ProximaDbGrpcService {
             req.vector_id
         );
 
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
 
         // Extract include fields
         let include_fields = req.include_fields.as_ref();

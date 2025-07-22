@@ -22,4 +22,9 @@ pub mod metadata_indexes_tests;
 pub mod metadata_backend_tests;
 pub mod test_wal_config_simple;
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
-pub mod lsm_flush_compaction_tests;
+// LSM tests with consistent configuration
+pub mod lsm_test_config;
+pub mod lsm_core_tests;
+pub mod lsm_atomic_operations_test;
+pub mod lsm_sstable_format_test;
+pub mod lsm_flush_test;

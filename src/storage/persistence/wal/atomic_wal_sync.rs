@@ -194,7 +194,7 @@ impl AtomicWalSync {
     /// Immediate sync: Write batch to disk atomically
     async fn sync_immediate(
         &self,
-        operation_id: &str,
+        _operation_id: &str,
         paths: &CollectionPaths,
         batch: &WalVectorBatch,
         serialization_strategy: &SerializationStrategy,
@@ -330,7 +330,7 @@ impl AtomicWalSync {
             "batch_count": 1,
         });
 
-        let checkpoint_path = format!("{}/latest.checkpoint", paths.wal_checkpoints);
+        let _checkpoint_path = format!("{}/latest.checkpoint", paths.wal_checkpoints);
         let checkpoint_bytes = serde_json::to_vec_pretty(&checkpoint_data)
             .context("Failed to serialize checkpoint data")?;
 

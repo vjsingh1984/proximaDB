@@ -5,6 +5,7 @@
 
 pub mod bloom_filter;
 pub mod compaction;
+pub mod manifest;
 pub mod readers;
 pub mod sstable_writer;
 pub mod unified_search_engine;
@@ -14,23 +15,28 @@ pub mod unified_search_engine;
 pub mod bloom_filter_tests;
 
 // Re-export main types
-pub use bloom_filter::{BloomFilter, BloomFilterBuilder, BloomFilterConfig};
+pub use bloom_filter::{
+    BloomFilterStrategy, BloomFilterConfig, BloomFilterFactory,
+    SstableBloomFilter, BloomStrategy, CompositeBloomFilter,
+};
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
+pub use manifest::{LsmManifest, SstableFileInfo, ManifestStats};
 pub use readers::UnifiedSstableReader;
 
 // Additional exports for unified reader (SstableHeader is already defined below)
 pub use sstable_writer::SstableWriter;
 
 // Main LSM Tree implementation (contents from original lsm/mod.rs)
-use crate::core::{LsmConfig, VectorId, VectorRecord};
+use crate::core::{LsmConfig, VectorRecord};
 use crate::core::search::SearchParams;
-use crate::storage::optimization::{MetadataSorter, SortingStats};
-use self::readers::unified_sstable_reader;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem, FileOptions};
+use crate::storage::optimization::{SortingStats};
+// Removed duplicate import - readers module is already defined above
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,
 };
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -130,19 +136,21 @@ pub struct SstableHeader {
     pub block_count: u32,
 }
 
-/// Index entry for fast key lookups in SSTable with block organization
+/// Index entry for fast key lookups in SSTable with block organization and metadata statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub key: String,
     pub offset: u64,
     pub size: u32,
-    // Enhanced fields for block organization (optional for backward compatibility)
-    #[serde(default)]
     pub block_id: u32,
-    #[serde(default)]
     pub block_offset: u32,
-    #[serde(default)]
     pub compressed: bool,
+    /// Minimum values for each metadata column in this block
+    pub metadata_min_values: HashMap<String, serde_json::Value>,
+    /// Maximum values for each metadata column in this block
+    pub metadata_max_values: HashMap<String, serde_json::Value>,
+    /// Count of null values for each metadata column in this block
+    pub metadata_null_counts: HashMap<String, u32>,
 }
 
 // Default function for serde
@@ -184,8 +192,11 @@ pub struct LsmTree {
     // REMOVED: wal_manager - Not needed for pure SSTable storage
     data_dir: PathBuf,
     compaction_manager: Option<Arc<CompactionManager>>,
+    manifest: Arc<LsmManifest>,
     filesystem: Arc<FilesystemFactory>,
     // Collection service removed - indexing configuration handled by AXIS
+    // Atomic coordinator for safe flush and compaction operations
+    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
 }
 
 impl LsmTree {
@@ -205,19 +216,60 @@ impl LsmTree {
         
         // Create directory asynchronously
         fs.create_dir_all(&data_dir_str).await?;
+        
+        // Always create atomic coordinator for safe operations
+        let atomic_coordinator = Arc::new(
+            UnifiedAtomicCoordinator::new(filesystem.clone(), None)
+                .await
+                .context("Failed to create atomic coordinator")?
+        );
+        
+        // Create manifest for SSTable tracking
+        let manifest = Arc::new(LsmManifest::new(
+            collection_id.clone(),
+            data_dir.clone(),
+            filesystem.clone(),
+            Some(atomic_coordinator.clone()),
+        ));
+        
+        // Load existing manifest if present
+        if let Err(e) = manifest.load().await {
+            tracing::warn!("Failed to load existing manifest: {}", e);
+        }
 
         Ok(Self {
             config,
-            collection_id,
+            collection_id: collection_id.clone(),
             data_dir,
             compaction_manager: None,
+            manifest,
             filesystem,
+            atomic_coordinator,
         })
     }
-
+    
     /// Get the data directory for this LSM tree
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
+    }
+    
+    /// Enable compaction with the LSM tree's atomic coordinator
+    pub async fn enable_compaction(&mut self, worker_count: usize) -> Result<()> {
+        if self.compaction_manager.is_none() {
+            let mut compaction_manager = CompactionManager::with_atomic_coordinator(
+                self.config.clone(),
+                Some(self.atomic_coordinator.clone()),
+                Some(self.manifest.clone()),
+            );
+            
+            // Start background workers
+            compaction_manager.start_workers(worker_count).await?;
+            
+            self.compaction_manager = Some(Arc::new(compaction_manager));
+            
+            info!("✅ LSM: Compaction enabled with {} workers and atomic operations", worker_count);
+        }
+        Ok(())
     }
 
 
@@ -250,19 +302,12 @@ impl LsmTree {
             sort_stats.compression_estimate * 100.0
         );
 
-        // Create SST file path
-        let sst_filename = format!("sst_{}_{}.sst", self.collection_id, Utc::now().timestamp());
-        let sst_path = self.data_dir.join(&self.collection_id).join(sst_filename);
-
-        // Ensure directory exists using plugin filesystem
-        if let Some(parent) = sst_path.parent() {
-            let fs = self.filesystem.get_filesystem("file:///")?;
-            let parent_str = parent.to_string_lossy();
-            fs.create_dir_all(&parent_str)
-                .await
-                .map_err(|e| anyhow::anyhow!("Filesystem error: {}", e))?;
-        }
-
+        // Get the collection storage URL from assignment service
+        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        
+        // Generate SSTable filename
+        let sst_filename = format!("{}_level0_{}.sst", self.collection_id, Utc::now().timestamp_millis());
+        
         // Convert sorted vectors to LsmRecord format with sequence numbers
         let mut entries: BTreeMap<String, LsmRecord> = BTreeMap::new();
         let mut sequence_number = 0u64;
@@ -276,32 +321,132 @@ impl LsmTree {
             sequence_number += 1;
         }
 
-        // Use optimized SSTable writer with bloom filters and atomic writes
-        let block_size = (self.config.block_size_kb * 1024) as usize;
-        let writer = SstableWriter::new(&sst_path, block_size, Arc::clone(&self.filesystem));
-        writer.write_records(entries.clone()).await
-            .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
+        // Write SSTable using atomic operations (always available now)
+        let atomic_coordinator = &self.atomic_coordinator;
         
-        let fs = self.filesystem.get_filesystem("file:///")?;
-        let sst_path_str = sst_path.to_string_lossy();
-        let metadata = fs.metadata(&sst_path_str)
+        // Use atomic flush pattern
+        info!("🔄 LSM: Using atomic flush for {}", sst_filename);
+        
+        // Begin atomic operation
+        let staging_config = StagingConfig {
+            base_url: collection_storage_url.clone(),
+            collection_id: None, // Already included in base_url
+            operation_type: StagingOperationType::Flush,
+            custom_staging_dir: None,
+            auto_cleanup: true,
+            max_orphaned_age_hours: 24,
+        };
+        
+        let atomic_op = atomic_coordinator
+            .begin_atomic_operation(&staging_config)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get file size: {}", e))?;
-        let data_len = metadata.size;
+            .context("Failed to begin atomic flush operation")?;
+        
+        // Write to staging using SSTable writer
+        let staging_url = format!("{}/{}", atomic_op.staging_url, sst_filename);
+        let block_size = (self.config.block_size_kb * 1024) as usize;
+        let writer = SstableWriter::new(&staging_url, block_size, Arc::clone(&self.filesystem));
+        // Use bloom filter config from LSM config if available
+        let writer = if let Some(ref bloom_config) = self.config.bloom_filter_config {
+            writer.with_bloom_config(bloom_config.clone())
+        } else {
+            writer
+        };
+        writer.write_records(entries.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to write SSTable to staging: {}", e))?;
+        
+        // Get file size from staging
+        let fs = self.filesystem.get_filesystem(&staging_url)?;
+        let metadata = fs.metadata(&staging_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get staging file size: {}", e))?;
+        let file_size = metadata.size;
+        
+        // Finalize atomic operation
+        atomic_coordinator
+            .finalize_atomic_operation(&atomic_op.operation_id)
+            .await
+            .context("Failed to finalize atomic flush")?;
+        
+        let final_url = format!("{}/{}", collection_storage_url.trim_end_matches('/'), sst_filename);
+        let (sst_url, data_len) = (final_url, file_size);
 
         info!(
             "✅ LSM: Flushed {} vectors to SSTable: {}",
             entries.len(),
-            sst_path.display()
+            sst_url
         );
+        
+        // Register the new SSTable with the manifest
+        let min_key = entries.keys().next().cloned().unwrap_or_default();
+        let max_key = entries.keys().last().cloned().unwrap_or_default();
+        let min_sequence = entries.values().map(|r| r.sequence_number).min().unwrap_or(0);
+        let max_sequence = entries.values().map(|r| r.sequence_number).max().unwrap_or(0);
+        
+        // Collect metadata statistics
+        let mut metadata_columns = HashMap::new();
+        for record in entries.values() {
+            for (column, value) in &record.metadata {
+                let stats = metadata_columns.entry(column.clone()).or_insert_with(|| {
+                    manifest::ColumnStats {
+                        min_value: value.clone(),
+                        max_value: value.clone(),
+                        null_count: 0,
+                        distinct_count_estimate: 0,
+                    }
+                });
+                
+                // Update min/max values
+                if let (Some(v), Some(min), Some(max)) = (value.as_f64(), stats.min_value.as_f64(), stats.max_value.as_f64()) {
+                    if v < min {
+                        stats.min_value = value.clone();
+                    }
+                    if v > max {
+                        stats.max_value = value.clone();
+                    }
+                } else if let (Some(v), Some(min), Some(max)) = (value.as_str(), stats.min_value.as_str(), stats.max_value.as_str()) {
+                    if v < min {
+                        stats.min_value = value.clone();
+                    }
+                    if v > max {
+                        stats.max_value = value.clone();
+                    }
+                }
+                
+                if value.is_null() {
+                    stats.null_count += 1;
+                }
+            }
+        }
+        
+        let file_info = SstableFileInfo {
+            file_id: sst_filename.clone(),
+            file_path: sst_filename.clone(),
+            level: 0,
+            size_bytes: data_len,
+            record_count: entries.len() as u64,
+            min_key,
+            max_key,
+            created_at: chrono::Utc::now().timestamp(),
+            last_compacted_at: None,
+            bloom_fpr: 0.01, // Default, would be calculated from actual bloom filter
+            metadata_columns,
+            marked_for_deletion: false,
+            min_sequence,
+            max_sequence,
+        };
+        
+        if let Err(e) = self.manifest.add_sstable(file_info).await {
+            tracing::warn!("Failed to register SSTable in manifest: {}", e);
+        }
 
         // Trigger compaction if manager is available
         if let Some(_compaction_manager) = &self.compaction_manager {
             let _task = CompactionTask {
                 collection_id: self.collection_id.clone(),
                 level: 0, // Start at level 0
-                input_files: vec![sst_path.clone()],
-                output_file: sst_path.with_extension("compacted.sst"),
+                input_files: vec![std::path::PathBuf::from(sst_url.clone())],
+                output_file: std::path::PathBuf::from(format!("{}.compacted", sst_url)),
                 priority: CompactionPriority::Medium,
             };
             // For now, just log that we would trigger compaction
@@ -323,7 +468,7 @@ impl LsmTree {
             completed_at: Utc::now(),
             engine_metrics: {
                 let mut metrics = HashMap::new();
-                metrics.insert("sstable_path".to_string(), serde_json::Value::String(sst_path.display().to_string()));
+                metrics.insert("sstable_path".to_string(), serde_json::Value::String(sst_url.clone()));
                 metrics.insert("level".to_string(), serde_json::Value::Number(serde_json::Number::from(0)));
                 metrics
             },
@@ -601,52 +746,47 @@ impl UnifiedStorageEngine for LsmTree {
         // LSM-specific compaction: Level-based SSTable merging
         if let Some(compaction_manager) = &self.compaction_manager {
             tracing::debug!(
-                "🔄 LSM COMPACTION: Checking for SSTable files in {}",
+                "🔄 LSM COMPACTION: Checking for compaction needs in {}",
                 self.data_dir.display()
             );
 
-            // Check for SSTable files that need compaction
-            let mut sst_files = Vec::new();
-            if let Ok(mut dir_entries) = tokio::fs::read_dir(&self.data_dir).await {
-                while let Ok(Some(entry)) = dir_entries.next_entry().await {
-                    if let Some(filename) = entry.file_name().to_str() {
-                        if filename.starts_with(collection_id) && filename.ends_with(".sst") {
-                            sst_files.push(entry.path());
-                        }
-                    }
-                }
-            }
+            // Get collection storage directory
+            let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+            let collection_dir = std::path::PathBuf::from(
+                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+            );
 
-            if sst_files.len() >= self.config.compaction_threshold as usize {
-                tracing::debug!(
-                    "🗂️ LSM COMPACTION: Found {} SSTable files, threshold is {}",
-                    sst_files.len(),
-                    self.config.compaction_threshold
+            // Check if compaction is needed
+            if let Some(task) = compaction_manager
+                .check_compaction_needed(&collection_dir, collection_id)
+                .await?
+            {
+                tracing::info!(
+                    "🔄 LSM COMPACTION: Scheduling compaction for collection {} level {}",
+                    task.collection_id, task.level
                 );
 
-                // Simulate LSM compaction: merge multiple SSTables into fewer ones
-                let files_to_merge = sst_files.len();
-                let merged_files = (files_to_merge + 1) / 2; // Merge pairs
-                let entries_processed = files_to_merge * 1000; // Estimate
-                let entries_removed = entries_processed / 10; // 10% duplicates/tombstones
-                let bytes_reclaimed = entries_removed * 256; // Average entry size
+                // Schedule the compaction task
+                compaction_manager.schedule_compaction(task).await?;
 
+                // Get compaction stats for result
+                let stats = compaction_manager.get_stats().await;
+                
                 result.collections_affected.push(collection_id.clone());
-                result.entries_processed = entries_processed as u64;
-                result.entries_removed = entries_removed as u64;
-                result.bytes_read = (files_to_merge * 100 * 1024) as u64; // Estimate bytes read
-                result.bytes_written = (merged_files * 80 * 1024) as u64; // Estimate bytes written
-                result.input_files = files_to_merge as u64;
-                result.output_files = merged_files as u64;
+                result.entries_processed = stats.files_merged * 1000; // Estimate
+                result.entries_removed = stats.expired_records_deleted + stats.tombstones_removed;
+                result.bytes_read = stats.bytes_read;
+                result.bytes_written = stats.bytes_written;
+                result.input_files = stats.files_merged;
+                result.output_files = stats.total_compactions;
                 result.success = true;
 
-                tracing::info!("✅ LSM COMPACTION: Collection {} - {} SSTables → {} SSTables, {} entries removed", 
-                              collection_id, files_to_merge, merged_files, entries_removed);
-            } else {
-                tracing::debug!(
-                    "📊 LSM COMPACTION: Only {} SSTable files, compaction threshold not met",
-                    sst_files.len()
+                tracing::info!(
+                    "✅ LSM COMPACTION: Scheduled compaction for collection {} (files merged: {}, bytes written: {})",
+                    collection_id, stats.files_merged, stats.bytes_written
                 );
+            } else {
+                tracing::debug!("📊 LSM COMPACTION: No compaction needed for collection {}", collection_id);
                 result.success = true; // No compaction needed is still successful
             }
         } else {
@@ -665,59 +805,52 @@ impl UnifiedStorageEngine for LsmTree {
             return Ok(None);
         }
 
-        tracing::debug!("🔍 LSM: Looking up vector {} in collection {} SSTables (with bloom filter optimization)", vector_id, collection_id);
+        tracing::debug!("🔍 LSM: Looking up vector {} in collection {} using manifest", vector_id, collection_id);
 
-        // LSM is now pure SSTable storage - search only SSTable files
-        // LSM files are stored in collection-specific directories
-        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
-        let collection_dir = std::path::PathBuf::from(collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url));
-
-        if !collection_dir.exists() {
-            tracing::debug!("📂 LSM: Collection directory {} does not exist", collection_dir.display());
+        // Get SSTable files that might contain this key from manifest
+        let overlapping_files = self.manifest.get_overlapping_files(vector_id, vector_id).await;
+        
+        if overlapping_files.is_empty() {
+            tracing::debug!("📂 LSM: No SSTable files overlap with key {}", vector_id);
             return Ok(None);
         }
-
-        // Read all SSTable files in the collection directory
-        let mut dir_entries = match tokio::fs::read_dir(&collection_dir).await {
-            Ok(entries) => entries,
-            Err(e) => {
-                tracing::warn!("⚠️ LSM: Failed to read collection directory {}: {}", collection_dir.display(), e);
-                return Ok(None);
-            }
-        };
-
+        
+        let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
+        let collection_dir = std::path::PathBuf::from(collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url));
+        
         let mut sstables_checked = 0;
         let mut bloom_filter_hits = 0;
-
-        while let Ok(Some(entry)) = dir_entries.next_entry().await {
-            if let Some(filename) = entry.file_name().to_str() {
-                if filename.ends_with(".sst") {
-                    sstables_checked += 1;
+        
+        // Search through files in key range order (smallest range first)
+        for file_info in overlapping_files {
+            sstables_checked += 1;
+            
+            let file_path = collection_dir.join(&file_info.file_path);
+            let path_str = file_path.to_string_lossy().to_string();
+            
+            // Use unified SSTable reader with bloom filter
+            let reader = UnifiedSstableReader::new(self.filesystem.clone());
+            
+            // Load metadata (includes bloom filter)
+            if reader.load_metadata(&path_str).await.is_ok() {
+                // Check bloom filter first
+                if reader.might_contain_key(&path_str, vector_id).await {
+                    bloom_filter_hits += 1;
+                    tracing::trace!("🌸 LSM: Bloom filter hit for {} in {}", vector_id, file_info.file_id);
                     
-                    // Use unified SSTable reader with bloom filter
-                    let reader = UnifiedSstableReader::new(self.filesystem.clone());
-                    
-                    // Load metadata (includes bloom filter)
-                    let path_str = entry.path().to_string_lossy().to_string();
-                    if reader.load_metadata(&path_str).await.is_ok() {
-                        // Check bloom filter first
-                        if reader.might_contain_key(&path_str, vector_id).await {
-                            bloom_filter_hits += 1;
-                            tracing::trace!("🌸 LSM: Bloom filter hit for {} in {}", vector_id, filename);
-                            
-                            // Actually search the SSTable
-                            if let Ok(Some(record)) = reader.get_vector(&path_str, vector_id).await {
-                                tracing::debug!(
-                                    "✅ LSM: Found vector {} in SSTable {} (checked {}/{} SSTables, {} bloom hits)",
-                                    vector_id, filename, bloom_filter_hits, sstables_checked, bloom_filter_hits
-                                );
-                                return Ok(Some(record));
-                            }
-                        } else {
-                            tracing::trace!("🌸 LSM: Bloom filter miss for {} in {} - skipping", vector_id, filename);
-                        }
+                    // Actually search the SSTable
+                    if let Ok(Some(record)) = reader.get_vector(&path_str, vector_id).await {
+                        tracing::debug!(
+                            "✅ LSM: Found vector {} in SSTable {} (level {}, checked {}/{} SSTables, {} bloom hits)",
+                            vector_id, file_info.file_id, file_info.level, bloom_filter_hits, sstables_checked, bloom_filter_hits
+                        );
+                        return Ok(Some(record));
                     }
+                } else {
+                    tracing::trace!("🌸 LSM: Bloom filter miss for {} in {} - skipping", vector_id, file_info.file_id);
                 }
+            } else {
+                tracing::warn!("⚠️ Failed to load metadata for SSTable {}", file_info.file_id);
             }
         }
 
@@ -739,80 +872,120 @@ impl UnifiedStorageEngine for LsmTree {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
-        use crate::compute::unified_distance::UnifiedDistanceCompute;
-        
         // Check if this is the correct collection
         if collection_id != &self.collection_id {
+            debug!("🔍 LSM: Collection mismatch - requested: {}, engine: {}", collection_id, &self.collection_id);
             return Ok(Vec::new());
         }
         
-        debug!("🔍 LSM: Searching collection {} - Pure SSTable search (no memtable)", collection_id);
+        debug!("🔍 LSM: Searching collection {} using manifest", collection_id);
         
         let mut all_results = Vec::new();
         
-        // LSM is now pure SSTable storage - search only SSTables
-        // All data comes from flushed SSTables, no memtable to search
+        // Get SSTable files from manifest based on metadata filters
+        let sstable_files = if let Some(filters) = metadata_filters {
+            // Get files that might contain the filtered metadata
+            let mut matching_files = Vec::new();
+            for (column, value) in filters {
+                let files = self.manifest.get_files_with_metadata(column, value).await;
+                matching_files.extend(files);
+            }
+            // Deduplicate files
+            matching_files.sort_by(|a, b| a.file_id.cmp(&b.file_id));
+            matching_files.dedup_by(|a, b| a.file_id == b.file_id);
+            matching_files
+        } else {
+            // Get all files from manifest
+            let mut all_files = Vec::new();
+            for level in 0..self.config.level_count {
+                all_files.extend(self.manifest.get_files_at_level(level).await);
+            }
+            all_files
+        };
+        
+        if sstable_files.is_empty() {
+            debug!("📂 LSM: No SSTable files found in manifest");
+            return Ok(all_results);
+        }
+        
+        debug!("🔍 LSM: Found {} SSTable files to search", sstable_files.len());
+        
         let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
         let collection_dir = std::path::PathBuf::from(
             collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
         );
         
-        if collection_dir.exists() {
-            let mut dir_entries = tokio::fs::read_dir(&collection_dir).await?;
-            let mut sstables_scanned = 0;
-            let mut records_evaluated = 0;
+        let mut sstables_scanned = 0;
+        let mut records_evaluated = 0;
+        
+        for file_info in sstable_files {
+            sstables_scanned += 1;
             
-            while let Ok(Some(entry)) = dir_entries.next_entry().await {
-                if let Some(filename) = entry.file_name().to_str() {
-                    if filename.ends_with(".sst") {
-                        sstables_scanned += 1;
-                        
-                        // Use unified SSTable reader for optimized access
-                        let reader = UnifiedSstableReader::new(self.filesystem.clone());
-                        
-                        // Load metadata and search vectors
-                        let path_str = entry.path().to_string_lossy().to_string();
-                        if reader.load_metadata(&path_str).await.is_ok() {
-                            // Note: For vector search, we can't use bloom filter as we need all vectors
-                            // But we still benefit from block-based reading and index
-                            
-                            // Create a collection context for the search
-                            let context = unified_sstable_reader::CollectionContext {
-                                collection_id: self.collection_id.clone(),
-                                file_path: path_str.clone(),
-                                sstable_files: vec![path_str.clone()],
-                                total_vectors: 0, // Will be populated during search
-                                metadata_columns: vec![],
-                                level: 0,
-                                creation_time: chrono::Utc::now(),
-                            };
-                            
-                            // Create search params for the reader
-                            let search_params = SearchParams {
-                                query_vectors: Some(vec![query_vector.to_vec()]),
-                                filters: metadata_filters.map(|f| f.clone()),
-                                filter_expression: None,
-                                top_k: Some(1000), // Use a large k to get all results
-                                distance_metric: Some(*distance_metric),
-                                ..Default::default()
-                            };
-                            
-                            if let Ok(search_results) = reader.search_vectors(&search_params, &context).await {
-                                records_evaluated += search_results.len();
-                                
-                                // Results from reader are already search::SearchResult type
-                                all_results.extend(search_results);
-                            }
-                        }
-                    }
+            // Use unified SSTable reader for optimized access
+            let reader = UnifiedSstableReader::new(self.filesystem.clone());
+            
+            // Create proper file path
+            let file_path = collection_dir.join(&file_info.file_path);
+            let path_str = if collection_storage_url.starts_with("file://") {
+                format!("file://{}", file_path.to_string_lossy())
+            } else {
+                // For cloud storage, construct the full URL
+                format!("{}/{}", collection_storage_url.trim_end_matches('/'), file_info.file_path)
+            };
+            
+            debug!("🔍 LSM: Searching SSTable {} (level {})", file_info.file_id, file_info.level);
+            
+            match reader.load_metadata(&path_str).await {
+                Ok(_) => {
+                    debug!("🔍 LSM: Successfully loaded metadata for SSTable: {}", file_info.file_id);
+                }
+                Err(e) => {
+                    debug!("🔍 LSM: Failed to load metadata for SSTable {}: {}", file_info.file_id, e);
+                    continue;
                 }
             }
             
-            debug!(
-                "📊 LSM: Scanned {} SSTables, evaluated {} records for search",
-                sstables_scanned, records_evaluated
-            );
+            // Create a collection context for the search
+            let context = readers::CollectionContext {
+                collection_id: self.collection_id.clone(),
+                file_path: path_str.clone(),
+                sstable_files: vec![path_str.clone()],
+                total_vectors: file_info.record_count as usize,
+                metadata_columns: file_info.metadata_columns.keys().cloned().collect(),
+                level: file_info.level as usize,
+                creation_time: chrono::DateTime::from_timestamp(file_info.created_at, 0).unwrap_or_else(chrono::Utc::now),
+            };
+            
+            // Create search params for the reader
+            let search_params = SearchParams {
+                query_vectors: Some(vec![query_vector.to_vec()]),
+                filters: metadata_filters.map(|f| f.clone()),
+                filter_expression: None,
+                top_k: Some(1000), // Use a large k to get all results
+                distance_metric: Some(*distance_metric),
+                ..Default::default()
+            };
+            
+            debug!("🔍 LSM: Searching SSTable with {} records", file_info.record_count);
+            
+            match reader.search_vectors(&search_params, &context).await {
+                Ok(search_results) => {
+                    debug!("🔍 LSM: SSTable {} returned {} results", file_info.file_id, search_results.len());
+                    records_evaluated += search_results.len();
+                    
+                    // Results from reader are already search::SearchResult type
+                    all_results.extend(search_results);
+                }
+                Err(e) => {
+                    debug!("🔍 LSM: Error reading SSTable {}: {}", file_info.file_id, e);
+                }
+            }
         }
+        
+        debug!(
+            "📊 LSM: Scanned {} SSTables, evaluated {} records for search",
+            sstables_scanned, records_evaluated
+        );
         
         // Sort by score (descending) and take top k
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -1008,10 +1181,16 @@ impl LsmTree {
                 continue;
             }
 
+            // Get the collection storage URL from assignment service
+            let collection_storage_url = self.get_collection_storage_url(&self.collection_id).await?;
+            let data_dir = PathBuf::from(
+                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+            );
+
             // Generate SSTable filename with level and timestamp
             let timestamp = Utc::now().timestamp();
             let sst_filename = format!("{}_level{}_{}.sst", self.collection_id, level, timestamp);
-            let sst_path = self.data_dir.join(&self.collection_id).join(&sst_filename);
+            let sst_path = data_dir.join(&sst_filename);
 
             // Ensure directory exists
             if let Some(parent) = sst_path.parent() {
@@ -1183,7 +1362,7 @@ impl LsmTree {
 
         // Step 2: Build bloom filter for fast key existence checks
         let bloom_filter = self.build_bloom_filter(records).await?;
-        let bloom_data = bincode::serialize(&bloom_filter)
+        let bloom_data = bloom_filter.serialize()
             .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))?;
 
         // Step 3: Organize records into blocks for better cache performance
@@ -1404,18 +1583,22 @@ impl LsmTree {
     }
 
     /// Build bloom filter for fast key existence checks
-    async fn build_bloom_filter(&self, records: &[LsmRecord]) -> Result<BloomFilter> {
-        let config = BloomFilterConfig::default();
-        let mut filter = BloomFilter::new(records.len(), &config);
+    async fn build_bloom_filter(&self, records: &[LsmRecord]) -> Result<Box<dyn BloomFilterStrategy>> {
+        let config = BloomFilterConfig {
+            strategy: BloomStrategy::ByteAligned,
+            expected_items: records.len(),
+            ..Default::default()
+        };
+        let mut filter = BloomFilterFactory::create(&config);
         
         // Add all keys to bloom filter
         for record in records {
-            filter.insert(&record.id);
+            filter.insert(record.id.as_bytes());
         }
         
         debug!(
             "📊 LSM: Built bloom filter with {} bits for {} keys (FPR: {:.2}%)",
-            filter.num_bits,
+            filter.bit_count(),
             records.len(),
             filter.false_positive_rate() * 100.0
         );
@@ -1618,6 +1801,10 @@ impl LsmTree {
                     block_id: block.block_id,
                     block_offset,
                     compressed: is_compressed,
+                    // Metadata statistics (empty for backward compatibility)
+                    metadata_min_values: HashMap::new(),
+                    metadata_max_values: HashMap::new(),
+                    metadata_null_counts: HashMap::new(),
                 });
                 block_offset += std::mem::size_of::<LsmRecord>() as u32;
             }
@@ -1673,7 +1860,7 @@ impl LsmTree {
             return Err(anyhow::anyhow!("Collection ID mismatch: expected {}, got {}", self.collection_id, collection_id));
         }
         
-        // Create empty compaction parameters
+        // Create compaction parameters (LSM doesn't have collection service access)
         let params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -1681,6 +1868,7 @@ impl LsmTree {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None, // LSM doesn't have collection service
         };
         
         // Use the existing do_compact implementation

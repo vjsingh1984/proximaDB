@@ -8,6 +8,7 @@ mod tests {
     use crate::storage::BatchId;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::wal::{AvroSerializationStrategy, BincodeSerializationStrategy, WalBatchStrategy};
+    // WalBatchStrategyExt removed - use write_native_batch directly
     use crate::storage::WalConfig;
     use crate::compute::distance::DistanceMetric;
     use chrono::Utc;
@@ -116,7 +117,7 @@ mod tests {
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
 
-        let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
         
         assert_eq!(sequences.len(), 1);
         assert!(sequences[0] > 0);
@@ -130,7 +131,7 @@ mod tests {
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
 
-        let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
         
         assert_eq!(sequences.len(), 1);
         assert!(sequences[0] > 0);
@@ -148,7 +149,7 @@ mod tests {
         ];
         let batch = create_test_wal_batch(collection_id, vectors);
 
-        let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
         
         assert_eq!(sequences.len(), 3);
         
@@ -170,7 +171,7 @@ mod tests {
         ];
         let batch = create_test_wal_batch(collection_id, vectors);
 
-        let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
         
         assert_eq!(sequences.len(), 3);
         
@@ -187,10 +188,13 @@ mod tests {
         let collection_id = "test_collection";
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let search_id = vector_record.id.clone();
+        
+        // Create a batch and write it properly with collection_id
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Search for the vector
         let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().unwrap_or_default())
@@ -209,10 +213,13 @@ mod tests {
         let collection_id = "test_collection";
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let search_id = vector_record.id.clone();
+        
+        // Create a batch and write it properly with collection_id
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Search for the vector
         let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().unwrap_or_default())
@@ -235,9 +242,10 @@ mod tests {
             create_test_vector_record(collection_id, "vector_3", vec![0.0, 0.0, 1.0, 0.0]),
         ];
         let batch = create_test_wal_batch(collection_id, vectors);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Search for similar vectors
         let query_vector = vec![1.0, 0.0, 0.0, 0.0];
@@ -266,9 +274,10 @@ mod tests {
             create_test_vector_record(collection_id, "vector_3", vec![0.0, 0.0, 1.0, 0.0]),
         ];
         let batch = create_test_wal_batch(collection_id, vectors);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Search for similar vectors
         let query_vector = vec![1.0, 0.0, 0.0, 0.0];
@@ -295,10 +304,10 @@ mod tests {
             create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]),
             create_test_vector_record(collection_id, "vector_2", vec![5.0, 6.0, 7.0, 8.0]),
         ];
-        let batch = create_test_wal_batch(collection_id, vectors.clone());
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        // Create batch and use write_native_batch which properly handles collection_id
+        let batch = create_test_wal_batch(collection_id, vectors);
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Get all vectors for the collection
         let collection_vectors = strategy.get_collection_vectors(&collection_id.to_string())
@@ -321,10 +330,10 @@ mod tests {
             create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]),
             create_test_vector_record(collection_id, "vector_2", vec![5.0, 6.0, 7.0, 8.0]),
         ];
-        let batch = create_test_wal_batch(collection_id, vectors.clone());
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        // Create batch and use write_native_batch which properly handles collection_id
+        let batch = create_test_wal_batch(collection_id, vectors);
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Get all vectors for the collection
         let collection_vectors = strategy.get_collection_vectors(&collection_id.to_string())
@@ -345,9 +354,10 @@ mod tests {
         let collection_id = "test_collection";
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Get stats
         let stats = strategy.get_stats().await.expect("Failed to get stats");
@@ -367,9 +377,10 @@ mod tests {
         let collection_id = "test_collection";
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
-
-        // Write the batch
-        strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        
+        // Use write_native_batch which accepts collection_id
+        strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Get stats
         let stats = strategy.get_stats().await.expect("Failed to get stats");
@@ -390,8 +401,10 @@ mod tests {
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
 
-        let sequences = strategy.write_vector_batch_with_sync(batch, true)
-            .await.expect("Failed to write batch with sync");
+        // write_vector_batch_with_sync doesn't have collection_id, but data should still go to right place
+        // Use write_native_batch then force_sync instead
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
+        strategy.force_sync(Some(&collection_id.to_string())).await.expect("Failed to sync");
         
         assert_eq!(sequences.len(), 1);
         assert!(sequences[0] > 0);
@@ -405,8 +418,10 @@ mod tests {
         let vector_record = create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
 
-        let sequences = strategy.write_vector_batch_with_sync(batch, true)
-            .await.expect("Failed to write batch with sync");
+        // write_vector_batch_with_sync doesn't have collection_id, but data should still go to right place
+        // Use write_native_batch then force_sync instead
+        let sequences = strategy.write_native_batch(batch, collection_id).await.expect("Failed to write batch");
+        strategy.force_sync(Some(&collection_id.to_string())).await.expect("Failed to sync");
         
         assert_eq!(sequences.len(), 1);
         assert!(sequences[0] > 0);
@@ -421,10 +436,11 @@ mod tests {
             create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]),
             create_test_vector_record(collection_id, "vector_2", vec![5.0, 6.0, 7.0, 8.0]),
         ];
-        let batch = create_test_wal_batch(collection_id, vectors);
 
-        // Write the batch
-        let sequences = strategy.write_vector_batch(batch).await.expect("Failed to write batch");
+        // Create batch and use write_native_batch which properly handles collection_id
+        let batch = create_test_wal_batch(collection_id, vectors);
+        let sequences = strategy.write_native_batch(batch, collection_id)
+            .await.expect("Failed to write batch");
 
         // Read batches
         let batches = strategy.read_all_batches(&collection_id.to_string(), Some(10))
@@ -442,13 +458,15 @@ mod tests {
         let collection1 = "collection_1";
         let vector1 = create_test_vector_record(collection1, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
         let batch1 = create_test_wal_batch(collection1, vec![vector1]);
-        strategy.write_vector_batch(batch1).await.expect("Failed to write batch 1");
+        strategy.write_native_batch(batch1, collection1)
+            .await.expect("Failed to write batch 1");
 
         // Write to second collection
         let collection2 = "collection_2";
         let vector2 = create_test_vector_record(collection2, "vector_2", vec![5.0, 6.0, 7.0, 8.0]);
         let batch2 = create_test_wal_batch(collection2, vec![vector2]);
-        strategy.write_vector_batch(batch2).await.expect("Failed to write batch 2");
+        strategy.write_native_batch(batch2, collection2)
+            .await.expect("Failed to write batch 2");
 
         // Verify isolation: each collection should only see its own vectors
         let vectors1 = strategy.get_collection_vectors(&collection1.to_string())

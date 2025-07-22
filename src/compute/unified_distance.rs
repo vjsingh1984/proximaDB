@@ -275,7 +275,7 @@ impl UnifiedDistanceCompute {
         vec_a: &[f32],
         vec_b: &[f32],
         metric: &DistanceMetric,
-        mode: DistanceMode,
+        _mode: DistanceMode,
     ) -> SimilarityResult {
         // Handle dimension mismatches
         if vec_a.len() != vec_b.len() {
@@ -284,7 +284,7 @@ impl UnifiedDistanceCompute {
         
         // Validate vectors for the metric
         let validation = self.validate_vectors_for_metric(vec_a, vec_b, metric);
-        if let ValidationResult::Error(msg) = validation {
+        if let ValidationResult::Error(_msg) = validation {
             return SimilarityResult {
                 raw_value: f32::INFINITY,
                 metric: metric.clone(),
@@ -398,7 +398,7 @@ impl UnifiedDistanceCompute {
     }
     
     /// Normalize raw value for ranking (consistent ordering, lower = better)
-    fn normalize_for_ranking(&self, raw_value: &f32, metric: &DistanceMetric, context: &NormalizationContext) -> f32 {
+    fn normalize_for_ranking(&self, raw_value: &f32, metric: &DistanceMetric, _context: &NormalizationContext) -> f32 {
         match metric {
             DistanceMetric::DotProduct => {
                 // Invert so higher dot product = lower rank value

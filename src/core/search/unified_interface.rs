@@ -200,7 +200,7 @@ impl UnifiedSearchOrchestrator {
     async fn build_search_context(
         &self,
         collection_id: &str,
-        params: &SearchParams,
+        _params: &SearchParams,
     ) -> Result<UnifiedSearchContext> {
         // Get collection from service
         let collection = self.collection_service
@@ -315,7 +315,7 @@ impl UnifiedSearchOrchestrator {
     
     
     /// Analyze storage characteristics for optimization
-    async fn analyze_storage_info(&self, collection_id: &str) -> Result<StorageInfo> {
+    async fn analyze_storage_info(&self, _collection_id: &str) -> Result<StorageInfo> {
         // This would integrate with actual storage analysis
         // For now, provide reasonable defaults
         Ok(StorageInfo {

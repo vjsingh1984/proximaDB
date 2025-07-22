@@ -198,7 +198,7 @@ impl SchemaManager {
         ]));
         schema_fields.push(Field::new(
             "extra_meta", 
-            DataType::List(Arc::new(Field::new("item", key_value_struct, false))), 
+            DataType::List(Arc::new(Field::new("item", key_value_struct, true))),  // Item should be nullable for empty metadata
             true
         ));
         

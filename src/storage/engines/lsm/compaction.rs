@@ -20,10 +20,10 @@
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
 use super::{LsmRecord, SstableWriter};
-use super::readers::unified_sstable_reader::UnifiedSstableReader;
 use crate::core::{String, LsmConfig, VectorId, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -74,11 +74,22 @@ pub struct CompactionManager {
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+    atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+    manifest: Option<Arc<super::LsmManifest>>,
 }
 
 impl CompactionManager {
     /// Create a new compaction manager
     pub fn new(config: LsmConfig) -> Self {
+        Self::with_atomic_coordinator(config, None, None)
+    }
+    
+    /// Create a new compaction manager with atomic coordinator
+    pub fn with_atomic_coordinator(
+        config: LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
+    ) -> Self {
         Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -86,6 +97,8 @@ impl CompactionManager {
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(RwLock::new(CompactionStats::default())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
+            atomic_coordinator,
+            manifest,
         }
     }
 
@@ -98,6 +111,8 @@ impl CompactionManager {
             let shutdown_signal = Arc::clone(&self.shutdown_signal);
             let stats = Arc::clone(&self.stats);
             let active_compactions = Arc::clone(&self.active_compactions);
+            let atomic_coordinator = self.atomic_coordinator.clone();
+            let manifest = self.manifest.clone();
             let config = LsmConfig {
                 memtable_size_mb: self.config.memtable_size_mb,
                 level_count: self.config.level_count,
@@ -131,6 +146,8 @@ impl CompactionManager {
                     stats,
                     active_compactions,
                     config,
+                    atomic_coordinator,
+                    manifest,
                 )
                 .await;
             });
@@ -262,6 +279,8 @@ impl CompactionManager {
         stats: Arc<RwLock<CompactionStats>>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
         config: LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
     ) {
         debug!("Compaction worker {} started", worker_id);
 
@@ -291,7 +310,7 @@ impl CompactionManager {
                 let start_time = std::time::Instant::now();
 
                 // Perform compaction
-                match Self::perform_compaction(&task, &config).await {
+                match Self::perform_compaction(&task, &config, atomic_coordinator.clone(), manifest.clone()).await {
                     Ok(compaction_stats) => {
                         info!(
                             "Compaction completed for collection {} level {} in {}ms",
@@ -345,6 +364,8 @@ impl CompactionManager {
     async fn perform_compaction(
         task: &CompactionTask,
         _config: &LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
     ) -> Result<CompactionStats> {
         let start_time = std::time::Instant::now();
         let mut merged_data = BTreeMap::<VectorId, LsmRecord>::new();
@@ -506,21 +527,153 @@ impl CompactionManager {
             ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
         );
         
-        let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
-        writer.write_records(sorted_lsm_records).await
-            .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+        let bytes_written = if let Some(coordinator) = atomic_coordinator {
+            // Use atomic operations for compaction
+            info!("🔒 LSM COMPACTION: Using atomic operations for compaction");
+            
+            // Create staging configuration
+            let staging_config = StagingConfig {
+                base_url: task.output_file.parent()
+                    .ok_or_else(|| crate::core::StorageError::LsmTree("Invalid output file path".to_string()))?
+                    .to_string_lossy()
+                    .to_string(),
+                collection_id: Some(task.collection_id.clone()),
+                operation_type: StagingOperationType::Compaction,
+                ..Default::default()
+            };
+            
+            // Begin atomic operation
+            let atomic_op = coordinator.begin_atomic_operation(&staging_config).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to begin atomic operation: {}", e)))?;
+            
+            debug!("Started atomic operation {} for compaction", atomic_op.operation_id);
+            
+            // Write to staging area
+            let staging_filename = task.output_file.file_name()
+                .ok_or_else(|| crate::core::StorageError::LsmTree("Invalid output filename".to_string()))?
+                .to_string_lossy();
+            
+            // Serialize the records
+            let mut serialized_data = Vec::new();
+            for (_id, record) in sorted_lsm_records.iter() {
+                let record_data = bincode::serialize(record)
+                    .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+                let len = record_data.len() as u32;
+                serialized_data.extend_from_slice(&len.to_le_bytes());
+                serialized_data.extend_from_slice(&record_data);
+            }
+            
+            // Write to staging
+            coordinator.write_to_staging(
+                &atomic_op.operation_id,
+                &staging_filename,
+                &serialized_data,
+            ).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to write to staging: {}", e)))?;
+            
+            let written_bytes = serialized_data.len() as u64;
+            
+            // Finalize atomic operation
+            coordinator.finalize_atomic_operation(&atomic_op.operation_id).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to finalize atomic operation: {}", e)))?;
+            
+            info!("✅ LSM COMPACTION: Atomic operation {} completed successfully", atomic_op.operation_id);
+            
+            written_bytes
+        } else {
+            // Fallback to direct write (non-atomic)
+            let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
+            writer.write_records(sorted_lsm_records).await
+                .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
 
-        let output_path = task.output_file.to_string_lossy();
-        let metadata = fs.metadata(&output_path)
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-        let bytes_written = metadata.size;
+            let output_path = task.output_file.to_string_lossy();
+            let metadata = fs.metadata(&output_path)
+                .await
+                .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            metadata.size
+        };
 
         debug!(
             "Wrote {} bytes to output file {}",
             bytes_written,
             task.output_file.display()
         );
+        
+        // Update manifest if available
+        if let Some(manifest) = manifest {
+            // Add the new compacted file
+            let output_filename = task.output_file.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown.sst")
+                .to_string();
+            
+            // Collect metadata statistics from the merged records
+            let mut metadata_columns = HashMap::new();
+            for record in merged_data.values() {
+                for (column, value) in &record.metadata {
+                    let stats = metadata_columns.entry(column.clone()).or_insert_with(|| {
+                        super::manifest::ColumnStats {
+                            min_value: value.clone(),
+                            max_value: value.clone(),
+                            null_count: 0,
+                            distinct_count_estimate: 0,
+                        }
+                    });
+                    
+                    // Update min/max
+                    if let (Some(v), Some(min), Some(max)) = (value.as_f64(), stats.min_value.as_f64(), stats.max_value.as_f64()) {
+                        if v < min {
+                            stats.min_value = value.clone();
+                        }
+                        if v > max {
+                            stats.max_value = value.clone();
+                        }
+                    }
+                    
+                    if value.is_null() {
+                        stats.null_count += 1;
+                    }
+                }
+            }
+            
+            let min_key = merged_data.keys().next().map(|k| k.to_string()).unwrap_or_default();
+            let max_key = merged_data.keys().last().map(|k| k.to_string()).unwrap_or_default();
+            let min_sequence = merged_data.values().map(|r| r.sequence_number).min().unwrap_or(0);
+            let max_sequence = merged_data.values().map(|r| r.sequence_number).max().unwrap_or(0);
+            
+            let new_file_info = super::SstableFileInfo {
+                file_id: output_filename.clone(),
+                file_path: output_filename,
+                level: task.level + 1,
+                size_bytes: bytes_written,
+                record_count: merged_data.len() as u64,
+                min_key,
+                max_key,
+                created_at: chrono::Utc::now().timestamp(),
+                last_compacted_at: Some(chrono::Utc::now().timestamp()),
+                bloom_fpr: 0.01,
+                metadata_columns,
+                marked_for_deletion: false,
+                min_sequence,
+                max_sequence,
+            };
+            
+            // Add new file first
+            if let Err(e) = manifest.add_sstable(new_file_info).await {
+                warn!("Failed to add compacted file to manifest: {}", e);
+            }
+            
+            // Remove old files from manifest
+            let input_file_ids: Vec<String> = task.input_files.iter()
+                .filter_map(|p| p.file_name())
+                .filter_map(|n| n.to_str())
+                .map(|s| s.to_string())
+                .collect();
+            
+            if let Err(e) = manifest.remove_sstables(&input_file_ids).await {
+                warn!("Failed to remove input files from manifest: {}", e);
+            }
+        }
 
         // Remove input files after successful compaction using plugin filesystem
         for input_file in &task.input_files {
@@ -652,7 +805,7 @@ impl CompactionManager {
                             0
                         };
                         
-                        let path = PathBuf::from(&entry.path);
+                        let path = PathBuf::from(&entry.url);
                         files_by_level.entry(level).or_insert_with(Vec::new).push(path);
                     }
                 }
@@ -672,7 +825,7 @@ impl CompactionManager {
     /// Sort vector records by metadata for optimal compaction encoding
     /// Uses same sorting strategy as flush operations to maintain consistency
     async fn sort_vectors_for_compaction(
-        mut vector_records: Vec<VectorRecord>,
+        vector_records: Vec<VectorRecord>,
     ) -> Result<(Vec<VectorRecord>, SortingStats)> {
         debug!("🔄 Sorting {} vectors for optimal SSTable compaction encoding", vector_records.len());
         

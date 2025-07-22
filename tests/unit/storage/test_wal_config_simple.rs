@@ -22,7 +22,7 @@ mod wal_config_tests {
     fn test_wal_strategy_type_defaults() {
         // Test default WAL strategy
         let default_strategy = WalStrategyType::default();
-        assert_eq!(default_strategy, WalStrategyType::AvroBatch);
+        assert_eq!(default_strategy, WalStrategyType::BincodeBatch);
         
         // Test all strategy types
         let strategies = vec![
@@ -94,7 +94,7 @@ mod wal_config_tests {
         let config = MultiDiskConfig::default();
         
         assert_eq!(config.data_directories.len(), 1);
-        assert_eq!(config.data_directories[0], "file:///workspace/data/wal");
+        assert_eq!(config.data_directories[0], "file://./data/wal");
         assert_eq!(config.distribution_strategy, DiskDistributionStrategy::LoadBalanced);
         assert!(config.collection_affinity);
         
@@ -311,7 +311,7 @@ mod wal_config_tests {
         let config = WalConfig::default();
         
         // Verify default strategy
-        assert_eq!(config.strategy_type, WalStrategyType::AvroBatch);
+        assert_eq!(config.strategy_type, WalStrategyType::BincodeBatch);
         
         // Verify MVCC and TTL are enabled by default
         assert!(config.enable_mvcc);

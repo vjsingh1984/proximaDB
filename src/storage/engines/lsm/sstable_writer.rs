@@ -11,18 +11,23 @@
 //! Uses unified atomic write strategies for cross-cloud compatibility.
 
 use anyhow::Result;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::storage::persistence::filesystem::{
-    FilesystemFactory, FileSystem, FileOptions,
-    atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory}
+    FilesystemFactory,
+    atomic_strategy::{AtomicWriteExecutorFactory}
 };
 
-use super::{BloomFilter, BloomFilterConfig, DataBlock, IndexEntry, LsmRecord, SstableHeader};
-use super::bloom_filter::{MetadataBloomFilter, MetadataBloomFilterBuilder, SstableBloomFilter};
+use super::{DataBlock, IndexEntry, LsmRecord, SstableHeader};
+use crate::core::bloom::{
+    BloomFilterConfig, BloomStrategy,
+    factory::BloomFilterFactory,
+};
+use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
+use super::bloom_filter::SstableBloomFilter;
 
 /// SSTable writer with atomic write optimization
 pub struct SstableWriter {
@@ -53,32 +58,55 @@ impl SstableWriter {
         info!("🔄 Building SSTable in memory for atomic write: {} records", records.len());
         
         // Get filesystem and atomic writer
-        let fs = self.filesystem.get_filesystem("file:///")?;
+        // Extract the scheme from the path to get the correct filesystem
+        let path_str = self.path.to_string_lossy();
+        let (_scheme, fs_url) = if path_str.contains("://") {
+            let parts: Vec<&str> = path_str.splitn(2, "://").collect();
+            (parts[0], path_str.to_string())
+        } else {
+            ("file", format!("file://{}", path_str))
+        };
+        let fs = self.filesystem.get_filesystem(&fs_url)?;
         let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
         
         // Step 1: Build comprehensive bloom filters (keys + metadata)
-        let mut key_bloom_filter = BloomFilter::new(records.len(), &self.bloom_config);
-        let mut metadata_builder = MetadataBloomFilterBuilder::new(self.bloom_config.clone());
+        let bloom_config = BloomFilterConfig {
+            strategy: BloomStrategy::ByteAligned,
+            expected_items: records.len(),
+            ..self.bloom_config.clone()
+        };
+        let mut key_bloom_filter = BloomFilterFactory::create(&bloom_config);
+        
+        let metadata_config = BloomFilterConfig {
+            strategy: BloomStrategy::Composite,
+            expected_items: records.len(),
+            ..self.bloom_config.clone()
+        };
+        let mut metadata_builder = CompositeBloomFilterBuilder::new(metadata_config);
         
         // Extract keys and metadata values
+        let mut metadata_value_count = 0;
         for (key, record) in &records {
-            key_bloom_filter.insert(key);
+            key_bloom_filter.insert(key.as_bytes());
             
             // Extract metadata values for each column
             for (column, value) in &record.metadata {
                 if let Some(string_value) = value.as_str() {
-                    metadata_builder.add_value(column.clone(), string_value.to_string());
+                    metadata_builder.add_metadata_value(column.clone(), string_value.to_string());
+                    metadata_value_count += 1;
                 } else if let Some(number_value) = value.as_number() {
-                    metadata_builder.add_value(column.clone(), number_value.to_string());
+                    metadata_builder.add_metadata_value(column.clone(), number_value.to_string());
+                    metadata_value_count += 1;
                 }
             }
         }
+        debug!("Added {} metadata values to bloom filter", metadata_value_count);
         
         let metadata_bloom_filter = metadata_builder.build();
-        let combined_bloom_filter = SstableBloomFilter::new(key_bloom_filter, metadata_bloom_filter);
+        let combined_bloom_filter = SstableBloomFilter::new(key_bloom_filter.as_ref(), &metadata_bloom_filter)?;
         
         debug!("🔍 Built combined bloom filter for {} keys with {} metadata columns", 
-               records.len(), combined_bloom_filter.metadata_filter.num_columns());
+               records.len(), metadata_bloom_filter.num_columns());
         
         // Step 2: Organize records into data blocks (in-memory)
         let mut data_blocks = Vec::new();
@@ -123,7 +151,8 @@ impl SstableWriter {
             .map(|b| bincode::serialized_size(b).unwrap_or(0))
             .sum();
         
-        let header = SstableHeader {
+        // Create header with correct sizes
+        let mut header = SstableHeader {
             version: 1,
             level: 0,
             entry_count: records_count as u64,
@@ -134,18 +163,31 @@ impl SstableWriter {
             has_bloom_filter: true,
             block_size: self.block_size as u32,
             batch_size: 0,
-            header_size: 0, // Will be updated below
+            header_size: 0, // Will be updated after serialization
             index_size: index_data.len() as u32,
             data_size: total_data_size as u32,
             block_count: data_blocks.len() as u32,
         };
         
+        // Serialize header to get its size
+        let header_data = bincode::serialize(&header)?;
+        header.header_size = header_data.len() as u32;
+        
+        // Re-serialize with correct header_size
         let header_data = bincode::serialize(&header)?;
         
         // Build complete SSTable bytes: header_len + header + bloom_len + bloom + index_len + index + data_blocks
+        debug!("SSTable Writer - File layout:");
+        debug!("  - Header length (4 bytes): {}", header_data.len());
+        debug!("  - Header data ({} bytes)", header_data.len());
+        debug!("  - Bloom length (4 bytes): {}", bloom_data.len());
+        debug!("  - Bloom data ({} bytes)", bloom_data.len());
+        debug!("  - Bloom offset will be: {}", 4 + header_data.len());
+        
         sstable_bytes.extend_from_slice(&(header_data.len() as u32).to_le_bytes());
         sstable_bytes.extend_from_slice(&header_data);
         
+        debug!("Writing bloom length: {} as bytes: {:?}", bloom_data.len(), &(bloom_data.len() as u32).to_le_bytes());
         sstable_bytes.extend_from_slice(&(bloom_data.len() as u32).to_le_bytes());
         sstable_bytes.extend_from_slice(&bloom_data);
         
@@ -175,12 +217,28 @@ impl SstableWriter {
             .await
             .map_err(|e| anyhow::anyhow!("Atomic write failed: {}", e))?;
         
+        // Verify the file was written correctly
+        let file_metadata = fs.metadata(&final_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to verify written file: {}", e))?;
+        
+        if file_metadata.size != sstable_bytes.len() as u64 {
+            return Err(anyhow::anyhow!(
+                "SSTable file size mismatch after write: expected {} bytes, got {} bytes",
+                sstable_bytes.len(),
+                file_metadata.size
+            ));
+        }
+        
         info!(
-            "✅ LSM: Atomically wrote SSTable {} ({} KB, {} records, {} blocks)",
+            "✅ LSM: Atomically wrote SSTable {} ({} bytes / {} KB, {} records, {} blocks, header={} bytes, bloom={} bytes, index={} bytes)",
             self.path.display(),
+            sstable_bytes.len(),
             sstable_bytes.len() / 1024,
             records_count,
-            data_blocks.len()
+            data_blocks.len(),
+            header_data.len(),
+            bloom_data.len(),
+            index_data.len()
         );
         
         Ok(())
@@ -203,6 +261,31 @@ impl SstableWriter {
         
         let block_size = bincode::serialized_size(&data_block).unwrap_or(0) as u32;
         
+        // Collect metadata statistics for this block
+        let mut metadata_min_values = HashMap::new();
+        let mut metadata_max_values = HashMap::new();
+        let mut metadata_null_counts = HashMap::new();
+        
+        for record in current_block {
+            for (column, value) in &record.metadata {
+                // Track null counts
+                if value.is_null() {
+                    *metadata_null_counts.entry(column.clone()).or_insert(0) += 1;
+                } else {
+                    // Track min/max values
+                    let entry_min = metadata_min_values.entry(column.clone()).or_insert_with(|| value.clone());
+                    if Self::compare_json_values(value, entry_min) == std::cmp::Ordering::Less {
+                        *entry_min = value.clone();
+                    }
+                    
+                    let entry_max = metadata_max_values.entry(column.clone()).or_insert_with(|| value.clone());
+                    if Self::compare_json_values(value, entry_max) == std::cmp::Ordering::Greater {
+                        *entry_max = value.clone();
+                    }
+                }
+            }
+        }
+        
         // Add index entry for first record in block
         if let Some(first_record) = current_block.first() {
             index_entries.push(IndexEntry {
@@ -212,6 +295,9 @@ impl SstableWriter {
                 block_id,
                 block_offset: 0,
                 compressed: false,
+                metadata_min_values,
+                metadata_max_values,
+                metadata_null_counts,
             });
         }
         
@@ -223,6 +309,23 @@ impl SstableWriter {
     pub fn with_bloom_config(mut self, config: BloomFilterConfig) -> Self {
         self.bloom_config = config;
         self
+    }
+    
+    /// Compare two JSON values for ordering
+    fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+        use serde_json::Value;
+        use std::cmp::Ordering;
+        
+        match (a, b) {
+            (Value::Number(n1), Value::Number(n2)) => {
+                let f1 = n1.as_f64().unwrap_or(0.0);
+                let f2 = n2.as_f64().unwrap_or(0.0);
+                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
+            }
+            (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
+            (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
+            _ => Ordering::Equal,
+        }
     }
 }
 

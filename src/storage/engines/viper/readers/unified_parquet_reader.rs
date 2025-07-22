@@ -219,18 +219,29 @@ impl UnifiedParquetReader {
         }
     }
     
+    /// Get the filesystem for external use
+    pub fn filesystem(&self) -> &Arc<FilesystemFactory> {
+        &self.filesystem
+    }
+    
     /// Execute search with SearchParams directly - no adapters needed
     pub async fn search_vectors(
         &self,
         params: &crate::core::search::SearchParams,
         collection_context: &CollectionContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        debug!("📖 UnifiedParquetReader::search_vectors called");
+        debug!("📖 Collection context: files={}, filterable_columns={:?}", 
+               collection_context.file_paths.len(), collection_context.filterable_columns);
+        
         // Extract query vector from params (support single vector for now)
         let query_vector = params.first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector is required for search"))?;
         
+        debug!("📖 Query vector dimension: {}", query_vector.len());
+        
         // TODO: Support batch search when is_batch_search() is true
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         
         // 1. Analyze search parameters for optimal strategy selection
         let search_analysis = self.analyze_search_params(params, collection_context).await?;
@@ -257,10 +268,10 @@ impl UnifiedParquetReader {
         info!("📊 Reading {} row groups, {} columns from: {}", 
               row_groups.len(), columns.len(), file_path);
         
-        let fs = self.filesystem.create_filesystem_for_url(file_path).await?;
+        let fs = self.filesystem.get_filesystem(file_path)?;
         
         // For cloud storage, use range requests to fetch only needed chunks
-        if file_path.starts_with("s3://") || file_path.starts_with("gcs://") || file_path.starts_with("adls://") {
+        if file_path.starts_with("s3://") || file_path.starts_with("gs://") || file_path.starts_with("adls://") {
             // First, get metadata to calculate byte ranges
             let metadata = self.read_parquet_metadata(file_path).await?;
             
@@ -271,7 +282,7 @@ impl UnifiedParquetReader {
                 info!("📊 Optimized read: fetching {} byte ranges instead of full file", ranges.len());
                 
                 // Read the specific ranges
-                let range_data = fs.read_ranges(file_path, ranges.clone()).await?;
+                let _range_data = fs.read_ranges(file_path, ranges.clone()).await?;
                 
                 // For now, still need full file for arrow reader
                 // TODO: Implement custom Parquet reader that works with partial data
@@ -279,7 +290,7 @@ impl UnifiedParquetReader {
             }
         }
         
-        // Fall back to full file read for now
+        // Fall back to full file read for now (stateless design)
         let data = fs.read(file_path).await?;
         self.build_reader_with_selection(data, row_groups, columns).await
     }
@@ -370,7 +381,7 @@ impl UnifiedParquetReader {
         }
         
         // Read the data
-        let mut reader = builder.build()?;
+        let reader = builder.build()?;
         let mut batches = Vec::new();
         
         for batch in reader {
@@ -382,10 +393,11 @@ impl UnifiedParquetReader {
     
     /// Read Parquet metadata without downloading the entire file
     pub async fn read_parquet_metadata(&self, file_path: &str) -> Result<Arc<parquet::file::metadata::ParquetMetaData>> {
-        let fs = self.filesystem.create_filesystem_for_url(file_path).await?;
+        // Use the standard filesystem with the full URL (stateless design)
+        let fs = self.filesystem.get_filesystem(file_path)?;
         
         // For cloud storage, we could optimize to only read footer
-        // For now, read full file
+        // For now, read full file using full URL
         let data = fs.read(file_path).await?;
         let bytes = bytes::Bytes::from(data);
         let reader = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)?;
@@ -492,7 +504,7 @@ impl UnifiedParquetReader {
     /// Execute direct Arrow-based search
     async fn execute_direct_search(
         &self,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         params: &crate::core::search::SearchParams,
         context: &CollectionContext,
         use_projection: bool,
@@ -516,11 +528,14 @@ impl UnifiedParquetReader {
             };
             
             // Apply filters (both simple and complex)
+            debug!("📖 Filtering {} vectors, filters present: {}", vectors.len(), params.filters.is_some());
             let filtered_vectors: Vec<_> = vectors.into_iter()
                 .filter(|vector| {
                     // Apply simple filters if present
                     if let Some(filters) = &params.filters {
-                        if !self.apply_metadata_filters(vector, filters, context) {
+                        let passes = self.apply_metadata_filters(vector, filters, context);
+                        debug!("📖 Vector {:?} filter result: {}", vector.id, passes);
+                        if !passes {
                             return false;
                         }
                     }
@@ -568,8 +583,8 @@ impl UnifiedParquetReader {
     /// Execute quantized two-stage search
     async fn execute_quantized_search(
         &self,
-        query_vector: &[f32],
-        params: &crate::core::search::SearchParams,
+        _query_vector: &[f32],
+        _params: &crate::core::search::SearchParams,
         context: &CollectionContext,
         _quantization_method: &QuantizationMethod,
         candidate_count: usize,
@@ -616,12 +631,19 @@ impl UnifiedParquetReader {
         use parquet::arrow::ProjectionMask;
         use arrow_array::Array;
         
-        // Get filesystem and read file
-        let fs = self.filesystem.create_filesystem_for_url(file_path).await?;
+        info!("📖 UnifiedParquetReader::read_all_vectors from: {}", file_path);
+        debug!("📖 Requested columns: {:?}", columns);
+        
+        // Get filesystem and read file (stateless design)
+        let fs = self.filesystem.get_filesystem(file_path)?;
         let data = fs.read(file_path).await?;
+        
+        info!("📖 Read {} bytes from file", data.len());
         
         // Build Parquet reader
         let mut builder = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data))?;
+        
+        debug!("📖 Parquet schema: {:?}", builder.schema());
         
         // Apply column projection if specified
         if !columns.is_empty() {
@@ -637,12 +659,17 @@ impl UnifiedParquetReader {
         }
         
         // Read batches
-        let mut reader = builder.build()?;
+        let reader = builder.build()?;
         let mut vectors = Vec::new();
         
+        let mut batch_count = 0;
+        let mut total_rows = 0;
         for batch in reader {
             let batch = batch?;
             let num_rows = batch.num_rows();
+            batch_count += 1;
+            total_rows += num_rows;
+            info!("📖 Batch {}: {} rows", batch_count, num_rows);
             
             // Extract data from batch
             for row_idx in 0..num_rows {
@@ -660,11 +687,97 @@ impl UnifiedParquetReader {
                 // Collection ID not stored in VectorRecord anymore
                 
                 // Extract vector (FP32 or quantized based on columns)
-                let vector_extracted = self.extract_vector_from_batch(&batch, row_idx, columns)?;
-                record.vector = vector_extracted;
+                match self.extract_vector_from_batch(&batch, row_idx, columns) {
+                    Ok(vector_extracted) => {
+                        if vector_extracted.is_empty() {
+                            debug!("📖 Warning: Empty vector extracted for row {}", row_idx);
+                        }
+                        record.vector = vector_extracted;
+                    }
+                    Err(e) => {
+                        debug!("📖 Failed to extract vector for row {}: {}", row_idx, e);
+                        // Skip this record if we can't extract the vector
+                        continue;
+                    }
+                }
                 
-                // Extract metadata if present
-                if let Ok(idx) = batch.schema().index_of("metadata") {
+                // Extract metadata from filterable columns first
+                // These are stored as separate columns during flush for efficient filtering
+                let schema = batch.schema();
+                for field in schema.fields() {
+                    let field_name = field.name();
+                    // Skip known system columns
+                    if field_name == "id" || field_name == "collection_id" || 
+                       field_name == "vector" || field_name == "version" || 
+                       field_name == "timestamp" || field_name == "updated_at" || 
+                       field_name == "expires_at" || field_name == "extra_meta" ||
+                       field_name.starts_with("vector_") {
+                        continue;
+                    }
+                    
+                    // This is likely a filterable metadata column
+                    if let Ok(idx) = schema.index_of(field_name) {
+                        let column = batch.column(idx);
+                        let mut value_str = String::new();
+                        
+                        // Extract value based on column type
+                        if let Some(str_array) = column.as_any().downcast_ref::<arrow_array::StringArray>() {
+                            if str_array.is_valid(row_idx) {
+                                value_str = str_array.value(row_idx).to_string();
+                            }
+                        } else if let Some(int_array) = column.as_any().downcast_ref::<arrow_array::Int64Array>() {
+                            if int_array.is_valid(row_idx) {
+                                value_str = int_array.value(row_idx).to_string();
+                            }
+                        } else if let Some(float_array) = column.as_any().downcast_ref::<arrow_array::Float64Array>() {
+                            if float_array.is_valid(row_idx) {
+                                value_str = float_array.value(row_idx).to_string();
+                            }
+                        } else if let Some(bool_array) = column.as_any().downcast_ref::<arrow_array::BooleanArray>() {
+                            if bool_array.is_valid(row_idx) {
+                                value_str = bool_array.value(row_idx).to_string();
+                            }
+                        }
+                        
+                        if !value_str.is_empty() {
+                            debug!("📖 Extracted filterable metadata: {} = {}", field_name, value_str);
+                            record.metadata.push(crate::proto::proximadb::MetadataItem {
+                                key: field_name.to_string(),
+                                value: value_str,
+                            });
+                        }
+                    }
+                }
+                
+                // Extract remaining metadata from extra_meta column
+                if let Ok(idx) = batch.schema().index_of("extra_meta") {
+                    // New format: List of Struct with key/value pairs
+                    if let Some(list_array) = batch.column(idx).as_any().downcast_ref::<arrow_array::ListArray>() {
+                        if list_array.is_valid(row_idx) {
+                            let struct_array = list_array.value(row_idx);
+                            if let Some(struct_array) = struct_array.as_any().downcast_ref::<arrow_array::StructArray>() {
+                                println!("📖 Extracting metadata from extra_meta column for row {}", row_idx);
+                                // Extract key/value pairs
+                                if let (Some(keys), Some(values)) = (
+                                    struct_array.column_by_name("key").and_then(|c| c.as_any().downcast_ref::<arrow_array::StringArray>()),
+                                    struct_array.column_by_name("value").and_then(|c| c.as_any().downcast_ref::<arrow_array::StringArray>())
+                                ) {
+                                    for i in 0..keys.len() {
+                                        if keys.is_valid(i) && values.is_valid(i) {
+                                            let key = keys.value(i);
+                                            let value = values.value(i);
+                                            record.metadata.push(crate::proto::proximadb::MetadataItem {
+                                                key: key.to_string(),
+                                                value: value.to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Ok(idx) = batch.schema().index_of("metadata") {
+                    // Old format support
                     if let Some(meta_array) = batch.column(idx).as_any().downcast_ref::<arrow_array::StringArray>() {
                         if meta_array.is_valid(row_idx) {
                             if let Ok(metadata) = serde_json::from_str(meta_array.value(row_idx)) {
@@ -678,6 +791,11 @@ impl UnifiedParquetReader {
             }
         }
         
+        info!("📖 Read complete: {} batches, {} total rows, {} vectors extracted", 
+              batch_count, total_rows, vectors.len());
+        if !vectors.is_empty() {
+            debug!("📖 First vector metadata: {:?}", vectors[0].metadata);
+        }
         Ok(vectors)
     }
     
@@ -701,10 +819,13 @@ impl UnifiedParquetReader {
                 .collect()
         };
         
+        debug!("📖 Trying to extract vector from columns: {:?}", vector_columns);
+        
         // Try each vector column in order
         for col_name in vector_columns {
             if let Ok(idx) = batch.schema().index_of(col_name) {
                 let column = batch.column(idx);
+                debug!("📖 Found column '{}' at index {}", col_name, idx);
                 
                 // Handle different vector representations
                 if col_name == "vector" {
@@ -731,6 +852,7 @@ impl UnifiedParquetReader {
         }
         
         // No vector column found
+        debug!("📖 No vector column found in batch for row {}", row_idx);
         Err(anyhow::anyhow!("No vector column found in batch"))
     }
     
@@ -750,24 +872,36 @@ impl UnifiedParquetReader {
         // Convert metadata items to a HashMap for easier access
         let metadata_map = self.convert_vector_metadata(&vector.metadata);
         
+        debug!("📖 Applying filters to vector {:?} with metadata: {:?}", vector.id, metadata_map);
+        debug!("📖 Filters to apply: {:?}", filters);
+        debug!("📖 Context filterable columns: {:?}", context.filterable_columns);
+        
         // Apply simple filters (for backward compatibility)
         for (key, expected_value) in filters {
             // Check if this is a filterable column
-            let is_filterable = context.filterable_columns.iter()
-                .any(|col| &col.name == key);
-                
-            if !is_filterable {
-                continue; // Skip non-filterable columns
+            // NOTE: If no filterable columns are specified (e.g., in tests), check all metadata
+            // If filterable columns ARE specified, only check those columns
+            if !context.filterable_columns.is_empty() {
+                let is_filterable = context.filterable_columns.iter()
+                    .any(|col| &col.name == key);
+                    
+                if !is_filterable {
+                    println!("📖 Skipping non-filterable column: {}", key);
+                    continue; // Skip non-filterable columns
+                }
             }
             
             let actual_value = metadata_map.get(key);
+            println!("📖 Checking filter: {} = {:?} (actual: {:?})", key, expected_value, actual_value);
             
             // Parse filter value to extract operation
             let filter_op = self.parse_filter_value(expected_value);
             if !self.evaluate_filter(actual_value, &filter_op) {
+                println!("📖 Filter failed for key: {}", key);
                 return false;
             }
         }
+        debug!("📖 All filters passed");
         true
     }
     
@@ -791,11 +925,13 @@ impl UnifiedParquetReader {
     ) -> bool {
         match expression {
             FilterExpression::Comparison { field, operator, value } => {
-                // Check if filterable
-                let is_filterable = context.filterable_columns.iter()
-                    .any(|col| &col.name == field);
-                if !is_filterable {
-                    return true; // Skip non-filterable fields
+                // Check if filterable - if no filterable columns specified, allow all
+                if !context.filterable_columns.is_empty() {
+                    let is_filterable = context.filterable_columns.iter()
+                        .any(|col| &col.name == field);
+                    if !is_filterable {
+                        return true; // Skip non-filterable fields
+                    }
                 }
                 
                 let actual_value = metadata.get(field);

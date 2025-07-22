@@ -5,11 +5,11 @@
 use anyhow::Result;
 use arrow_array::{
     Array, RecordBatch, StringArray, Float32Array, Int64Array, FixedSizeListArray,
-    StructArray, BooleanArray, ListArray, UInt8Array,
+    BooleanArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
-use std::fs::{self, File};
+use std::fs::File;
 use std::sync::Arc;
 use tempfile::TempDir;
 use rand::{Rng, SeedableRng};

@@ -6,11 +6,9 @@
 use anyhow::{Context, Result};
 use arrow_array::{Array, RecordBatch, StringArray, Float32Array};
 use arrow_schema::{Schema, Field, DataType};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::HashMap;
 use chrono;
-use std::io::{Cursor, Seek, SeekFrom};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 

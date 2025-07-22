@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::storage::assignment_service::{AssignmentService, StorageComponentType};
+use crate::storage::assignment_service::AssignmentService;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 // SimpleAtomicSync removed - using AtomicWalSync instead

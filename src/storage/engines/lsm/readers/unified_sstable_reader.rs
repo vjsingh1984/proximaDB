@@ -16,10 +16,8 @@ use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::engines::lsm::bloom_filter::{
-    MetadataBloomFilter, SstableBloomFilter, BloomFilterConfig, MetadataBloomFilterBuilder
-};
-use crate::storage::engines::lsm::{SstableHeader, LsmRecord};
+use crate::storage::engines::lsm::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::lsm::{SstableHeader, DataBlock, IndexEntry};
 
 /// Unified SSTable Reader with automatic optimization selection
 pub struct UnifiedSstableReader {
@@ -111,28 +109,10 @@ pub struct ReaderConfig {
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BlockCacheKey {
     pub file_path: String,
-    pub block_id: usize,
+    pub block_id: u32,
     pub block_index: usize,
 }
 
-/// Data block with vectors and metadata
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DataBlock {
-    pub block_id: usize,
-    pub records: Vec<LsmRecord>,
-    pub compressed_size: usize,
-    pub uncompressed_size: usize,
-}
-
-/// Index entry for block lookup
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IndexEntry {
-    pub block_id: usize,
-    pub offset: u64,
-    pub size: u64,
-    pub first_key: String,
-    pub last_key: String,
-}
 
 /// Cache statistics
 #[derive(Debug, Default)]
@@ -223,7 +203,7 @@ impl UnifiedSstableReader {
         &self,
         params: &SearchParams,
         blocks: &[DataBlock],
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<SearchResult>> {
         let query_vector = params.first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
@@ -320,7 +300,7 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<DataBlock>> {
         debug!("Using metadata filtered strategy for {} blocks", blocks.len());
 
-        // Get bloom filter for this SSTable
+        // Get bloom filter and index for this SSTable
         let bloom_filter = if !skip_bloom {
             let bloom_filters = self.index_cache.bloom_filters.read().await;
             bloom_filters.get(&context.file_path).cloned()
@@ -328,35 +308,85 @@ impl UnifiedSstableReader {
             None
         };
 
+        // Get the index to access metadata statistics
+        let indices = self.index_cache.indices.read().await;
+        let index = indices.get(&context.file_path).ok_or_else(|| {
+            anyhow::anyhow!("Index not found for file: {}", context.file_path)
+        })?.clone();
+        drop(indices);
+
         // Extract metadata filters from search params
         let metadata_conditions = self.extract_metadata_conditions(params);
 
-        // Filter blocks using bloom filter if available
-        let filtered_blocks = if let Some(bloom_filter) = bloom_filter {
-            let mut filtered = Vec::new();
-            // Check metadata conditions against bloom filter
-            let mut conditions_match = true;
+        // First check bloom filter for quick rejection
+        if let Some(bloom_filter) = bloom_filter {
+            let mut any_match = false;
             for (column, value) in &metadata_conditions {
-                if !bloom_filter.metadata_filter.might_match_metadata(column, value) {
-                    conditions_match = false;
+                if bloom_filter.might_match_metadata(column, value).unwrap_or(true) {
+                    any_match = true;
                     break;
                 }
             }
             
-            if conditions_match {
-                // If metadata might match, include all blocks
-                filtered.extend_from_slice(blocks);
-            } else {
-                debug!("Bloom filter skipped all blocks (metadata mismatch)");
+            if !any_match {
+                debug!("Bloom filter rejected all blocks (no metadata matches)");
+                return Ok(Vec::new());
             }
-            filtered
+        }
+
+        // Use block-level metadata statistics to filter blocks
+        let mut selected_blocks = Vec::new();
+        let block_list = if blocks.is_empty() {
+            // If no specific blocks provided, check all blocks
+            (0..index.entries.len()).collect::<Vec<_>>()
         } else {
             blocks.to_vec()
         };
+        let total_blocks = block_list.len();
 
-        // Load the filtered blocks
+        for block_idx in block_list {
+            if block_idx >= index.entries.len() {
+                continue;
+            }
+            
+            let entry = &index.entries[block_idx];
+            let mut should_include = true;
+            
+            // Check each metadata condition against block statistics
+            for (column, value) in &metadata_conditions {
+                // Check if this block might contain the value
+                if let Some(min_val) = entry.metadata_min_values.get(column) {
+                    if let Some(max_val) = entry.metadata_max_values.get(column) {
+                        let value_json = serde_json::Value::String(value.clone());
+                        
+                        // If value is outside the min/max range, skip this block
+                        if Self::compare_metadata_values(&value_json, min_val) == std::cmp::Ordering::Less ||
+                           Self::compare_metadata_values(&value_json, max_val) == std::cmp::Ordering::Greater {
+                            should_include = false;
+                            break;
+                        }
+                    }
+                } else {
+                    // Column not present in this block, check if there are nulls
+                    if entry.metadata_null_counts.get(column).copied().unwrap_or(0) == 0 {
+                        // No values for this column in this block
+                        should_include = false;
+                        break;
+                    }
+                }
+            }
+            
+            if should_include {
+                selected_blocks.push(block_idx);
+            }
+        }
+
+        debug!("Selected {} blocks out of {} after metadata filtering", 
+               selected_blocks.len(), total_blocks);
+
+        // Load the selected blocks
         let mut result_blocks = Vec::new();
-        for block_idx in filtered_blocks {
+        for block_idx in selected_blocks {
             if let Some(block) = self.load_block_with_cache(context, block_idx).await? {
                 result_blocks.push(block);
             }
@@ -410,7 +440,7 @@ impl UnifiedSstableReader {
     async fn load_block_with_cache(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
         let cache_key = BlockCacheKey {
             file_path: context.file_path.clone(),
-            block_id: block_idx,
+            block_id: block_idx as u32,
             block_index: block_idx,
         };
 
@@ -443,104 +473,207 @@ impl UnifiedSstableReader {
 
     /// Load a block from disk with cloud-optimized range requests
     async fn load_block_from_disk(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
-        // Get block offset and size from index
-        let indices = self.index_cache.indices.read().await;
-        let index = indices.get(&context.file_path).ok_or_else(|| {
-            anyhow::anyhow!("No index found for file: {}", context.file_path)
-        })?;
+        // Extract scheme from file path for proper filesystem selection
+        let scheme = if context.file_path.contains("://") {
+            context.file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
+        // First, we need to get the index to know where blocks are located
+        // Check if index is cached
+        let indices = self.index_cache.indices.read().await;
+        let index = if let Some(index) = indices.get(&context.file_path) {
+            index.clone()
+        } else {
+            drop(indices);
+            // Load index if not cached
+            let idx = Arc::new(self.load_index_optimized(&context.file_path).await?);
+            let mut indices = self.index_cache.indices.write().await;
+            indices.insert(context.file_path.clone(), idx.clone());
+            idx
+        };
+        
+        // Check if block exists
         if block_idx >= index.entries.len() {
             return Ok(None);
         }
         
-        let entry = &index.entries[block_idx];
-        let block_offset = entry.offset;
-        let block_size = entry.size as u64;
+        // To find the block offset, we need to calculate the data section offset
+        // Read header length to calculate offsets
+        let header_len_data = fs.read_range(&context.file_path, 0, 4).await?;
+        let header_len = u32::from_le_bytes([
+            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+        ]) as u64;
         
-        // Use cloud-optimized range request
-        let fs = self.filesystem.get_filesystem("file:///")?;
-        let block_data = match fs.read_range(&context.file_path, block_offset, block_size).await {
-            Ok(data) => {
-                debug!("Loading block {} with range request: bytes={}-{}", block_idx, block_offset, block_offset + block_size - 1);
-                data
-            }
-            Err(_) => {
-                // Fallback to full file read with seeking
-                debug!("Loading block {} with full file read (range request failed)", block_idx);
-                let data = fs.read(&context.file_path).await?;
-                if data.len() < (block_offset + block_size) as usize {
-                    return Err(anyhow::anyhow!("Block extends beyond file size"));
-                }
-                data[block_offset as usize..(block_offset + block_size) as usize].to_vec()
-            }
-        };
+        // Read bloom filter length to skip it
+        let bloom_offset = 4 + header_len;
+        let bloom_len_data = fs.read_range(&context.file_path, bloom_offset, 4).await?;
+        let bloom_len = u32::from_le_bytes([
+            bloom_len_data[0], bloom_len_data[1], bloom_len_data[2], bloom_len_data[3]
+        ]) as u64;
         
-        // Deserialize the block
+        // Read index length to skip it
+        let index_offset = bloom_offset + 4 + bloom_len;
+        let index_len_data = fs.read_range(&context.file_path, index_offset, 4).await?;
+        let index_len = u32::from_le_bytes([
+            index_len_data[0], index_len_data[1], index_len_data[2], index_len_data[3]
+        ]) as u64;
+        
+        // Calculate where data blocks start
+        let data_section_offset = index_offset + 4 + index_len;
+        
+        // Now we need to find the specific block offset
+        // For efficiency, we should store absolute offsets in the index, but for now
+        // we'll read block lengths sequentially (this could be optimized further)
+        let mut block_offset = data_section_offset;
+        for _i in 0..block_idx {
+            // Read block length
+            let len_data = fs.read_range(&context.file_path, block_offset, 4).await?;
+            let block_len = u32::from_le_bytes([
+                len_data[0], len_data[1], len_data[2], len_data[3]
+            ]) as u64;
+            // Skip this block (length prefix + data)
+            block_offset += 4 + block_len;
+        }
+        
+        // Read the target block length
+        let block_len_data = fs.read_range(&context.file_path, block_offset, 4).await?;
+        let block_len = u32::from_le_bytes([
+            block_len_data[0], block_len_data[1], block_len_data[2], block_len_data[3]
+        ]) as u64;
+        
+        // Read the block data
+        let block_data = fs.read_range(&context.file_path, block_offset + 4, block_len).await?;
         let block: DataBlock = bincode::deserialize(&block_data)?;
+        
+        debug!("Loaded block {} from SSTable using range request ({} bytes)", block_idx, block_len);
         Ok(Some(block))
     }
 
     /// Load index with cloud-optimized metadata reading
     async fn load_index_optimized(&self, file_path: &str) -> Result<SstableIndex> {
-        let fs = self.filesystem.get_filesystem("file:///")?;
-        
-        // Read only the header first to get index offset
-        let header_data = match fs.read_range(file_path, 0, 4).await {
-            Ok(header_len_data) => {
-                let header_len = u32::from_le_bytes([header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]]) as u64;
-                
-                // Now read the actual header
-                match fs.read_range(file_path, 4, header_len).await {
-                    Ok(data) => data,
-                    Err(_) => {
-                        // Fallback to full file read
-                        let data = fs.read(file_path).await?;
-                        let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-                        data[4..4 + header_len].to_vec()
-                    }
-                }
-            }
-            Err(_) => {
-                // Fallback to full file read
-                let data = fs.read(file_path).await?;
-                let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-                data[4..4 + header_len].to_vec()
-            }
+        // Extract scheme from file path for proper filesystem selection
+        let scheme = if file_path.contains("://") {
+            file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
         };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
-        let header: SstableHeader = bincode::deserialize(&header_data)?;
+        // Read header length
+        let header_len_data = fs.read_range(file_path, 0, 4).await?;
+        if header_len_data.len() < 4 {
+            return Err(anyhow::anyhow!(
+                "SSTable file too small: expected at least 4 bytes for header length, got {}",
+                header_len_data.len()
+            ));
+        }
+        let header_len = u32::from_le_bytes([
+            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+        ]) as u64;
         
-        // Calculate index offset (header_len + bloom_filter_len + header + bloom_filter)
-        let index_offset = 4 + header_data.len() as u64 + 4 + header.index_size as u64;
+        // Read header
+        let header_data = fs.read_range(file_path, 4, header_len).await?;
+        if header_data.len() < header_len as usize {
+            return Err(anyhow::anyhow!(
+                "Failed to read complete header: expected {} bytes, got {}",
+                header_len, header_data.len()
+            ));
+        }
+        let header: SstableHeader = bincode::deserialize(&header_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
         
-        // Read index with range request
-        let index_data = match fs.read_range(file_path, index_offset, header.index_size as u64).await {
-            Ok(data) => {
-                debug!("Loading index with range request: bytes={}-{}", index_offset, index_offset + header.index_size as u64 - 1);
-                data
-            }
-            Err(_) => {
-                let data = fs.read(file_path).await?;
-                data[index_offset as usize..(index_offset + header.index_size as u64) as usize].to_vec()
-            }
-        };
+        // Calculate bloom filter offset and read its length
+        let bloom_offset = 4 + header_len;
+        let bloom_len_data = fs.read_range(file_path, bloom_offset, 4).await?;
+        if bloom_len_data.len() < 4 {
+            return Err(anyhow::anyhow!(
+                "Failed to read bloom filter length: expected 4 bytes, got {}",
+                bloom_len_data.len()
+            ));
+        }
+        let bloom_len = u32::from_le_bytes([
+            bloom_len_data[0], bloom_len_data[1], bloom_len_data[2], bloom_len_data[3]
+        ]) as u64;
         
+        // Calculate index offset (skip bloom filter)
+        let index_offset = bloom_offset + 4 + bloom_len;
+        
+        // Read index length
+        let index_len_data = fs.read_range(file_path, index_offset, 4).await?;
+        let index_len = u32::from_le_bytes([
+            index_len_data[0], index_len_data[1], index_len_data[2], index_len_data[3]
+        ]) as u64;
+        
+        // Read index data
+        let index_data = fs.read_range(file_path, index_offset + 4, index_len).await?;
         let entries: Vec<IndexEntry> = bincode::deserialize(&index_data)?;
         
         // Build metadata statistics from index entries
         let mut metadata_stats = HashMap::new();
+        
+        // Aggregate metadata statistics across all blocks
         for entry in &entries {
-            // TODO: Extract metadata statistics from index entries
-            // This would require storing metadata min/max values in the index
+            for (column, min_val) in &entry.metadata_min_values {
+                let stats = metadata_stats.entry(column.clone()).or_insert(MetadataStats {
+                    min_value: min_val.clone(),
+                    max_value: min_val.clone(),
+                    null_count: 0,
+                    distinct_count: 0,
+                    bloom_filter_offset: Some(bloom_offset + 4), // Bloom filter location
+                });
+                
+                // Update min value
+                if Self::compare_metadata_values(min_val, &stats.min_value) == std::cmp::Ordering::Less {
+                    stats.min_value = min_val.clone();
+                }
+            }
+            
+            for (column, max_val) in &entry.metadata_max_values {
+                let stats = metadata_stats.entry(column.clone()).or_insert(MetadataStats {
+                    min_value: max_val.clone(),
+                    max_value: max_val.clone(),
+                    null_count: 0,
+                    distinct_count: 0,
+                    bloom_filter_offset: Some(bloom_offset + 4),
+                });
+                
+                // Update max value
+                if Self::compare_metadata_values(max_val, &stats.max_value) == std::cmp::Ordering::Greater {
+                    stats.max_value = max_val.clone();
+                }
+            }
+            
+            // Update null counts
+            for (column, null_count) in &entry.metadata_null_counts {
+                let stats = metadata_stats.entry(column.clone()).or_insert(MetadataStats {
+                    min_value: serde_json::Value::Null,
+                    max_value: serde_json::Value::Null,
+                    null_count: 0,
+                    distinct_count: 0,
+                    bloom_filter_offset: Some(bloom_offset + 4),
+                });
+                stats.null_count += *null_count as usize;
+            }
         }
         
-        Ok(SstableIndex {
+        debug!("Built metadata statistics for {} columns", metadata_stats.len());
+        
+        let index = SstableIndex {
             entries,
             metadata_stats,
             vector_count: header.entry_count as usize,
             min_key: header.min_key,
             max_key: header.max_key,
-        })
+        };
+        
+        // Cache the index
+        let mut indices = self.index_cache.indices.write().await;
+        indices.insert(file_path.to_string(), Arc::new(index.clone()));
+        
+        Ok(index)
     }
 
     /// Simple get operation for single vector retrieval
@@ -550,7 +683,7 @@ impl UnifiedSstableReader {
         let bloom_filters = self.index_cache.bloom_filters.read().await;
         if let Some(bloom_filter) = bloom_filters.get(file_path) {
             // Check bloom filter first
-            if !bloom_filter.key_filter.might_contain(vector_id) {
+            if !bloom_filter.might_contain_key(vector_id).unwrap_or(true) {
                 return Ok(None);
             }
         }
@@ -566,10 +699,10 @@ impl UnifiedSstableReader {
             creation_time: chrono::Utc::now(),
         };
 
-        // Use single-key search strategy
-        let strategy = SstableReadingStrategy::MetadataFiltered {
-            selected_blocks: vec![],
-            skip_bloom_check: false,
+        // Use full scan strategy for single key lookup
+        // TODO: Optimize with index-based lookup
+        let strategy = SstableReadingStrategy::FullScan {
+            use_block_cache: true,
         };
 
         // Load blocks and search for the vector
@@ -606,7 +739,7 @@ impl UnifiedSstableReader {
     pub async fn might_contain_key(&self, file_path: &str, key: &str) -> bool {
         let bloom_filters = self.index_cache.bloom_filters.read().await;
         if let Some(bloom_filter) = bloom_filters.get(file_path) {
-            bloom_filter.key_filter.might_contain(key)
+            bloom_filter.might_contain_key(key).unwrap_or(true)
         } else {
             true // No bloom filter, assume it might contain
         }
@@ -614,34 +747,89 @@ impl UnifiedSstableReader {
 
     /// Load metadata for an SSTable (header and bloom filter)
     pub async fn load_metadata(&self, file_path: &str) -> Result<()> {
-        let fs = self.filesystem.get_filesystem("file:///")?;
+        // Extract scheme from file path for proper filesystem selection
+        let scheme = if file_path.contains("://") {
+            file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
-        // Read file
-        let data = fs.read(file_path).await?;
-        let mut cursor = std::io::Cursor::new(data);
+        // First read just the header length (4 bytes)
+        let header_len_data = fs.read_range(file_path, 0, 4).await?;
+        if header_len_data.len() < 4 {
+            return Err(anyhow::anyhow!("SSTable file too small: {} bytes", header_len_data.len()));
+        }
+        let header_len = u32::from_le_bytes([
+            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+        ]) as u64;
         
-        // Read header
-        let mut header_len_bytes = [0u8; 4];
-        std::io::Read::read_exact(&mut cursor, &mut header_len_bytes)?;
-        let header_len = u32::from_le_bytes(header_len_bytes) as usize;
+        debug!("Header length: {} bytes", header_len);
         
-        let mut header_data = vec![0u8; header_len];
-        std::io::Read::read_exact(&mut cursor, &mut header_data)?;
-        let header: SstableHeader = bincode::deserialize(&header_data)?;
+        // Read the header data
+        let header_data = fs.read_range(file_path, 4, header_len).await?;
+        let header: SstableHeader = bincode::deserialize(&header_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
+        
+        debug!("Header info: version={}, has_bloom={}, entry_count={}", 
+               header.version, header.has_bloom_filter, header.entry_count);
         
         // Read bloom filter if present
         if header.has_bloom_filter {
-            let mut bloom_len_bytes = [0u8; 4];
-            std::io::Read::read_exact(&mut cursor, &mut bloom_len_bytes)?;
-            let bloom_len = u32::from_le_bytes(bloom_len_bytes) as usize;
+            // Calculate bloom filter offset (after header_len + header)
+            let bloom_offset = 4 + header_len;
             
-            let mut bloom_data = vec![0u8; bloom_len];
-            std::io::Read::read_exact(&mut cursor, &mut bloom_data)?;
-            let bloom_filter: SstableBloomFilter = bincode::deserialize(&bloom_data)?;
+            // Read bloom filter length
+            let bloom_len_data = fs.read_range(file_path, bloom_offset, 4).await?;
+            if bloom_len_data.len() < 4 {
+                return Err(anyhow::anyhow!(
+                    "Failed to read bloom filter length: expected 4 bytes, got {}",
+                    bloom_len_data.len()
+                ));
+            }
+            let bloom_len = u32::from_le_bytes([
+                bloom_len_data[0], bloom_len_data[1], bloom_len_data[2], bloom_len_data[3]
+            ]) as u64;
+            
+            println!("DEBUG SSTable Reader - Reading bloom filter: offset={}, length={}", bloom_offset + 4, bloom_len);
+            println!("DEBUG SSTable Reader - Bloom length bytes: {:?}", bloom_len_data);
+            
+            // Check file size
+            let file_metadata = fs.metadata(file_path).await?;
+            println!("DEBUG SSTable Reader - File size: {} bytes", file_metadata.size);
+            
+            // Read bloom filter data
+            let bloom_data = fs.read_range(file_path, bloom_offset + 4, bloom_len).await?;
+            println!("DEBUG SSTable Reader - Actually read {} bytes of bloom data", bloom_data.len());
+            if bloom_data.len() < bloom_len as usize {
+                return Err(anyhow::anyhow!(
+                    "Failed to read complete bloom filter: expected {} bytes, got {}",
+                    bloom_len, bloom_data.len()
+                ));
+            }
+            println!("DEBUG SSTable Reader - Bloom data first 20 bytes: {:?}", &bloom_data[..bloom_data.len().min(20)]);
+            
+            let bloom_filter: SstableBloomFilter = match bincode::deserialize(&bloom_data) {
+                Ok(bf) => bf,
+                Err(e) => {
+                    println!("DEBUG SSTable Reader - Deserialization error: {:?}", e);
+                    println!("DEBUG SSTable Reader - Expected SstableBloomFilter, got {} bytes", bloom_data.len());
+                    
+                    // Try to understand what we're actually reading
+                    if bloom_data.len() >= 8 {
+                        let first_u64 = u64::from_le_bytes(bloom_data[0..8].try_into().unwrap());
+                        println!("DEBUG SSTable Reader - First u64 in bloom data: {}", first_u64);
+                    }
+                    
+                    return Err(anyhow::anyhow!("Failed to deserialize bloom filter: {}", e));
+                }
+            };
             
             // Cache the bloom filter
             let mut bloom_filters = self.index_cache.bloom_filters.write().await;
             bloom_filters.insert(file_path.to_string(), Arc::new(bloom_filter));
+            
+            debug!("Loaded bloom filter for SSTable: {} ({} bytes)", file_path, bloom_len);
         }
         
         debug!("Loaded metadata for SSTable: {}", file_path);
@@ -651,22 +839,135 @@ impl UnifiedSstableReader {
     
     async fn load_specific_blocks(
         &self,
-        _context: &CollectionContext,
-        _blocks: &[usize],
+        context: &CollectionContext,
+        blocks: &[usize],
     ) -> Result<Vec<DataBlock>> {
-        Ok(Vec::new())
+        let mut loaded_blocks = Vec::new();
+        
+        for &block_idx in blocks {
+            if let Some(block) = self.load_block_with_cache(context, block_idx).await? {
+                loaded_blocks.push(block);
+            }
+        }
+        
+        Ok(loaded_blocks)
     }
     
-    async fn read_file_with_cache(&self, _path: &str) -> Result<Vec<DataBlock>> {
-        Ok(Vec::new())
+    async fn read_file_with_cache(&self, path: &str) -> Result<Vec<DataBlock>> {
+        // First ensure index is loaded
+        let indices = self.index_cache.indices.read().await;
+        if !indices.contains_key(path) {
+            drop(indices);
+            self.load_index_optimized(path).await?;
+        }
+        
+        // Get the index
+        let indices = self.index_cache.indices.read().await;
+        let index = indices.get(path).ok_or_else(|| {
+            anyhow::anyhow!("Failed to load index for file: {}", path)
+        })?;
+        let num_blocks = index.entries.len();
+        drop(indices);
+        
+        // Load all blocks using cache
+        let mut blocks = Vec::new();
+        let context = CollectionContext {
+            collection_id: "temp".to_string(),
+            file_path: path.to_string(),
+            sstable_files: vec![path.to_string()],
+            total_vectors: 0,
+            metadata_columns: vec![],
+            level: 0,
+            creation_time: chrono::Utc::now(),
+        };
+        
+        for block_idx in 0..num_blocks {
+            if let Some(block) = self.load_block_with_cache(&context, block_idx).await? {
+                blocks.push(block);
+            }
+        }
+        
+        Ok(blocks)
     }
     
-    async fn read_file_direct(&self, _path: &str) -> Result<Vec<DataBlock>> {
-        Ok(Vec::new())
+    async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
+        // Load index first
+        self.load_index_optimized(path).await?;
+        
+        // Read the full file
+        let fs = self.filesystem.get_filesystem("file:///")?;
+        let data = fs.read(path).await?;
+        let mut offset = 0usize;
+        
+        // Skip header
+        if data.len() < 4 {
+            return Ok(vec![]);
+        }
+        let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        offset += 4 + header_len;
+        
+        // Skip bloom filter
+        if offset + 4 > data.len() {
+            return Ok(vec![]);
+        }
+        let bloom_len = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        ]) as usize;
+        offset += 4 + bloom_len;
+        
+        // Skip index
+        if offset + 4 > data.len() {
+            return Ok(vec![]);
+        }
+        let index_len = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        ]) as usize;
+        offset += 4 + index_len;
+        
+        // Read all data blocks
+        let mut blocks = Vec::new();
+        while offset + 4 <= data.len() {
+            let block_len = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            ]) as usize;
+            offset += 4;
+            
+            if offset + block_len > data.len() {
+                break;
+            }
+            
+            let block_data = &data[offset..offset + block_len];
+            if let Ok(block) = bincode::deserialize::<DataBlock>(block_data) {
+                blocks.push(block);
+            }
+            offset += block_len;
+        }
+        
+        Ok(blocks)
     }
     
     fn evaluate_filter(&self, _expr: &FilterExpression, _metadata: &HashMap<String, serde_json::Value>) -> bool {
         true // Placeholder
+    }
+    
+    /// Compare metadata values for ordering
+    fn compare_metadata_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+        use serde_json::Value;
+        use std::cmp::Ordering;
+        
+        match (a, b) {
+            (Value::Number(n1), Value::Number(n2)) => {
+                let f1 = n1.as_f64().unwrap_or(0.0);
+                let f2 = n2.as_f64().unwrap_or(0.0);
+                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
+            }
+            (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
+            (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
+            (Value::Null, Value::Null) => Ordering::Equal,
+            (Value::Null, _) => Ordering::Less,
+            (_, Value::Null) => Ordering::Greater,
+            _ => Ordering::Equal,
+        }
     }
 }
 

@@ -108,13 +108,21 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         let start_time = std::time::Instant::now();
         
         info!("🔍 VIPER Search: collection={}, k={}", context.collection_id, params.top_k.unwrap_or(10));
+        if let Some(filters) = &params.filters {
+            info!("🔍 VIPER Search has filters: {:?}", filters);
+        }
         
         // 1. Build file paths using collection context and ML clustering
         let file_paths = self.build_file_paths(context, params).await?;
         debug!("📁 Selected {} files for search", file_paths.len());
+        for (i, path) in file_paths.iter().enumerate() {
+            debug!("📁   File {}: {}", i, path);
+        }
         
         // 2. Build collection context for reader
         let collection_context = self.build_collection_context(context, &file_paths);
+        debug!("📁 Collection context: {:?}", collection_context);
+        debug!("📁 Filterable columns: {:?}", collection_context.filterable_columns);
         
         // 3. Use UnifiedParquetReader direct search - NO ADAPTERS!
         let search_results = self.parquet_reader.search_vectors(
@@ -230,17 +238,62 @@ impl ViperUnifiedSearchEngine {
         context: &UnifiedSearchContext,
         _params: &SearchParams,
     ) -> Result<Vec<String>> {
-        // This would integrate with actual ML clustering service
-        // For now, provide a reasonable implementation
-        Ok(vec![
-            format!("{}/cluster_0/*.parquet", context.collection_id),
-            format!("{}/cluster_1/*.parquet", context.collection_id),
-        ])
+        // For now, fall back to getting all files until ML clustering is implemented
+        // In the future, this would integrate with ML clustering service to select
+        // only the most relevant parquet files based on the query vector
+        self.build_all_file_paths(context).await
     }
     
     /// Build all file paths for collection
     async fn build_all_file_paths(&self, context: &UnifiedSearchContext) -> Result<Vec<String>> {
-        Ok(vec![format!("{}/**/*.parquet", context.collection_id)])
+        use crate::storage::assignment_service::get_assignment_service;
+        
+        debug!("📁 Building file paths for collection: {}", context.collection_id);
+        
+        // Get storage assignment for the collection
+        let assignment_service = get_assignment_service();
+        let storage_assignment = assignment_service
+            .get_assignment(&context.collection_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", context.collection_id))?;
+        
+        let storage_url = &storage_assignment.data_url;
+        debug!("📁 Storage URL for collection {}: {}", context.collection_id, storage_url);
+        
+        // Use the parquet reader's filesystem (which was injected)
+        let fs = self.parquet_reader.filesystem();
+        let filesystem = fs.get_filesystem(storage_url)?;
+        
+        // List files in the data directory (storage_url already includes collection_id)
+        let entries = match filesystem.list(storage_url).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                debug!("📁 Failed to list files in {}: {}", storage_url, e);
+                return Ok(vec![]);
+            }
+        };
+        
+        // Find all .parquet files
+        let mut files = Vec::new();
+        for entry in entries {
+            // Skip staging directories (start with __) and hidden files (start with .)
+            if entry.name.starts_with("__") || entry.name.starts_with(".") {
+                debug!("📁 Skipping staging/hidden entry: {}", entry.name);
+                continue;
+            }
+            
+            if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
+                // In stateless design, DirEntry.url already contains full URL
+                debug!("📁 Found parquet file: {}", entry.url);
+                files.push(entry.url);
+            }
+        }
+        
+        // Sort files for consistent ordering
+        files.sort();
+        
+        info!("📁 Found {} parquet files for collection {}", files.len(), context.collection_id);
+        Ok(files)
     }
     
     /// Build collection context for reader - NO ADAPTERS NEEDED

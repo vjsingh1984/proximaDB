@@ -29,7 +29,7 @@ pub type AvroVectorRecord = crate::core::avro_unified::VectorRecord;
 pub type ProtoVectorRecord = VectorRecord;
 
 /// Convert Avro VectorRecord to Proto VectorRecord
-pub fn avro_to_proto(avro_record: &AvroVectorRecord, collection_id: &str) -> ProtoVectorRecord {
+pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> ProtoVectorRecord {
     // Convert metadata from HashMap<String, serde_json::Value> to Vec<MetadataItem>
     let metadata: Vec<crate::proto::proximadb::MetadataItem> = avro_record.metadata.iter()
         .map(|(key, value)| {

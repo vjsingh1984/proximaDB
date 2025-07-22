@@ -60,7 +60,7 @@ where
     }
 
     /// Estimate memory size of a key-value pair
-    fn estimate_entry_size(_key: &K, value: &V) -> usize {
+    fn estimate_entry_size(_key: &K, _value: &V) -> usize {
         // HashMap overhead: ~24 bytes per entry (bucket + hash + alignment)
         std::mem::size_of::<K>() + std::mem::size_of::<V>() + 24
     }

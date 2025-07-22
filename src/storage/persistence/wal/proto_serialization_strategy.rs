@@ -7,17 +7,17 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 
 use super::batch_strategy::WalBatchStrategy;
-use super::{FlushResult, WalConfig, WalStats, WalOperation, BatchId};
+use super::{FlushResult, WalConfig, WalStats, BatchId};
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::{
     MemtableManager, WalDiskManager, RecoveryManager,
-    WalFlushCoordinator, RecoveryMode,
+    WalFlushCoordinator,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -28,7 +28,7 @@ pub struct ProtoSerializationStrategy {
     serializer: Box<dyn VectorBatchSerializer>,
     
     /// Memtable manager (shared across strategies)
-    memtable_manager: Arc<MemtableManager>,
+    pub memtable_manager: Arc<MemtableManager>,
     
     /// Disk manager (shared across strategies)
     disk_manager: Arc<WalDiskManager>,
@@ -155,75 +155,10 @@ impl WalBatchStrategy for ProtoSerializationStrategy {
         });
     }
 
-    #[instrument(skip(self, proto_bytes), fields(collection_id, proto_size = proto_bytes.len()))]
-    async fn write_proto_batch(
-        &self,
-        collection_id: &str,
-        proto_bytes: &[u8]
-    ) -> Result<WalOperation> {
-        debug!(
-            "📝 Writing proto batch for collection {} with {} bytes",
-            collection_id,
-            proto_bytes.len()
-        );
-        
-        // 1. Deserialize to get vector count
-        let vectors = self.serializer.deserialize_batch(proto_bytes)?;
-        let vector_count = vectors.len();
-        
-        // 2. Create batch and add to memtable
-        let batch = WalVectorBatch {
-            batch_id: BatchId::new(),
-            vector_records: Arc::new(vectors),
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes: proto_bytes.len(),
-            is_flushed: false,
-        };
-        
-        let batch_id = batch.batch_id.clone();
-        self.memtable_manager.add_vector_batch(collection_id, batch).await?;
-        
-        // 3. Persist to disk if configured
-        if self.should_persist_to_disk() {
-            self.disk_manager.write_batch(
-                collection_id,
-                &batch_id,
-                proto_bytes,
-                SerializationFormat::ProtocolBuffers,
-            ).await?;
-        }
-        
-        // 4. Check if we should trigger flush
-        if self.memtable_manager.should_flush_collection(
-            collection_id,
-            self.config.performance.memory_flush_size_bytes as u64,
-        ).await? {
-            self.trigger_background_flush(collection_id);
-        }
-        
-        Ok(WalOperation {
-            operation_type: "upsert_batch".to_string(),
-            payload_data: proto_bytes.to_vec(),
-            payload_format: "proto".to_string(),
-            vector_count,
-        })
-    }
+    // Removed legacy methods write_proto_batch and write_avro_batch
+    // All writes should use write_native_batch directly with collection_id
 
-    async fn write_avro_batch(
-        &self, 
-        collection_id: &str,
-        avro_bytes: &[u8]
-    ) -> Result<WalOperation> {
-        // For Proto strategy, we don't support Avro directly
-        Err(anyhow::anyhow!(
-            "Avro format not supported by ProtoSerializationStrategy. Use AvroSerializationStrategy instead."
-        ))
-    }
-
-    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        // We need collection_id but it's not in the batch
-        // This is a design flaw that needs to be addressed
-        let collection_id = "default"; // TODO: Fix this
+    async fn write_native_batch(&self, batch: WalVectorBatch, collection_id: &str) -> Result<Vec<u64>> {
         
         debug!(
             "📝 Writing native batch {} with {} vectors",
@@ -249,16 +184,13 @@ impl WalBatchStrategy for ProtoSerializationStrategy {
         Ok(sequences)
     }
 
-    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        self.write_native_batch(batch).await
-    }
-
     async fn write_vector_batch_with_sync(
         &self,
         batch: WalVectorBatch,
+        collection_id: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch).await?;
+        let sequences = self.write_native_batch(batch, collection_id).await?;
         
         if immediate_sync {
             self.force_sync(None).await?;
@@ -427,7 +359,7 @@ impl WalBatchStrategy for ProtoSerializationStrategy {
             memory_entries: memtable_stats.total_vectors_added,
             disk_segments: disk_stats.total_files_written,
             total_disk_size_bytes: disk_stats.total_bytes_written,
-            memory_size_bytes: 0, // TODO: Get from memtable
+            memory_size_bytes: memtable_stats.memory_usage_bytes,
             collections_count: memtable_stats.total_collections,
             last_flush_time: None,
             write_throughput_entries_per_sec: 0.0,
@@ -506,9 +438,9 @@ impl ProtoSerializationStrategy {
     /// Trigger background flush for a collection
     fn trigger_background_flush(&self, collection_id: &str) {
         let collection_id = collection_id.to_string();
-        let memtable = self.memtable_manager.clone();
-        let storage = self.storage_engine.clone();
-        let config = self.config.clone();
+        let _memtable = self.memtable_manager.clone();
+        let _storage = self.storage_engine.clone();
+        let _config = self.config.clone();
         
         tokio::spawn(async move {
             debug!("🔄 Background flush triggered for collection {}", collection_id);
@@ -522,10 +454,6 @@ impl ProtoSerializationStrategy {
     /// Flush all collections
     async fn flush_all_collections(&self) -> Result<FlushResult> {
         let collections = self.memtable_manager.get_all_collections().await?;
-        
-        let mut total_vectors = 0;
-        let mut total_bytes = 0u64;
-        let mut total_duration = 0u64;
         
         let mut affected_collections = Vec::new();
         for collection_id in collections {

@@ -10,18 +10,20 @@ graph TB
     end
 
     subgraph "Optimized Service Layer"
-        DVS[DirectVectorService<br/>40-60% Latency Reduction<br/>No Registry Overhead]
-        CC[CompactionCoordinator<br/>Automatic Optimization<br/>Threshold-based]
-        SSS[StreamingSearchService<br/>Lock-Free Search<br/>Non-blocking]
+        DVS[DirectVectorService<br/>40-60% Latency Reduction<br/>Engine-Specific Routing]
+        CS[CollectionService<br/>Configuration Management<br/>Engine Selection]
+        FC[FlushCoordinator<br/>Collection-Aware Flushing<br/>No Default Engine]
     end
 
     subgraph "Storage Layer"
-        UBS[UnifiedBatchStrategy<br/>90% Code Reduction<br/>Proto/Bincode/Avro]
+        WAL[WalManager<br/>14,939 vectors/sec<br/>Clean Separation]
         
         subgraph "Storage Engines"
-            VIPER[ViperEngine<br/>Parquet columnar<br/>ML clustering]
-            LSM[LsmTree<br/>SSTable row-based<br/>Bloom filters]
+            VIPER[ViperEngine<br/>Columnar Storage<br/>Predicate Pushdown]
+            LSM[LsmEngine<br/>Atomic Compaction<br/>Metadata Filtering]
         end
+        
+        UAC[UnifiedAtomicCoordinator<br/>ACID Operations<br/>Staging Pattern]
     end
 
     Python --> UH
@@ -29,15 +31,18 @@ graph TB
     gRPC --> UH
     
     UH --> DVS
-    DVS --> CC
-    DVS --> SSS
-    DVS --> UBS
+    DVS --> CS
+    DVS --> FC
+    DVS --> WAL
     
-    UBS --> VIPER
-    UBS --> LSM
+    CS --> VIPER
+    CS --> LSM
     
-    CC --> VIPER
-    CC --> LSM
+    WAL --> UAC
+    FC --> UAC
+    
+    UAC --> VIPER
+    UAC --> LSM
 
     classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
     classDef network fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
@@ -46,5 +51,5 @@ graph TB
     
     class Python,REST,gRPC client
     class UH network
-    class DVS,CC,SSS service
-    class UBS,VIPER,LSM storage
+    class DVS,CS,FC service
+    class WAL,VIPER,LSM,UAC storage

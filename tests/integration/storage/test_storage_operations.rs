@@ -345,7 +345,11 @@ async fn test_compaction_operations() {
         max_levels: 7,
         compaction_strategy: "level".to_string(),
         enable_bloom_filter: true,
-        bloom_filter_bits_per_key: 10,
+        bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
+            bits_per_key: 10,
+            enabled: true,
+            ..Default::default()
+        }),
         enable_compression: true,
         compression_algorithm: "lz4".to_string(),
         max_open_files: 1000,

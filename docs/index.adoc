@@ -36,11 +36,11 @@ endif::[]
 |30 min
 
 |🟡 **Developers** 
-|link:developer_guide.adoc[Developer Guide] → link:architecture.adoc[Architecture] → link:technical_reference.adoc[Technical Reference]
+|link:developer_guide.adoc[Developer Guide] → link:proximadb-technical-reference.adoc[Technical Reference] → link:appendix_implementation_details.adoc[Implementation Details]
 |2 hours
 
 |🔴 **Architects**
-|link:requirements.adoc[Requirements] → link:architecture.adoc[Architecture] → link:quantization_and_optimization.adoc[Advanced Features]
+|link:proximadb-technical-reference.adoc[Technical Reference] → link:architecture.adoc[Architecture Deep Dive] → link:appendix_performance_metrics.adoc[Performance Metrics]
 |4+ hours
 |===
 
@@ -76,21 +76,25 @@ endif::[]
 |===
 |**Document** |**Description** |**Audience**
 
+|link:proximadb-technical-reference.adoc[Technical Reference]
+|Comprehensive technical documentation with architecture, APIs, and configuration
+|All Technical Users
+
 |link:developer_guide.adoc[Developer Guide]
 |Complete development reference with setup, API docs, and testing
 |Developers
 
-|link:hld.adoc[High-Level Design]
-|System architecture, components, and design decisions
+|link:architecture.adoc[Architecture Deep Dive]
+|Detailed system architecture, components, and design decisions
 |Architects
 
-|link:lld.adoc[Low-Level Design]
-|Detailed implementation specifications and internal architecture
+|link:appendix_implementation_details.adoc[Implementation Details]
+|Code patterns, examples, and advanced implementation techniques
 |Senior Developers
 
-|link:requirements.adoc[Requirements Specification]
-|Complete system requirements and implementation tracking
-|Product Managers
+|link:appendix_performance_metrics.adoc[Performance Metrics]
+|Comprehensive benchmarks, optimization guidelines, and tuning
+|Performance Engineers
 |===
 
 === 🚀 Advanced Features & Planning
@@ -121,18 +125,18 @@ endif::[]
 
 === 🔧 "I want to integrate ProximaDB into my application"
 1. link:developer_guide.adoc#client-sdk-usage[SDK documentation]
-2. link:developer_guide.adoc#api-documentation[API reference]
-3. link:technical_reference.adoc[Implementation details]
+2. link:proximadb-technical-reference.adoc#api-reference[API reference]
+3. link:appendix_implementation_details.adoc[Implementation patterns]
 
 === 🏗️ "I want to understand the architecture"
-1. link:architecture.adoc[System architecture overview]
-2. link:technical_reference.adoc[Technical implementation details]
-3. link:requirements.adoc[Requirements and acceptance criteria]
+1. link:proximadb-technical-reference.adoc#architecture-overview[System architecture]
+2. link:architecture.adoc[Architecture deep dive]
+3. link:appendix_implementation_details.adoc[Implementation details]
 
 === ⚡ "I want to optimize performance"
-1. link:quantization_and_optimization.adoc[Vector quantization guide]
-2. link:architecture.adoc#performance-characteristics[Performance benchmarks]
-3. link:technical_reference.adoc#performance-optimization[Optimization techniques]
+1. link:appendix_performance_metrics.adoc[Performance benchmarks]
+2. link:proximadb-technical-reference.adoc#performance-characteristics[Optimization techniques]
+3. link:appendix_performance_metrics.adoc#optimization-guidelines[Tuning guidelines]
 
 === 🏢 "I want to deploy ProximaDB in production"
 1. link:architecture.adoc#deployment-architecture[Deployment strategies]

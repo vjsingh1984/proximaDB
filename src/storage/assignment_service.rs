@@ -508,7 +508,7 @@ impl AssignmentDiscovery {
         component_type: StorageComponentType,
         storage_urls: &[String],
         filesystem: &Arc<FilesystemFactory>,
-        assignment_service: &Arc<dyn AssignmentService>,
+        _assignment_service: &Arc<dyn AssignmentService>,
     ) -> Result<usize> {
         let mut discovered_count = 0;
 
@@ -518,7 +518,7 @@ impl AssignmentDiscovery {
             storage_urls.len()
         );
 
-        for (directory_index, storage_url) in storage_urls.iter().enumerate() {
+        for (_directory_index, storage_url) in storage_urls.iter().enumerate() {
             let fs = filesystem.get_filesystem(storage_url)?;
 
             let base_path = if storage_url.starts_with("file://") {
@@ -532,7 +532,7 @@ impl AssignmentDiscovery {
                     Ok(entries) => {
                         for entry in entries {
                             if entry.metadata.is_directory {
-                                let dir_name = std::path::Path::new(&entry.path)
+                                let dir_name = std::path::Path::new(&entry.url)
                                     .file_name()
                                     .and_then(|n| n.to_str())
                                     .unwrap_or("");
@@ -547,7 +547,7 @@ impl AssignmentDiscovery {
                                             !f.metadata.is_directory
                                                 && Self::is_component_data_file(
                                                     component_type,
-                                                    std::path::Path::new(&f.path),
+                                                    std::path::Path::new(&f.url),
                                                 )
                                         })
                                         .collect();
@@ -606,7 +606,11 @@ impl AssignmentDiscovery {
     ) -> bool {
         if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
             match component_type {
-                StorageComponentType::Wal => extension == "avro" || extension == "bincode",
+                StorageComponentType::Wal => {
+                    // Support both old and new WAL file extensions
+                    extension == "avro" || extension == "bincode" || extension == "proto"
+                        || extension == "avwal" || extension == "bcwal" || extension == "pbwal"
+                }
                 StorageComponentType::Storage => {
                     extension == "parquet"
                         || extension == "vpr"
@@ -629,6 +633,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::fs;
+    use tracing::info;
 
     #[tokio::test]
     async fn test_hash_based_assignment() {
@@ -824,8 +829,8 @@ mod tests {
         // NOTE: Discovery logic currently only counts but doesn't record assignments
         // This will be implemented in future iterations
         // For now, verify that discovery found the collections but don't expect assignments
-        println!("Discovered {} WAL collections and {} Storage collections", wal_count, storage_count);
-        println!("Current assignments: {}", all_assignments.len());
+        info!("Discovered {} WAL collections and {} Storage collections", wal_count, storage_count);
+        info!("Current assignments: {}", all_assignments.len());
         // Test passes if discovery found collections (even if not recorded yet)
     }
 
@@ -881,8 +886,8 @@ mod tests {
 
         // NOTE: Discovery logic currently only counts but doesn't record assignments
         // This will be implemented in future iterations  
-        println!("Concurrent discovery found: WAL={}, Storage={}, Index={}", wal_count, storage_count, index_count);
-        println!("Current assignments: {}", all_assignments.len());
+        info!("Concurrent discovery found: WAL={}, Storage={}, Index={}", wal_count, storage_count, index_count);
+        info!("Current assignments: {}", all_assignments.len());
         // Test passes if discovery found collections (even if not recorded yet)
     }
 

@@ -39,7 +39,11 @@ mod metadata_backend_tests {
             mmap_enabled: true,
             lsm_config: Default::default(),
             cache_size_mb: 10,
-            bloom_filter_bits: 10,
+            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+                ..Default::default()
+            }),
         };
         
         // Create storage engine without collection service

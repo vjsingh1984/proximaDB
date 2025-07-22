@@ -114,7 +114,7 @@ impl OptimizedWalPathResolver {
         &self,
         collection_id: &str,
         wal_base_url: &str,
-        storage_base_url: &str,
+        _storage_base_url: &str,
         assignment_timestamp: DateTime<Utc>,
     ) -> CollectionPaths {
         let base_path = format!("{}/{}", wal_base_url, collection_id);

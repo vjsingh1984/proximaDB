@@ -15,6 +15,10 @@
  */
 
 //! Local filesystem implementation supporting Windows, Linux, and other OS platforms
+//!
+//! IMPORTANT: This implementation uses sync_all() for writes when sync_enabled is true
+//! to ensure data durability and prevent file truncation issues that can occur when
+//! files are moved/renamed before data is fully flushed to disk.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -58,6 +62,23 @@ pub struct LocalFileSystem {
 }
 
 impl LocalFileSystem {
+    /// Extract path from URL for stateless operations
+    fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
+        use url::Url;
+        
+        // Handle URLs without schemes by assuming local file
+        if !url.contains("://") {
+            return Ok(url.to_string());
+        }
+        
+        let parsed_url = Url::parse(url)?;
+        if parsed_url.scheme() == "file" {
+            Ok(parsed_url.path().to_string())
+        } else {
+            Err(FilesystemError::UnsupportedScheme(parsed_url.scheme().to_string()))
+        }
+    }
+
     /// Create new local filesystem instance
     pub async fn new(config: LocalConfig) -> FsResult<Self> {
         // Create and validate root directory if specified
@@ -86,7 +107,10 @@ impl LocalFileSystem {
 
     /// Resolve path relative to root if configured
     fn resolve_path(&self, path: &str) -> PathBuf {
-        let path_buf = PathBuf::from(path);
+        // First extract path from URL if needed
+        let path_str = self.extract_path_from_url(path).unwrap_or_else(|_| path.to_string());
+        
+        let path_buf = PathBuf::from(path_str);
 
         if let Some(ref root_dir) = self.config.root_dir {
             if path_buf.is_absolute() {
@@ -145,13 +169,15 @@ impl LocalFileSystem {
 #[async_trait]
 impl FileSystem for LocalFileSystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
-        let resolved_path = self.resolve_path(path);
+        // Extract actual file path from URL (stateless design)
+        let file_path = self.extract_path_from_url(path)?;
+        let resolved_path = self.resolve_path(&file_path);
 
         match fs::read(&resolved_path).await {
             Ok(data) => Ok(data),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => Err(FilesystemError::NotFound(
-                    resolved_path.display().to_string(),
+                    format!("File not found: {}", path)
                 )),
                 std::io::ErrorKind::PermissionDenied => Err(FilesystemError::PermissionDenied(
                     resolved_path.display().to_string(),
@@ -181,10 +207,29 @@ impl FileSystem for LocalFileSystem {
             ));
         }
 
-        // Write file
-        fs::write(&resolved_path, data)
-            .await
-            .map_err(FilesystemError::Io)?;
+        // Write file with proper sync to ensure data is flushed to disk
+        // This is critical for atomic writes to prevent truncation
+        if self.config.sync_enabled {
+            // Open file for writing with sync
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&resolved_path)
+                .await
+                .map_err(FilesystemError::Io)?;
+                
+            // Write all data
+            file.write_all(data).await.map_err(FilesystemError::Io)?;
+            
+            // Sync data to disk to prevent truncation issues
+            file.sync_all().await.map_err(FilesystemError::Io)?;
+        } else {
+            // Fast write without sync (for development/testing only)
+            fs::write(&resolved_path, data)
+                .await
+                .map_err(FilesystemError::Io)?;
+        }
 
         // Set permissions if specified
         #[cfg(unix)]
@@ -243,6 +288,57 @@ impl FileSystem for LocalFileSystem {
         Ok(resolved_path.exists())
     }
 
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        
+        // Extract actual file path from URL (stateless design)
+        let file_path = self.extract_path_from_url(path)?;
+        let resolved_path = self.resolve_path(&file_path);
+        
+        // Open file for reading
+        let mut file = match tokio::fs::File::open(&resolved_path).await {
+            Ok(f) => f,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    return Err(FilesystemError::NotFound(
+                        format!("File not found: {}", path)
+                    ))
+                }
+                std::io::ErrorKind::PermissionDenied => {
+                    return Err(FilesystemError::PermissionDenied(
+                        resolved_path.display().to_string(),
+                    ))
+                }
+                _ => return Err(FilesystemError::Io(e)),
+            },
+        };
+        
+        // Get file size to validate the range
+        let metadata = file.metadata().await.map_err(FilesystemError::Io)?;
+        let file_size = metadata.len();
+        
+        // Check if offset is beyond file size
+        if offset >= file_size {
+            return Ok(vec![]);
+        }
+        
+        // Seek to the offset
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(FilesystemError::Io)?;
+        
+        // Calculate actual bytes to read (handle case where offset + length > file_size)
+        let bytes_to_read = std::cmp::min(length, file_size - offset) as usize;
+        
+        // Read the exact amount of bytes
+        let mut buffer = vec![0u8; bytes_to_read];
+        file.read_exact(&mut buffer)
+            .await
+            .map_err(FilesystemError::Io)?;
+        
+        Ok(buffer)
+    }
+
     async fn metadata(&self, path: &str) -> FsResult<FileMetadata> {
         let resolved_path = self.resolve_path(path);
 
@@ -264,7 +360,9 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        let resolved_path = self.resolve_path(path);
+        // Extract actual file path from URL (stateless design)
+        let file_path = self.extract_path_from_url(path)?;
+        let resolved_path = self.resolve_path(&file_path);
 
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
@@ -280,12 +378,14 @@ impl FileSystem for LocalFileSystem {
                 .to_string();
 
             let metadata = entry.metadata().await.map_err(FilesystemError::Io)?;
-
             let file_metadata = self.convert_metadata(&entry_path, &metadata);
+
+            // Create full URL for entry (stateless design)
+            let entry_url = format!("file://{}", entry_path.display());
 
             entries.push(DirEntry {
                 name,
-                path: entry_path.display().to_string(),
+                url: entry_url,  // Use full URL instead of path
                 metadata: file_metadata,
             });
         }

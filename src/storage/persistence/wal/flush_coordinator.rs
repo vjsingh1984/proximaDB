@@ -206,10 +206,16 @@ impl WalFlushCoordinator {
         );
 
         // Step 2: Select appropriate storage engine (Strategy Pattern)
-        let engine_type = preferred_engine.unwrap_or("VIPER"); // Default to VIPER
+        let engine_type = preferred_engine.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No storage engine specified for collection {}. \
+                 Engine routing must be determined by the collection service.",
+                collection_id
+            )
+        })?;
         info!(
-            "🔍 Coordinator: Engine selection - preferred: {:?}, selected: {}",
-            preferred_engine, engine_type
+            "🔍 Coordinator: Using {} storage engine for collection {}",
+            engine_type, collection_id
         );
 
         let engine = {

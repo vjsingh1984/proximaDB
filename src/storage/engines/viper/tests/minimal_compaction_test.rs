@@ -1,0 +1,111 @@
+//! Minimal test to debug VIPER compaction
+
+use std::sync::Arc;
+use tempfile::TempDir;
+use anyhow::Result;
+
+use crate::core::VectorRecord;
+use crate::proto::proximadb::MetadataItem;
+use crate::storage::engines::viper::{ViperEngine, ViperConfig};
+use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};
+use crate::storage::persistence::filesystem::FilesystemFactory;
+
+/// Create test vector
+fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
+    VectorRecord {
+        id: Some(id.to_string()),
+        vector: (0..dimension).map(|i| (i as f32) / (dimension as f32)).collect(),
+        metadata: vec![],
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        expires_at: None,
+        version: 1,
+        rank: None,
+        score: None,
+        distance: None,
+    }
+}
+
+#[tokio::test]
+async fn test_minimal_viper_compaction() -> Result<()> {
+    println!("\n[TEST] Starting minimal VIPER compaction test");
+    
+    let temp_dir = TempDir::new()?;
+    let base_path = temp_dir.path().to_str().unwrap();
+    
+    println!("[TEST] Test directory: {}", base_path);
+    
+    // Create config
+    let mut config = ViperConfig::default();
+    config.enable_ml_clustering = false;
+    config.flush_size_bytes = Some(512 * 1024); // 512KB
+    
+    // Create engine
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let engine = ViperEngine::new(config, filesystem_factory).await?;
+    
+    let collection_id = "minimal_test";
+    
+    // Set up storage assignment
+    use tokio::fs;
+    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    fs::create_dir_all(&data_dir).await?;
+    
+    let assignment_service = crate::storage::assignment_service::get_assignment_service();
+    let storage_location = crate::core::config::StorageLocation {
+        url: format!("file://{}", base_path),
+        weight: 1,
+        tags: Default::default(),
+    };
+    assignment_service
+        .assign_collection(collection_id, &[storage_location], "hash")
+        .await?;
+    
+    // Create and flush just 3 vectors
+    println!("\n[TEST] Creating and flushing 3 vectors");
+    
+    let vectors = vec![
+        create_test_vector("vec_0", 128),
+        create_test_vector("vec_1", 128),
+        create_test_vector("vec_2", 128),
+    ];
+    
+    let flush_params = FlushParameters {
+        collection_id: Some(collection_id.to_string()),
+        force: true,
+        synchronous: true,
+        vector_records: vectors,
+        batch_ids: vec![],
+        hints: std::collections::HashMap::new(),
+        timeout_ms: None,
+        trigger_compaction: false,
+    
+        collection_config: None,};
+    
+    let flush_result = engine.do_flush(&flush_params).await?;
+    println!("[TEST] Flush complete: {} files created, {} entries flushed", 
+             flush_result.files_created, flush_result.entries_flushed);
+    
+    // Run compaction
+    println!("\n[TEST] Running compaction");
+    
+    let compact_params = CompactionParameters {
+        collection_id: Some(collection_id.to_string()),
+        force: true,
+        synchronous: true,
+        hints: std::collections::HashMap::new(),
+        timeout_ms: None,
+        priority: crate::storage::traits::OperationPriority::Medium,
+    
+        collection_config: None,};
+    
+    let compact_result = engine.do_compact(&compact_params).await?;
+    println!("[TEST] Compaction complete: {} input files, {} output files, {} entries processed", 
+             compact_result.input_files, compact_result.output_files, compact_result.entries_processed);
+    
+    assert!(compact_result.success, "Compaction should succeed");
+    assert_eq!(compact_result.entries_processed, 3, "Should process 3 entries");
+    
+    Ok(())
+}

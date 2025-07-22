@@ -619,7 +619,7 @@ impl FileSystem for HdfsFileSystem {
 
             entries.push(DirEntry {
                 name,
-                path: entry_path,
+                url: format!("hdfs://{}", entry_path),
                 metadata,
             });
         }

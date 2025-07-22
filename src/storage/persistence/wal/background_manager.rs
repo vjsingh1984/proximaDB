@@ -176,7 +176,7 @@ impl BackgroundMaintenanceManager {
     /// 1. Collection has >1M vectors (MIN_VECTORS_FOR_CLUSTERING)
     /// 2. Vector count has grown by >20% since last training
     /// 3. At least 6 hours have passed since last training
-    async fn should_retrain_model(&self, collection_id: &str, current_vectors: usize) -> bool {
+    async fn should_retrain_model(&self, collection_id: &str, _current_vectors: usize) -> bool {
         // Clustering functionality moved to AXIS
         // Always return false as model training is now handled by AXIS
         let mut stats = self.stats.lock().await;
@@ -256,7 +256,7 @@ impl BackgroundMaintenanceManager {
         let axis_manager = self.axis_manager.clone();
         let storage_engines_clone = self.storage_engines.clone();
         // let clustering_model_manager = self.clustering_model_manager.clone(); // Moved to AXIS
-        let last_training_vector_counts = self.last_training_vector_counts.clone();
+        let _last_training_vector_counts = self.last_training_vector_counts.clone();
 
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
@@ -398,7 +398,7 @@ impl BackgroundMaintenanceManager {
             }
 
             // CRITICAL: IndexConfig-based indexing AFTER complete flush-compaction cycle
-            if let (Some(ref axis), Some(ref flush_result)) = (&axis_manager, &flush_result) {
+            if let (Some(ref axis), Some(ref _flush_result)) = (&axis_manager, &flush_result) {
                 if !final_files_created.is_empty() {
                     info!(
                         "🔄 [INDEXING] Starting IndexConfig-based indexing for collection {} after flush-compaction cycle",
@@ -753,6 +753,7 @@ impl BackgroundMaintenanceManager {
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(300_000), // 5 minute timeout
             priority: crate::storage::traits::OperationPriority::Low,
+            collection_config: None, // Background manager doesn't have collection service access
         };
         
         info!(
@@ -805,7 +806,7 @@ impl BackgroundMaintenanceManager {
             return Err(anyhow::anyhow!("Cannot combine empty batches"));
         }
         
-        use arrow_array::{Array, ArrayRef};
+        use arrow_array::ArrayRef;
         
         
         let mut combined_columns = Vec::new();

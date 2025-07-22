@@ -1,0 +1,61 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#fff', 'primaryBorderColor':'#374151', 'lineColor':'#6b7280', 'secondaryColor':'#3b82f6', 'tertiaryColor':'#10b981', 'tertiaryTextColor':'#fff', 'tertiaryBorderColor':'#059669', 'background':'#ffffff', 'mainBkg':'#f3f4f6', 'secondBkg':'#e5e7eb', 'tertiaryBkg':'#d1d5db'}}}%%
+
+graph TB
+    subgraph "Bloom Filter Architecture"
+        Config[BloomFilterConfig]
+        Factory[BloomFilterFactory]
+        
+        Config -->|configures| Factory
+        
+        Factory -->|creates| Strategies
+        
+        subgraph "Strategies"
+            ByteAligned["ByteAligned<br/>SSTable Optimized"]
+            BitPacked["BitPacked<br/>Memory Efficient"]
+            Simple["Simple<br/>Small Datasets"]
+            Composite["Composite<br/>Metadata Aware"]
+            NoOp["NoOp<br/>Disabled/Empty"]
+        end
+        
+        subgraph "Core Trait"
+            Trait["BloomFilterStrategy<br/>insert()<br/>might_contain()<br/>serialize()<br/>false_positive_rate()"]
+        end
+        
+        ByteAligned -.->|implements| Trait
+        BitPacked -.->|implements| Trait
+        Simple -.->|implements| Trait
+        Composite -.->|implements| Trait
+        NoOp -.->|implements| Trait
+        
+        subgraph "Storage Engines"
+            LSM["LSM Engine<br/>SSTables"]
+            VIPER["VIPER Engine<br/>Parquet"]
+            Memtable["Memtable<br/>In-Memory"]
+        end
+        
+        LSM -->|uses| ByteAligned
+        VIPER -->|uses| Composite
+        Memtable -->|uses| BitPacked
+        
+        subgraph "Features"
+            Hash["Hash Functions<br/>MurmurHash3<br/>Double Hashing"]
+            Serial["Serialization<br/>Version Control<br/>Strategy Type"]
+            Edge["Edge Cases<br/>Empty Filters<br/>Division by Zero"]
+        end
+        
+        Strategies --> Hash
+        Strategies --> Serial
+        Factory --> Edge
+    end
+    
+    classDef configClass fill:#3b82f6,stroke:#2563eb,color:#fff
+    classDef factoryClass fill:#10b981,stroke:#059669,color:#fff
+    classDef strategyClass fill:#f59e0b,stroke:#d97706,color:#fff
+    classDef engineClass fill:#8b5cf6,stroke:#7c3aed,color:#fff
+    classDef featureClass fill:#6b7280,stroke:#4b5563,color:#fff
+    
+    class Config configClass
+    class Factory factoryClass
+    class ByteAligned,BitPacked,Simple,Composite,NoOp strategyClass
+    class LSM,VIPER,Memtable engineClass
+    class Hash,Serial,Edge featureClass

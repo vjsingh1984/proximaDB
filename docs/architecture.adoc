@@ -19,34 +19,34 @@ This document contains inline Mermaid diagrams that render as visual diagrams wh
 ====
 
 [.lead]
-ProximaDB is an enterprise-grade vector database engineered with **DirectVectorService architecture**, delivering **40-60% insert latency reduction** through eliminated registry overhead, **90% duplicate code removal** via unified strategies, and **lock-free streaming search** for optimal throughput.
+ProximaDB is a high-performance vector database built with Rust, featuring a **DirectVectorService architecture** that eliminates unnecessary abstraction layers, **unified strategies** to reduce code duplication, and **efficient search capabilities**.
 
 == Executive Summary
 
 [cols="1,3"]
 |===
-|**Performance** |6.10x search improvement, 20K+ vectors/sec insert, sub-ms search latency
-|**Architecture** |Proto-first design with zero double serialization
-|**Code Quality** |85% reduction in handler duplication, 40% memtable consolidation  
-|**Storage** |Dual engines (VIPER Parquet + LSM SSTable) with automatic selection
-|**Deployment** |Multi-cloud native, Kubernetes-ready, horizontal scaling
-|**Status** |✅ Production-ready with 520+ passing tests
+|**Performance** |Optimized for high-throughput vector operations
+|**Architecture** |Proto-first design reducing serialization overhead
+|**Code Quality** |Unified interfaces reducing code duplication
+|**Storage** |Dual engines (VIPER columnar + LSM row-based) for different workloads
+|**Deployment** |Containerized deployment with Docker support
+|**Testing** |Comprehensive test suite ensuring reliability
 |===
 
 NOTE: See link:appendix_performance_metrics.adoc[Appendix: Performance Metrics] for detailed benchmarks and optimization guidelines.
 
 == Proto-First Architecture Foundation
 
-image::proximadb-refactored-architecture.png[Proto-First Architecture Foundation, width=800, align=center]
+image::proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
 
-_Diagram source: link:diagrams/proximadb-refactored-architecture.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/proximadb-actual-architecture.mmd[View Mermaid source]_
 
 === Core Design Principles
 
-**Proto-Native Operations**:: Protocol Buffers flow natively through the entire system without intermediate conversions
-**Zero Double Serialization**:: Direct proto serialization eliminates 50% of flush CPU overhead
-**Handler Consolidation**:: Unified business logic reduces REST/gRPC code duplication by 85%
-**Storage-Aware Intelligence**:: Automatic engine selection based on data location and query patterns
+**Proto-Native Operations**:: Protocol Buffers used throughout the system for consistency
+**Reduced Serialization**:: Direct proto serialization reduces overhead
+**Handler Consolidation**:: Unified business logic reduces code duplication
+**Storage Engine Selection**:: Choose appropriate engine based on workload
 
 === Key Architectural Innovations
 
@@ -55,19 +55,17 @@ image::two-stage-search.png[Two-Stage Search Process, width=800, align=center]
 _Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 
 ==== 1. DirectVectorService Architecture
-- **40-60% latency reduction** by eliminating WAL Manager Registry overhead
-- **Direct memtable access** without HashMap lookups or lock contention
-- **Unified search pipeline** automatically coordinates WAL + Storage layers
-- **Lock-free streaming search** for non-blocking result delivery
+- **Reduced latency** by eliminating unnecessary abstraction layers
+- **Direct memtable access** for write operations
+- **Coordinated search** across WAL and storage layers
+- **Efficient result delivery** for search operations
 
 ==== 2. Unified Memtable Architecture
 
-NOTE: Unified memtable architecture diagram shows the hierarchical organization of memtable implementations with specialized behavior wrappers.
-
-- **Polymorphic backends**: BTree, SkipList, HashMap, DashMap
-- **Specialized wrappers** for WAL and LSM behaviors
-- **40% code reduction** through trait-based design
-- **Runtime backend selection** based on workload characteristics
+- **Multiple backend options**: BTree, SkipList, HashMap, DashMap
+- **Specialized behaviors** for different storage engines
+- **Trait-based design** for code reuse
+- **Configurable backend** selection
 
 ==== 3. Intelligent Storage Optimization
 - **CompactionCoordinator** for automatic background compaction after flushes
@@ -84,10 +82,10 @@ image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, widt
 _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
 **UnifiedHandlers Design**::
-- **85% code reduction** through consolidated business logic
+- **Consolidated business logic** reducing code duplication
 - **Protocol adapters** for REST (JSON ↔ Proto) and gRPC (direct proto)
-- **Single source of truth** for all collection and vector operations
-- **Zero double serialization** throughout the request pipeline
+- **Single implementation** for all operations
+- **Efficient serialization** throughout the pipeline
 
 **Transport Independence**::
 - REST API (port 5678): JSON interface with automatic proto conversion
@@ -130,6 +128,33 @@ _Diagram source: link:diagrams/unified_quantization_system.mmd[View Mermaid sour
 - **Stage 2**: FP32 refinement for accuracy guarantee
 - **Configurable candidate multiplier** (default: 3x for optimal speed/accuracy)
 - **Maintains 100% recall** while achieving 3-6x speedup
+
+=== Unified Bloom Filter Architecture
+
+image::bloom-filter-architecture.png[Unified Bloom Filter Architecture, width=800, align=center]
+
+_Diagram source: link:diagrams/bloom-filter-architecture.mmd[View Mermaid source]_
+
+**Polymorphic Design Benefits**::
+- **Single configuration type**: One `BloomFilterConfig` used everywhere
+- **Strategy pattern**: Different implementations for different use cases
+- **Zero duplication**: Eliminated all duplicate bloom filter implementations
+- **Type safety**: Compile-time guarantees through trait-based design
+
+**Strategy Implementations**::
+- **ByteAligned**: Optimized for SSTable disk persistence
+- **BitPacked**: Memory-efficient for in-memory structures  
+- **Simple**: Fast operations for small datasets
+- **Composite**: Metadata-aware filtering for complex queries
+- **NoOp**: Edge case handling for disabled/empty filters
+
+**Integration Points**::
+- **LSM Engine**: ByteAligned filters in SSTables for key lookups
+- **VIPER Engine**: Composite filters for metadata queries
+- **Memtable**: BitPacked filters for memory efficiency
+- **Factory Pattern**: Unified creation and serialization
+
+NOTE: See link:architecture/bloom-filter-unified-design.adoc[Bloom Filter Architecture Guide] for detailed design documentation and link:architecture/bloom-filter-quick-reference.adoc[Quick Reference] for usage patterns.
 
 === Proto-First Data Flow
 
@@ -190,10 +215,10 @@ _Diagram source: link:diagrams/deployment-architecture.mmd[View Mermaid source]_
 - Long-term storage with compression
 - Automated lifecycle management
 
-**Cloud Tier (S3/Azure/GCS)**::
-- Backup and disaster recovery
-- Cross-region replication
-- Cost-optimized cold storage
+[NOTE]
+====
+Cloud storage integration is planned for future releases.
+====
 
 === Optimized Data Flow
 
@@ -201,53 +226,45 @@ _Diagram source: link:diagrams/deployment-architecture.mmd[View Mermaid source]_
 ----
 Client API Call
     ↓ (JSON→Proto or Direct Proto)
-UnifiedHandlers (Protocol-Agnostic)
+UnifiedHandlers
     ↓ (proto::CollectionConfig | proto::VectorRecord)
-DirectVectorService (40-60% Latency Reduction)
-    ↓ (Direct Memtable Access - No Registry)
-Unified Batch Strategy (90% Code Reduction)
-    ↓ (Workload-Aware Serialization)
-Storage Engine Selection (Automatic)
+DirectVectorService
+    ↓ (Direct Memtable Access)
+Storage Engine Selection
     ↓
 ┌─────────────────┬─────────────────┐
 │   VIPER Engine  │    LSM Engine   │
-│ (Parquet+ML)    │ (SSTable+Bloom) │
-│ Predicate↓      │ Memtable↓       │
-│ Pushdown        │ Priority        │
+│   (Columnar)    │   (Row-based)   │
+│   Parquet       │   SSTable       │
+│   Storage       │   Storage       │
 └─────────────────┴─────────────────┘
-    ↓ (Automatic Background Compaction)
-CompactionCoordinator (Threshold-Based)
-    ↓ (Lock-Free Streaming)
-StreamingSearchService (Non-Blocking Results)
+    ↓
+Search Results
 ----
 
 == Performance Characteristics
 
-=== Benchmark Results
+=== Architecture Benefits
 
-[cols="3,2,2,3"]
-|===
-|**Metric** |**Before Proto-First** |**After Proto-First** |**Improvement**
+The proto-first architecture provides:
 
-|Search Latency (1M vectors) |610ms |100ms |**6.10x faster**
-|Handler Code Lines |12,500 |1,875 |**85% reduction**
-|Python SDK Lines |6,467 |800 |**87% reduction**
-|Flush CPU Overhead |200ms |100ms |**50% reduction**
-|Memory Usage (WAL) |256MB |128MB |**50% reduction**
-|Test Suite |325 tests |520+ tests |**60% more coverage**
-|===
+* **Reduced serialization overhead** through native protobuf usage
+* **Code consolidation** by unifying REST and gRPC handlers
+* **Simplified client SDKs** with proto-generated bindings
+* **Efficient memory usage** in WAL and storage operations
+* **Comprehensive test coverage** ensuring reliability
 
-=== Scalability Targets
+=== Scalability Design
 
-**Throughput**::
-- **Write**: 100,000 vectors/second (batch mode)
-- **Search**: 10,000 queries/second (sub-100ms latency)
-- **Collections**: 10,000+ concurrent collections
+**Throughput Design**::
+- Optimized for batch operations
+- Concurrent query handling
+- Multiple collection support
 
-**Storage**::
-- **Single node**: 100M vectors (TB scale)
-- **Cluster**: 10B+ vectors (PB scale)
-- **Multi-cloud**: Unlimited with cost optimization
+**Storage Architecture**::
+- Designed for large-scale deployments
+- Efficient storage utilization
+- Future support for distributed clusters
 
 == Migration Guide
 

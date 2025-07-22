@@ -19,9 +19,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::storage::persistence::filesystem::{
-    FilesystemFactory, FileSystem, FileOptions,
-    atomic_strategy::{AtomicWriteExecutor, AtomicWriteExecutorFactory}
+    FilesystemFactory
 };
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 
 use crate::core::{String, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
@@ -38,18 +38,29 @@ pub struct FlushManager {
     
     /// Filesystem factory for cross-cloud atomic writes
     filesystem_factory: Arc<FilesystemFactory>,
+    
+    /// Atomic coordinator for ACID operations
+    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
 }
 
 impl FlushManager {
-    pub fn new(
+    pub async fn new(
         collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
         filesystem_factory: Arc<FilesystemFactory>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        // Create atomic coordinator
+        let atomic_coordinator = Arc::new(
+            UnifiedAtomicCoordinator::new(filesystem_factory.clone(), None)
+                .await
+                .context("Failed to create atomic coordinator")?
+        );
+        
+        Ok(Self {
             schema_manager: SchemaManager::new(),
             collection_service,
             filesystem_factory,
-        }
+            atomic_coordinator,
+        })
     }
 
     /// Core flush operation using proper staging pattern
@@ -152,7 +163,7 @@ impl FlushManager {
             "🔄 VIPER: Step 2a - Sorting {} vector records by metadata for optimal compression",
             vector_records.len()
         );
-        let (sorted_records, sort_stats) = match self
+        let (sorted_records, _sort_stats) = match self
             .sort_records_for_parquet_encoding(vector_records, &collection_config)
             .await
         {
@@ -314,8 +325,16 @@ impl FlushManager {
             ));
         }
         
-        // Add extra_meta column for remaining metadata
-        schema_fields.push(Field::new("extra_meta", DataType::Utf8, true));
+        // Add extra_meta column for remaining metadata as list of key-value pairs
+        let key_value_struct = DataType::Struct(arrow_schema::Fields::from(vec![
+            Field::new("key", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ]));
+        schema_fields.push(Field::new(
+            "extra_meta", 
+            DataType::List(Arc::new(Field::new("item", key_value_struct, true))), 
+            true
+        ));
         
         let schema = Arc::new(Schema::new(schema_fields));
 
@@ -516,16 +535,27 @@ impl FlushManager {
 
         // Create RecordBatch
         let batch = RecordBatch::try_new(schema, columns)?;
+        
+        info!("📝 VIPER FLUSH: Created RecordBatch with {} rows for {} records", 
+              batch.num_rows(), records.len());
+        
+        // Verify batch has correct number of rows
+        if batch.num_rows() != records.len() {
+            error!("❌ VIPER FLUSH: Batch row count mismatch! Expected {}, got {}", 
+                   records.len(), batch.num_rows());
+        }
 
         // Write to Parquet
         let mut buffer = Vec::new();
         let props = WriterProperties::builder()
-            .set_compression(parquet::basic::Compression::SNAPPY)
+            .set_compression(parquet::basic::Compression::UNCOMPRESSED)
             .build();
         
         let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
         writer.write(&batch)?;
         writer.close()?;
+        
+        info!("📝 VIPER FLUSH: Wrote {} bytes of Parquet data", buffer.len());
 
         Ok(buffer)
     }
@@ -540,10 +570,6 @@ impl FlushManager {
     ) -> Result<String> {
         info!("🔄 Writing Parquet file atomically: {} ({} bytes)", filename, parquet_data.len());
         
-        // Get filesystem and atomic writer
-        let fs = self.filesystem_factory.get_filesystem("file:///")?;
-        let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
-        
         // Use assignment service for proper path resolution
         let assignment_service = crate::storage::assignment_service::get_assignment_service();
         let storage_assignment = assignment_service
@@ -551,19 +577,50 @@ impl FlushManager {
             .await
             .context("Failed to get storage assignment")?;
         
-        // Construct final path using assignment service
-        let final_path = format!("{}/{}", storage_assignment.data_url, filename);
+        // Begin atomic operation for flush
+        // Note: data_url already includes collection path, so don't set collection_id
+        let staging_config = StagingConfig {
+            base_url: storage_assignment.data_url.clone(),
+            collection_id: None,  // Don't duplicate collection path
+            operation_type: StagingOperationType::Flush,
+            custom_staging_dir: None,
+            auto_cleanup: true,
+            max_orphaned_age_hours: 24,
+        };
         
-        // Atomic write with staging strategy:
-        // - Local: writes to ___temp subdirectory then atomic move
-        // - Cloud: writes to local temp then uploads to object store
-        atomic_writer
-            .write_atomic(fs, &final_path, parquet_data, None)
+        let atomic_op = self.atomic_coordinator
+            .begin_atomic_operation(&staging_config)
             .await
-            .context("Atomic write failed")?;
+            .context("Failed to begin atomic flush operation")?;
+        
+        info!("📝 Writing parquet file to staging: {}", filename);
+        
+        // Write parquet data to staging directory
+        self.atomic_coordinator
+            .write_to_staging(&atomic_op.operation_id, filename, parquet_data)
+            .await
+            .context("Failed to write parquet file to staging")?;
+        
+        // Finalize atomic operation - this will atomically move the file to final location
+        self.atomic_coordinator
+            .finalize_atomic_operation(&atomic_op.operation_id)
+            .await
+            .context("Failed to finalize atomic flush")?;
+        
+        let final_path = format!("{}/{}", storage_assignment.data_url, filename);
         
         info!("✅ VIPER: Atomically wrote Parquet file {} ({} KB)", 
               final_path, parquet_data.len() / 1024);
+        
+        // Verify file was written
+        let fs = self.filesystem_factory.get_filesystem(&storage_assignment.data_url)?;
+        if fs.exists(&final_path).await? {
+            let metadata = fs.metadata(&final_path).await?;
+            info!("✅ VIPER: Verified file exists at {} with size {} bytes", 
+                  final_path, metadata.size);
+        } else {
+            error!("❌ VIPER: File not found after atomic write: {}", final_path);
+        }
         
         Ok(final_path)
     }

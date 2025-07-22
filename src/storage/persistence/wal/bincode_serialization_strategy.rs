@@ -7,18 +7,17 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::collections::HashMap;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 
 use super::batch_strategy::WalBatchStrategy;
-use super::{FlushResult, WalConfig, WalStats, WalOperation, BatchId};
+use super::{FlushResult, WalConfig, WalStats, BatchId};
 use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::{
     MemtableManager, WalDiskManager, RecoveryManager,
-    WalFlushCoordinator, RecoveryMode,
+    WalFlushCoordinator,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -156,33 +155,10 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
         });
     }
 
-    #[instrument(skip(self, proto_bytes), fields(collection_id))]
-    async fn write_proto_batch(
-        &self,
-        collection_id: &str,
-        proto_bytes: &[u8]
-    ) -> Result<WalOperation> {
-        // Bincode strategy doesn't handle proto format directly
-        Err(anyhow::anyhow!(
-            "Proto format not supported by BincodeSerializationStrategy. Use ProtoSerializationStrategy instead."
-        ))
-    }
+    // Removed legacy methods write_proto_batch and write_avro_batch
+    // All writes should use write_native_batch directly with collection_id
 
-    async fn write_avro_batch(
-        &self, 
-        collection_id: &str,
-        avro_bytes: &[u8]
-    ) -> Result<WalOperation> {
-        // Bincode strategy doesn't handle Avro format
-        Err(anyhow::anyhow!(
-            "Avro format not supported by BincodeSerializationStrategy. Use AvroSerializationStrategy instead."
-        ))
-    }
-
-    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        // We need collection_id but it's not in the batch
-        // This is a design flaw that needs to be addressed
-        let collection_id = "default"; // TODO: Fix this
+    async fn write_native_batch(&self, batch: WalVectorBatch, collection_id: &str) -> Result<Vec<u64>> {
         
         debug!(
             "📝 Writing native batch {} with {} vectors (Bincode format)",
@@ -216,16 +192,13 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
         Ok(sequences)
     }
 
-    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        self.write_native_batch(batch).await
-    }
-
     async fn write_vector_batch_with_sync(
         &self,
         batch: WalVectorBatch,
+        collection_id: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch).await?;
+        let sequences = self.write_native_batch(batch, collection_id).await?;
         
         if immediate_sync {
             self.force_sync(None).await?;
@@ -236,8 +209,8 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
 
     async fn delete_vector(
         &self,
-        collection_id: &str,
-        vector_id: &crate::core::VectorId,
+        _collection_id: &str,
+        _vector_id: &crate::core::VectorId,
     ) -> Result<u64> {
         // For now, deletion is not implemented in clean architecture
         // TODO: Implement deletion through memtable manager
@@ -259,14 +232,34 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
         k: usize,
         distance_metric: Option<crate::compute::distance::DistanceMetric>,
     ) -> Result<Vec<(String, f32, VectorRecord)>> {
-        // For now, similarity search is delegated to storage engine
-        let engine = self.storage_engine.read().await;
-        if let Some(engine) = engine.as_ref() {
-            // TODO: Implement similarity search through storage engine
-            Err(anyhow::anyhow!("Similarity search should be done through storage engine"))
-        } else {
-            Err(anyhow::anyhow!("No storage engine configured"))
+        // For tests, we can do a simple search in memtable
+        let vectors = self.memtable_manager.get_collection_vectors(collection_id).await?;
+        
+        if vectors.is_empty() {
+            return Ok(Vec::new());
         }
+        
+        // Use the unified distance compute to calculate distances
+        let metric = distance_metric.unwrap_or(crate::compute::distance::DistanceMetric::Cosine);
+        let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
+        
+        for vector in vectors {
+            let distance_result = self.distance_compute.calculate_distance(
+                query_vector,
+                &vector.vector,
+                &metric,
+            );
+            // Use empty string for vectors without IDs
+            let id = vector.id.clone().unwrap_or_default();
+            // Use rank_value for sorting (lower = more similar)
+            results.push((id, distance_result.rank_value, vector));
+        }
+        
+        // Sort by distance (ascending) and take top k
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k);
+        
+        Ok(results)
     }
 
     async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
@@ -370,10 +363,10 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
         })
     }
 
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
+    async fn compact_collection(&self, _collection_id: &str) -> Result<u64> {
         // Compaction is handled by storage engine
         let engine = self.storage_engine.read().await;
-        if let Some(engine) = engine.as_ref() {
+        if let Some(_engine) = engine.as_ref() {
             // TODO: Call engine's compaction method
             Ok(0)
         } else {
@@ -399,7 +392,7 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
             memory_entries: memtable_stats.total_vectors_added,
             disk_segments: disk_stats.total_files_written,
             total_disk_size_bytes: disk_stats.total_bytes_written,
-            memory_size_bytes: 0, // TODO: Get from memtable
+            memory_size_bytes: memtable_stats.memory_usage_bytes,
             collections_count: memtable_stats.total_collections,
             last_flush_time: None,
             write_throughput_entries_per_sec: 0.0,
@@ -415,7 +408,7 @@ impl WalBatchStrategy for BincodeSerializationStrategy {
         Ok(())
     }
 
-    async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
+    async fn force_sync(&self, _collection_id: Option<&String>) -> Result<()> {
         // Force sync is a no-op in clean architecture
         // Data is already persisted when written
         Ok(())

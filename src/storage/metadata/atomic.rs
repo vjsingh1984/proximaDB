@@ -660,8 +660,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         filter: Option<MetadataFilter>,
     ) -> Result<Vec<CollectionMetadata>> {
         // Convert filter to WAL manager format
-        let wal_filter = filter.map(|f| {
-            Box::new(move |versioned: &VersionedCollectionMetadata| -> bool {
+        let wal_filter = filter.map(|_f| {
+            Box::new(move |_versioned: &VersionedCollectionMetadata| -> bool {
                 // Apply filter logic
                 true // TODO: Implement proper filtering
             }) as Box<dyn Fn(&VersionedCollectionMetadata) -> bool + Send>
@@ -740,7 +740,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
     async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
         let wal_stats = self.wal_manager.get_stats().await?;
-        let atomic_stats = self.stats.read().await;
+        let _atomic_stats = self.stats.read().await;
 
         Ok(MetadataStorageStats {
             total_collections: wal_stats.total_collections,

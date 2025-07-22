@@ -2,7 +2,7 @@
 //! 
 //! Provides schema evolution support for backward compatibility.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crate::core::VectorRecord;
 use apache_avro::{Schema, Writer, Reader, types::Value};
 use std::collections::HashMap;

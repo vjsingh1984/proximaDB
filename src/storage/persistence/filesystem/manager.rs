@@ -129,7 +129,7 @@ impl ManagedFilesystem {
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(err) if attempts >= max_attempts => return Err(err),
-                Err(err) => {
+                Err(_err) => {
                     // Exponential backoff
                     let delay = self.retry_config.calculate_delay(attempts - 1);
                     tokio::time::sleep(delay).await;

@@ -293,7 +293,7 @@ impl MetadataMemoryIndexes {
         let mut results = Vec::new();
 
         let size_index = self.size_index.read().await;
-        for (size, uuids) in size_index.range(min_size..=max_size) {
+        for (_size, uuids) in size_index.range(min_size..=max_size) {
             for uuid in uuids {
                 if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
@@ -313,7 +313,7 @@ impl MetadataMemoryIndexes {
         let mut results = Vec::new();
 
         let time_index = self.created_time_index.read().await;
-        for (time, uuids) in time_index.range(start_time..=end_time) {
+        for (_time, uuids) in time_index.range(start_time..=end_time) {
             for uuid in uuids {
                 if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));

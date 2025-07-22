@@ -30,7 +30,9 @@ mod tests {
         assert!(!config.storage.data_dirs.is_empty(), "Storage data_dirs should not be empty");
         assert!(!config.storage.wal_dir.is_empty(), "Storage wal_dir should not be empty");
         assert!(config.storage.cache_size_mb > 0, "Storage cache_size_mb should be positive");
-        assert!(config.storage.bloom_filter_bits > 0, "Storage bloom_filter_bits should be positive");
+        assert!(config.storage.bloom_filter_config.is_some(), "Storage bloom_filter_config should be present");
+        let bloom_config = config.storage.bloom_filter_config.as_ref().unwrap();
+        assert!(bloom_config.bits_per_key > 0, "Bloom filter bits_per_key should be positive");
         
         // WAL configuration
         assert!(!config.storage.wal_config.wal_urls.is_empty(), "WAL wal_urls should not be empty");
@@ -65,7 +67,7 @@ mod tests {
         assert!(config.storage.lsm_config.prefetch_size_kb > 0, "LSM prefetch_size_kb should be positive");
         
         // Bloom filter configuration
-        assert!(config.storage.bloom_filter_config.bits_per_key > 0, "Bloom filter bits_per_key should be positive");
+        // Bloom filter configuration already checked above
         
         // Storage layout configuration
         assert!(config.storage.storage_layout.node_instance > 0, "Storage layout node_instance should be positive");
@@ -158,7 +160,7 @@ rest_port = 9997
         // Verify defaults are still present for non-overridden fields
         assert!(!config.server.bind_address.is_empty(), "Default bind_address should be preserved");
         assert!(!config.server.data_dir.is_empty(), "Default data_dir should be preserved");
-        assert!(config.storage.bloom_filter_bits > 0, "Default bloom_filter_bits should be preserved");
+        assert!(config.storage.bloom_filter_config.is_some(), "Default bloom_filter_config should be preserved");
         assert!(!config.storage.wal_config.strategy_type.is_empty(), "Default WAL strategy_type should be preserved");
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "Default LSM memtable_size_mb should be preserved");
         assert!(config.api.timeout_seconds > 0, "Default API timeout_seconds should be preserved");

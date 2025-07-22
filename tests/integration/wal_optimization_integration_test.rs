@@ -153,6 +153,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         bloom_filter_config: Some(proximadb::core::config::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
+            ..Default::default()
         }),
         max_files_per_level: 10,
         level_size_multiplier: 10.0,

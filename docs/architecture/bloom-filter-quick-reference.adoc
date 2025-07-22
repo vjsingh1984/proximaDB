@@ -1,0 +1,446 @@
+= Bloom Filter Quick Reference
+:doctype: article
+:toc: left
+:toclevels: 2
+:source-highlighter: rouge
+:rouge-style: github
+:icons: font
+:experimental:
+:version: 2025.1
+
+[.lead]
+Quick reference guide for using ProximaDB's unified bloom filter architecture.
+
+== Configuration Templates
+
+=== LSM SSTable Configuration
+
+[source,toml]
+----
+[storage.lsm.bloom_filter]
+enabled = true
+strategy = "ByteAligned"
+bits_per_key = 10              # 10 bits = ~1% false positive rate
+expected_items = 50000         # Adjust based on SSTable size
+----
+
+=== VIPER Metadata Configuration
+
+[source,toml]
+----
+[storage.viper.bloom_filter]
+enabled = true
+strategy = "Composite"
+false_positive_rate = 0.01
+metadata_columns = ["category", "tags", "author"]
+----
+
+=== Memtable Configuration
+
+[source,toml]
+----
+[storage.memtable.bloom_filter]
+enabled = true
+strategy = "BitPacked"
+false_positive_rate = 0.01
+expected_items = 10000         # Per-partition estimate
+----
+
+== Common Usage Patterns
+
+=== Creating a Bloom Filter
+
+[source,rust]
+----
+use proximadb::core::bloom::{BloomFilterFactory, BloomFilterConfig, BloomStrategy};
+
+// For SSTable
+let sstable_filter = BloomFilterFactory::create(&BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::ByteAligned,
+    bits_per_key: Some(10),
+    expected_items: records.len(),
+    ..Default::default()
+});
+
+// For Memtable
+let memtable_filter = BloomFilterFactory::create(&BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::BitPacked,
+    false_positive_rate: Some(0.01),
+    expected_items: 10000,
+    ..Default::default()
+});
+
+// For Testing
+let test_filter = BloomFilterFactory::create(&BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::Simple,
+    expected_items: 100,
+    ..Default::default()
+});
+----
+
+=== Basic Operations
+
+[source,rust]
+----
+// Insert keys
+for record in records {
+    bloom_filter.insert(&record.key);
+}
+
+// Check existence
+if bloom_filter.might_contain(&search_key) {
+    // Key might exist, check actual data
+    if let Some(value) = sstable.get(&search_key) {
+        // Found it
+    }
+}
+
+// Clear filter
+bloom_filter.clear();
+
+// Check memory usage
+let memory_bytes = bloom_filter.approximate_memory_usage();
+println!("Bloom filter using {} bytes", memory_bytes);
+----
+
+=== Metadata Filtering (Composite)
+
+[source,rust]
+----
+use proximadb::core::bloom::CompositeBloomFilter;
+
+let mut composite = CompositeBloomFilter::new();
+
+// Insert record with metadata
+composite.insert_key(&record.id);
+for (column, value) in &record.metadata {
+    composite.insert_metadata(column, value);
+}
+
+// Query with metadata
+if composite.might_contain_key(&search_id) {
+    // Check metadata filters
+    if composite.might_match_metadata("category", "electronics") {
+        // Likely match, verify with actual data
+    }
+}
+----
+
+=== Serialization
+
+[source,rust]
+----
+// Serialize for storage
+let serialized = bloom_filter.serialize()?;
+metadata.bloom_filter = Some(serialized);
+metadata.bloom_filter_strategy = Some(BloomStrategy::ByteAligned);
+
+// Deserialize from storage
+if let Some(filter_data) = metadata.bloom_filter {
+    let strategy = metadata.bloom_filter_strategy.unwrap_or(BloomStrategy::ByteAligned);
+    let filter = BloomFilterFactory::deserialize(&filter_data, strategy)?;
+}
+----
+
+== Strategy Selection Guide
+
+[cols="2,3,2,2"]
+|===
+| Strategy | Use When | Memory/Key | Example
+
+| **ByteAligned**
+| Storing in SSTable files
+| 10 bits
+| `bits_per_key = 10`
+
+| **BitPacked**
+| In-memory filtering
+| 8-12 bits
+| `false_positive_rate = 0.01`
+
+| **Simple**
+| < 1000 items
+| 8 bytes
+| Testing, small collections
+
+| **Composite**
+| Metadata queries
+| Variable
+| VIPER predicate pushdown
+
+| **NoOp**
+| Disabled/empty
+| 0 bytes
+| `enabled = false`
+|===
+
+== Configuration Examples
+
+=== Optimal SSTable Configuration
+
+[source,rust]
+----
+// For 100K records with 1% false positive target
+BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::ByteAligned,
+    bits_per_key: Some(10),        // 10 bits = ~1% FPR
+    expected_items: 100_000,
+    false_positive_rate: None,     // Using bits_per_key instead
+}
+----
+
+=== Memory-Optimized Configuration
+
+[source,rust]
+----
+// For in-memory with strict memory limit
+BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::BitPacked,
+    bits_per_key: None,
+    expected_items: 50_000,
+    false_positive_rate: Some(0.02),  // 2% FPR for less memory
+}
+----
+
+=== High-Accuracy Configuration
+
+[source,rust]
+----
+// For critical path with low false positives
+BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::BitPacked,
+    bits_per_key: Some(20),         // 20 bits = ~0.1% FPR
+    expected_items: 10_000,
+    false_positive_rate: None,
+}
+----
+
+== Performance Tips
+
+=== Memory Usage Estimation
+
+[source,rust]
+----
+// Calculate memory usage before creating
+fn estimate_memory(items: usize, fpr: f64) -> usize {
+    let bits = optimal_bit_count(items, fpr);
+    let bytes = (bits + 7) / 8;  // Round up to byte
+    bytes + 64  // Add overhead for structure
+}
+
+fn optimal_bit_count(items: usize, fpr: f64) -> usize {
+    let ln2_squared = 0.48045301391; // ln(2)^2
+    let bits_per_item = -1.0 * (fpr.ln() / ln2_squared);
+    (items as f64 * bits_per_item).ceil() as usize
+}
+----
+
+=== Batch Insertions
+
+[source,rust]
+----
+// Efficient batch insertion
+let mut filter = BloomFilterFactory::create(&config);
+
+// Pre-calculate all hashes
+let keys: Vec<Vec<u8>> = records.iter()
+    .map(|r| r.key.clone())
+    .collect();
+
+// Batch insert
+for key in keys {
+    filter.insert(&key);
+}
+----
+
+=== Query Optimization
+
+[source,rust]
+----
+// Check bloom filter before expensive operations
+if !bloom_filter.might_contain(&key) {
+    // Definitely not present, skip disk I/O
+    return None;
+}
+
+// Only perform disk read if bloom filter says maybe
+sstable.get(&key)
+----
+
+== Common Pitfalls
+
+=== 1. Wrong Strategy Selection
+
+[source,rust]
+----
+// DON'T: Use Simple for large datasets
+let filter = BloomFilterFactory::create(&BloomFilterConfig {
+    strategy: BloomStrategy::Simple,  // Bad for 1M items!
+    expected_items: 1_000_000,
+    ..Default::default()
+});
+
+// DO: Use appropriate strategy
+let filter = BloomFilterFactory::create(&BloomFilterConfig {
+    strategy: BloomStrategy::BitPacked,  // Good for in-memory
+    expected_items: 1_000_000,
+    false_positive_rate: Some(0.01),
+    ..Default::default()
+});
+----
+
+=== 2. Ignoring Edge Cases
+
+[source,rust]
+----
+// DON'T: Assume filter is always created
+let filter = BloomFilterFactory::create(&config);
+filter.insert(&key);  // May panic if disabled!
+
+// DO: Check configuration
+if config.enabled && config.expected_items > 0 {
+    let filter = BloomFilterFactory::create(&config);
+    filter.insert(&key);
+}
+----
+
+=== 3. Over-Optimizing Small Datasets
+
+[source,rust]
+----
+// DON'T: Use bloom filter for tiny datasets
+if records.len() < 100 {
+    // Bloom filter overhead not worth it
+    let filter = BloomFilterFactory::create(&config);
+}
+
+// DO: Use simple lookups for small data
+if records.len() < 100 {
+    // Direct HashMap or Vec lookup is faster
+    let index: HashMap<_, _> = records.iter()
+        .map(|r| (&r.key, &r.value))
+        .collect();
+}
+----
+
+== Debugging
+
+=== Check False Positive Rate
+
+[source,rust]
+----
+fn measure_false_positive_rate(
+    filter: &dyn BloomFilterStrategy,
+    test_keys: &[Vec<u8>]
+) -> f64 {
+    let mut false_positives = 0;
+    
+    for key in test_keys {
+        if filter.might_contain(key) {
+            false_positives += 1;
+        }
+    }
+    
+    false_positives as f64 / test_keys.len() as f64
+}
+----
+
+=== Verify Filter Configuration
+
+[source,rust]
+----
+// Log filter statistics
+info!(
+    "Bloom filter initialized: strategy={:?}, memory={} bytes, fpr={:.4}",
+    config.strategy,
+    filter.approximate_memory_usage(),
+    filter.false_positive_rate()
+);
+----
+
+=== Monitor Performance
+
+[source,rust]
+----
+// Track bloom filter effectiveness
+let mut bloom_hits = 0;
+let mut bloom_misses = 0;
+let mut false_positives = 0;
+
+if bloom_filter.might_contain(&key) {
+    bloom_hits += 1;
+    if let Some(value) = sstable.get(&key) {
+        // True positive
+    } else {
+        false_positives += 1;
+    }
+} else {
+    bloom_misses += 1;
+    // Definitely not in SSTable
+}
+
+let effectiveness = bloom_misses as f64 / (bloom_hits + bloom_misses) as f64;
+info!("Bloom filter prevented {:.1}% of disk reads", effectiveness * 100.0);
+----
+
+== Migration Checklist
+
+When migrating from old implementations:
+
+- [ ] Identify current bloom filter usage
+- [ ] Choose appropriate strategy for each use case
+- [ ] Update configuration files
+- [ ] Replace old instantiation with factory calls
+- [ ] Update serialization/deserialization code
+- [ ] Test false positive rates
+- [ ] Monitor memory usage
+- [ ] Remove old implementations
+
+== Quick Comparison
+
+[cols="2,1,1,1,1"]
+|===
+| Feature | ByteAligned | BitPacked | Simple | Composite
+
+| Best For
+| SSTable
+| Memtable
+| Testing
+| Metadata
+
+| Memory/Key
+| 10 bits
+| 8-12 bits
+| 8 bytes
+| Variable
+
+| Speed
+| Fast
+| Fastest
+| Good
+| Moderate
+
+| Disk-Friendly
+| Yes
+| No
+| No
+| Yes
+
+| Metadata Support
+| No
+| No
+| No
+| Yes
+|===
+
+== Reference Links
+
+* link:bloom-filter-unified-design.adoc[Detailed Design Document]
+* link:../../technical_reference.adoc#_bloom_filter_architecture[Technical Reference]
+* link:../../developer_guide.adoc#_bloom_filters[Developer Guide]

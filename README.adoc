@@ -39,36 +39,39 @@ endif::[]
 // specific language governing permissions and limitations
 // under the License.
 
-[mermaid]
-----
-include::docs/diagrams/proximadb-architecture-overview.mmd[]
-----
+image::docs/diagrams/images/proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
 
 [.lead]
-**Proximity at Scale** +
-_Enterprise-grade vector database with DirectVectorService architecture delivering 40-60% latency reduction and 6.10x search speedup_
+**ProximaDB** +
+_High-performance vector database built with Rust, featuring unified architectures and efficient storage engines_
 
 == 🎯 Why ProximaDB?
 
 Modern AI applications need vector databases that don't compromise on performance, scalability, or operational simplicity. ProximaDB delivers:
 
-**⚡ 40-60% Performance Gain**:: DirectVectorService eliminates registry overhead for blazing-fast operations → link:docs/architecture.adoc#direct-vector-service[See benchmarks]
-**🚀 6.10x Search Speed**:: Storage-aware search with intelligent engine selection (317ms → 52ms) → link:docs/architecture.adoc#storage-aware-search[Learn more]
-**🔄 Zero-Copy Architecture**:: Proto-first design eliminates double serialization → link:docs/technical_reference.adoc#proto-first-architecture[Details]
-**🤖 Automatic Optimization**:: Background compaction and streaming search for seamless performance → link:docs/technical_reference.adoc#optimization-features[How it works]
+**⚡ Optimized Performance**:: DirectVectorService architecture reduces latency by eliminating abstraction layers
+**🚀 Efficient Search**:: Storage-aware search with dual engine support (LSM and VIPER)
+**🔄 Proto-First Design**:: Reduces serialization overhead throughout the system
+**🤖 Automatic Operations**:: Background compaction and efficient memory management
 
 == 🚀 What is ProximaDB?
 
-Production-ready, cloud-native vector database built in Rust with cutting-edge optimizations:
+ProximaDB is a vector database built in Rust that provides:
 
-[mermaid]
-----
-include::docs/diagrams/direct-vector-service.mmd[]
-----
+* **Dual Storage Engines**: LSM for write-heavy workloads, VIPER for analytics
+* **Protocol Support**: Both REST (JSON) and gRPC (Protobuf) APIs
+* **Unified Architecture**: Single business logic serving both protocols
+* **Direct Access**: Efficient memtable operations without unnecessary layers
+* **Distance Metrics**: Cosine, Euclidean, and Dot Product similarity
+* **Atomic Operations**: Safe file operations with staging pattern
 
-**DirectVectorService Architecture**:: Eliminates WAL Manager Registry overhead for 40-60% latency reduction → link:docs/technical_reference.adoc#direct-vector-service[Architecture details]
-**Unified Search Pipeline**:: Single API automatically coordinates storage engines with deduplication → link:docs/architecture.adoc#unified-search[Implementation]  
-**Intelligent Storage**:: Automatic compaction, workload-aware serialization, and streaming search → link:docs/technical_reference.adoc#storage-optimization[Features]
+=== Architecture Highlights
+
+* **Service Layer**: DirectVectorService handles vector operations with direct memtable access
+* **Storage Engines**: Choose between LSM (row-based) or VIPER (columnar) based on workload
+* **Persistence**: Write-Ahead Log ensures durability with configurable serialization
+* **Compute**: Optimized distance calculations with SIMD detection
+* **APIs**: Unified handlers serve both REST and gRPC with proto-first design
 
 == 🛠️ Getting Started
 
@@ -102,10 +105,10 @@ results = client.search("docs", query_vector, k=10)
 
 == 🏆 Key Benefits
 
-**Performance**: 40-60% insert latency reduction + 6.10x search speedup → link:docs/architecture.adoc#performance-characteristics[Benchmarks]  
-**Code Quality**: 90% duplicate code eliminated, 5,135+ lines removed → link:docs/technical_reference.adoc#code-optimization[Details]  
-**Deployment**: Multi-cloud freedom with URL-based configuration → link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Configuration guide]  
-**Cost**: Zero licensing fees with enterprise-grade features → link:docs/requirements.adoc#licensing[License details]
+**Performance**: Optimized for high-throughput vector operations
+**Code Quality**: Unified interfaces reduce code duplication
+**Deployment**: Containerized deployment with Docker support
+**Open Source**: Apache 2.0 licensed with active development
 
 == 📚 Documentation Guide
 
@@ -177,7 +180,7 @@ requirements.adoc → architecture.adoc → Performance & deployment strategies
 === 🚀 Specialized Guides
 
 **Performance Optimization**:
-- link:docs/quantization_and_optimization.adoc[Vector Quantization] - 4x memory reduction with zero accuracy loss
+- link:docs/quantization_and_optimization.adoc[Vector Quantization] - Memory optimization techniques
 - link:docs/architecture.adoc#performance-characteristics[Performance Benchmarks] - Latency and throughput metrics
 
 **Production Deployment**:
@@ -185,8 +188,8 @@ requirements.adoc → architecture.adoc → Performance & deployment strategies
 - link:docs/architecture.adoc#deployment-architecture[Deployment Strategies] - Single-node to multi-cloud
 
 **Advanced Features**:
-- link:docs/technical_reference.adoc#ml-clustering-implementation[ML Clustering] - K-means++ for >1M vectors
-- link:docs/technical_reference.adoc#simd-optimization[SIMD Optimization] - Hardware acceleration
+- link:docs/technical_reference.adoc[Technical Implementation] - Architecture details
+- link:docs/appendix_implementation_details.adoc[Implementation Patterns] - Code examples
 
 == 🤝 Contributing & Community
 
@@ -223,6 +226,4 @@ ProximaDB is licensed under the Apache License 2.0. All novel architectural inno
 
 ---
 
-**ProximaDB** - _Proximity at Scale with Engineering Excellence_ 🚀
-
-Built with ❤️ in Rust for the AI community. Engineered for production workloads.
+**ProximaDB** - _High-performance vector database built with Rust_

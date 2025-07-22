@@ -28,7 +28,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
-use std::path::PathBuf;
 use url::Url;
 use tracing::{info, error};
 
@@ -101,11 +100,11 @@ pub struct FileMetadata {
     pub storage_class: Option<String>, // For cloud storage
 }
 
-/// Directory listing entry
+/// Directory listing entry (stateless design - contains full URL)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirEntry {
     pub name: String,
-    pub path: String,
+    pub url: String,  // Full URL instead of relative path
     pub metadata: FileMetadata,
 }
 
@@ -465,9 +464,9 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         
         for entry in entries {
             if entry.metadata.is_directory {
-                self.remove_dir_all(&entry.path).await?;
+                self.remove_dir_all(&entry.url).await?;
             } else {
-                self.delete(&entry.path).await?;
+                self.delete(&entry.url).await?;
             }
         }
         
@@ -637,7 +636,14 @@ impl FilesystemFactory {
 
     /// Get filesystem instance for URL scheme (cached instances)
     pub fn get_filesystem(&self, url: &str) -> FsResult<&dyn FileSystem> {
-        let scheme = self.extract_scheme(url)?;
+        // Handle URLs without schemes by prepending file://
+        let normalized_url = if !url.contains("://") {
+            format!("file://{}", url)
+        } else {
+            url.to_string()
+        };
+        
+        let scheme = self.extract_scheme(&normalized_url)?;
 
         self.filesystems
             .get(&scheme)
@@ -700,7 +706,14 @@ impl FilesystemFactory {
 
     /// Validate URL format for supported cloud providers
     pub fn validate_url(&self, url: &str) -> FsResult<()> {
-        let parsed_url = Url::parse(url)?;
+        // Handle URLs without schemes by prepending file://
+        let normalized_url = if !url.contains("://") {
+            format!("file://{}", url)
+        } else {
+            url.to_string()
+        };
+        
+        let parsed_url = Url::parse(&normalized_url)?;
         
         match parsed_url.scheme() {
             "file" => {
@@ -719,7 +732,7 @@ impl FilesystemFactory {
                     ));
                 }
             }
-            "gcs" | "gs" => {
+            "gs" => {
                 // GCS URLs must have bucket name
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
@@ -764,7 +777,14 @@ impl FilesystemFactory {
 
     /// Extract bucket/container name from URL
     pub fn extract_bucket_from_url(&self, url: &str) -> FsResult<Option<String>> {
-        let parsed_url = Url::parse(url)?;
+        // Handle URLs without schemes by prepending file://
+        let normalized_url = if !url.contains("://") {
+            format!("file://{}", url)
+        } else {
+            url.to_string()
+        };
+        
+        let parsed_url = Url::parse(&normalized_url)?;
         
         match parsed_url.scheme() {
             "s3" | "gcs" | "gs" => {
@@ -795,7 +815,14 @@ impl FilesystemFactory {
 
     /// Extract account name from URL (for Azure)
     pub fn extract_account_from_url(&self, url: &str) -> FsResult<Option<String>> {
-        let parsed_url = Url::parse(url)?;
+        // Handle URLs without schemes by prepending file://
+        let normalized_url = if !url.contains("://") {
+            format!("file://{}", url)
+        } else {
+            url.to_string()
+        };
+        
+        let parsed_url = Url::parse(&normalized_url)?;
         
         match parsed_url.scheme() {
             "adls" => {
@@ -823,7 +850,15 @@ impl FilesystemFactory {
     /// Extract relative path from URL (removes base path configured for the storage)
     pub fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
         info!("🔍 extract_path_from_url: {}", url);
-        let parsed_url = Url::parse(url)?;
+        
+        // Handle URLs without schemes by prepending file://
+        let normalized_url = if !url.contains("://") {
+            format!("file://{}", url)
+        } else {
+            url.to_string()
+        };
+        
+        let parsed_url = Url::parse(&normalized_url)?;
         let path = parsed_url.path();
         info!("    parsed path: {}", path);
 
@@ -865,34 +900,8 @@ impl FilesystemFactory {
         }
     }
 
-    /// Create filesystem instance configured for specific URL base path
-    pub async fn create_filesystem_for_url(&self, url: &str) -> FsResult<Box<dyn FileSystem>> {
-        let parsed_url = Url::parse(url)?;
-        let scheme = parsed_url.scheme();
 
-        match scheme {
-            "file" => {
-                // Extract base path from file:// URL and create LocalFileSystem with it as root
-                let base_path = PathBuf::from(parsed_url.path());
-                let mut local_config = self.config.local.clone().unwrap_or_default();
-                local_config.root_dir = Some(base_path);
-
-                let local_fs = LocalFileSystem::new(local_config).await?;
-                Ok(Box::new(local_fs))
-            }
-            _ => {
-                // For other schemes, use existing cached instance
-                let fs = self.get_filesystem(url)?;
-                // Note: This is a limitation - we can't return both &dyn and Box<dyn>
-                // In a real implementation, we'd need to restructure this
-                Err(FilesystemError::Config(
-                    "URL-specific filesystems not supported for this scheme".to_string(),
-                ))
-            }
-        }
-    }
-
-    /// Extract scheme from URL
+    /// Extract scheme from URL, handling paths without schemes
     fn extract_scheme(&self, url: &str) -> FsResult<String> {
         if url.contains("://") {
             let parsed = Url::parse(url)?;
@@ -905,20 +914,8 @@ impl FilesystemFactory {
             
             Ok(mapped_scheme.clone())
         } else {
-            // Use default filesystem for unqualified paths
-            if let Some(default_fs) = &self.config.default_fs {
-                let parsed = Url::parse(default_fs)?;
-                let raw_scheme = parsed.scheme().to_string();
-                
-                // Check for scheme mapping on default filesystem too
-                let mapped_scheme = self.config.scheme_mapping
-                    .get(&raw_scheme)
-                    .unwrap_or(&raw_scheme);
-                
-                Ok(mapped_scheme.clone())
-            } else {
-                Ok("file".to_string()) // Default to local filesystem
-            }
+            // No scheme present - assume local file
+            Ok("file".to_string())
         }
     }
 
@@ -926,7 +923,15 @@ impl FilesystemFactory {
     pub fn extract_path(&self, url: &str) -> FsResult<String> {
         if url.contains("://") {
             let parsed = Url::parse(url)?;
-            Ok(parsed.path().to_string())
+            let path = parsed.path();
+            
+            // Handle relative paths in file:// URLs
+            if parsed.scheme() == "file" && path.starts_with("/.") {
+                // file://./mydir becomes ./mydir
+                Ok(path[1..].to_string())
+            } else {
+                Ok(path.to_string())
+            }
         } else {
             // Treat as local path if no scheme
             Ok(url.to_string())

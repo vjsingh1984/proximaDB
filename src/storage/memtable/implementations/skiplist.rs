@@ -53,7 +53,7 @@ where
     }
 
     /// Estimate memory size of a key-value pair
-    fn estimate_entry_size(_key: &K, value: &V) -> usize {
+    fn estimate_entry_size(_key: &K, _value: &V) -> usize {
         // Conservative estimate for SkipList:
         // - 32 bytes overhead per entry (node pointers)
         // - Key and value sizes

@@ -8,9 +8,8 @@ use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::serialization::SerializationFormat;
-use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::persistence::wal::BatchId;
 
 /// Centralized manager for all WAL disk operations
@@ -141,8 +140,8 @@ impl WalDiskManager {
         &self,
         collection_id: &str,
     ) -> Result<Vec<WalFileInfo>> {
-        let collection_dir = self.wal_base_dir.join("collections").join(collection_id);
-        let dir_url = format!("file://{}/", collection_dir.display());
+        let wal_dir = self.wal_base_dir.join(collection_id).join("wal");
+        let dir_url = format!("file://{}/", wal_dir.display());
         
         debug!("📂 Listing WAL files for collection {} in {}", collection_id, dir_url);
         
@@ -150,16 +149,20 @@ impl WalDiskManager {
         
         // Check if directory exists
         if !filesystem.exists(&dir_url).await? {
-            debug!("Collection directory does not exist: {}", dir_url);
+            debug!("WAL directory does not exist: {}", dir_url);
             return Ok(Vec::new());
         }
         
         let entries = filesystem.list(&dir_url).await?;
         let mut wal_files = Vec::new();
         
+        debug!("Raw entries from filesystem: {} entries", entries.len());
         for entry in entries {
-            if let Some(file_info) = self.parse_wal_filename(&entry.path, collection_id) {
+            debug!("  Entry: path={}, is_dir={}", entry.url, entry.metadata.is_directory);
+            if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
                 wal_files.push(file_info);
+            } else {
+                debug!("  Failed to parse WAL filename: {}", entry.url);
             }
         }
         
@@ -223,9 +226,9 @@ impl WalDiskManager {
             }
         }
         
-        // Try to remove the collection directory
-        let collection_dir = self.wal_base_dir.join("collections").join(collection_id);
-        let dir_url = format!("file://{}/", collection_dir.display());
+        // Try to remove the WAL directory
+        let wal_dir = self.wal_base_dir.join(collection_id).join("wal");
+        let dir_url = format!("file://{}/", wal_dir.display());
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
         
         if let Err(e) = filesystem.delete(&dir_url).await {
@@ -249,15 +252,14 @@ impl WalDiskManager {
         format: SerializationFormat,
     ) -> PathBuf {
         let extension = match format {
-            SerializationFormat::ProtocolBuffers => "proto",
-            SerializationFormat::Bincode => "bincode",
-            SerializationFormat::Avro => "avro",
+            SerializationFormat::ProtocolBuffers => "pbwal",
+            SerializationFormat::Bincode => "bcwal",
+            SerializationFormat::Avro => "avwal",
         };
         
         self.wal_base_dir
-            .join("collections")
             .join(collection_id)
-            .join("batches")
+            .join("wal")
             .join(format!("{}.{}", batch_id.to_base62(), extension))
     }
     
@@ -267,7 +269,14 @@ impl WalDiskManager {
         path: &str,
         collection_id: &str,
     ) -> Option<WalFileInfo> {
-        let path_buf = PathBuf::from(path);
+        // Strip file:// prefix if present
+        let clean_path = if path.starts_with("file://") {
+            path.strip_prefix("file://").unwrap_or(path)
+        } else {
+            path
+        };
+        
+        let path_buf = PathBuf::from(clean_path);
         let file_name = path_buf.file_name()?.to_str()?;
         
         // Expected format: <batch_id>.<format>
@@ -281,6 +290,10 @@ impl WalDiskManager {
         
         // Parse format from extension
         let format = match extension {
+            "pbwal" => SerializationFormat::ProtocolBuffers,
+            "bcwal" => SerializationFormat::Bincode,
+            "avwal" => SerializationFormat::Avro,
+            // Legacy extensions for backward compatibility
             "proto" => SerializationFormat::ProtocolBuffers,
             "bincode" => SerializationFormat::Bincode,
             "avro" => SerializationFormat::Avro,

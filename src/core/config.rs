@@ -43,11 +43,11 @@ pub struct StorageConfig {
     pub mmap_enabled: bool,
     pub lsm_config: LsmConfig,
     pub cache_size_mb: u64,
-    pub bloom_filter_bits: u32,
+    // bloom_filter_bits removed - use bloom_filter_config instead
     pub bloom_filter_config: Option<BloomFilterConfig>,
 
     /// Filesystem optimization settings
-    pub filesystem_config: FilesystemConfig,
+    pub filesystem_config: FilesystemOptimizationConfig,
 }
 
 /// Storage location configuration
@@ -160,7 +160,7 @@ pub struct GcsConfig {
 
 /// Filesystem configuration for performance optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilesystemConfig {
+pub struct FilesystemOptimizationConfig {
     /// Enable write strategy caching
     pub enable_write_strategy_cache: bool,
 
@@ -197,7 +197,7 @@ pub struct AtomicOperationsConfig {
     pub cleanup_temp_on_startup: bool,
 }
 
-impl Default for FilesystemConfig {
+impl Default for FilesystemOptimizationConfig {
     fn default() -> Self {
         Self {
             enable_write_strategy_cache: true,
@@ -265,12 +265,9 @@ impl Default for StorageConfig {
             mmap_enabled: true,
             lsm_config: LsmConfig::default(),
             cache_size_mb: 2048,
-            bloom_filter_bits: 12,
-            bloom_filter_config: Some(BloomFilterConfig {
-                bits_per_key: 10,
-                enabled: true,
-            }),
-            filesystem_config: FilesystemConfig::default(),
+            // Use unified bloom filter config
+            bloom_filter_config: Some(BloomFilterConfig::default()),
+            filesystem_config: FilesystemOptimizationConfig::default(),
         }
     }
 }
@@ -301,11 +298,9 @@ pub struct LsmConfig {
     pub prefetch_size_kb: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BloomFilterConfig {
-    pub bits_per_key: u32,
-    pub enabled: bool,
-}
+// BloomFilterConfig moved to core::bloom module for polymorphic design
+// Re-export for backward compatibility
+pub use crate::core::bloom::BloomFilterConfig;
 
 impl Default for LsmConfig {
     fn default() -> Self {
@@ -318,10 +313,7 @@ impl Default for LsmConfig {
             memtable_type: "skiplist".to_string(),
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
-            bloom_filter_config: Some(BloomFilterConfig {
-                bits_per_key: 10,
-                enabled: true,
-            }),
+            bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
             write_buffer_size_mb: 64,
             max_files_per_level: 10,

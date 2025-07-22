@@ -12,7 +12,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm, SearchResult as AlgoSearchResult};
 use crate::compute::DistanceMetric;
 use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
-use crate::index::axis::types::{DataType, IndexSpecification, IndexAlgorithm};
+use crate::index::axis::types::DataType;
 use super::manager::AxisManager;
 
 /// HNSW configuration for AXIS integration
@@ -345,7 +345,7 @@ impl PartitionedHnswIndex {
         for result in results {
             // Find the vector in partitions
             if let Some(partition_id) = self.vector_partitions.get(&result.vector_id) {
-                if let Some(partition) = self.partitions.get(partition_id) {
+                if let Some(_partition) = self.partitions.get(partition_id) {
                     // Extract vector and metadata from HNSW
                     // TODO: Add method to HNSWIndex to get vector by ID
                     let vector_record = VectorRecord {

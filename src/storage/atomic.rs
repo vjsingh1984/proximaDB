@@ -507,11 +507,8 @@ impl UnifiedAtomicCoordinator {
         // Note: Final directory was already created during begin_atomic_operation
         for entry in staging_entries {
             if !entry.metadata.is_directory && !entry.name.starts_with(".") {
-                let staging_file_url = format!(
-                    "{}/{}",
-                    metadata.staging_url.trim_end_matches('/'),
-                    entry.name
-                );
+                // Use the full URL from entry, not just the name
+                let staging_file_url = entry.url.clone();
                 let final_file_url = format!(
                     "{}/{}",
                     metadata.final_url.trim_end_matches('/'),

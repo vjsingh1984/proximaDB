@@ -62,7 +62,7 @@ async fn test_axis_large_scale_insertion() {
         let test_vectors = create_test_vectors(1000, 128, &collection_id);
 
         for vector in test_vectors {
-            let result = axis_manager.insert("test_collection", &vector).await;
+            let result = axis_manager.insert(&collection_id, &vector).await;
             assert!(
                 result.is_ok(),
                 "Large-scale vector insertion should succeed"
@@ -239,7 +239,7 @@ async fn test_axis_system_recovery() {
         let vectors = create_test_vectors(100, 64, &collection_id);
 
         for vector in vectors {
-            let _ = axis_manager.insert("test_collection", &vector).await;
+            let _ = axis_manager.insert(&collection_id, &vector).await;
         }
     }
 

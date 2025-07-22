@@ -13,21 +13,19 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::HashMap;
 use tracing::{debug, info, warn, error};
 
 use crate::compute::distance::DistanceMetric;
 use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo};
 use crate::core::VectorRecord;
-use crate::proto::proximadb;
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::lsm::LsmTree;
 use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
 use crate::storage::persistence::wal::{WalConfig, WalFlushCoordinator, CompactionCoordinator, BatchId};
 use crate::storage::persistence::wal::optimized_wal_writer::OptimizedWalWriter;
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, StreamingSearchResult};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::{UnifiedStorageEngine, CollectionMetadataProvider};
 
 /// Optimized Vector Service with direct memtable access
 /// 
@@ -69,6 +67,9 @@ pub struct DirectVectorService {
     
     /// Optimized WAL writer for high-performance writes
     optimized_wal_writer: Arc<OptimizedWalWriter>,
+    
+    /// Collection service for metadata and engine routing (optional)
+    collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
 }
 
 /// Optimized serialization format with intelligent defaults
@@ -142,6 +143,22 @@ impl DirectVectorService {
         Self::with_format(wal_config, viper_engine, lsm_engine, OptimizedFormat::default()).await
     }
     
+    /// Create new direct vector service with collection service for engine routing
+    pub async fn with_collection_service(
+        wal_config: WalConfig,
+        viper_engine: Arc<ViperEngine>,
+        lsm_engine: Arc<LsmTree>,
+        collection_service: Arc<dyn CollectionMetadataProvider>,
+    ) -> Result<Self> {
+        Self::with_collection_service_and_format(
+            wal_config,
+            viper_engine,
+            lsm_engine,
+            collection_service,
+            OptimizedFormat::default()
+        ).await
+    }
+    
     /// Create direct vector service with specific serialization format for workload optimization
     pub async fn with_format(
         wal_config: WalConfig,
@@ -152,11 +169,48 @@ impl DirectVectorService {
         Self::with_workload_hint(wal_config, viper_engine, lsm_engine, WorkloadType::Balanced, Some(format)).await
     }
     
+    /// Create direct vector service with collection service and specific format
+    pub async fn with_collection_service_and_format(
+        wal_config: WalConfig,
+        viper_engine: Arc<ViperEngine>,
+        lsm_engine: Arc<LsmTree>,
+        collection_service: Arc<dyn CollectionMetadataProvider>,
+        format: OptimizedFormat,
+    ) -> Result<Self> {
+        Self::with_collection_service_and_workload_hint(
+            wal_config,
+            viper_engine,
+            lsm_engine,
+            Some(collection_service),
+            WorkloadType::Balanced,
+            Some(format)
+        ).await
+    }
+    
     /// Create direct vector service with workload hint for automatic format selection
     pub async fn with_workload_hint(
         wal_config: WalConfig,
         viper_engine: Arc<ViperEngine>,
         lsm_engine: Arc<LsmTree>,
+        workload: WorkloadType,
+        format_override: Option<OptimizedFormat>,
+    ) -> Result<Self> {
+        Self::with_collection_service_and_workload_hint(
+            wal_config,
+            viper_engine,
+            lsm_engine,
+            None,
+            workload,
+            format_override
+        ).await
+    }
+    
+    /// Create direct vector service with all options
+    pub async fn with_collection_service_and_workload_hint(
+        wal_config: WalConfig,
+        viper_engine: Arc<ViperEngine>,
+        lsm_engine: Arc<LsmTree>,
+        collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
         workload: WorkloadType,
         format_override: Option<OptimizedFormat>,
     ) -> Result<Self> {
@@ -246,6 +300,7 @@ impl DirectVectorService {
             successful_operations: Arc::new(AtomicU64::new(0)),
             failed_operations: Arc::new(AtomicU64::new(0)),
             optimized_wal_writer,
+            collection_service,
         };
         debug!("✅ DirectVectorService::with_workload_hint - Service instance created");
         
@@ -313,6 +368,38 @@ impl DirectVectorService {
     /// Get WAL behavior wrapper for direct memtable access (used by streaming search)
     pub fn get_wal_behavior_wrapper(&self) -> Option<&WalBehaviorWrapper> {
         Some(&self.global_memtable)
+    }
+    
+    /// Determine the storage engine for a collection based on its configuration
+    async fn get_collection_storage_engine(&self, collection_id: &str) -> Result<&'static str> {
+        if let Some(collection_service) = &self.collection_service {
+            // Get collection metadata to determine the configured storage engine
+            if let Some(collection) = collection_service.get_collection_metadata(collection_id).await? {
+                if let Some(config) = collection.config {
+                    // Map storage engine enum value to engine name
+                    let engine_name = match config.storage_engine {
+                        x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => "LSM",
+                        x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
+                        x if x == crate::proto::proximadb::StorageEngine::Mmap as i32 => "MMAP",
+                        x if x == crate::proto::proximadb::StorageEngine::Hybrid as i32 => "HYBRID",
+                        _ => "VIPER", // Default to VIPER for unspecified
+                    };
+                    
+                    debug!(
+                        "🔍 Collection {} configured to use {} storage engine",
+                        collection_id, engine_name
+                    );
+                    return Ok(engine_name);
+                }
+            }
+        }
+        
+        // If no collection service or collection not found, default to VIPER
+        debug!(
+            "⚠️ No collection service or collection {} not found, defaulting to VIPER engine",
+            collection_id
+        );
+        Ok("VIPER")
     }
     
     /// ✅ LOCK-FREE STREAMING SEARCH: High-performance non-blocking search
@@ -507,7 +594,7 @@ impl DirectVectorService {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: DistanceMetric,
+        _distance_metric: DistanceMetric,
         search_params: Option<&crate::core::search::SearchParams>,
         metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
         include_vectors: bool,
@@ -658,13 +745,35 @@ impl DirectVectorService {
         let flush_coordinator = self.flush_coordinator.clone();
         let compaction_coordinator = self.compaction_coordinator.clone();
         let global_memtable = self.global_memtable.clone();
+        let collection_service = self.collection_service.clone();
         
         // Spawn background task to avoid blocking insert
         tokio::spawn(async move {
+            // Determine the storage engine for this collection
+            let storage_engine = if let Some(service) = &collection_service {
+                if let Ok(Some(collection)) = service.get_collection_metadata(&collection_id).await {
+                    if let Some(config) = collection.config {
+                        match config.storage_engine {
+                            x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => "LSM",
+                            x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
+                            _ => "VIPER",
+                        }
+                    } else {
+                        "VIPER"
+                    }
+                } else {
+                    "VIPER"
+                }
+            } else {
+                "VIPER"
+            };
+            
+            info!("🔍 FLUSH_ENGINE: Collection {} will flush to {} engine", collection_id, storage_engine);
+            
             let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::Memory;
             
             match flush_coordinator
-                .execute_coordinated_flush(&collection_id, flush_data, None, None)
+                .execute_coordinated_flush(&collection_id, flush_data, Some(storage_engine), None)
                 .await
             {
                 Ok(flush_result) => {
@@ -1063,7 +1172,7 @@ impl DirectVectorService {
         collection_id: &str,
         vectors: Vec<crate::proto::proximadb::VectorRecord>,
     ) -> Result<Vec<u8>> {
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         
         debug!("📦 BATCH_OPERATION: Processing {} vectors for collection {}", vectors.len(), collection_id);
         
@@ -1119,7 +1228,10 @@ impl DirectVectorService {
             
             let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vectors);
             
-            match self.flush_coordinator.execute_coordinated_flush(collection_id, flush_data, None, None).await {
+            // Determine storage engine for this collection
+            let storage_engine = self.get_collection_storage_engine(collection_id).await.unwrap_or("VIPER");
+            
+            match self.flush_coordinator.execute_coordinated_flush(collection_id, flush_data, Some(storage_engine), None).await {
                 Ok(_) => {
                     info!("✅ FORCE_FLUSH: Successfully flushed collection {}", collection_id);
                     flush_results.push((collection_id.clone(), true));
@@ -1163,8 +1275,11 @@ impl DirectVectorService {
         
         let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vectors);
         
+        // Determine storage engine for this collection
+        let storage_engine = self.get_collection_storage_engine(collection_id).await.unwrap_or("VIPER");
+        
         // Use flush coordinator to execute collection flush
-        match self.flush_coordinator.execute_coordinated_flush(collection_id, flush_data, None, None).await {
+        match self.flush_coordinator.execute_coordinated_flush(collection_id, flush_data, Some(storage_engine), None).await {
             Ok(_) => {
                 let total_time = start_time.elapsed().as_millis();
                 info!("✅ FORCE_FLUSH_COLLECTION: Successfully flushed collection {} in {}ms", 
@@ -1200,7 +1315,7 @@ impl DirectVectorService {
     /// ✅ GET METRICS: Comprehensive performance metrics
     pub async fn get_metrics(&self) -> Result<Vec<u8>> {
         // Get basic memtable stats
-        let memtable_size = self.global_memtable.size_bytes().await;
+        let _memtable_size = self.global_memtable.size_bytes().await;
         let entry_count = self.global_memtable.len().await;
         
         let metrics_response = crate::core::MetricsResponse {

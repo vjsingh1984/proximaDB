@@ -227,7 +227,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             is_flushed: false,
         };
         
-        let sequences = self.write_native_batch(batch.clone()).await?;
+        let sequences = self.write_native_batch(batch.clone(), collection_id).await?;
         
         // Step 3: Create WalOperation using strategy-specific serialization
         let strategy_payload = self.serialize_vectors_for_disk(&batch.vector_records)?;
@@ -244,29 +244,18 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
         Ok(wal_operation)
     }
 
-    /// Legacy: Avro batch write (delegates to unified method)
-    async fn write_avro_batch(&self, collection_id: &str, avro_bytes: &[u8]) -> Result<super::WalOperation> {
-        self.write_vector_batch_unified(collection_id, avro_bytes, "avro").await
-    }
-
-    /// Legacy: Proto batch write (delegates to unified method)  
-    async fn write_proto_batch(&self, collection_id: &str, proto_bytes: &[u8]) -> Result<super::WalOperation> {
-        self.write_vector_batch_unified(collection_id, proto_bytes, "proto").await
-    }
-
-    /// Legacy: Vector batch write (kept for compatibility)
-    async fn write_vector_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>> {
-        self.write_native_batch(batch).await
-    }
+    // Removed legacy methods: write_avro_batch, write_proto_batch, write_vector_batch
+    // All writes should use write_native_batch directly with collection_id
 
     /// Primary method: Write native WalVectorBatch directly to memtable
     /// This is the core method that all others delegate to
-    async fn write_native_batch(&self, batch: WalVectorBatch) -> Result<Vec<u64>>;
+    async fn write_native_batch(&self, batch: WalVectorBatch, collection_id: &str) -> Result<Vec<u64>>;
 
     /// Write vector batch with immediate disk sync for durability
     async fn write_vector_batch_with_sync(
         &self, 
-        batch: WalVectorBatch, 
+        batch: WalVectorBatch,
+        collection_id: &str,
         immediate_sync: bool
     ) -> Result<Vec<u64>>;
 
@@ -430,7 +419,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             );
             
             // Use assignment service to get storage location
-            use crate::storage::assignment_service::{get_assignment_service, StorageComponentType};
+            use crate::storage::assignment_service::get_assignment_service;
             let assignment_service = get_assignment_service();
             
             if let Some(assignment) = assignment_service
@@ -753,7 +742,7 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
             is_flushed: false,
         };
 
-        let sequences = self.write_vector_batch(batch).await?;
+        let sequences = self.write_native_batch(batch, collection_id).await?;
         Ok(sequences.into_iter().next().unwrap_or(0))
     }
 
@@ -920,102 +909,8 @@ pub trait WalBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::De
     }
 }
 
-/// Convenience methods for common operations
-pub trait WalBatchStrategyExt: WalBatchStrategy {
-    /// Insert single vector (creates batch of size 1)
-    async fn insert_vector(
-        &self,
-        collection_id: String,
-        vector_record: VectorRecord,
-    ) -> Result<u64> {
-        use super::BatchId;
-        
-        // Create single-vector batch
-        let batch_id = BatchId::new();
-        let total_size_bytes = vector_record.vector.len() * 4 + 256;
-        
-        let batch = WalVectorBatch {
-            batch_id,
-            vector_records: Arc::new(vec![vector_record]),
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes,
-            is_flushed: false,
-        };
-
-        let sequences = self.write_vector_batch(batch).await?;
-        Ok(sequences.into_iter().next().unwrap_or(0))
-    }
-
-    /// Insert multiple vectors efficiently
-    async fn insert_vectors(
-        &self,
-        collection_id: String,
-        vector_records: Vec<VectorRecord>,
-    ) -> Result<Vec<u64>> {
-        use super::BatchId;
-        
-        if vector_records.is_empty() {
-            return Ok(Vec::new());
-        }
-        
-        // Calculate total size
-        let total_size_bytes: usize = vector_records.iter()
-            .map(|r| r.vector.len() * 4 + 256)
-            .sum();
-        
-        // Create multi-vector batch
-        let batch_id = BatchId::new();
-        
-        let batch = WalVectorBatch {
-            batch_id,
-            vector_records: Arc::new(vector_records),
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes,
-            is_flushed: false,
-        };
-
-        self.write_vector_batch(batch).await
-    }
-
-    /// Insert vectors with cloud backup option
-    async fn insert_vectors_with_cloud_backup(
-        &self,
-        collection_id: String,
-        vector_records: Vec<VectorRecord>,
-        cloud_backup_url: Option<&str>,
-    ) -> Result<Vec<u64>> {
-        // Insert vectors normally
-        let sequences = self.insert_vectors(collection_id.clone(), vector_records.clone()).await?;
-        
-        // If cloud backup is enabled, also write to cloud
-        if let Some(cloud_url) = cloud_backup_url {
-            let batch_id = super::BatchId::new();
-            
-            let total_size_bytes: usize = vector_records.iter()
-                .map(|r| r.vector.len() * 4 + 256)
-                .sum();
-            
-            let batch = WalVectorBatch {
-                batch_id,
-                vector_records: Arc::new(vector_records),
-                created_at: std::time::SystemTime::now(),
-                total_size_bytes,
-                is_flushed: false,
-            };
-            
-            // Write to cloud as backup (fire and forget)
-            let cloud_result = self.write_batch_to_cloud(&collection_id, &batch, cloud_url).await;
-            if let Err(e) = cloud_result {
-                tracing::warn!("Failed to write batch to cloud backup: {}", e);
-            }
-        }
-        
-        Ok(sequences)
-    }
-}
-
-// Blanket implementation of convenience methods for all batch strategies
-impl<T: WalBatchStrategy> WalBatchStrategyExt for T {}
+// Removed WalBatchStrategyExt trait - insert_vector/insert_vectors methods were only used in tests
+// All production code should use write_native_batch directly with collection_id
 
 /// WAL disk entry structure for persistence
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

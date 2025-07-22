@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::core::config::{StorageConfig, StorageLocation, AssignmentConfig};
+    use crate::core::config::{StorageConfig, StorageLocation, AssignmentConfig, BloomFilterConfig};
     
     #[test]
     fn test_storage_locations_config() {
@@ -25,8 +24,11 @@ mod tests {
             mmap_enabled: true,
             lsm_config: Default::default(),
             cache_size_mb: 2048,
-            bloom_filter_bits: 12,
-            bloom_filter_config: None,
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 12,
+                enabled: true,
+                ..Default::default()
+            }),
             filesystem_config: Default::default(),
         };
         

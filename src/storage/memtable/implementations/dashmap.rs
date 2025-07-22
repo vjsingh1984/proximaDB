@@ -75,7 +75,7 @@ where
     }
 
     /// Estimate memory size of a key-value pair
-    fn estimate_entry_size(_key: &K, value: &V) -> usize {
+    fn estimate_entry_size(_key: &K, _value: &V) -> usize {
         // DashMap overhead: ~32 bytes per entry (shard overhead + bucket + hash)
         std::mem::size_of::<K>() + std::mem::size_of::<V>() + 32
     }

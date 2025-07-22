@@ -583,7 +583,7 @@ impl FilestoreMetadataBackend {
     
     /// Prepare filestore write data without committing
     async fn prepare_filestore_write(&self, operation: &IncrementalOperation) -> Result<PreparedWrite> {
-        let fs = self.get_fs()?;
+        let _fs = self.get_fs()?;
         let ops_dir = self.base_path.join("current");
         
         // Create operation filename with sequence

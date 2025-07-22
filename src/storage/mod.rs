@@ -62,3 +62,7 @@ pub use persistence::wal::{BatchId, WalConfig, WalManager, WalOperation};
 // ResultProcessor has naming conflicts, import explicitly when needed
 
 pub type Result<T> = std::result::Result<T, StorageError>;
+
+// Tests module
+#[cfg(test)]
+mod tests;

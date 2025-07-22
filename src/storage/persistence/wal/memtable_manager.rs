@@ -3,7 +3,7 @@
 //! This module centralizes all memtable operations, removing them from batch strategies.
 //! It provides a clean interface for adding vectors to the memtable and retrieving them.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -53,6 +53,7 @@ impl MemtableManager {
         );
         
         let vector_count = batch.vector_records.len() as u64;
+        let batch_size_bytes = batch.total_size_bytes as u64;
         
         // Add to memtable
         let sequences = self.wal_behavior.add_vector_batch(collection_id, batch).await?;
@@ -62,6 +63,12 @@ impl MemtableManager {
             let mut stats = self.stats.write().await;
             stats.total_vectors_added += vector_count;
             stats.total_batches_added += 1;
+            stats.memory_usage_bytes += batch_size_bytes;
+            // Update collection count if this is a new collection
+            // For now, we'll just set it to 1 as a simple fix
+            if stats.total_collections == 0 {
+                stats.total_collections = 1;
+            }
         }
         
         debug!(

@@ -593,8 +593,7 @@ mod tests {
                 for bit in 0..8 {
                     let dim_idx = i * 8 + bit;
                     if dim_idx < dimension {
-                        dequantized[dim_idx] = if (byte >> bit) & 1 == 1 { 1.0 } else { -1.0 };
-                    }
+                        dequantized[dim_idx] = if (byte >> bit) & 1 == 1 { 1.0 } else { -1.0 }}
                 }
             }
             

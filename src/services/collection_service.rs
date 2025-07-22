@@ -31,7 +31,7 @@ use crate::proto::proximadb::{CollectionConfig, Collection};
 use crate::core::config::StorageConfig;
 // Using proto types directly - CollectionRecord is obsolete
 use crate::storage::assignment_service::{
-    get_assignment_service, AssignmentService, StorageAssignmentConfig, StorageComponentType,
+    get_assignment_service, AssignmentService, StorageComponentType,
 };
 use crate::storage::metadata::backends::filestore_backend::FilestoreMetadataBackend;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -198,7 +198,7 @@ impl CollectionService {
         tracing::debug!("🔍 Resolving collection identifier: '{}'", identifier);
         
         // Check if this looks like a base62 collection ID (short alphanumeric)
-        let is_likely_id = identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
+        let _is_likely_id = identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
         
         if let Some(collection) = self.get_proto_collection(identifier).await? {
             let collection_id = collection.id;

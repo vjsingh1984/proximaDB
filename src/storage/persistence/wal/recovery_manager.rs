@@ -14,14 +14,11 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-use crate::core::VectorRecord;
 use crate::storage::persistence::wal::{
     WalDiskManager, WalFileInfo, WalFlushCoordinator,
-    serialization::{SerializationFormat, SerializerFactory},
-    BatchId,
-    recovery_thread_pool::{RecoveryThreadPool, get_recovery_thread_pool},
+    serialization::SerializerFactory,
+    recovery_thread_pool::get_recovery_thread_pool,
 };
-use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 use crate::storage::traits::UnifiedStorageEngine;
 
 /// Recovery destination configuration
@@ -161,7 +158,7 @@ impl RecoveryManager {
                     ).await;
                     
                     match &result {
-                        Ok(count) => info!("✅ Collection {} recovered: {} vectors", collection_id_clone, count),
+                        Ok((vectors, files)) => info!("✅ Collection {} recovered: {} vectors from {} files", collection_id_clone, vectors, files),
                         Err(e) => warn!("❌ Collection {} recovery failed: {}", collection_id_clone, e),
                     }
                     
@@ -184,10 +181,11 @@ impl RecoveryManager {
         
         for result in recovery_results {
             match result {
-                Ok((collection_id, Ok(count))) => {
-                    total_vectors += count;
+                Ok((collection_id, Ok((vectors, files)))) => {
+                    total_vectors += vectors;
+                    total_files += files;
                     successful_collections += 1;
-                    debug!("Collection {} recovered successfully with {} vectors", collection_id, count);
+                    debug!("Collection {} recovered successfully with {} vectors from {} files", collection_id, vectors, files);
                 }
                 Ok((collection_id, Err(e))) => {
                     warn!("Collection {} recovery failed: {}", collection_id, e);
@@ -232,14 +230,24 @@ impl RecoveryManager {
         collection_id: &str,
         progress_callback: Option<RecoveryProgressCallback>,
     ) -> Result<u64> {
-        Self::recover_collection_internal(
+        let (vectors_recovered, files_recovered) = Self::recover_collection_internal(
             collection_id,
             self.disk_manager.clone(),
             self.storage_engines.clone(),
             self.flush_coordinator.clone(),
             self.recovery_mode,
             progress_callback,
-        ).await
+        ).await?;
+        
+        // Update stats
+        if vectors_recovered > 0 {
+            let mut stats = self.stats.write().await;
+            stats.total_collections_recovered += 1;
+            stats.total_vectors_recovered += vectors_recovered;
+            stats.total_files_recovered += files_recovered;
+        }
+        
+        Ok(vectors_recovered)
     }
     
     /// Internal collection recovery logic (can be called from parallel tasks)
@@ -247,10 +255,10 @@ impl RecoveryManager {
         collection_id: &str,
         disk_manager: Arc<WalDiskManager>,
         storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
-        flush_coordinator: Arc<WalFlushCoordinator>,
+        _flush_coordinator: Arc<WalFlushCoordinator>,
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
-    ) -> Result<u64> {
+    ) -> Result<(u64, u64)> {  // Returns (vectors_recovered, files_recovered)
         info!("🔄 Recovering collection: {} (mode: {:?})", collection_id, recovery_mode);
         
         // Check if we have a storage engine for this collection
@@ -268,7 +276,7 @@ impl RecoveryManager {
         let wal_files = disk_manager.list_collection_files(collection_id).await?;
         if wal_files.is_empty() {
             debug!("No WAL files found for collection {}", collection_id);
-            return Ok(0);
+            return Ok((0, 0));
         }
         
         info!("Found {} WAL files for collection {}", wal_files.len(), collection_id);
@@ -276,6 +284,7 @@ impl RecoveryManager {
         let total_files = wal_files.len();
         let mut vectors_recovered = 0u64;
         let mut bytes_processed = 0u64;
+        let mut files_recovered = 0u64;
         
         // Sort files by batch ID to maintain order
         let mut sorted_files = wal_files;
@@ -306,6 +315,7 @@ impl RecoveryManager {
                 Ok(count) => {
                     vectors_recovered += count;
                     bytes_processed += file_info.size_bytes;
+                    files_recovered += 1;
                     debug!(
                         "Recovered {} vectors from batch {}",
                         count,
@@ -342,10 +352,10 @@ impl RecoveryManager {
         
         info!(
             "✅ Recovered {} vectors from {} files for collection {}",
-            vectors_recovered, total_files, collection_id
+            vectors_recovered, files_recovered, collection_id
         );
         
-        Ok(vectors_recovered)
+        Ok((vectors_recovered, files_recovered))
     }
     
     /// Recover a single WAL file (public API)
@@ -422,9 +432,9 @@ impl RecoveryManager {
     async fn flush_recovered_vectors(
         file_info: &WalFileInfo,
         vectors: Vec<crate::core::VectorRecord>,
-        disk_manager: &Arc<WalDiskManager>,
+        _disk_manager: &Arc<WalDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
-        recovery_mode: RecoveryMode,
+        _recovery_mode: RecoveryMode,
     ) -> Result<crate::storage::traits::FlushResult> {
         // Get the storage engine for this collection
         let engines = storage_engines.read().await;
@@ -639,6 +649,9 @@ impl ParallelRecoveryManager {
 mod tests {
     use super::*;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::core::VectorRecord;
+    use crate::storage::persistence::wal::{BatchId, SerializationFormat};
+    use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
     use tempfile::TempDir;
 
     async fn create_test_managers() -> (Arc<WalDiskManager>, Arc<WalFlushCoordinator>, RecoveryManager, TempDir) {
@@ -716,6 +729,11 @@ mod tests {
             ).await.expect("Failed to write batch");
         }
         
+        // Verify files were written
+        let written_files = disk_manager.list_collection_files(collection_id).await
+            .expect("Failed to list files after writing");
+        assert_eq!(written_files.len(), 3);
+        
         // Recover the collection (should go to storage engine)
         let recovered = recovery_manager.recover_collection(collection_id, None).await
             .expect("Failed to recover collection");
@@ -734,8 +752,105 @@ mod tests {
     
     // Mock storage engine for testing
     fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
-        // This would be a mock implementation
-        // For now, return a placeholder
-        unimplemented!("Mock storage engine needed for tests")
+        use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult};
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use crate::services::collection_service::CollectionService;
+        use async_trait::async_trait;
+        use std::collections::HashMap;
+        
+        struct MockStorageEngine {
+            vectors_received: Arc<tokio::sync::Mutex<Vec<VectorRecord>>>,
+            filesystem_factory: FilesystemFactory,
+        }
+        
+        #[async_trait]
+        impl UnifiedStorageEngine for MockStorageEngine {
+            fn engine_name(&self) -> &'static str {
+                "MockEngine"
+            }
+            
+            fn engine_version(&self) -> &'static str {
+                "1.0.0"
+            }
+            
+            fn strategy(&self) -> StorageEngineStrategy {
+                StorageEngineStrategy::Lsm
+            }
+            
+            async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+                // Store the vectors we receive during recovery
+                let mut vectors = self.vectors_received.lock().await;
+                vectors.extend(params.vector_records.clone());
+                
+                Ok(FlushResult {
+                    success: true,
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    entries_flushed: params.vector_records.len() as u64,
+                    bytes_written: params.vector_records.len() as u64 * 256,
+                    files_created: 1,
+                    duration_ms: 10,
+                    completed_at: chrono::Utc::now(),
+                    engine_metrics: HashMap::new(),
+                    compaction_triggered: false,
+                    flushed_batch_ids: params.batch_ids.clone(),
+                })
+            }
+            
+            async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
+                Ok(CompactionResult {
+                    success: true,
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    entries_processed: 0,
+                    entries_removed: 0,
+                    bytes_read: 0,
+                    bytes_written: 0,
+                    input_files: 0,
+                    output_files: 0,
+                    duration_ms: 10,
+                    completed_at: chrono::Utc::now(),
+                    engine_metrics: HashMap::new(),
+                })
+            }
+            
+            async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+                Ok(HashMap::new())
+            }
+            
+            async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<VectorRecord>> {
+                Ok(None)
+            }
+            
+            async fn search_vectors_unified(
+                &self,
+                _collection_id: &str,
+                _query_vector: &[f32],
+                _k: usize,
+                _distance_metric: &crate::compute::distance::DistanceMetric,
+                _metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+                _include_vectors: bool,
+                _include_metadata: bool,
+            ) -> Result<Vec<crate::core::search::SearchResult>> {
+                Ok(Vec::new())
+            }
+            
+            fn get_filesystem_factory(&self) -> &FilesystemFactory {
+                &self.filesystem_factory
+            }
+            
+            fn get_collection_service(&self) -> Option<&CollectionService> {
+                None
+            }
+        }
+        
+        // Create a filesystem factory for the mock
+        let filesystem_factory = futures::executor::block_on(async {
+            FilesystemFactory::new(FilesystemConfig::default()).await
+                .expect("Failed to create filesystem factory")
+        });
+        
+        Arc::new(MockStorageEngine {
+            vectors_received: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            filesystem_factory,
+        })
     }
 }

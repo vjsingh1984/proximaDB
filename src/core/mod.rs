@@ -16,6 +16,7 @@ pub mod serverless;
 pub mod storage_layout;
 // vector_record_adapter removed - proto-first architecture everywhere
 pub mod proto_metadata_helper;
+pub mod bloom;
 
 #[cfg(test)]
 mod config_tests;

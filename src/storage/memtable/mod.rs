@@ -198,11 +198,11 @@ where
 
         for (memtable_type, memtable) in &mut self.implementations {
             let start = std::time::Instant::now();
-            let mut total_size = 0u64;
+            let mut _total_size = 0u64;
 
             for (key, value) in &entries {
                 match memtable.insert(key.clone(), value.clone()).await {
-                    Ok(size_delta) => total_size += size_delta,
+                    Ok(size_delta) => _total_size += size_delta,
                     Err(_) => continue,
                 }
             }
@@ -269,13 +269,13 @@ where
         for (memtable_type, memtable) in &mut self.implementations {
             let start = std::time::Instant::now();
             let mut success_count = 0;
-            let mut total_results = 0;
+            let mut _total_results = 0;
 
             for (from_key, limit) in &ranges {
                 match memtable.range_scan(from_key.clone(), *limit).await {
                     Ok(scan_results) => {
                         success_count += 1;
-                        total_results += scan_results.len();
+                        _total_results += scan_results.len();
                     }
                     Err(_) => continue,
                 }

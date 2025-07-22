@@ -201,7 +201,7 @@ impl LsmUnifiedSearchEngine {
         &self,
         files: Vec<String>,
         _context: &UnifiedSearchContext,
-        params: &SearchParams,
+        _params: &SearchParams,
     ) -> Result<Vec<String>> {
         // Optimization strategies:
         // 1. Skip older levels if we have enough recent data

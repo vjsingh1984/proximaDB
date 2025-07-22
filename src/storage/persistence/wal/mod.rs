@@ -62,7 +62,7 @@ pub use background_manager::{
 pub use proto_serialization_strategy::ProtoSerializationStrategy;
 pub use bincode_serialization_strategy::BincodeSerializationStrategy;
 pub use avro_serialization_strategy::AvroSerializationStrategy;
-pub use batch_strategy::{WalBatchStrategy, WalBatchStrategyExt};
+pub use batch_strategy::WalBatchStrategy;
 pub use batch_factory::{WalBatchFactory, StrategyInfo, StrategyComparison};
 pub use config::WalStrategyType;
 pub use config::{CompressionConfig, PerformanceConfig, WalConfig};
@@ -799,7 +799,7 @@ pub async fn configure_wal_manager_pool(pool_config: WalManagerPoolConfig) -> Re
 /// collection distribution, and load metrics.
 pub async fn get_wal_manager_pool_stats() -> Result<WalManagerPoolStats> {
     let registry = get_wal_manager_registry();
-    let managers = registry.get_all_managers().await;
+    let _managers = registry.get_all_managers().await;
     
     let pool = registry.manager_pool.read().await;
     let total_collections: usize = pool.values().map(|entry| entry.workload_metrics.collection_count).sum();
@@ -1033,7 +1033,7 @@ impl WalManager {
         };
 
         // Use modern batch strategy
-        let sequences = self.strategy.write_vector_batch(batch).await?;
+        let sequences = self.strategy.write_native_batch(batch, &collection_id).await?;
         let duration = start_time.elapsed();
 
         // Return the first (and only) sequence from the batch
@@ -1065,7 +1065,7 @@ impl WalManager {
     /// Insert batch of vector records with immediate sync option
     pub async fn insert_batch_with_sync(
         &self,
-        collection_id: String,
+        _collection_id: String,
         records: Vec<(VectorId, VectorRecord)>,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
@@ -1175,34 +1175,30 @@ impl WalManager {
     /// In proto-first architecture, main WAL should not handle Avro serialization
     pub async fn append_avro_entry(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         _operation_type: &str,
-        avro_payload: &[u8],
+        _avro_payload: &[u8],
     ) -> Result<u64> {
-        // Only delegate to the strategy - no Avro logic in main WAL module
-        self.strategy.write_avro_batch(collection_id, avro_payload).await
-            .map(|_| 1) // Return sequence number 1 for single entry
+        // This is a legacy method that should be deprecated
+        Err(anyhow::anyhow!("append_avro_entry is deprecated - use write_native_batch directly"))
     }
 
     /// Append Proto entry - modern method for proto-first architecture
     pub async fn append_proto_entry(
         &self,
-        collection_id: &str,
-        operation_type: &str,
-        proto_payload: &[u8],
+        _collection_id: &str,
+        _operation_type: &str,
+        _proto_payload: &[u8],
     ) -> Result<u64> {
-        // Use write_proto_batch for proto-first architecture
-        let wal_op = self.strategy.write_proto_batch(collection_id, proto_payload).await?;
-        
-        // Return the first sequence number
-        Ok(wal_op.vector_count as u64)
+        // This is a legacy method that should be deprecated
+        Err(anyhow::anyhow!("append_proto_entry is deprecated - use write_native_batch directly"))
     }
 
     /// Read vector records by operation type (proto-first approach)
     pub async fn read_proto_entries(
         &self,
         collection_id: &str,
-        operation_type: &str,
+        _operation_type: &str,
         limit: Option<usize>,
     ) -> Result<Vec<Vec<u8>>> {
         // Get the vector records from the collection
@@ -1236,7 +1232,7 @@ impl WalManager {
     pub async fn append_batch_entry(
         &self,
         collection_id: &str,
-        operation_type: &str,
+        _operation_type: &str,
         payload: &[u8],
         immediate_sync: bool,
     ) -> Result<u64> {
@@ -1301,7 +1297,7 @@ impl WalManager {
     pub async fn force_flush_collection(
         &self,
         collection_id: &str,
-        storage_engine: Option<&str>,
+        _storage_engine: Option<&str>,
     ) -> Result<()> {
         tracing::warn!(
             "⚠️ WAL MANAGER: FORCE FLUSH COLLECTION {} - TESTING ONLY",
@@ -1320,10 +1316,7 @@ impl WalManager {
 
     // 🎯 MODERN BATCH API (Recommended)
 
-    /// Write vector batch natively (modern API)
-    pub async fn write_vector_batch(&self, batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<Vec<u64>> {
-        self.strategy.write_vector_batch(batch).await
-    }
+    // Removed write_vector_batch - use write_native_batch with collection_id instead
 
     /// PROTO-FIRST ZERO-COPY: Write native VectorRecord with Arc
     /// This is the optimal method for proto-first architecture
@@ -1347,7 +1340,7 @@ impl WalManager {
         };
         
         // Delegate to strategy - each strategy handles its own serialization
-        self.strategy.write_native_batch(native_batch).await
+        self.strategy.write_native_batch(native_batch, collection_id).await
     }
 
     // REMOVED: write_vector_batch_native method - first release, zero-copy Arc-based API only
@@ -1355,10 +1348,12 @@ impl WalManager {
     /// Write vector batch with immediate sync (modern API)
     pub async fn write_vector_batch_with_sync(
         &self, 
-        batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch, 
-        immediate_sync: bool
+        _batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch, 
+        _immediate_sync: bool
     ) -> Result<Vec<u64>> {
-        self.strategy.write_vector_batch_with_sync(batch, immediate_sync).await
+        // Note: write_vector_batch_with_sync requires collection_id but we don't have it here
+        // This is a legacy method that should be deprecated
+        Err(anyhow::anyhow!("write_vector_batch_with_sync is deprecated - use write_native_batch directly"))
     }
 
     /// Insert multiple vectors efficiently (modern API)
@@ -1388,7 +1383,7 @@ impl WalManager {
         };
 
         // Write to memory first
-        let sequences = self.write_vector_batch(batch).await?;
+        let sequences = self.strategy.write_native_batch(batch, &collection_id).await?;
         
         // Check if we should sync to disk based on sync mode
         if self.should_sync_to_disk(&collection_id).await? {
@@ -1456,7 +1451,7 @@ impl WalManager {
     pub async fn initialize_assignment_service(
         &mut self,
         assignment_service: Arc<dyn AssignmentService>,
-        atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+        _atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
     ) -> Result<()> {
         // Create assignment configs for WAL and storage components
         let wal_assignment_config = StorageAssignmentConfig {
@@ -1572,7 +1567,7 @@ impl WalManager {
     async fn extract_batch_for_sync(
         &self,
         collection_id: &str,
-        sequences: &[u64],
+        _sequences: &[u64],
     ) -> Result<WalVectorBatch> {
         // Get the batch from the strategy's memory
         if let Some(wal_behavior) = self.strategy.get_wal_behavior() {

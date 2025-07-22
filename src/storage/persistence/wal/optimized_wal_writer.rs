@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, error};
 
 use crate::proto::proximadb::VectorRecord;
-use crate::storage::assignment_service::{get_assignment_service, StorageAssignmentConfig, StorageComponentType};
+use crate::storage::assignment_service::get_assignment_service;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::wal::config::WalConfig;
 use crate::services::direct_vector_service::OptimizedFormat;
@@ -442,7 +442,7 @@ impl OptimizedWalWriter {
     /// Get cached assignment or fetch new one
     async fn get_cached_assignment(
         collection_id: &str,
-        config: &WalConfig,
+        _config: &WalConfig,
         assignment_cache: &Arc<RwLock<HashMap<String, CachedAssignment>>>,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<CachedAssignment> {
@@ -495,7 +495,7 @@ impl OptimizedWalWriter {
         format: &OptimizedFormat,
         assignment: &CachedAssignment,
         filesystem_factory: &FilesystemFactory,
-        config: &WalConfig,
+        _config: &WalConfig,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<String> {
         // Serialize vectors

@@ -459,7 +459,7 @@ impl UnifiedQuantizationEngine {
         // Run k-means iterations
         let mut assignments = vec![0; vectors.len()];
         
-        for iteration in 0..max_iterations {
+        for _iteration in 0..max_iterations {
             let old_centroids = centroids.clone();
             
             // Assignment step

@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
-use crate::storage::memtable::core::{MemtableConfig, MemtableCore};
+use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::wal::{BatchId, WalOperation, WalStats};
 
@@ -644,6 +644,7 @@ impl WalBehaviorWrapper {
 
     /// Remove a specific batch from the memtable (for atomic rollback)
     pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
+        // First remove from coordinator (for backward compatibility)
         let mut coordinator = self.batch_coordinator.write().await;
         
         // Remove batch from coordinator
@@ -655,23 +656,13 @@ impl WalBehaviorWrapper {
                         coordinator.vector_index.remove(id);
                     }
                 }
-                
-                tracing::debug!(
-                    "🗑️ Removed batch {} from collection {} ({} vectors)",
-                    batch_id,
-                    collection_id,
-                    removed_batch.vector_records.len()
-                );
-                
-                return Ok(());
             }
         }
+        drop(coordinator);
         
-        Err(anyhow::anyhow!(
-            "Batch {} not found in collection {} for removal",
-            batch_id,
-            collection_id
-        ))
+        // IMPORTANT: Also remove from the actual GlobalPartitionedMemtable
+        // This is the real storage - coordinator is just for backward compatibility
+        self.inner.remove_batch(collection_id, batch_id).await
     }
 
     /// Get statistics with String keys (legacy compatibility wrapper)
@@ -782,7 +773,7 @@ impl WalBehaviorWrapper {
     pub async fn atomic_mark_for_flush(
         &self,
         collection_id: &crate::core::String,
-        up_to_sequence: u64,
+        _up_to_sequence: u64,
     ) -> Result<Vec<WalVectorBatch>> {
         // Return unflushed batches directly for storage engine processing
         self.get_unflushed_batches(collection_id).await

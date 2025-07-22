@@ -1,7 +1,6 @@
 //! Unit tests for AXIS Type System
 
 use super::types::*;
-use serde_json::json;
 
 #[test]
 fn test_data_type_creation() {

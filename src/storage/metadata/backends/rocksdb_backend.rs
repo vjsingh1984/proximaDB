@@ -733,14 +733,14 @@ impl RocksDbMetadataBackend {
                 DbHandle::Transactional(ref db) => {
                     // Create checkpoint for transactional DB
                     let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)?;
-                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp());
+                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
                     checkpoint.create_checkpoint(&backup_dir)?;
                     info!("✅ Created RocksDB backup at: {:?}", backup_dir);
                 }
                 DbHandle::Regular(ref db) => {
                     // Create checkpoint for regular DB
                     let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)?;
-                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp());
+                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
                     checkpoint.create_checkpoint(&backup_dir)?;
                     info!("✅ Created RocksDB backup at: {:?}", backup_dir);
                 }

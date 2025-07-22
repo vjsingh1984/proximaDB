@@ -1,0 +1,341 @@
+= ProximaDB Technical Reference
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlightjs
+:imagesdir: diagrams/images
+:sectnums:
+:sectanchors:
+
+[abstract]
+--
+ProximaDB is a high-performance vector database built with Rust, featuring a proto-first architecture, dual storage engines (LSM and VIPER), and enterprise-grade capabilities. This technical reference provides comprehensive documentation of ProximaDB's architecture, implementation, and operational characteristics.
+--
+
+== Introduction
+
+ProximaDB is a high-performance vector database built with Rust, featuring:
+
+* **Optimized write throughput** with batched operations
+* **Low-latency** search capabilities
+* **Unified architectures** reducing code duplication
+* **Dual storage engines** for different workload types
+
+image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=100%]
+
+=== Key Features
+
+* **Proto-First Design**: Zero serialization overhead
+* **Dual Storage Engines**: LSM (row-based) and VIPER (columnar)
+* **Direct Vector Service**: 40-60% latency reduction
+* **Unified Architectures**: Consistent APIs across all components
+* **Enterprise Ready**: Multi-cloud support, monitoring, security
+
+=== Design Principles
+
+1. **Single Responsibility**: Each component does one thing well
+2. **Direct Access**: No unnecessary indirection or registries
+3. **Atomic Operations**: All writes use UnifiedAtomicCoordinator
+4. **Clean Separation**: Clear boundaries between components
+5. **Performance First**: Optimized for real-world workloads
+
+== Architecture Overview
+
+=== System Architecture
+
+ProximaDB employs a layered architecture with clean separation of concerns:
+
+[source,text]
+----
+┌─────────────────────────────────────────────────┐
+│             Network Layer                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
+│  │ REST API    │  │ gRPC API    │  │Dashboard│ │
+│  └──────┬──────┘  └──────┬──────┘  └────┬────┘ │
+│         └────────────┬────┴──────────────┘      │
+│                      ▼                           │
+│            UnifiedHandlers                       │
+└─────────────────────┬────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────┐
+│             Service Layer                        │
+│  ┌─────────────────┐  ┌────────────────────┐   │
+│  │DirectVectorService│  │CollectionService   │   │
+│  └────────┬─────────┘  └─────────┬──────────┘   │
+└───────────┴───────────────────────┴──────────────┘
+                      ▼
+┌─────────────────────────────────────────────────┐
+│             Storage Layer                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
+│  │ LSM Engine  │  │VIPER Engine │  │   WAL   │ │
+│  └─────────────┘  └─────────────┘  └─────────┘ │
+└──────────────────────────────────────────────────┘
+----
+
+=== Proto-First Architecture
+
+All data flows through Protocol Buffers, eliminating serialization overhead:
+
+image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=80%]
+
+Key benefits:
+* Single business logic implementation
+* Zero double serialization
+* 85% code reduction in handlers
+* Protocol-agnostic operations
+
+== Core Components
+
+=== DirectVectorService
+
+The DirectVectorService provides direct memtable access, eliminating unnecessary abstraction layers:
+
+[source,rust]
+----
+pub struct DirectVectorService {
+    storage_engines: HashMap<String, Arc<dyn StorageEngine>>,
+    wal_manager: Arc<WalManager>,
+    collection_service: Arc<CollectionService>,
+}
+----
+
+Features:
+* **Direct memtable access**: Reduces overhead by eliminating abstraction layers
+* **Engine-specific routing**: Routes operations to appropriate storage engine
+* **Collection-aware**: Operations consider collection configuration
+* **Explicit configuration**: No hidden defaults
+
+image::direct-vector-service.png[Direct Vector Service Architecture, width=80%]
+
+=== Storage Engines
+
+==== LSM Engine
+
+The Log-Structured Merge (LSM) engine provides:
+
+* **Atomic compaction**: ACID guarantees via staging
+* **Metadata filtering**: Block-level statistics
+* **Manifest tracking**: Centralized SSTable registry
+* **Unified bloom filters**: Polymorphic design
+
+[source,rust]
+----
+pub struct LsmEngine {
+    memtable: Arc<dyn UnifiedMemtable>,
+    manifest: Arc<LsmManifest>,
+    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    bloom_filter: Arc<dyn BloomFilterStrategy>,
+}
+----
+
+==== VIPER Engine
+
+The Vectorized Parquet Engine provides:
+
+* **Columnar storage**: Optimized for analytics
+* **Predicate pushdown**: Filter at storage level
+* **ML clustering**: Locality-preserving organization
+* **Quantization support**: Reduced memory footprint
+
+=== WAL Architecture
+
+The Write-Ahead Log system features clean separation of concerns:
+
+image::wal_strategy_pattern.png[WAL Strategy Pattern, width=100%]
+
+Components:
+* **WalManager**: Orchestration only
+* **SerializationStrategies**: Format conversion
+* **MemtableManager**: Memory operations
+* **DiskManager**: I/O operations
+* **RecoveryManager**: Recovery logic
+
+Features:
+* Batched write operations for improved throughput
+* Optimized serialization reducing latency
+* Parallel recovery for faster startup
+
+== Unified Architectures
+
+=== Bloom Filter Design
+
+ProximaDB uses a unified polymorphic bloom filter design:
+
+image::bloom-filter-architecture.png[Bloom Filter Architecture, width=80%]
+
+[source,rust]
+----
+pub trait BloomFilterStrategy: Send + Sync {
+    fn insert(&mut self, key: &[u8]);
+    fn might_contain(&self, key: &[u8]) -> bool;
+    fn serialize(&self) -> Result<Vec<u8>>;
+    fn false_positive_rate(&self) -> f64;
+}
+----
+
+Strategies:
+* **ByteAligned**: SSTable optimized
+* **BitPacked**: Memory efficient
+* **Simple**: Fast for small datasets
+* **Composite**: Metadata filtering
+* **NoOp**: Disabled
+
+=== Unified Storage Engine
+
+All storage engines implement a common interface:
+
+[source,rust]
+----
+pub trait UnifiedStorageEngine: Send + Sync {
+    fn engine_name(&self) -> &str;
+    fn flush(&self, params: FlushParameters) -> Result<FlushResult>;
+    fn compact(&self, params: CompactionParameters) -> Result<()>;
+    fn search(&self, query: SearchQuery) -> Result<Vec<SearchResult>>;
+}
+----
+
+Benefits:
+* Consistent API across engines
+* Easy to add new engines
+* Shared infrastructure
+* Simplified testing
+
+== Performance Characteristics
+
+=== Benchmarks
+
+[NOTE]
+====
+Performance characteristics depend on:
+* Hardware specifications
+* Dataset size and dimensionality
+* Configuration parameters
+* Workload patterns
+
+See Appendix B for detailed performance testing guidelines.
+====
+
+=== Optimization Techniques
+
+1. **Channel-based batching**: Reduces lock contention
+2. **Caching strategies**: Reduces repeated computations
+3. **Parallel operations**: Utilizes multiple CPU cores
+4. **Predicate pushdown**: Filters data at storage level (VIPER engine)
+5. **Efficient data structures**: Optimized for vector operations
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[server]
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+default_engine = "lsm"
+data_directory = "/var/lib/proximadb"
+
+[wal]
+batch_size = 1000
+channel_capacity = 10000
+write_buffer_size = "64MB"
+
+[flush]
+max_wal_age_hours = 24.0
+max_wal_size_mb = 128.0
+max_vector_count = 1000000
+----
+
+=== Advanced Configuration
+
+See link:../appendix_implementation_details.adoc[Appendix A: Implementation Details] for:
+* Performance tuning parameters
+* Multi-disk configuration
+* Cloud storage setup
+* Monitoring configuration
+
+== API Reference
+
+=== REST API
+
+ProximaDB provides a comprehensive REST API:
+
+[source,http]
+----
+POST /v2/collections
+Content-Type: application/x-protobuf
+
+CreateCollectionRequest {
+  collection_id: "products",
+  config: {
+    vector_dimension: 768,
+    distance_metric: COSINE,
+    storage_engine: LSM
+  }
+}
+----
+
+See link:api/unified_rest_api.adoc[Unified REST API Reference] for complete documentation.
+
+=== gRPC API
+
+For high-performance applications, use the gRPC API:
+
+[source,protobuf]
+----
+service ProximaDB {
+  rpc CreateCollection(CreateCollectionRequest) 
+      returns (CreateCollectionResponse);
+  rpc InsertVectors(InsertVectorsRequest) 
+      returns (InsertVectorsResponse);
+  rpc SearchVectors(SearchVectorsRequest) 
+      returns (SearchVectorsResponse);
+}
+----
+
+== Operational Guide
+
+=== Deployment
+
+ProximaDB supports multiple deployment models:
+
+* **Single node**: Development and testing
+* **Distributed**: Production workloads
+* **Cloud native**: Kubernetes operators
+* **Multi-region**: Global deployments
+
+=== Monitoring
+
+Built-in monitoring includes:
+
+* Prometheus metrics
+* OpenTelemetry tracing
+* Health check endpoints
+* Performance dashboards
+
+=== Maintenance
+
+Regular maintenance tasks:
+
+1. **Compaction**: Automatic or manual
+2. **Backup**: Incremental snapshots
+3. **Upgrades**: Rolling updates
+4. **Monitoring**: Alert configuration
+
+== Appendices
+
+* link:appendix_implementation_details.adoc[Appendix A: Implementation Details] - Code patterns and advanced techniques
+* link:appendix_performance_metrics.adoc[Appendix B: Performance Metrics] - Benchmarks and optimization
+* link:appendix_testing_development.adoc[Appendix C: Testing & Development] - Testing and contribution guide
+
+== References
+
+* link:https://github.com/proximadb/proximadb[GitHub Repository]
+* link:https://proximadb.io/docs[Online Documentation]
+* link:https://proximadb.io/community[Community Forums]
+* link:CHANGELOG.adoc[Release History]
+
+---
+_Last updated: {docdate}_

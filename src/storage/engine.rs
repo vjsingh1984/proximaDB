@@ -265,7 +265,7 @@ impl StorageEngine {
             ).await.expect("Failed to create LSM tree");
             trees.insert(collection_id.to_string(), new_tree);
         }
-        let tree = trees.get_mut(collection_id).unwrap();
+        let _tree = trees.get_mut(collection_id).unwrap();
 
         tracing::debug!(
             "💾 Calling tree.put() for vector {} in collection {}",
@@ -275,11 +275,6 @@ impl StorageEngine {
         // LSM is pure SSTable storage - no direct put operation
         // tree.put(vector_id.to_string(), record).await?;
         return Err(anyhow::anyhow!("Direct writes to LSM not supported. Use WAL → Flush → SSTable pipeline.").into());
-        tracing::debug!(
-            "✅ Completed tree.put() for vector {} in collection {}",
-            vector_id,
-            collection_id
-        );
 
         // Release the trees lock before other operations
         drop(trees);
@@ -330,7 +325,7 @@ impl StorageEngine {
     ) -> crate::storage::Result<Option<VectorRecord>> {
         // First check LSM tree (recent writes)
         let trees = self.lsm_trees.read().await;
-        if let Some(tree) = trees.get(collection_id) {
+        if let Some(_tree) = trees.get(collection_id) {
             // LSM is pure SSTable storage - no direct get operation
             // Use search API to retrieve vectors from LSM
             return Err(anyhow::anyhow!("Direct gets from LSM not supported. Use search API.").into());
@@ -372,7 +367,7 @@ impl StorageEngine {
         // Mark as deleted in LSM tree using tombstone
         if exists {
             let trees = self.lsm_trees.read().await;
-            if let Some(tree) = trees.get(collection_id) {
+            if let Some(_tree) = trees.get(collection_id) {
                 // LSM is pure SSTable storage - no direct delete operation
                 // Deletes should be handled through WAL tombstones
                 return Err(anyhow::anyhow!("Direct deletes from LSM not supported. Use WAL tombstones.").into());
@@ -996,7 +991,7 @@ impl StorageEngine {
         collection_id: &str,
         query: Vec<f32>,
         k: usize,
-        filter: F,
+        _filter: F,
     ) -> crate::storage::Result<Vec<SearchResult>>
     where
         F: Fn(&HashMap<String, serde_json::Value>) -> bool + Send + Sync + 'static,
@@ -1203,7 +1198,7 @@ impl StorageEngine {
         }
 
         // Clear metadata store by deleting all collections
-        for collection in collections {
+        for _collection in collections {
             // TODO: Use SharedServices for metadata operations
             // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_deref().unwrap_or("")).await {
             //     tracing::warn!(

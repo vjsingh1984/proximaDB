@@ -23,45 +23,44 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-System requirements and acceptance criteria for ProximaDB, defining what the system must deliver to users and stakeholders.
+System requirements and implementation status for ProximaDB, tracking what has been built and what remains to be implemented.
 
 [NOTE]
 ====
 🔗 **Architecture**: See link:architecture.adoc[Architecture Guide] for system design | **Implementation**: See link:technical_reference.adoc[Technical Reference] for details
 ====
 
-=== Implementation Status Dashboard
+=== Implementation Status
 
 [cols="3,2,1"]
 |===
-|**Requirement Category** |**Status** |**Completion**
+|**Component** |**Status** |**Notes**
 
-|📊 **Vector Operations**
-|✅ Core Complete
-|90%
+|**Vector Operations**
+|✅ Basic CRUD
+|Insert, search, delete working
 
-|💾 **Storage & Data Management**
-|✅ Production Ready
-|95%
+|**Storage Engines**
+|✅ LSM & VIPER
+|Both engines functional
 
-|🔍 **AXIS Indexing System**
-|✅ Framework Complete
-|85%
+|**WAL System**
+|✅ Implemented
+|Basic durability
 
-|🌐 **Client SDK Features**
-|✅ Feature Complete
-|100%
+|**Python SDK**
+|✅ Available
+|REST/gRPC support
 
-|⚡ **Performance & Hardware**
-|✅ SIMD Ready
-|80%
+|**SIMD Support**
+|🚧 Detection only
+|Implementation pending
 
-|🔒 **Enterprise Features**
-|📋 Planned
-|20%
+|**Enterprise Features**
+|📋 Not started
+|Future roadmap
 |===
 
-**Tagline**: _Proximity at Scale_ - Enterprise-grade vector database with unified memtable architecture and intelligent storage-aware search.
 
 === Current Sprint: Production-Ready Alpha Release
 
@@ -76,11 +75,10 @@ System requirements and acceptance criteria for ProximaDB, defining what the sys
 ✅ **Write-Ahead Log (WAL)** - Durability and consistency with Avro/Bincode serialization
 ✅ **Search Engine** - Multi-strategy vector search with HNSW and metadata filtering
 
-**Performance Characteristics:**
-- gRPC Vector Search: ~5ms P95 (Target: <5ms) ✅
-- REST Vector Search: ~6ms P95 (Target: <10ms) ✅  
-- gRPC Insert: ~2ms P95 (Target: <5ms) ✅
-- REST Insert: ~3ms P95 (Target: <10ms) ✅
+[NOTE]
+====
+Performance depends on hardware, dataset size, and configuration. Actual results may vary.
+====
 
 == 🏗️ Architecture Requirements
 
@@ -92,7 +90,7 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 **Unified Storage Interface**:: Single memtable interface supporting multiple backends (SkipList, BTree, HashMap, DashMap)
 
-**Storage-Aware Search**:: Automatic engine selection with >6x performance improvement and 100% accuracy guarantee
+**Storage-Aware Search**:: Engine selection based on collection configuration
 
 **Multi-Cloud Support**:: URL-based abstraction enabling zero-downtime cloud migration
 
@@ -140,9 +138,9 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |VR-005
-|Batch vector operations for high-throughput ingestion (Infrastructure Ready)
+|Batch vector operations for high-throughput ingestion
 |Critical
-|🚧 INFRASTRUCTURE READY
+|✅ IMPLEMENTED
 
 |VR-006
 |Real-time vector upserts with immediate consistency
@@ -227,42 +225,42 @@ Deliver a cloud-native vector database that provides:
 |VR-022
 |Time-travel queries with versioned vector IDs and timestamps
 |Low
-|✅ CLIENT READY, ❌ SERVER MISSING
+|❌ NOT IMPLEMENTED
 
 |VR-023
 |Collection metadata update operations (description, config changes)
 |High
-|✅ CLIENT READY, 🚧 SERVER PARTIAL
+|🚧 PARTIAL
 
 |VR-024
 |Delete vectors by metadata filter criteria
 |High
-|✅ CLIENT READY, ❌ SERVER MISSING
+|❌ NOT IMPLEMENTED
 
 |VR-025
 |Atomic vector batch operations with rollback capability
 |Medium
-|✅ CLIENT READY, ❌ SERVER MISSING
+|❌ NOT IMPLEMENTED
 
 |VR-026
 |Search result aggregations and grouping operations
 |Medium
-|✅ CLIENT READY, ❌ SERVER MISSING
+|❌ NOT IMPLEMENTED
 
 |VR-027
 |Transaction management with ACID guarantees
 |Low
-|✅ CLIENT READY, ❌ SERVER MISSING
+|❌ NOT IMPLEMENTED (basic atomic file operations only)
 
 |VR-028
 |Storage-aware polymorphic search with engine-specific optimizations
 |Critical
-|✅ IMPLEMENTED (6.10x performance improvement, storage-aware search)
+|✅ IMPLEMENTED
 
 |VR-029
 |VIPER search optimizations: predicate pushdown, ML clustering, quantization
 |Critical
-|✅ IMPLEMENTED (ML clustering, static column projection, 50-80% I/O reduction)
+|🚧 PARTIAL (predicate pushdown only, ML clustering not implemented)
 
 |VR-030
 |LSM search optimizations: memtable priority, bloom filters, level-aware search
@@ -272,7 +270,7 @@ Deliver a cloud-native vector database that provides:
 |VR-031
 |Multi-precision quantization support (FP32, PQ4, PQ8, Binary, INT8)
 |High
-|✅ IMPLEMENTED (Unified quantization engine with hardware acceleration)
+|❌ NOT IMPLEMENTED (configuration only)
 
 |VR-032
 |Search engine factory with automatic storage type detection
@@ -287,27 +285,27 @@ Deliver a cloud-native vector database that provides:
 |VR-034
 |ML clustering with K-means++ initialization for optimal cluster placement
 |Critical
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |VR-035
 |Model persistence in __models/ directory with JSON serialization
 |Critical
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |VR-036
 |20% vector growth threshold for intelligent model retraining
 |High
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |VR-037
 |Parallel cluster search with futures for performance optimization
 |High
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |VR-038
 |Cluster-specific Parquet file organization and retrieval
 |High
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |VR-039
 |Real-time cluster prediction for new vectors during insertion
@@ -317,7 +315,7 @@ Deliver a cloud-native vector database that provides:
 |VR-040
 |Clustering statistics tracking (silhouette score, inter/intra distances)
 |Medium
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 |===
 
 ==== Proto-First Architecture
@@ -618,12 +616,12 @@ sync_mode = "PerBatch"
 |IX-001
 |Global ID Index with Trie structure for prefix queries and HashMap for O(1) lookups
 |Critical
-|✅ IMPLEMENTED
+|🚧 PARTIAL (HashMap only)
 
 |IX-002
 |ID-to-location mapping: id → {partition_id, offset_in_file} for unified access
 |Critical
-|✅ IMPLEMENTED
+|🚧 PARTIAL
 
 |IX-003
 |Metadata Index with Parquet columnar storage and Roaring Bitmap filters
@@ -638,7 +636,7 @@ sync_mode = "PerBatch"
 |IX-005
 |Dense Vector Index with per-partition HNSW/IVF/PQ indexes
 |Critical
-|✅ IMPLEMENTED
+|🚧 PARTIAL (basic indexing)
 
 |IX-006
 |ANN index pointers stored alongside Parquet row group offsets
@@ -663,7 +661,7 @@ sync_mode = "PerBatch"
 |IX-010
 |Join Engine with RowSet intersection for multi-index query results
 |Critical
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |IX-011
 |Bloom filter cache for false-positive rejection in joins
@@ -673,7 +671,7 @@ sync_mode = "PerBatch"
 |IX-012
 |Priority queue for relevance re-ranking of combined results
 |High
-|✅ IMPLEMENTED
+|🚧 PARTIAL
 
 |IX-013
 |Multi-level caching with hot vectors kept in memory
@@ -698,7 +696,7 @@ sync_mode = "PerBatch"
 |IX-017
 |Adaptive Index Strategy Selection based on collection characteristics
 |Critical
-|✅ IMPLEMENTED
+|❌ NOT IMPLEMENTED
 
 |IX-018
 |Real-time Index Performance Monitoring and automatic optimization triggers

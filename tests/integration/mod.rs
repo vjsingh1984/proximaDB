@@ -46,6 +46,10 @@ pub mod wal_optimization_integration_test;
 // VIPER engine integration tests
 pub mod viper;
 
+// LSM engine integration tests
+pub mod lsm_search_integration_test;
+pub mod lsm_collection_test;
+
 // Storage-aware search integration tests - REMOVED (obsolete APIs)
 // pub mod storage_aware_search_tests;
 

@@ -415,7 +415,7 @@ impl MetadataBackendFactory {
 
     /// Get available backend types
     pub fn available_backends() -> Vec<MetadataBackendType> {
-        let backends = vec![MetadataBackendType::Disk];
+        let mut backends = vec![MetadataBackendType::Disk];
         #[cfg(feature = "rocksdb")]
         backends.push(MetadataBackendType::RocksDB);
         backends

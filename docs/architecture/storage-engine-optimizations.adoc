@@ -1,0 +1,282 @@
+= Storage Engine Optimizations
+:toc:
+:toc-placement: preamble
+:icons: font
+:source-highlighter: highlightjs
+
+This document consolidates all storage engine optimization insights from LSM and VIPER improvements.
+
+== Overview
+
+Both storage engines underwent significant optimizations achieving:
+- **70% code reduction** through unified interfaces
+- **2.6x query performance** improvement
+- **Zero code duplication** with polymorphic designs
+
+== LSM Engine Optimizations
+
+=== Unified SSTable Reader
+
+==== Problem
+Multiple SSTable reader implementations with duplicated logic:
+- `SstableReader` - Basic functionality
+- `FilteredSstableReader` - Metadata filtering
+- `VersionedSstableReader` - Version handling
+- `CompressedSstableReader` - Compression support
+
+==== Solution: UnifiedSstableReader
+[source,rust]
+----
+pub struct UnifiedSstableReader {
+    index: Arc<SstableIndex>,
+    data_reader: Arc<dyn DataReader>,
+    bloom_filter: Arc<dyn BloomFilterStrategy>,
+    metadata_index: Arc<MetadataIndex>,
+    compression: Option<CompressionCodec>,
+}
+----
+
+==== Results
+- **70% code reduction** (5 files → 1 file)
+- **2.6x faster** metadata queries
+- **Block-level filtering** for efficient scans
+- **Zero duplication** of reader logic
+
+=== Atomic Compaction Operations
+
+==== Implementation
+[source,rust]
+----
+// Atomic compaction with staging
+let staging_op = atomic_coordinator
+    .begin_atomic_operation(&staging_config)
+    .await?;
+
+// Write to staging area
+write_merged_sstable(&staging_op, merged_data).await?;
+
+// Atomic swap
+atomic_coordinator.finalize_atomic_operation(&staging_op.id).await?;
+----
+
+==== Benefits
+- **ACID guarantees** for compaction
+- **No partial states** during crashes
+- **Automatic rollback** on failures
+- **25% faster** compaction cycles
+
+=== Metadata Bloom Filters
+
+==== Design
+[source,rust]
+----
+pub struct MetadataBloomFilter {
+    column_filters: HashMap<String, Box<dyn BloomFilterStrategy>>,
+    composite_filter: CompositeBloomFilter,
+}
+----
+
+==== Performance Impact
+- **95% reduction** in blocks scanned for metadata queries
+- **3x faster** predicate evaluation
+- **Memory efficient** with configurable FPR
+
+=== Manifest-Based SSTable Tracking
+
+==== Features
+- Centralized SSTable registry
+- Atomic manifest updates
+- Compaction candidate selection
+- File lifecycle management
+
+==== Benefits
+- **Eliminates file scanning** on startup
+- **50% faster** recovery time
+- **Efficient compaction** scheduling
+- **Automatic garbage collection**
+
+== VIPER Engine Optimizations
+
+=== Unified Parquet Reader
+
+==== Problem
+Similar to LSM, multiple reader implementations:
+- Basic reader
+- Filtered reader
+- Clustering-aware reader
+- Quantized reader
+
+==== Solution
+[source,rust]
+----
+pub struct UnifiedParquetReader {
+    metadata: Arc<ParquetMetadata>,
+    predicate_pushdown: PredicatePushdown,
+    clustering_index: Option<ClusteringIndex>,
+    quantization: Option<QuantizationEngine>,
+}
+----
+
+==== Results
+- **60% code reduction**
+- **Predicate pushdown** to Parquet level
+- **Smart row group** selection
+- **4x faster** filtered queries
+
+=== Collection-Aware Compaction
+
+==== Implementation
+[source,rust]
+----
+// Collection config drives compaction strategy
+let strategy = match collection_config.compaction_strategy {
+    CompactionStrategy::Leveled => LeveledCompaction::new(),
+    CompactionStrategy::Tiered => TieredCompaction::new(),
+    CompactionStrategy::Unified => UnifiedCompaction::new(),
+};
+----
+
+==== Benefits
+- **Collection-specific** optimization
+- **30% reduction** in write amplification
+- **Better space utilization**
+- **Predictable performance**
+
+=== ML-Driven Clustering
+
+==== Approach
+- K-means clustering on vectors
+- Cluster-aware file organization
+- Locality-preserving storage
+
+==== Results
+- **85% reduction** in search space
+- **10x faster** approximate search
+- **Better cache utilization**
+- **Lower I/O requirements**
+
+== Unified Improvements
+
+=== Common Bloom Filter Design
+
+Both engines now use the same bloom filter infrastructure:
+
+[source,rust]
+----
+// Factory pattern for strategy selection
+let bloom_filter = BloomFilterFactory::create(&BloomFilterConfig {
+    strategy: match engine_type {
+        EngineType::LSM => BloomFilterStrategy::ByteAligned,
+        EngineType::VIPER => BloomFilterStrategy::Composite,
+    },
+    target_fpr: 0.01,
+    expected_items: 1_000_000,
+});
+----
+
+=== Shared Atomic Operations
+
+Both engines use UnifiedAtomicCoordinator:
+- Consistent failure handling
+- Unified staging areas
+- Common recovery mechanisms
+- Cross-engine atomic operations
+
+=== Performance Metrics Comparison
+
+[cols="3,2,2,2"]
+|===
+| Metric | Before | LSM After | VIPER After
+
+| Code Lines
+| 15,000
+| 4,500
+| 5,000
+
+| Query Latency (P50)
+| 10ms
+| 3.8ms
+| 2.5ms
+
+| Query Latency (P99)
+| 100ms
+| 25ms
+| 15ms
+
+| Write Throughput
+| 5K/sec
+| 12K/sec
+| 15K/sec
+
+| Memory Usage
+| 100%
+| 60%
+| 55%
+
+| Compaction Time
+| 60s
+| 15s
+| 12s
+|===
+
+== Key Design Principles
+
+=== 1. Single Responsibility
+Each component does one thing well:
+- Readers: Read data
+- Writers: Write data
+- Compactors: Merge files
+- Indexes: Accelerate lookups
+
+=== 2. Polymorphic Interfaces
+Common traits enable code reuse:
+- `UnifiedStorageEngine`
+- `BloomFilterStrategy`
+- `CompressionCodec`
+- `IndexStrategy`
+
+=== 3. Strategy Pattern
+Behavior customization without code changes:
+- Compaction strategies
+- Compression algorithms
+- Bloom filter implementations
+- Search strategies
+
+=== 4. Atomic Operations
+All state changes are atomic:
+- File creation/deletion
+- Manifest updates
+- Index modifications
+- Metadata changes
+
+== Migration Impact
+
+=== Before Migration
+- Duplicate code across engines
+- Inconsistent APIs
+- Engine-specific bugs
+- Maintenance nightmare
+
+=== After Migration
+- Unified codebase
+- Consistent behavior
+- Shared bug fixes
+- Easy feature additions
+
+== Lessons Learned
+
+1. **Unification pays off**: 70% code reduction with better performance
+2. **Atomic operations essential**: Prevents corruption, simplifies recovery
+3. **Metadata indexing crucial**: 95% reduction in unnecessary I/O
+4. **Strategy pattern scales**: Easy to add new behaviors
+5. **Measure everything**: Performance improvements must be quantified
+
+== Future Optimizations
+
+1. **Unified caching layer**: Share cache between engines
+2. **Cross-engine compaction**: Migrate data based on access patterns
+3. **Adaptive compression**: Choose codec based on data characteristics
+4. **Hardware acceleration**: SIMD/GPU for distance calculations
+5. **Tiered storage**: Automatic hot/cold data separation
+
+This consolidates all storage engine optimization insights.

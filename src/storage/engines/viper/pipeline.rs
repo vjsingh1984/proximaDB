@@ -1093,7 +1093,7 @@ impl VectorRecordProcessor {
         };
 
         // Stage 2: Convert to RecordBatch (placeholder - would be actual implementation)
-        let schema = Arc::new(arrow_schema::Schema::new(vec![
+        let _schema = Arc::new(arrow_schema::Schema::new(vec![
             Arc::new(arrow_schema::Field::new(
                 "id",
                 arrow_schema::DataType::Utf8,
@@ -2772,12 +2772,12 @@ impl CompactionEngine {
             target_compression_ratio,
         )
         .await?;
-        let rewrite_time = rewrite_start.elapsed().as_millis() as u64;
+        let _rewrite_time = rewrite_start.elapsed().as_millis() as u64;
 
         // Stage 5: Update metadata and cleanup old files
         let cleanup_start = Instant::now();
         Self::update_metadata_and_cleanup(&task.collection_id).await?;
-        let cleanup_time = cleanup_start.elapsed().as_millis() as u64;
+        let _cleanup_time = cleanup_start.elapsed().as_millis() as u64;
 
         let total_time = sorted_rewrite_start.elapsed().as_millis() as u64;
 

@@ -2,7 +2,7 @@
 //! 
 //! This is the default and recommended format for ProximaDB's proto-first architecture.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crate::core::VectorRecord;
 use prost::Message;
 

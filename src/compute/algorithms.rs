@@ -139,7 +139,7 @@ impl HNSWIndex {
         m: usize,
         ef_construction: usize,
         distance_metric: DistanceMetric,
-        use_simd: bool,
+        _use_simd: bool,
     ) -> Self {
         let distance_computer =
             crate::compute::distance::create_distance_calculator(distance_metric);
@@ -558,7 +558,7 @@ pub struct BruteForceIndex {
 }
 
 impl BruteForceIndex {
-    pub fn new(distance_metric: DistanceMetric, use_simd: bool) -> Self {
+    pub fn new(distance_metric: DistanceMetric, _use_simd: bool) -> Self {
         let distance_computer =
             crate::compute::distance::create_distance_calculator(distance_metric);
 

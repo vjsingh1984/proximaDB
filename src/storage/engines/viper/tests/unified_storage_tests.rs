@@ -92,8 +92,8 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.do_flush(&flush_params).await?;
 
@@ -118,8 +118,8 @@ async fn test_viper_flush_with_high_level_trait_method() -> Result<()> {
         force: true,
         synchronous: true,
         trigger_compaction: false,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.flush(flush_params).await?;
 
@@ -188,8 +188,8 @@ async fn test_dynamic_storage_engine_flush() -> Result<()> {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = storage_engine.flush(flush_params).await?;
 
@@ -232,8 +232,8 @@ async fn test_flush_parameter_validation() -> Result<()> {
     // Test invalid parameters
     let invalid_params = FlushParameters {
         collection_id: None, // VIPER requires collection ID
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.do_flush(&invalid_params).await;
     assert!(result.is_err());

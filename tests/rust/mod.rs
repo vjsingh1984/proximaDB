@@ -16,5 +16,8 @@ pub mod test_proto_integration;
 #[path = "../integration/mod.rs"]
 pub mod integration;
 
+// Include unit tests
+pub mod unit_tests;
+
 // Re-export common utilities
 // pub use common::*; // Removed - common module deleted

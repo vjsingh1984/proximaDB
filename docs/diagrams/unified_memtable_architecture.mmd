@@ -126,9 +126,7 @@ classDiagram
     MemtableFactory ..> MemtableConfig : uses
     
     %% Notes
-    note "WAL Optimal Pairings:\n• BTree for Bincode WAL (ordered flush)\n• HashMap for Avro WAL (random access)\n• DashMap for high-concurrency WAL" as wal_note
+    note "WAL Optimal Pairings:<br/>• BTree for Bincode WAL (ordered flush)<br/>• HashMap for Avro WAL (random access)<br/>• DashMap for high-concurrency WAL"
     
-    note "LSM Optimal Pairings:\n• BTree for SSTable generation\n• SkipList for concurrent writes\n• Both maintain sorted order" as lsm_note
+    note "LSM Optimal Pairings:<br/>• BTree for SSTable generation<br/>• SkipList for concurrent writes<br/>• Both maintain sorted order"
     
-    WalBehaviorWrapper -.-> wal_note
-    LsmBehaviorWrapper -.-> lsm_note
