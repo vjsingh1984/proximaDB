@@ -323,3 +323,7 @@ test_*.sh
 # Build artifacts
 target/
 build_rs_cov.profraw
+
+# Large binary tools
+tools/minio
+tools/fake-gcs-server
