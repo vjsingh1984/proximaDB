@@ -23,10 +23,6 @@ pub mod proximadb {
     include!("proximadb.rs");
 }
 
-// Moved to obsolete directory - not currently used in gRPC service
-// pub mod proximadb_avro {
-//     include!("proximadb.avro.rs");  // MOVED: obsolete/proto/proximadb.avro.rs
-// }
 
 /// File descriptor set for gRPC reflection
 /// Note: This will be generated during build - for now we'll use an empty placeholder

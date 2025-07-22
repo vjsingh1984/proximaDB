@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::proto::proximadb::Collection;
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -26,6 +27,36 @@ pub enum StorageEngineStrategy {
 impl Default for StorageEngineStrategy {
     fn default() -> Self {
         Self::Viper // VIPER is the default strategy
+    }
+}
+
+/// Trait for providing collection metadata to storage engines
+/// This breaks the circular dependency between StorageEngine and CollectionService
+#[async_trait]
+pub trait CollectionMetadataProvider: Send + Sync {
+    /// Get collection UUID by name or ID
+    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
+    
+    /// Get full collection metadata
+    async fn get_collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
+    
+    /// Get collection as unified type
+    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
+    
+    /// List all collections
+    async fn list_collections(&self) -> Result<Vec<Collection>>;
+    
+    /// Check if collection exists
+    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
+        Ok(self.get_uuid(collection_id).await?.is_some())
+    }
+    
+    /// Fast check if collection ID exists (for collision detection)
+    /// This should be optimized for speed, returning just bool
+    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
+        // Default implementation delegates to collection_exists
+        // Backends can override with more efficient implementation
+        self.collection_exists(collection_id).await
     }
 }
 
@@ -52,6 +83,26 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Engine-specific statistics collection (required)
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
+
+    /// Retrieve a specific vector by ID from storage (required)
+    /// This method should search across all storage layers (memtable, SSTables, Parquet files)
+    async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
+
+    /// Engine-specific unified search with optimization capabilities (required)
+    /// Each engine implements its own optimizations:
+    /// - VIPER: Columnar predicate pushdown, Parquet filtering, ML clustering
+    /// - LSM: Bloom filter hints, range scans, SSTable optimizations
+    /// This abstraction allows each engine to leverage its unique capabilities
+    async fn search_vectors_unified(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: &crate::compute::distance::DistanceMetric,
+        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>>;
 
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided
@@ -99,12 +150,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
         };
 
         match assignment_service.get_assignment(
-            &crate::core::CollectionId::from(collection_id.to_string()), 
-            component_type
+            &crate::core::String::from(collection_id.to_string())
         ).await {
             Some(assignment) => {
-                // Return the assigned storage URL with collection subdirectory
-                Ok(format!("{}/{}", assignment.storage_url, collection_id))
+                // Return the assigned data URL (already includes collection id)
+                Ok(assignment.data_url)
             },
             None => {
                 Err(anyhow::anyhow!(
@@ -133,12 +183,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         match assignment_service
             .get_assignment(
-                &crate::core::CollectionId::from(collection_id.to_string()),
-                component_type,
+                &crate::core::String::from(collection_id.to_string())
             )
             .await
         {
-            Some(assignment) => Ok(assignment.storage_url),
+            Some(assignment) => Ok(assignment.data_url),
             None => Err(anyhow::anyhow!(
                 "No storage assignment found for collection {} in {} component",
                 collection_id,
@@ -164,8 +213,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         assignment_service
             .get_assignment(
-                &crate::core::CollectionId::from(collection_id.to_string()),
-                component_type,
+                &crate::core::String::from(collection_id.to_string())
             )
             .await
             .is_some()
@@ -178,6 +226,36 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Get filesystem factory for this engine - to be implemented by each engine
     fn get_filesystem_factory(&self)
         -> &crate::storage::persistence::filesystem::FilesystemFactory;
+
+    /// Get collection service for IndexConfig retrieval - to be implemented by each engine
+    /// NOTE: This is deprecated - IndexConfig should be handled by AXIS indexing service
+    fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService>;
+
+    /// Get collection's IndexConfig from collection service
+    async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+        if let Some(collection_service) = self.get_collection_service() {
+            match collection_service.get_native_index_config(collection_id).await {
+                Ok(Some(config)) => {
+                    tracing::debug!("📋 Retrieved IndexConfig for collection: {}", collection_id);
+                    Ok(config)
+                }
+                Ok(None) => {
+                    tracing::warn!("⚠️ Collection not found for IndexConfig: {}", collection_id);
+                    // Return default IndexConfig as fallback
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to retrieve IndexConfig for collection {}: {}", collection_id, e);
+                    // Return default IndexConfig as fallback
+                    Ok(crate::index::config::IndexConfig::default())
+                }
+            }
+        } else {
+            tracing::warn!("⚠️ Collection service not available, using default IndexConfig");
+            // Default implementation: return default IndexConfig
+            Ok(crate::index::config::IndexConfig::default())
+        }
+    }
 
     /// Ensure staging directory exists for the given operation type
     /// operation_type: "__flush" for flush operations, "__compact" for compaction operations
@@ -339,7 +417,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             let compact_params = CompactionParameters {
                 collection_id: params.collection_id.clone(),
                 force: false,
-                synchronous: false, // Background compaction
+                synchronous: true, // 🎯 SEQUENTIAL: Must be synchronous for atomic file replacement
                 priority: OperationPriority::Low,
                 ..Default::default()
             };
@@ -347,6 +425,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
             match self.compact(compact_params).await {
                 Ok(_) => result.compaction_triggered = true,
                 Err(e) => tracing::warn!("⚠️ Post-flush compaction failed: {}", e),
+            }
+        }
+
+        // 🚀 INDEX UPDATES: Delegate to AXIS indexing service for proper configuration handling
+        if result.success {
+            if let Some(collection_id) = &params.collection_id {
+                tracing::debug!("🔄 Flush successful for collection: {} - AXIS will handle index updates", collection_id);
+                // NOTE: Index updates are now handled by AXIS indexing service based on collection IndexConfig
+                // The flush coordinator will notify AXIS about new vectors to index
             }
         }
 
@@ -603,6 +690,9 @@ pub struct FlushParameters {
 
     /// Batch IDs involved in this flush operation (for coordination)
     pub batch_ids: Vec<crate::storage::persistence::wal::BatchId>,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
 }
 
 /// Flexible compaction parameters that work for both engine types
@@ -625,6 +715,9 @@ pub struct CompactionParameters {
 
     /// Priority level for the operation
     pub priority: OperationPriority,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
 }
 
 /// Operation priority levels
@@ -635,6 +728,37 @@ pub enum OperationPriority {
     Medium = 1,
     High = 2,
     Critical = 3,
+}
+
+/// Search parameters with collection configuration
+#[derive(Debug, Clone, Default)]
+pub struct SearchParams {
+    /// Target collection ID
+    pub collection_id: String,
+    
+    /// Query vector
+    pub query_vector: Vec<f32>,
+    
+    /// Number of results to return
+    pub k: usize,
+    
+    /// Distance metric to use
+    pub distance_metric: crate::compute::distance::DistanceMetric,
+    
+    /// Optional metadata filters
+    pub metadata_filters: Option<HashMap<String, serde_json::Value>>,
+    
+    /// Include vectors in results
+    pub include_vectors: bool,
+    
+    /// Include metadata in results
+    pub include_metadata: bool,
+    
+    /// Collection configuration to avoid redundant lookups
+    pub collection_config: Option<Collection>,
+    
+    /// Engine-specific hints
+    pub hints: HashMap<String, serde_json::Value>,
 }
 
 /// Unified flush result that accommodates different engine types

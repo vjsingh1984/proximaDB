@@ -1,0 +1,117 @@
+# ProximaDB Multi-Disk Optimized Configuration
+# Uses hash-based affinity to keep WAL and data on same disk/cloud storage
+
+[server]
+node_id = "proximadb-node-1"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "/home/vsingh/code/proximaDB/test_data_fresh"
+
+[grpc]
+host = "0.0.0.0"
+port = 5679
+
+[storage]
+# Single metadata URL for consistency (should be on fast, reliable storage)
+metadata_url = "file:///home/vsingh/code/proximaDB/test_data_fresh/metadata"
+
+# Storage locations - can be heterogeneous (file://, s3://, gs://, adls://, etc.)
+[[storage.storage_locations]]
+url = "file:///home/vsingh/code/proximaDB/test_data_fresh/disk1"
+weight = 2
+tags = ["fast", "disk1"]
+
+[[storage.storage_locations]]
+url = "file:///home/vsingh/code/proximaDB/test_data_fresh/disk2"
+weight = 2
+tags = ["fast", "disk2"]
+
+# Examples of cloud storage:
+# [[storage.storage_locations]]
+# url = "s3://my-bucket/proximadb/region1"
+# weight = 1
+# tags = ["cloud", "s3"]
+
+# [[storage.storage_locations]]
+# url = "gs://my-bucket/proximadb/zone1"
+# weight = 1
+# tags = ["cloud", "gcs"]
+
+# [[storage.storage_locations]]
+# url = "adls://myaccount.dfs.core.windows.net/container/proximadb"
+# weight = 1
+# tags = ["cloud", "azure"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"     # Hash-based ensures same collection always goes to same location
+affinity = true       # WAL, data, and index stay together
+
+# Performance settings
+mmap_enabled = true
+cache_size_mb = 512
+bloom_filter_bits = 10
+
+# LSM configuration (if using LSM engine)
+[storage.lsm_config]
+memtable_size_mb = 64
+level_count = 7
+compaction_threshold = 4
+block_size_kb = 64
+memory_flush_size_bytes = 67108864
+memtable_type = "skiplist"
+compaction_strategy = "leveled"
+compression = "snappy"
+cache_size_mb = 128
+write_buffer_size_mb = 64
+max_files_per_level = 10
+level_size_multiplier = 10.0
+max_levels = 7
+background_thread_count = 4
+sync_mode = "sync"
+enable_wal = true
+# LSM gets its own subdirectory under first storage base
+wal_directory = "/home/vsingh/code/proximaDB/test_data_fresh/disk1/lsm_wal"
+data_directory = "/home/vsingh/code/proximaDB/test_data_fresh/disk1/lsm_data"
+mmap_enabled = true
+prefetch_enabled = true
+prefetch_size_kb = 64
+
+[storage.bloom_filter_config]
+bits_per_key = 10
+enabled = true
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
+
+# Removed metadata_backend - now using metadata_url in main storage section
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+max_request_size_mb = 64
+timeout_seconds = 30
+enable_tls = false
+
+[logging]
+level = "debug"
+file_path = "/home/vsingh/code/proximaDB/test_data_fresh/logs/proximadb.log"
+max_files = 5
+max_file_size_mb = 100
+
+[monitoring]
+metrics_enabled = true
+log_level = "info"
+
+[consensus]
+node_id = 1
+cluster_peers = []
+election_timeout_ms = 5000
+heartbeat_interval_ms = 1000
+snapshot_threshold = 1000

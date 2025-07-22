@@ -26,7 +26,7 @@ from enum import Enum
 # Add Python SDK to path
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 
 @dataclass
@@ -358,11 +358,7 @@ class RealSearchTest:
                     query_embedding = self.embeddings[doc_idx]
                     
                     # Perform search with very high similarity threshold
-                    search_results = self.client.search_vectors(
-                        collection_id=self.collection_name,
-                        query_vectors=[query_embedding.tolist()],
-                        top_k=1
-                    )
+                    search_results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=1); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
                     
                     if search_results and search_results[0].vector_id == target_id:
                         result = SearchResult(

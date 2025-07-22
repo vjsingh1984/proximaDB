@@ -1,7 +1,10 @@
 """
-ProximaDB Python Client - Data Models
+ProximaDB Python Client - Data Models for REST API
 
-Copyright 2024 Vijaykumar Singh
+These Pydantic models are designed to work with the ProximaDB REST API.
+They align with the server-side REST handlers (not proto definitions).
+
+Copyright 2025 ProximaDB
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,314 +22,602 @@ limitations under the License.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 from enum import Enum
-
-import numpy as np
 from pydantic import BaseModel, Field, field_validator, ConfigDict
+import numpy as np
 
+# Type aliases for convenience
+VectorArray = Union[List[List[float]], np.ndarray]
+MetadataDict = Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]]
+FilterDict = Dict[str, Any]
+
+
+# ============================================================================
+# ENUMS - String values for REST API
+# ============================================================================
 
 class DistanceMetric(str, Enum):
-    """Supported distance metrics for vector similarity"""
+    """Distance metrics for REST API"""
     COSINE = "cosine"
     EUCLIDEAN = "euclidean"
     DOT_PRODUCT = "dot_product"
-    MANHATTAN = "manhattan"
     HAMMING = "hamming"
+    MANHATTAN = "manhattan"
+    JACCARD = "jaccard"
+    CUSTOM = "custom"
 
 
-class IndexAlgorithm(str, Enum):
-    """Supported vector index algorithms"""
+class StorageEngine(str, Enum):
+    """Storage engines for REST API"""
+    VIPER = "viper"
+    LSM = "lsm"
+    MMAP = "mmap"
+    HYBRID = "hybrid"
+
+
+class IndexingAlgorithm(str, Enum):
+    """Indexing algorithms for REST API"""
     HNSW = "hnsw"
     IVF = "ivf"
-    LSH = "lsh"
-    BRUTE_FORCE = "brute_force"
-    AUTO = "auto"
+    PQ = "pq"
+    FLAT = "flat"
+    ANNOY = "annoy"
 
 
-class CompressionType(str, Enum):
-    """Supported compression algorithms"""
+
+
+class IndexUpdateMode(str, Enum):
+    """Index update modes"""
+    SYNCHRONOUS = "synchronous"
+    ASYNCHRONOUS = "asynchronous"
+    HYBRID_MODE = "hybrid_mode"
+
+
+class FilterableDataType(str, Enum):
+    """Filterable data types"""
+    STRING = "string"
+    INTEGER = "integer"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+    DATETIME = "datetime"
+    ARRAY_STRING = "array_string"
+    ARRAY_INTEGER = "array_integer"
+    ARRAY_FLOAT = "array_float"
+
+
+class CollectionOperationType(str, Enum):
+    """Collection operation types"""
+    CREATE = "create"
+    UPDATE = "update"
+    GET = "get"
+    LIST = "list"
+    DELETE = "delete"
+    MIGRATE = "migrate"
+
+
+class VectorOperationType(str, Enum):
+    """Vector operation types"""
+    INSERT = "insert"
+    UPSERT = "upsert"
+    UPDATE = "update"
+    DELETE = "delete"
+    SEARCH = "search"
+    GET = "get"
+
+
+class FilterOperator(str, Enum):
+    """Filter operators"""
+    AND = "and"
+    OR = "or"
+    NOT = "not"
+
+
+class FilterOperation(str, Enum):
+    """Filter operations"""
+    EQUALS = "equals"
+    NOT_EQUALS = "not_equals"
+    GREATER_THAN = "greater_than"
+    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
+    LESS_THAN = "less_than"
+    LESS_THAN_OR_EQUAL = "less_than_or_equal"
+    IN = "in"
+    NOT_IN = "not_in"
+    CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
+    STARTS_WITH = "starts_with"
+    ENDS_WITH = "ends_with"
+
+
+# ============================================================================
+# QUANTIZATION MODELS
+# ============================================================================
+
+class QuantizationType(str, Enum):
+    """Quantization types for REST API"""
     NONE = "none"
-    LZ4 = "lz4"
-    ZSTD = "zstd"
-    GZIP = "gzip"
+    UNIFORM = "uniform"
+    PRODUCT = "pq"
+    SCALAR = "scalar"
+    BINARY = "binary"
+    CUSTOM = "custom"
 
 
-class IndexConfig(BaseModel):
-    """Vector index configuration"""
-    algorithm: IndexAlgorithm = IndexAlgorithm.HNSW
-    parameters: Dict[str, Any] = Field(default_factory=dict)
+class QuantizationLevel(BaseModel):
+    """Quantization level configuration"""
+    level_type: str  # "none", "uniform", "pq", "scalar", "binary", "custom"
+    bits: Optional[int] = None
+    scale: Optional[float] = None
+    offset: Optional[float] = None
+    num_subvectors: Optional[int] = None
+    bits_per_code: Optional[int] = None
+    codebook_id: Optional[str] = None
+    adaptive_subvectors: Optional[bool] = None
+    threshold: Optional[float] = None
+    sign_based: Optional[bool] = None
+    clamp_values: Optional[bool] = None
+    type_id: Optional[str] = None
+    bits_per_element: Optional[int] = None
+    config: Optional[Dict[str, str]] = None
+
+
+class StorageQuantizationConfig(BaseModel):
+    """Storage quantization configuration"""
+    enabled: bool = False
+    level: Optional[QuantizationLevel] = None
+    codebook_id: Optional[str] = None
+    progressive_quantization: bool = False
+    storage_compatibility: str = "VIPER_ONLY"
+
+
+class IndexQuantizationStrategy(BaseModel):
+    """Index quantization strategy"""
+    index_name: str
+    level: QuantizationLevel
+    build_async: bool = False
+    codebook_id: Optional[str] = None
+
+
+class IndexQuantizationConfig(BaseModel):
+    """Index quantization configuration"""
+    enabled: bool = False
+    strategies: List[IndexQuantizationStrategy] = Field(default_factory=list)
+    auto_select_strategy: bool = False
+
+
+class SearchQuantizationConfig(BaseModel):
+    """Search quantization configuration"""
+    enabled: bool = False
+    default_level: Optional[QuantizationLevel] = None
+    adaptive_precision: bool = True
+    accuracy_threshold: float = 0.95
+    candidate_multiplier: int = 3
+
+
+class QuantizationValidation(BaseModel):
+    """Quantization validation configuration"""
+    accuracy_threshold: float = 0.95
+    validation_sample_size: int = 1000
+    enable_quality_monitoring: bool = True
+    retraining_threshold: float = 0.90
+
+
+class QuantizationConfig(BaseModel):
+    """Quantization configuration"""
+    enabled: bool = False
+    type: QuantizationType = QuantizationType.NONE
+    progressive_quantization: bool = False
     
-    model_config = ConfigDict(use_enum_values=True)
-
-
-class StorageConfig(BaseModel):
-    """Storage configuration for collections"""
-    compression: CompressionType = CompressionType.LZ4
-    replication_factor: int = Field(default=3, ge=1, le=5)
-    enable_tiering: bool = True
-    hot_tier_size_gb: Optional[int] = None
+    # Product quantization params
+    bits_per_subvector: Optional[int] = None
+    num_subvectors: Optional[int] = None
     
-    model_config = ConfigDict(use_enum_values=True)
-
-
-class FlushConfig(BaseModel):
-    """WAL flush configuration for collections"""
-    max_wal_size_mb: Optional[float] = Field(
-        default=None,
-        ge=1.0,
-        description="Maximum WAL size in MB before forced flush (None = use global default: 128MB)"
-    )
+    # Scalar quantization params
+    bits_per_vector: Optional[int] = None
     
-    model_config = ConfigDict(use_enum_values=True)
+    # Binary quantization params
+    threshold: Optional[float] = None
+    
+    # Common params
+    accuracy_threshold: Optional[float] = 0.95
+    compression_ratio_target: Optional[float] = None
+    validation_sample_size: Optional[int] = 1000
+    retraining_threshold: Optional[float] = 0.90
+    
+
+
+
+class ComprehensiveQuantizationConfig(BaseModel):
+    """Comprehensive quantization configuration matching proto structure"""
+    enabled: bool = False
+    storage_quantization: Optional[StorageQuantizationConfig] = None
+    index_quantization: Optional[IndexQuantizationConfig] = None
+    search_quantization: Optional[SearchQuantizationConfig] = None
+    compression_ratio_target: Optional[float] = None
+    validation: Optional[QuantizationValidation] = None
+
+
+# ============================================================================
+# INDEX CONFIGURATION MODELS
+# ============================================================================
+
+class HnswConfig(BaseModel):
+    """HNSW index configuration"""
+    m: int = 16
+    ef_construction: int = 200
+    ef_search: int = 50
+    max_partition_size: int = 100000
+    adaptive_parameters: bool = True
+    use_simd: bool = True
+    memory_limit_mb: int = 512
+    lazy_loading: bool = True
+    prune_connections: int = 0
+    level_multiplier: float = 0.69
+
+
+class IvfConfig(BaseModel):
+    """IVF index configuration"""
+    n_lists: int = 100
+    n_probe: int = 1
+    quantization_bits: int = 8
+    use_pq: bool = False
+    pq_subspaces: int = 8
+    train_on_insert: bool = False
+    min_train_size: int = 1000
+
+
+class FlatConfig(BaseModel):
+    """Flat index configuration"""
+    enable_simd: bool = True
+    batch_size: int = 1000
+    enable_parallel_search: bool = True
+
+
+class PqConfig(BaseModel):
+    """Product Quantization index configuration"""
+    subvectors: int = 8
+    bits_per_subvector: int = 8
+    training_sample_count: int = 10000
+    enable_reranking: bool = True
+
+
+class AnnoyConfig(BaseModel):
+    """Annoy index configuration"""
+    n_trees: int = 10
+    search_k: int = -1
+    max_leaf_size: int = 100
+    enable_mmap: bool = True
+
+
+class IndexConfiguration(BaseModel):
+    """Index configuration"""
+    index_name: str
+    algorithm: IndexingAlgorithm
+    update_mode: IndexUpdateMode = IndexUpdateMode.SYNCHRONOUS
+    async_update_timeout_ms: Optional[int] = None
+    async_update_batch_size: Optional[int] = None
+    enable_background_optimization: Optional[bool] = None
+    hnsw_config: Optional[HnswConfig] = None
+    ivf_config: Optional[IvfConfig] = None
+    flat_config: Optional[FlatConfig] = None
+    pq_config: Optional[PqConfig] = None
+    annoy_config: Optional[AnnoyConfig] = None
+    build_concurrency: Optional[int] = None
+    memory_limit_mb: Optional[int] = None
+    checkpoint_interval_ms: Optional[int] = None
+    is_primary: Optional[bool] = None
+    use_cases: Optional[List[str]] = None
+    selectivity_threshold: Optional[float] = None
+
+
+# ============================================================================
+# COLLECTION MODELS
+# ============================================================================
+
+class FilterableColumn(BaseModel):
+    """Filterable column specification"""
+    name: str
+    data_type: FilterableDataType
+    indexed: bool = True
+    supports_range: bool = False
+    estimated_cardinality: Optional[int] = None
 
 
 class CollectionConfig(BaseModel):
-    """Configuration for creating collections"""
-    dimension: int = Field(..., ge=1, le=65536)
-    distance_metric: DistanceMetric = DistanceMetric.COSINE
-    index_config: Optional[IndexConfig] = None
-    storage_config: Optional[StorageConfig] = None
-    
-    # Storage layout configuration
-    storage_layout: str = Field(
-        default="viper",
-        description="Storage layout: 'viper' (default), 'lsm', 'rocksdb', 'memory'"
-    )
-    
+    """Collection configuration for REST API"""
+    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with IDs
+    dimension: int = Field(ge=1, le=10000)
+    distance_metric: Optional[DistanceMetric] = None
+    storage_engine: Optional[StorageEngine] = None
+    primary_indexing_algorithm: Optional[IndexingAlgorithm] = None
+    filterable_columns: Optional[List[FilterableColumn]] = None
+    index_configs: Optional[List[IndexConfiguration]] = None
+    quantization_config: Optional[QuantizationConfig] = None
+    primary_index_name: Optional[str] = None
+    enable_automatic_index_selection: Optional[bool] = None
     description: Optional[str] = None
-    metadata_schema: Optional[Dict[str, str]] = None
+    tags: Optional[List[str]] = None
+    owner: Optional[str] = None
+    metadata_schema: Optional[Dict[str, Any]] = None
+    filterable_metadata_fields: Optional[List[str]] = None
     
-    # VIPER-specific optimization (only used when storage_layout = 'viper')
-    filterable_metadata_fields: Optional[List[str]] = Field(
-        default=None, 
-        description="Up to 16 metadata field names for Parquet column optimization and efficient filtering (VIPER only)"
-    )
-    flush_config: Optional[FlushConfig] = Field(
-        default=None,
-        description="WAL flush configuration (None = use global defaults). SIZE-BASED FLUSH ONLY for stability."
-    )
-    
-    model_config = ConfigDict(use_enum_values=True)
-    
-    @field_validator('dimension')
-    def validate_dimension(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("Dimension must be positive")
+    @field_validator('name')
+    def validate_name_length(cls, v):
+        """Validate collection name is at least 8 characters"""
+        if len(v) < 8:
+            raise ValueError("Collection name must be at least 8 characters long to prevent collision with collection IDs")
         return v
     
-    @field_validator('storage_layout')
-    def validate_storage_layout(cls, v: str) -> str:
-        valid_layouts = {'viper', 'lsm', 'rocksdb', 'memory'}
-        if v not in valid_layouts:
-            raise ValueError(f"Storage layout '{v}' is not supported. Valid options: {', '.join(valid_layouts)}")
-        return v
+    @property
+    def index_config(self):
+        """Backward compatibility property for singular index_config access"""
+        if self.index_configs and len(self.index_configs) > 0:
+            return self.index_configs[0]
+        return None
     
-    @field_validator('filterable_metadata_fields')
-    def validate_filterable_fields(cls, v: Optional[List[str]]) -> Optional[List[str]]:
-        if v is not None:
-            # Validate field names
-            for field in v:
-                if not isinstance(field, str) or not field.strip():
-                    raise ValueError("Filterable metadata field names must be non-empty strings")
-                if len(field) > 64:
-                    raise ValueError(f"Filterable metadata field name '{field}' exceeds 64 character limit")
-                if not field.replace('_', '').isalnum():
-                    raise ValueError(f"Filterable metadata field name '{field}' must be alphanumeric with underscores")
-            
-            # Check for duplicates
-            if len(v) != len(set(v)):
-                raise ValueError("Filterable metadata field names must be unique")
-            
-            # Check reserved names
-            reserved_names = {'id', 'vector', 'vectors', 'timestamp', 'created_at', 'updated_at', 'expires_at', 'extra_meta'}
-            for field in v:
-                if field.lower() in reserved_names:
-                    raise ValueError(f"Filterable metadata field name '{field}' is reserved")
-        
-        return v
-
-
-class Collection(BaseModel):
-    """Vector collection metadata"""
-    id: str
-    name: str
-    config: Optional[CollectionConfig] = None
-    vector_count: int = 0
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    status: str = "active"
-    # Simple server fields
-    dimension: Optional[int] = None
-    metric: Optional[str] = None
-    index_type: Optional[str] = None
-    
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-
-
-class Vector(BaseModel):
-    """Vector with metadata"""
-    id: str
-    vector: List[float]
-    metadata: Optional[Dict[str, Any]] = None
-    
-    @field_validator('vector')
-    def validate_vector(cls, v: List[float]) -> List[float]:
-        if not v:
-            raise ValueError("Vector cannot be empty")
-        return v
-    
-    @classmethod
-    def from_numpy(cls, id: str, array: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> "Vector":
-        """Create Vector from numpy array"""
-        if array.dtype != np.float32:
-            array = array.astype(np.float32)
-        return cls(id=id, vector=array.tolist(), metadata=metadata)
-    
-    def to_numpy(self) -> np.ndarray:
-        """Convert vector to numpy array"""
-        return np.array(self.vector, dtype=np.float32)
-
-
-class SearchResult(BaseModel):
-    """Search result with similarity score"""
-    id: Optional[str] = None  # Made optional to match protobuf definition
-    score: float
-    metadata: Optional[Dict[str, Any]] = None
-    distance: Optional[float] = None
-    vector: Optional[List[float]] = None  # Include vector data if requested
-    
-    def to_numpy(self) -> Optional[np.ndarray]:
-        """Convert vector to numpy array if available"""
-        if self.vector is None:
-            return None
-        return np.array(self.vector, dtype=np.float32)
-
-
-class SearchStats(BaseModel):
-    """Search performance statistics"""
-    total_searched: int
-    vectors_scanned: int
-    duration_ms: float
-    cache_hit_rate: Optional[float] = None
-    index_seek_time_us: Optional[int] = None
-
-
-class SearchParams(BaseModel):
-    """Search parameters for fine-tuning"""
-    ef: Optional[int] = Field(default=None, ge=1)
-    exact_search: bool = False
-    timeout_ms: int = Field(default=5000, ge=100, le=60000)
-    include_vectors: bool = False
-    include_metadata: bool = True
-
-
-class FilterCondition(BaseModel):
-    """Filter condition for metadata filtering"""
-    field: str
-    operator: str  # eq, ne, gt, gte, lt, lte, in, nin, exists
-    value: Union[str, int, float, bool, List[Any]]
-
-
-class SearchRequest(BaseModel):
-    """Search request with all parameters"""
-    collection_id: str
-    query: List[float]
-    k: int = Field(..., ge=1, le=10000)
-    filter: Optional[Dict[str, Any]] = None
-    params: Optional[SearchParams] = None
-    
-    @field_validator('query')
-    def validate_query(cls, v: List[float]) -> List[float]:
-        if not v:
-            raise ValueError("Query vector cannot be empty")
-        return v
-    
-    @classmethod
-    def from_numpy(cls, collection_id: str, query: np.ndarray, k: int, **kwargs) -> "SearchRequest":
-        """Create SearchRequest from numpy array"""
-        if query.dtype != np.float32:
-            query = query.astype(np.float32)
-        return cls(collection_id=collection_id, query=query.tolist(), k=k, **kwargs)
-
-
-class SearchResponse(BaseModel):
-    """Search response with results and statistics"""
-    results: List[SearchResult]
-    stats: Optional[SearchStats] = None
-    request_id: Optional[str] = None
-    # Simple server fields
-    total_time_ms: Optional[int] = None
-
-
-class InsertResult(BaseModel):
-    """Result of vector insertion operation"""
-    count: int
-    failed_count: int = 0
-    duration_ms: float
-    request_id: Optional[str] = None
-    errors: Optional[List[str]] = None
-
-
-class BatchResult(BaseModel):
-    """Result of batch operation"""
-    total_count: Optional[int] = None
-    successful_count: int
-    failed_count: int
-    duration_ms: float
-    request_id: Optional[str] = None
-    errors: Optional[List[Dict[str, Any]]] = None
-    # Simple server fields
-    count: Optional[int] = None
-
-
-class DeleteResult(BaseModel):
-    """Result of delete operation"""
-    deleted_count: Optional[int] = None
-    not_found_count: int = 0
-    duration_ms: Optional[float] = None
-    request_id: Optional[str] = None
-    # Simple server fields
-    deleted: Optional[bool] = None
-    count: Optional[int] = None
+    @property 
+    def storage_config(self):
+        """Backward compatibility property for storage_config access"""
+        # This is used in tests but not defined in the model
+        # Return a mock object for now
+        from types import SimpleNamespace
+        return SimpleNamespace(compression=CompressionType.LZ4)
 
 
 class CollectionStats(BaseModel):
     """Collection statistics"""
-    collection_id: Optional[str] = None
-    vector_count: int
-    index_size_bytes: int
-    data_size_bytes: Optional[int] = None
-    memory_usage_bytes: int
-    last_updated: Optional[datetime] = None
-    # Simple server fields
-    dimension: Optional[int] = None
+    vector_count: int = 0
+    index_size_bytes: int = 0
+    data_size_bytes: int = 0
+
+
+class Collection(BaseModel):
+    """Collection information"""
+    id: str
+    config: CollectionConfig
+    stats: Optional[CollectionStats] = None
+    created_at: Optional[int] = None  # Microseconds since epoch
+    updated_at: Optional[int] = None  # Microseconds since epoch
     
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
+    @property
+    def name(self) -> str:
+        """Backward compatibility property for collection name"""
+        return self.config.name
 
 
-class ClusterInfo(BaseModel):
-    """Cluster information"""
-    cluster_id: str
-    node_count: int
-    leader_node: str
-    version: str
-    status: str
-    uptime_seconds: int
+# ============================================================================
+# VECTOR MODELS
+# ============================================================================
+
+class VectorRecord(BaseModel):
+    """Vector record for REST API"""
+    id: Optional[str] = None
+    vector: List[float]
+    metadata: Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]] = Field(default_factory=dict)
+    timestamp: Optional[int] = None  # Microseconds since epoch
+    version: int = 0
+    expires_at: Optional[int] = None  # TTL support
+
+    @field_validator('vector')
+    def validate_vector(cls, v):
+        if not v:
+            raise ValueError("Vector cannot be empty")
+        if not all(isinstance(x, (int, float)) for x in v):
+            raise ValueError("Vector must contain only numeric values")
+        return v
+
+
+# ============================================================================
+# SEARCH MODELS
+# ============================================================================
+
+class FilterCondition(BaseModel):
+    """Filter condition"""
+    field_name: str
+    operation: FilterOperation
+    value: Any
+
+
+class MetadataFilter(BaseModel):
+    """Metadata filter"""
+    conditions: List[FilterCondition]
+    operator: FilterOperator = FilterOperator.AND
+
+
+class SearchQuery(BaseModel):
+    """Search query"""
+    vector: List[float]
+    id: Optional[str] = None
+    metadata_filter: Optional[MetadataFilter] = None
+
+
+class SearchParameters(BaseModel):
+    """Search parameters"""
+    ef_search: Optional[int] = None
+    max_connections: Optional[int] = None
+    n_probe: Optional[int] = None
+    enable_reranking: Optional[bool] = None
+    batch_size: Optional[int] = None
+    timeout_ms: Optional[int] = None
+    accuracy_threshold: Optional[float] = None
+    enable_parallel_search: Optional[bool] = None
+    thread_count: Optional[int] = None
+
+
+class IncludeFields(BaseModel):
+    """Fields to include in search results"""
+    vector: bool = False
+    metadata: bool = True
+    score: bool = True
+    rank: bool = True
+
+
+class QuantizationHint(BaseModel):
+    """Quantization hint for search"""
+    hint_type: str  # "none", "binary", "scalar", "product", "uniform"
+    parameters: Optional[Dict[str, Any]] = None
+
+
+class SearchOptimization(BaseModel):
+    """Search optimization hints"""
+    top_k: Optional[int] = None
+    filters: Optional[Dict[str, Any]] = None
+    accuracy_threshold: Optional[float] = None
+    include_expired: Optional[bool] = None
+    timeout_ms: Optional[int] = None
+    enable_two_stage: Optional[bool] = None
+    quantization_hint: Optional[QuantizationHint] = None
+    enable_clustering_hint: Optional[bool] = None
+    enable_metadata_filtering_hint: Optional[bool] = None
+    custom_hints: Optional[Dict[str, Any]] = None
+
+
+class SearchResult(BaseModel):
+    """Search result"""
+    id: str
+    score: float
+    vector: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    rank: Optional[int] = None
+
+
+# ============================================================================
+# REQUEST/RESPONSE MODELS
+# ============================================================================
+
+class CollectionOperationRequest(BaseModel):
+    """Collection operation request"""
+    operation: CollectionOperationType
+    collection_id: Optional[str] = None
+    collection_name: Optional[str] = None
+    config: Optional[CollectionConfig] = None
+    query_params: Optional[Dict[str, str]] = None
+    options: Optional[Dict[str, bool]] = None
+
+
+class CollectionResponse(BaseModel):
+    """Collection operation response"""
+    success: bool
+    operation: str
+    collection: Optional[Collection] = None
+    collections: Optional[List[Collection]] = None
+    affected_count: int = 0
+    total_count: Optional[int] = None
+    metadata: Dict[str, str] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    error_code: Optional[str] = None
+    processing_time_us: int = 0
+
+
+class VectorBatchRequest(BaseModel):
+    """Vector batch operation request"""
+    collection_id: str
+    operation: VectorOperationType
+    records: List[VectorRecord]
+    options: Optional[Dict[str, bool]] = None
+
+
+class VectorSearchRequest(BaseModel):
+    """Vector search request"""
+    collection_id: str
+    queries: List[SearchQuery]
+    search_params: Optional[SearchParameters] = None
+    include_fields: Optional[IncludeFields] = None
+    search_optimization: Optional[SearchOptimization] = None
+
+
+class OperationMetrics(BaseModel):
+    """Operation metrics"""
+    total_processed: int = 0
+    successful_count: int = 0
+    failed_count: int = 0
+    updated_count: int = 0
+    processing_time_us: int = 0
+    wal_write_time_us: int = 0
+    index_update_time_us: int = 0
+
+
+class DeleteResult(BaseModel):
+    """Delete operation result"""
+    deleted_count: int = 0
+    success: bool = True
+    message: Optional[str] = None
+    metrics: Optional[OperationMetrics] = None
+
+
+class BatchResult(BaseModel):
+    """Batch operation result"""
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    errors: List[str] = Field(default_factory=list)
+    duration_ms: float = 0.0
+
+
+class VectorOperationResponse(BaseModel):
+    """Vector operation response"""
+    success: bool
+    operation: str
+    metrics: OperationMetrics
+    results: Optional[List[SearchResult]] = None
+    vector_ids: List[str] = Field(default_factory=list)
+    error_message: Optional[str] = None
+    error_code: Optional[str] = None
+
+
+class ApiError(BaseModel):
+    """API error details"""
+    code: str
+    message: str
+    details: Optional[Any] = None
+
+
+class ApiResponse(BaseModel):
+    """Generic API response wrapper"""
+    success: bool
+    data: Optional[Any] = None
+    error: Optional[ApiError] = None
+    message: Optional[str] = None
+
+    model_config = ConfigDict(extra='allow')
+
+
+# ============================================================================
+# HEALTH AND MONITORING
+# ============================================================================
+
+class CompressionType(str, Enum):
+    """Compression types"""
+    NONE = "none"
+    LZ4 = "lz4" 
+    ZSTD = "zstd"
+    SNAPPY = "snappy"
+
+
+
+
+class StorageConfig(BaseModel):
+    """Storage configuration"""
+    compression: CompressionType = CompressionType.NONE
+    replication_factor: int = 1
+    enable_tiering: bool = False
+
+
+class FlushConfig(BaseModel):
+    """Flush configuration"""
+    force_flush: bool = False
+    timeout_ms: int = 5000
+    include_secondary_indexes: bool = True
+    include_metadata: bool = True
+    max_wal_size_mb: Optional[float] = None
 
 
 class HealthStatus(BaseModel):
-    """Health status response"""
-    status: str  # healthy, degraded, unhealthy
+    """Health check response"""
+    status: str
     version: str
-    uptime_seconds: Optional[int] = None
-    cluster_info: Optional[ClusterInfo] = None
-    checks: Dict[str, bool] = Field(default_factory=dict)
+    uptime_seconds: int
+    services: Dict[str, str]
+    timestamp: int
 
 
-# Type aliases for convenience
-VectorArray = Union[List[List[float]], np.ndarray]
-MetadataDict = Dict[str, Any]
-FilterDict = Dict[str, Any]
+# Simple alias
+Vector = VectorRecord

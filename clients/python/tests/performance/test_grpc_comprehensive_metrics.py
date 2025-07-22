@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from typing import Dict, List, Any
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_utils import (
     generate_text_corpus,
     convert_corpus_to_vectors,
@@ -178,7 +178,7 @@ class ComprehensiveVIPERMetricsTest:
             
             # Test health check
             health_start = time.time()
-            health = await self.client.health_check()
+            health = await self.client.health()
             health_end = time.time()
             
             end_time = time.time()

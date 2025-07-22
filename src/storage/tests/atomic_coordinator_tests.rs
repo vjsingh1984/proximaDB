@@ -1,0 +1,429 @@
+//! Comprehensive tests for UnifiedAtomicCoordinator
+//!
+//! These tests ensure the UnifiedAtomicCoordinator correctly handles:
+//! - Atomic operations across storage systems
+//! - Transaction management
+//! - Staging operations
+//! - Abort/rollback scenarios
+//! - Multi-operation coordination
+
+use std::sync::Arc;
+use tempfile::TempDir;
+
+use crate::storage::atomic::{
+    UnifiedAtomicCoordinator, AtomicOperationStatus,
+    StagingConfig, StagingOperationType, TransactionState,
+};
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::core::VectorRecord;
+use crate::proto::proximadb::MetadataItem;
+
+/// Create test vector
+fn create_test_vector(id: &str) -> VectorRecord {
+    VectorRecord {
+        id: Some(id.to_string()),
+        vector: vec![0.1; 128],
+        metadata: vec![MetadataItem {
+            key: "atomic_test".to_string(),
+            value: "true".to_string(),
+        }],
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        expires_at: None,
+        version: 1,
+        rank: None,
+        score: None,
+        distance: None,
+    }
+}
+
+#[tokio::test]
+async fn test_atomic_coordinator_creation() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.expect("Failed to create coordinator");
+    
+    // Should be created successfully
+    let active_ops = coordinator.list_active_operations().await;
+    assert_eq!(active_ops.len(), 0, "Should start with no active operations");
+}
+
+#[tokio::test]
+async fn test_begin_atomic_operation() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    let config = StagingConfig {
+        operation_type: StagingOperationType::Flush,
+        collection_id: Some("test_collection".to_string()),
+        base_url: temp_dir.path().to_str().unwrap().to_string(),
+        custom_staging_dir: None,
+        auto_cleanup: true,
+        max_orphaned_age_hours: 24,
+    };
+    
+    let operation = coordinator.begin_atomic_operation(&config).await
+        .expect("Failed to begin atomic operation");
+    
+    assert!(!operation.operation_id.is_empty());
+    match operation.status {
+        AtomicOperationStatus::Preparing | AtomicOperationStatus::Staging => {},
+        _ => panic!("Operation should be Preparing or Staging"),
+    }
+}
+
+#[tokio::test]
+async fn test_write_to_staging() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Begin operation
+    let config = StagingConfig {
+        operation_type: StagingOperationType::Flush,
+        collection_id: Some("staging_test".to_string()),
+        base_url: temp_dir.path().to_str().unwrap().to_string(),
+        custom_staging_dir: None,
+        auto_cleanup: true,
+        max_orphaned_age_hours: 24,
+    };
+    
+    let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
+    
+    // Write data to staging
+    let test_data = b"test data for atomic operation";
+    coordinator.write_to_staging(&operation.operation_id, "test.parquet", test_data).await
+        .expect("Failed to write to staging");
+    
+    // Verify operation status updated
+    let status = coordinator.get_operation_status(&operation.operation_id).await
+        .expect("Operation status not found");
+    
+    // Status should have progressed beyond Preparing
+    match status {
+        AtomicOperationStatus::Staging | AtomicOperationStatus::Finalizing => {},
+        _ => panic!("Operation should be in Staging or Finalizing state"),
+    }
+}
+
+#[tokio::test]
+async fn test_finalize_atomic_operation() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Begin operation
+    let config = StagingConfig {
+        operation_type: StagingOperationType::Flush,
+        collection_id: Some("finalize_test".to_string()),
+        base_url: temp_dir.path().to_str().unwrap().to_string(),
+        custom_staging_dir: Some("final".to_string()),
+        auto_cleanup: true,
+        max_orphaned_age_hours: 24,
+    };
+    
+    let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
+    
+    // Write test data
+    let test_data = b"finalized data";
+    coordinator.write_to_staging(&operation.operation_id, "final.parquet", test_data).await.unwrap();
+    
+    // Finalize operation
+    coordinator.finalize_atomic_operation(&operation.operation_id).await
+        .expect("Failed to finalize operation");
+    
+    // After finalization, operation should be removed from active operations
+    let status = coordinator.get_operation_status(&operation.operation_id).await;
+    assert!(status.is_none(), "Operation should be removed after finalization");
+    
+    // Verify the file was moved to final location
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let fs = filesystem_factory.get_filesystem(&operation.final_url).unwrap();
+    let final_file_path = format!("{}/final.parquet", operation.final_url);
+    assert!(fs.exists(&final_file_path).await.unwrap(), "File should exist in final location");
+}
+
+#[tokio::test]
+async fn test_abort_atomic_operation() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Begin operation
+    let config = StagingConfig {
+        operation_type: StagingOperationType::Flush,
+        collection_id: Some("abort_test".to_string()),
+        base_url: temp_dir.path().to_str().unwrap().to_string(),
+        custom_staging_dir: None,
+        auto_cleanup: true,
+        max_orphaned_age_hours: 24,
+    };
+    
+    let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
+    
+    // Write test data
+    coordinator.write_to_staging(&operation.operation_id, "abort.parquet", b"abort data").await.unwrap();
+    
+    // Abort operation
+    coordinator.abort_atomic_operation(&operation.operation_id, "Test abort").await
+        .expect("Failed to abort operation");
+    
+    // Check status - operation might be removed after abort
+    let status = coordinator.get_operation_status(&operation.operation_id).await;
+    
+    // After abort, the operation might be cleaned up (None) or marked as Failed
+    match status {
+        Some(AtomicOperationStatus::Failed(reason)) => {
+            assert_eq!(reason, "Test abort");
+        },
+        None => {
+            // Operation was cleaned up after abort - this is also valid
+        },
+        Some(status) => panic!("Operation should be Failed or cleaned up after abort, got: {:?}", status),
+    }
+}
+
+#[tokio::test]
+async fn test_transaction_lifecycle() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Begin transaction
+    let tx_handle = coordinator.begin_transaction("test_transaction", vec![]).await
+        .expect("Failed to begin transaction");
+    
+    // Prepare phase
+    let can_commit = tx_handle.prepare().await
+        .expect("Failed to prepare transaction");
+    assert!(can_commit, "Transaction should be able to commit");
+    
+    // Commit transaction
+    tx_handle.commit().await
+        .expect("Failed to commit transaction");
+    
+    // Check state
+    let state = coordinator.get_transaction_state("test_transaction").await
+        .expect("Failed to get transaction state");
+    
+    match state {
+        TransactionState::Committed => {},
+        _ => panic!("Transaction should be Committed"),
+    }
+}
+
+#[tokio::test]
+async fn test_transaction_rollback() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory.clone(),
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Create a test file first
+    let test_file_path = format!("{}/test_rollback_file.txt", temp_dir.path().to_str().unwrap());
+    let fs = filesystem_factory.get_filesystem(&format!("file://{}", temp_dir.path().to_str().unwrap())).unwrap();
+    fs.write(&test_file_path, b"test content", None).await.unwrap();
+    
+    // Begin transaction with participant
+    let tx_handle = coordinator.begin_transaction("rollback_test", vec!["test_participant".to_string()]).await
+        .expect("Failed to begin transaction");
+    
+    // Register rollback action
+    tx_handle.register_rollback(
+        "test_participant",
+        crate::storage::atomic::RollbackAction::DeleteFile {
+            path: format!("file://{}", test_file_path),
+        },
+    ).await.expect("Failed to register rollback");
+    
+    // Rollback transaction
+    tx_handle.rollback().await
+        .expect("Failed to rollback transaction");
+    
+    // After rollback, the transaction might be removed or in Aborted state
+    match coordinator.get_transaction_state("rollback_test").await {
+        Ok(TransactionState::Aborted) | Ok(TransactionState::Aborting) => {
+            // Transaction is in expected state
+        },
+        Err(_) => {
+            // Transaction was removed after rollback - this is also valid
+        },
+        Ok(state) => panic!("Transaction should be Aborted or removed after rollback, got: {:?}", state),
+    }
+    
+    // Verify the file was deleted as part of rollback
+    assert!(!fs.exists(&test_file_path).await.unwrap(), "File should be deleted after rollback");
+}
+
+#[tokio::test]
+async fn test_concurrent_operations() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap());
+    
+    // Start multiple concurrent operations
+    let mut handles = vec![];
+    
+    for i in 0..5 {
+        let coord_clone = coordinator.clone();
+        let base_path = temp_dir.path().to_str().unwrap().to_string();
+        
+        let handle = tokio::spawn(async move {
+            let config = StagingConfig {
+                operation_type: StagingOperationType::Flush,
+                collection_id: Some(format!("concurrent_{}", i)),
+                base_url: base_path,
+                custom_staging_dir: None,
+                auto_cleanup: true,
+                max_orphaned_age_hours: 24,
+            };
+            
+            let operation = coord_clone.begin_atomic_operation(&config).await
+                .expect("Failed to begin operation");
+            
+            // Write data
+            let data = format!("data for operation {}", i);
+            coord_clone.write_to_staging(&operation.operation_id, "data.txt", data.as_bytes()).await
+                .expect("Failed to write");
+            
+            // Finalize
+            coord_clone.finalize_atomic_operation(&operation.operation_id).await
+                .expect("Failed to finalize");
+            
+            operation.operation_id
+        });
+        
+        handles.push(handle);
+    }
+    
+    // Wait for all operations
+    let mut operation_ids = vec![];
+    for handle in handles {
+        let op_id = handle.await.expect("Task failed");
+        operation_ids.push(op_id);
+    }
+    
+    // All operations should have unique IDs
+    operation_ids.sort();
+    operation_ids.dedup();
+    assert_eq!(operation_ids.len(), 5, "All operations should have unique IDs");
+}
+
+#[tokio::test]
+async fn test_cleanup_orphaned_operations() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    // Create some operations but don't finalize them
+    for i in 0..3 {
+        let config = StagingConfig {
+            operation_type: StagingOperationType::Flush,
+            collection_id: Some(format!("orphaned_{}", i)),
+            base_url: temp_dir.path().to_str().unwrap().to_string(),
+            custom_staging_dir: None,
+            auto_cleanup: false, // Disable auto cleanup for testing
+            max_orphaned_age_hours: 0,
+        };
+        
+        let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
+        coordinator.write_to_staging(&operation.operation_id, "orphan.data", b"orphaned").await.unwrap();
+    }
+    
+    // The operations are still active, so cleanup won't remove them
+    // This is by design - cleanup only removes truly orphaned operations
+    // (those not in the active list, usually from crashes)
+    
+    // For this test, let's verify that active operations exist
+    let active = coordinator.list_active_operations().await;
+    assert_eq!(active.len(), 3, "Should have 3 active operations");
+    
+    // Now abort one operation to test cleanup
+    let first_op = active[0].operation_id.clone();
+    coordinator.abort_atomic_operation(&first_op, "test cleanup").await.unwrap();
+    
+    // After abort, we should have 2 active operations
+    let active = coordinator.list_active_operations().await;
+    assert_eq!(active.len(), 2, "Should have 2 active operations after abort");
+}
+
+#[tokio::test]
+async fn test_viper_atomic_operations() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    let viper_ops = crate::storage::atomic::ViperAtomicOperations::new(Arc::new(coordinator));
+    
+    // Test VIPER-specific flush operation
+    let operation = viper_ops.begin_flush_operation(
+        "viper_collection",
+        temp_dir.path().to_str().unwrap(),
+    ).await.expect("Failed to begin VIPER flush");
+    
+    // Write parquet data
+    let parquet_data = b"mock parquet data";
+    viper_ops.write_parquet_to_staging(&operation.operation_id, "data.parquet", parquet_data).await
+        .expect("Failed to write parquet");
+    
+    // Finalize flush
+    viper_ops.finalize_flush(&operation.operation_id).await
+        .expect("Failed to finalize VIPER flush");
+}
+
+#[tokio::test]
+async fn test_wal_atomic_operations() {
+    let temp_dir = TempDir::new().unwrap();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let coordinator = UnifiedAtomicCoordinator::new(
+        filesystem_factory,
+        Some(temp_dir.path().to_str().unwrap().to_string()),
+    ).await.unwrap();
+    
+    let wal_ops = crate::storage::atomic::WalAtomicOperations::new(Arc::new(coordinator));
+    
+    // Test WAL segment rotation
+    let operation = wal_ops.begin_segment_rotation(temp_dir.path().to_str().unwrap()).await
+        .expect("Failed to begin WAL rotation");
+    
+    // Write segment data
+    let segment_data = b"WAL segment data";
+    wal_ops.write_segment_to_staging(&operation.operation_id, "segment_001", segment_data).await
+        .expect("Failed to write segment");
+    
+    // Finalize rotation
+    wal_ops.finalize_rotation(&operation.operation_id).await
+        .expect("Failed to finalize WAL rotation");
+}

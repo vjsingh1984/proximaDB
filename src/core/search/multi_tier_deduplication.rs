@@ -109,12 +109,13 @@ impl MultiTierDeduplicator {
     fn matches_filters(&mut self, vector_record: &VectorRecord) -> bool {
         // If we have a logical metadata query, use that (takes precedence)
         if let Some(ref query) = self.metadata_query {
-            match self.query_engine.evaluate(query, &vector_record.metadata) {
+            let json_metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
+            match self.query_engine.evaluate(query, &json_metadata) {
                 Ok(result) => {
                     if !result {
                         tracing::debug!(
                             "🔍 Query filter: Vector {} did not match logical query",
-                            vector_record.id
+                            vector_record.id.as_deref().unwrap_or("unknown")
                         );
                     }
                     return result;
@@ -122,7 +123,7 @@ impl MultiTierDeduplicator {
                 Err(e) => {
                     tracing::warn!(
                         "🚨 Query evaluation error for vector {}: {}",
-                        vector_record.id, e
+                        vector_record.id.as_deref().unwrap_or("unknown"), e
                     );
                     return false; // Fail safe on query evaluation error
                 }
@@ -134,8 +135,9 @@ impl MultiTierDeduplicator {
             None => true, // No filters - all records match
             Some(filters) => {
                 // Apply each filter
+                let metadata = &vector_record.metadata;
                 for (key, expected_value) in filters {
-                    match vector_record.metadata.get(key) {
+                    match metadata.iter().find(|item| &item.key == key).map(|item| &item.value) {
                         Some(actual_value) => {
                             // Compare values (strict equality for now)
                             if actual_value != expected_value {
@@ -164,17 +166,18 @@ impl MultiTierDeduplicator {
             if !self.matches_filters(&result.vector_record) {
                 tracing::debug!(
                     "🚫 Filter: Skipping vector {} due to metadata filter mismatch",
-                    result.vector_record.id
+                    result.vector_record.id.as_deref().unwrap_or("unknown")
                 );
                 continue;
             }
 
-            if result.vector_record.id.is_empty() {
+            if result.vector_record.id.is_none() || result.vector_record.id.as_deref().unwrap_or("").is_empty() {
                 // No ID - include directly (no deduplication possible)
                 self.results_without_id.push(result);
             } else {
                 // ID-based deduplication across and within tiers
-                let should_replace = match self.id_to_latest.get(&result.vector_record.id) {
+                let vector_id = result.vector_record.id.as_deref().unwrap_or("").to_string();
+                let should_replace = match self.id_to_latest.get(&vector_id) {
                     Some(existing) => {
                         // Multi-criteria replacement logic (in order of priority):
                         if result.tier > existing.tier {
@@ -210,27 +213,26 @@ impl MultiTierDeduplicator {
                 };
 
                 if should_replace {
-                    if let Some(existing) = self.id_to_latest.get(&result.vector_record.id) {
+                    if let Some(existing) = self.id_to_latest.get(&vector_id) {
                         tracing::debug!(
                             "🔄 Dedup: Replacing vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}) with {:?}/{:?} (seq:{}, v:{}, ts:{})",
-                            result.vector_record.id,
+                            vector_id,
                             existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis(),
                             result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
                         );
                     } else {
                         tracing::debug!(
                             "✅ Dedup: Adding new vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{})",
-                            result.vector_record.id,
+                            vector_id,
                             result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
                         );
                     }
-                    let vector_id = std::mem::take(&mut result.vector_record.id.clone());
-                    self.id_to_latest.insert(vector_id, result);
+                    self.id_to_latest.insert(vector_id.clone(), result);
                 } else {
-                    if let Some(existing) = self.id_to_latest.get(&result.vector_record.id) {
+                    if let Some(existing) = self.id_to_latest.get(&vector_id) {
                         tracing::debug!(
                             "🚫 Dedup: Skipping older vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}), keeping {:?}/{:?} (seq:{}, v:{}, ts:{})",
-                            result.vector_record.id,
+                            vector_id,
                             result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis(),
                             existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis()
                         );
@@ -297,7 +299,7 @@ impl Default for MultiTierDeduplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     #[test]
     fn test_multi_tier_deduplication() {
@@ -308,10 +310,9 @@ mod tests {
         // Add compacted result
         let compacted_result = TieredSearchResult {
             vector_record: VectorRecord {
-                id: "vector_1".to_string(),
-                collection_id: "test".to_string(),
+                id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: now.timestamp_millis(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
@@ -332,10 +333,9 @@ mod tests {
         // Add flushed result (should override compacted)
         let flushed_result = TieredSearchResult {
             vector_record: VectorRecord {
-                id: "vector_1".to_string(),
-                collection_id: "test".to_string(),
+                id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: now.timestamp_millis(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
@@ -356,10 +356,9 @@ mod tests {
         // Add unflushed result (should override flushed)
         let unflushed_result = TieredSearchResult {
             vector_record: VectorRecord {
-                id: "vector_1".to_string(),
-                collection_id: "test".to_string(),
+                id: Some("vector_1".to_string()),
                 vector: vec![1.2, 2.2, 3.2],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: now.timestamp_millis(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
@@ -397,10 +396,9 @@ mod tests {
         // Add two unflushed results with same sequence but different versions
         let unflushed_v1 = TieredSearchResult {
             vector_record: VectorRecord {
-                id: "vector_1".to_string(),
-                collection_id: "test".to_string(),
+                id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: now.timestamp_millis(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
@@ -420,10 +418,9 @@ mod tests {
         
         let unflushed_v2 = TieredSearchResult {
             vector_record: VectorRecord {
-                id: "vector_1".to_string(),
-                collection_id: "test".to_string(),
+                id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: now.timestamp_millis(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),

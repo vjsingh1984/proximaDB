@@ -1,3 +1,31 @@
+[env]
+CC = "gcc-14"
+CXX = "g++-14"
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "gcc-14"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "gcc-14"
+rustflags = [
+  "-C", "link-arg=-fuse-ld=gold",     # Use gold linker for faster linking
+  "-C", "link-arg=-Wl,--threads",      # Enable parallel linking
+  "-C", "link-arg=-Wl,--thread-count=4",
+  "-C", "link-arg=-Wl,--no-keep-memory", # Reduce memory usage during linking
+  "-C", "link-arg=-Wl,--hash-style=gnu",  # Use GNU hash style
+]
+
+# Build settings for better compatibility
+[build]
+jobs = 12  # Limit parallel jobs to avoid resource exhaustion
+
+# Profile optimizations for different build types
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.test]
+debug = true
+opt-level = 1
+
 [patch.crates-io]
 # Patch arrow-arith to fix chrono quarter method conflict
 # This uses a local copy with the disambiguation fix applied

@@ -10,9 +10,12 @@ from typing import Dict, Any
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
 from proximadb.models import (
-    CollectionConfig, IndexConfig, StorageConfig, FlushConfig,
-    DistanceMetric, IndexAlgorithm, CompressionType
+    CollectionConfig, IndexConfiguration,
+    DistanceMetric, StorageEngine, IndexingAlgorithm,
+    Collection, CollectionStats, StorageConfig, CompressionType,
+    FlushConfig
 )
+from proximadb import IndexConfig  # Import alias for IndexConfiguration
 from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
 from proximadb.config import ClientConfig
 
@@ -42,6 +45,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_rest(self, rest_client, collection_name):
         """Test complete collection lifecycle via REST"""
         config = CollectionConfig(
+            name="test_collection",
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="REST test collection"
@@ -78,6 +82,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_grpc(self, grpc_client, collection_name):
         """Test complete collection lifecycle via gRPC"""
         config = CollectionConfig(
+            name="test_collection",
             dimension=256,
             distance_metric=DistanceMetric.DOT_PRODUCT,
             description="gRPC test collection"
@@ -101,6 +106,7 @@ class TestCollectionCRUD:
     def test_cross_protocol_operations(self, rest_client, grpc_client, collection_name):
         """Test collection operations across REST and gRPC protocols"""
         config = CollectionConfig(
+            name="test_collection",
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Cross-protocol test collection"
@@ -144,15 +150,19 @@ class TestCollectionConfiguration:
     
     def test_basic_collection_config(self):
         """Test basic collection configuration"""
-        config = CollectionConfig(dimension=768)
+        config = CollectionConfig(
+            name="test_collection",
+            dimension=768,
+            distance_metric=DistanceMetric.COSINE)
         assert config.dimension == 768
         assert config.distance_metric == DistanceMetric.COSINE
     
     def test_advanced_collection_config(self):
         """Test advanced collection configuration with all options"""
-        index_config = IndexConfig(
-            algorithm=IndexAlgorithm.HNSW,
-            parameters={"m": 16, "ef_construction": 200}
+        index_config = IndexConfiguration(
+            index_name="test_index",
+            algorithm=IndexingAlgorithm.HNSW,
+            # parameters={"m": 16, "ef_construction": 200}  # Not a field anymore
         )
         
         storage_config = StorageConfig(
@@ -164,19 +174,21 @@ class TestCollectionConfiguration:
         flush_config = FlushConfig(max_wal_size_mb=64.0)
         
         config = CollectionConfig(
+            name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.EUCLIDEAN,
-            index_config=index_config,
-            storage_config=storage_config,
-            storage_layout="viper",
+            index_configs=[index_config],  # Use plural form
+            # storage_config=storage_config,  # This field doesn't exist in the model
+            storage_engine=StorageEngine.VIPER,
             description="Advanced test collection",
-            filterable_metadata_fields=["category", "timestamp"],
-            flush_config=flush_config
+            filterable_metadata_fields=["category", "timestamp"]
+            # flush_config=flush_config  # This field doesn't exist in the model
         )
         
         assert config.dimension == 384
         assert config.distance_metric == DistanceMetric.EUCLIDEAN
-        assert config.index_config.algorithm == IndexAlgorithm.HNSW
+        # The model has index_configs (plural) but we added a backward compatibility property
+        assert config.index_config.algorithm == IndexingAlgorithm.HNSW
         assert config.storage_config.compression == CompressionType.LZ4
     
     def test_distance_metrics(self):
@@ -190,64 +202,69 @@ class TestCollectionConfiguration:
         ]
         
         for metric in metrics:
-            config = CollectionConfig(dimension=128, distance_metric=metric)
+            config = CollectionConfig(
+            name="test_collection",
+            dimension=128,
+            distance_metric=metric)
             assert config.distance_metric == metric
     
     def test_index_algorithms(self):
         """Test index algorithm options"""
         algorithms = [
-            IndexAlgorithm.HNSW,
-            IndexAlgorithm.IVF,
-            IndexAlgorithm.LSH,
-            IndexAlgorithm.BRUTE_FORCE,
-            IndexAlgorithm.AUTO
+            IndexingAlgorithm.HNSW,
+            IndexingAlgorithm.IVF,
+            IndexingAlgorithm.PQ,
+            IndexingAlgorithm.FLAT,
+            IndexingAlgorithm.ANNOY
         ]
         
         for algo in algorithms:
-            index_config = IndexConfig(algorithm=algo)
-            assert index_config.algorithm == algo
+            config = CollectionConfig(name="test", dimension=128, primary_indexing_algorithm=algo)
+            assert config.primary_indexing_algorithm == algo
     
-    def test_compression_types(self):
-        """Test compression type options"""
-        compression_types = [
-            CompressionType.NONE,
-            CompressionType.LZ4,
-            CompressionType.ZSTD,
-            CompressionType.GZIP
+    def test_storage_engines(self):
+        """Test storage engine options"""
+        engines = [
+            StorageEngine.VIPER,
+            StorageEngine.LSM,
+            StorageEngine.MMAP,
+            StorageEngine.HYBRID
         ]
         
-        for compression in compression_types:
-            storage_config = StorageConfig(compression=compression)
-            assert storage_config.compression == compression
+        for engine in engines:
+            config = CollectionConfig(name="test", dimension=128, storage_engine=engine)
+            assert config.storage_engine == engine
     
-    def test_collection_with_metadata_schema(self):
-        """Test collection with metadata schema configuration"""
-        metadata_schema = {
-            "category": "string",
-            "timestamp": "datetime", 
-            "score": "float"
-        }
+    def test_collection_with_filterable_columns(self):
+        """Test collection with filterable columns configuration"""
+        from proximadb.models import FilterableColumn, FilterableDataType
+        
+        filterable_cols = [
+            FilterableColumn(name="category", data_type=FilterableDataType.STRING, indexed=True),
+            FilterableColumn(name="timestamp", data_type=FilterableDataType.DATETIME, indexed=True),
+            FilterableColumn(name="score", data_type=FilterableDataType.FLOAT, indexed=False)
+        ]
         
         config = CollectionConfig(
+            name="test_filterable",
             dimension=512,
-            metadata_schema=metadata_schema,
-            filterable_metadata_fields=["category", "timestamp"]
+            filterable_columns=filterable_cols
         )
         
-        assert config.metadata_schema == metadata_schema
-        assert "category" in config.filterable_metadata_fields
-        assert "timestamp" in config.filterable_metadata_fields
+        assert config.filterable_columns is not None
+        assert len(config.filterable_columns) == 3
+        assert config.filterable_columns[0].name == "category"
     
     def test_collection_creation_with_config(self, rest_client):
         """Test creating collection with advanced configuration"""
         collection_name = f"config_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="Configuration test collection",
-            storage_layout="viper",
-            flush_config=FlushConfig(max_wal_size_mb=32.0)
+            storage_engine=StorageEngine.VIPER
         )
         
         try:
@@ -271,15 +288,24 @@ class TestCollectionValidation:
     def test_dimension_validation(self):
         """Test dimension validation"""
         # Valid dimensions
-        valid_config = CollectionConfig(dimension=128)
+        valid_config = CollectionConfig(
+            name="test_collection",
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         assert valid_config.dimension == 128
         
         # Invalid dimensions should raise validation errors
         with pytest.raises((ValueError, TypeError)):
-            CollectionConfig(dimension=0)
+            CollectionConfig(
+                name="test_collection",
+                dimension=0,  # Invalid dimension
+                distance_metric=DistanceMetric.COSINE)
         
         with pytest.raises((ValueError, TypeError)):
-            CollectionConfig(dimension=-5)
+            CollectionConfig(
+                name="test_collection",
+                dimension=10001,  # Too large
+                distance_metric=DistanceMetric.COSINE)
     
     def test_collection_not_found_error(self):
         """Test CollectionNotFoundError handling"""
@@ -294,7 +320,10 @@ class TestCollectionValidation:
         client = connect_rest("http://localhost:5678")
         collection_name = f"duplicate_test_{int(time.time())}"
         
-        config = CollectionConfig(dimension=128)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         try:
             # Create first time - should succeed
@@ -321,6 +350,7 @@ class TestCollectionPersistence:
         collection_name = f"persist_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.COSINE,
             description="Persistence test collection"

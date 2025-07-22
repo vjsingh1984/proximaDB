@@ -6,15 +6,17 @@
 //! Index module for ProximaDB
 
 pub mod axis;
+pub mod config;
 
 // Re-export main types for easier access
-pub use axis::{AxisConfig, AxisIndexManager};
+pub use axis::{AxisConfig, AxisManager};
+pub use config::{IndexConfig, IndexUpdateMode, HnswConfig, IvfConfig};
 
 // Placeholder index structures for compilation
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{avro_unified::VectorRecord, CollectionId, VectorId};
+use crate::core::{VectorRecord, VectorId};
 
 /// Placeholder Global ID Index
 #[derive(Debug)]
@@ -30,7 +32,7 @@ impl GlobalIdIndex {
     pub async fn insert(
         &self,
         _id: VectorId,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
         _vector: &VectorRecord,
     ) -> Result<()> {
         Ok(())
@@ -44,7 +46,7 @@ impl GlobalIdIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -72,7 +74,7 @@ impl MetadataIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -100,7 +102,7 @@ impl DenseVectorIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -128,7 +130,7 @@ impl SparseVectorIndex {
         Ok(())
     }
 
-    pub async fn remove_collection(&self, _collection_id: &CollectionId) -> Result<()> {
+    pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
 }

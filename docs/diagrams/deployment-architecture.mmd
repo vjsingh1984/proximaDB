@@ -1,0 +1,92 @@
+graph TB
+    subgraph "Client Applications"
+        APP1[AI Applications<br/>LangChain/LlamaIndex]
+        APP2[Data Pipeline<br/>ETL/Streaming]
+        APP3[Analytics<br/>Dashboards]
+    end
+    
+    subgraph "Load Balancer"
+        LB[HAProxy/Nginx<br/>Health Checks<br/>SSL Termination]
+    end
+    
+    subgraph "ProximaDB Cluster"
+        subgraph "Node 1"
+            REST1[REST API<br/>:5678]
+            GRPC1[gRPC API<br/>:5679]
+            DVS1[DirectVectorService<br/>40-60% faster]
+        end
+        
+        subgraph "Node 2"
+            REST2[REST API<br/>:5678]
+            GRPC2[gRPC API<br/>:5679]
+            DVS2[DirectVectorService<br/>40-60% faster]
+        end
+        
+        subgraph "Node 3"
+            REST3[REST API<br/>:5678]
+            GRPC3[gRPC API<br/>:5679]
+            DVS3[DirectVectorService<br/>40-60% faster]
+        end
+    end
+    
+    subgraph "Storage Tiers"
+        subgraph "Hot Tier - NVMe"
+            WAL[WAL Logs<br/>2MB flush]
+            MEM[Active Memtables<br/>Recent vectors]
+        end
+        
+        subgraph "Warm Tier - SSD"
+            VIPER[VIPER Parquet<br/>ML clustering]
+            LSM[LSM SSTables<br/>Bloom filters]
+        end
+        
+        subgraph "Cold Tier - HDD"
+            COMPACT[Compacted Data<br/>Historical vectors]
+        end
+        
+        subgraph "Cloud Tier"
+            S3[S3/Azure/GCS<br/>Backup & Archive]
+        end
+    end
+    
+    subgraph "Monitoring"
+        PROM[Prometheus<br/>Metrics]
+        GRAF[Grafana<br/>Dashboards]
+        LOG[ELK Stack<br/>Logs]
+    end
+    
+    APP1 --> LB
+    APP2 --> LB
+    APP3 --> LB
+    
+    LB --> REST1
+    LB --> REST2
+    LB --> REST3
+    LB --> GRPC1
+    LB --> GRPC2
+    LB --> GRPC3
+    
+    DVS1 --> WAL
+    DVS2 --> WAL
+    DVS3 --> WAL
+    
+    WAL --> VIPER
+    WAL --> LSM
+    
+    VIPER --> COMPACT
+    LSM --> COMPACT
+    
+    COMPACT --> S3
+    
+    DVS1 --> PROM
+    DVS2 --> PROM
+    DVS3 --> PROM
+    
+    PROM --> GRAF
+    
+    style DVS1 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style DVS2 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style DVS3 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style WAL fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style VIPER fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
+    style LSM fill:#fce4ec,stroke:#880e4f,stroke-width:2px

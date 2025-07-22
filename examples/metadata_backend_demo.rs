@@ -13,7 +13,7 @@ use proximadb::server::builder::ServerBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     println!("🚀 ProximaDB Metadata Backend Configuration Examples");
     println!("=====================================================");

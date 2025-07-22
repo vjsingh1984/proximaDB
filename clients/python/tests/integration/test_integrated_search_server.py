@@ -17,7 +17,7 @@ from typing import List, Dict, Any
 # Add Python SDK to path
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 
 class IntegratedSearchTest:
@@ -222,11 +222,7 @@ class IntegratedSearchTest:
             
             search_start = time.time()
             # Simulate ID search using high similarity threshold
-            results = self.client.search_vectors(
-                collection_id=self.collection_name,
-                query_vectors=[query_embedding.tolist()],
-                top_k=1
-            )
+            results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=1); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
             search_time = (time.time() - search_start) * 1000
             
             if results:
@@ -287,11 +283,7 @@ class IntegratedSearchTest:
             
             # Search
             search_start = time.time()
-            results = self.client.search_vectors(
-                collection_id=self.collection_name,
-                query_vectors=[query_embedding.tolist()],
-                top_k=3
-            )
+            results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=3); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
             search_time = (time.time() - search_start) * 1000
             
             print(f"✅ Search completed in {search_time:.2f}ms")
@@ -318,11 +310,7 @@ class IntegratedSearchTest:
         
         # Perform similarity search
         search_start = time.time()
-        results = self.client.search_vectors(
-            collection_id=self.collection_name,
-            query_vectors=[query_embedding.tolist()],
-            top_k=5
-        )
+        results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=5); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
         search_time = (time.time() - search_start) * 1000
         
         # Filter results by metadata (client-side for now)

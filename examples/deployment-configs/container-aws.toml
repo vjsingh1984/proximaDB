@@ -6,9 +6,26 @@ port = 8080
 data_dir = "/data"
 
 [storage]
-# Container-optimized data directories
-data_dirs = ["/data/hot", "/data/warm"]
-wal_dir = "/data/wal"
+# Single metadata URL on fast local storage
+metadata_url = "file:///data/metadata"
+
+# Hybrid storage locations - local ephemeral + S3 durability
+[[storage.storage_locations]]
+url = "file:///data/hot"
+weight = 3  # Higher weight for fast local storage
+tags = ["fast", "ephemeral", "container"]
+
+[[storage.storage_locations]]
+url = "s3://vectordb-prod-storage"
+weight = 1  # Lower weight for durable cloud storage
+tags = ["durable", "s3", "cloud"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "weighted"  # Weighted distribution based on storage characteristics
+affinity = true       # Keep collection data together
+
+# Container-optimized settings
 mmap_enabled = true
 cache_size_mb = 2048
 bloom_filter_bits = 10
@@ -18,26 +35,17 @@ memtable_size_mb = 128
 level_count = 7
 compaction_threshold = 4
 block_size_kb = 64
+memory_flush_size_bytes = 2097152  # 2MB
+compression = "zstd"  # Better compression for S3 storage
 
-# URL-based WAL configuration for containers
-[storage.wal_config]
-wal_urls = [
-    "file:///data/wal",           # Local ephemeral storage for fast writes
-    "s3://vectordb-prod-storage/wal"  # S3 backup for durability
-]
-distribution_strategy = "LoadBalanced"
-collection_affinity = true
-memory_flush_size_bytes = 1048576
-global_flush_threshold = 2097152
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
 
-# URL-based storage layout optimized for containers
-[storage.storage_layout]
-[[storage.storage_layout.base_paths]]
-base_dir = "file:///data/hot"
-instance_id = 1
-mount_point = "/data/hot"
-[storage.storage_layout.base_paths.disk_type]
-NvmeSsd = { max_iops = 3000 }  # Container-optimized IOPS
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
 [storage.storage_layout.base_paths.capacity_config]
 max_wal_size_mb = 512
 metadata_reserved_mb = 128

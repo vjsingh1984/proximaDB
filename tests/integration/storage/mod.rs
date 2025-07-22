@@ -20,4 +20,4 @@
 // and don't need to be declared as modules since they are standalone test binaries
 
 // WAL to VIPER to Search flow integration tests
-pub mod test_wal_viper_search_flow;
+// pub mod test_wal_viper_search_flow; // Removed - obsolete API

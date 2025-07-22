@@ -1,0 +1,91 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#fff', 'primaryBorderColor':'#374151', 'lineColor':'#6b7280', 'secondaryColor':'#3b82f6', 'tertiaryColor':'#10b981', 'tertiaryTextColor':'#fff', 'tertiaryBorderColor':'#059669', 'background':'#ffffff', 'mainBkg':'#f3f4f6', 'secondBkg':'#e5e7eb', 'tertiaryBkg':'#d1d5db'}}}%%
+
+graph TB
+    subgraph "Client Layer"
+        Python[Python SDK<br/>REST & gRPC Support]
+        RestClient[REST Clients<br/>JSON Format]
+        GrpcClient[gRPC Clients<br/>Protobuf Format]
+    end
+
+    subgraph "API Layer"
+        RestAPI[REST API<br/>Port: 5678<br/>JSON ↔ Proto]
+        GrpcAPI[gRPC API<br/>Port: 5679<br/>Native Proto]
+        
+        subgraph "Unified Handlers"
+            UH[UnifiedHandlers<br/>Single Business Logic<br/>Protocol Agnostic]
+        end
+    end
+
+    subgraph "Service Layer"
+        DVS[DirectVectorService<br/>Direct Memtable Access<br/>Engine Routing]
+        CS[CollectionService<br/>Collection Management<br/>Metadata Storage]
+        WM[WalManager<br/>Write-Ahead Log<br/>Durability]
+    end
+
+    subgraph "Storage Layer"
+        subgraph "Storage Engines"
+            LSM[LSM Engine<br/>Row-Based Storage<br/>SSTable Format<br/>Write Optimized]
+            VIPER[VIPER Engine<br/>Columnar Storage<br/>Parquet Format<br/>Analytics Optimized]
+        end
+        
+        MT[Unified Memtable<br/>Multiple Backends<br/>BTree, SkipList, HashMap]
+        
+        UAC[UnifiedAtomicCoordinator<br/>Atomic File Operations<br/>Staging Pattern]
+    end
+
+    subgraph "Compute Layer"
+        DC[Distance Compute<br/>Cosine, Euclidean, DotProduct<br/>SIMD Detection]
+        QE[Quantization Config<br/>Future Implementation]
+    end
+
+    subgraph "Persistence"
+        FS[Filesystem Abstraction<br/>Local & Future Cloud Support]
+        META[Metadata Storage<br/>Collection Configs<br/>Schemas]
+    end
+
+    %% Client connections
+    Python --> RestAPI
+    Python --> GrpcAPI
+    RestClient --> RestAPI
+    GrpcClient --> GrpcAPI
+
+    %% API to Handlers
+    RestAPI --> UH
+    GrpcAPI --> UH
+
+    %% Handlers to Services
+    UH --> DVS
+    UH --> CS
+
+    %% Service interactions
+    DVS --> CS
+    DVS --> WM
+    DVS --> MT
+    CS --> META
+
+    %% Storage connections
+    WM --> UAC
+    MT --> LSM
+    MT --> VIPER
+    LSM --> UAC
+    VIPER --> UAC
+    UAC --> FS
+
+    %% Compute connections
+    LSM --> DC
+    VIPER --> DC
+
+    %% Styling
+    classDef client fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px
+    classDef api fill:#f0f9ff,stroke:#0369a1,color:#0c4a6e,stroke-width:2px
+    classDef service fill:#ecfdf5,stroke:#059669,color:#064e3b,stroke-width:2px
+    classDef storage fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+    classDef compute fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:2px
+    classDef persist fill:#f3f4f6,stroke:#4b5563,color:#1f2937,stroke-width:2px
+
+    class Python,RestClient,GrpcClient client
+    class RestAPI,GrpcAPI,UH api
+    class DVS,CS,WM service
+    class LSM,VIPER,MT,UAC storage
+    class DC,QE compute
+    class FS,META persist

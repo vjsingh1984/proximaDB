@@ -14,7 +14,7 @@
 
 pub mod atomic;
 pub mod backends;
-pub mod compaction;
+pub mod checkpoint;
 // filestore_backend moved to backends/filestore_backend.rs
 pub mod indexes;
 pub mod single_index;
@@ -22,7 +22,7 @@ pub mod store;
 pub mod unified_index;
 pub mod wal;
 
-use crate::core::CollectionId;
+
 use crate::storage::strategy::CollectionStrategyConfig;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -35,11 +35,16 @@ pub use atomic::{AtomicMetadataStore, MetadataTransaction, TransactionId};
 pub use store::{MetadataStore, MetadataStoreConfig};
 pub use wal::{MetadataWalConfig, MetadataWalManager, SystemMetadata, VersionedCollectionMetadata};
 
+// Re-export strategy types for convenience
+pub use crate::storage::strategy::{StorageEngineType, IndexingAlgorithm, DistanceMetric};
+
+// No conversion implementations needed - StorageEngineType is now a type alias for proto enum
+
 /// Collection metadata with comprehensive information and migration support
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionMetadata {
     // Core identification
-    pub id: CollectionId,
+    pub id: String,
     pub name: String,
 
     // Vector configuration
@@ -212,35 +217,35 @@ pub enum MetadataOperation {
 
     /// Update collection metadata
     UpdateCollection {
-        collection_id: CollectionId,
+        collection_id: String,
         metadata: CollectionMetadata,
     },
 
     /// Delete collection
-    DeleteCollection(CollectionId),
+    DeleteCollection(String),
 
     /// Update statistics (atomic counter updates)
     UpdateStats {
-        collection_id: CollectionId,
+        collection_id: String,
         vector_delta: i64,
         size_delta: i64,
     },
 
     /// Update access pattern
     UpdateAccessPattern {
-        collection_id: CollectionId,
+        collection_id: String,
         pattern: AccessPattern,
     },
 
     /// Update tags
     UpdateTags {
-        collection_id: CollectionId,
+        collection_id: String,
         tags: Vec<String>,
     },
 
     /// Update retention policy
     UpdateRetentionPolicy {
-        collection_id: CollectionId,
+        collection_id: String,
         policy: Option<RetentionPolicy>,
     },
 }
@@ -314,18 +319,18 @@ pub trait MetadataStoreInterface: Send + Sync {
     /// Get collection metadata
     async fn get_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CollectionMetadata>>;
 
     /// Update collection metadata
     async fn update_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()>;
 
     /// Delete collection
-    async fn delete_collection(&self, collection_id: &CollectionId) -> Result<bool>;
+    async fn delete_collection(&self, collection_id: &str) -> Result<bool>;
 
     /// List collections with optional filtering
     async fn list_collections(
@@ -336,7 +341,7 @@ pub trait MetadataStoreInterface: Send + Sync {
     /// Update collection statistics atomically
     async fn update_stats(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()>;

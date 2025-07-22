@@ -1,0 +1,55 @@
+graph TB
+    subgraph "Client Layer"
+        Python[Python SDK]
+        REST[REST Client]
+        gRPC[gRPC Client]
+    end
+
+    subgraph "Network Layer"
+        UH[UnifiedHandlers<br/>85% Code Reduction<br/>Protocol-agnostic]
+    end
+
+    subgraph "Optimized Service Layer"
+        DVS[DirectVectorService<br/>40-60% Latency Reduction<br/>Engine-Specific Routing]
+        CS[CollectionService<br/>Configuration Management<br/>Engine Selection]
+        FC[FlushCoordinator<br/>Collection-Aware Flushing<br/>No Default Engine]
+    end
+
+    subgraph "Storage Layer"
+        WAL[WalManager<br/>14,939 vectors/sec<br/>Clean Separation]
+        
+        subgraph "Storage Engines"
+            VIPER[ViperEngine<br/>Columnar Storage<br/>Predicate Pushdown]
+            LSM[LsmEngine<br/>Atomic Compaction<br/>Metadata Filtering]
+        end
+        
+        UAC[UnifiedAtomicCoordinator<br/>ACID Operations<br/>Staging Pattern]
+    end
+
+    Python --> UH
+    REST --> UH
+    gRPC --> UH
+    
+    UH --> DVS
+    DVS --> CS
+    DVS --> FC
+    DVS --> WAL
+    
+    CS --> VIPER
+    CS --> LSM
+    
+    WAL --> UAC
+    FC --> UAC
+    
+    UAC --> VIPER
+    UAC --> LSM
+
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef network fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef service fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    
+    class Python,REST,gRPC client
+    class UH network
+    class DVS,CS,FC service
+    class WAL,VIPER,LSM,UAC storage

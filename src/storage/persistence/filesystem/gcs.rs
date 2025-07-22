@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
 use super::auth::{GcsCredentialProvider, GcsCredentials};
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult};
+use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// GCS storage classes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +69,9 @@ pub struct GcsConfig {
 
     /// Upload chunk size for resumable uploads
     pub upload_chunk_size: u64, // bytes
+
+    /// Custom endpoint URL (for fake-gcs-server, etc.)
+    pub endpoint_url: Option<String>,
 }
 
 /// GCS credential configuration
@@ -117,6 +120,7 @@ impl Default for GcsConfig {
             max_retries: 3,
             resumable_threshold: 5 * 1024 * 1024, // 5MB
             upload_chunk_size: 1 * 1024 * 1024,   // 1MB
+            endpoint_url: None,
         }
     }
 }
@@ -268,6 +272,16 @@ impl GcsClient {
         object_path: &str,
         credentials: &GcsCredentials,
     ) -> FsResult<Vec<u8>> {
+        self.get_object_range(bucket, object_path, credentials, None).await
+    }
+
+    async fn get_object_range(
+        &self,
+        bucket: &str,
+        object_path: &str,
+        credentials: &GcsCredentials,
+        range: Option<&str>,
+    ) -> FsResult<Vec<u8>> {
         let url = format!(
             "https://storage.googleapis.com/storage/v1/b/{}/o/{}?alt=media",
             bucket,
@@ -276,13 +290,21 @@ impl GcsClient {
 
         tracing::debug!("📥 Getting GCS object: {}", url);
 
-        let response = self
+        let mut request = self
             .http_client
             .get(&url)
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
-            )
+            );
+
+        // Add Range header if specified
+        if let Some(range_value) = range {
+            request = request.header("Range", range_value);
+            tracing::debug!("GCS range request: {} for gs://{}/{}", range_value, bucket, object_path);
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|e| {
@@ -290,26 +312,39 @@ impl GcsClient {
                 FilesystemError::Network(e.to_string())
             })?;
 
-        if response.status().is_success() {
+        // Handle both 200 OK (full content) and 206 Partial Content (range request)
+        let status = response.status();
+        if status.is_success() || status.as_u16() == 206 {
+            let is_range_response = status.as_u16() == 206;
             let data = response
                 .bytes()
                 .await
                 .map(|b| b.to_vec())
                 .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
-            tracing::debug!("✅ Successfully retrieved {} bytes from GCS", data.len());
+            if is_range_response {
+                tracing::debug!("✅ GCS range response: {} bytes received", data.len());
+            } else {
+                tracing::debug!("✅ Successfully retrieved {} bytes from GCS", data.len());
+            }
             Ok(data)
-        } else if response.status().as_u16() == 404 {
+        } else if status.as_u16() == 404 {
             tracing::warn!("🔍 GCS object not found: gcs://{}/{}", bucket, object_path);
             Err(FilesystemError::NotFound(format!(
                 "gcs://{}/{}",
                 bucket, object_path
             )))
+        } else if status.as_u16() == 416 {
+            // Range not satisfiable
+            Err(FilesystemError::Config(format!(
+                "Invalid range request for gcs://{}/{}",
+                bucket, object_path
+            )))
         } else {
-            tracing::error!("❌ GCS GET error: {}", response.status());
+            tracing::error!("❌ GCS GET error: {}", status);
             Err(FilesystemError::Network(format!(
-                "GCS error: {}",
-                response.status()
+                "GCS error: {} for gcs://{}/{}",
+                status, bucket, object_path
             )))
         }
     }
@@ -387,6 +422,32 @@ impl FileSystem for GcsFileSystem {
         self.client
             .get_object(&bucket, &object_path, &credentials)
             .await
+    }
+
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        tracing::debug!("📖 GCS range read: {} (offset: {}, length: {})", path, offset, length);
+        let (bucket, object_path) = self.parse_gcs_url(path)?;
+        let credentials = self.credential_provider.get_credentials().await?;
+        
+        // GCS supports byte-range requests using the Range header
+        // Format: "bytes=start-end" (inclusive)
+        let end = offset + length - 1;
+        let range_header = format!("bytes={}-{}", offset, end);
+        
+        self.client
+            .get_object_range(&bucket, &object_path, &credentials, Some(&range_header))
+            .await
+    }
+
+    async fn read_ranges(&self, path: &str, ranges: Vec<std::ops::Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+        // GCS doesn't support multipart range requests as efficiently as S3
+        // Fall back to individual range requests
+        let mut results = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let length = range.end - range.start;
+            results.push(self.read_range(path, range.start, length).await?);
+        }
+        Ok(results)
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
@@ -605,6 +666,13 @@ impl FileSystem for GcsFileSystem {
         tracing::trace!("🔄 GCS sync (no-op)");
         // GCS operations are immediately durable
         Ok(())
+    }
+
+    async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }
 

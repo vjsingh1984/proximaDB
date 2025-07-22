@@ -1,0 +1,168 @@
+sequenceDiagram
+    participant Client
+    participant API as REST/gRPC
+    participant CollSvc as Collection Service
+    participant AvroSvc as Unified Avro Service
+    participant AssignSvc as Assignment Service
+    participant WAL as WAL Manager
+    participant Strategy as WAL Strategy
+    participant Memtable as Unified Memtable<br/>(BTree/HashMap)
+    participant WalWrapper as WAL Behavior Wrapper
+    participant VIPER as VIPER Engine
+    participant FS as Filesystem
+    participant D1 as Disk 1
+    participant D2 as Disk 2
+    participant D3 as Disk 3
+
+    Note over Client,D3: ProximaDB Data Flow and Persistence Lifecycle
+
+    rect rgb(240, 248, 255)
+        Note right of Client: Collection Creation & Assignment
+        Client->>API: POST /collections {name, dimension, config}
+        activate API
+        API->>CollSvc: create_collection(name, config)
+        activate CollSvc
+        CollSvc->>AssignSvc: assign_storage_url(collection_id, WAL)
+        activate AssignSvc
+        AssignSvc->>AssignSvc: round_robin_assignment()
+        Note right of AssignSvc: Selects Disk 2 for this collection
+        AssignSvc->>FS: ensure_directory(/data/disk2/wal/collection_id)
+        FS->>D2: create directory structure
+        D2-->>FS: success
+        AssignSvc-->>CollSvc: assignment{url: "file:///data/disk2/wal", index: 1}
+        deactivate AssignSvc
+        CollSvc->>WAL: initialize_collection_wal(collection_id, assignment)
+        activate WAL
+        WAL->>Strategy: set_assignment(collection_id, assignment)
+        activate Strategy
+        Strategy-->>WAL: configured
+        deactivate Strategy
+        WAL-->>CollSvc: initialized
+        deactivate WAL
+        CollSvc-->>API: collection_created{id, name, uuid}
+        deactivate CollSvc
+        API-->>Client: 201 Created
+        deactivate API
+    end
+
+    rect rgb(240, 255, 240)
+        Note right of Client: Vector Insert & WAL Writing
+        Client->>API: POST /collections/{id}/vectors {vector_id, vector, metadata}
+        activate API
+        API->>AvroSvc: insert_vector(collection_id, vector_id, vector, metadata)
+        activate AvroSvc
+        AvroSvc->>WAL: write_entry(collection_id, WalEntry)
+        activate WAL
+        WAL->>Strategy: get_assignment_service().get_assignment(collection_id, WAL)
+        activate Strategy
+        Strategy->>AssignSvc: get_assignment(collection_id, WAL)
+        activate AssignSvc
+        AssignSvc-->>Strategy: cached_assignment{disk2}
+        deactivate AssignSvc
+        Strategy->>WalWrapper: wrap_insert(collection_id, entry)
+        activate WalWrapper
+        WalWrapper->>Memtable: insert(vector_id, entry)
+        activate Memtable
+        Memtable->>Memtable: btree.insert(vector_id, entry)
+        Note right of Memtable: Unified memtable<br/>BTree for WAL ordered ops<br/>HashMap for random access
+        Memtable-->>WalWrapper: success
+        deactivate Memtable
+        WalWrapper->>WalWrapper: increment_sequence()
+        WalWrapper-->>Strategy: sequence_number
+        deactivate WalWrapper
+        Strategy->>Strategy: check_flush_threshold()
+        alt Memory threshold exceeded (1MB)
+            Strategy->>Strategy: trigger_background_flush()
+            Strategy->>FS: write_wal_segment(assignment.storage_url, serialized_data)
+            activate FS
+            FS->>D2: write /data/disk2/wal/collection_id/segment_001.avwal
+            D2-->>FS: written
+            deactivate FS
+            Strategy->>Memtable: clear_flushed_entries(collection_id, sequence)
+            activate Memtable
+            Memtable-->>Strategy: cleared
+            deactivate Memtable
+        end
+        Strategy-->>WAL: sequence_number
+        deactivate Strategy
+        WAL-->>AvroSvc: sequence_number
+        deactivate WAL
+        AvroSvc-->>API: insert_result{sequence_number}
+        deactivate AvroSvc
+        API-->>Client: 200 OK
+        deactivate API
+    end
+
+    rect rgb(255, 248, 240)
+        Note over Strategy,VIPER: WAL Flush to VIPER Storage<br/>Periodic or threshold-triggered flush
+        Strategy->>Strategy: collections_needing_flush()
+        activate Strategy
+        Strategy->>Memtable: get_all_entries(collection_id)
+        activate Memtable
+        Memtable-->>Strategy: vector_entries[]
+        deactivate Memtable
+        Strategy->>Strategy: serialize_entries(entries, Avro)
+        Strategy->>FS: write_wal_segment(disk2, serialized_data)
+        activate FS
+        FS->>D2: atomic_write(segment.avwal)
+        D2-->>FS: committed
+        deactivate FS
+        Strategy->>VIPER: delegate_to_storage_engine_flush(collection_id)
+        activate VIPER
+        VIPER->>AssignSvc: assign_storage_url(collection_id, VIPER)
+        activate AssignSvc
+        AssignSvc-->>VIPER: assignment{disk1_storage}
+        deactivate AssignSvc
+        VIPER->>FS: write_parquet_files(disk1_storage, vector_data)
+        activate FS
+        FS->>D1: write /data/disk1/storage/collection_id/vectors.parquet
+        D1-->>FS: written
+        deactivate FS
+        VIPER-->>Strategy: flush_result{entries_flushed, bytes_written}
+        deactivate VIPER
+        Strategy->>Memtable: clear_flushed(collection_id, last_sequence)
+        activate Memtable
+        Memtable-->>Strategy: cleared
+        deactivate Memtable
+        Strategy-->>Strategy: flush_complete
+        deactivate Strategy
+    end
+
+    rect rgb(250, 245, 255)
+        Note over AssignSvc,D3: Server Restart & Recovery
+        AssignSvc->>AssignSvc: discover_and_record_assignments()
+        activate AssignSvc
+        loop for each disk [D1, D2, D3]
+            AssignSvc->>FS: list_directories(disk/wal)
+            activate FS
+            FS->>D1: scan /data/disk1/wal/
+            D1-->>FS: [collection_a, collection_b]
+            FS->>D2: scan /data/disk2/wal/
+            D2-->>FS: [collection_c, collection_d]
+            FS->>D3: scan /data/disk3/wal/
+            D3-->>FS: [collection_e]
+            FS-->>AssignSvc: discovered_collections
+            deactivate FS
+            AssignSvc->>AssignSvc: record_assignment(collection_id, WAL, disk_assignment)
+        end
+        AssignSvc-->>AssignSvc: discovery_complete{5_collections_recovered}
+        deactivate AssignSvc
+        WAL->>Strategy: recover()
+        activate Strategy
+        Strategy->>FS: read_wal_segments(assigned_directories)
+        activate FS
+        FS->>D1: read segments
+        FS->>D2: read segments
+        FS->>D3: read segments
+        FS-->>Strategy: all_wal_entries[]
+        deactivate FS
+        Strategy->>Strategy: deserialize_entries(wal_data)
+        Strategy->>Memtable: restore_entries(entries)
+        activate Memtable
+        Memtable-->>Strategy: restored
+        deactivate Memtable
+        Strategy-->>WAL: recovery_complete{entries_recovered}
+        deactivate Strategy
+    end
+
+    Note over Client,D3: Multi-Disk Benefits:<br/>• Load distribution across multiple disks<br/>• Parallel I/O operations<br/>• Fault tolerance (disk failure isolation)<br/>• Scalable performance<br/>• Fair assignment via round-robin

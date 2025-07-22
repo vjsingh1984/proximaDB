@@ -10,7 +10,6 @@ mod assignment_service_tests {
         StorageComponentType, AssignmentDiscovery
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::core::CollectionId;
     
     #[tokio::test]
     async fn test_round_robin_assignment() {
@@ -32,7 +31,7 @@ mod assignment_service_tests {
         
         for collection in &collections {
             let assignment = service.assign_storage_url(
-                &CollectionId::from(collection.to_string()), 
+                collection, 
                 &config
             ).await.unwrap();
             assignments.push(assignment.directory_index);
@@ -55,7 +54,7 @@ mod assignment_service_tests {
             collection_affinity: true,
         };
         
-        let collection_id = CollectionId::from("test_collection".to_string());
+        let collection_id = "test_collection";
         
         // Assign multiple times - should always get same result
         let assignment1 = service.assign_storage_url(&collection_id, &config).await.unwrap();
@@ -103,7 +102,7 @@ mod assignment_service_tests {
         
         // Create test collection directories with files
         let collection_dirs = vec![
-            (format!("{}/test_collection_1", base_path), vec!["data.avro", "checkpoint.bincode"]),
+            (format!("{}/test_collection_1", base_path), vec!["data.avwal", "checkpoint.bcwal"]),
             (format!("{}/test_collection_2", base_path), vec!["vectors.parquet", "index.sst"]),
             (format!("{}/invalid_collection", base_path), vec!["readme.txt"]), // Should be ignored
         ];
@@ -163,7 +162,7 @@ mod assignment_service_tests {
         
         // Create test collections for each component type
         let test_data = vec![
-            ("wal_collection", vec!["log1.avro", "log2.bincode"]),
+            ("wal_collection", vec!["log1.avwal", "log2.bcwal"]),
             ("storage_collection", vec!["data1.parquet", "data2.sst"]),
             ("index_collection", vec!["index1.idx", "index2.hnsw"]),
         ];

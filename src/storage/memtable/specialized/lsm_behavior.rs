@@ -82,7 +82,7 @@ impl<T> LsmBehaviorWrapper<T> {
     }
 
     /// Extract key from LSM entry for tombstone tracking
-    fn extract_key<K, V>(key: &K, value: &V) -> String
+    fn extract_key<K, V>(key: &K, _value: &V) -> String
     where
         K: std::fmt::Debug,
         V: std::fmt::Debug,
@@ -418,7 +418,7 @@ where
     pub async fn scan(
         &self,
         from: Option<String>,
-        to: Option<String>,
+        _to: Option<String>,
     ) -> Result<Vec<(String, LsmEntry)>> {
         if let Some(start) = from {
             self.inner.range_scan(start, None).await
@@ -464,53 +464,105 @@ pub struct SsTableMetadata {
     pub tombstone_count: usize,
 }
 
-/// Simple bloom filter implementation
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// Use the unified polymorphic bloom filter design
+use crate::core::bloom::{BloomFilterStrategy, factory::BloomFilterFactory, BloomFilterConfig, BloomStrategy};
+
+/// Wrapper for memtable bloom filter using unified design
 pub struct BloomFilter {
-    bits: Vec<bool>,
-    size: usize,
-    hash_count: usize,
+    inner: Box<dyn BloomFilterStrategy>,
+    serialized_data: Vec<u8>,
+}
+
+impl std::fmt::Debug for BloomFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BloomFilter")
+            .field("bit_count", &self.inner.bit_count())
+            .field("num_elements", &self.inner.num_elements())
+            .field("false_positive_rate", &self.inner.false_positive_rate())
+            .field("serialized_size", &self.serialized_data.len())
+            .finish()
+    }
+}
+
+impl Clone for BloomFilter {
+    fn clone(&self) -> Self {
+        // Clone by re-creating from serialized data
+        let config = BloomFilterConfig {
+            strategy: BloomStrategy::Simple,
+            expected_items: 1000, // Default
+            ..Default::default()
+        };
+        
+        let inner = BloomFilterFactory::create(&config);
+        
+        Self {
+            inner,
+            serialized_data: self.serialized_data.clone(),
+        }
+    }
 }
 
 impl BloomFilter {
     pub fn new(size: usize) -> Self {
+        let config = BloomFilterConfig {
+            strategy: BloomStrategy::Simple, // Use simple strategy for memtable
+            bits_per_key: 8,
+            expected_items: size,
+            enabled: true,
+            ..Default::default()
+        };
+        
+        let inner = BloomFilterFactory::create(&config);
+        let serialized_data = inner.serialize().unwrap_or_default();
+        
         Self {
-            bits: vec![false; size],
-            size,
-            hash_count: 3, // Simple fixed hash count
+            inner,
+            serialized_data,
         }
     }
 
     pub fn insert(&mut self, key: &str) {
-        for i in 0..self.hash_count {
-            let hash = self.hash(key, i);
-            let index = hash % self.size;
-            self.bits[index] = true;
-        }
+        self.inner.insert(key.as_bytes());
+        self.serialized_data = self.inner.serialize().unwrap_or_default();
     }
 
     pub fn contains(&self, key: &str) -> bool {
-        for i in 0..self.hash_count {
-            let hash = self.hash(key, i);
-            let index = hash % self.size;
-            if !self.bits[index] {
-                return false;
-            }
-        }
-        true
+        self.inner.might_contain(key.as_bytes())
     }
-
-    fn hash(&self, key: &str, seed: usize) -> usize {
-        // Simple hash function (in production, use proper hash functions)
-        let mut hash = seed;
-        for byte in key.bytes() {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as usize);
-        }
-        hash
-    }
-
+    
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap_or_default()
+        self.serialized_data.clone()
+    }
+}
+
+// Custom serialization for the trait object
+impl serde::Serialize for BloomFilter {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.serialized_data.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BloomFilter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let serialized_data = Vec::<u8>::deserialize(deserializer)?;
+        let config = BloomFilterConfig {
+            strategy: BloomStrategy::Simple,
+            expected_items: 1000, // Default
+            ..Default::default()
+        };
+        
+        let inner = BloomFilterFactory::create(&config);
+        
+        Ok(Self {
+            inner,
+            serialized_data,
+        })
     }
 }
 
@@ -549,7 +601,7 @@ mod tests {
     async fn test_lsm_behavior_wrapper() {
         let config = MemtableConfig::default();
         let skiplist = SkipListMemtable::new();
-        let mut lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
+        let lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
 
         // Create test LSM entry
         let lsm_entry = LsmEntry {
@@ -589,7 +641,7 @@ mod tests {
     async fn test_lsm_compaction_logic() {
         let config = MemtableConfig::default();
         let skiplist = SkipListMemtable::new();
-        let mut lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
+        let lsm_wrapper = LsmBehaviorWrapper::new(skiplist, config);
 
         // Insert multiple entries
         for i in 0..10 {

@@ -1,0 +1,319 @@
+//! Comprehensive tests for config and config_loader modules
+//! Target: 80%+ coverage for configuration handling
+
+use proximadb::core::config::{Config, StorageConfig, CollectionsConfig, NetworkConfig};
+use proximadb::core::config_loader::{ConfigLoader, ConfigError};
+use std::env;
+use tempfile::{TempDir, NamedTempFile};
+use std::io::Write;
+
+#[test]
+fn test_default_config() {
+    let config = Config::default();
+    
+    // Test default storage config
+    assert_eq!(config.storage.engine, "viper");
+    assert_eq!(config.storage.data_dir, "./data");
+    assert_eq!(config.storage.wal_dir, "./wal");
+    assert_eq!(config.storage.cache_dir, "./cache");
+    assert_eq!(config.storage.max_memory_usage, 1024 * 1024 * 1024); // 1GB
+    assert!(config.storage.enable_compression);
+    assert_eq!(config.storage.compression_level, 3);
+    
+    // Test default collections config
+    assert_eq!(config.collections.default_distance_metric, "cosine");
+    assert!(config.collections.enable_auto_id);
+    assert_eq!(config.collections.default_shard_count, 1);
+    assert_eq!(config.collections.default_replication_factor, 1);
+    
+    // Test default network config
+    assert_eq!(config.network.rest_port, 5678);
+    assert_eq!(config.network.grpc_port, 5679);
+    assert_eq!(config.network.bind_address, "0.0.0.0");
+    assert!(config.network.enable_tls.is_none());
+}
+
+#[test]
+fn test_config_from_toml() {
+    let toml_content = r#"
+[storage]
+engine = "lsm"
+data_dir = "/custom/data"
+wal_dir = "/custom/wal"
+cache_dir = "/custom/cache"
+rocksdb_path = "/custom/rocksdb"
+max_memory_usage = 2147483648
+enable_compression = false
+compression_level = 6
+
+[collections]
+default_distance_metric = "euclidean"
+enable_auto_id = false
+default_shard_count = 4
+default_replication_factor = 3
+
+[network]
+rest_port = 8080
+grpc_port = 9090
+bind_address = "127.0.0.1"
+enable_tls = true
+"#;
+    
+    let config: Config = toml::from_str(toml_content).unwrap();
+    
+    assert_eq!(config.storage.engine, "lsm");
+    assert_eq!(config.storage.data_dir, "/custom/data");
+    assert_eq!(config.storage.max_memory_usage, 2147483648);
+    assert!(!config.storage.enable_compression);
+    
+    assert_eq!(config.collections.default_distance_metric, "euclidean");
+    assert!(!config.collections.enable_auto_id);
+    assert_eq!(config.collections.default_shard_count, 4);
+    
+    assert_eq!(config.network.rest_port, 8080);
+    assert_eq!(config.network.bind_address, "127.0.0.1");
+    assert_eq!(config.network.enable_tls, Some(true));
+}
+
+#[test]
+fn test_config_loader_from_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("test_config.toml");
+    
+    let config_content = r#"
+[storage]
+engine = "viper"
+data_dir = "./test_data"
+
+[collections]
+default_distance_metric = "manhattan"
+
+[network]
+rest_port = 7777
+"#;
+    
+    std::fs::write(&config_path, config_content).unwrap();
+    
+    let loader = ConfigLoader::new();
+    let config = loader.load_from_file(config_path.to_str().unwrap()).unwrap();
+    
+    assert_eq!(config.storage.engine, "viper");
+    assert_eq!(config.storage.data_dir, "./test_data");
+    assert_eq!(config.collections.default_distance_metric, "manhattan");
+    assert_eq!(config.network.rest_port, 7777);
+}
+
+#[test]
+fn test_config_loader_from_env() {
+    // Save current env vars
+    let saved_engine = env::var("PROXIMADB_STORAGE_ENGINE").ok();
+    let saved_port = env::var("PROXIMADB_NETWORK_REST_PORT").ok();
+    
+    // Set test env vars
+    env::set_var("PROXIMADB_STORAGE_ENGINE", "lsm");
+    env::set_var("PROXIMADB_NETWORK_REST_PORT", "9999");
+    env::set_var("PROXIMADB_STORAGE_MAX_MEMORY_USAGE", "4294967296");
+    env::set_var("PROXIMADB_COLLECTIONS_ENABLE_AUTO_ID", "false");
+    
+    let loader = ConfigLoader::new();
+    let config = loader.load_from_env().unwrap();
+    
+    assert_eq!(config.storage.engine, "lsm");
+    assert_eq!(config.network.rest_port, 9999);
+    assert_eq!(config.storage.max_memory_usage, 4294967296);
+    assert!(!config.collections.enable_auto_id);
+    
+    // Restore env vars
+    match saved_engine {
+        Some(val) => env::set_var("PROXIMADB_STORAGE_ENGINE", val),
+        None => env::remove_var("PROXIMADB_STORAGE_ENGINE"),
+    }
+    match saved_port {
+        Some(val) => env::set_var("PROXIMADB_NETWORK_REST_PORT", val),
+        None => env::remove_var("PROXIMADB_NETWORK_REST_PORT"),
+    }
+    env::remove_var("PROXIMADB_STORAGE_MAX_MEMORY_USAGE");
+    env::remove_var("PROXIMADB_COLLECTIONS_ENABLE_AUTO_ID");
+}
+
+#[test]
+fn test_config_loader_precedence() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("precedence_test.toml");
+    
+    // File config
+    let file_content = r#"
+[storage]
+engine = "viper"
+data_dir = "./file_data"
+
+[network]
+rest_port = 5555
+"#;
+    std::fs::write(&config_path, file_content).unwrap();
+    
+    // Set env var that should override file
+    env::set_var("PROXIMADB_STORAGE_ENGINE", "lsm");
+    
+    let loader = ConfigLoader::new();
+    let config = loader.load_with_precedence(Some(config_path.to_str().unwrap())).unwrap();
+    
+    // Env var should override file
+    assert_eq!(config.storage.engine, "lsm");
+    // File value should be used when no env var
+    assert_eq!(config.storage.data_dir, "./file_data");
+    assert_eq!(config.network.rest_port, 5555);
+    
+    env::remove_var("PROXIMADB_STORAGE_ENGINE");
+}
+
+#[test]
+fn test_config_validation() {
+    let mut config = Config::default();
+    
+    // Valid config should pass
+    assert!(config.validate().is_ok());
+    
+    // Invalid storage engine
+    config.storage.engine = "invalid_engine".to_string();
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid storage engine"));
+    
+    // Reset and test invalid distance metric
+    config = Config::default();
+    config.collections.default_distance_metric = "invalid_metric".to_string();
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid distance metric"));
+    
+    // Test invalid port
+    config = Config::default();
+    config.network.rest_port = 0;
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid REST port"));
+    
+    // Test port conflict
+    config = Config::default();
+    config.network.rest_port = 8080;
+    config.network.grpc_port = 8080;
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("REST and gRPC ports cannot be the same"));
+}
+
+#[test]
+fn test_storage_config_methods() {
+    let config = StorageConfig::default();
+    
+    // Test path methods
+    assert_eq!(config.data_path(), std::path::Path::new("./data"));
+    assert_eq!(config.wal_path(), std::path::Path::new("./wal"));
+    assert_eq!(config.cache_path(), std::path::Path::new("./cache"));
+    
+    // Test with custom paths
+    let mut custom_config = StorageConfig::default();
+    custom_config.data_dir = "/custom/data".to_string();
+    custom_config.wal_dir = "/custom/wal".to_string();
+    
+    assert_eq!(custom_config.data_path(), std::path::Path::new("/custom/data"));
+    assert_eq!(custom_config.wal_path(), std::path::Path::new("/custom/wal"));
+}
+
+#[test]
+fn test_config_error_handling() {
+    let loader = ConfigLoader::new();
+    
+    // Test loading non-existent file
+    let result = loader.load_from_file("/non/existent/path.toml");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        ConfigError::IoError(_) => (),
+        _ => panic!("Expected IoError"),
+    }
+    
+    // Test loading invalid TOML
+    let temp_file = NamedTempFile::new().unwrap();
+    writeln!(temp_file.as_file(), "invalid toml content").unwrap();
+    
+    let result = loader.load_from_file(temp_file.path().to_str().unwrap());
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        ConfigError::ParseError(_) => (),
+        _ => panic!("Expected ParseError"),
+    }
+}
+
+#[test]
+fn test_collections_config_defaults() {
+    let config = CollectionsConfig::default();
+    
+    assert_eq!(config.default_distance_metric, "cosine");
+    assert!(config.enable_auto_id);
+    assert_eq!(config.default_shard_count, 1);
+    assert_eq!(config.default_replication_factor, 1);
+    assert_eq!(config.max_vectors_per_collection, None);
+    assert_eq!(config.max_dimension, None);
+}
+
+#[test]
+fn test_network_config_tls() {
+    let mut config = NetworkConfig::default();
+    
+    // No TLS by default
+    assert_eq!(config.enable_tls, None);
+    assert_eq!(config.tls_cert_path, None);
+    assert_eq!(config.tls_key_path, None);
+    
+    // Enable TLS
+    config.enable_tls = Some(true);
+    config.tls_cert_path = Some("/path/to/cert.pem".to_string());
+    config.tls_key_path = Some("/path/to/key.pem".to_string());
+    
+    // Should validate TLS config when enabled
+    assert!(config.enable_tls.unwrap());
+    assert_eq!(config.tls_cert_path.as_ref().unwrap(), "/path/to/cert.pem");
+}
+
+#[test]
+fn test_config_serialization() {
+    let config = Config::default();
+    
+    // Serialize to TOML
+    let toml_str = toml::to_string(&config).unwrap();
+    assert!(toml_str.contains("[storage]"));
+    assert!(toml_str.contains("[collections]"));
+    assert!(toml_str.contains("[network]"));
+    
+    // Deserialize back
+    let deserialized: Config = toml::from_str(&toml_str).unwrap();
+    assert_eq!(deserialized.storage.engine, config.storage.engine);
+    assert_eq!(deserialized.collections.default_distance_metric, config.collections.default_distance_metric);
+    assert_eq!(deserialized.network.rest_port, config.network.rest_port);
+}
+
+#[test]
+fn test_environment_variable_parsing() {
+    // Test boolean parsing
+    env::set_var("TEST_BOOL_TRUE", "true");
+    env::set_var("TEST_BOOL_FALSE", "false");
+    env::set_var("TEST_BOOL_1", "1");
+    env::set_var("TEST_BOOL_0", "0");
+    
+    assert_eq!(env::var("TEST_BOOL_TRUE").unwrap().parse::<bool>().unwrap(), true);
+    assert_eq!(env::var("TEST_BOOL_FALSE").unwrap().parse::<bool>().unwrap(), false);
+    assert_eq!(env::var("TEST_BOOL_1").unwrap(), "1");
+    assert_eq!(env::var("TEST_BOOL_0").unwrap(), "0");
+    
+    // Test number parsing
+    env::set_var("TEST_NUM", "42");
+    assert_eq!(env::var("TEST_NUM").unwrap().parse::<u16>().unwrap(), 42);
+    
+    // Cleanup
+    env::remove_var("TEST_BOOL_TRUE");
+    env::remove_var("TEST_BOOL_FALSE");
+    env::remove_var("TEST_BOOL_1");
+    env::remove_var("TEST_BOOL_0");
+    env::remove_var("TEST_NUM");
+}

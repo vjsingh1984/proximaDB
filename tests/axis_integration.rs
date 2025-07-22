@@ -3,11 +3,10 @@
 //! Tests the integration between AXIS and other ProximaDB components
 
 use chrono::Utc;
-use proximadb::core::avro_unified::VectorRecord;
+use proximadb::core::VectorRecord;
 use proximadb::index::axis::{
-    AxisConfig, AxisIndexManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+    AxisConfig, AxisManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -21,18 +20,21 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
             *val = (i as f32 + j as f32) / 100.0;
         }
 
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "category".to_string(),
-            serde_json::json!(format!("cat_{}", i % 5)),
-        );
-        metadata.insert("priority".to_string(), serde_json::json!(i % 10));
+        let metadata = vec![
+            proximadb::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: format!("cat_{}", i % 5),
+            },
+            proximadb::proto::proximadb::MetadataItem {
+                key: "priority".to_string(),
+                value: (i % 10).to_string(),
+            },
+        ];
 
         let now = Utc::now().timestamp_millis();
 
         vectors.push(VectorRecord {
-            id: Uuid::new_v4().to_string(),
-            collection_id: collection_id.to_string(),
+            id: Some(Uuid::new_v4().to_string()),
             vector: vector_data,
             metadata,
             timestamp: now,
@@ -52,7 +54,7 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
 #[tokio::test]
 async fn test_axis_large_scale_insertion() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Test large-scale insertion across multiple collections
     for collection_idx in 0..3 {
@@ -60,7 +62,7 @@ async fn test_axis_large_scale_insertion() {
         let test_vectors = create_test_vectors(1000, 128, &collection_id);
 
         for vector in test_vectors {
-            let result = axis_manager.insert(vector).await;
+            let result = axis_manager.insert(&collection_id, &vector).await;
             assert!(
                 result.is_ok(),
                 "Large-scale vector insertion should succeed"
@@ -83,7 +85,7 @@ async fn test_axis_large_scale_insertion() {
 #[tokio::test]
 async fn test_axis_concurrent_operations() {
     let config = AxisConfig::default();
-    let axis_manager = Arc::new(AxisIndexManager::new(config).await.unwrap());
+    let axis_manager = Arc::new(AxisManager::new(config).await.unwrap());
 
     // Create multiple concurrent insertion tasks
     let mut handles = vec![];
@@ -95,7 +97,7 @@ async fn test_axis_concurrent_operations() {
         let handle = tokio::spawn(async move {
             let vectors = create_test_vectors(200, 64, &collection_id);
             for vector in vectors {
-                let _ = manager.insert(vector).await;
+                let _ = manager.insert("test_collection", &vector).await;
             }
         });
 
@@ -122,7 +124,7 @@ async fn test_axis_concurrent_operations() {
 #[tokio::test]
 async fn test_axis_adaptive_optimization() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Insert different types of data to trigger adaptive behavior
     let dense_collection = "dense_optimized_collection";
@@ -131,18 +133,19 @@ async fn test_axis_adaptive_optimization() {
     // Dense collection (low sparsity)
     let dense_vectors = create_test_vectors(500, 256, dense_collection);
     for vector in dense_vectors {
-        let _ = axis_manager.insert(vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Sparse collection (simulated high sparsity via metadata)
     let mut sparse_vectors = create_test_vectors(500, 256, sparse_collection);
     for vector in &mut sparse_vectors {
-        vector
-            .metadata
-            .insert("sparse_type".to_string(), serde_json::json!(true));
+        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+            key: "sparse_type".to_string(),
+            value: "true".to_string(),
+        });
     }
     for vector in sparse_vectors {
-        let _ = axis_manager.insert(vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Trigger optimization analysis for both collections
@@ -155,38 +158,40 @@ async fn test_axis_adaptive_optimization() {
 
     assert!(
         dense_result.is_ok(),
-        "Dense collection optimization should succeed"
+        "Dense collection optimization should succeed: {:?}", dense_result.err()
     );
     assert!(
         sparse_result.is_ok(),
-        "Sparse collection optimization should succeed"
+        "Sparse collection optimization should succeed: {:?}", sparse_result.err()
     );
 }
 
 #[tokio::test]
 async fn test_axis_complex_hybrid_queries() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     let collection_id = "hybrid_query_collection";
 
     // Insert test data with rich metadata
     let mut test_vectors = create_test_vectors(100, 128, collection_id);
     for (i, vector) in test_vectors.iter_mut().enumerate() {
-        vector.metadata.insert(
-            "region".to_string(),
-            serde_json::json!(format!("region_{}", i % 3)),
-        );
-        vector
-            .metadata
-            .insert("score".to_string(), serde_json::json!(i as f64 / 10.0));
-        vector
-            .metadata
-            .insert("active".to_string(), serde_json::json!(i % 2 == 0));
+        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+            key: "region".to_string(),
+            value: format!("region_{}", i % 3),
+        });
+        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+            key: "score".to_string(),
+            value: (i as f64 / 10.0).to_string(),
+        });
+        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+            key: "active".to_string(),
+            value: (i % 2 == 0).to_string(),
+        });
     }
 
     for vector in test_vectors {
-        let _ = axis_manager.insert(vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Execute complex hybrid query
@@ -226,7 +231,7 @@ async fn test_axis_complex_hybrid_queries() {
 #[tokio::test]
 async fn test_axis_system_recovery() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     // Setup multiple collections
     for coll_id in 0..3 {
@@ -234,7 +239,7 @@ async fn test_axis_system_recovery() {
         let vectors = create_test_vectors(100, 64, &collection_id);
 
         for vector in vectors {
-            let _ = axis_manager.insert(vector).await;
+            let _ = axis_manager.insert(&collection_id, &vector).await;
         }
     }
 
@@ -265,20 +270,20 @@ async fn test_axis_system_recovery() {
 #[tokio::test]
 async fn test_axis_collection_lifecycle() {
     let config = AxisConfig::default();
-    let axis_manager = AxisIndexManager::new(config).await.unwrap();
+    let axis_manager = AxisManager::new(config).await.unwrap();
 
     let collection_id = "lifecycle_test_collection";
 
     // Phase 1: Collection creation and initial data
     let initial_vectors = create_test_vectors(50, 128, collection_id);
     for vector in initial_vectors {
-        let _ = axis_manager.insert(vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Phase 2: Collection growth
     let growth_vectors = create_test_vectors(100, 128, collection_id);
     for vector in growth_vectors {
-        let _ = axis_manager.insert(vector).await;
+        let _ = axis_manager.insert("test_collection", &vector).await;
     }
 
     // Phase 3: Analysis and optimization

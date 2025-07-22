@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::persistence::wal::config::{MemTableType, WalStrategyType};
-use super::persistence::wal::{WalConfig, WalFactory, WalManager};
+use super::persistence::wal::{WalConfig, WalManager};
+// Legacy WalFactory removed - WalManager now uses WalBatchFactory internally
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -613,9 +614,11 @@ impl StorageSystemBuilder {
             self.config.wal_system.memtable.memtable_type
         );
 
-        let wal_strategy =
-            WalFactory::create_from_config(&self.config.wal_system, filesystem.clone()).await?;
-        let wal_manager = WalManager::new(wal_strategy, self.config.wal_system.clone()).await?;
+        let wal_manager = WalManager::create_with_batch_factory(
+            self.config.wal_system.strategy_type.clone(),
+            self.config.wal_system.clone(),
+            filesystem.clone()
+        ).await?;
         tracing::info!(
             "✅ WAL system initialized with {:?} strategy",
             self.config.wal_system.strategy_type
@@ -717,7 +720,7 @@ mod tests {
     async fn test_storage_system_builder() {
         let builder = StorageSystemBuilder::new()
             .with_viper_layout()
-            .with_wal_strategy(WalStrategyType::Avro)
+            .with_wal_strategy(WalStrategyType::AvroBatch)
             .with_wal_memtable(MemTableType::BTree)
             .with_high_data_compression();
 
@@ -727,7 +730,7 @@ mod tests {
         );
         assert_eq!(
             builder.config.wal_system.strategy_type,
-            WalStrategyType::Avro
+            WalStrategyType::AvroBatch
         );
         assert_eq!(
             builder.config.wal_system.memtable.memtable_type,

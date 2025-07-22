@@ -18,8 +18,8 @@
 
 use clap::Parser;
 use proximadb::compute::hardware_detection::HardwareCapabilities;
-use proximadb::{Config, ProximaDB};
-use std::path::PathBuf;
+use proximadb::{ConfigLoader, ProximaDB};
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
 #[derive(Parser)]
@@ -37,6 +37,64 @@ struct Args {
 
     #[arg(long)]
     node_id: Option<String>,
+}
+
+/// Ensure all required directories exist based on configuration
+async fn ensure_required_directories(config: &proximadb::core::Config) -> anyhow::Result<()> {
+    info!("🔧 Ensuring all required directories exist...");
+    
+    // Extract base data directory from storage configuration
+    let base_data_dir = config.server.data_dir.to_string_lossy();
+    info!("📂 Base data directory: {}", base_data_dir);
+    
+    // Create base data directory
+    tokio::fs::create_dir_all(base_data_dir.as_ref()).await
+        .map_err(|e| anyhow::anyhow!("Failed to create base data directory: {}", e))?;
+    
+    // Create storage location directories
+    for location in &config.storage.storage_locations {
+        if let Some(path) = location.url.strip_prefix("file://") {
+            info!("📂 Creating storage location directory: {}", path);
+            tokio::fs::create_dir_all(path).await
+                .map_err(|e| anyhow::anyhow!("Failed to create storage directory {}: {}", path, e))?;
+        }
+    }
+    
+    // Create metadata directory with required subdirectories
+    let metadata_url = &config.storage.metadata_url;
+    if let Some(base_path) = metadata_url.strip_prefix("file://") {
+        info!("📂 Creating metadata directories at: {}", base_path);
+        
+        // Create base metadata directory
+        tokio::fs::create_dir_all(base_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to create metadata directory: {}", e))?;
+            
+        // Create required subdirectories
+        let subdirs = ["current", "archive", "__staging"];
+        for subdir in &subdirs {
+            let subdir_path = format!("{}/{}", base_path, subdir);
+            info!("  📁 Creating subdirectory: {}", subdir_path);
+            tokio::fs::create_dir_all(&subdir_path).await
+                .map_err(|e| anyhow::anyhow!("Failed to create subdirectory {}: {}", subdir_path, e))?;
+        }
+    }
+    
+    // LSM directories are now created per-collection under storage locations
+    // The LSM config only contains operational parameters
+    let lsm_config = &config.storage.lsm_config;
+    
+    info!("📂 Creating LSM WAL directory: {}", lsm_config.wal_directory);
+    tokio::fs::create_dir_all(&lsm_config.wal_directory).await
+        .map_err(|e| anyhow::anyhow!("Failed to create LSM WAL directory: {}", e))?;
+    
+    info!("📂 Creating LSM data directory: {}", lsm_config.data_directory);
+    tokio::fs::create_dir_all(&lsm_config.data_directory).await
+        .map_err(|e| anyhow::anyhow!("Failed to create LSM data directory: {}", e))?;
+    
+    // Log directory creation is handled by the logging framework itself
+    
+    info!("✅ All required directories created successfully");
+    Ok(())
 }
 
 #[tokio::main]
@@ -80,14 +138,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let args = Args::parse();
 
-    // Load configuration
-    let mut config = if args.config.exists() {
-        let config_str = std::fs::read_to_string(&args.config)?;
-        toml::from_str::<Config>(&config_str)?
-    } else {
-        info!("Configuration file not found, using defaults");
-        Config::default()
-    };
+    // Load configuration with default merging and cloud support
+    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())?;
 
     // Override with CLI arguments
     if let Some(data_dir) = args.data_dir {
@@ -101,6 +153,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     info!("Starting ProximaDB server with config: {:?}", config);
+    
+    // Ensure all required directories exist
+    ensure_required_directories(&config).await?;
 
     // Create and start the database
     let mut db = ProximaDB::new(config).await?;

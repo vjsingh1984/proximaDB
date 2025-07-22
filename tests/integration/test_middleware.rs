@@ -16,6 +16,7 @@
 
 use proximadb::core::{
     ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+    bloom::BloomFilterConfig,
 };
 use proximadb::network::middleware::auth::UserInfo;
 use proximadb::network::middleware::{AuthConfig, RateLimitConfig};
@@ -59,7 +60,11 @@ async fn test_authentication_middleware() {
                 block_size_kb: 64,
             },
             cache_size_mb: 10,
-            bloom_filter_bits: 10,
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+                ..Default::default()
+            }),
         },
         consensus: ConsensusConfig {
             cluster_peers: vec![],
@@ -166,7 +171,11 @@ async fn test_rate_limiting_middleware() {
                 block_size_kb: 64,
             },
             cache_size_mb: 10,
-            bloom_filter_bits: 10,
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+                ..Default::default()
+            }),
         },
         consensus: ConsensusConfig {
             cluster_peers: vec![],

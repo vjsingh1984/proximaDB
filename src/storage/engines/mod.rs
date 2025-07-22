@@ -9,7 +9,7 @@ pub mod viper;
 
 // Re-export main engine types
 pub use lsm::LsmTree;
-pub use viper::ViperCoreEngine;
+pub use viper::ViperEngine;
 
 // Strategy pattern exports
 pub use crate::storage::traits::{

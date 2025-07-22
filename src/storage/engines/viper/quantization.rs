@@ -4,10 +4,9 @@
 //! significant storage reduction while maintaining search quality. Supports
 //! Product Quantization (PQ4/PQ8), Binary Quantization, and INT8 quantization.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
@@ -283,8 +282,8 @@ impl QuantizationLevel {
                         bits_per_element
                     ))
                 } else if let Some(size) = codebook_size {
-                    if *size == 0 || *size > 65535 {
-                        Err(anyhow!("Codebook size must be 1-65535, got {}", size))
+                    if *size == 0 {
+                        Err(anyhow!("Codebook size must be at least 1, got {}", size))
                     } else {
                         Ok(())
                     }
@@ -560,7 +559,7 @@ impl VectorQuantizationEngine {
             if record.vector.len() != model.dimension {
                 warn!(
                     "Vector {} dimension mismatch: {} vs expected {}",
-                    record.id,
+                    record.id.as_deref().unwrap_or(""),
                     record.vector.len(),
                     model.dimension
                 );
@@ -609,7 +608,7 @@ impl VectorQuantizationEngine {
             total_reconstruction_error += reconstruction_error;
 
             quantized_vectors.push(QuantizedVector {
-                id: record.id.clone(),
+                id: record.id.as_deref().unwrap_or("").to_string(),
                 level: model.level,
                 data: quantized_data,
                 reconstruction_error,

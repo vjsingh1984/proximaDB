@@ -15,7 +15,6 @@ pub mod lsm_behavior;
 pub mod wal_behavior;
 
 // Type aliases for convenience - these expose the actual data structures
-pub type WalMemtable = wal_behavior::WalBehaviorWrapper;
 pub type LsmMemtable<K, V> = lsm_behavior::LsmBehaviorWrapper<
     crate::storage::memtable::implementations::skiplist::SkipListMemtable<K, V>,
 >;
@@ -30,14 +29,13 @@ pub type FastLookupMap<K, V> =
     crate::storage::memtable::implementations::hashmap::HashMapMemtable<K, V>;
 
 use crate::storage::memtable::core::MemtableConfig;
-use anyhow::Result;
 
 /// Factory methods that use actual data structure names
 pub struct SpecializedMemtableFactory;
 
 impl SpecializedMemtableFactory {
     /// Create global partitioned memtable with WAL-specific behavior
-    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> WalMemtable {
+    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> wal_behavior::WalBehaviorWrapper {
         wal_behavior::WalBehaviorWrapper::new(config)
     }
 

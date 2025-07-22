@@ -19,9 +19,11 @@
 //! Implements level-based compaction strategy to prevent unbounded growth
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
-use super::LsmStorageEntry;
-use crate::core::{CollectionId, LsmConfig, VectorId};
+use super::{LsmRecord, SstableWriter};
+use crate::core::{String, LsmConfig, VectorId, VectorRecord};
+use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
+use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -34,7 +36,7 @@ use tracing::{debug, error, info, warn};
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
 pub struct CompactionTask {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -59,6 +61,8 @@ pub struct CompactionStats {
     pub files_merged: u64,
     pub avg_compaction_time_ms: u64,
     pub last_compaction_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub expired_records_deleted: u64,
+    pub tombstones_removed: u64,
 }
 
 /// Manages background compaction of SST files
@@ -69,12 +73,23 @@ pub struct CompactionManager {
     worker_handles: Vec<JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
-    active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionTask>>>,
+    active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+    atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+    manifest: Option<Arc<super::LsmManifest>>,
 }
 
 impl CompactionManager {
     /// Create a new compaction manager
     pub fn new(config: LsmConfig) -> Self {
+        Self::with_atomic_coordinator(config, None, None)
+    }
+    
+    /// Create a new compaction manager with atomic coordinator
+    pub fn with_atomic_coordinator(
+        config: LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
+    ) -> Self {
         Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -82,6 +97,8 @@ impl CompactionManager {
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(RwLock::new(CompactionStats::default())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
+            atomic_coordinator,
+            manifest,
         }
     }
 
@@ -94,8 +111,13 @@ impl CompactionManager {
             let shutdown_signal = Arc::clone(&self.shutdown_signal);
             let stats = Arc::clone(&self.stats);
             let active_compactions = Arc::clone(&self.active_compactions);
+            let atomic_coordinator = self.atomic_coordinator.clone();
+            let manifest = self.manifest.clone();
             let config = LsmConfig {
                 memtable_size_mb: self.config.memtable_size_mb,
+                level_count: self.config.level_count,
+                compaction_threshold: self.config.compaction_threshold,
+                block_size_kb: self.config.block_size_kb,
                 memory_flush_size_bytes: self.config.memory_flush_size_bytes,
                 memtable_type: self.config.memtable_type.clone(),
                 compaction_strategy: self.config.compaction_strategy.clone(),
@@ -124,6 +146,8 @@ impl CompactionManager {
                     stats,
                     active_compactions,
                     config,
+                    atomic_coordinator,
+                    manifest,
                 )
                 .await;
             });
@@ -206,7 +230,7 @@ impl CompactionManager {
     pub async fn check_compaction_needed(
         &self,
         collection_dir: &Path,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Option<CompactionTask>> {
         let sst_files = self.get_sst_files_by_level(collection_dir).await?;
 
@@ -230,7 +254,7 @@ impl CompactionManager {
                 };
 
                 return Ok(Some(CompactionTask {
-                    collection_id: collection_id.clone(),
+                    collection_id: collection_id.to_string(),
                     level,
                     input_files,
                     output_file,
@@ -253,8 +277,10 @@ impl CompactionManager {
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
         shutdown_signal: Arc<AtomicBool>,
         stats: Arc<RwLock<CompactionStats>>,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionTask>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
         config: LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
     ) {
         debug!("Compaction worker {} started", worker_id);
 
@@ -284,7 +310,7 @@ impl CompactionManager {
                 let start_time = std::time::Instant::now();
 
                 // Perform compaction
-                match Self::perform_compaction(&task, &config).await {
+                match Self::perform_compaction(&task, &config, atomic_coordinator.clone(), manifest.clone()).await {
                     Ok(compaction_stats) => {
                         info!(
                             "Compaction completed for collection {} level {} in {}ms",
@@ -338,9 +364,11 @@ impl CompactionManager {
     async fn perform_compaction(
         task: &CompactionTask,
         _config: &LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
     ) -> Result<CompactionStats> {
         let start_time = std::time::Instant::now();
-        let mut merged_data = BTreeMap::<VectorId, LsmStorageEntry>::new();
+        let mut merged_data = BTreeMap::<VectorId, LsmRecord>::new();
         let mut bytes_read = 0u64;
 
         debug!(
@@ -349,11 +377,20 @@ impl CompactionManager {
             task.level
         );
 
-        // Read and merge all input files
+        // Read and merge all input files using plugin filesystem
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        let fs = filesystem_factory.get_filesystem("file:///")
+            .map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?;
+        
         for input_file in &task.input_files {
-            let file_data = tokio::fs::read(input_file)
+            let input_path = input_file.to_string_lossy();
+            let file_data = fs.read(&input_path)
                 .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
             bytes_read += file_data.len() as u64;
 
@@ -379,25 +416,27 @@ impl CompactionManager {
 
                 let entry_data = &file_data[offset..offset + entry_len];
 
-                match bincode::deserialize::<(VectorId, LsmStorageEntry)>(entry_data) {
-                    Ok((id, entry)) => {
-                        // Handle merge logic for LSM entries
-                        match (&entry, merged_data.get(&id)) {
-                            // If we have a newer entry, use it
-                            (new_entry, Some(existing_entry)) => {
-                                if should_replace_entry(existing_entry, new_entry) {
-                                    merged_data.insert(id, entry);
+                match bincode::deserialize::<LsmRecord>(entry_data) {
+                    Ok(record) => {
+                        let id = VectorId::from(record.id.clone());
+                        
+                        // Handle merge logic for LSM records
+                        match merged_data.get(&id) {
+                            // If we have an existing record, check if we should replace it
+                            Some(existing_record) => {
+                                if should_replace_record(existing_record, &record) {
+                                    merged_data.insert(id, record);
                                 }
                             }
-                            // If no existing entry, insert the new one
-                            (_, None) => {
-                                merged_data.insert(id, entry);
+                            // If no existing record, insert the new one
+                            None => {
+                                merged_data.insert(id, record);
                             }
                         }
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to deserialize entry in {}: {}",
+                            "Failed to deserialize record in {}: {}",
                             input_file.display(),
                             e
                         );
@@ -410,56 +449,236 @@ impl CompactionManager {
 
         debug!("Merged {} unique records", merged_data.len());
 
-        // Write merged data to output file, filtering out old tombstones
-        let mut output_data = Vec::new();
-        for (id, lsm_entry) in merged_data.iter() {
-            // Skip old tombstones (they can be garbage collected during compaction)
-            // Keep only records and recent tombstones (within a certain time window)
-            let should_keep = match lsm_entry {
-                LsmStorageEntry::Record(_) => true,
-                LsmStorageEntry::Tombstone { timestamp, .. } => {
-                    // Keep tombstones that are less than 1 hour old
-                    let age = chrono::Utc::now().signed_duration_since(*timestamp);
-                    age.num_hours() < 1
+        // Convert merged data to vectors for sorting
+        let mut vector_records = Vec::new();
+        let current_time = chrono::Utc::now().timestamp_millis();
+        let mut expired_records_count = 0;
+        let mut tombstones_removed_count = 0;
+        
+        for (id, lsm_record) in merged_data.iter() {
+            // Check if record is expired (TTL-based expiry)
+            let is_expired = if let Some(expires_at) = lsm_record.expires_at {
+                expires_at < current_time
+            } else {
+                false
+            };
+            
+            // Skip expired records completely - they are physically deleted
+            if is_expired {
+                expired_records_count += 1;
+                debug!("⏰ LSM COMPACTION: Physically deleting expired record {} (expired at {})", 
+                      id, lsm_record.expires_at.unwrap());
+                continue;
+            }
+            
+            // Handle tombstone cleanup
+            let should_keep = if lsm_record.is_tombstone {
+                // Keep tombstones that are less than 1 hour old
+                let age = current_time - lsm_record.timestamp;
+                let keep_tombstone = age < (60 * 60 * 1000); // 1 hour in milliseconds
+                
+                if !keep_tombstone {
+                    tombstones_removed_count += 1;
+                    debug!("🗑️ LSM COMPACTION: Removing old tombstone {} (age: {}ms)", 
+                          id, age);
                 }
+                
+                keep_tombstone
+            } else {
+                true // Keep all active, non-expired records
             };
 
             if should_keep {
-                let entry = bincode::serialize(&(id.clone(), lsm_entry))
-                    .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
-                output_data.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-                output_data.extend_from_slice(&entry);
+                // Convert LsmRecord to VectorRecord for sorting
+                let vector_record: VectorRecord = lsm_record.clone().into();
+                vector_records.push(vector_record);
             }
         }
-
-        // Ensure output directory exists
-        if let Some(parent) = task.output_file.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+        
+        // Log cleanup statistics
+        if expired_records_count > 0 || tombstones_removed_count > 0 {
+            info!("🧹 LSM COMPACTION CLEANUP: {} expired records deleted, {} old tombstones removed", 
+                  expired_records_count, tombstones_removed_count);
         }
 
-        // Write output file atomically (write to temp file, then rename)
-        let temp_file = task.output_file.with_extension("tmp");
-        tokio::fs::write(&temp_file, &output_data)
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+        // Sort records by metadata for optimal encoding
+        info!("🔄 LSM COMPACTION: Sorting {} records by metadata for optimal encoding", vector_records.len());
+        let (sorted_vectors, sort_stats) = Self::sort_vectors_for_compaction(vector_records).await?;
+        info!("✅ LSM COMPACTION: Sorted records (estimated compression improvement: {:.1}%)", 
+              sort_stats.compression_estimate * 100.0);
 
-        tokio::fs::rename(&temp_file, &task.output_file)
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+        // Convert back to LsmRecord format with preserved metadata sorting
+        let mut sorted_lsm_records: BTreeMap<String, LsmRecord> = BTreeMap::new();
+        for (seq, vector) in sorted_vectors.into_iter().enumerate() {
+            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+            let mut lsm_record = LsmRecord::from_vector_record(vector, &task.collection_id);
+            lsm_record.sequence_number = seq as u64; // Update sequence for compacted order
+            lsm_record.level = task.level + 1; // Increment level after compaction
+            sorted_lsm_records.insert(vector_id, lsm_record);
+        }
 
-        let bytes_written = output_data.len() as u64;
+        // Use optimized SSTable writer for compacted output with atomic writes
+        let block_size = (_config.block_size_kb * 1024) as usize;
+        
+        // TODO: Pass filesystem from compaction manager - for now create a new factory
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        
+        let bytes_written = if let Some(coordinator) = atomic_coordinator {
+            // Use atomic operations for compaction
+            info!("🔒 LSM COMPACTION: Using atomic operations for compaction");
+            
+            // Create staging configuration
+            let staging_config = StagingConfig {
+                base_url: task.output_file.parent()
+                    .ok_or_else(|| crate::core::StorageError::LsmTree("Invalid output file path".to_string()))?
+                    .to_string_lossy()
+                    .to_string(),
+                collection_id: Some(task.collection_id.clone()),
+                operation_type: StagingOperationType::Compaction,
+                ..Default::default()
+            };
+            
+            // Begin atomic operation
+            let atomic_op = coordinator.begin_atomic_operation(&staging_config).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to begin atomic operation: {}", e)))?;
+            
+            debug!("Started atomic operation {} for compaction", atomic_op.operation_id);
+            
+            // Write to staging area
+            let staging_filename = task.output_file.file_name()
+                .ok_or_else(|| crate::core::StorageError::LsmTree("Invalid output filename".to_string()))?
+                .to_string_lossy();
+            
+            // Serialize the records
+            let mut serialized_data = Vec::new();
+            for (_id, record) in sorted_lsm_records.iter() {
+                let record_data = bincode::serialize(record)
+                    .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+                let len = record_data.len() as u32;
+                serialized_data.extend_from_slice(&len.to_le_bytes());
+                serialized_data.extend_from_slice(&record_data);
+            }
+            
+            // Write to staging
+            coordinator.write_to_staging(
+                &atomic_op.operation_id,
+                &staging_filename,
+                &serialized_data,
+            ).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to write to staging: {}", e)))?;
+            
+            let written_bytes = serialized_data.len() as u64;
+            
+            // Finalize atomic operation
+            coordinator.finalize_atomic_operation(&atomic_op.operation_id).await
+                .map_err(|e| crate::core::StorageError::LsmTree(format!("Failed to finalize atomic operation: {}", e)))?;
+            
+            info!("✅ LSM COMPACTION: Atomic operation {} completed successfully", atomic_op.operation_id);
+            
+            written_bytes
+        } else {
+            // Fallback to direct write (non-atomic)
+            let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
+            writer.write_records(sorted_lsm_records).await
+                .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+
+            let output_path = task.output_file.to_string_lossy();
+            let metadata = fs.metadata(&output_path)
+                .await
+                .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            metadata.size
+        };
 
         debug!(
             "Wrote {} bytes to output file {}",
             bytes_written,
             task.output_file.display()
         );
+        
+        // Update manifest if available
+        if let Some(manifest) = manifest {
+            // Add the new compacted file
+            let output_filename = task.output_file.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown.sst")
+                .to_string();
+            
+            // Collect metadata statistics from the merged records
+            let mut metadata_columns = HashMap::new();
+            for record in merged_data.values() {
+                for (column, value) in &record.metadata {
+                    let stats = metadata_columns.entry(column.clone()).or_insert_with(|| {
+                        super::manifest::ColumnStats {
+                            min_value: value.clone(),
+                            max_value: value.clone(),
+                            null_count: 0,
+                            distinct_count_estimate: 0,
+                        }
+                    });
+                    
+                    // Update min/max
+                    if let (Some(v), Some(min), Some(max)) = (value.as_f64(), stats.min_value.as_f64(), stats.max_value.as_f64()) {
+                        if v < min {
+                            stats.min_value = value.clone();
+                        }
+                        if v > max {
+                            stats.max_value = value.clone();
+                        }
+                    }
+                    
+                    if value.is_null() {
+                        stats.null_count += 1;
+                    }
+                }
+            }
+            
+            let min_key = merged_data.keys().next().map(|k| k.to_string()).unwrap_or_default();
+            let max_key = merged_data.keys().last().map(|k| k.to_string()).unwrap_or_default();
+            let min_sequence = merged_data.values().map(|r| r.sequence_number).min().unwrap_or(0);
+            let max_sequence = merged_data.values().map(|r| r.sequence_number).max().unwrap_or(0);
+            
+            let new_file_info = super::SstableFileInfo {
+                file_id: output_filename.clone(),
+                file_path: output_filename,
+                level: task.level + 1,
+                size_bytes: bytes_written,
+                record_count: merged_data.len() as u64,
+                min_key,
+                max_key,
+                created_at: chrono::Utc::now().timestamp(),
+                last_compacted_at: Some(chrono::Utc::now().timestamp()),
+                bloom_fpr: 0.01,
+                metadata_columns,
+                marked_for_deletion: false,
+                min_sequence,
+                max_sequence,
+            };
+            
+            // Add new file first
+            if let Err(e) = manifest.add_sstable(new_file_info).await {
+                warn!("Failed to add compacted file to manifest: {}", e);
+            }
+            
+            // Remove old files from manifest
+            let input_file_ids: Vec<String> = task.input_files.iter()
+                .filter_map(|p| p.file_name())
+                .filter_map(|n| n.to_str())
+                .map(|s| s.to_string())
+                .collect();
+            
+            if let Err(e) = manifest.remove_sstables(&input_file_ids).await {
+                warn!("Failed to remove input files from manifest: {}", e);
+            }
+        }
 
-        // Remove input files after successful compaction
+        // Remove input files after successful compaction using plugin filesystem
         for input_file in &task.input_files {
-            if let Err(e) = tokio::fs::remove_file(input_file).await {
+            let input_path = input_file.to_string_lossy();
+            if let Err(e) = fs.delete(&input_path).await {
                 warn!(
                     "Failed to remove input file {}: {}",
                     input_file.display(),
@@ -529,8 +748,8 @@ impl CompactionManager {
         }
 
         debug!(
-            "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged",
-            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len()
+            "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged, {} expired deleted, {} tombstones removed",
+            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len(), expired_records_count, tombstones_removed_count
         );
 
         Ok(CompactionStats {
@@ -540,6 +759,8 @@ impl CompactionManager {
             files_merged: task.input_files.len() as u64,
             avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
             last_compaction_time: Some(Utc::now()),
+            expired_records_deleted: expired_records_count,
+            tombstones_removed: tombstones_removed_count,
         })
     }
 
@@ -554,21 +775,39 @@ impl CompactionManager {
             return Ok(files_by_level);
         }
 
-        let mut dir = tokio::fs::read_dir(collection_dir)
+        // Use plugin filesystem for directory listing
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?
+        );
+        let fs = filesystem_factory.get_filesystem("file:///")
+            .map_err(|e| crate::core::StorageError::LsmTree(e.to_string()))?;
+        
+        let collection_path = collection_dir.to_string_lossy();
+        let entries = fs.list(&collection_path)
             .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
-        while let Some(entry) = dir
-            .next_entry()
-            .await
-            .map_err(|e| crate::core::StorageError::DiskIO(e))?
-        {
-            let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                if filename.starts_with("sst_") && filename.ends_with(".db") {
-                    // For now, assign all SST files to level 0
-                    // TODO: Parse level from filename or metadata
-                    files_by_level.entry(0).or_insert_with(Vec::new).push(path);
+        for entry in entries {
+            if !entry.metadata.is_directory {
+                if let Some(filename) = std::path::Path::new(&entry.name).file_name().and_then(|f| f.to_str()) {
+                    if filename.starts_with("sst_") && filename.ends_with(".db") {
+                        // Parse level from filename format: sst_L{level}_{timestamp}.db
+                        let level = if let Some(level_str) = filename.strip_prefix("sst_L") {
+                            level_str.chars()
+                                .take_while(|c| c.is_numeric())
+                                .collect::<String>()
+                                .parse::<u8>()
+                                .unwrap_or(0)
+                        } else {
+                            // Legacy format without level, assume level 0
+                            0
+                        };
+                        
+                        let path = PathBuf::from(&entry.url);
+                        files_by_level.entry(level).or_insert_with(Vec::new).push(path);
+                    }
                 }
             }
         }
@@ -582,34 +821,42 @@ impl CompactionManager {
         let filename = format!("sst_l{}_t{}.db", level, timestamp);
         collection_dir.join(filename)
     }
+
+    /// Sort vector records by metadata for optimal compaction encoding
+    /// Uses same sorting strategy as flush operations to maintain consistency
+    async fn sort_vectors_for_compaction(
+        vector_records: Vec<VectorRecord>,
+    ) -> Result<(Vec<VectorRecord>, SortingStats)> {
+        debug!("🔄 Sorting {} vectors for optimal SSTable compaction encoding", vector_records.len());
+        
+        if vector_records.is_empty() {
+            return Ok((vector_records, SortingStats::default()));
+        }
+
+        // Create metadata sorter for optimal SSTable encoding
+        let sorter = MetadataSorter::new(Default::default());
+        
+        // Sort records to optimize for:
+        // 1. Sequential access patterns in SSTable blocks
+        // 2. Better compression ratios in block-based storage
+        // 3. Improved bloom filter effectiveness
+        let (sorted_records, sort_stats) = sorter.sort_for_encoding(vector_records)?;
+        
+        debug!("✅ LSM compaction sorting complete: {} records sorted for optimal SSTable encoding", 
+               sorted_records.len());
+        
+        Ok((sorted_records, sort_stats))
+    }
 }
 
-/// Determine if a new entry should replace an existing entry during compaction
-fn should_replace_entry(existing: &LsmStorageEntry, new: &LsmStorageEntry) -> bool {
-    match (existing, new) {
-        // Always prefer newer timestamps
-        (LsmStorageEntry::Record(existing_record), LsmStorageEntry::Record(new_record)) => {
-            new_record.timestamp > existing_record.timestamp
-        }
-        (LsmStorageEntry::Record(record), LsmStorageEntry::Tombstone { timestamp, .. }) => {
-            timestamp.timestamp_millis() > record.timestamp
-        }
-        (
-            LsmStorageEntry::Tombstone {
-                timestamp: existing_ts,
-                ..
-            },
-            LsmStorageEntry::Record(record),
-        ) => record.timestamp > existing_ts.timestamp_millis(),
-        (
-            LsmStorageEntry::Tombstone {
-                timestamp: existing_ts,
-                ..
-            },
-            LsmStorageEntry::Tombstone {
-                timestamp: new_ts, ..
-            },
-        ) => *new_ts > *existing_ts,
+/// Determine if a new record should replace an existing record during compaction
+fn should_replace_record(existing: &LsmRecord, new: &LsmRecord) -> bool {
+    // LSM compaction rule: newer records (higher sequence number) replace older ones
+    // For records with same sequence number, prefer by timestamp
+    if new.sequence_number != existing.sequence_number {
+        new.sequence_number > existing.sequence_number
+    } else {
+        new.timestamp > existing.timestamp
     }
 }
 
@@ -627,16 +874,15 @@ impl Drop for CompactionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    
 
     #[tokio::test]
     async fn test_compaction_manager_basic() {
-        let config = LsmConfig {
-            memtable_size_mb: 1,
-            level_count: 3,
-            compaction_threshold: 2,
-            block_size_kb: 4,
-        };
+        let mut config = LsmConfig::default();
+        config.memtable_size_mb = 1;
+        config.level_count = 3;
+        config.compaction_threshold = 2;
+        config.block_size_kb = 4;
 
         let mut manager = CompactionManager::new(config);
         assert!(manager.start_workers(1).await.is_ok());
@@ -645,12 +891,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_task_scheduling() {
-        let config = LsmConfig {
-            memtable_size_mb: 1,
-            level_count: 3,
-            compaction_threshold: 2,
-            block_size_kb: 4,
-        };
+        let mut config = LsmConfig::default();
+        config.memtable_size_mb = 1;
+        config.level_count = 3;
+        config.compaction_threshold = 2;
+        config.block_size_kb = 4;
 
         let manager = CompactionManager::new(config);
 

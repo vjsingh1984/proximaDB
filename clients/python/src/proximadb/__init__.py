@@ -16,24 +16,41 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-# Unified client interface (recommended)
+# Unified client interface
 from .unified_client import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
 
-# Specialized clients (for advanced use cases)
-from .client import ProximaDBClient as ProximaDBRestClient
-from .sync_grpc_client import ProximaDBSyncGrpcClient as ProximaDBGrpcClient
+# Individual client implementations
+from .rest_client import ProximaDBRestClient
+try:
+    from .protocols.grpc_async import ProximaDBGrpcClient
+except ImportError:
+    # gRPC not available
+    ProximaDBGrpcClient = None
 from .config import ClientConfig
 from .models import (
     Collection,
     CollectionConfig,
-    IndexConfig,
+    IndexConfiguration,
     SearchResult,
-    SearchStats,
-    InsertResult,
-    BatchResult,
+    VectorOperationResponse,
+    OperationMetrics,
     DistanceMetric,
-    IndexAlgorithm,
+    IndexingAlgorithm,
+    StorageEngine,
+    VectorRecord,
+    HealthStatus,
+    VectorArray,
+    MetadataDict,
+    FilterDict,
+    QuantizationConfig,
+    QuantizationType,
+    SearchOptimization,
 )
+
+# Aliases for test compatibility
+IndexConfig = IndexConfiguration
+Vector = VectorRecord
+
 from .exceptions import (
     ProximaDBError,
     AuthenticationError,
@@ -60,29 +77,51 @@ __version__ = "0.1.0"
 __author__ = "Vijaykumar Singh"
 __email__ = "singhvjd@gmail.com"
 
+# Protobuf modules for gRPC
+try:
+    from . import proximadb_pb2
+    from . import proximadb_pb2_grpc
+except ImportError:
+    proximadb_pb2 = None
+    proximadb_pb2_grpc = None
+
 __all__ = [
-    # Unified client interface (recommended)
+    # Unified client interface
     "ProximaDBClient",
     "connect", 
     "connect_grpc",
     "connect_rest",
     "Protocol",
     
-    # Specialized clients (for advanced use cases)
+    # Individual client implementations
     "ProximaDBRestClient",
     "ProximaDBGrpcClient",
+    
+    # Configuration
     "ClientConfig",
     
     # Models
     "Collection",
     "CollectionConfig", 
-    "IndexConfig",
+    "IndexConfiguration",
     "SearchResult",
-    "SearchStats",
-    "InsertResult",
-    "BatchResult",
+    "VectorOperationResponse",
+    "OperationMetrics",
     "DistanceMetric",
-    "IndexAlgorithm",
+    "IndexingAlgorithm",
+    "StorageEngine",
+    "VectorRecord",
+    "HealthStatus",
+    "VectorArray",
+    "MetadataDict",
+    "FilterDict",
+    "QuantizationConfig",
+    "QuantizationType",
+    "SearchOptimization",
+    
+    # Aliases for test compatibility
+    "IndexConfig",
+    "Vector",
     
     # Exceptions
     "ProximaDBError",
@@ -102,4 +141,34 @@ __all__ = [
     "chunk_by_sentences",
     "chunk_by_paragraphs",
     "chunk_sliding_window",
+    
+    # Protobuf modules (for gRPC)
+    "proximadb_pb2",
+    "proximadb_pb2_grpc",
 ]
+
+# Filter API
+from .filters import (
+    FilterBuilder,
+    FilterOp,
+    LogicalOp,
+    eq,
+    gt,
+    lt,
+    in_list,
+    and_filters,
+    or_filters,
+)
+
+__all__.extend([
+    # Filter API
+    "FilterBuilder",
+    "FilterOp", 
+    "LogicalOp",
+    "eq",
+    "gt",
+    "lt",
+    "in_list",
+    "and_filters",
+    "or_filters",
+])

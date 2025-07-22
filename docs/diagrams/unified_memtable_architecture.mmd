@@ -1,0 +1,132 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#2196F3', 'primaryBorderColor':'#1976D2', 'primaryTextColor':'#fff', 'fontFamily':'Arial', 'fontSize':'14px'}}}%%
+classDiagram
+    %% Core Interface
+    class MemtableCore~K,V~ {
+        <<interface>>
+        +insert(K, V) Result~()~
+        +get(K)* Option~V~*
+        +remove(K)* Option~V~
+        +scan() Iterator~K,V~
+        +clear() Result~()~
+        +is_empty() bool
+        +len() usize
+        +memory_usage() usize
+    }
+    
+    class MemtableConfig {
+        +memtable_type: MemTableType
+        +initial_capacity: usize
+        +global_memory_limit: usize
+        +max_size_bytes: usize
+    }
+    
+    %% Implementations
+    class BTreeMemtable~K,V~ {
+        -tree: BTreeMap~K,V~
+        -memory_usage: AtomicU64
+    }
+    note for BTreeMemtable "Ordered operations\nNatural sort order\nEfficient range scans"
+    
+    class SkipListMemtable~K,V~ {
+        -skiplist: SkipMap~K,V~
+        -memory_usage: AtomicU64
+    }
+    note for SkipListMemtable "Lock-free operations\nHigh concurrency\nProbabilistic ordering"
+    
+    class HashMapMemtable~K,V~ {
+        -map: HashMap~K,V~
+        -memory_usage: AtomicU64
+    }
+    note for HashMapMemtable "O(1) operations\nRandom access\nMemory efficient"
+    
+    class DashMapMemtable~K,V~ {
+        -map: DashMap~K,V~
+        -memory_usage: AtomicU64
+    }
+    note for DashMapMemtable "Concurrent HashMap\nSharded locks\nHigh throughput"
+    
+    %% Behavior Wrappers
+    class WalBehaviorWrapper~K,V~ {
+        -inner: Box~dyn MemtableCore[K,V]~
+        -sequence_counter: AtomicU64
+        -flush_coordinator: Arc~FlushCoordinator~
+        +wrap_insert() u64
+        +wrap_batch_insert() Vec~u64~
+        +get_operation_type() u8
+        +coordinate_flush() Result~()~
+    }
+    
+    class LsmBehaviorWrapper~K,V~ {
+        -inner: Box~dyn MemtableCore[K,V]~
+        -tombstones: Arc~RwLock[HashSet[K]]~
+        -range_cache: Arc~RwLock[RangeCache]~
+        +handle_delete() Result~()~
+        +optimize_range_scan() Iterator
+        +prepare_for_sstable() Vec~K,V~
+        +apply_compaction_hints() Result~()~
+    }
+    
+    %% Storage Behaviors
+    class WAL_Behavior {
+        <<behavior>>
+        Sequence Management
+        - Auto-incrementing sequences
+        - Batch sequence allocation
+        - Flush coordination
+        
+        Operation Types
+        - Insert (1)
+        - Update (2)
+        - Delete (3)
+        - Flush (4)
+        - Checkpoint (5)
+        - AvroPayload (6)
+    }
+    
+    class LSM_Behavior {
+        <<behavior>>
+        LSM Operations
+        - Tombstone tracking
+        - Range optimization
+        - SSTable preparation
+        - Compaction hints
+        
+        Storage Format
+        - Key ordering
+        - Bloom filter data
+        - Compression metadata
+    }
+    
+    %% Factory
+    class MemtableFactory {
+        +create_memtable(config) Box~dyn MemtableCore~
+        +create_wal_memtable(config) WalBehaviorWrapper
+        +create_lsm_memtable(config) LsmBehaviorWrapper
+    }
+    
+    %% Relationships
+    BTreeMemtable ..|> MemtableCore : implements
+    SkipListMemtable ..|> MemtableCore : implements
+    HashMapMemtable ..|> MemtableCore : implements
+    DashMapMemtable ..|> MemtableCore : implements
+    
+    WalBehaviorWrapper o-- MemtableCore : wraps
+    LsmBehaviorWrapper o-- MemtableCore : wraps
+    
+    WalBehaviorWrapper ..> WAL_Behavior : applies
+    LsmBehaviorWrapper ..> LSM_Behavior : applies
+    
+    MemtableFactory --> BTreeMemtable : creates
+    MemtableFactory --> SkipListMemtable : creates
+    MemtableFactory --> HashMapMemtable : creates
+    MemtableFactory --> DashMapMemtable : creates
+    MemtableFactory --> WalBehaviorWrapper : creates
+    MemtableFactory --> LsmBehaviorWrapper : creates
+    
+    MemtableFactory ..> MemtableConfig : uses
+    
+    %% Notes
+    note "WAL Optimal Pairings:<br/>• BTree for Bincode WAL (ordered flush)<br/>• HashMap for Avro WAL (random access)<br/>• DashMap for high-concurrency WAL"
+    
+    note "LSM Optimal Pairings:<br/>• BTree for SSTable generation<br/>• SkipList for concurrent writes<br/>• Both maintain sorted order"
+    

@@ -17,7 +17,7 @@ mod tests {
         assert!(!config.auth.enabled);
         assert!(config.rate_limit.enabled);
         assert_eq!(config.request_timeout_secs, 30);
-        assert_eq!(config.max_request_size, 32 * 1024 * 1024);
+        assert_eq!(config.max_request_size, 64 * 1024 * 1024);
         assert_eq!(config.keep_alive_timeout_secs, 60);
         assert!(config.tcp_nodelay);
     }

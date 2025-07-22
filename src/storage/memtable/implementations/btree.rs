@@ -59,7 +59,7 @@ where
     }
 
     /// Estimate memory size of a key-value pair
-    fn estimate_entry_size(key: &K, value: &V) -> usize {
+    fn estimate_entry_size(_key: &K, _value: &V) -> usize {
         let overhead = 24; // BTreeMap entry overhead
         let mut total = overhead;
 
@@ -67,37 +67,10 @@ where
         let key_size = std::mem::size_of::<K>();
         total += key_size;
 
-        // For the value, try to use actual_size_bytes() if it's a WalEntry
-        let value_size = {
-            // Check if value can be cast to WalEntry and use its actual_size_bytes method
-            use std::any::{Any, TypeId};
-            if TypeId::of::<V>() == TypeId::of::<crate::storage::persistence::wal::WalEntry>() {
-                // Cast to WalEntry and use actual_size_bytes
-                if let Some(wal_entry) =
-                    (value as &dyn Any).downcast_ref::<crate::storage::persistence::wal::WalEntry>()
-                {
-                    let actual_size = wal_entry.actual_size_bytes();
-                    tracing::debug!(
-                        "📊 BTREE_SIZE_ESTIMATE: Using WalEntry.actual_size_bytes() = {} bytes",
-                        actual_size
-                    );
-                    actual_size
-                } else {
-                    // Fallback to std::mem::size_of
-                    let fallback_size = std::mem::size_of::<V>();
-                    tracing::debug!("📊 BTREE_SIZE_ESTIMATE: WalEntry cast failed, using std::mem::size_of = {} bytes", fallback_size);
-                    fallback_size
-                }
-            } else {
-                // Not a WalEntry, use std::mem::size_of
-                let regular_size = std::mem::size_of::<V>();
-                tracing::debug!(
-                    "📊 BTREE_SIZE_ESTIMATE: Non-WalEntry type, using std::mem::size_of = {} bytes",
-                    regular_size
-                );
-                regular_size
-            }
-        };
+        // For the value, use std::mem::size_of
+        // Note: For more accurate size estimation with variable-length data,
+        // implement a trait with an actual_size_bytes() method
+        let value_size = std::mem::size_of::<V>();
 
         total += value_size;
 
@@ -131,7 +104,7 @@ where
         let old_count = data.len();
         let key_exists = data.contains_key(&key);
 
-        tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: key={:?}, old_count={}, key_exists={}, THIS_IS_THE_LEGACY_BTREE_IMPLEMENTATION", 
+        tracing::info!("🌲 BTree Memtable Insert: key={:?}, old_count={}, key_exists={}", 
                       key, old_count, key_exists);
 
         let old_size = if key_exists {

@@ -6,19 +6,18 @@
 //! Comprehensive unit tests for VIPER UnifiedStorageEngine implementation and atomic operations
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::VectorRecord;
 use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
-use crate::storage::engines::viper::{core::ViperCoreConfig, ViperCoreEngine};
+use crate::storage::engines::viper::{ViperEngine, types::ViperConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
 
 /// Create test filesystem and VIPER engine
-async fn create_test_viper_engine() -> Result<(ViperCoreEngine, TempDir)> {
+async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_string_lossy().to_string();
 
@@ -28,33 +27,30 @@ async fn create_test_viper_engine() -> Result<(ViperCoreEngine, TempDir)> {
     };
 
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let config = ViperCoreConfig::default();
-    let viper_engine = ViperCoreEngine::new(config, filesystem).await?;
+    let config = ViperConfig::default();
+    let viper_engine = ViperEngine::new(config, filesystem).await?;
 
     Ok((viper_engine, temp_dir))
 }
 
 /// Create test vector records for testing
-fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRecord> {
+fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| {
             let now = chrono::Utc::now().timestamp_millis();
             VectorRecord {
-                id: format!("test_vector_{}", i),
-                collection_id: collection_id.to_string(),
+                id: Some(format!("test_vector_{}", i)),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
-                metadata: {
-                    let mut meta = HashMap::new();
-                    meta.insert(
-                        "category".to_string(),
-                        serde_json::Value::String(format!("category_{}", i % 3)),
-                    );
-                    meta.insert(
-                        "priority".to_string(),
-                        serde_json::Value::Number(serde_json::Number::from(i)),
-                    );
-                    meta
-                },
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "category".to_string(),
+                        value: format!("category_{}", i % 3),
+                    },
+                    crate::proto::proximadb::MetadataItem {
+                        key: "priority".to_string(),
+                        value: i.to_string(),
+                    },
+                ],
                 timestamp: now,
                 created_at: now,
                 updated_at: now,
@@ -96,8 +92,8 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.do_flush(&flush_params).await?;
 
@@ -122,14 +118,14 @@ async fn test_viper_flush_with_high_level_trait_method() -> Result<()> {
         force: true,
         synchronous: true,
         trigger_compaction: false,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.flush(flush_params).await?;
 
     // Verify the high-level flush includes timing and logging
     assert!(result.success);
-    assert!(result.duration_ms >= 0);
+    // duration_ms is always >= 0 as it's unsigned
     assert!(result.completed_at > chrono::Utc::now() - chrono::Duration::minutes(1));
 
     Ok(())
@@ -192,8 +188,8 @@ async fn test_dynamic_storage_engine_flush() -> Result<()> {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = storage_engine.flush(flush_params).await?;
 
@@ -211,19 +207,19 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     let metrics = viper_engine.collect_engine_metrics().await?;
 
     // Verify VIPER-specific metrics are present
-    assert!(metrics.contains_key("internal_operations"));
-    assert!(metrics.contains_key("internal_memory_usage"));
-    assert!(metrics.contains_key("internal_collections"));
+    assert!(metrics.contains_key("flush_operations"));
+    assert!(metrics.contains_key("memory_usage_bytes"));
+    assert!(metrics.contains_key("collection_count"));
 
-    // Verify metric values are reasonable
-    if let Some(serde_json::Value::Number(ops)) = metrics.get("internal_operations") {
-        assert!(ops.as_u64().unwrap_or(0) >= 0);
+    // Verify metric values exist (u64 values are always >= 0)
+    if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
+        let _ = ops.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(mem)) = metrics.get("internal_memory_usage") {
-        assert!(mem.as_u64().unwrap_or(0) >= 0);
+    if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
+        let _ = mem.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(cols)) = metrics.get("internal_collections") {
-        assert!(cols.as_u64().unwrap_or(0) >= 0);
+    if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
+        let _ = cols.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
 
     Ok(())
@@ -236,8 +232,8 @@ async fn test_flush_parameter_validation() -> Result<()> {
     // Test invalid parameters
     let invalid_params = FlushParameters {
         collection_id: None, // VIPER requires collection ID
-        ..Default::default()
-    };
+        collection_config: None,
+        ..Default::default()};
 
     let result = viper_engine.do_flush(&invalid_params).await;
     assert!(result.is_err());

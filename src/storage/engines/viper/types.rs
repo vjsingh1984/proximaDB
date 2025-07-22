@@ -1,0 +1,384 @@
+// Copyright 2025 ProximaDB
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+//! VIPER Type Definitions
+//!
+//! This module contains all the type definitions, enums, and structs used by the VIPER storage engine.
+
+use std::collections::HashMap;
+use std::time::SystemTime;
+
+
+
+/// Filterable column configuration for server-side metadata filtering
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FilterableColumn {
+    /// Column name in metadata
+    pub name: String,
+    /// Data type for Parquet schema
+    pub data_type: FilterableDataType,
+    /// Whether to create an index on this column
+    pub indexed: bool,
+    /// Whether this column supports range queries
+    pub supports_range: bool,
+    /// Estimated cardinality for query optimization
+    pub estimated_cardinality: Option<usize>,
+}
+
+/// Supported data types for filterable columns
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum FilterableDataType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    DateTime,
+    Array(Box<FilterableDataType>),
+}
+
+/// Index types for different column access patterns
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnIndexType {
+    /// Hash index for equality queries
+    Hash,
+    /// B-tree index for range queries  
+    BTree,
+    /// Bloom filter for existence checks
+    BloomFilter,
+    /// Full-text search index
+    FullText,
+}
+
+/// Parquet schema design for user-configurable columns
+#[derive(Debug, Clone)]
+pub struct ParquetSchemaDesign {
+    pub collection_id: String,
+    pub fields: Vec<ParquetField>,
+    pub filterable_columns: Vec<FilterableColumn>,
+    pub partition_columns: Vec<String>,
+    pub compression: ParquetCompression,
+    pub row_group_size: usize,
+}
+
+/// Individual field in Parquet schema
+#[derive(Debug, Clone)]
+pub struct ParquetField {
+    pub name: String,
+    pub field_type: ParquetFieldType,
+    pub nullable: bool,
+    pub indexed: bool,
+}
+
+/// Parquet field types
+#[derive(Debug, Clone)]
+pub enum ParquetFieldType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    Binary,
+    List(Box<ParquetFieldType>),
+    Timestamp,
+}
+
+/// Parquet compression options
+#[derive(Debug, Clone)]
+pub enum ParquetCompression {
+    None,
+    Snappy,
+    Gzip,
+    Zstd,
+}
+
+/// Processed vector record with separated filterable and extra metadata
+#[derive(Debug, Clone)]
+pub struct ProcessedVectorRecord {
+    pub original_record: crate::core::VectorRecord,
+    pub filterable_data: HashMap<String, serde_json::Value>,
+    pub extra_meta: HashMap<String, serde_json::Value>,
+}
+
+/// Configuration for VIPER core engine
+#[derive(Debug, Clone)]
+pub struct ViperConfig {
+    /// Enable ML-driven clustering for optimal data organization
+    pub enable_ml_clustering: bool,
+
+    /// Number of clusters for initial partitioning
+    pub initial_cluster_count: usize,
+
+    /// Quantization settings for vector compression
+    pub enable_quantization: bool,
+
+    /// Parquet compression type
+    pub parquet_compression: ParquetCompression,
+
+    /// Row group size for Parquet files
+    pub row_group_size: usize,
+
+    /// Enable background compaction
+    pub enable_background_compaction: bool,
+
+    /// Flush size threshold in bytes
+    pub flush_size_bytes: Option<usize>,
+
+    // Future: Quantization and clustering integration
+    /// Quantization configuration per cluster
+    pub quantization_config: Option<QuantizationConfig>,
+    /// Cluster-specific quantization strategies
+    pub cluster_quantization_map: HashMap<ClusterId, VectorStorageFormat>,
+    /// Vector quality metrics for quantization decisions
+    pub vector_quality_metrics: VectorQualityMetrics,
+    /// Search performance statistics for optimization
+    pub search_performance_stats: SearchPerformanceStats,
+}
+
+/// Collection metadata in VIPER with quantization and clustering support
+#[derive(Debug, Clone)]
+pub struct CollectionMetadata {
+    pub collection_id: String,
+    pub vector_dimensions: usize,
+    pub distance_metric: String,
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
+    pub total_vectors: usize,
+    pub total_size_bytes: usize,
+    pub active_clusters: Vec<ClusterId>,
+    pub quantization_enabled: bool,
+    pub quantization_config: Option<QuantizationConfig>,
+    pub partition_strategy: PartitionStrategy,
+    pub compression_stats: CompressionStats,
+    pub filterable_columns: Vec<FilterableColumn>,
+    pub schema_version: u32,
+    pub flush_size_bytes: Option<usize>,
+}
+
+/// Compression statistics for optimization
+#[derive(Debug, Clone, Default)]
+pub struct CompressionStats {
+    pub original_size: usize,
+    pub compressed_size: usize,
+    pub compression_ratio: f32,
+    pub compression_time_ms: u64,
+}
+
+/// Compression configuration
+#[derive(Debug, Clone)]
+pub struct CompressionConfig {
+    pub algorithm: CompressionAlgorithm,
+    pub level: u8,
+    pub dictionary_size: usize,
+    pub parallel_compression: bool,
+}
+
+/// Compression algorithms
+#[derive(Debug, Clone)]
+pub enum CompressionAlgorithm {
+    None,
+    Snappy,
+    Gzip,
+    Zstd,
+    Lz4,
+}
+
+/// Schema configuration
+#[derive(Debug, Clone)]
+pub struct SchemaConfig {
+    pub version: u32,
+    pub backward_compatibility: bool,
+    pub strict_mode: bool,
+    pub auto_migration: bool,
+    pub field_evolution: HashMap<String, FieldEvolution>,
+}
+
+/// Field evolution configuration
+#[derive(Debug, Clone)]
+pub struct FieldEvolution {
+    pub nullable: bool,
+    pub default_value: Option<serde_json::Value>,
+    pub migration_strategy: MigrationStrategy,
+}
+
+/// Migration strategy for schema evolution
+#[derive(Debug, Clone)]
+pub enum MigrationStrategy {
+    Copy,
+    Transform(String),
+    Drop,
+    Default(serde_json::Value),
+}
+
+/// Atomic operations configuration
+#[derive(Debug, Clone)]
+pub struct AtomicOperationsConfig {
+    pub staging_directory: String,
+    pub atomic_writes: bool,
+    pub fsync_on_commit: bool,
+    pub rollback_on_failure: bool,
+    pub max_concurrent_operations: usize,
+}
+
+/// Cluster metadata
+#[derive(Debug, Clone)]
+pub struct ClusterMetadata {
+    pub cluster_id: ClusterId,
+    pub centroid: Vec<f32>,
+    pub vector_count: usize,
+    pub total_size_bytes: usize,
+    pub created_at: SystemTime,
+    pub last_updated: SystemTime,
+    pub compression_ratio: f32,
+    pub quantization_level: QuantizationLevel,
+    pub partition_files: Vec<String>,
+}
+
+/// Quantization configuration
+#[derive(Debug, Clone)]
+pub struct QuantizationConfig {
+    pub enabled: bool,
+    pub quantization_type: QuantizationType,
+    pub bits_per_dimension: u8,
+    pub compression_ratio: f32,
+    pub accuracy_threshold: f32,
+}
+
+/// Quantization types
+#[derive(Debug, Clone)]
+pub enum QuantizationType {
+    ProductQuantization,
+    ScalarQuantization,
+    BinaryQuantization,
+}
+
+/// Quantization level
+#[derive(Debug, Clone)]
+pub enum QuantizationLevel {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+/// Vector storage format
+#[derive(Debug, Clone)]
+pub enum VectorStorageFormat {
+    Float32,
+    Float16,
+    Int8,
+    Binary,
+    ProductQuantized,
+}
+
+/// Vector quality metrics
+#[derive(Debug, Clone, Default)]
+pub struct VectorQualityMetrics {
+    pub avg_norm: f32,
+    pub std_deviation: f32,
+    pub sparsity_ratio: f32,
+    pub dimension_variance: Vec<f32>,
+}
+
+/// Search performance statistics
+#[derive(Debug, Clone, Default)]
+pub struct SearchPerformanceStats {
+    pub avg_search_time_ms: f64,
+    pub cache_hit_ratio: f32,
+    pub false_positive_rate: f32,
+    pub recall_at_k: HashMap<usize, f32>,
+}
+
+/// Partition strategy
+#[derive(Debug, Clone)]
+pub enum PartitionStrategy {
+    None,
+    ByCluster,
+    ByTimestamp,
+    BySize,
+    Hybrid,
+}
+
+/// Cluster ID type
+pub type ClusterId = String;
+
+/// Engine statistics
+#[derive(Debug, Clone, Default)]
+pub struct EngineStats {
+    pub total_vectors: u64,
+    pub total_size_bytes: u64,
+    pub active_collections: usize,
+    pub flush_operations: u64,
+    pub compaction_operations: u64,
+    pub avg_compression_ratio: f32,
+    pub avg_ml_prediction_accuracy: f32,
+    pub total_storage_size_bytes: u64,
+    pub active_clusters: usize,
+    pub active_partitions: usize,
+}
+
+impl Default for ViperConfig {
+    fn default() -> Self {
+        Self {
+            enable_ml_clustering: true,
+            initial_cluster_count: 16,
+            enable_quantization: false,
+            parquet_compression: ParquetCompression::Snappy,
+            row_group_size: 1000,
+            enable_background_compaction: true,
+            flush_size_bytes: Some(1024 * 1024), // 1MB flush size for testing
+            quantization_config: None,
+            cluster_quantization_map: HashMap::new(),
+            vector_quality_metrics: VectorQualityMetrics::default(),
+            search_performance_stats: SearchPerformanceStats::default(),
+        }
+    }
+}
+
+impl Default for ParquetCompression {
+    fn default() -> Self {
+        Self::Snappy
+    }
+}
+
+impl Default for CompressionAlgorithm {
+    fn default() -> Self {
+        Self::Snappy
+    }
+}
+
+impl Default for SchemaConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            backward_compatibility: true,
+            strict_mode: false,
+            auto_migration: true,
+            field_evolution: HashMap::new(),
+        }
+    }
+}
+
+impl Default for AtomicOperationsConfig {
+    fn default() -> Self {
+        Self {
+            staging_directory: "/tmp/viper_staging".to_string(),
+            atomic_writes: true,
+            fsync_on_commit: true,
+            rollback_on_failure: true,
+            max_concurrent_operations: 4,
+        }
+    }
+}
+
+impl Default for QuantizationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            quantization_type: QuantizationType::ProductQuantization,
+            bits_per_dimension: 8,
+            compression_ratio: 0.25,
+            accuracy_threshold: 0.95,
+        }
+    }
+}

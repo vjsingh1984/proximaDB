@@ -18,7 +18,7 @@ from dataclasses import dataclass
 # Add Python SDK to path
 sys.path.insert(0, '/workspace/clients/python/src')
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 
 @dataclass
@@ -333,11 +333,7 @@ class FinalSearchDemo:
                     # Use stored embedding for exact match
                     query_embedding = inserted["embedding"]
                     
-                    search_results = self.client.search_vectors(
-                        collection_id=self.collection_name,
-                        query_vectors=[query_embedding.tolist()],
-                        top_k=1
-                    )
+                    search_results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=1); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
                     
                     if search_results and search_results[0].vector_id == target_id:
                         results.append(SearchResult(
@@ -371,11 +367,7 @@ class FinalSearchDemo:
         """BERT-powered semantic similarity search"""
         query_embedding = self.embedding_service.embed_text(text_query)
         
-        search_results = self.client.search_vectors(
-            collection_id=self.collection_name,
-            query_vectors=[query_embedding.tolist()],
-            top_k=5
-        )
+        search_results = self.results = client.search_single(collection_id=self.collection_name, vector=query_embedding.tolist(), top_k=5); response = type("Response", (), {"success": True, "results": [type("Result", (), {"search_results": results})()]})()
         
         return [SearchResult(
             vector_id=r.vector_id,

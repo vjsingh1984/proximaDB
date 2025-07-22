@@ -25,7 +25,7 @@ use tracing::{debug, info};
 
 // Note: storage::vector::types module has been removed
 // Types now come from crate::core (avro_unified) and specific modules
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{String, VectorRecord};
 // Index types imported as needed in implementations
 
 /// VIPER Factory - Main entry point for creating VIPER components
@@ -253,7 +253,7 @@ pub trait SchemaGenerationStrategy: Send + Sync {
     fn get_filterable_fields(&self) -> &[String];
 
     /// Get collection ID
-    fn get_collection_id(&self) -> &CollectionId;
+    fn get_collection_id(&self) -> &String;
 
     /// Check if TTL is supported
     fn supports_ttl(&self) -> bool;
@@ -271,7 +271,7 @@ pub trait SchemaStrategyFactory: Send + Sync {
     fn create_strategy(
         &self,
         config: &ViperSchemaConfig,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Box<dyn SchemaGenerationStrategy>;
 
     /// Get factory name
@@ -318,21 +318,21 @@ pub struct ProcessingStatistics {
 
 /// VIPER schema strategy
 pub struct ViperSchemaStrategy {
-    collection_id: CollectionId,
+    collection_id: String,
     config: ViperSchemaConfig,
     filterable_fields: Vec<String>,
 }
 
 /// Legacy schema strategy for backward compatibility
 pub struct LegacySchemaStrategy {
-    collection_id: CollectionId,
+    collection_id: String,
     #[allow(dead_code)]
     config: ViperSchemaConfig,
 }
 
 /// Time-series optimized schema strategy
 pub struct TimeSeriesSchemaStrategy {
-    collection_id: CollectionId,
+    collection_id: String,
     config: ViperSchemaConfig,
     time_precision: TimePrecision,
 }
@@ -384,7 +384,7 @@ impl ViperFactory {
     /// Create VIPER components for a collection
     pub fn create_for_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         collection_config: Option<&CollectionConfig>,
     ) -> Result<ViperComponents> {
         info!(
@@ -508,7 +508,7 @@ impl ViperFactory {
         &self,
         strategy_name: &str,
         config: &ViperConfiguration,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<Box<dyn SchemaGenerationStrategy>> {
         let factory = self
             .strategy_registry
@@ -628,7 +628,7 @@ impl ViperConfigurationBuilder {
 
 impl ViperSchemaStrategy {
     pub fn new(
-        collection_id: CollectionId,
+        collection_id: String,
         config: ViperSchemaConfig,
         filterable_fields: Vec<String>,
     ) -> Self {
@@ -644,13 +644,19 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
     fn generate_schema(&self) -> Result<Arc<Schema>> {
         let mut fields = Vec::new();
 
-        // Core required fields
-        fields.push(Field::new("id", DataType::Utf8, false));
+        // Core fields - id can be null for immutable vectors
+        fields.push(Field::new("id", DataType::Utf8, true));
         fields.push(Field::new(
             "vectors",
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-            false,
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            true,  // Nullable for sparse vectors
         ));
+        
+        // Version field for MVCC - using tinyint
+        fields.push(Field::new("version", DataType::Int8, true));
+        
+        // Audit field - stores creation or update time
+        fields.push(Field::new("updated_at", DataType::Int64, true));
 
         // Dynamic filterable metadata columns
         for field_name in &self.filterable_fields {
@@ -693,18 +699,6 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
             ));
         }
 
-        // Timestamps
-        fields.push(Field::new(
-            "created_at",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false,
-        ));
-        fields.push(Field::new(
-            "updated_at",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false,
-        ));
-
         Ok(Arc::new(Schema::new(fields)))
     }
 
@@ -712,7 +706,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         &self.filterable_fields
     }
 
-    fn get_collection_id(&self) -> &CollectionId {
+    fn get_collection_id(&self) -> &String {
         &self.collection_id
     }
 
@@ -730,7 +724,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
 }
 
 impl LegacySchemaStrategy {
-    pub fn new(collection_id: CollectionId, config: ViperSchemaConfig) -> Self {
+    pub fn new(collection_id: String, config: ViperSchemaConfig) -> Self {
         Self {
             collection_id,
             config,
@@ -741,16 +735,18 @@ impl LegacySchemaStrategy {
 impl SchemaGenerationStrategy for LegacySchemaStrategy {
     fn generate_schema(&self) -> Result<Arc<Schema>> {
         let fields = vec![
-            Field::new("id", DataType::Utf8, false),
+            Field::new("id", DataType::Utf8, true),  // Nullable for legacy compatibility
             Field::new(
                 "vectors",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-                false,
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                true,  // Nullable for sparse vectors
             ),
+            Field::new("version", DataType::Int8, true), // Version field for MVCC
+            Field::new("updated_at", DataType::Int64, true), // Audit field
             Field::new(
-                "created_at",
+                "expires_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
-                false,
+                true,  // Can be null for TTL support
             ),
         ];
 
@@ -761,7 +757,7 @@ impl SchemaGenerationStrategy for LegacySchemaStrategy {
         &[]
     }
 
-    fn get_collection_id(&self) -> &CollectionId {
+    fn get_collection_id(&self) -> &String {
         &self.collection_id
     }
 
@@ -834,10 +830,10 @@ impl SchemaStrategyFactory for ViperSchemaStrategyFactory {
     fn create_strategy(
         &self,
         config: &ViperSchemaConfig,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Box<dyn SchemaGenerationStrategy> {
         Box::new(ViperSchemaStrategy::new(
-            collection_id.clone(),
+            collection_id.to_string(),
             config.clone(),
             vec!["category".to_string(), "type".to_string()], // Default filterable fields
         ))
@@ -852,10 +848,10 @@ impl SchemaStrategyFactory for LegacySchemaStrategyFactory {
     fn create_strategy(
         &self,
         config: &ViperSchemaConfig,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Box<dyn SchemaGenerationStrategy> {
         Box::new(LegacySchemaStrategy::new(
-            collection_id.clone(),
+            collection_id.to_string(),
             config.clone(),
         ))
     }
@@ -869,11 +865,11 @@ impl SchemaStrategyFactory for TimeSeriesSchemaStrategyFactory {
     fn create_strategy(
         &self,
         config: &ViperSchemaConfig,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Box<dyn SchemaGenerationStrategy> {
         // Placeholder implementation
         Box::new(LegacySchemaStrategy::new(
-            collection_id.clone(),
+            collection_id.to_string(),
             config.clone(),
         ))
     }

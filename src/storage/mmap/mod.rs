@@ -1,5 +1,5 @@
-use crate::core::{CollectionId, StorageError, VectorId, VectorRecord};
-use crate::storage::{engines::lsm::LsmStorageEntry, Result};
+use crate::core::{String, StorageError, VectorId, VectorRecord};
+use crate::storage::{engines::lsm::LsmRecord, Result};
 use memmap2::MmapOptions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,13 +22,13 @@ struct MmapSstFile {
 
 #[derive(Debug)]
 pub struct MmapReader {
-    collection_id: CollectionId,
+    collection_id: String,
     data_dir: PathBuf,
     sst_files: Arc<RwLock<Vec<MmapSstFile>>>,
 }
 
 impl MmapReader {
-    pub fn new(collection_id: CollectionId, data_dir: PathBuf) -> Result<Self> {
+    pub fn new(collection_id: String, data_dir: PathBuf) -> Result<Self> {
         Ok(Self {
             collection_id: collection_id.clone(),
             data_dir,
@@ -52,13 +52,14 @@ impl MmapReader {
 
                 if end <= sst_file.mmap.len() {
                     let data = &sst_file.mmap[start..end];
-                    let (_, lsm_entry): (VectorId, LsmStorageEntry) = bincode::deserialize(data)
+                    let lsm_record: LsmRecord = bincode::deserialize(data)
                         .map_err(|e| StorageError::Serialization(e.to_string()))?;
 
-                    // Handle different entry types
-                    match lsm_entry {
-                        LsmStorageEntry::Record(record) => return Ok(Some(record)),
-                        LsmStorageEntry::Tombstone { .. } => return Ok(None), // Vector was deleted
+                    // Handle different record types
+                    if lsm_record.is_tombstone {
+                        return Ok(None); // Vector was deleted
+                    } else {
+                        return Ok(Some(lsm_record.into())); // Convert LsmRecord to VectorRecord
                     }
                 }
             }
@@ -128,8 +129,9 @@ impl MmapReader {
 
             // Deserialize just to get the VectorId for building the index
             let entry_data = &mmap[offset + 4..offset + 4 + entry_len];
-            match bincode::deserialize::<(VectorId, LsmStorageEntry)>(entry_data) {
-                Ok((id, _)) => {
+            match bincode::deserialize::<LsmRecord>(entry_data) {
+                Ok(record) => {
+                    let id = VectorId::from(record.id);
                     index.insert(
                         id,
                         IndexEntry {
@@ -169,17 +171,14 @@ impl MmapReader {
                 if end <= sst_file.mmap.len() {
                     let data = &sst_file.mmap[start..end];
 
-                    // Deserialize the entry
-                    match bincode::deserialize::<(VectorId, LsmStorageEntry)>(data) {
-                        Ok((_, lsm_entry)) => {
-                            match lsm_entry {
-                                LsmStorageEntry::Record(record) => {
-                                    records.push(record);
-                                }
-                                LsmStorageEntry::Tombstone { .. } => {
-                                    // Skip deleted records (tombstones)
-                                }
+                    // Deserialize the record
+                    match bincode::deserialize::<LsmRecord>(data) {
+                        Ok(lsm_record) => {
+                            if !lsm_record.is_tombstone {
+                                // Convert LsmRecord to VectorRecord and add to results
+                                records.push(lsm_record.into());
                             }
+                            // Skip deleted records (tombstones)
                         }
                         Err(e) => {
                             tracing::warn!(

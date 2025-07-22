@@ -29,28 +29,73 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Legacy fields (deprecated, use storage_layout instead)
-    pub data_dirs: Vec<PathBuf>,
-    pub wal_dir: PathBuf,
+    /// Storage locations - each can host WAL, data, and indexes
+    pub storage_locations: Vec<StorageLocation>,
+    
+    /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata")
+    pub metadata_url: String,
 
-    /// Modern WAL configuration with multi-disk support
+    /// Assignment configuration
     #[serde(default)]
-    pub wal_config: WalStorageConfig,
-
-    /// ProximaDB hierarchical storage layout configuration
-    pub storage_layout: crate::core::storage_layout::StorageLayoutConfig,
+    pub assignment_config: AssignmentConfig,
 
     /// Storage engine configuration
     pub mmap_enabled: bool,
     pub lsm_config: LsmConfig,
     pub cache_size_mb: u64,
-    pub bloom_filter_bits: u32,
+    // bloom_filter_bits removed - use bloom_filter_config instead
+    pub bloom_filter_config: Option<BloomFilterConfig>,
 
     /// Filesystem optimization settings
-    pub filesystem_config: FilesystemConfig,
+    pub filesystem_config: FilesystemOptimizationConfig,
+}
 
-    /// Metadata backend configuration
-    pub metadata_backend: Option<MetadataBackendConfig>,
+/// Storage location configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLocation {
+    /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
+    pub url: String,
+    
+    /// Weight for weighted distribution (default: 1)
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    
+    /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_weight() -> u32 {
+    1
+}
+
+/// Assignment configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignmentConfig {
+    /// Assignment strategy: "hash", "round-robin", "weighted"
+    #[serde(default = "default_assignment_strategy")]
+    pub strategy: String,
+    
+    /// Keep all collection data together (WAL, data, index on same location)
+    #[serde(default = "default_affinity")]
+    pub affinity: bool,
+}
+
+fn default_assignment_strategy() -> String {
+    "hash".to_string()
+}
+
+fn default_affinity() -> bool {
+    true
+}
+
+impl Default for AssignmentConfig {
+    fn default() -> Self {
+        Self {
+            strategy: default_assignment_strategy(),
+            affinity: default_affinity(),
+        }
+    }
 }
 
 /// Metadata backend configuration for cloud and local storage
@@ -115,7 +160,7 @@ pub struct GcsConfig {
 
 /// Filesystem configuration for performance optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilesystemConfig {
+pub struct FilesystemOptimizationConfig {
     /// Enable write strategy caching
     pub enable_write_strategy_cache: bool,
 
@@ -152,7 +197,7 @@ pub struct AtomicOperationsConfig {
     pub cleanup_temp_on_startup: bool,
 }
 
-impl Default for FilesystemConfig {
+impl Default for FilesystemOptimizationConfig {
     fn default() -> Self {
         Self {
             enable_write_strategy_cache: true,
@@ -172,22 +217,57 @@ impl Default for AtomicOperationsConfig {
     }
 }
 
+impl StorageConfig {
+    /// Get storage URLs from locations
+    pub fn get_storage_urls(&self) -> Vec<String> {
+        self.storage_locations.iter().map(|loc| loc.url.clone()).collect()
+    }
+    
+    /// Get WAL URLs derived from storage URLs
+    pub fn get_wal_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/wal", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+    
+    /// Get data URLs derived from storage URLs
+    pub fn get_data_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/data", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+    
+    /// Get index URLs derived from storage URLs
+    pub fn get_index_urls(&self) -> Vec<String> {
+        self.storage_locations.iter()
+            .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
+            .collect()
+    }
+}
+
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            data_dirs: vec![
-                PathBuf::from("/data/proximadb/1"),
-                PathBuf::from("/data/proximadb/2"),
+            storage_locations: vec![
+                StorageLocation {
+                    url: "file:///data/proximadb/disk1".to_string(),
+                    weight: 1,
+                    tags: vec!["local".to_string()],
+                },
+                StorageLocation {
+                    url: "file:///data/proximadb/disk2".to_string(),
+                    weight: 1,
+                    tags: vec!["local".to_string()],
+                },
             ],
-            wal_dir: PathBuf::from("/data/proximadb/1/wal"),
-            wal_config: WalStorageConfig::default(),
-            storage_layout: crate::core::storage_layout::StorageLayoutConfig::default_2_disk(),
+            metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
+            assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
             lsm_config: LsmConfig::default(),
             cache_size_mb: 2048,
-            bloom_filter_bits: 12,
-            filesystem_config: FilesystemConfig::default(),
-            metadata_backend: None, // Use default filestore backend
+            // Use unified bloom filter config
+            bloom_filter_config: Some(BloomFilterConfig::default()),
+            filesystem_config: FilesystemOptimizationConfig::default(),
         }
     }
 }
@@ -198,7 +278,29 @@ pub struct LsmConfig {
     pub level_count: u8,
     pub compaction_threshold: u32,
     pub block_size_kb: u32,
+    pub memory_flush_size_bytes: usize,
+    pub memtable_type: String,
+    pub compaction_strategy: String,
+    pub compression: String,
+    pub bloom_filter_config: Option<BloomFilterConfig>,
+    pub cache_size_mb: u64,
+    pub write_buffer_size_mb: u64,
+    pub max_files_per_level: u32,
+    pub level_size_multiplier: f64,
+    pub max_levels: u8,
+    pub background_thread_count: u32,
+    pub sync_mode: String,
+    pub enable_wal: bool,
+    pub wal_directory: String,
+    pub data_directory: String,
+    pub mmap_enabled: bool,
+    pub prefetch_enabled: bool,
+    pub prefetch_size_kb: u32,
 }
+
+// BloomFilterConfig moved to core::bloom module for polymorphic design
+// Re-export for backward compatibility
+pub use crate::core::bloom::BloomFilterConfig;
 
 impl Default for LsmConfig {
     fn default() -> Self {
@@ -207,6 +309,24 @@ impl Default for LsmConfig {
             level_count: 7,
             compaction_threshold: 4,
             block_size_kb: 64,
+            memory_flush_size_bytes: 64 * 1024 * 1024, // 64MB
+            memtable_type: "skiplist".to_string(),
+            compaction_strategy: "leveled".to_string(),
+            compression: "snappy".to_string(),
+            bloom_filter_config: Some(BloomFilterConfig::default()),
+            cache_size_mb: 128,
+            write_buffer_size_mb: 64,
+            max_files_per_level: 10,
+            level_size_multiplier: 10.0,
+            max_levels: 7,
+            background_thread_count: 4,
+            sync_mode: "sync".to_string(),
+            enable_wal: true,
+            wal_directory: "./lsm_wal".to_string(),
+            data_directory: "./lsm_data".to_string(),
+            mmap_enabled: true,
+            prefetch_enabled: true,
+            prefetch_size_kb: 64,
         }
     }
 }
@@ -275,6 +395,11 @@ pub struct WalStorageConfig {
     /// Maximum concurrent flush operations
     #[serde(default = "default_concurrent_flushes")]
     pub concurrent_flushes: Option<usize>,
+
+    /// Shrink factor for global threshold management (percentage)
+    /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
+    #[serde(default = "default_global_shrink_factor")]
+    pub global_shrink_factor: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,17 +421,18 @@ impl Default for WalDistributionStrategy {
 impl Default for WalStorageConfig {
     fn default() -> Self {
         Self {
-            wal_urls: vec!["file:///workspace/data/wal".to_string()],
+            wal_urls: vec!["file://./data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
-            memory_flush_size_bytes: 1 * 1024 * 1024,  // 1MB
-            global_flush_threshold: 512 * 1024 * 1024, // 512MB
+            memory_flush_size_bytes: 10 * 1024 * 1024,  // 10MB - recommended for collection-level flush
+            global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB - recommended for global memory threshold
             strategy_type: None,                       // Use WAL defaults
             memtable_type: None,                       // Use WAL defaults
             sync_mode: None,                           // Use WAL defaults
             batch_threshold: None,                     // Use WAL defaults
             write_buffer_size_mb: None,                // Use WAL defaults
             concurrent_flushes: None,                  // Use WAL defaults
+            global_shrink_factor: Some(0.4),           // 40% shrink factor - recommended
         }
     }
 }
@@ -316,10 +442,10 @@ fn default_collection_affinity() -> bool {
     true
 }
 fn default_memory_flush_size() -> usize {
-    1 * 1024 * 1024
+    2 * 1024 * 1024 // 2MB - reduced for faster recovery as per CLAUDE.md
 }
 fn default_global_flush_threshold() -> usize {
-    512 * 1024 * 1024
+    4 * 1024 * 1024 * 1024 // 4GB - recommended for global memory threshold
 }
 fn default_strategy_type() -> Option<String> {
     None
@@ -338,6 +464,9 @@ fn default_write_buffer_size_mb() -> Option<usize> {
 }
 fn default_concurrent_flushes() -> Option<usize> {
     None
+}
+fn default_global_shrink_factor() -> Option<f64> {
+    Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

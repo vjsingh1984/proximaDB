@@ -1,0 +1,1023 @@
+//! Unit tests for VIPER Unified Search Engine
+//! Tests columnar search functionality with comprehensive coverage
+
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio;
+use anyhow::Result;
+use chrono::Utc;
+
+use super::*;
+use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel, InMemoryCodebookStore};
+use crate::core::search::{SearchParams, UnifiedSearchContext};
+
+/// Mock UnifiedParquetReader for testing
+#[derive(Debug, Clone)]
+pub struct MockUnifiedParquetReader {
+    pub should_fail: Arc<std::sync::Mutex<bool>>,
+    pub search_results: Arc<std::sync::Mutex<Vec<crate::core::search::SearchResult>>>,
+}
+
+impl MockUnifiedParquetReader {
+    pub fn new() -> Self {
+        Self {
+            should_fail: Arc::new(std::sync::Mutex::new(false)),
+            search_results: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+    
+    pub fn set_should_fail(&self, fail: bool) {
+        *self.should_fail.lock().unwrap() = fail;
+    }
+    
+    pub fn set_search_results(&self, results: Vec<crate::core::search::SearchResult>) {
+        *self.search_results.lock().unwrap() = results;
+    }
+    
+    /// Mock search_vectors method
+    pub async fn search_vectors(
+        &self,
+        _params: &SearchParams,
+        _context: &crate::storage::engines::viper::readers::unified_parquet_reader::CollectionContext,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        if *self.should_fail.lock().unwrap() {
+            return Err(anyhow::anyhow!("Mock Parquet reader search failed"));
+        }
+        Ok(self.search_results.lock().unwrap().clone())
+    }
+}
+
+/// Create test search context
+fn create_test_search_context() -> UnifiedSearchContext {
+    UnifiedSearchContext {
+        collection_id: "test_collection".to_string(),
+        storage_info: crate::core::search::StorageInfo {
+            storage_type: "VIPER".to_string(),
+            file_count: 8,
+            estimated_size_mb: 250.0,
+            is_cloud_storage: true,
+            supports_range_requests: true,
+        },
+        filterable_columns: vec![
+            crate::core::search::FilterableColumn {
+                name: "category".to_string(),
+                data_type: crate::proto::proximadb::ColumnDataType::String,
+                is_indexed: true,
+                estimated_cardinality: 50,
+            },
+            crate::core::search::FilterableColumn {
+                name: "rating".to_string(),
+                data_type: crate::proto::proximadb::ColumnDataType::Float,
+                is_indexed: true,
+                estimated_cardinality: 10,
+            },
+        ],
+        available_quantization: vec![],
+        collection_config: Some(crate::core::search::CollectionConfig {
+            vector_dimension: 512,
+            estimated_document_count: 75000,
+            default_distance_metric: crate::compute::distance::DistanceMetric::Euclidean,
+            enable_metadata_filtering: true,
+            enable_quantization: true,
+        }),
+    }
+}
+
+/// Create test search parameters
+fn create_test_search_params() -> SearchParams {
+    SearchParams {
+        query_vectors: Some(vec![vec![0.2; 512]]),
+        top_k: Some(20),
+        distance_metric: Some(crate::compute::distance::DistanceMetric::Euclidean),
+        filters: None,
+        filter_expression: None,
+        accuracy_threshold: None,
+        include_expired: Some(false),
+        timeout_ms: None,
+        enable_two_stage: Some(true),
+        enable_clustering_hint: Some(true),
+        enable_metadata_filtering_hint: Some(true),
+        quantization_hint: None,
+        custom_hints: None,
+    }
+}
+
+/// Create mock search results
+fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchResult> {
+    (0..count).map(|i| {
+        crate::core::search::SearchResult {
+            id: format!("viper_result_{}", i),
+            vector_id: Some(format!("vector_{}", i)),
+            score: 1.0 - (i as f32 * 0.05),
+            distance: Some(i as f32 * 0.05),
+            rank: Some(i as i32 + 1),
+            vector: Some((0..512).map(|j| (i * 512 + j) as f32 / 10000.0).collect()),
+            metadata: {
+                let mut map = HashMap::new();
+                map.insert("category".to_string(), serde_json::Value::String("viper_test".to_string()));
+                map.insert("rating".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(4.5 - i as f64 * 0.1).unwrap()));
+                map
+            },
+            debug_info: None,
+            semantic_distance: None,
+            quantization_info: None,
+            engine_stats: None,
+            index_path: None,
+            collection_id: Some("test_collection".to_string()),
+            created_at: Some(Utc::now()),
+        }
+    }).collect()
+}
+
+/// Test ViperSearchConfig functionality
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    
+    #[test]
+    fn test_viper_search_config_default() {
+        let config = ViperSearchConfig::default();
+        
+        assert!(config.enable_quantization);
+        assert!(config.enable_metadata_filtering);
+        assert!(config.enable_clustering);
+        assert_eq!(config.max_parallel_files, 8);
+        assert_eq!(config.cache_size, 1000);
+    }
+    
+    #[test]
+    fn test_viper_search_config_custom() {
+        let config = ViperSearchConfig {
+            enable_quantization: false,
+            enable_metadata_filtering: false,
+            enable_clustering: false,
+            max_parallel_files: 4,
+            cache_size: 500,
+        };
+        
+        assert!(!config.enable_quantization);
+        assert!(!config.enable_metadata_filtering);
+        assert!(!config.enable_clustering);
+        assert_eq!(config.max_parallel_files, 4);
+        assert_eq!(config.cache_size, 500);
+    }
+}
+
+/// Test ViperUnifiedSearchEngine construction
+#[cfg(test)]
+mod construction_tests {
+    use super::*;
+    
+    #[test]
+    fn test_new_with_default_config() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        assert_eq!(engine.engine_id(), "ViperUnifiedSearchEngine");
+        assert!(engine.config.enable_quantization);
+        assert!(engine.config.enable_metadata_filtering);
+        assert!(engine.config.enable_clustering);
+    }
+    
+    #[test]
+    fn test_with_custom_config() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let custom_config = ViperSearchConfig {
+            enable_quantization: false,
+            enable_metadata_filtering: true,
+            enable_clustering: false,
+            max_parallel_files: 16,
+            cache_size: 2000,
+        };
+        
+        let engine = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            custom_config.clone(),
+        );
+        
+        assert_eq!(engine.engine_id(), "ViperUnifiedSearchEngine");
+        assert!(!engine.config.enable_quantization);
+        assert!(engine.config.enable_metadata_filtering);
+        assert!(!engine.config.enable_clustering);
+        assert_eq!(engine.config.max_parallel_files, 16);
+        assert_eq!(engine.config.cache_size, 2000);
+    }
+}
+
+/// Test UnifiedSearchEngine trait implementation
+#[cfg(test)]
+mod unified_search_engine_tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_engine_id() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        assert_eq!(engine.engine_id(), "ViperUnifiedSearchEngine");
+    }
+    
+    #[tokio::test]
+    async fn test_can_handle_viper_storage() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let can_handle = engine.can_handle(&context, &params).await;
+        assert!(can_handle); // VIPER storage type
+    }
+    
+    #[tokio::test]
+    async fn test_can_handle_parquet_storage() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let mut context = create_test_search_context();
+        context.storage_info.storage_type = "Parquet".to_string();
+        let params = create_test_search_params();
+        
+        let can_handle = engine.can_handle(&context, &params).await;
+        assert!(can_handle); // Parquet storage type
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_quantization() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context(); // Has 75k documents
+        
+        let hints = engine.optimization_hints(&context).await;
+        assert!(!hints.is_empty());
+        
+        // Should suggest quantization for large collections
+        let has_quantization_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseQuantization { .. })
+        });
+        assert!(has_quantization_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_metadata_filtering() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context(); // Has filterable columns
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should suggest metadata filtering for collections with filterable columns
+        let has_metadata_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseMetadataFiltering { .. })
+        });
+        assert!(has_metadata_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_cloud_storage() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context(); // Has is_cloud_storage = true
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should suggest range requests and caching for cloud storage
+        let has_range_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseRangeRequests { .. })
+        });
+        let has_cache_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseCaching { .. })
+        });
+        
+        assert!(has_range_hint);
+        assert!(has_cache_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_high_dimensional_vectors() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let mut context = create_test_search_context();
+        context.collection_config.as_mut().unwrap().vector_dimension = 1024; // High dimension
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should suggest column projection for high-dimensional vectors
+        let has_projection_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseColumnProjection { .. })
+        });
+        assert!(has_projection_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_estimate_cost() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let cost = engine.estimate_cost(&context, &params).await;
+        assert!(cost > 0.0);
+        
+        // Test cost reduction with filters
+        let mut params_with_filters = params.clone();
+        params_with_filters.filters = Some({
+            let mut filters = HashMap::new();
+            filters.insert("category".to_string(), serde_json::Value::String("test".to_string()));
+            filters
+        });
+        
+        let cost_with_filters = engine.estimate_cost(&context, &params_with_filters).await;
+        assert!(cost_with_filters < cost); // Filters should reduce cost
+        
+        // Test cost reduction with quantization
+        let mut params_with_quantization = params.clone();
+        params_with_quantization.quantization_hint = Some(UnifiedQuantizationLevel::pq8(8));
+        
+        let cost_with_quantization = engine.estimate_cost(&context, &params_with_quantization).await;
+        assert!(cost_with_quantization < cost); // Quantization should reduce cost
+    }
+    
+    #[tokio::test]
+    async fn test_estimate_cost_cloud_vs_local() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context_cloud = create_test_search_context(); // is_cloud_storage = true
+        let mut context_local = context_cloud.clone();
+        context_local.storage_info.is_cloud_storage = false;
+        
+        let params = create_test_search_params();
+        
+        let cost_cloud = engine.estimate_cost(&context_cloud, &params).await;
+        let cost_local = engine.estimate_cost(&context_local, &params).await;
+        
+        assert!(cost_cloud > cost_local); // Cloud storage should have higher cost
+    }
+}
+
+/// Test search functionality
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_search_unified_success() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        // Set up mock search results
+        let mock_results = create_mock_search_results(10);
+        parquet_reader.set_search_results(mock_results.clone());
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let result = engine.search_unified(&context, &params, &distance_compute, Some(&quantization_engine)).await;
+        
+        assert!(result.is_ok());
+        let search_result_set = result.unwrap();
+        
+        assert_eq!(search_result_set.results.len(), 10);
+        assert_eq!(search_result_set.total_count, 10);
+        assert!(search_result_set.processing_time_us > 0);
+        assert_eq!(search_result_set.algorithm, "VIPER-Direct");
+    }
+    
+    #[tokio::test]
+    async fn test_search_unified_with_query_id() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let mock_results = create_mock_search_results(5);
+        parquet_reader.set_search_results(mock_results);
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let mut params = create_test_search_params();
+        
+        // Add query ID in custom hints
+        let mut custom_hints = HashMap::new();
+        custom_hints.insert("query_id".to_string(), serde_json::Value::String("test_query_123".to_string()));
+        params.custom_hints = Some(custom_hints);
+        
+        let result = engine.search_unified(&context, &params, &distance_compute, Some(&quantization_engine)).await;
+        
+        assert!(result.is_ok());
+        let search_result_set = result.unwrap();
+        
+        assert_eq!(search_result_set.query_id, Some("test_query_123".to_string()));
+    }
+    
+    #[tokio::test]
+    async fn test_search_unified_failure() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        // Make Parquet reader fail
+        parquet_reader.set_should_fail(true);
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let result = engine.search_unified(&context, &params, &distance_compute, Some(&quantization_engine)).await;
+        
+        assert!(result.is_err());
+    }
+    
+    #[tokio::test]
+    async fn test_search_unified_empty_results() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        // Set empty results
+        parquet_reader.set_search_results(Vec::new());
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let result = engine.search_unified(&context, &params, &distance_compute, Some(&quantization_engine)).await;
+        
+        assert!(result.is_ok());
+        let search_result_set = result.unwrap();
+        
+        assert_eq!(search_result_set.results.len(), 0);
+        assert_eq!(search_result_set.total_count, 0);
+    }
+}
+
+/// Test private helper methods
+#[cfg(test)]
+mod helper_methods_tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_build_file_paths_with_clustering() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let config = ViperSearchConfig {
+            enable_clustering: true,
+            ..Default::default()
+        };
+        
+        let engine = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            config,
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let file_paths = engine.build_file_paths(&context, &params).await;
+        assert!(file_paths.is_ok());
+        
+        let paths = file_paths.unwrap();
+        assert!(!paths.is_empty());
+        assert!(paths.iter().any(|p| p.contains("cluster")));
+    }
+    
+    #[tokio::test]
+    async fn test_build_file_paths_without_clustering() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let config = ViperSearchConfig {
+            enable_clustering: false,
+            ..Default::default()
+        };
+        
+        let engine = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            config,
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let file_paths = engine.build_file_paths(&context, &params).await;
+        assert!(file_paths.is_ok());
+        
+        let paths = file_paths.unwrap();
+        assert!(!paths.is_empty());
+        assert!(paths.iter().any(|p| p.contains("**/*.parquet")));
+    }
+    
+    #[tokio::test]
+    async fn test_build_clustered_file_paths() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let file_paths = engine.build_clustered_file_paths(&context, &params).await;
+        assert!(file_paths.is_ok());
+        
+        let paths = file_paths.unwrap();
+        assert!(!paths.is_empty());
+        assert_eq!(paths.len(), 2); // cluster_0 and cluster_1
+        assert!(paths.iter().any(|p| p.contains("cluster_0")));
+        assert!(paths.iter().any(|p| p.contains("cluster_1")));
+    }
+    
+    #[tokio::test]
+    async fn test_build_all_file_paths() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context();
+        
+        let file_paths = engine.build_all_file_paths(&context).await;
+        assert!(file_paths.is_ok());
+        
+        let paths = file_paths.unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].contains("**/*.parquet"));
+    }
+    
+    #[test]
+    fn test_build_collection_context() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let context = create_test_search_context();
+        let file_paths = vec![
+            "path1.parquet".to_string(),
+            "path2.parquet".to_string(),
+        ];
+        
+        let collection_context = engine.build_collection_context(&context, &file_paths);
+        
+        assert_eq!(collection_context.collection_id, "test_collection");
+        assert_eq!(collection_context.file_paths.len(), 2);
+        assert_eq!(collection_context.filterable_columns.len(), 2);
+        assert_eq!(collection_context.quantization_columns.len(), 2);
+        assert_eq!(collection_context.estimated_size_mb, 250.0);
+        assert_eq!(collection_context.estimated_document_count, 75000);
+        assert!(collection_context.is_cloud_storage);
+        
+        // Check filterable columns mapping
+        let category_col = collection_context.filterable_columns.iter()
+            .find(|col| col.name == "category")
+            .unwrap();
+        assert_eq!(category_col.data_type, "String");
+        assert!(category_col.is_indexed);
+        assert_eq!(category_col.estimated_cardinality, 50);
+        
+        let rating_col = collection_context.filterable_columns.iter()
+            .find(|col| col.name == "rating")
+            .unwrap();
+        assert_eq!(rating_col.data_type, "Float");
+        assert!(rating_col.is_indexed);
+        assert_eq!(rating_col.estimated_cardinality, 10);
+        
+        // Check quantization columns
+        assert!(collection_context.quantization_columns.contains(&"vector_pq8".to_string()));
+        assert!(collection_context.quantization_columns.contains(&"vector_pq4".to_string()));
+    }
+}
+
+/// Test edge cases and error handling
+#[cfg(test)]
+mod edge_case_tests {
+    use super::*;
+    
+    #[test]
+    fn test_build_collection_context_with_no_config() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let mut context = create_test_search_context();
+        context.collection_config = None; // No collection config
+        
+        let file_paths = vec!["test.parquet".to_string()];
+        
+        let collection_context = engine.build_collection_context(&context, &file_paths);
+        
+        assert_eq!(collection_context.estimated_document_count, 1000); // Default value
+    }
+    
+    #[test]
+    fn test_build_collection_context_with_empty_filterable_columns() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let mut context = create_test_search_context();
+        context.filterable_columns.clear(); // No filterable columns
+        
+        let file_paths = vec!["test.parquet".to_string()];
+        
+        let collection_context = engine.build_collection_context(&context, &file_paths);
+        
+        assert!(collection_context.filterable_columns.is_empty());
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_no_quantization() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let config = ViperSearchConfig {
+            enable_quantization: false,
+            ..Default::default()
+        };
+        
+        let engine = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            config,
+        );
+        
+        let context = create_test_search_context(); // Has 75k documents
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should NOT suggest quantization when disabled
+        let has_quantization_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseQuantization { .. })
+        });
+        assert!(!has_quantization_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_no_metadata_filtering() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let config = ViperSearchConfig {
+            enable_metadata_filtering: false,
+            ..Default::default()
+        };
+        
+        let engine = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            config,
+        );
+        
+        let context = create_test_search_context(); // Has filterable columns
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should NOT suggest metadata filtering when disabled
+        let has_metadata_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseMetadataFiltering { .. })
+        });
+        assert!(!has_metadata_hint);
+    }
+    
+    #[tokio::test]
+    async fn test_optimization_hints_local_storage() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+        );
+        
+        let mut context = create_test_search_context();
+        context.storage_info.is_cloud_storage = false; // Local storage
+        
+        let hints = engine.optimization_hints(&context).await;
+        
+        // Should NOT suggest cloud optimizations for local storage
+        let has_range_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseRangeRequests { .. })
+        });
+        let has_cache_hint = hints.iter().any(|hint| {
+            matches!(hint, crate::core::search::OptimizationHint::UseCaching { .. })
+        });
+        
+        assert!(!has_range_hint);
+        assert!(!has_cache_hint);
+    }
+}
+
+/// Integration tests
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    
+    #[tokio::test]
+    async fn test_full_search_workflow() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let mock_results = create_mock_search_results(15);
+        parquet_reader.set_search_results(mock_results);
+        
+        let engine = ViperUnifiedSearchEngine::new(
+            parquet_reader,
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        // Test can_handle
+        assert!(engine.can_handle(&context, &params).await);
+        
+        // Test optimization hints
+        let hints = engine.optimization_hints(&context).await;
+        assert!(!hints.is_empty());
+        
+        // Test cost estimation
+        let cost = engine.estimate_cost(&context, &params).await;
+        assert!(cost > 0.0);
+        
+        // Test actual search
+        let result = engine.search_unified(&context, &params, &distance_compute, Some(&quantization_engine)).await;
+        assert!(result.is_ok());
+        
+        let search_result_set = result.unwrap();
+        assert_eq!(search_result_set.results.len(), 15);
+        assert!(search_result_set.processing_time_us > 0);
+        assert_eq!(search_result_set.algorithm, "VIPER-Direct");
+    }
+    
+    #[tokio::test]
+    async fn test_clustering_vs_non_clustering_workflow() {
+        let parquet_reader = Arc::new(MockUnifiedParquetReader::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::default()),
+            Arc::new(InMemoryCodebookStore::new()),
+        ));
+        
+        let mock_results = create_mock_search_results(5);
+        parquet_reader.set_search_results(mock_results.clone());
+        
+        // Test with clustering enabled
+        let engine_with_clustering = ViperUnifiedSearchEngine::new(
+            parquet_reader.clone(),
+            distance_compute.clone(),
+            quantization_engine.clone(),
+        );
+        
+        let context = create_test_search_context();
+        let params = create_test_search_params();
+        
+        let file_paths_clustered = engine_with_clustering.build_file_paths(&context, &params).await.unwrap();
+        
+        // Test with clustering disabled
+        let config_no_clustering = ViperSearchConfig {
+            enable_clustering: false,
+            ..Default::default()
+        };
+        
+        let engine_no_clustering = ViperUnifiedSearchEngine::with_config(
+            parquet_reader,
+            distance_compute,
+            quantization_engine,
+            config_no_clustering,
+        );
+        
+        let file_paths_no_clustering = engine_no_clustering.build_file_paths(&context, &params).await.unwrap();
+        
+        // Results should be different
+        assert_ne!(file_paths_clustered, file_paths_no_clustering);
+        
+        // Clustered should have specific cluster paths
+        assert!(file_paths_clustered.iter().any(|p| p.contains("cluster")));
+        
+        // Non-clustered should have wildcard paths
+        assert!(file_paths_no_clustering.iter().any(|p| p.contains("**/*.parquet")));
+    }
+}

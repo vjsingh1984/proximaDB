@@ -5,6 +5,7 @@
 pub mod assignment_service;
 pub mod builder;
 pub mod traits;
+pub mod types;
 pub mod validation;
 
 // Core storage engines (organized)
@@ -16,26 +17,21 @@ pub mod persistence;
 // Unified atomic operations
 pub mod atomic;
 
-// Legacy modules removed - use organized structure instead
-
-// Other legacy modules
-pub mod atomicity;
-pub mod encoding;
+// Core modules
 pub mod engine;
 pub mod mmap;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
-#[deprecated(note = "Use query/ instead")]
-pub mod search;
-#[deprecated(note = "Use indexing/ instead")]
-pub mod search_index;
+// Storage optimization utilities
+pub mod optimization;
+// Strategy module for collection lifecycle configuration
 pub mod strategy;
 
-// Vector storage system removed - functionality integrated into engines/
 
 // Main exports from organized structure
 pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
+pub use types::StorageEngineType;
 pub use validation::ConfigValidator;
 
 // Strategy pattern exports
@@ -45,7 +41,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::{lsm::LsmTree, viper::ViperCoreEngine};
+pub use engines::{lsm::LsmTree, viper::ViperEngine};
 
 // Persistence exports
 pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
@@ -56,30 +52,17 @@ pub use atomic::{
     UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
 };
 
-// Legacy exports (deprecated)
-// Use engines directly instead of legacy StorageEngine
+// Storage engine exports
 pub use engine::StorageEngine;
 // WAL system exports
 use crate::core::StorageError;
-pub use atomicity::{
-    AtomicOperation, AtomicityConfig, AtomicityManager, BulkOperation, BulkVectorOperation,
-    OperationResult, TransactionContext, TransactionId, VectorDeleteOperation,
-    VectorInsertOperation, VectorUpdateOperation,
-};
-// pub use engines::lsm::memtable::{Memtable, MemtableCollectionStats, MemtableEntry, MemtableOperation}; // Moved to obsolete - using unified memtable system
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
-// 🚨 DEPRECATED EXPORTS - Use unified vector storage system instead
+pub use persistence::wal::{BatchId, WalConfig, WalManager, WalOperation};
 
-// SearchIndexManager removed - use indexing/ instead
-
-// VIPER exports removed - use engines/viper/ instead
-pub use persistence::wal::avro::AvroWalStrategy;
-pub use persistence::wal::bincode::BincodeWalStrategy;
-pub use persistence::wal::{
-    WalConfig, WalEntry, WalFactory, WalManager, WalOperation, WalStrategy,
-};
-
-// Vector storage system removed - functionality integrated into engines/
 // ResultProcessor has naming conflicts, import explicitly when needed
 
 pub type Result<T> = std::result::Result<T, StorageError>;
+
+// Tests module
+#[cfg(test)]
+mod tests;

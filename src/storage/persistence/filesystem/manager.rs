@@ -129,7 +129,7 @@ impl ManagedFilesystem {
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(err) if attempts >= max_attempts => return Err(err),
-                Err(err) => {
+                Err(_err) => {
                     // Exponential backoff
                     let delay = self.retry_config.calculate_delay(attempts - 1);
                     tokio::time::sleep(delay).await;
@@ -321,6 +321,13 @@ impl FileSystem for ManagedFilesystem {
 
     fn supports_atomic_writes(&self) -> bool {
         self.filesystem.supports_atomic_writes()
+    }
+
+    async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn super::FilesystemFile>> {
+        // Not used in ProximaDB - all operations go through read/write methods
+        Err(FilesystemError::InvalidOperation(
+            "open_file not implemented - use read/write methods instead".to_string()
+        ))
     }
 }
 

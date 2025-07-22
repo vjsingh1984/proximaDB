@@ -98,6 +98,7 @@ def unique_collection_name(test_config) -> str:
 def basic_collection_config() -> CollectionConfig:
     """Basic collection configuration for tests"""
     return CollectionConfig(
+        name="test_collection_basic",  # Minimum 8 characters
         dimension=128,
         distance_metric=DistanceMetric.COSINE,
         description="Test collection created by pytest"
@@ -108,10 +109,11 @@ def basic_collection_config() -> CollectionConfig:
 def advanced_collection_config() -> CollectionConfig:
     """Advanced collection configuration for tests"""
     return CollectionConfig(
+        name="test_collection_advanced",  # Minimum 8 characters
         dimension=384,
         distance_metric=DistanceMetric.COSINE,
         description="Advanced test collection with BERT dimensions",
-        storage_layout="viper"
+        storage_engine=StorageEngine.VIPER
     )
 
 
@@ -140,7 +142,10 @@ class TestCollectionManager:
     def create_test_collection(self, name_suffix: str = "", config: CollectionConfig = None) -> str:
         """Create a test collection with automatic tracking"""
         if config is None:
-            config = CollectionConfig(dimension=128, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+                name="test_collection_default",  # Minimum 8 characters
+                dimension=128,
+                distance_metric=DistanceMetric.COSINE)
         
         timestamp = int(time.time() * 1000)
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"

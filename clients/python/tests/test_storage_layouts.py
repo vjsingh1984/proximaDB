@@ -12,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 import logging
 
 from proximadb import connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, FlushConfig, DistanceMetric
+from proximadb.models import CollectionConfig, FlushConfig, DistanceMetric, StorageEngine
 from proximadb.exceptions import ProximaDBError
 
 logger = logging.getLogger(__name__)
@@ -43,10 +43,11 @@ class TestVIPERStorageLayout:
         
         # Configure VIPER with low flush threshold
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="VIPER flush test collection",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=8.0)  # Low threshold to trigger flush
         )
         
@@ -59,7 +60,7 @@ class TestVIPERStorageLayout:
             # 384 dims * 4 bytes = 1536 bytes per vector
             # ~1300 vectors per MB, so ~26000 vectors for 20MB
             total_vectors = 20000
-            batch_size = 500
+            batch_size = 100
             
             documents_data = []
             batch_count = 0
@@ -103,7 +104,7 @@ class TestVIPERStorageLayout:
                 
                 # Insert batch
                 start_time = time.time()
-                result = rest_client.insert_vectors(
+                result = rest_client.insert(
                     collection_id=collection_name,
                     vectors=vectors,
                     ids=vector_ids,
@@ -139,8 +140,8 @@ class TestVIPERStorageLayout:
                 start_time = time.time()
                 results = rest_client.search(
                     collection_id=collection_name,
-                    query=query_embedding.tolist(),
-                    k=50,  # Large k to test ranking across storage layers
+                    vector=query_embedding.tolist(),
+                    top_k=50,  # Large k to test ranking across storage layers
                     include_metadata=True,
                     include_vectors=False
                 )
@@ -215,8 +216,8 @@ class TestVIPERStorageLayout:
             start_time = time.time()
             final_results = rest_client.search(
                 collection_id=collection_name,
-                query=complex_embedding.tolist(),
-                k=100,
+                vector=complex_embedding.tolist(),
+                top_k=100,
                 include_metadata=True,
                 include_vectors=False
             )
@@ -288,6 +289,7 @@ class TestLSMStorageLayout:
         
         # Configure LSM with aggressive compaction settings
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="LSM compaction test collection",
@@ -342,7 +344,7 @@ class TestLSMStorageLayout:
                     documents.append((f"lsm_doc_{i}", vector, metadata))
                 
                 # Insert via gRPC for LSM testing
-                result = grpc_client.insert_vectors(
+                result = grpc_client.insert(
                     collection_id=collection_name,
                     vectors=vectors,
                     ids=vector_ids,
@@ -373,8 +375,8 @@ class TestLSMStorageLayout:
                     
                     results = grpc_client.search(
                         collection_id=collection_name,
-                        query=query_embedding.tolist(),
-                        k=30,
+                        vector=query_embedding.tolist(),
+                        top_k=30,
                         include_metadata=True
                     )
                     
@@ -441,8 +443,8 @@ class TestLSMStorageLayout:
                 start_time = time.time()
                 results = grpc_client.search(
                     collection_id=collection_name,
-                    query=query_embedding.tolist(),
-                    k=80,  # Large k to test cross-level ranking
+                    vector=query_embedding.tolist(),
+                    top_k=80,  # Large k to test cross-level ranking
                     include_metadata=True
                 )
                 search_time = time.time() - start_time
@@ -529,14 +531,16 @@ class TestStorageLayoutComparison:
         
         # Identical configurations except storage layout
         viper_config = CollectionConfig(
+            name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="VIPER performance test",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=10.0)
         )
         
         lsm_config = CollectionConfig(
+            name="test_collection",
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="LSM performance test",
@@ -592,7 +596,7 @@ class TestStorageLayoutComparison:
                 metadatas = all_metadatas[batch_start:batch_end]
                 
                 start_time = time.time()
-                result = rest_client.insert_vectors(
+                result = rest_client.insert(
                     collection_id=viper_collection,
                     vectors=vectors,
                     ids=vector_ids,
@@ -613,7 +617,7 @@ class TestStorageLayoutComparison:
                 metadatas = all_metadatas[batch_start:batch_end]
                 
                 start_time = time.time()
-                result = grpc_client.insert_vectors(
+                result = grpc_client.insert(
                     collection_id=lsm_collection,
                     vectors=vectors,
                     ids=vector_ids,
@@ -649,8 +653,8 @@ class TestStorageLayoutComparison:
                 start_time = time.time()
                 viper_results = rest_client.search(
                     collection_id=viper_collection,
-                    query=query_embedding.tolist(),
-                    k=50,
+                    vector=query_embedding.tolist(),
+                    top_k=50,
                     include_metadata=True
                 )
                 viper_search_time = time.time() - start_time
@@ -660,8 +664,8 @@ class TestStorageLayoutComparison:
                 start_time = time.time()
                 lsm_results = grpc_client.search(
                     collection_id=lsm_collection,
-                    query=query_embedding.tolist(),
-                    k=50,
+                    vector=query_embedding.tolist(),
+                    top_k=50,
                     include_metadata=True
                 )
                 lsm_search_time = time.time() - start_time
@@ -686,15 +690,15 @@ class TestStorageLayoutComparison:
             
             viper_final = rest_client.search(
                 collection_id=viper_collection,
-                query=final_embedding.tolist(),
-                k=20,
+                vector=final_embedding.tolist(),
+                top_k=20,
                 include_metadata=True
             )
             
             lsm_final = grpc_client.search(
                 collection_id=lsm_collection,
-                query=final_embedding.tolist(),
-                k=20,
+                vector=final_embedding.tolist(),
+                top_k=20,
                 include_metadata=True
             )
             
@@ -739,10 +743,11 @@ class TestCrossStorageSearch:
         collection_name = f"unified_search_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="Unified search test across storage layers",
-            storage_layout="viper",
+            storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=5.0)
         )
         
@@ -763,7 +768,7 @@ class TestCrossStorageSearch:
             base_embeddings = bert_model.encode(base_texts)
             
             # Insert in large batches to trigger flush
-            batch_size = 500
+            batch_size = 100
             for batch_start in range(0, base_documents, batch_size):
                 batch_end = min(batch_start + batch_size, base_documents)
                 
@@ -782,7 +787,7 @@ class TestCrossStorageSearch:
                     }
                     metadatas.append(metadata)
                 
-                rest_client.insert_vectors(
+                rest_client.insert(
                     collection_id=collection_name,
                     vectors=vectors,
                     ids=vector_ids,
@@ -875,8 +880,8 @@ class TestCrossStorageSearch:
                 start_time = time.time()
                 results = rest_client.search(
                     collection_id=collection_name,
-                    query=query_embedding.tolist(),
-                    k=60,  # Large k to test ranking across storage layers
+                    vector=query_embedding.tolist(),
+                    top_k=60,  # Large k to test ranking across storage layers
                     include_metadata=True,
                     include_vectors=False
                 )
@@ -932,8 +937,8 @@ class TestCrossStorageSearch:
             start_time = time.time()
             complex_results = rest_client.search(
                 collection_id=collection_name,
-                query=complex_embedding.tolist(),
-                k=100,  # Large result set
+                vector=complex_embedding.tolist(),
+                top_k=100,  # Large result set
                 include_metadata=True
             )
             complex_search_time = time.time() - start_time

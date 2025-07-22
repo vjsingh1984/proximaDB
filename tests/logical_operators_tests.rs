@@ -19,11 +19,26 @@ mod tests {
 
     /// Create a test vector record with metadata
     fn create_test_vector(id: &str, metadata: HashMap<String, serde_json::Value>) -> VectorRecord {
+        // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
+        let metadata_items: Vec<proximadb::proto::proximadb::MetadataItem> = metadata.iter()
+            .map(|(key, value)| {
+                let string_value = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => value.to_string(),
+                };
+                proximadb::proto::proximadb::MetadataItem {
+                    key: key.clone(),
+                    value: string_value,
+                }
+            })
+            .collect();
+        
         VectorRecord {
-            id: id.to_string(),
-            collection_id: "test_collection".to_string(),
+            id: Some(id.to_string()),
             vector: vec![1.0, 2.0, 3.0, 4.0],
-            metadata,
+            metadata: metadata_items,
             timestamp: Utc::now().timestamp_millis(),
             created_at: Utc::now().timestamp_millis(),
             updated_at: Utc::now().timestamp_millis(),
@@ -382,7 +397,7 @@ mod tests {
         let final_results = deduplicator.get_final_results(10);
         
         assert_eq!(final_results.len(), 1);
-        assert_eq!(final_results[0].vector_record.id, "vec1");
+        assert_eq!(final_results[0].vector_record.id, Some("vec1".to_string()));
         assert_eq!(final_results[0].score, 0.9);
     }
 

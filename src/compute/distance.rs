@@ -23,27 +23,12 @@
 //! 4. Zero compilation errors across platforms
 //! 5. Optimal performance per platform
 
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize}; // Unused imports
 use std::sync::OnceLock;
 use tracing::info;
 
-/// Distance metrics supported by ProximaDB
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum DistanceMetric {
-    Cosine,
-    Euclidean,
-    Manhattan,
-    DotProduct,
-    Hamming,
-    Jaccard,
-    Custom(String),
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        DistanceMetric::Cosine // Cosine is the default distance metric
-    }
-}
+// Use proto enum as the single source of truth
+pub use crate::proto::proximadb::DistanceMetric;
 
 /// Platform-agnostic SIMD capability detection
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -348,7 +333,7 @@ impl DistanceCompute for GenericScalar {
                     1.0 - (intersection / union)  // Jaccard distance
                 }
             }
-            DistanceMetric::Custom(_) => {
+            DistanceMetric::Custom => {
                 // Custom metrics fall back to cosine distance
                 CosineScalar.distance(a, b)
             }
@@ -396,7 +381,7 @@ mod x86_implementations {
     #[target_feature(enable = "avx2,fma")]
     unsafe fn cosine_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
         let chunks = a.len() / 8;
-        let remainder = a.len() % 8;
+        let _remainder = a.len() % 8;
 
         let mut dot = _mm256_setzero_ps();
         let mut norm_a = _mm256_setzero_ps();

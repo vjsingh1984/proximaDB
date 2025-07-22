@@ -1,0 +1,36 @@
+graph TB
+    subgraph "Storage Tiers"
+        A[Hot Storage<br/>NVMe SSD] 
+        B[Warm Storage<br/>SSD]
+        C[Cold Storage<br/>HDD]
+        D[Archive Storage<br/>Cloud Object Store]
+    end
+    
+    subgraph "Access Patterns"
+        E[High Frequency<br/>< 1 day]
+        F[Medium Frequency<br/>1-7 days]
+        G[Low Frequency<br/>7-30 days]
+        H[Rare Access<br/>> 30 days]
+    end
+    
+    subgraph "Storage URLs"
+        I["file:///mnt/nvme/"]
+        J["file:///mnt/ssd/"]
+        K["file:///mnt/hdd/"]
+        L["s3://bucket/archive"]
+    end
+    
+    E --> A
+    F --> B
+    G --> C
+    H --> D
+    
+    A --> I
+    B --> J
+    C --> K
+    D --> L
+    
+    style A fill:#ff9999
+    style B fill:#ffcc99
+    style C fill:#99ccff
+    style D fill:#cccccc

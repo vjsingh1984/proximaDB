@@ -39,1048 +39,191 @@ endif::[]
 // specific language governing permissions and limitations
 // under the License.
 
-image::ProximaDB_Main_Architecture.png[ProximaDB Architecture Overview,800,align=center]
+image::docs/diagrams/images/proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
 
 [.lead]
-**Proximity at Scale** +
-_Enterprise-grade vector database engineered for AI workloads with unified memtable architecture and intelligent storage-aware search_
-
-A production-ready, cloud-native vector database built in Rust featuring unified memtable systems, polymorphic search engines, and comprehensive multi-cloud support for modern AI applications.
-
-== 🚀 Quick Navigation
-
-[cols="1,3"]
-|===
-|👤 **New Users** |Start with <<quick-start,Quick Start>> → <<demo-overview,Demo Guide>> → <<python-sdk-example,SDK Examples>>
-|🔧 **Developers** |Jump to <<development-setup,Development Setup>> → <<engineering-approaches,Architecture>> → <<contributing,Contributing>>
-|🏢 **Enterprise** |Review <<competitive-differentiation-matrix,Competitive Analysis>> → <<enterprise-security,Security>> → <<deployment,Deployment>>
-|📚 **Researchers** |Explore <<performance-scalability,Benchmarks>> → <<engineering-challenges,Technical Challenges>> → <<documentation,Research Papers>>
-|===
-
-[TIP]
-====
-🎯 **Quick Start**: Get ProximaDB running in 5 minutes with Docker:
-```bash
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb/demo && docker compose up -d
-```
-====
+**ProximaDB** +
+_High-performance vector database built with Rust, featuring unified architectures and efficient storage engines_
 
 == 🎯 Why ProximaDB?
 
-The rapid evolution of AI applications demands vector databases that balance performance, scalability, and operational simplicity. ProximaDB addresses these challenges through innovative architectural decisions and proven engineering approaches:
+Modern AI applications need vector databases that don't compromise on performance, scalability, or operational simplicity. ProximaDB delivers:
 
-**Unified Memtable Architecture** 🧠:: Single memtable system with behavior wrappers eliminates code duplication while supporting diverse storage backends (VIPER, LSM, WAL).
+**⚡ Optimized Performance**:: DirectVectorService architecture reduces latency by eliminating abstraction layers
+**🚀 Efficient Search**:: Storage-aware search with dual engine support (LSM and VIPER)
+**🔄 Proto-First Design**:: Reduces serialization overhead throughout the system
+**🤖 Automatic Operations**:: Background compaction and efficient memory management
 
-**Storage-Aware Polymorphic Search** 🔍:: Intelligent search engine selection based on data location provides optimal performance across WAL, VIPER, and LSM storage tiers.
+== 🚀 What is ProximaDB?
 
-**URL-Based Multi-Cloud Support** ☁️:: Seamless filesystem abstraction supports `file://`, `s3://`, `adls://`, and `gcs://` URLs with zero-downtime migration capabilities.
+ProximaDB is a vector database built in Rust that provides:
 
-**Production-Ready Infrastructure** 🏗️:: Dual-server architecture (REST:5678 + gRPC:5679) with comprehensive SDK support and enterprise-grade persistence.
+* **Dual Storage Engines**: LSM for write-heavy workloads, VIPER for analytics
+* **Protocol Support**: Both REST (JSON) and gRPC (Protobuf) APIs
+* **Unified Architecture**: Single business logic serving both protocols
+* **Direct Access**: Efficient memtable operations without unnecessary layers
+* **Distance Metrics**: Cosine, Euclidean, and Dot Product similarity
+* **Atomic Operations**: Safe file operations with staging pattern
 
-**RAG-Ready Text Processing** 📚:: Built-in text chunking with 6 strategies (sentence, paragraph, sliding window, semantic, fixed-size, recursive) for Retrieval Augmented Generation applications.
+=== Architecture Highlights
 
-**Advanced Indexing & Quantization** ⚡:: AXIS+HNSW integration with vector quantization support (Product, Scalar, Binary) for 4x memory efficiency and sub-linear search performance.
+* **Service Layer**: DirectVectorService handles vector operations with direct memtable access
+* **Storage Engines**: Choose between LSM (row-based) or VIPER (columnar) based on workload
+* **Persistence**: Write-Ahead Log ensures durability with configurable serialization
+* **Compute**: Optimized distance calculations with SIMD detection
+* **APIs**: Unified handlers serve both REST and gRPC with proto-first design
 
-**Comprehensive Demo Suite** 🎭:: Real server integration demos (not simulations) with platform-specific setup guides (Windows, macOS, Ubuntu), Docker support, and competitive analysis vs leading vector databases.
+== 🛠️ Getting Started
 
-== ⚡ Competitive Advantages & Unique Value Propositions
-
-[NOTE]
-====
-📊 **Evidence-Based Claims**: All performance metrics and competitive advantages listed below are backed by benchmarks, real implementations, and measurable results documented in our demos.
-====
-
-=== 🏆 Technical Excellence & Innovation
-
-**1. Revolutionary Unified Memtable Architecture**::
-- **Unique**: Only vector database with behavior wrappers eliminating code duplication
-- **Advantage**: 40% reduction in codebase complexity, single source of truth for all storage engines
-- **Competition**: All other solutions use storage-specific memtable implementations
-- **Impact**: Faster development, fewer bugs, easier maintenance at enterprise scale
-
-**2. Storage-Aware Polymorphic Search (Proven 6.10x Performance)**::
-- **Unique**: Intelligent search engine selection based on data location and characteristics
-- **Advantage**: 317ms → 52ms search latency with 100% accuracy retention
-- **Competition**: Monolithic search engines that cannot optimize based on storage tier
-- **Impact**: Sub-linear performance scaling with guaranteed result quality
-
-**3. VIPER Engine Innovation (No-Memtable Design)**::
-- **Unique**: Pure WAL delegation for Parquet optimization, no memtable overhead
-- **Advantage**: 3-5x storage efficiency through ML clustering and dual-column storage
-- **Competition**: Traditional engines waste memory on unnecessary memtable layers
-- **Impact**: Massive cost savings on cloud storage and memory requirements
-
-**4. True Multi-Cloud Freedom**::
-- **Unique**: URL-based abstraction enabling zero-downtime cloud migration
-- **Advantage**: `file://`, `s3://`, `adls://`, `gcs://` seamless switching via config changes
-- **Competition**: Vendor lock-in or complex re-architecture required for cloud changes
-- **Impact**: Complete deployment flexibility and negotiating power with cloud providers
-
-=== 🎯 Business & Operational USPs
-
-**5. RAG-Ready Out of the Box**::
-- **Unique**: Built-in text chunking with 6 strategies (sentence, paragraph, sliding window, semantic, fixed-size, recursive)
-- **Advantage**: No external preprocessing pipelines, immediate RAG application deployment
-- **Competition**: Requires external text processing tools and complex integration
-- **Impact**: 10x faster time-to-market for AI applications
-
-**6. Dual Protocol Architecture**::
-- **Unique**: Simultaneous REST (5678) + gRPC (5679) with identical feature parity
-- **Advantage**: HTTP for web integration, gRPC for high-performance applications
-- **Competition**: Single protocol forces architectural compromises
-- **Impact**: Perfect fit for heterogeneous enterprise environments
-
-**7. Production-Ready Administrative Suite**::
-- **Unique**: Comprehensive health monitoring, backup/recovery, maintenance automation
-- **Advantage**: Prometheus metrics, automated scripts, platform-specific deployment guides
-- **Competition**: Basic monitoring or managed service dependency
-- **Impact**: 50-70% reduction in operational overhead
-
-**8. Quantization Without Compromise**::
-- **Unique**: Product Quantization, Scalar, Binary with side-by-side storage
-- **Advantage**: 4x memory reduction while maintaining full-precision search capability
-- **Competition**: Quality degradation or separate quantized indexes required
-- **Impact**: Massive infrastructure cost savings with zero accuracy loss
-
-=== 🚀 Competitive Differentiation Matrix
-
-[IMPORTANT]
-====
-🎯 **Decision Matrix**: Use this table to compare ProximaDB against leading vector databases across key differentiators
-====
-
-[cols="2,2,2,2,2"]
-|===
-.2+^.^|**Capability** 4+^.^|**Vector Database Comparison**
-^.^|**ProximaDB** ^.^|**Pinecone** ^.^|**Milvus** ^.^|**Qdrant**
-
-|**Code Architecture**
-|✅ Unified memtable (unique)
-|❌ Proprietary black box
-|❌ Storage-specific duplication
-|❌ Single memtable approach
-
-|**Search Intelligence**
-|✅ Storage-aware (6.10x proven)
-|❌ Index-only optimization
-|❌ Single strategy
-|⚠️ Limited adaptation
-
-|**Cloud Strategy**
-|✅ True multi-cloud freedom
-|❌ Vendor lock-in
-|⚠️ Manual cloud setup
-|⚠️ Limited cloud support
-
-|**RAG Readiness**
-|✅ Built-in 6 chunking strategies
-|❌ External tools required
-|❌ No text processing
-|❌ Manual preprocessing
-
-|**Protocol Flexibility**
-|✅ REST + gRPC simultaneous
-|❌ REST only
-|✅ Multiple protocols
-|✅ HTTP + gRPC
-
-|**Quantization Innovation**
-|✅ Side-by-side storage
-|⚠️ Preset levels only
-|⚠️ Separate indexes
-|⚠️ Quality trade-offs
-
-|**Operational Excellence**
-|✅ Complete admin suite
-|✅ Managed service
-|⚠️ Basic monitoring
-|⚠️ Limited tooling
-
-|**Total Cost of Ownership**
-|✅ Open source + efficient
-|❌ High cloud costs
-|⚠️ Infrastructure complexity
-|⚠️ Operational overhead
-|===
-
-=== 🎖️ When to Choose ProximaDB
-
-**Perfect for Startups & SMBs**:
-- ✅ Zero licensing costs with production-grade features
-- ✅ RAG applications ready in minutes, not weeks
-- ✅ Single deployment scales from laptop to enterprise
-- ✅ No vendor lock-in or surprise cost escalations
-
-**Ideal for Enterprises**:
-- ✅ Proven 6.10x performance improvement with benchmarks
-- ✅ Multi-cloud strategy enabling negotiating power
-- ✅ Complete operational control and transparency
-- ✅ Advanced features without premium pricing
-
-**Essential for AI/ML Teams**:
-- ✅ Built-in text chunking eliminates preprocessing complexity
-- ✅ Dual protocol support for diverse application architectures
-- ✅ Quantization without accuracy loss for cost optimization
-- ✅ Storage-aware search automatically optimizes for your data patterns
-
-**Critical for DevOps/Platform Teams**:
-- ✅ Comprehensive monitoring and automation tools included
-- ✅ Platform-specific deployment scripts (Windows/macOS/Ubuntu)
-- ✅ Docker and Kubernetes production-ready configurations
-- ✅ Zero-downtime cloud migration capabilities
-
-[[architecture-overview]]
-== 🏗️ Architecture Overview
-
-[NOTE]
-====
-🔗 **Deep Dive**: For detailed architectural analysis, see link:docs/hld.adoc[High-Level Design] and link:docs/lld.adoc[Low-Level Design] documents
-====
-
-ProximaDB implements a sophisticated layered architecture designed for enterprise-scale vector operations:
-
-image::Assignment Service Flow.png[Assignment Service Flow,600,align=center]
-
-=== ⚡ Core Innovation: Unified Memtable System
-
-image::Unified_Memtable_Architecture.png[Unified Memtable Architecture,800,align=center]
-
-==== Revolutionary Design Pattern
-ProximaDB pioneered the **unified memtable architecture** - a paradigm shift from traditional storage-specific implementations:
-
-- **Single Memtable Interface**: Unified `MemtableManager` eliminates code duplication across storage engines
-- **Behavior Wrappers**: `WalBehaviorWrapper`, `LsmBehaviorWrapper` provide storage-specific functionality
-- **VIPER Delegation**: VIPER engine has **no memtable** - uses pure WAL delegation for optimal Parquet performance
-- **Pluggable Backends**: SkipList (LSM), BTree (Bincode WAL), HashMap (Avro WAL) with consistent interfaces
-
-==== Storage-Engine Specialization
-
-**VIPER Engine (Vector-Optimized Parquet)**::
-- **No Memtable Design**: Direct WAL delegation for maximum Parquet efficiency
-- **Dual-Column Storage**: FP32 and quantized vectors stored side-by-side
-- **ML Clustering Framework**: 3-5x storage efficiency through intelligent data organization
-- **Quantization Infrastructure**: 1-32 bit quantization with Product Quantization ready
-
-**LSM Engine (Log-Structured Merge)**::
-- **SkipList Memtable**: High-performance concurrent data structure
-- **LsmBehaviorWrapper**: Handles compaction triggers and SSTable management
-- **Tiered Search**: Memtable → SSTables with bloom filter optimization
-- **Tombstone Handling**: Proper deletion semantics across storage tiers
-
-**WAL System (Write-Ahead Logging)**::
-- **Strategy Pattern**: Avro (cross-language) vs Bincode (native Rust performance)
-- **Zero-Copy Advantages**: Avro binary operations reduce payload by 35-50% vs JSON
-- **Batch Upsert Performance**: Bincode delivers 8-21% faster operations for Rust-native scenarios
-- **Memtable Integration**: BTree/HashMap backends with pluggable serialization
-- **Flush Coordination**: Atomic operations across multiple collections
-- **Assignment Awareness**: Multi-disk distribution with collection affinity
-
-image::WAL_Strategy_Pattern.png[WAL Strategy Pattern,800,align=center]
-
-=== 🔄 Advanced Search Features Roadmap
-
-==== Current Implementation Status (Q4 2024 - Q1 2025)
-
-**✅ Production-Ready Foundation**:
-- Storage-aware polymorphic search engines
-- Unified memtable architecture with behavior wrappers  
-- VIPER/LSM/WAL search engine factory pattern
-- Search result aggregation across heterogeneous storage
-- **Text Chunking Implementation**: 6 chunking strategies for RAG applications
-- **AXIS+HNSW Integration**: Hierarchical Navigable Small World indexing with metadata filtering
-- **Vector Quantization Support**: Product Quantization, Scalar, and Binary quantization
-- **Logical Operators**: AND/OR/NOT metadata filtering with comparison operators
-- **Multi-Distance Metrics**: Cosine, Euclidean, Manhattan, Dot Product support
-
-**✅ Demo & Documentation Suite**:
-- **Comprehensive Demo Guide**: Platform-specific setup (Windows/macOS/Ubuntu) with real server integration
-- **Real Performance Benchmarks**: All demo results from actual server execution, not simulations
-- **Storage Engine Comparison**: Live performance testing of LSM vs VIPER with realistic datasets
-- **Docker Integration**: Full containerization with docker-compose and production configs
-- **Vector Database Comparison**: Detailed analysis vs Pinecone, Milvus, Qdrant, Weaviate, Vespa, PostgreSQL+pgvector
-- **Administrative Features**: Health monitoring, backup/recovery, maintenance automation
-- **Migration Guides**: Step-by-step migration from leading vector databases
-
-**🚧 Performance Optimization Phase (Q2 2025)**:
-- **VIPER ML Clustering**: 3-5x storage efficiency through intelligent data organization
-- **Advanced Quantization**: PQ4/PQ8 with 10-50x memory reduction validation
-- **GPU/SIMD Acceleration**: 2-10x performance through hardware optimization
-- **Distributed Architecture**: Multi-node deployment with consensus protocols
-
-**📋 Advanced Features Phase (Q3-Q4 2025)**:
-- **Parquet Predicate Pushdown**: 30-70% I/O reduction for filtered queries
-- **LSM SSTable Reader**: Complete LSM engine with background compaction
-- **Advanced Caching Systems**: Lock-free data structures with LRU caching
-- **Multi-Language SDKs**: JavaScript, Go, Java SDK implementations
-
-== 🛠️ Engineering Approaches & Methodologies
-
-=== Data Ingestion Pipeline
-
-==== Multi-Modal Ingestion Strategy
-Our ingestion system supports diverse data types through a unified pipeline:
-
-**Vector Sources**:
-- **BERT Embeddings**: Native support for 384, 768, 1024-dimensional vectors
-- **Custom Models**: SentenceTransformers, OpenAI embeddings, custom neural networks
-- **Batch Processing**: Optimized for 200-vector batches with 0% failure rate
-
-**Metadata Enrichment**:
-- **Structured Metadata**: JSON objects with hierarchical indexing support
-- **Tagging Strategy**: Multi-level tags for efficient filtering and organization
-- **Content Preservation**: Original text, images, or documents stored alongside vectors
-
-**Performance Characteristics**:
-- **Sustained Throughput**: 212 vectors/second in production workloads
-- **Memory Management**: 1MB WAL flush threshold for optimal memory usage
-- **Error Recovery**: Zero-downtime recovery from ingestion failures
-
-=== Chunking & Indexing Architecture
-
-==== Modular Pipeline Design
-ProximaDB implements a **modular chunking and indexing pipeline** that can be configured based on workload requirements:
-
-**Chunking Strategies**:
-- **Fixed-Size Chunking**: Predictable performance for uniform data
-- **Semantic Chunking**: Content-aware splitting for optimal retrieval quality
-- **Hierarchical Chunking**: Multi-level document structure preservation
-- **Overlapping Windows**: Sliding window approach for context preservation
-
-**Indexing Pipeline**:
-- **Separate from Chunking**: Modular design allows independent optimization
-- **AXIS Framework**: Adaptive indexing with HNSW, IVF, and hybrid strategies
-- **Real-Time Updates**: Incremental indexing without full rebuilds
-- **Quality Monitoring**: Automatic index quality assessment and rebalancing
-
-=== Storage Strategy & Optimization
-
-==== Tiered Storage Architecture
-**WAL Tier (Hot Data)**:
-- **Immediate Availability**: New vectors searchable within milliseconds
-- **Memory Management**: Configurable flush thresholds (1MB-64MB)
-- **Persistence Strategy**: Atomic operations with filesystem-level consistency
-
-**VIPER Tier (Warm Data)**:
-- **Parquet Optimization**: Columnar storage with advanced compression
-- **Quantization Layers**: Multiple precision levels stored side-by-side
-- **ML Clustering**: Intelligent data organization for query optimization
-
-**Cloud Tier (Cold Data)**:
-- **Multi-Cloud Support**: Seamless migration between AWS S3, Azure Blob, GCS
-- **Cost Optimization**: Automatic tiering based on access patterns
-- **Disaster Recovery**: Cross-region replication for enterprise deployments
-
-=== Tools & Frameworks Evaluated
-
-==== Vector Database Landscape Analysis
-Our engineering team conducted extensive evaluations of leading vector database solutions to inform ProximaDB's design decisions:
-
-**Enterprise-Focused Solutions**:
-- **Distributed Architecture Patterns**: Studied horizontal scaling approaches from market leaders
-- **Index Strategy Evaluation**: Compared HNSW, IVF, and hybrid indexing implementations
-- **API Design Analysis**: Evaluated REST vs gRPC performance characteristics
-- **Cloud Integration Patterns**: Assessed multi-cloud deployment strategies
-
-**Performance Benchmarking**:
-- **Throughput Analysis**: Compared insertion rates across different architectures
-- **Query Performance**: Evaluated search latency under various load conditions
-- **Memory Efficiency**: Analyzed quantization strategies and memory usage patterns
-- **Scalability Testing**: Assessed horizontal and vertical scaling characteristics
-
-**Operational Considerations**:
-- **Deployment Complexity**: Evaluated operational overhead of different architectures
-- **Monitoring & Observability**: Compared metric collection and alerting capabilities
-- **Data Migration**: Assessed import/export capabilities and migration tools
-- **SDK Quality**: Evaluated client library design and language support
-
-[[quick-start]]
-== 🚀 Quick Start
-
-[TIP]
-====
-⏱️ **Time Investment**: 5 minutes for Docker setup, 15 minutes for comprehensive demo
-====
-
-[[docker-quickstart]]
-=== Docker Quick Start (Recommended)
+=== Quick Start (2 Minutes)
 
 [source,bash]
 ----
-# One-command setup with demo suite
+# Run with Docker
 git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb/demo
-docker compose up -d
+cd proximadb/demo && docker compose up -d
 
-# Watch the comprehensive demo execution
-docker compose logs -f
-
-# Or run individual demos
-docker run --network proximadb_default \
-  -e PROXIMADB_SERVER_URL=http://proximadb:5678 \
-  proximadb-demo:latest python working_demo.py
+# Or build from source
+cargo run --bin proximadb-server
 ----
 
-[[platform-setup]]
-=== Platform-Specific Setup
+→ link:docs/getting_started.adoc[Full installation guide] | link:docs/user_guide.adoc#docker-deployment[Docker configuration]
 
-[NOTE]
-====
-🔗 **Detailed Instructions**: For comprehensive setup guides, see link:demo/demo.adoc[Demo Guide] with platform-specific troubleshooting
-====
-
-**Windows (PowerShell)**:
-[source,powershell]
-----
-# Run setup script
-.\demo\setup-windows.ps1 -InstallPath "C:\ProximaDB"
-.\demo\start-proximadb-windows.ps1 -Release
-----
-
-**macOS (Bash)**:
-[source,bash]
-----
-# Run setup script  
-./demo/setup-macos.sh ~/ProximaDB
-./demo/start-proximadb-macos.sh config-macos.toml true
-----
-
-**Ubuntu (Bash)**:
-[source,bash]
-----
-# Run setup script
-./demo/setup-ubuntu.sh ~/ProximaDB
-./demo/start-proximadb-ubuntu.sh config-ubuntu.toml true
-----
-
-=== Building from Source
-
-[source,bash]
-----
-# Clone repository
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
-
-# Build release version
-cargo build --release
-
-# Run comprehensive test suite
-make test
-
-# Start server with demo configuration
-cargo run --bin proximadb-server -- --config demo/docker-config.toml
-----
-
-[[python-sdk-example]]
-=== Python SDK Example with Text Chunking
-
-[TIP]
-====
-🔗 **Complete Examples**: See link:demo/financial_analysis_demo.py[Financial Analysis Demo] for advanced BERT embedding workflows
-====
+=== Python Example
 
 [source,python]
 ----
-from proximadb import (
-    connect_rest, connect_grpc, CollectionConfig, DistanceMetric,
-    TextChunker, ChunkingStrategy, ChunkingConfig,
-    chunk_by_sentences, chunk_sliding_window
-)
-from sentence_transformers import SentenceTransformer
+from proximadb import connect_rest
 
-# Initialize dual protocol clients
-rest_client = connect_rest("http://localhost:5678")
-grpc_client = connect_grpc("localhost:5679")
-
-# Create collection with advanced configuration
-config = CollectionConfig(
-    dimension=768,
-    distance_metric=DistanceMetric.COSINE,
-    description="RAG-ready document collection",
-    index_config={
-        "algorithm": "hnsw",
-        "parameters": {"m": 16, "ef_construction": 200}
-    },
-    storage_config={
-        "quantization": {
-            "enabled": True,
-            "method": "product",
-            "compression_ratio": 4.0
-        }
-    }
-)
-collection = rest_client.create_collection("rag_documents", config)
-
-# Advanced text chunking for RAG applications
-document = """
-ProximaDB's unified memtable architecture revolutionizes vector database design 
-by eliminating code duplication across storage engines. The storage-aware 
-polymorphic search achieves 6.10x performance improvement while maintaining 
-100% accuracy through intelligent engine selection.
-"""
-
-# Use multiple chunking strategies
-sentence_chunks = chunk_by_sentences(document, chunk_size=200)
-window_chunks = chunk_sliding_window(document, window_size=150, overlap=50)
-
-# Semantic chunking with configuration
-semantic_config = ChunkingConfig(
-    strategy=ChunkingStrategy.SEMANTIC,
-    max_chunk_size=300,
-    preserve_sentences=True
-)
-chunker = TextChunker(semantic_config)
-semantic_chunks = chunker.chunk_text(document, "doc_semantic")
-
-# Generate embeddings and insert with chunking metadata
-model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-vectors, ids, metadata = [], [], []
-
-for i, chunk in enumerate(sentence_chunks + window_chunks):
-    embedding = model.encode(chunk.text).tolist()
-    vectors.append(embedding)
-    ids.append(f"chunk_{i}")
-    metadata.append({
-        "text": chunk.text,
-        "chunk_strategy": chunk.metadata.get("chunk_type", "sentence"),
-        "position": f"{chunk.start_pos}-{chunk.end_pos}",
-        "length": chunk.length,
-        "document_id": chunk.chunk_id,
-        "category": "architecture"
-    })
-
-# Batch insert using gRPC for performance
-result = grpc_client.insert_vectors("rag_documents", vectors, ids, metadata=metadata)
-print(f"Inserted {result.successful_count} vectors via gRPC")
-
-# Advanced search with logical operators and metadata filtering
-query = "How does unified memtable improve performance?"
-query_embedding = model.encode(query).tolist()
-
-# Search with complex metadata filtering (simulated)
-results = rest_client.search(
-    "rag_documents",
-    query_embedding,
-    k=10
-)
-
-# Filter results using logical operators
-filtered_results = []
-for result in results:
-    meta = getattr(result, 'metadata', {})
-    # Complex filter: (category=architecture AND length>100) OR chunk_strategy=semantic
-    if ((meta.get('category') == 'architecture' and meta.get('length', 0) > 100) or 
-        meta.get('chunk_strategy') == 'semantic'):
-        filtered_results.append(result)
-
-print(f"Found {len(filtered_results)} relevant chunks with advanced filtering")
+client = connect_rest("http://localhost:5678")
+collection = client.create_collection("docs", dimension=768)
+client.insert_vectors("docs", embeddings, metadata=[{"type": "doc"}])
+results = client.search("docs", query_vector, k=10)
 ----
 
-[[comparative-analysis]]
-== 📊 Comparative Analysis: Vector Database Landscape
+→ link:docs/developer_guide.adoc#python-sdk[Python SDK reference] | link:docs/user_guide.adoc#ai-integration-examples[More examples]
 
-=== Performance & Scalability Comparison
+== 🏆 Key Benefits
 
-[cols="3,2,2,2,2"]
-|===
-|Capability |ProximaDB |Enterprise Solution A |Open Source Solution B |Cloud Solution C
+**Performance**: Optimized for high-throughput vector operations
+**Code Quality**: Unified interfaces reduce code duplication
+**Deployment**: Containerized deployment with Docker support
+**Open Source**: Apache 2.0 licensed with active development
 
-|**Memtable Architecture**
-|✅ Unified with behavior wrappers
-|❌ Storage-specific implementations
-|❌ Single memtable type
-|❌ Proprietary implementation
+== 📚 Documentation Guide
 
-|**Search Engine Design**
-|✅ Polymorphic storage-aware
-|⚠️ Index-focused only
-|⚠️ Single strategy
-|❌ Black box implementation
+ProximaDB documentation follows a **progressive disclosure** model - start with high-level concepts and dive deeper based on your needs.
 
-|**Multi-Cloud Support**
-|✅ URL-based abstraction
-|⚠️ Limited cloud support
-|❌ Single cloud only
-|❌ Vendor lock-in
+=== 🎯 How to Navigate the Documentation
 
-|**Quantization Flexibility**
-|✅ 1-32 bit + Product Quantization
-|⚠️ Preset levels only
-|⚠️ Binary quantization only
-|❌ No quantization control
-
-|**Storage Efficiency**
-|✅ Dual-column Parquet
-|⚠️ Single format storage
-|⚠️ Memory-focused
-|❌ Proprietary format
-
-|**API Architecture**
-|✅ Dual REST+gRPC servers
-|⚠️ Single protocol
-|✅ Multiple protocols
-|⚠️ REST only
-
-|**SDK Quality**
-|✅ Production-ready Python+Rust
-|✅ Multiple languages
-|⚠️ Limited language support
-|✅ Multiple languages
-|===
-
-=== Architectural Innovation Comparison
-
-[cols="3,2,2,2,2"]
-|===
-|Innovation |ProximaDB |Enterprise Solution A |Open Source Solution B |Cloud Solution C
-
-|**Assignment Service**
-|✅ Multi-disk round-robin
-|❌ Single node focus
-|❌ Manual sharding
-|❌ Managed service only
-
-|**WAL Strategy Pattern**
-|✅ Pluggable serialization
-|⚠️ Fixed WAL format
-|⚠️ No WAL layer
-|❌ Proprietary
-
-|**Search Result Quality**
-|✅ 100% exact matches, 1.0 correlation
-|⚠️ Approximate results
-|⚠️ Quality varies
-|❌ No quality metrics
-
-|**Performance Optimization**
-|✅ 6.10x speedup proven
-|⚠️ Vendor claims only
-|⚠️ Limited benchmarks
-|❌ No public benchmarks
-
-|**Deployment Flexibility**
-|✅ Docker/Kubernetes/Bare metal
-|⚠️ Limited deployment options
-|✅ Flexible deployment
-|❌ Cloud only
-
-|**Operational Transparency**
-|✅ Full source code access
-|❌ Proprietary
-|✅ Open source
-|❌ Proprietary
-|===
-
-=== Challenges & Solutions Analysis
-
-**Memory Management Challenges**:
-- **Industry Problem**: Vector databases often face memory pressure with large datasets
-- **ProximaDB Solution**: Unified memtable with configurable flush thresholds and intelligent tiering
-- **Competitive Gaps**: Most solutions require manual memory tuning or suffer from unpredictable memory usage
-
-**Search Quality vs Performance Trade-offs**:
-- **Industry Problem**: Traditional solutions force choice between search speed and result quality
-- **ProximaDB Solution**: Storage-aware search with proven 6.10x speedup while maintaining 100% exact matches
-- **Competitive Advantage**: Dual-column storage enables quality comparison without performance penalties
-
-**Multi-Cloud Deployment Complexity**:
-- **Industry Problem**: Vendor lock-in and complex migration processes between cloud providers
-- **ProximaDB Solution**: URL-based filesystem abstraction enables zero-downtime cloud migration
-- **Market Differentiation**: Most solutions require significant re-architecture for cloud changes
-
-**Operational Overhead**:
-- **Industry Problem**: Complex deployment, monitoring, and maintenance requirements
-- **ProximaDB Solution**: Unified configuration, built-in health endpoints, and comprehensive documentation
-- **Strategic Advantage**: Simplified operations reduce total cost of ownership
-
-== 📋 Multi-Cloud Configuration
-
-ProximaDB's URL-based storage abstraction provides seamless multi-cloud deployment:
-
-image::Storage_Pairing_Strategy.png[Storage Pairing Strategy,700,align=center]
-
-[source,toml]
+**New to ProximaDB?** → **5-Minute Journey**
+[source,text]
 ----
-[storage.wal_config]
-wal_urls = [
-    "file:///mnt/nvme1/wal",        # Local NVMe for hot data
-    "s3://proximadb-wal/cluster1",  # AWS S3 for warm data
-    "adls://storage.dfs.core.windows.net/wal", # Azure for cold data
-    "gcs://proximadb-backup/wal"    # GCS for disaster recovery
-]
-distribution_strategy = "PerformanceBased"
-collection_affinity = true
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/mnt/nvme1/storage"
-instance_id = 1
-disk_type = { NvmeSsd = { max_iops = 200000 } }
-
-[[storage.storage_layout.base_paths]]
-base_dir = "s3://proximadb-storage/cluster1"
-instance_id = 2
-disk_type = { NetworkStorage = { latency_ms = 10.0 } }
+README.adoc (this file) → getting_started.adoc → First vector operations
 ----
 
-== 🌟 Engineering Challenges & Solutions
+**Building an Application?** → **User-Focused Path**
+[source,text]
+----
+getting_started.adoc → user_guide.adoc → Integration patterns & workflows
+----
 
-image::Engineering_Challenges_Simple.png[Engineering Challenges Overview,800,align=center]
+**Contributing to ProximaDB?** → **Developer-Focused Path**
+[source,text]
+----
+developer_guide.adoc → architecture.adoc → technical_reference.adoc
+----
 
-=== Challenge 1: Unified Memtable Architecture
+**Designing a System?** → **Architecture-Focused Path**
+[source,text]
+----
+requirements.adoc → architecture.adoc → Performance & deployment strategies
+----
 
-**Problem**: Traditional vector databases implement separate memtable systems for each storage engine, leading to code duplication and maintenance overhead.
+=== 📖 Document Overview
 
-**Approach**: Designed a unified memtable interface with behavior wrappers that provide storage-specific functionality while maintaining consistent APIs.
-
-**Solution**: 
-- Created `MemtableManager` trait with pluggable backend support
-- Implemented `WalBehaviorWrapper` and `LsmBehaviorWrapper` for storage-specific logic
-- VIPER engine uses pure WAL delegation (no memtable) for optimal Parquet performance
-- Achieved 40% reduction in codebase complexity while improving maintainability
-
-**Tools Used**: Rust trait system, Arc/Mutex for thread safety, tokio for async operations
-
-=== Challenge 2: Storage-Aware Polymorphic Search
-
-**Problem**: Existing solutions use monolithic search engines that cannot optimize based on data location and storage characteristics.
-
-**Approach**: Implemented factory pattern with storage-aware search engine selection and result aggregation across heterogeneous storage tiers.
-
-**Solution**:
-- `SearchEngineFactory` automatically selects optimal engines based on collection storage type
-- Polymorphic search across WAL (unflushed), VIPER (Parquet), and LSM (SSTables)
-- Result aggregation with duplicate detection and relevance scoring
-- Achieved 6.10x performance improvement (317ms → 52ms) with 100% result accuracy
-
-**Tools Used**: Factory pattern, async/await, Arrow for Parquet reading, custom result merging algorithms
-
-=== Challenge 3: Multi-Cloud Filesystem Abstraction
-
-**Problem**: Vector databases typically require significant re-architecture when migrating between cloud providers or hybrid deployments.
-
-**Approach**: Developed URL-based filesystem abstraction that provides unified interfaces across local and cloud storage systems.
-
-**Solution**:
-- Unified URL parsing for `file://`, `s3://`, `adls://`, `gcs://` schemes
-- Pluggable backend implementations with consistent async interfaces
-- Zero-downtime migration capabilities through configuration changes
-- Automatic retry logic and error handling for network-based storage
-
-**Tools Used**: AWS SDK, Azure SDK, GCS SDK, async-trait for unified interfaces, URL parsing libraries
-
-=== Challenge 4: Production-Grade WAL System
-
-**Problem**: Most vector databases either lack WAL systems or implement simplistic logging that doesn't handle multi-collection scenarios effectively.
-
-**Approach**: Designed strategy pattern-based WAL with pluggable serialization and assignment-aware distribution.
-
-**Solution**:
-- Strategy pattern supporting Avro (cross-language) and Bincode (native Rust) serialization
-- Assignment service integration for multi-disk distribution
-- Atomic flush coordination across multiple collections
-- Background flush management with configurable thresholds
-
-**Tools Used**: Apache Avro, Bincode, tokio for background tasks, atomic filesystem operations
-
-[[performance-scalability]]
-== 📊 Performance & Scalability
-
-=== Real-World Benchmarks
-
-==== BERT Embedding Performance (Production Workload)
-**Configuration**: 10,000 vectors, 768-dimensional BERT embeddings, 1MB WAL flush threshold
-
-[cols="3,2,2,2"]
+[cols="2,3,2,1"]
 |===
-|Metric |VIPER Baseline |VIPER Optimized |Performance Gain
+|**Document** |**Purpose** |**Audience** |**Read Time**
 
-|**Search Latency**
-|317ms avg
-|52ms avg
-|**6.10x faster**
+|**link:docs/getting_started.adoc[Getting Started]**
+|Get ProximaDB running in 5 minutes with first vector operations
+|Everyone
+|5 min
 
-|**Result Quality**
-|Perfect baseline
-|100% exact matches
-|**Perfect retention**
+|**link:docs/user_guide.adoc[User Guide]**
+|Complete workflows, AI integration, and production usage patterns
+|Users, ML Engineers
+|30 min
 
-|**Rank Correlation**
-|1.0000 (baseline)
-|1.0000 (identical)
-|**No quality loss**
+|**link:docs/architecture.adoc[Architecture]**
+|System design, performance characteristics, and deployment strategies
+|Architects, Engineers
+|20 min
 
-|**Insertion Throughput**
-|212 vectors/sec
-|212 vectors/sec
-|**Maintained**
+|**link:docs/developer_guide.adoc[Developer Guide]**
+|APIs, SDKs, testing, and contribution workflows
+|Developers, Contributors
+|45 min
 
-|**Memory Usage**
-|~2.1GB peak
-|~1.8GB peak
-|**14% reduction**
+|**link:docs/technical_reference.adoc[Technical Reference]**
+|Implementation details, algorithms, and optimization techniques
+|System Engineers
+|60 min
+
+|**link:docs/requirements.adoc[Requirements]**
+|System requirements and acceptance criteria
+|Product Managers, Architects
+|30 min
 |===
 
-==== Multi-Disk Scalability Analysis
+=== 🚀 Specialized Guides
 
-[cols="2,1,1,1,1"]
-|===
-|Configuration |Insert Rate |Search QPS |Storage Efficiency |Fault Tolerance
+**Performance Optimization**:
+- link:docs/quantization_and_optimization.adoc[Vector Quantization] - Memory optimization techniques
+- link:docs/architecture.adoc#performance-characteristics[Performance Benchmarks] - Latency and throughput metrics
 
-|**Single NVMe**
-|10K vec/s
-|500 QPS
-|1.0x baseline
-|Single point failure
+**Production Deployment**:
+- link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Setup] - High-performance storage configuration
+- link:docs/architecture.adoc#deployment-architecture[Deployment Strategies] - Single-node to multi-cloud
 
-|**3 x NVMe SSD**
-|28K vec/s
-|1,400 QPS
-|0.95x (metadata overhead)
-|2 disk failure tolerance
+**Advanced Features**:
+- link:docs/technical_reference.adoc[Technical Implementation] - Architecture details
+- link:docs/appendix_implementation_details.adoc[Implementation Patterns] - Code examples
 
-|**6 x NVMe SSD**
-|55K vec/s
-|2,700 QPS
-|0.92x (coordination overhead)
-|5 disk failure tolerance
+== 🤝 Contributing & Community
 
-|**Hybrid (Local + S3)**
-|18K vec/s
-|900 QPS
-|0.88x (network latency)
-|Cloud backup redundancy
+ProximaDB thrives on community contributions. Our development process follows industry best practices:
 
-|**Pure Cloud (S3)**
-|8K vec/s
-|400 QPS
-|0.85x (network overhead)
-|99.999% availability
-|===
+**Development Standards**:
+- Zero warnings policy (`cargo clippy -- -D warnings`)
+- Comprehensive test coverage with performance benchmarks
+- Real server testing (no simulations)
+- Cross-platform validation
 
-[[documentation]]
-== 📚 Documentation
-
-[TIP]
-====
-📖 **Documentation Map**: All documentation is cross-linked and follows a progressive learning path from basic concepts to advanced implementation
-====
-
-Comprehensive documentation following enterprise standards:
-
-- **link:docs/requirements.adoc[Requirements Specification]** - Functional and non-functional requirements with traceability
-- **link:docs/hld.adoc[High-Level Design]** - Architecture overview with unified memtable diagrams
-- **link:docs/lld.adoc[Low-Level Design]** - Implementation details with storage-aware search algorithms
-- **link:docs/user_guide.adoc[User Guide]** - Installation, configuration, and operational procedures
-- **link:docs/developer_guide.adoc[Developer Guide]** - Contributing guidelines and development environment setup
-- **link:docs/guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Configuration Guide]** - Production deployment scenarios
-
-=== Demo & Feature Documentation
-
-- **link:demo/demo.adoc[Comprehensive Demo Guide]** - Complete setup guide for Windows, macOS, Ubuntu with Docker support
-- **link:demo/README.md[Demo Overview]** - Quick start guide for running demos and benchmarks
-- **link:docs/quantization_support.md[Vector Quantization Guide]** - Implementation details and performance benchmarks
-- **link:docs/logical_operators.md[Logical Operators Guide]** - Advanced metadata filtering with AND/OR/NOT operations
-- **link:docs/optimization_plan.adoc[Optimization Plan]** - Memory optimization strategies and performance improvements
-
-=== Feature-Specific Guides
-
-- **Text Chunking Strategies** - 6 different approaches for RAG applications (built into SDK)
-- **AXIS+HNSW Integration** - Advanced indexing with hierarchical navigable small world graphs
-- **Multi-Distance Metrics** - Cosine, Euclidean, Manhattan, Dot Product configuration
-- **Platform Setup Scripts** - Automated installation for Windows, macOS, Ubuntu
-- **Docker Deployment** - Full containerization with production configurations
-- **Vector Database Migration** - Step-by-step guides from Pinecone, Milvus, Qdrant, Weaviate
-
-[[contributing]]
-== 🤝 Contributing
-
-[IMPORTANT]
-====
-🤝 **Community Driven**: ProximaDB thrives on community contributions. See link:docs/developer_guide.adoc[Developer Guide] for detailed contribution workflows
-====
-
-We welcome contributions from the AI and systems engineering community! Our development process follows industry best practices:
-
-**Development Workflow**:
-- Feature branches with descriptive names
-- Comprehensive test coverage requirements
-- Performance benchmark validation
-- Documentation updates for all changes
-
-**Code Quality Standards**:
-- Rust clippy linting with zero warnings
-- Comprehensive unit and integration tests
-- Performance regression testing
-- Memory safety verification
-
-[[development-setup]]
-=== Development Setup
-
+**Get Started**:
 [source,bash]
 ----
-# Install Rust toolchain
+# Install Rust and clone repository
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Clone and build
 git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
-cargo build --release
+cd proximadb && cargo build --release
 
-# Run comprehensive test suite
+# Run test suite
 make test
-
-# Performance benchmarks
-make benchmark-vector
-
-# Development server with debug logging
-RUST_LOG=debug cargo run --bin proximadb-server
 ----
 
-== 📊 Current Production Status
+→ link:docs/developer_guide.adoc#development-setup[Development environment] | link:docs/developer_guide.adoc#testing-guidelines[Testing guide]
 
-[cols="3,1,2"]
-|===
-|Component |Status |Production Notes
+== 📄 License & Contact
 
-|**Unified Memtable Architecture**
-|✅ Production
-|Behavior wrappers with SkipList/BTree/HashMap backends
+ProximaDB is licensed under the Apache License 2.0. All novel architectural innovations are released under open-source licensing to benefit the AI community.
 
-|**Storage-Aware Polymorphic Search**
-|✅ Production
-|Factory pattern with VIPER/LSM/WAL engines
-
-|**Multi-Cloud Filesystem Abstraction**
-|✅ Production
-|URL-based abstraction for file://, s3://, adls://, gcs://
-
-|**Dual-Server Architecture (REST+gRPC)**
-|✅ Production
-|Simultaneous protocol support on ports 5678/5679
-
-|**WAL Strategy Pattern**
-|✅ Production
-|Avro/Bincode serialization with assignment integration
-
-|**VIPER Storage Engine**
-|✅ Production
-|Parquet-based with dual-column FP32/quantized storage
-
-|**Assignment Service**
-|✅ Production
-|Multi-disk round-robin with collection affinity
-
-|**Python SDK with Text Chunking**
-|✅ Production
-|6 chunking strategies, async support, dual-protocol
-
-|**Performance Benchmarks**
-|✅ Validated
-|6.10x speedup with 100% result quality retention
-
-|**Text Chunking Implementation**
-|✅ Production
-|Sentence, paragraph, sliding window, semantic, fixed-size, recursive
-
-|**AXIS+HNSW Integration**
-|✅ Production
-|Hierarchical Navigable Small World with metadata filtering
-
-|**Vector Quantization Support**
-|✅ Production
-|Product Quantization, Scalar, Binary with 4x compression
-
-|**Logical Operators**
-|✅ Production
-|AND/OR/NOT metadata filtering with comparison operators
-
-|**Multi-Distance Metrics**
-|✅ Production
-|Cosine, Euclidean, Manhattan, Dot Product support
-
-|**Comprehensive Demo Suite**
-|✅ Production
-|Real server execution: storage_engines_demo.py (620 lines), tangible datasets, live benchmarks
-
-|**Administrative Features**
-|✅ Production
-|Health monitoring, backup/recovery, maintenance automation
-
-|**Vector Database Migration Tools**
-|✅ Production
-|Step-by-step guides from leading vector databases
-
-|**ML Clustering Implementation**
-|🚧 Framework Ready
-|Clustering infrastructure for 3-5x storage efficiency
-
-|**GPU Acceleration Support**
-|📋 Planned Q2 2025
-|CUDA/ROCm framework prepared
-
-|**Distributed Consensus**
-|📋 Planned Q3 2025
-|Raft implementation foundation ready
-
-|**Multi-Language SDKs**
-|📋 Planned Q3 2025
-|JavaScript, Go, Java SDK implementations
-|===
-
-[[enterprise-security]]
-== 🛡️ Enterprise Security & Compliance
-
-ProximaDB implements enterprise-grade security features:
-
-**Data Protection**:
-- Encryption at rest via cloud provider integration
-- TLS 1.3 support for encrypted communication (implementation ready)
-- Secure credential management for cloud storage access
-
-**Access Control**:
-- API key authentication framework (implementation ready)
-- Role-based access control design completed
-- Audit logging for compliance requirements
-
-**Operational Security**:
-- Secure configuration management
-- Container security best practices
-- Network isolation support
-
-== 📄 License & Legal
-
-ProximaDB is licensed under the Apache License 2.0. See link:LICENSE[LICENSE] for complete terms.
-
-**Patent Considerations**: All novel architectural innovations in ProximaDB are released under open-source licensing to benefit the AI community.
-
-== 🌟 Acknowledgments
-
-ProximaDB's development has been influenced by extensive research and evaluation of the vector database ecosystem:
-
-**Technical Influences**:
-- Apache Arrow project for columnar storage design patterns
-- Rust async ecosystem for high-performance networking
-- Distributed systems research for consensus and replication strategies
-
-**Community Contributions**:
-- Early adopters providing production feedback
-- Open-source contributors improving SDK quality
-- Academic researchers validating performance claims
-
-== 📞 Contact & Community
-
-**Technical Discussions**:
-- **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
-- **Architecture Discussions**: https://github.com/vjsingh1984/proximadb/discussions
-- **Performance Benchmarks**: Community-validated results welcome
-
-**Professional Contact**:
+**Contact**:
+- **GitHub**: https://github.com/vjsingh1984/proximadb
 - **Email**: singhvjd@gmail.com
-- **LinkedIn**: Technical architecture discussions
-- **Conference Presentations**: Available for vector database architecture talks
+- **Issues**: https://github.com/vjsingh1984/proximadb/issues
 
 ---
 
-**ProximaDB** - _Proximity at Scale with Engineering Excellence_ 🚀
-
-Built with ❤️ in Rust for the AI community. Engineered for production workloads.
+**ProximaDB** - _High-performance vector database built with Rust_

@@ -1,0 +1,41 @@
+graph TD
+    A[Search Request] --> B{Query Analysis}
+    
+    B --> C[Filter Selectivity<br/>Estimation]
+    B --> D[Vector Search<br/>Cost Model]
+    B --> E[Result Size<br/>Prediction]
+    B --> Q1{Quantization<br/>Detection}
+    
+    C --> F{Optimization<br/>Decision}
+    D --> F
+    E --> F
+    Q1 --> F
+    
+    F -->|Selective Filter| G[Filter First<br/>Then Search]
+    F -->|Non-Selective| H[Search First<br/>Then Filter]
+    F -->|Mixed| I[Hybrid<br/>Approach]
+    F -->|Quantized Available| TS[Two-Stage<br/>Search]
+    
+    G --> J[Apply Metadata<br/>Filters]
+    J --> K[Search Filtered<br/>Vectors]
+    
+    H --> L[Vector<br/>Search]
+    L --> M[Filter<br/>Results]
+    
+    I --> N[Partial<br/>Filtering]
+    N --> O[Bounded<br/>Search]
+    O --> P[Final<br/>Filtering]
+    
+    TS --> TS1[Stage 1:<br/>Quantized Search]
+    TS1 --> TS2[Stage 2:<br/>FP32 Refinement]
+    
+    K --> Q[Return Results]
+    M --> Q
+    P --> Q
+    TS2 --> Q
+    
+    style B fill:#ffcc99
+    style F fill:#99ccff
+    style Q fill:#99ff99
+    style TS fill:#ff99cc
+    style Q1 fill:#ffcc99

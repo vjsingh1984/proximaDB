@@ -11,10 +11,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::{
-    strategy::ResourceRequirements, AxisConfig, CollectionAnalyzer, IndexStrategy, IndexType,
-    MigrationDecision, MigrationPriority, OptimizationConfig,
+    AxisConfig, CollectionAnalyzer, MigrationDecision,
+    strategy::{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
+    types::{DataType, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy},
 };
-use crate::core::CollectionId;
+
 
 /// Engine for analyzing collections and recommending optimal indexing strategies
 pub struct AdaptiveIndexEngine {
@@ -45,7 +46,7 @@ impl std::fmt::Debug for AdaptiveIndexEngine {
 /// Collection characteristics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionCharacteristics {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub vector_count: u64,
     pub average_sparsity: f32,
     pub sparsity_variance: f32,
@@ -130,8 +131,8 @@ pub struct MetadataComplexity {
 
 /// Strategy selection engine
 pub struct IndexStrategySelector {
-    /// Strategy templates for different scenarios
-    strategy_templates: std::collections::HashMap<StrategyType, IndexStrategyTemplate>,
+    /// Optimization configurations for different scenarios
+    optimization_configs: std::collections::HashMap<StrategyType, OptimizationConfig>,
 }
 
 /// Strategy types for different collection profiles
@@ -147,11 +148,11 @@ pub enum StrategyType {
     Analytical,
 }
 
-/// Strategy template
+/// Strategy configuration template
 #[derive(Debug, Clone)]
-pub struct IndexStrategyTemplate {
+pub struct StrategyConfigTemplate {
     pub strategy_type: StrategyType,
-    pub base_strategy: IndexStrategy,
+    pub optimization_config: OptimizationConfig,
     pub applicability_conditions: ApplicabilityConditions,
 }
 
@@ -238,10 +239,10 @@ pub struct ResourcePrediction {
 /// Strategy decision record
 #[derive(Debug, Clone)]
 pub struct StrategyDecision {
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub timestamp: DateTime<Utc>,
     pub characteristics: CollectionCharacteristics,
-    pub recommended_strategy: IndexStrategy,
+    pub recommended_strategy: IndexSelectionStrategy,
     pub decision_reason: String,
     pub expected_improvement: f64,
 }
@@ -265,7 +266,7 @@ impl AdaptiveIndexEngine {
     /// Analyze collection characteristics
     pub async fn analyze_collection(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
     ) -> Result<CollectionCharacteristics> {
         self.collection_analyzer
             .analyze_collection(collection_id)
@@ -276,7 +277,7 @@ impl AdaptiveIndexEngine {
     pub async fn recommend_strategy(
         &self,
         characteristics: &CollectionCharacteristics,
-    ) -> Result<IndexStrategy> {
+    ) -> Result<IndexSelectionStrategy> {
         // Determine strategy type based on characteristics
         let strategy_type = self.determine_strategy_type(characteristics);
 
@@ -303,7 +304,7 @@ impl AdaptiveIndexEngine {
     /// Determine if migration is beneficial
     pub async fn should_migrate(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         characteristics: &CollectionCharacteristics,
     ) -> Result<MigrationDecision> {
         // Get current strategy (mock for now)
@@ -313,7 +314,7 @@ impl AdaptiveIndexEngine {
         let optimal_strategy = self.recommend_strategy(characteristics).await?;
 
         // Check if strategies are the same
-        if current_strategy.primary_index_type == optimal_strategy.primary_index_type {
+        if current_strategy.indexes == optimal_strategy.indexes {
             return Ok(MigrationDecision::Stay {
                 reason: "Already using optimal strategy".to_string(),
             });
@@ -346,7 +347,7 @@ impl AdaptiveIndexEngine {
 
         // Record decision
         let decision = StrategyDecision {
-            collection_id: collection_id.clone(),
+            collection_id: collection_id.to_string(),
             timestamp: Utc::now(),
             characteristics: characteristics.clone(),
             recommended_strategy: optimal_strategy.clone(),
@@ -383,9 +384,9 @@ impl AdaptiveIndexEngine {
     /// Refine strategy using ML predictions
     async fn refine_with_ml_predictions(
         &self,
-        base_strategy: IndexStrategy,
+        base_strategy: IndexSelectionStrategy,
         _characteristics: &CollectionCharacteristics,
-    ) -> Result<IndexStrategy> {
+    ) -> Result<IndexSelectionStrategy> {
         // TODO: Implement ML-based refinement
         Ok(base_strategy)
     }
@@ -393,19 +394,23 @@ impl AdaptiveIndexEngine {
     /// Calculate improvement potential
     async fn calculate_improvement_potential(
         &self,
-        current: &IndexStrategy,
-        optimal: &IndexStrategy,
+        current: &IndexSelectionStrategy,
+        optimal: &IndexSelectionStrategy,
         _characteristics: &CollectionCharacteristics,
     ) -> Result<f64> {
         // Simple heuristic for now
         // TODO: Use ML models for accurate prediction
 
-        let improvement = match (&current.primary_index_type, &optimal.primary_index_type) {
-            (IndexType::GlobalIdOnly, IndexType::HNSW) => 0.5, // 50% improvement
-            (IndexType::GlobalIdOnly, IndexType::FullAXIS) => 0.7, // 70% improvement
-            (IndexType::LightweightHNSW, IndexType::HNSW) => 0.3, // 30% improvement
-            (IndexType::HNSW, IndexType::PartitionedHNSW) => 0.2, // 20% improvement
-            _ => 0.1,                                          // Default 10% improvement
+        // Calculate improvement based on index specifications
+        let current_has_vector = current.indexes.iter()
+            .any(|idx| matches!(idx.data_type, DataType::DenseVector { .. } | DataType::SparseVector { .. }));
+        let optimal_has_vector = optimal.indexes.iter()
+            .any(|idx| matches!(idx.data_type, DataType::DenseVector { .. } | DataType::SparseVector { .. }));
+        
+        let improvement = match (current_has_vector, optimal_has_vector) {
+            (false, true) => 0.6,  // 60% improvement adding vector index
+            (true, true) => 0.2,   // 20% improvement optimizing existing
+            _ => 0.1,              // Default 10% improvement
         };
 
         Ok(improvement)
@@ -414,8 +419,8 @@ impl AdaptiveIndexEngine {
     /// Estimate migration complexity
     fn estimate_migration_complexity(
         &self,
-        current: &IndexStrategy,
-        target: &IndexStrategy,
+        current: &IndexSelectionStrategy,
+        target: &IndexSelectionStrategy,
         characteristics: &CollectionCharacteristics,
     ) -> f64 {
         // Complexity based on data size and strategy difference
@@ -428,15 +433,16 @@ impl AdaptiveIndexEngine {
     /// Calculate difference between strategies
     fn calculate_strategy_difference(
         &self,
-        current: &IndexStrategy,
-        target: &IndexStrategy,
+        current: &IndexSelectionStrategy,
+        target: &IndexSelectionStrategy,
     ) -> f64 {
-        // Simple heuristic based on index type differences
-        if current.primary_index_type == target.primary_index_type {
-            0.1 // Minor changes only
-        } else {
-            1.0 // Major strategy change
-        }
+        // Simple heuristic based on number of index differences
+        let current_count = current.indexes.len();
+        let target_count = target.indexes.len();
+        let count_diff = (current_count as f64 - target_count as f64).abs();
+        
+        // Normalize to 0-1 range
+        (count_diff / 10.0).min(1.0)
     }
 
     /// Estimate migration duration
@@ -453,76 +459,115 @@ impl AdaptiveIndexEngine {
     }
 
     /// Get current strategy (mock implementation)
-    async fn get_current_strategy(&self, _collection_id: &CollectionId) -> Result<IndexStrategy> {
+    async fn get_current_strategy(&self, _collection_id: &str) -> Result<IndexSelectionStrategy> {
         // TODO: Get from actual storage
-        Ok(IndexStrategy::default())
+        // For now, return a simple default strategy with identifier index
+        use crate::index::axis::types::{QueryCondition, ResultCombination, RoutingRule};
+        
+        Ok(IndexSelectionStrategy {
+            indexes: vec![
+                IndexSpecification {
+                    data_type: DataType::Identifier,
+                    algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                    name: Some("default_id".to_string()),
+                    is_primary: false,
+                    selectivity_threshold: None,
+                },
+            ],
+            routing_rules: vec![
+                RoutingRule {
+                    condition: QueryCondition::Always,
+                    use_indexes: vec![0],
+                    combination: ResultCombination::First,
+                },
+            ],
+        })
     }
 }
 
 impl IndexStrategySelector {
     /// Create new strategy selector
     pub fn new() -> Self {
-        let mut templates = std::collections::HashMap::new();
+        let mut configs = std::collections::HashMap::new();
 
-        // Initialize strategy templates
-        templates.insert(
+        // Initialize optimization configs for different scenarios
+        configs.insert(
             StrategyType::SmallDense,
-            IndexStrategyTemplate {
-                strategy_type: StrategyType::SmallDense,
-                base_strategy: IndexStrategy {
-                    primary_index_type: IndexType::LightweightHNSW,
-                    secondary_indexes: vec![IndexType::Metadata],
-                    optimization_config: OptimizationConfig::default(),
-                    migration_priority: MigrationPriority::Low,
-                    resource_requirements: ResourceRequirements::low(),
-                },
-                applicability_conditions: ApplicabilityConditions {
-                    max_vector_count: Some(10_000),
-                    max_sparsity: Some(0.1),
-                    ..Default::default()
-                },
+            OptimizationConfig {
+                goal: OptimizationGoal::MinLatency,
+                max_memory_gb: Some(2.0),
+                target_latency_ms: Some(10.0),
+                min_accuracy: Some(0.95),
             },
         );
 
-        templates.insert(
+        configs.insert(
             StrategyType::LargeDense,
-            IndexStrategyTemplate {
-                strategy_type: StrategyType::LargeDense,
-                base_strategy: IndexStrategy {
-                    primary_index_type: IndexType::HNSW,
-                    secondary_indexes: vec![IndexType::Metadata, IndexType::GlobalId],
-                    optimization_config: OptimizationConfig::high_performance(),
-                    migration_priority: MigrationPriority::High,
-                    resource_requirements: ResourceRequirements::high(),
-                },
-                applicability_conditions: ApplicabilityConditions {
-                    min_vector_count: Some(10_000),
-                    max_sparsity: Some(0.1),
-                    ..Default::default()
-                },
+            OptimizationConfig {
+                goal: OptimizationGoal::Balanced,
+                max_memory_gb: Some(16.0),
+                target_latency_ms: Some(50.0),
+                min_accuracy: Some(0.95),
             },
         );
 
-        // Add Mixed strategy template for general use cases
-        templates.insert(
+        configs.insert(
+            StrategyType::SmallSparse,
+            OptimizationConfig {
+                goal: OptimizationGoal::MinMemory,
+                max_memory_gb: Some(1.0),
+                target_latency_ms: Some(20.0),
+                min_accuracy: Some(0.90),
+            },
+        );
+
+        configs.insert(
+            StrategyType::LargeSparse,
+            OptimizationConfig {
+                goal: OptimizationGoal::MaxThroughput,
+                max_memory_gb: Some(32.0),
+                target_latency_ms: Some(100.0),
+                min_accuracy: Some(0.95),
+            },
+        );
+
+        configs.insert(
             StrategyType::Mixed,
-            IndexStrategyTemplate {
-                strategy_type: StrategyType::Mixed,
-                base_strategy: IndexStrategy {
-                    primary_index_type: IndexType::HNSW,
-                    secondary_indexes: vec![IndexType::Metadata, IndexType::DenseVector],
-                    optimization_config: OptimizationConfig::balanced(),
-                    migration_priority: MigrationPriority::Medium,
-                    resource_requirements: ResourceRequirements::medium(),
-                },
-                applicability_conditions: ApplicabilityConditions {
-                    ..Default::default()
-                },
+            OptimizationConfig::default(),
+        );
+
+        configs.insert(
+            StrategyType::MetadataHeavy,
+            OptimizationConfig {
+                goal: OptimizationGoal::MinLatency,
+                max_memory_gb: Some(8.0),
+                target_latency_ms: Some(5.0),
+                min_accuracy: None, // Exact match for metadata
+            },
+        );
+
+        configs.insert(
+            StrategyType::HighThroughput,
+            OptimizationConfig {
+                goal: OptimizationGoal::MaxThroughput,
+                max_memory_gb: Some(64.0),
+                target_latency_ms: Some(200.0),
+                min_accuracy: Some(0.90),
+            },
+        );
+
+        configs.insert(
+            StrategyType::Analytical,
+            OptimizationConfig {
+                goal: OptimizationGoal::Balanced,
+                max_memory_gb: None,
+                target_latency_ms: Some(1000.0),
+                min_accuracy: Some(0.99),
             },
         );
 
         Self {
-            strategy_templates: templates,
+            optimization_configs: configs,
         }
     }
 
@@ -530,12 +575,35 @@ impl IndexStrategySelector {
     pub async fn select_strategy(
         &self,
         strategy_type: StrategyType,
-        _characteristics: &CollectionCharacteristics,
-    ) -> Result<IndexStrategy> {
-        self.strategy_templates
+        characteristics: &CollectionCharacteristics,
+    ) -> Result<IndexSelectionStrategy> {
+        let optimization_config = self.optimization_configs
             .get(&strategy_type)
-            .map(|template| template.base_strategy.clone())
-            .ok_or_else(|| anyhow::anyhow!("No template for strategy type: {:?}", strategy_type))
+            .ok_or_else(|| anyhow::anyhow!("No config for strategy type: {:?}", strategy_type))?;
+
+        // Convert characteristics to builder format
+        let collection_stats = CollectionStatistics {
+            total_vectors: characteristics.vector_count as usize,
+            vector_dimension: 128, // Default, should be in characteristics
+            avg_vector_sparsity: characteristics.average_sparsity,
+            has_metadata: characteristics.metadata_complexity.field_count > 0,
+            metadata_cardinality: std::collections::HashMap::new(),
+            has_text_fields: false,
+            update_frequency: characteristics.access_frequency.writes_per_second as f32,
+        };
+
+        let query_patterns = QueryPatterns {
+            avg_queries_per_second: characteristics.access_frequency.reads_per_second as f32,
+            filter_usage_ratio: characteristics.query_patterns.metadata_filter_percentage,
+            text_search_ratio: 0.0,
+            typical_k: characteristics.query_patterns.average_k as usize,
+            recall_requirement: 0.95,
+        };
+
+        // Build strategy using the new builder
+        IndexStrategyBuilder::new(collection_stats, query_patterns)
+            .with_optimization(optimization_config.clone())
+            .build()
     }
 }
 

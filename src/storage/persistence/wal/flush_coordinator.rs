@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::config::SyncMode;
-use crate::core::CollectionId;
+
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
 
 /// Flush state tracking for coordinated WAL cleanup
@@ -70,11 +70,13 @@ pub enum FlushDataSource {
 #[derive(Clone)]
 pub struct WalFlushCoordinator {
     /// Per-collection flush state
-    flush_states: Arc<RwLock<HashMap<CollectionId, FlushState>>>,
+    flush_states: Arc<RwLock<HashMap<String, FlushState>>>,
     /// Global flush ID counter
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    /// AXIS manager for IndexConfig-based indexing after flush
+    axis_manager: Option<Arc<crate::index::axis::manager::AxisManager>>,
 }
 
 impl WalFlushCoordinator {
@@ -84,7 +86,14 @@ impl WalFlushCoordinator {
             flush_states: Arc::new(RwLock::new(HashMap::new())),
             next_flush_id: Arc::new(tokio::sync::Mutex::new(1)),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
+            axis_manager: None,
         }
+    }
+
+    /// Set the AXIS manager for IndexConfig-based indexing
+    pub fn set_axis_manager(&mut self, axis_manager: Arc<crate::index::axis::manager::AxisManager>) {
+        self.axis_manager = Some(axis_manager);
+        info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
 
     /// Initialize flush state for a collection
@@ -103,7 +112,7 @@ impl WalFlushCoordinator {
     }
 
     /// Clean up flush coordinator state for a deleted collection
-    pub async fn cleanup_collection(&self, collection_id: &CollectionId) {
+    pub async fn cleanup_collection(&self, collection_id: &str) {
         let mut flush_states = self.flush_states.write().await;
         if flush_states.remove(collection_id).is_some() {
             info!(
@@ -116,10 +125,10 @@ impl WalFlushCoordinator {
     /// Execute coordinated flush: WAL → Storage Engine → WAL Cleanup (ATOMIC)
     pub async fn execute_coordinated_flush(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         flush_data: FlushDataSource,
         preferred_engine: Option<&str>,
-        wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalStrategy>>,
+        wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalBatchStrategy>>,
     ) -> Result<FlushResult> {
         info!(
             "🚀 Coordinator: Starting ATOMIC coordinated flush for collection {}",
@@ -179,7 +188,7 @@ impl WalFlushCoordinator {
             );
             return Ok(FlushResult {
                 success: true,
-                collections_affected: vec![collection_id.clone()],
+                collections_affected: vec![collection_id.to_string()],
                 entries_flushed: 0,
                 bytes_written: 0,
                 files_created: 0,
@@ -197,10 +206,16 @@ impl WalFlushCoordinator {
         );
 
         // Step 2: Select appropriate storage engine (Strategy Pattern)
-        let engine_type = preferred_engine.unwrap_or("VIPER"); // Default to VIPER
+        let engine_type = preferred_engine.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No storage engine specified for collection {}. \
+                 Engine routing must be determined by the collection service.",
+                collection_id
+            )
+        })?;
         info!(
-            "🔍 Coordinator: Engine selection - preferred: {:?}, selected: {}",
-            preferred_engine, engine_type
+            "🔍 Coordinator: Using {} storage engine for collection {}",
+            engine_type, collection_id
         );
 
         let engine = {
@@ -229,7 +244,7 @@ impl WalFlushCoordinator {
         };
 
         let flush_params = FlushParameters {
-            collection_id: Some(collection_id.clone()),
+            collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
             vector_records,
@@ -287,6 +302,15 @@ impl WalFlushCoordinator {
             info!("📋 Coordinator: Skipping cleanup (no entries flushed or storage failed)");
         }
 
+        // NOTE: AXIS indexing notification is handled by BackgroundManager 
+        // after the complete flush-compaction cycle to ensure proper sequential execution:
+        // 1. FLUSH (materialized data)
+        // 2. COMPACTION (if needed) 
+        // 3. INDEXING (final optimized layout)
+        info!(
+            "📋 Coordinator: Flush completed - indexing will be handled by BackgroundManager after compaction cycle"
+        );
+
         info!(
             "🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}",
             collection_id
@@ -294,10 +318,10 @@ impl WalFlushCoordinator {
         Ok(storage_result)
     }
 
-    pub async fn initialize_flush_state(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn initialize_flush_state(&self, collection_id: &str) -> Result<()> {
         let mut flush_states = self.flush_states.write().await;
         if !flush_states.contains_key(collection_id) {
-            flush_states.insert(collection_id.clone(), FlushState::default());
+            flush_states.insert(collection_id.to_string(), FlushState::default());
             debug!(
                 "🔄 Initialized flush state for collection: {}",
                 collection_id
@@ -310,7 +334,7 @@ impl WalFlushCoordinator {
     /// This method determines whether to flush from memory or disk based on configuration
     pub async fn initiate_flush(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         sequences: Vec<u64>,
         sync_mode: &SyncMode,
     ) -> Result<FlushDataSource> {
@@ -323,7 +347,7 @@ impl WalFlushCoordinator {
 
         let mut flush_states = self.flush_states.write().await;
         let flush_state = flush_states
-            .entry(collection_id.clone())
+            .entry(collection_id.to_string())
             .or_insert_with(FlushState::default);
 
         // Determine data source based on sync mode and configuration
@@ -367,7 +391,7 @@ impl WalFlushCoordinator {
     /// This is called by the storage engine after successful flush
     pub async fn acknowledge_flush(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         flush_id: u64,
         flushed_sequences: Vec<u64>,
     ) -> Result<CleanupInstructions> {
@@ -425,13 +449,13 @@ impl WalFlushCoordinator {
     }
 
     /// Get flush state for a collection
-    pub async fn get_flush_state(&self, collection_id: &CollectionId) -> Option<FlushState> {
+    pub async fn get_flush_state(&self, collection_id: &str) -> Option<FlushState> {
         let flush_states = self.flush_states.read().await;
         flush_states.get(collection_id).cloned()
     }
 
     /// Check if a collection uses disk WAL
-    pub async fn uses_disk_wal(&self, collection_id: &CollectionId) -> bool {
+    pub async fn uses_disk_wal(&self, collection_id: &str) -> bool {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
@@ -440,7 +464,7 @@ impl WalFlushCoordinator {
     }
 
     /// Get pending flushes for a collection
-    pub async fn get_pending_flushes(&self, collection_id: &CollectionId) -> Vec<PendingFlush> {
+    pub async fn get_pending_flushes(&self, collection_id: &str) -> Vec<PendingFlush> {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
@@ -449,7 +473,7 @@ impl WalFlushCoordinator {
     }
 
     /// Cancel a pending flush (in case of errors)
-    pub async fn cancel_flush(&self, collection_id: &CollectionId, flush_id: u64) -> Result<()> {
+    pub async fn cancel_flush(&self, collection_id: &str, flush_id: u64) -> Result<()> {
         let mut flush_states = self.flush_states.write().await;
         if let Some(flush_state) = flush_states.get_mut(collection_id) {
             flush_state.pending_flushes.remove(&flush_id);
@@ -462,7 +486,7 @@ impl WalFlushCoordinator {
     }
 
     /// Drop all flush state for a collection
-    pub async fn drop_collection(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         let mut flush_states = self.flush_states.write().await;
         flush_states.remove(collection_id);
         info!("🗑️ Dropped flush state for collection: {}", collection_id);
@@ -475,7 +499,7 @@ impl WalFlushCoordinator {
     /// This is a placeholder - actual implementation should be provided by the WAL strategy
     async fn get_wal_files_for_sequences(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         sequences: &[u64],
     ) -> Result<Vec<String>> {
         // Placeholder implementation - to be overridden by strategy-specific logic
@@ -490,7 +514,7 @@ impl WalFlushCoordinator {
     /// This is a placeholder - actual implementation should be provided by the WAL strategy
     async fn filter_fully_flushed_files(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         wal_files: &[String],
         flushed_sequences: &[u64],
     ) -> Result<Vec<String>> {
@@ -520,14 +544,14 @@ pub trait FlushCoordinatorCallbacks {
     /// Get WAL files containing the specified sequences
     async fn get_wal_files_for_sequences(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         sequences: &[u64],
     ) -> Result<Vec<String>>;
 
     /// Check if a WAL file is fully flushed and can be safely deleted
     async fn is_wal_file_fully_flushed(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         wal_file: &str,
         flushed_sequences: &[u64],
     ) -> Result<bool>;

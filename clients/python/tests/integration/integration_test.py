@@ -75,8 +75,9 @@ class IntegrationTest:
         try:
             # Create collection using the client
             config = CollectionConfig(
+                name="test_collection",
                 dimension=128,
-                distance_metric="cosine"
+                distance_metric=DistanceMetric.COSINE
             )
             
             collection = self.client.create_collection(

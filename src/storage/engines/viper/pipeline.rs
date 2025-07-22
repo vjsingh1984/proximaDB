@@ -29,9 +29,9 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use super::ml_clustering::{KMeansConfig, MLClusteringEngine};
+// use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 use super::quantization::{QuantizationConfig, VectorQuantizationEngine};
-use crate::core::{CollectionId, VectorRecord};
+use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -235,7 +235,7 @@ pub struct VectorRecordProcessor {
     pub schema_adapter: Arc<SchemaAdapter>,
 
     /// ML clustering engine for intelligent data organization
-    pub ml_clustering: Arc<Mutex<MLClusteringEngine>>,
+    // pub ml_clustering: Arc<Mutex<MLClusteringEngine>>, // Moved to AXIS
 
     /// Vector quantization engine for storage optimization
     pub quantization: Arc<Mutex<VectorQuantizationEngine>>,
@@ -285,7 +285,7 @@ pub trait SchemaGenerationStrategy: Send + Sync {
     fn generate_schema(&self, records: &[VectorRecord]) -> Result<Arc<Schema>>;
 
     /// Get collection ID
-    fn get_collection_id(&self) -> &CollectionId;
+    fn get_collection_id(&self) -> &String;
 
     /// Get filterable fields
     fn get_filterable_fields(&self) -> &[String];
@@ -330,8 +330,23 @@ pub struct WriterPool {
     writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
-// Use ParquetWriter and ParquetWriterFactory from viper_core module
-use super::core::{DefaultParquetWriter, DefaultParquetWriterFactory};
+// TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
+// These were referenced from the deprecated core module
+// For now, providing placeholder types to fix compilation
+
+/// Placeholder for ParquetWriter implementation
+#[derive(Debug, Clone)]
+pub struct DefaultParquetWriter;
+
+/// Placeholder for ParquetWriterFactory implementation
+#[derive(Debug, Clone)]
+pub struct DefaultParquetWriterFactory;
+
+impl DefaultParquetWriterFactory {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 /// Flush result information
 #[derive(Debug, Clone)]
@@ -339,7 +354,7 @@ pub struct FlushResult {
     pub entries_flushed: u64,
     pub bytes_written: u64,
     pub segments_created: u64,
-    pub collections_affected: Vec<CollectionId>,
+    pub collections_affected: Vec<String>,
     pub flush_duration_ms: u64,
     pub compression_ratio: f32,
 }
@@ -355,7 +370,7 @@ pub struct CompactionEngine {
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
 
     /// Active compaction operations
-    active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+    active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
 
     /// ML optimization model
     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
@@ -377,7 +392,7 @@ pub struct CompactionEngine {
 #[derive(Debug, Clone)]
 pub struct CompactionTask {
     pub task_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub compaction_type: CompactionType,
     pub priority: CompactionPriority,
     pub input_partitions: Vec<PartitionId>,
@@ -391,7 +406,7 @@ pub struct CompactionTask {
 #[derive(Debug)]
 pub struct CompactionOperation {
     pub operation_id: String,
-    pub collection_id: CollectionId,
+    pub collection_id: String,
     pub operation_type: CompactionType,
     pub started_at: DateTime<Utc>,
     pub progress: f32,
@@ -567,7 +582,7 @@ impl ViperPipeline {
     /// Process vector records through the complete pipeline
     pub async fn process_records(
         &self,
-        collection_id: &CollectionId,
+        collection_id: &str,
         records: Vec<VectorRecord>,
         output_path: &str,
     ) -> Result<FlushResult> {
@@ -580,7 +595,7 @@ impl ViperPipeline {
         );
 
         // Step 1: Process records using template method pattern
-        let processed_batch = self.processor.process_records(records).await?;
+        let processed_batch = self.processor.process_records(collection_id, records).await?;
 
         // Step 2: Flush processed batch to storage
         let flush_result = self
@@ -644,19 +659,19 @@ impl ViperPipeline {
 
 impl VectorRecordProcessor {
     async fn new(config: ProcessingConfig, schema_adapter: Arc<SchemaAdapter>) -> Result<Self> {
-        // Initialize ML clustering engine with sensible defaults
-        let kmeans_config = KMeansConfig {
-            max_iterations: 100,
-            convergence_threshold: 0.01,
-            min_cluster_size: 1,
-            random_seed: Some(42), // Reproducible clustering
-        };
-        let ml_clustering = Arc::new(Mutex::new(MLClusteringEngine::new(kmeans_config)));
+        // ML clustering moved to AXIS
+        // let kmeans_config = KMeansConfig {
+        //     max_iterations: 100,
+        //     convergence_threshold: 0.01,
+        //     min_cluster_size: 1,
+        //     random_seed: Some(42), // Reproducible clustering
+        // };
+        // let ml_clustering = Arc::new(Mutex::new(MLClusteringEngine::new(kmeans_config)));
 
         Ok(Self {
             config,
             schema_adapter,
-            ml_clustering,
+            // ml_clustering, // Moved to AXIS
             quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(
                 QuantizationConfig::default(),
             ))),
@@ -665,7 +680,7 @@ impl VectorRecordProcessor {
     }
 
     /// Process records using template method pattern
-    pub async fn process_records(&self, mut records: Vec<VectorRecord>) -> Result<RecordBatch> {
+    pub async fn process_records(&self, collection_id: &str, mut records: Vec<VectorRecord>) -> Result<RecordBatch> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("No records to process"));
         }
@@ -678,7 +693,6 @@ impl VectorRecordProcessor {
         let preprocess_time = preprocess_start.elapsed().as_millis() as u64;
 
         // Step 2: Generate schema
-        let collection_id = &records[0].collection_id;
         let schema = self
             .schema_adapter
             .get_or_generate_schema(collection_id, &records)
@@ -731,11 +745,13 @@ impl VectorRecordProcessor {
         fields: &[String],
     ) -> std::cmp::Ordering {
         for field in fields {
-            let a_val = a.metadata.get(field);
-            let b_val = b.metadata.get(field);
+            let a_val = a.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
+            let b_val = b.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
-                    let cmp = self.compare_metadata_values(a_meta, b_meta);
+                    let a_json = serde_json::Value::String(a_meta.clone());
+                    let b_json = serde_json::Value::String(b_meta.clone());
+                    let cmp = self.compare_metadata_values(&a_json, &b_json);
                     if cmp != std::cmp::Ordering::Equal {
                         return cmp;
                     }
@@ -888,61 +904,9 @@ impl VectorRecordProcessor {
             effective_clusters
         );
 
-        // Use async block to handle the async ML clustering
-        let cluster_assignment = {
-            // Check if we have a trained model, if not train one
-            let mut ml_engine = self.ml_clustering.lock().await;
-                
-                // Check if model needs training or retraining
-                let needs_training = match ml_engine.get_model() {
-                    Some(model) => {
-                        // Retrain if dimension mismatch or significant cluster count change
-                        model.dimension != records[0].vector.len() ||
-                        (model.centroids.len() as f32 - effective_clusters as f32).abs() / effective_clusters as f32 > 0.3
-                    }
-                    None => true,
-                };
-                
-                if needs_training {
-                    debug!("🧠 Training new K-means model for {} vectors", records.len());
-                    
-                    // Extract vectors for training (sample if too many for efficiency)
-                    let training_vectors: Vec<Vec<f32>> = if records.len() > 1000 {
-                        // Sample every nth record for training to maintain efficiency
-                        let step = records.len() / 1000;
-                        records.iter().step_by(step).map(|r| r.vector.clone()).collect()
-                    } else {
-                        records.iter().map(|r| r.vector.clone()).collect()
-                    };
-                    
-                    match ml_engine.train_model(&training_vectors, effective_clusters) {
-                        Ok(model) => {
-                            info!("✅ K-means model trained: silhouette={:.3}, clusters={}", 
-                                  model.quality_metrics.silhouette_score, effective_clusters);
-                        }
-                        Err(e) => {
-                            warn!("⚠️ K-means training failed: {}, falling back to hash-based clustering", e);
-                            return self.fallback_hash_clustering(records, effective_clusters);
-                        }
-                    }
-                }
-                
-                // Assign vectors to clusters using trained model
-                match ml_engine.assign_clusters(records) {
-                    Ok(assignment) => {
-                        debug!("✅ K-means assignment complete: {} clusters, avg confidence={:.3}",
-                               assignment.clusters.len(),
-                               assignment.confidence_scores.iter().sum::<f32>() / assignment.confidence_scores.len() as f32);
-                        Ok(assignment.clusters)
-                    }
-                    Err(e) => {
-                        warn!("⚠️ K-means assignment failed: {}, falling back to hash-based clustering", e);
-                        self.fallback_hash_clustering(records, effective_clusters)
-                    }
-                }
-        };
-
-        cluster_assignment
+        // ML clustering moved to AXIS - use simple hash-based clustering
+        debug!("Using hash-based clustering (ML clustering moved to AXIS)");
+        self.fallback_hash_clustering(records, effective_clusters)
     }
 
     /// Fallback hash-based clustering when ML clustering fails
@@ -1030,10 +994,10 @@ impl VectorRecordProcessor {
                 records
                     .iter()
                     .step_by(step.max(1))
-                    .map(|r| r.vector.clone())
+                    .map(|r| r.vector.to_vec())
                     .collect()
             } else {
-                records.iter().map(|r| r.vector.clone()).collect()
+                records.iter().map(|r| r.vector.to_vec()).collect()
             };
 
             let train_result = quantization_engine.train_model(&training_vectors);
@@ -1087,6 +1051,7 @@ impl VectorRecordProcessor {
     /// Process vector records with quantization for hybrid storage
     pub async fn process_records_with_quantization(
         &self,
+        collection_id: &str,
         records: &[VectorRecord],
     ) -> Result<(
         RecordBatch,
@@ -1128,7 +1093,7 @@ impl VectorRecordProcessor {
         };
 
         // Stage 2: Convert to RecordBatch (placeholder - would be actual implementation)
-        let schema = Arc::new(arrow_schema::Schema::new(vec![
+        let _schema = Arc::new(arrow_schema::Schema::new(vec![
             Arc::new(arrow_schema::Field::new(
                 "id",
                 arrow_schema::DataType::Utf8,
@@ -1152,13 +1117,10 @@ impl VectorRecordProcessor {
 
         // Create minimal RecordBatch (placeholder implementation)
         let id_array = arrow_array::StringArray::from(
-            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            records.iter().map(|r| r.id.as_deref().unwrap_or("")).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
-            records
-                .iter()
-                .map(|r| r.collection_id.as_str())
-                .collect::<Vec<_>>(),
+            vec![collection_id; records.len()]
         );
 
         // Simplified vector column (would be properly implemented with List array)
@@ -1260,18 +1222,13 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.cmp(&b.id)
+                    a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""))
                 });
             }
 
             CustomComparisonType::CollectionGrouped => {
+                // Since all records are from the same collection, just sort by timestamp
                 records.sort_by(|a, b| {
-                    // Primary: group by collection_id
-                    let coll_cmp = a.collection_id.cmp(&b.collection_id);
-                    if coll_cmp != std::cmp::Ordering::Equal {
-                        return coll_cmp;
-                    }
-                    // Secondary: maintain insertion order within collection
                     a.timestamp.cmp(&b.timestamp)
                 });
             }
@@ -1312,7 +1269,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1324,7 +1281,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -1391,7 +1348,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1403,7 +1360,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -1832,7 +1789,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1855,7 +1812,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.cmp(&b.id);
+                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != std::cmp::Ordering::Equal {
                             return id_cmp;
                         }
@@ -2115,7 +2072,7 @@ impl ParquetFlusher {
         quantized_vectors: &[super::quantization::QuantizedVector],
     ) -> Result<RecordBatch> {
         use super::quantization::{QuantizationLevel, QuantizedData};
-        use arrow_array::{BinaryArray, Int8Array, UInt8Array};
+        use arrow_array::{BinaryArray, UInt8Array};
         use arrow_schema::{DataType, Field};
 
         if quantized_vectors.is_empty() {
@@ -2351,14 +2308,14 @@ impl CompactionEngine {
     }
 
     /// Schedule compaction if needed
-    pub async fn schedule_compaction_if_needed(&self, collection_id: &CollectionId) -> Result<()> {
+    pub async fn schedule_compaction_if_needed(&self, collection_id: &str) -> Result<()> {
         // Check if compaction is needed based on ML model or heuristics
         let needs_compaction = self.evaluate_compaction_need(collection_id).await?;
 
         if needs_compaction {
             let task = CompactionTask {
                 task_id: uuid::Uuid::new_v4().to_string(),
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 compaction_type: CompactionType::FileMerging {
                     target_file_size_mb: self.config.target_file_size_mb,
                     max_files_per_merge: self.config.max_files_per_merge,
@@ -2424,7 +2381,7 @@ impl CompactionEngine {
         Ok(())
     }
 
-    async fn evaluate_compaction_need(&self, _collection_id: &CollectionId) -> Result<bool> {
+    async fn evaluate_compaction_need(&self, _collection_id: &str) -> Result<bool> {
         // Simplified evaluation - would implement actual heuristics
         Ok(true)
     }
@@ -2432,7 +2389,7 @@ impl CompactionEngine {
     async fn worker_loop(
         worker_id: usize,
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
         _config: CompactionConfig,
@@ -2461,7 +2418,7 @@ impl CompactionEngine {
 
     async fn execute_compaction_task(
         task: CompactionTask,
-        active_compactions: Arc<RwLock<HashMap<CollectionId, CompactionOperation>>>,
+        active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
     ) {
         let operation = CompactionOperation {
@@ -2815,12 +2772,12 @@ impl CompactionEngine {
             target_compression_ratio,
         )
         .await?;
-        let rewrite_time = rewrite_start.elapsed().as_millis() as u64;
+        let _rewrite_time = rewrite_start.elapsed().as_millis() as u64;
 
         // Stage 5: Update metadata and cleanup old files
         let cleanup_start = Instant::now();
         Self::update_metadata_and_cleanup(&task.collection_id).await?;
-        let cleanup_time = cleanup_start.elapsed().as_millis() as u64;
+        let _cleanup_time = cleanup_start.elapsed().as_millis() as u64;
 
         let total_time = sorted_rewrite_start.elapsed().as_millis() as u64;
 
@@ -3012,12 +2969,20 @@ impl CompactionEngine {
                 );
                 meta
             };
-            let record = VectorRecord::new(
-                format!("vec_{:06}", i),
-                collection_id.to_string(),
-                vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
-                metadata,
-            );
+            let timestamp = chrono::Utc::now().timestamp_millis();
+            let record = VectorRecord {
+                id: Some(format!("vec_{:06}", i)),
+                vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
+                metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
+                timestamp,
+                created_at: timestamp,
+                updated_at: timestamp,
+                expires_at: None,
+                version: 1,
+                rank: None,
+                score: None,
+                distance: None,
+            };
             records.push(record);
         }
 
@@ -3044,7 +3009,7 @@ impl CompactionEngine {
         let processor = VectorRecordProcessor {
             config: processor_config,
             schema_adapter,
-            ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))),
+            // ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))), // Moved to AXIS
             quantization: Arc::new(Mutex::new(VectorQuantizationEngine::new(
                 QuantizationConfig::default(),
             ))),
@@ -3109,8 +3074,9 @@ impl CompactionEngine {
                 .filter_map(|field| {
                     record
                         .metadata
-                        .get(field)
-                        .map(|v| format!("{}:{}", field, v))
+                        .iter()
+                        .find(|item| &item.key == field)
+                        .map(|item| format!("{}:{}", field, item.value))
                 })
                 .collect::<Vec<_>>()
                 .join("|");
@@ -3465,7 +3431,7 @@ impl SchemaAdapter {
 
     async fn get_or_generate_schema(
         &self,
-        _collection_id: &CollectionId,
+        _collection_id: &str,
         _records: &[VectorRecord],
     ) -> Result<Arc<Schema>> {
         // Placeholder implementation

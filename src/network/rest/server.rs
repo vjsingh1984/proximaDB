@@ -24,8 +24,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::handlers::{create_router, AppState};
-use crate::services::collection_service::CollectionService;
-use crate::services::vector_service::VectorService;
+use crate::handlers::UnifiedHandlers;
 
 /// REST server for ProximaDB
 pub struct RestServer {
@@ -37,12 +36,10 @@ impl RestServer {
     /// Create new REST server
     pub fn new(
         bind_addr: SocketAddr,
-        vector_service: Arc<VectorService>,
-        collection_service: Arc<CollectionService>,
+        unified_handlers: Arc<UnifiedHandlers>,
     ) -> Self {
         let state = AppState {
-            vector_service,
-            collection_service,
+            unified_handlers,
         };
 
         let router = create_router(state).layer(
@@ -66,16 +63,11 @@ impl RestServer {
         tracing::info!("✅ REST server listening on {}", self.bind_addr);
         tracing::info!("📋 Available endpoints:");
         tracing::info!("   GET    /health                           - Health check");
-        tracing::info!("   POST   /collections                      - Create collection");
-        tracing::info!("   GET    /collections                      - List collections");
-        tracing::info!("   GET    /collections/:id                  - Get collection");
-        tracing::info!("   DELETE /collections/:id                  - Delete collection");
-        tracing::info!("   POST   /collections/:id/vectors          - Insert vector");
-        tracing::info!("   GET    /collections/:id/vectors/:vid     - Get vector");
-        tracing::info!("   PUT    /collections/:id/vectors/:vid     - Update vector");
-        tracing::info!("   DELETE /collections/:id/vectors/:vid     - Delete vector");
-        tracing::info!("   POST   /collections/:id/search           - Search vectors");
-        tracing::info!("   POST   /collections/:id/vectors/batch    - Batch insert");
+        tracing::info!("   POST   /api/v1/collection                - Unified collection operations");
+        tracing::info!("   POST   /api/v1/vector/batch              - Vector batch operations");
+        tracing::info!("   POST   /api/v1/vector/search             - Vector search");
+        tracing::info!("   POST   /internal/flush                   - Flush all (testing only)");
+        tracing::info!("   POST   /internal/flush/:id               - Flush collection (testing only)");
 
         // For axum 0.6, use axum::Server
         axum::Server::bind(&self.bind_addr)

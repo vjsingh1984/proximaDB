@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
+from proximadb.models import CollectionConfig, DistanceMetric, QuantizationConfig, QuantizationType
 from proximadb.exceptions import ProximaDBError
 
 
@@ -41,6 +41,7 @@ class TestSearchOperations:
         collection_name = f"search_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
             distance_metric=DistanceMetric.COSINE,
             description="Search operations test collection"
@@ -146,7 +147,7 @@ class TestSearchOperations:
         """Ingest test data into the collection"""
         for doc in test_data:
             grpc_client.insert_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id=doc["id"],
                 vector=doc["embedding"],
                 metadata={
@@ -169,7 +170,7 @@ class TestSearchOperations:
         
         for vector_id in existing_ids:
             result = grpc_client.get_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id=vector_id,
                 include_vector=False,
                 include_metadata=True
@@ -182,7 +183,7 @@ class TestSearchOperations:
         # Test non-existent ID
         with pytest.raises(ProximaDBError):
             grpc_client.get_vector(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 vector_id="non_existent_id",
                 include_vector=False,
                 include_metadata=True
@@ -195,7 +196,7 @@ class TestSearchOperations:
         
         # Search without filter first
         all_results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=10,
             include_metadata=True,
@@ -246,7 +247,7 @@ class TestSearchOperations:
             
             # Perform similarity search
             results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=3,
                 include_metadata=True,
@@ -271,7 +272,7 @@ class TestSearchOperations:
         source_doc = next(d for d in test_data if d['id'] == 'tech_001')
         
         results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=source_doc['embedding'],
             k=5,
             include_metadata=True,
@@ -298,7 +299,7 @@ class TestSearchOperations:
         
         # Search via gRPC
         grpc_results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=5,
             include_metadata=True
@@ -306,7 +307,7 @@ class TestSearchOperations:
         
         # Search via REST
         rest_results = rest_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=5,
             include_metadata=True
@@ -330,7 +331,7 @@ class TestSearchOperations:
         
         # Test search with k larger than collection size
         results = grpc_client.search(
-            collection_id=search_collection.name,
+            collection_id=search_collection.config.name,
             query=query_embedding.tolist(),
             k=100,  # Much larger than our 7 documents
             include_metadata=True
@@ -347,7 +348,7 @@ class TestSearchOperations:
         # Test search with k=0
         with pytest.raises(ProximaDBError):
             grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=0
             )
@@ -355,7 +356,7 @@ class TestSearchOperations:
         # Test search with negative k
         with pytest.raises(ProximaDBError):
             grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=-1
             )
@@ -367,7 +368,7 @@ class TestSearchOperations:
         try:
             # Attempt server-side filtering
             filtered_results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=10,
                 filter={"category": "technology"},
@@ -381,7 +382,7 @@ class TestSearchOperations:
         except Exception as e:
             # Server-side filtering not yet implemented - test client-side fallback
             all_results = grpc_client.search(
-                collection_id=search_collection.name,
+                collection_id=search_collection.config.name,
                 query=query_embedding.tolist(),
                 k=10,
                 include_metadata=True
@@ -394,7 +395,7 @@ class TestSearchOperations:
     def test_empty_collection_search(self, grpc_client, bert_model):
         """Test search on empty collection"""
         empty_collection = f"empty_search_{int(time.time())}"
-        config = CollectionConfig(dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(name=empty_collection, dimension=384, distance_metric=DistanceMetric.COSINE)
         grpc_client.create_collection(empty_collection, config)
         
         try:
@@ -429,7 +430,7 @@ class TestAdvancedSearchFeatures:
     def test_search_performance_basic(self, grpc_client, bert_model):
         """Test basic search performance characteristics"""
         collection_name = f"perf_test_{int(time.time())}"
-        config = CollectionConfig(dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(name=collection_name, dimension=384, distance_metric=DistanceMetric.COSINE)
         
         collection = grpc_client.create_collection(collection_name, config)
         
@@ -462,6 +463,211 @@ class TestAdvancedSearchFeatures:
             
         finally:
             grpc_client.delete_collection(collection_name)
+    
+    def test_search_with_quantization_hints(self, rest_client, bert_model):
+        """Test search with quantization optimization hints"""
+        collection_name = f"quant_search_test_{int(time.time())}"
+        
+        # Create collection with quantization enabled
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=384,
+            distance_metric=DistanceMetric.COSINE,
+            quantization_config=QuantizationConfig(
+                enabled=True,
+                type=QuantizationType.SCALAR,
+                bits_per_vector=8,
+                accuracy_threshold=0.95
+            )
+        )
+        
+        collection = rest_client.create_collection(collection_name, config)
+        
+        try:
+            # Insert test vectors
+            texts = [
+                "ProximaDB is a high-performance vector database",
+                "Machine learning models generate embeddings",
+                "Vector search enables semantic similarity",
+                "Quantization reduces memory usage",
+                "Two-stage search improves performance"
+            ]
+            
+            embeddings = bert_model.encode(texts)
+            for i, (text, embedding) in enumerate(zip(texts, embeddings)):
+                rest_client.insert(
+                    collection_name,
+                    vector=embedding.tolist(),
+                    id=f"quant_doc_{i}",
+                    metadata={"text": text, "index": i}
+                )
+            
+            # Search with optimization hints
+            query_text = "database performance optimization"
+            query_embedding = bert_model.encode([query_text])[0]
+            
+            # Test different optimization configurations
+            optimization_configs = [
+                {
+                    "name": "No optimization",
+                    "hints": None
+                },
+                {
+                    "name": "Basic two-stage",
+                    "hints": {
+                        "enable_two_stage_search": True,
+                        "quantization_hint": "INT8",
+                        "candidate_multiplier": 2.0
+                    }
+                },
+                {
+                    "name": "Aggressive optimization",
+                    "hints": {
+                        "enable_two_stage_search": True,
+                        "quantization_hint": "PQ4",
+                        "candidate_multiplier": 5.0,
+                        "min_candidates": 20,
+                        "max_candidates": 100,
+                        "enable_parallel_search": True
+                    }
+                }
+            ]
+            
+            for config in optimization_configs:
+                start_time = time.time()
+                results = rest_client.search(
+                    collection_name,
+                    query=query_embedding.tolist(),
+                    k=3,
+                    include_metadata=True,
+                    optimization_hints=config["hints"]
+                )
+                search_time = time.time() - start_time
+                
+                print(f"\n{config['name']}:")
+                print(f"  Search time: {search_time*1000:.2f}ms")
+                print(f"  Results: {len(results)}")
+                
+                assert len(results) <= 3
+                assert all(hasattr(r, 'score') for r in results)
+                
+                # With optimization, search should be faster (after warmup)
+                if config["hints"] and config["hints"].get("enable_two_stage_search"):
+                    assert search_time < 0.5, f"Optimized search too slow: {search_time:.3f}s"
+                    
+        finally:
+            rest_client.delete_collection(collection_name)
+    
+    def test_grpc_search_with_optimization(self, grpc_client, bert_model):
+        """Test gRPC search with optimization hints"""
+        collection_name = f"grpc_opt_test_{int(time.time())}"
+        config = CollectionConfig(name=collection_name, dimension=384, distance_metric=DistanceMetric.COSINE)
+        
+        collection = grpc_client.create_collection(collection_name, config)
+        
+        try:
+            # Insert vectors
+            vector_count = 50
+            vectors = []
+            for i in range(vector_count):
+                vector = np.random.normal(0, 1, 384).astype(np.float32).tolist()
+                vectors.append({
+                    "id": f"opt_vec_{i}",
+                    "vector": vector,
+                    "metadata": {"index": i, "type": "random"}
+                })
+            
+            grpc_client.insert_vectors(collection_name, vectors)
+            
+            # Test search with optimization hints
+            query_vector = np.random.normal(0, 1, 384).astype(np.float32).tolist()
+            
+            optimization_hints = {
+                "enable_two_stage_search": True,
+                "quantization_hint": "PQ8",
+                "candidate_multiplier": 3.0,
+                "enable_clustering_optimization": True,
+                "enable_metadata_filtering_hint": True,
+                "accuracy_threshold": 0.9,
+                "custom_hints": {
+                    "use_gpu": "false",
+                    "prefetch_size": "32"
+                }
+            }
+            
+            results = grpc_client.search_vectors(
+                collection_name,
+                [query_vector],
+                top_k=10,
+                optimization_hints=optimization_hints
+            )
+            
+            assert len(results) == 10
+            assert all(hasattr(r, 'score') for r in results)
+            
+            # Verify results are properly sorted by score
+            scores = [r.score for r in results]
+            assert scores == sorted(scores, reverse=True), "Results should be sorted by score"
+            
+        finally:
+            grpc_client.delete_collection(collection_name)
+    
+    def test_collection_with_progressive_quantization(self, rest_client):
+        """Test collection with progressive quantization enabled"""
+        collection_name = f"prog_quant_test_{int(time.time())}"
+        
+        # Create collection with progressive quantization
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.EUCLIDEAN,
+            quantization_config=QuantizationConfig(
+                enabled=True,
+                type=QuantizationType.UNIFORM,
+                bits_per_vector=16,
+                progressive_quantization=True,
+                compression_ratio_target=2.0,
+                accuracy_threshold=0.98
+            )
+        )
+        
+        collection = rest_client.create_collection(collection_name, config)
+        
+        try:
+            # Insert initial vectors
+            initial_vectors = np.random.rand(10, 128).astype(np.float32)
+            for i, vec in enumerate(initial_vectors):
+                rest_client.insert(
+                    collection_name,
+                    vector=vec.tolist(),
+                    id=f"prog_vec_{i}",
+                    metadata={"batch": "initial"}
+                )
+            
+            # Add more vectors to trigger progressive quantization
+            additional_vectors = np.random.rand(90, 128).astype(np.float32)
+            for i, vec in enumerate(additional_vectors):
+                rest_client.insert(
+                    collection_name,
+                    vector=vec.tolist(),
+                    id=f"prog_vec_{i+10}",
+                    metadata={"batch": "additional"}
+                )
+            
+            # Search and verify accuracy is maintained
+            query = np.random.rand(128).astype(np.float32)
+            results = rest_client.search(
+                collection_name,
+                query=query.tolist(),
+                k=5,
+                include_metadata=True
+            )
+            
+            assert len(results) == 5
+            assert all(r.metadata is not None for r in results)
+            
+        finally:
+            rest_client.delete_collection(collection_name)
 
 
 if __name__ == "__main__":

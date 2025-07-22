@@ -24,13 +24,13 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::backends::filestore_backend::CollectionRecord;
+use crate::proto::proximadb::Collection as Collection;
 
 /// Collection index entry - contains both record and secondary keys
 #[derive(Debug, Clone)]
 pub struct CollectionIndexEntry {
     /// The actual collection record
-    pub record: Arc<CollectionRecord>,
+    pub record: Arc<Collection>,
 
     /// Pre-computed secondary keys for fast lookups
     pub name_key: String,
@@ -38,9 +38,9 @@ pub struct CollectionIndexEntry {
 }
 
 impl CollectionIndexEntry {
-    pub fn new(record: CollectionRecord) -> Self {
-        let name_key = record.name.clone();
-        let uuid_key = record.uuid.clone();
+    pub fn new(record: Collection) -> Self {
+        let name_key = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let uuid_key = record.id.clone();
 
         Self {
             record: Arc::new(record),
@@ -50,9 +50,9 @@ impl CollectionIndexEntry {
     }
 
     /// Update with new record, maintaining key consistency
-    pub fn update_record(&mut self, new_record: CollectionRecord) {
-        self.name_key = new_record.name.clone();
-        self.uuid_key = new_record.uuid.clone();
+    pub fn update_record(&mut self, new_record: Collection) {
+        self.name_key = new_record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
 }
@@ -72,12 +72,16 @@ pub struct SingleIndexMetrics {
 
 /// Single unified index using UUID as primary key with secondary name lookup
 /// This eliminates the dual-index sync problem by using a single memory table
-/// with built-in secondary key indexing through efficient iteration
+/// with built-in secondary key indexing for O(1) lookups on both UUID and name
 #[derive(Debug)]
 pub struct SingleCollectionIndex {
     /// Primary store: UUID -> CollectionIndexEntry
     /// DashMap provides lock-free concurrent access with excellent performance
     entries: DashMap<String, CollectionIndexEntry>,
+    
+    /// Secondary index: Name -> UUID for O(1) name lookups
+    /// This eliminates the O(n) scan for name-based lookups
+    name_to_uuid: DashMap<String, String>,
 
     /// Performance metrics
     metrics: Arc<RwLock<SingleIndexMetrics>>,
@@ -88,6 +92,7 @@ impl SingleCollectionIndex {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            name_to_uuid: DashMap::new(),
             metrics: Arc::new(RwLock::new(SingleIndexMetrics {
                 total_collections: 0,
                 memory_usage_bytes: 0,
@@ -103,13 +108,26 @@ impl SingleCollectionIndex {
 
     /// Insert or update collection - single atomic operation
     /// This is the ONLY method that modifies the index, ensuring consistency
-    pub fn upsert_collection(&self, record: CollectionRecord) {
+    pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
-        let uuid = record.uuid.clone();
-
-        // Single atomic operation - no sync issues possible
+        let uuid = record.id.clone();
+        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        
+        // Check if this is an update (collection exists)
+        let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
+        
+        // Update primary index
         let entry = CollectionIndexEntry::new(record);
-        self.entries.insert(uuid, entry);
+        self.entries.insert(uuid.clone(), entry);
+        
+        // Update secondary index
+        // If name changed, remove old mapping
+        if let Some(old_name) = old_name {
+            if old_name != name {
+                self.name_to_uuid.remove(&old_name);
+            }
+        }
+        self.name_to_uuid.insert(name, uuid);
 
         // Update metrics
         let elapsed = start.elapsed().as_nanos() as u64;
@@ -120,10 +138,14 @@ impl SingleCollectionIndex {
     }
 
     /// Remove collection by UUID - single atomic operation
-    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
 
-        let result = self.entries.remove(uuid).map(|(_, entry)| entry.record);
+        let result = self.entries.remove(uuid).map(|(_, entry)| {
+            // Remove from secondary index
+            self.name_to_uuid.remove(&entry.name_key);
+            entry.record
+        });
 
         // Update metrics
         let elapsed = start.elapsed().as_nanos() as u64;
@@ -142,7 +164,7 @@ impl SingleCollectionIndex {
     }
 
     /// Get collection by UUID - O(1) primary key lookup
-    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
         let result = self.entries.get(uuid).map(|entry| entry.record.clone());
 
@@ -160,18 +182,14 @@ impl SingleCollectionIndex {
         result
     }
 
-    /// Get collection by name - O(n) scan but very efficient with DashMap
-    /// This is the trade-off: single table = O(n) name lookup
-    /// But DashMap's parallel iteration makes this very fast in practice
-    pub fn get_by_name(&self, name: &str) -> Option<Arc<CollectionRecord>> {
+    /// Get collection by name - O(1) lookup using secondary index
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
 
-        // Parallel scan through DashMap - very efficient
-        let result = self
-            .entries
-            .iter()
-            .find(|entry| entry.value().name_key == name)
-            .map(|entry| entry.value().record.clone());
+        // O(1) lookup in secondary index
+        let result = self.name_to_uuid.get(name)
+            .and_then(|uuid| self.entries.get(uuid.as_str()))
+            .map(|entry| entry.record.clone());
 
         // Update metrics
         let elapsed = start.elapsed().as_nanos() as u64;
@@ -187,12 +205,9 @@ impl SingleCollectionIndex {
         result
     }
 
-    /// Get UUID by name - O(n) but optimized for storage operations
+    /// Get UUID by name - O(1) lookup using secondary index
     pub fn get_uuid_by_name(&self, name: &str) -> Option<String> {
-        self.entries
-            .iter()
-            .find(|entry| entry.value().name_key == name)
-            .map(|entry| entry.key().clone())
+        self.name_to_uuid.get(name).map(|uuid| uuid.clone())
     }
 
     /// Check if collection exists by UUID - O(1)
@@ -200,15 +215,13 @@ impl SingleCollectionIndex {
         self.entries.contains_key(uuid)
     }
 
-    /// Check if collection exists by name - O(n) but efficient
+    /// Check if collection exists by name - O(1) using secondary index
     pub fn exists_by_name(&self, name: &str) -> bool {
-        self.entries
-            .iter()
-            .any(|entry| entry.value().name_key == name)
+        self.name_to_uuid.contains_key(name)
     }
 
     /// List all collections - O(n) efficient iteration
-    pub fn list_all(&self) -> Vec<Arc<CollectionRecord>> {
+    pub fn list_all(&self) -> Vec<Arc<Collection>> {
         self.entries
             .iter()
             .map(|entry| entry.value().record.clone())
@@ -223,6 +236,7 @@ impl SingleCollectionIndex {
     /// Clear all data - for testing or rebuild
     pub fn clear(&self) {
         self.entries.clear();
+        self.name_to_uuid.clear();
 
         let mut metrics = self.metrics.write();
         metrics.total_collections = 0;
@@ -232,15 +246,33 @@ impl SingleCollectionIndex {
 
     /// Rebuild from collection records - critical for recovery
     /// This is the key method for disk recovery - single operation, no sync issues
-    pub fn rebuild_from_records(&self, records: Vec<CollectionRecord>) {
+    pub fn rebuild_from_records(&self, records: Vec<Collection>) {
         // Clear and rebuild atomically
         self.clear();
-
+        
+        // Batch rebuild for better performance
+        let mut name_mappings = Vec::with_capacity(records.len());
+        
         for record in records {
-            self.upsert_collection(record);
+            let uuid = record.id.clone();
+            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            
+            // Insert into primary index
+            let entry = CollectionIndexEntry::new(record);
+            self.entries.insert(uuid.clone(), entry);
+            
+            // Collect for batch secondary index update
+            name_mappings.push((name, uuid));
+        }
+        
+        // Batch update secondary index
+        for (name, uuid) in name_mappings {
+            self.name_to_uuid.insert(name, uuid);
         }
 
         let mut metrics = self.metrics.write();
+        metrics.total_collections = self.entries.len();
+        metrics.memory_usage_bytes = self.estimate_memory_usage();
         metrics.last_rebuild_timestamp = Some(chrono::Utc::now().timestamp());
 
         tracing::info!(
@@ -255,9 +287,9 @@ impl SingleCollectionIndex {
     }
 
     /// Filter collections by predicate - O(n) parallel scan
-    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<CollectionRecord>>
+    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>
     where
-        F: Fn(&CollectionRecord) -> bool + Sync,
+        F: Fn(&Collection) -> bool + Sync,
     {
         self.entries
             .iter()
@@ -266,25 +298,48 @@ impl SingleCollectionIndex {
             .collect()
     }
 
-    /// Prefix search on collection names - O(n) but efficient
-    pub fn find_by_name_prefix(&self, prefix: &str) -> Vec<Arc<CollectionRecord>> {
-        self.entries
+    /// Prefix search on collection names - optimized with secondary index
+    pub fn find_by_name_prefix(&self, prefix: &str) -> Vec<Arc<Collection>> {
+        // Still O(n) on secondary index, but faster than scanning all records
+        self.name_to_uuid
             .iter()
-            .filter(|entry| entry.value().name_key.starts_with(prefix))
-            .map(|entry| entry.value().record.clone())
+            .filter(|entry| entry.key().starts_with(prefix))
+            .filter_map(|entry| {
+                self.entries.get(entry.value().as_str())
+                    .map(|e| e.record.clone())
+            })
             .collect()
     }
 
     /// Estimate memory usage for monitoring
     fn estimate_memory_usage(&self) -> usize {
-        self.entries.len()
+        let primary_size = self.entries.len()
             * (
                 32 +  // UUID key
-            64 +  // Name key (average)
-            std::mem::size_of::<CollectionRecord>() +
-            64
-                // Arc and entry overhead
-            )
+                64 +  // Name key (average)
+                std::mem::size_of::<Collection>() +
+                64    // Arc and entry overhead
+            );
+        
+        let secondary_size = self.name_to_uuid.len()
+            * (
+                64 +  // Name key (average)
+                32 +  // UUID value
+                32    // DashMap overhead
+            );
+            
+        primary_size + secondary_size
+    }
+    
+    /// Export all collections as a map for snapshots
+    pub fn export_all(&self) -> std::collections::BTreeMap<String, Collection> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let record = (*entry.value().record).clone();
+                (entry.key().clone(), record)
+            })
+            .collect()
     }
 }
 
@@ -307,19 +362,19 @@ impl ThreadSafeSingleIndex {
     }
 
     /// All operations delegate to the single index
-    pub fn upsert_collection(&self, record: CollectionRecord) {
+    pub fn upsert_collection(&self, record: Collection) {
         self.index.upsert_collection(record);
     }
 
-    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn remove_collection(&self, uuid: &str) -> Option<Arc<Collection>> {
         self.index.remove_collection(uuid)
     }
 
-    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         self.index.get_by_uuid(uuid)
     }
 
-    pub fn get_by_name(&self, name: &str) -> Option<Arc<CollectionRecord>> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         self.index.get_by_name(name)
     }
 
@@ -335,7 +390,7 @@ impl ThreadSafeSingleIndex {
         self.index.exists_by_name(name)
     }
 
-    pub fn list_all(&self) -> Vec<Arc<CollectionRecord>> {
+    pub fn list_all(&self) -> Vec<Arc<Collection>> {
         self.index.list_all()
     }
 
@@ -343,7 +398,7 @@ impl ThreadSafeSingleIndex {
         self.index.count()
     }
 
-    pub fn rebuild_from_records(&self, records: Vec<CollectionRecord>) {
+    pub fn rebuild_from_records(&self, records: Vec<Collection>) {
         self.index.rebuild_from_records(records);
     }
 
@@ -351,9 +406,9 @@ impl ThreadSafeSingleIndex {
         self.index.get_metrics()
     }
 
-    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<CollectionRecord>>
+    pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>
     where
-        F: Fn(&CollectionRecord) -> bool + Sync,
+        F: Fn(&Collection) -> bool + Sync,
     {
         self.index.filter_collections(predicate)
     }

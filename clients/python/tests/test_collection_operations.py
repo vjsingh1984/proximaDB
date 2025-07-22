@@ -10,8 +10,9 @@ from typing import Dict, Any
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
 from proximadb.models import (
-    CollectionConfig, IndexConfig, StorageConfig, FlushConfig,
-    DistanceMetric, IndexAlgorithm, CompressionType
+    CollectionConfig, IndexConfiguration, FlushConfig,
+    DistanceMetric, IndexingAlgorithm, StorageEngine,
+    CompressionType, StorageConfig
 )
 from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
 from proximadb.config import ClientConfig
@@ -42,6 +43,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_rest(self, rest_client, collection_name):
         """Test complete collection lifecycle via REST"""
         config = CollectionConfig(
+            name="test_collection_rest",  # Minimum 8 characters
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="REST test collection"
@@ -71,6 +73,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_grpc(self, grpc_client, collection_name):
         """Test complete collection lifecycle via gRPC"""
         config = CollectionConfig(
+            name="test_collection_grpc",  # Minimum 8 characters
             dimension=256,
             distance_metric=DistanceMetric.DOT_PRODUCT,
             description="gRPC test collection"
@@ -94,6 +97,7 @@ class TestCollectionCRUD:
     def test_cross_protocol_operations(self, rest_client, grpc_client, collection_name):
         """Test collection operations across REST and gRPC protocols"""
         config = CollectionConfig(
+            name="test_collection_rest",  # Minimum 8 characters
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             description="Cross-protocol test collection"
@@ -137,40 +141,37 @@ class TestCollectionConfiguration:
     
     def test_basic_collection_config(self):
         """Test basic collection configuration"""
-        config = CollectionConfig(dimension=768)
+        config = CollectionConfig(
+            name="test_collection_basic",  # Minimum 8 characters
+            dimension=768,
+            distance_metric=DistanceMetric.COSINE)
         assert config.dimension == 768
         assert config.distance_metric == DistanceMetric.COSINE
     
     def test_advanced_collection_config(self):
         """Test advanced collection configuration with all options"""
-        index_config = IndexConfig(
-            algorithm=IndexAlgorithm.HNSW,
-            parameters={"m": 16, "ef_construction": 200}
+        index_config = IndexConfiguration(
+            index_name="primary_hnsw",
+            algorithm=IndexingAlgorithm.HNSW,
+            memory_limit_mb=512
         )
-        
-        storage_config = StorageConfig(
-            compression=CompressionType.LZ4,
-            replication_factor=1,
-            enable_tiering=True
-        )
-        
-        flush_config = FlushConfig(max_wal_size_mb=64.0)
         
         config = CollectionConfig(
+            name="test_collection_advanced",  # Minimum 8 characters
             dimension=384,
             distance_metric=DistanceMetric.EUCLIDEAN,
-            index_config=index_config,
-            storage_config=storage_config,
-            storage_layout="viper",
-            description="Advanced test collection",
-            filterable_metadata_fields=["category", "timestamp"],
-            flush_config=flush_config
+            storage_engine=StorageEngine.VIPER,
+            primary_indexing_algorithm=IndexingAlgorithm.HNSW,
+            index_configs=[index_config],
+            description="Advanced test collection"
         )
         
         assert config.dimension == 384
         assert config.distance_metric == DistanceMetric.EUCLIDEAN
-        assert config.index_config.algorithm == IndexAlgorithm.HNSW
-        assert config.storage_config.compression == CompressionType.LZ4
+        assert config.primary_indexing_algorithm == IndexingAlgorithm.HNSW
+        assert config.storage_engine == StorageEngine.VIPER
+        assert len(config.index_configs) == 1
+        assert config.index_configs[0].algorithm == IndexingAlgorithm.HNSW
     
     def test_distance_metrics(self):
         """Test all distance metric options"""
@@ -183,21 +184,27 @@ class TestCollectionConfiguration:
         ]
         
         for metric in metrics:
-            config = CollectionConfig(dimension=128, distance_metric=metric)
+            config = CollectionConfig(
+            name="test_collection",
+            dimension=128,
+            distance_metric=metric)
             assert config.distance_metric == metric
     
     def test_index_algorithms(self):
         """Test index algorithm options"""
         algorithms = [
-            IndexAlgorithm.HNSW,
-            IndexAlgorithm.IVF,
-            IndexAlgorithm.LSH,
-            IndexAlgorithm.BRUTE_FORCE,
-            IndexAlgorithm.AUTO
+            IndexingAlgorithm.HNSW,
+            IndexingAlgorithm.IVF,
+            IndexingAlgorithm.PQ,
+            IndexingAlgorithm.FLAT,
+            IndexingAlgorithm.ANNOY
         ]
         
         for algo in algorithms:
-            index_config = IndexConfig(algorithm=algo)
+            index_config = IndexConfiguration(
+                index_name=f"test_{algo.value}",
+                algorithm=algo
+            )
             assert index_config.algorithm == algo
     
     def test_compression_types(self):
@@ -206,7 +213,7 @@ class TestCollectionConfiguration:
             CompressionType.NONE,
             CompressionType.LZ4,
             CompressionType.ZSTD,
-            CompressionType.GZIP
+            CompressionType.SNAPPY
         ]
         
         for compression in compression_types:
@@ -222,6 +229,7 @@ class TestCollectionConfiguration:
         }
         
         config = CollectionConfig(
+            name="test_collection_metadata",  # Minimum 8 characters
             dimension=512,
             metadata_schema=metadata_schema,
             filterable_metadata_fields=["category", "timestamp"]
@@ -236,11 +244,11 @@ class TestCollectionConfiguration:
         collection_name = f"config_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=384,
             distance_metric=DistanceMetric.COSINE,
             description="Configuration test collection",
-            storage_layout="viper",
-            flush_config=FlushConfig(max_wal_size_mb=32.0)
+            storage_engine=StorageEngine.VIPER
         )
         
         try:
@@ -264,15 +272,24 @@ class TestCollectionValidation:
     def test_dimension_validation(self):
         """Test dimension validation"""
         # Valid dimensions
-        valid_config = CollectionConfig(dimension=128)
+        valid_config = CollectionConfig(
+            name="test_collection_valid",  # Minimum 8 characters
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         assert valid_config.dimension == 128
         
         # Invalid dimensions should raise validation errors
         with pytest.raises((ValueError, TypeError)):
-            CollectionConfig(dimension=0)
+            CollectionConfig(
+                name="test_collection_invalid",  # Minimum 8 characters
+                dimension=0,  # Invalid dimension
+                distance_metric=DistanceMetric.COSINE)
         
         with pytest.raises((ValueError, TypeError)):
-            CollectionConfig(dimension=-5)
+            CollectionConfig(
+                name="test_collection_toolarge",  # Minimum 8 characters
+                dimension=10001,  # Too large
+                distance_metric=DistanceMetric.COSINE)
     
     def test_collection_not_found_error(self):
         """Test CollectionNotFoundError handling"""
@@ -287,8 +304,11 @@ class TestCollectionValidation:
         client = connect_rest("http://localhost:5678")
         collection_name = f"duplicate_test_{int(time.time())}"
         
-        config = CollectionConfig(dimension=128)
-        
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE
+        )
         try:
             # Create first time - should succeed
             collection1 = client.create_collection(collection_name, config)
@@ -314,6 +334,7 @@ class TestCollectionPersistence:
         collection_name = f"persist_test_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.COSINE,
             description="Persistence test collection"

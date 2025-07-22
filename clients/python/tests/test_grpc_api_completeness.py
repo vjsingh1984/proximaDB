@@ -29,7 +29,10 @@ class TestGRPCAPICompleteness:
     def test_collection(self, grpc_client):
         """Create test collection for endpoint testing"""
         collection_name = f"grpc_test_{int(time.time())}"
-        config = CollectionConfig(dimension=32, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
         
         collection = grpc_client.create_collection(collection_name, config)
         yield collection_name
@@ -48,7 +51,10 @@ class TestGRPCAPICompleteness:
         
         # 1. Create Collection
         try:
-            config = CollectionConfig(dimension=64, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
             collection = grpc_client.create_collection(collection_name, config)
             assert collection is not None
             print("✅ CreateCollection - Create collection: WORKING")
@@ -394,7 +400,10 @@ class TestGRPCAPICompleteness:
         # 2. Invalid Vector Dimensions
         try:
             collection_name = f"grpc_error_test_{int(time.time())}"
-            config = CollectionConfig(dimension=64, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
             collection = grpc_client.create_collection(collection_name, config)
             
             try:
@@ -423,7 +432,10 @@ class TestGRPCAPICompleteness:
         # 3. Empty Query Vector
         try:
             collection_name = f"grpc_empty_test_{int(time.time())}"
-            config = CollectionConfig(dimension=32, distance_metric=DistanceMetric.COSINE)
+            config = CollectionConfig(
+            name=collection_name,
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE)
             collection = grpc_client.create_collection(collection_name, config)
             
             try:

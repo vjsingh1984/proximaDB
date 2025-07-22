@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value as JsonValue};
 use anyhow::{Result, Context};
 
-use crate::core::{MetadataQuery, FieldQuery, ComparisonOperator, MetadataQueryBuilder};
+use crate::core::{MetadataQuery, FieldQuery, ComparisonOperator};
 
 /// Parse metadata filters from gRPC request into logical metadata query
 pub fn parse_metadata_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
@@ -305,7 +305,7 @@ fn parse_simple_filters_excluding_operators(metadata_filter: &HashMap<String, St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    
 
     #[test]
     fn test_simple_equality_parsing() {

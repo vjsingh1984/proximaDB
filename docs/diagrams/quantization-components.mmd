@@ -1,0 +1,57 @@
+graph TB
+    subgraph "Client Layer"
+        A[Python SDK]
+        B[REST API]
+        C[gRPC API]
+    end
+    
+    subgraph "Protocol Layer"
+        D[QuantizationConfig]
+        E[SearchOptimizationHints]
+    end
+    
+    subgraph "Handler Layer"
+        F[REST Handler]
+        G[gRPC Handler]
+    end
+    
+    subgraph "Service Layer"
+        H[Vector Service]
+        I[Collection Service]
+    end
+    
+    subgraph "Storage Layer"
+        J[VIPER Engine]
+        K[LSM Engine]
+        L[Quantized Storage]
+        M[Full Precision Storage]
+    end
+    
+    A --> B
+    A --> C
+    B --> F
+    C --> G
+    F --> H
+    G --> H
+    H --> I
+    H --> J
+    H --> K
+    J --> L
+    J --> M
+    K --> L
+    K --> M
+    
+    D -.-> I
+    E -.-> F
+    E -.-> G
+    
+    style A fill:#FFE082
+    style B fill:#FFE082
+    style C fill:#FFE082
+    style D fill:#81C784
+    style E fill:#81C784
+    style H fill:#4FC3F7
+    style J fill:#CE93D8
+    style K fill:#CE93D8
+    style L fill:#FFAB91
+    style M fill:#FFAB91

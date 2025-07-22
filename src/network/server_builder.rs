@@ -191,7 +191,7 @@ impl Default for GrpcHttpServerBuilder {
             enable_grpc: true,
             tls_cert_file: None,
             tls_key_file: None,
-            max_message_size: 4 * 1024 * 1024, // 4MB
+            max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts
             enable_reflection: true,
         }
     }

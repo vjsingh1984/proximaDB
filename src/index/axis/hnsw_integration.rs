@@ -4,7 +4,7 @@
 //! for adaptive, high-performance vector search with metadata filtering.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as AsyncRwLock;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm, SearchResult as AlgoSearchResult};
 use crate::compute::DistanceMetric;
 use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
-use crate::index::axis::strategy::{IndexType, IndexStrategy};
+use crate::index::axis::types::DataType;
 use super::manager::AxisManager;
 
 /// HNSW configuration for AXIS integration
@@ -114,18 +114,21 @@ impl PartitionedHnswIndex {
         
         // Add vector to HNSW
         partition.add_vector(
-            vector_record.id.clone(),
-            vector_record.vector.clone(),
-            Some(vector_record.metadata.clone()),
-        ).context("Failed to add vector to HNSW partition")?;
+            vector_record.id.as_deref().unwrap_or("").to_string(),
+            vector_record.vector.to_vec(),
+            Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)),
+        ).map_err(|e| anyhow::anyhow!(e))?;
         
         // Update mappings
-        self.vector_partitions.insert(vector_record.id.clone(), partition_id);
+        self.vector_partitions.insert(vector_record.id.as_deref().unwrap_or("").to_string(), partition_id);
+        
+        // Calculate memory usage before borrowing metadata
+        let memory_usage = self.estimate_vector_memory_usage(vector_record);
         
         // Update partition metadata
         if let Some(metadata) = self.partition_metadata.get_mut(&partition_id) {
             metadata.vector_count += 1;
-            metadata.memory_usage_bytes += self.estimate_vector_memory_usage(vector_record);
+            metadata.memory_usage_bytes += memory_usage;
             metadata.last_accessed = std::time::Instant::now();
             
             // Update average dimension
@@ -140,7 +143,7 @@ impl PartitionedHnswIndex {
         
         tracing::debug!(
             "Added vector {} to HNSW partition {} (total vectors: {})",
-            vector_record.id, partition_id, 
+            vector_record.id.as_deref().unwrap_or(""), partition_id, 
             self.partition_metadata.get(&partition_id).map(|m| m.vector_count).unwrap_or(0)
         );
         
@@ -204,7 +207,7 @@ impl PartitionedHnswIndex {
         if let Some(partition_id) = self.vector_partitions.remove(vector_id) {
             if let Some(partition) = self.partitions.get_mut(&partition_id) {
                 let removed = partition.remove_vector(vector_id)
-                    .context("Failed to remove vector from HNSW partition")?;
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 
                 // Update partition metadata
                 if removed {
@@ -248,7 +251,7 @@ impl PartitionedHnswIndex {
     pub fn optimize(&mut self) -> Result<()> {
         for (partition_id, partition) in &mut self.partitions {
             partition.optimize()
-                .with_context(|| format!("Failed to optimize partition {}", partition_id))?;
+                .map_err(|e| anyhow::anyhow!("Failed to optimize partition {}: {}", partition_id, e))?;
         }
         
         // TODO: Implement partition rebalancing if needed
@@ -283,7 +286,7 @@ impl PartitionedHnswIndex {
             let mut hnsw = HNSWIndex::new(
                 self.config.m,
                 self.config.ef_construction,
-                self.distance_metric,
+                self.distance_metric.clone(),
                 self.config.use_simd,
             );
             
@@ -342,14 +345,20 @@ impl PartitionedHnswIndex {
         for result in results {
             // Find the vector in partitions
             if let Some(partition_id) = self.vector_partitions.get(&result.vector_id) {
-                if let Some(partition) = self.partitions.get(partition_id) {
+                if let Some(_partition) = self.partitions.get(partition_id) {
                     // Extract vector and metadata from HNSW
                     // TODO: Add method to HNSWIndex to get vector by ID
                     let vector_record = VectorRecord {
-                        id: result.vector_id,
-                        collection_id: "".to_string(), // TODO: Track collection
+                        id: Some(result.vector_id),
                         vector: vec![], // TODO: Get actual vector
-                        metadata: result.metadata.unwrap_or_default(),
+                        metadata: result.metadata
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                                key: k,
+                                value: v.to_string(),
+                            })
+                            .collect(),
                         timestamp: chrono::Utc::now().timestamp_millis(),
                         created_at: chrono::Utc::now().timestamp_millis(),
                         updated_at: chrono::Utc::now().timestamp_millis(),
@@ -465,15 +474,33 @@ impl AxisManager {
     pub async fn enable_hnsw_index(
         &mut self,
         collection_id: &str,
-        config: Option<AxisHnswConfig>,
+        _config: Option<AxisHnswConfig>,
     ) -> Result<()> {
         tracing::info!("Enabling HNSW indexing for collection {}", collection_id);
         
-        // Update collection strategy to include HNSW
-        if let Some(mut strategy) = self.get_collection_strategy(collection_id) {
-            if !strategy.secondary_indexes.contains(&IndexType::HNSW) {
-                strategy.secondary_indexes.push(IndexType::HNSW);
-                self.update_collection_strategy(collection_id, strategy).await?;
+        // Update collection strategy to include HNSW index
+        let collection_id_str = collection_id.to_string();
+        if let Ok(mut strategy) = self.get_collection_strategy(&collection_id_str).await {
+            // Check if we already have a dense vector index
+            let has_vector_index = strategy.indexes.iter()
+                .any(|spec| matches!(spec.data_type, DataType::DenseVector { .. }));
+            
+            if !has_vector_index {
+                use crate::index::axis::types::{IndexSpecification, IndexAlgorithm};
+                // Add HNSW index for dense vectors
+                strategy.indexes.push(IndexSpecification {
+                    data_type: DataType::DenseVector { dimension: 128 }, // Default dimension
+                    algorithm: IndexAlgorithm::HNSW {
+                        m: 16,
+                        ef_construction: 200,
+                        ef_search: 50,
+                        max_elements: 1_000_000,
+                    },
+                    name: Some("hnsw_vector".to_string()),
+                    is_primary: true,
+                    selectivity_threshold: None,
+                });
+                self.update_collection_strategy(&collection_id_str, strategy).await?;
             }
         }
         
@@ -483,10 +510,10 @@ impl AxisManager {
     /// Search using HNSW index with AXIS metadata
     pub async fn search_with_hnsw(
         &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        metadata_query: Option<&MetadataQuery>,
+        _collection_id: &str,
+        _query_vector: &[f32],
+        _k: usize,
+        _metadata_query: Option<&MetadataQuery>,
     ) -> Result<Vec<VectorRecord>> {
         // TODO: Integrate with actual HNSW manager
         // For now, return empty results
@@ -497,15 +524,18 @@ impl AxisManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    
 
     fn create_test_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), json!("test"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: "test".to_string(),
+            }
+        ];
         
         VectorRecord {
-            id: id.to_string(),
-            collection_id: "test_collection".to_string(),
+            id: Some(id.to_string()),
             vector,
             metadata,
             timestamp: chrono::Utc::now().timestamp_millis(),

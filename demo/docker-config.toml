@@ -9,32 +9,38 @@ host = "0.0.0.0"
 port = 5679
 
 [storage]
-# Storage layout with docker paths
-data_dir = "/app/data"
-wal_dir = "/app/wal"
+# Single metadata URL
+metadata_url = "file:///app/metadata"
 
-# WAL configuration
-wal_config = [
-    {url = "file:///app/wal/wal1", strategy = "Avro", sync_mode = "PerBatch"},
-    {url = "file:///app/wal/wal2", strategy = "Bincode", sync_mode = "PerBatch"}
-]
+# Storage locations in container
+[[storage.storage_locations]]
+url = "file:///app/data"
+weight = 1
+tags = ["docker", "local"]
 
-# Storage layout for containers
-storage_layout = [
-    {name = "disk1", path = "/app/data/disk1", max_size_gb = 50},
-    {name = "disk2", path = "/app/data/disk2", max_size_gb = 50}
-]
-
-# Storage pairing
-storage_pairing = [
-    {wal = "file:///app/wal/wal1", storage = "disk1"},
-    {wal = "file:///app/wal/wal2", storage = "disk2"}
-]
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
 
 # Memory and performance settings optimized for containers
-memtable_size_mb = 32
-memory_flush_size_bytes = 16_777_216  # 16MB
 mmap_enabled = true
+cache_size_mb = 256
+bloom_filter_bits = 10
+
+[storage.lsm_config]
+memtable_size_mb = 8
+memory_flush_size_bytes = 2097152  # 2MB
+compression = "snappy"
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = false
+cleanup_temp_on_startup = true
 
 [logging]
 level = "info"

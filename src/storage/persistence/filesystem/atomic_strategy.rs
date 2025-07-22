@@ -177,7 +177,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
     ) -> FsResult<()> {
         // Create parent directories if needed
         if let Some(parent) = Path::new(final_path).parent() {
-            filesystem.create_dir(&parent.to_string_lossy()).await.ok();
+            filesystem.create_dir_all(&parent.to_string_lossy()).await.ok();
         }
 
         // Direct write - fastest but not atomic
@@ -211,7 +211,31 @@ impl SameMountTempExecutor {
     }
 
     fn generate_temp_path(&self, final_path: &str) -> FsResult<String> {
-        let final_path = Path::new(final_path);
+        // Handle URLs properly
+        let (base_url, path_part) = if final_path.contains("://") {
+            // It's a URL - extract the path part after the scheme
+            let parts: Vec<&str> = final_path.splitn(2, "://").collect();
+            if parts.len() != 2 {
+                return Err(FilesystemError::InvalidPath("Invalid URL format".to_string()));
+            }
+            let scheme = parts[0];
+            let remaining = parts[1];
+            
+            // For file:// URLs, the path starts after the third slash
+            let path_start = if scheme == "file" {
+                remaining
+            } else {
+                // For other schemes (s3://, gs://), find the first slash after the bucket
+                remaining.splitn(2, '/').nth(1).unwrap_or(remaining)
+            };
+            
+            (format!("{}://", scheme), path_start)
+        } else {
+            // Not a URL, treat as regular path
+            ("".to_string(), final_path)
+        };
+        
+        let final_path = Path::new(&path_part);
         let parent = final_path.parent().unwrap_or(Path::new("."));
         let filename = final_path
             .file_name()
@@ -235,7 +259,13 @@ impl SameMountTempExecutor {
             rand::random::<u32>()
         );
 
-        Ok(temp_dir.join(temp_filename).to_string_lossy().to_string())
+        // Reconstruct the full URL if needed
+        let temp_path = temp_dir.join(temp_filename).to_string_lossy().to_string();
+        if !base_url.is_empty() {
+            Ok(format!("{}{}", base_url, temp_path))
+        } else {
+            Ok(temp_path)
+        }
     }
 }
 
@@ -251,19 +281,42 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         let temp_path = self.generate_temp_path(final_path)?;
 
         // Create parent directories for both temp and final paths
-        if let Some(parent) = Path::new(&temp_path).parent() {
-            filesystem.create_dir(&parent.to_string_lossy()).await.ok();
+        // Extract parent directory handling URLs properly
+        let temp_parent = if temp_path.contains("://") {
+            // For URLs, find the parent directory part
+            if let Some(last_slash) = temp_path.rfind('/') {
+                Some(temp_path[..last_slash].to_string())
+            } else {
+                None
+            }
+        } else {
+            Path::new(&temp_path).parent().map(|p| p.to_string_lossy().to_string())
+        };
+        
+        if let Some(parent) = temp_parent {
+            filesystem.create_dir_all(&parent).await.ok();
         }
-        if let Some(parent) = Path::new(final_path).parent() {
-            filesystem.create_dir(&parent.to_string_lossy()).await.ok();
+        
+        let final_parent = if final_path.contains("://") {
+            // For URLs, find the parent directory part
+            if let Some(last_slash) = final_path.rfind('/') {
+                Some(final_path[..last_slash].to_string())
+            } else {
+                None
+            }
+        } else {
+            Path::new(final_path).parent().map(|p| p.to_string_lossy().to_string())
+        };
+        
+        if let Some(parent) = final_parent {
+            filesystem.create_dir_all(&parent).await.ok();
         }
 
         // Write to temp file
         filesystem.write(&temp_path, data, None).await?;
 
-        // Atomic move to final location
-        filesystem.copy(&temp_path, final_path).await?;
-        filesystem.delete(&temp_path).await.ok(); // Best effort cleanup
+        // Atomic move to final location (move is atomic, copy is not)
+        filesystem.move_file(&temp_path, final_path).await?;
 
         Ok(())
     }

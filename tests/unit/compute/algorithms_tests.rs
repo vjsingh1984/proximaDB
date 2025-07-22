@@ -4,7 +4,7 @@
 //! implementations, including HNSW and BruteForce algorithms.
 
 use proximadb::compute::algorithms::{
-    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex, SearchResult, MemoryUsage
+    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex, SearchResult
 };
 use proximadb::compute::DistanceMetric;
 use std::collections::HashMap;
@@ -290,7 +290,8 @@ fn test_search_result_ordering() {
     };
     
     // Higher scores should be ordered first (max heap behavior)
-    assert!(result2 > result1);
+    // Note: PartialOrd is reversed for max heap, so result2 < result1 when result2.score > result1.score
+    assert!(result2 < result1);
 }
 
 #[test]
@@ -299,7 +300,7 @@ fn test_different_distance_metrics() {
     let metrics = vec![
         DistanceMetric::Cosine,
         DistanceMetric::Euclidean,
-        DistanceMetric::Dot,
+        DistanceMetric::DotProduct,
     ];
     
     for metric in metrics {

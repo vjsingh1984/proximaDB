@@ -67,21 +67,42 @@ pub struct PerformanceConfig {
 
     /// Sync mode for disk writes
     pub sync_mode: SyncMode,
+
+    /// Shrink factor for global threshold management (percentage)
+    /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
+    pub global_shrink_factor: f64,
+
+    /// Cloud backup configuration
+    pub cloud_backup: Option<CloudBackupConfig>,
+    
+    /// Enable optimized WAL writer for high-performance writes
+    pub enable_optimized_wal_writer: Option<bool>,
+    
+    /// Number of background writer threads for optimized WAL writer
+    pub background_writer_threads: Option<usize>,
+    
+    /// Batch size for optimized WAL writer
+    pub wal_batch_size: Option<usize>,
 }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
             // Optimized for write-triggered size-based flush only
-            memory_flush_size_bytes: 1 * 1024 * 1024, // 1MB memory limit for testing metadata filtering performance
+            memory_flush_size_bytes: 2 * 1024 * 1024, // 2MB memory limit - reduced for faster recovery as per CLAUDE.md
             disk_segment_size: 512 * 1024 * 1024,     // 512MB segments optimized for large vectors
-            global_flush_threshold: 512 * 1024 * 1024, // 512MB global limit for write-triggered flush
+            global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB global limit - recommended for global memory threshold
             write_buffer_size: 8 * 1024 * 1024, // 8MB write buffer for large vector throughput
             concurrent_flushes: num_cpus::get().min(4), // Max 4 concurrent flushes to avoid I/O contention
             batch_threshold: 500, // Larger batches for bulk insert optimization
             mvcc_cleanup_interval_secs: 3600, // Clean up old versions every hour
             ttl_cleanup_interval_secs: 300, // Check TTL every 5 minutes
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
+            global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
+            cloud_backup: None, // Cloud backup disabled by default
+            enable_optimized_wal_writer: Some(false), // Disabled by default for gradual rollout
+            background_writer_threads: None, // Will use 2 by default in optimized writer
+            wal_batch_size: None, // Will use 100 by default in optimized writer
         }
     }
 }
@@ -104,16 +125,33 @@ pub enum SyncMode {
 /// WAL strategy type selection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WalStrategyType {
-    /// Avro with schema evolution support
-    Avro,
-    /// Bincode for maximum native Rust performance
-    Bincode,
+    /// Modern Avro batch strategy with zero-copy optimization
+    AvroBatch,
+    /// Modern Bincode batch strategy with optimal Rust performance
+    BincodeBatch,
+    /// Modern Proto batch strategy for proto-first architecture
+    ProtoBatch,
 }
 
 impl Default for WalStrategyType {
     fn default() -> Self {
-        // Default to Avro for schema evolution, robust recovery, and bulk insert efficiency
-        Self::Avro
+        // Default to BincodeBatch for maximum performance with vector workloads
+        // Bincode provides:
+        // - Fastest serialization/deserialization (critical for high-throughput ingestion)
+        // - Most compact format (20-40% space savings vs Proto)
+        // - Zero-copy deserialization potential
+        // - Native Rust types with no conversion overhead
+        Self::BincodeBatch
+    }
+}
+
+impl std::fmt::Display for WalStrategyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WalStrategyType::AvroBatch => write!(f, "AvroBatch"),
+            WalStrategyType::BincodeBatch => write!(f, "BincodeBatch"),
+            WalStrategyType::ProtoBatch => write!(f, "ProtoBatch"),
+        }
     }
 }
 
@@ -149,7 +187,7 @@ pub enum DiskDistributionStrategy {
 impl Default for MultiDiskConfig {
     fn default() -> Self {
         Self {
-            data_directories: vec!["file:///workspace/data/wal".to_string()],
+            data_directories: vec!["file://./data/wal".to_string()],
             distribution_strategy: DiskDistributionStrategy::LoadBalanced, // Optimal for bulk inserts
             collection_affinity: true, // Keep collection on one disk for sequential I/O
         }
@@ -196,7 +234,7 @@ impl Default for MemTableConfig {
     fn default() -> Self {
         Self {
             memtable_type: MemTableType::default(),
-            global_memory_limit: 512 * 1024 * 1024, // 512MB for write-triggered flush
+            global_memory_limit: 4 * 1024 * 1024 * 1024, // 4GB for write-triggered flush
             mvcc_versions_retained: 3,              // Keep last 3 versions for MVCC
             enable_concurrency: true,               // Enable concurrent operations
         }
@@ -232,12 +270,27 @@ pub struct WalConfig {
 
     /// Collection-specific overrides
     pub collection_overrides: std::collections::HashMap<String, CollectionWalConfig>,
+    
+    /// Enable optimized WAL writer (feature flag)
+    pub enable_optimized_writer: bool,
+    
+    /// Optimized writer batch size
+    pub optimized_writer_batch_size: Option<usize>,
+    
+    /// Optimized writer batch timeout in milliseconds
+    pub optimized_writer_batch_timeout_ms: Option<u64>,
+    
+    /// Number of writer threads for optimized writer
+    pub optimized_writer_threads: Option<usize>,
+    
+    /// Enable write combining for same collection
+    pub optimized_writer_enable_combining: Option<bool>,
 }
 
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
-            strategy_type: WalStrategyType::default(), // Avro for schema evolution and recovery
+            strategy_type: WalStrategyType::default(), // Bincode for maximum vector ingestion performance
             memtable: MemTableConfig::default(),       // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(),    // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
@@ -246,6 +299,11 @@ impl Default for WalConfig {
             enable_ttl: true,  // Enable for data lifecycle management
             enable_background_compaction: true, // Enable for maintenance and space reclamation
             collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false, // Disabled by default for gradual rollout
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
         }
     }
 }
@@ -291,8 +349,12 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
             wal_config.strategy_type = match strategy_type.as_str() {
-                "Avro" => WalStrategyType::Avro,
-                "Bincode" => WalStrategyType::Bincode,
+                "Avro" => WalStrategyType::AvroBatch,
+                "Bincode" => WalStrategyType::BincodeBatch,
+                "AvroBatch" => WalStrategyType::AvroBatch,
+                "BincodeBatch" => WalStrategyType::BincodeBatch,
+                "Proto" => WalStrategyType::ProtoBatch,
+                "ProtoBatch" => WalStrategyType::ProtoBatch,
                 _ => WalStrategyType::default(),
             };
         }
@@ -331,6 +393,10 @@ impl From<&crate::core::config::WalStorageConfig> for WalConfig {
             wal_config.performance.concurrent_flushes = concurrent_flushes;
         }
 
+        if let Some(global_shrink_factor) = core_config.global_shrink_factor {
+            wal_config.performance.global_shrink_factor = global_shrink_factor;
+        }
+
         wal_config
     }
 }
@@ -339,7 +405,7 @@ impl WalConfig {
     /// Create configuration optimized for high-throughput writes
     pub fn high_throughput() -> Self {
         let mut config = Self::default();
-        config.strategy_type = WalStrategyType::Bincode; // Faster serialization
+        config.strategy_type = WalStrategyType::BincodeBatch; // Faster serialization
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB
@@ -374,7 +440,7 @@ impl WalConfig {
     pub fn range_query_optimized() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Excellent range scan performance
-        config.strategy_type = WalStrategyType::Avro; // Schema evolution for analytics
+        config.strategy_type = WalStrategyType::AvroBatch; // Schema evolution for analytics
         config.compression.algorithm = CompressionAlgorithm::Snappy; // Balanced compression
         config.performance.memory_flush_size_bytes = 64 * 1024 * 1024; // 64MB moderate memory usage
         config
@@ -384,7 +450,7 @@ impl WalConfig {
     pub fn high_concurrency() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::Art; // Excellent concurrency
-        config.strategy_type = WalStrategyType::Bincode; // Fast serialization
+        config.strategy_type = WalStrategyType::BincodeBatch; // Fast serialization
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
         config.memtable.enable_concurrency = true;
         config
@@ -420,4 +486,128 @@ pub struct CollectionEffectiveConfig {
     pub default_ttl_days: Option<u32>,
     /// Size-based flush threshold (bytes) - derived from memory_flush_size_bytes
     pub memory_flush_size_bytes: usize,
+}
+
+/// Cloud backup configuration for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudBackupConfig {
+    /// Enable cloud backup for WAL batches
+    pub enabled: bool,
+
+    /// Cloud storage URL for backup (e.g., s3://bucket/wal/, gcs://bucket/wal/)
+    pub backup_url: String,
+
+    /// Backup strategy
+    pub strategy: CloudBackupStrategy,
+
+    /// Backup frequency configuration
+    pub frequency: BackupFrequency,
+
+    /// Automatic cleanup of old cloud backups
+    pub cleanup_policy: Option<CloudCleanupPolicy>,
+
+    /// Verify backup integrity
+    pub verify_integrity: bool,
+
+    /// Retry configuration for cloud operations
+    pub retry_config: CloudRetryConfig,
+}
+
+impl Default for CloudBackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backup_url: "file://./data/wal_backup".to_string(),
+            strategy: CloudBackupStrategy::OnFlush,
+            frequency: BackupFrequency::default(),
+            cleanup_policy: Some(CloudCleanupPolicy::default()),
+            verify_integrity: true,
+            retry_config: CloudRetryConfig::default(),
+        }
+    }
+}
+
+/// Cloud backup strategy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CloudBackupStrategy {
+    /// Real-time backup on every write
+    RealTime,
+    /// Periodic batch backup
+    Periodic { interval_secs: u64 },
+    /// Backup on flush events
+    OnFlush,
+    /// Backup on demand only
+    OnDemand,
+}
+
+impl Default for CloudBackupStrategy {
+    fn default() -> Self {
+        Self::OnFlush
+    }
+}
+
+/// Backup frequency configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupFrequency {
+    /// Backup every N operations
+    pub operations_threshold: Option<u64>,
+    /// Backup every N seconds
+    pub time_threshold_secs: Option<u64>,
+    /// Backup when size exceeds threshold
+    pub size_threshold_bytes: Option<usize>,
+}
+
+impl Default for BackupFrequency {
+    fn default() -> Self {
+        Self {
+            operations_threshold: Some(1000),
+            time_threshold_secs: Some(300), // 5 minutes
+            size_threshold_bytes: Some(100 * 1024 * 1024), // 100MB
+        }
+    }
+}
+
+/// Cloud cleanup policy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudCleanupPolicy {
+    /// Retain backups for N days
+    pub retention_days: u32,
+    /// Maximum number of backups to keep
+    pub max_backups: Option<u32>,
+    /// Cleanup frequency in hours
+    pub cleanup_frequency_hours: u32,
+}
+
+impl Default for CloudCleanupPolicy {
+    fn default() -> Self {
+        Self {
+            retention_days: 7,
+            max_backups: Some(100),
+            cleanup_frequency_hours: 24,
+        }
+    }
+}
+
+/// Cloud retry configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudRetryConfig {
+    /// Maximum retry attempts
+    pub max_retries: u32,
+    /// Initial delay in milliseconds
+    pub initial_delay_ms: u64,
+    /// Maximum delay in milliseconds
+    pub max_delay_ms: u64,
+    /// Backoff multiplier
+    pub backoff_multiplier: f64,
+}
+
+impl Default for CloudRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay_ms: 100,
+            max_delay_ms: 5000,
+            backoff_multiplier: 2.0,
+        }
+    }
 }

@@ -34,10 +34,23 @@ pub mod storage;
 // Vector operations integration tests
 pub mod vector;
 
-// Search distance metrics integration tests
-pub mod search_distance_metrics;
+// Semantic distance integration tests - NEW unified system
+pub mod semantic_distance_integration;
 
-// Unified distance system integration tests
-pub mod unified_distance_system_integration;
+// Unified search integration tests - NEW unified search interface
+pub mod unified_search_integration;
+
+// WAL optimization integration tests - NEW optimized WAL writer
+pub mod wal_optimization_integration_test;
+
+// VIPER engine integration tests
+pub mod viper;
+
+// LSM engine integration tests
+pub mod lsm_search_integration_test;
+pub mod lsm_collection_test;
+
+// Storage-aware search integration tests - REMOVED (obsolete APIs)
+// pub mod storage_aware_search_tests;
 
 // Middleware integration tests are at this level since they cross-cut concerns

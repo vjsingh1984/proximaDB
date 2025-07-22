@@ -15,17 +15,20 @@
 //! - **ART**: Adaptive Radix Tree, memory efficient for string-like keys
 //!
 //! ## Usage:
-//! ```rust
+//! ```rust,no_run
 //! use proximadb::storage::memtable::{MemtableFactory, MemtableType};
+//! use proximadb::storage::memtable::core::MemtableConfig;
+//!
+//! let config = MemtableConfig::default();
 //!
 //! // Create WAL-optimized memtable (BTree)
-//! let wal_memtable = MemtableFactory::create_for_wal(config);
+//! let wal_memtable = MemtableFactory::create_for_wal(config.clone());
 //!
 //! // Create LSM-optimized memtable (SkipList)
-//! let lsm_memtable = MemtableFactory::create_for_lsm(config);
+//! let lsm_memtable = MemtableFactory::create_for_lsm(config.clone());
 //!
 //! // Create for performance testing
-//! let test_memtable = MemtableFactory::create(MemtableType::DashMap, config);
+//! let test_memtable = MemtableFactory::create_typed::<String, Vec<u8>>(MemtableType::DashMap, config);
 //! ```
 
 pub mod core;
@@ -49,8 +52,6 @@ pub use implementations::{
 // Re-export specialized wrappers (using proper OOP composition)
 pub use specialized::SpecializedMemtableFactory;
 
-use anyhow::Result;
-use std::sync::Arc;
 
 /// Available memtable implementation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,14 +118,14 @@ pub struct MemtableFactory;
 
 impl MemtableFactory {
     /// Create WAL-optimized memtable (global partitioned for collection isolation + vector content search)
-    pub fn create_for_wal(config: MemtableConfig) -> specialized::WalMemtable {
+    pub fn create_for_wal(config: MemtableConfig) -> specialized::wal_behavior::WalBehaviorWrapper {
         specialized::SpecializedMemtableFactory::create_global_partitioned_for_wal(config)
     }
 
     /// Create LSM-optimized memtable (SkipList for concurrent access)
     pub fn create_for_lsm(
         config: MemtableConfig,
-    ) -> specialized::LsmMemtable<String, specialized::lsm_behavior::LsmEntry> {
+    ) -> specialized::LsmMemtable<String, crate::storage::engines::lsm::LsmRecord> {
         specialized::SpecializedMemtableFactory::create_skiplist_for_lsm(config)
     }
 
@@ -197,11 +198,11 @@ where
 
         for (memtable_type, memtable) in &mut self.implementations {
             let start = std::time::Instant::now();
-            let mut total_size = 0u64;
+            let mut _total_size = 0u64;
 
             for (key, value) in &entries {
                 match memtable.insert(key.clone(), value.clone()).await {
-                    Ok(size_delta) => total_size += size_delta,
+                    Ok(size_delta) => _total_size += size_delta,
                     Err(_) => continue,
                 }
             }
@@ -268,13 +269,13 @@ where
         for (memtable_type, memtable) in &mut self.implementations {
             let start = std::time::Instant::now();
             let mut success_count = 0;
-            let mut total_results = 0;
+            let mut _total_results = 0;
 
             for (from_key, limit) in &ranges {
                 match memtable.range_scan(from_key.clone(), *limit).await {
                     Ok(scan_results) => {
                         success_count += 1;
-                        total_results += scan_results.len();
+                        _total_results += scan_results.len();
                     }
                     Err(_) => continue,
                 }

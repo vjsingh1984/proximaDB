@@ -10,14 +10,13 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
 /// Core memtable trait for unified storage operations
 ///
 /// Generic over key and value types to support:
-/// - WAL: K=u64 (sequence), V=WalEntry
+/// - WAL: K=u64 (sequence), V=WalVectorBatch
 /// - LSM: K=VectorId, V=LsmEntry
 #[async_trait]
 pub trait MemtableCore<K, V>: Send + Sync + Debug
@@ -102,7 +101,7 @@ impl Default for MemtableConfig {
     fn default() -> Self {
         Self {
             max_size_bytes: 64 * 1024 * 1024,        // 64MB
-            flush_threshold_bytes: 16 * 1024 * 1024, // 16MB
+            flush_threshold_bytes: 2 * 1024 * 1024,  // 2MB - reduced for faster recovery as per CLAUDE.md
             enable_mvcc: true,
             mvcc_cleanup_interval_secs: 300, // 5 minutes
             max_versions_per_key: 10,
@@ -112,5 +111,5 @@ impl Default for MemtableConfig {
 
 // Re-export common types for convenience (these may not exist yet)
 // pub use crate::core::{VectorId, VectorRecord};
-// pub use crate::storage::persistence::wal::WalEntry;
+// pub use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
 // pub use crate::storage::engines::lsm::LsmEntry;

@@ -16,7 +16,7 @@ workspace_root = Path(__file__).parent
 sdk_path = workspace_root / "clients/python/src"
 sys.path.insert(0, str(sdk_path))
 
-from proximadb.grpc_client import ProximaDBClient
+from proximadb import ProximaDBClient, Protocol
 
 # Enable debug logging
 logging.basicConfig(level=logging.DEBUG)
@@ -70,16 +70,15 @@ def main():
         import json
         from proximadb import proximadb_pb2 as pb2
         
-        # Create raw request
-        vectors_avro_binary = client._create_avro_vector_batch(vectors)
-        request = pb2.VectorInsertRequest(
+        # Create modern proto request
+        proto_vectors = client._create_proto_vector_batch(vectors, collection_id)
+        request = pb2.VectorBatchRequest(
             collection_id=collection_id,
-            upsert_mode=False,
-            vectors_avro_payload=vectors_avro_binary
+            vectors=proto_vectors
         )
         
-        # Make raw call  
-        raw_response = client._call_with_timeout(client.stub.VectorInsert, request)
+        # Make raw call using modern VectorBatch endpoint
+        raw_response = client._call_with_timeout(client.stub.VectorBatch, request)
         print(f"   Raw response success: {raw_response.success}")
         print(f"   Raw response vector_ids count: {len(raw_response.vector_ids)}")
         print(f"   Raw response vector_ids: {raw_response.vector_ids}")
