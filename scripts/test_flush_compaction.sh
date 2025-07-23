@@ -87,7 +87,7 @@ validate_configuration() {
     
     # Check if TOML configs can be parsed
     local configs=(
-        "config.toml"
+        "config/config.toml"
         "config/local.toml"
         "demo/docker-config.toml"
     )

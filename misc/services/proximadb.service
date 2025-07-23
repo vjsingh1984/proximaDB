@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=exec
 User=%i
 Group=%i
-ExecStart=/home/vsingh/code/proximadb/target/release/proximadb-server --config /home/vsingh/code/proximadb/config.toml
+ExecStart=/home/vsingh/code/proximadb/target/release/proximadb-server --config /home/vsingh/code/proximadb/config/config.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
@@ -24,7 +24,7 @@ ReadWritePaths=/data/proximadb
 
 # Environment
 Environment=RUST_LOG=info
-Environment=PROXIMADB_CONFIG=/home/vsingh/code/proximadb/config.toml
+Environment=PROXIMADB_CONFIG=/home/vsingh/code/proximadb/config/config.toml
 Environment=PROXIMADB_DATA_DIR=/data/proximadb
 
 # Resource limits

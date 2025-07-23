@@ -31,7 +31,7 @@ services:
     # Persistent data volume
     volumes:
       - proximadb-mvp-data:/data
-      - ./config.toml:/opt/proximadb/config/config.toml:ro
+      - ./docker-config.toml:/opt/proximadb/config/config.toml:ro
     
     # Resource limits for demo
     deploy:

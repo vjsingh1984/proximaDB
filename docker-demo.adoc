@@ -633,7 +633,7 @@ docker run -it \
   rust:1.75-slim \
   bash -c "
     apt-get update && apt-get install -y pkg-config libssl-dev protobuf-compiler cmake
-    cargo run --bin proximadb-server -- --config config.toml
+    cargo run --bin proximadb-server -- --config config/config.toml
   "
 
 # Code formatting and linting

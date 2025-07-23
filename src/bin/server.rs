@@ -26,7 +26,7 @@ use tracing::{error, info};
 #[command(name = "proximadb-server")]
 #[command(about = "ProximaDB cloud-native vector database server")]
 struct Args {
-    #[arg(short, long, default_value = "config.toml")]
+    #[arg(short, long, default_value = "config/config.toml")]
     config: PathBuf,
 
     #[arg(short, long)]
