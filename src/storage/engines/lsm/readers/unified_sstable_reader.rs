@@ -867,7 +867,10 @@ impl UnifiedSstableReader {
         let indices = self.index_cache.indices.read().await;
         if !indices.contains_key(path) {
             drop(indices);
-            self.load_index_optimized(path).await?;
+            // Load and cache the index
+            let index = Arc::new(self.load_index_optimized(path).await?);
+            let mut indices = self.index_cache.indices.write().await;
+            indices.insert(path.to_string(), index.clone());
         }
         
         // Get the index
@@ -900,8 +903,11 @@ impl UnifiedSstableReader {
     }
     
     async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
-        // Load index first
-        self.load_index_optimized(path).await?;
+        // Load index first and cache it
+        let index = Arc::new(self.load_index_optimized(path).await?);
+        let mut indices = self.index_cache.indices.write().await;
+        indices.insert(path.to_string(), index.clone());
+        drop(indices);
         
         // Read the full file
         let fs = self.filesystem.get_filesystem("file:///")?;
