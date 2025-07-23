@@ -118,6 +118,9 @@ logs/
 *.sqlite3
 *.db
 
+# PID files
+*.pid
+
 # Temporary files
 *.tmp
 *.temp

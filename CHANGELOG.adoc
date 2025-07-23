@@ -39,6 +39,9 @@ and this project adheres to https://semver.org/spec/v2.0.0.html[Semantic Version
 === Fixed
 - DirectVectorService now properly assigns generated IDs to vectors when client doesn't provide them
 - Vector ID propagation through storage pipeline ensures all vectors are retrievable by ID
+- Vector ID preservation in gRPC search results - fixed field name mismatch ("vector_id" vs "id")
+- Eliminated redundant JSON/Avro serialization in gRPC responses with direct proto conversion
+- Fixed hanging test in unified_sstable_reader with double-check locking pattern
 
 == [1.0.0] - 2025-01-22
 
