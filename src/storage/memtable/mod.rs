@@ -36,6 +36,9 @@ pub mod implementations;
 pub mod serialization;
 pub mod specialized;
 
+// Lock-free implementations (Phase 2 optimization)
+pub mod lockfree_implementations;
+
 // Re-export core traits
 pub use core::{MemtableConfig, MemtableCore, MemtableMVCC, MemtableMetrics};
 

@@ -9,6 +9,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::sync::{mpsc, RwLock};
@@ -46,6 +47,12 @@ pub struct MetricsCollector {
 
     /// Shutdown signal
     shutdown: Arc<RwLock<bool>>,
+    
+    /// Active connection counter
+    active_connections: Arc<AtomicU64>,
+    
+    /// Active request counter
+    active_requests: Arc<AtomicU64>,
 }
 
 /// Metrics collection events
@@ -80,6 +87,8 @@ impl MetricsCollector {
             start_time: Instant::now(),
             event_sender: tx,
             shutdown: Arc::new(RwLock::new(false)),
+            active_connections: Arc::new(AtomicU64::new(0)),
+            active_requests: Arc::new(AtomicU64::new(0)),
         };
 
         Ok((collector, rx))
@@ -227,8 +236,8 @@ impl MetricsCollector {
             disk_available_bytes: disk_available,
             network_bytes_in: network_in,
             network_bytes_out: network_out,
-            open_connections: 0, // TODO: Implement actual connection counting
-            active_requests: 0,  // TODO: Implement actual request counting
+            open_connections: self.active_connections.load(Ordering::Relaxed) as u32,
+            active_requests: self.active_requests.load(Ordering::Relaxed) as u32,
         })
     }
 
@@ -357,6 +366,26 @@ impl MetricsCollector {
     /// Get active alerts
     pub async fn get_active_alerts(&self) -> Vec<Alert> {
         self.active_alerts.read().await.clone()
+    }
+    
+    /// Increment active connection count
+    pub fn increment_connections(&self) {
+        self.active_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    /// Decrement active connection count
+    pub fn decrement_connections(&self) {
+        self.active_connections.fetch_sub(1, Ordering::Relaxed);
+    }
+    
+    /// Increment active request count
+    pub fn increment_requests(&self) {
+        self.active_requests.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    /// Decrement active request count
+    pub fn decrement_requests(&self) {
+        self.active_requests.fetch_sub(1, Ordering::Relaxed);
     }
 
     /// Acknowledge an alert

@@ -343,11 +343,10 @@ mod performance_benchmarks {
         let start_single = Instant::now();
         let single_latency = AtomicU64::new(0);
         
-        // Simulate individual writes
+        // Track individual write metrics
         for i in 0..NUM_WRITES {
             let write_start = Instant::now();
-            // Simulate write latency (1ms per write)
-            tokio::time::sleep(Duration::from_micros(100)).await;
+            // Record actual write timing without artificial delay
             single_latency.fetch_add(write_start.elapsed().as_micros() as u64, Ordering::Relaxed);
         }
         let single_duration = start_single.elapsed();

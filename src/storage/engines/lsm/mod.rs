@@ -4,6 +4,7 @@
 //! to VIPER for performance comparison and standard SSTable storage.
 
 pub mod bloom_filter;
+pub mod optimized_bloom_filter;
 pub mod compaction;
 pub mod manifest;
 pub mod readers;
@@ -18,6 +19,9 @@ pub mod bloom_filter_tests;
 pub use bloom_filter::{
     BloomFilterStrategy, BloomFilterConfig, BloomFilterFactory,
     SstableBloomFilter, BloomStrategy, CompositeBloomFilter,
+};
+pub use optimized_bloom_filter::{
+    OptimizedSstableBloomFilter, OptimizedBloomConfig, BloomFilterSharingManager,
 };
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 pub use manifest::{LsmManifest, SstableFileInfo, ManifestStats};

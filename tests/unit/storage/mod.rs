@@ -28,3 +28,10 @@ pub mod lsm_core_tests;
 pub mod lsm_atomic_operations_test;
 pub mod lsm_sstable_format_test;
 pub mod lsm_flush_test;
+
+// Phase 1 optimization tests
+pub mod optimized_bloom_filter_test;
+
+// Phase 2 optimization tests
+pub mod unified_cache_test;
+pub mod lockfree_test;

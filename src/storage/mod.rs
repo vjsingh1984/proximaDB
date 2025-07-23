@@ -27,6 +27,12 @@ pub mod metadata;
 pub mod optimization;
 // Strategy module for collection lifecycle configuration
 pub mod strategy;
+// Unified cross-engine cache system (Phase 2 optimization)
+pub mod unified_cache;
+
+// Lock-free implementations (Phase 2 optimization)
+pub mod lockfree_engine;
+pub mod lockfree_atomic;
 
 
 // Main exports from organized structure
@@ -50,6 +56,12 @@ pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
 pub use atomic::{
     AtomicOperationMetadata, AtomicOperationStatus, StagingConfig, StagingOperationType,
     UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
+};
+
+// Unified cache system exports (Phase 2 optimization)
+pub use unified_cache::{
+    UnifiedCrossEngineCache, UnifiedCacheConfig, CacheKey, CacheDataType,
+    MemoryPressure, CrossEngineMetrics,
 };
 
 // Storage engine exports

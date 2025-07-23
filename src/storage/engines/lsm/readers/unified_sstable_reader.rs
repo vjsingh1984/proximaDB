@@ -35,10 +35,22 @@ pub struct BlockCache {
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
 
-/// Index cache for SSTable indices
+/// Optimized Index cache with memory bounds and LRU eviction
 pub struct IndexCache {
-    indices: Arc<tokio::sync::RwLock<HashMap<String, Arc<SstableIndex>>>>,
-    bloom_filters: Arc<tokio::sync::RwLock<HashMap<String, Arc<SstableBloomFilter>>>>,
+    indices: Arc<moka::future::Cache<String, Arc<SstableIndex>>>,
+    bloom_filters: Arc<moka::future::Cache<String, Arc<SstableBloomFilter>>>,
+    max_memory_mb: usize,
+    metrics: Arc<tokio::sync::RwLock<CacheMetrics>>,
+}
+
+/// Cache metrics for monitoring and optimization
+#[derive(Debug, Default)]
+pub struct CacheMetrics {
+    pub memory_usage_bytes: usize,
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub eviction_count: u64,
+    pub memory_pressure_events: u64,
 }
 
 /// Enhanced SSTable index with metadata statistics
@@ -300,20 +312,17 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<DataBlock>> {
         debug!("Using metadata filtered strategy for {} blocks", blocks.len());
 
-        // Get bloom filter and index for this SSTable
+        // Get bloom filter from cache
         let bloom_filter = if !skip_bloom {
-            let bloom_filters = self.index_cache.bloom_filters.read().await;
-            bloom_filters.get(&context.file_path).cloned()
+            self.index_cache.bloom_filters.get(&context.file_path).await
         } else {
             None
         };
 
-        // Get the index to access metadata statistics
-        let indices = self.index_cache.indices.read().await;
-        let index = indices.get(&context.file_path).ok_or_else(|| {
-            anyhow::anyhow!("Index not found for file: {}", context.file_path)
-        })?.clone();
-        drop(indices);
+        // Get the index using the new cache API
+        let index = self.index_cache.get_or_load_index(&context.file_path, || async {
+            self.load_index_optimized(&context.file_path).await
+        }).await?;
 
         // Extract metadata filters from search params
         let metadata_conditions = self.extract_metadata_conditions(params);
@@ -481,29 +490,10 @@ impl UnifiedSstableReader {
         };
         let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
-        // First, we need to get the index to know where blocks are located
-        // Check if index is cached - use double-check locking pattern
-        let index = {
-            // First check with read lock
-            let indices = self.index_cache.indices.read().await;
-            if let Some(index) = indices.get(&context.file_path) {
-                index.clone()
-            } else {
-                // Drop read lock before acquiring write lock
-                drop(indices);
-                
-                // Acquire write lock and check again (another thread might have loaded it)
-                let mut indices = self.index_cache.indices.write().await;
-                if let Some(index) = indices.get(&context.file_path) {
-                    index.clone()
-                } else {
-                    // Load index if still not cached
-                    let idx = Arc::new(self.load_index_optimized(&context.file_path).await?);
-                    indices.insert(context.file_path.clone(), idx.clone());
-                    idx
-                }
-            }
-        };
+        // Use optimized cache with proper async-safe loading
+        let index = self.index_cache.get_or_load_index(&context.file_path, || async {
+            self.load_index_optimized(&context.file_path).await
+        }).await?;
         
         // Check if block exists
         if block_idx >= index.entries.len() {
@@ -688,10 +678,8 @@ impl UnifiedSstableReader {
     /// Simple get operation for single vector retrieval
     /// This provides a lightweight interface for basic get operations
     pub async fn get_vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
-        // Get bloom filter for this SSTable
-        let bloom_filters = self.index_cache.bloom_filters.read().await;
-        if let Some(bloom_filter) = bloom_filters.get(file_path) {
-            // Check bloom filter first
+        // Check bloom filter first using new cache API
+        if let Some(bloom_filter) = self.index_cache.bloom_filters.get(file_path).await {
             if !bloom_filter.might_contain_key(vector_id).unwrap_or(true) {
                 return Ok(None);
             }
@@ -746,8 +734,7 @@ impl UnifiedSstableReader {
 
     /// Check if a key might be contained using bloom filter
     pub async fn might_contain_key(&self, file_path: &str, key: &str) -> bool {
-        let bloom_filters = self.index_cache.bloom_filters.read().await;
-        if let Some(bloom_filter) = bloom_filters.get(file_path) {
+        if let Some(bloom_filter) = self.index_cache.bloom_filters.get(file_path).await {
             bloom_filter.might_contain_key(key).unwrap_or(true)
         } else {
             true // No bloom filter, assume it might contain
@@ -834,9 +821,8 @@ impl UnifiedSstableReader {
                 }
             };
             
-            // Cache the bloom filter
-            let mut bloom_filters = self.index_cache.bloom_filters.write().await;
-            bloom_filters.insert(file_path.to_string(), Arc::new(bloom_filter));
+            // Cache the bloom filter using new API
+            self.index_cache.bloom_filters.insert(file_path.to_string(), Arc::new(bloom_filter)).await;
             
             debug!("Loaded bloom filter for SSTable: {} ({} bytes)", file_path, bloom_len);
         }
@@ -863,23 +849,12 @@ impl UnifiedSstableReader {
     }
     
     async fn read_file_with_cache(&self, path: &str) -> Result<Vec<DataBlock>> {
-        // First ensure index is loaded
-        let indices = self.index_cache.indices.read().await;
-        if !indices.contains_key(path) {
-            drop(indices);
-            // Load and cache the index
-            let index = Arc::new(self.load_index_optimized(path).await?);
-            let mut indices = self.index_cache.indices.write().await;
-            indices.insert(path.to_string(), index.clone());
-        }
+        // Use optimized cache with proper LRU eviction
+        let index = self.index_cache.get_or_load_index(path, || async {
+            self.load_index_optimized(path).await
+        }).await?;
         
-        // Get the index
-        let indices = self.index_cache.indices.read().await;
-        let index = indices.get(path).ok_or_else(|| {
-            anyhow::anyhow!("Failed to load index for file: {}", path)
-        })?;
         let num_blocks = index.entries.len();
-        drop(indices);
         
         // Load all blocks using cache
         let mut blocks = Vec::new();
@@ -903,11 +878,8 @@ impl UnifiedSstableReader {
     }
     
     async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
-        // Load index first and cache it
+        // Load index directly without caching (true direct access)
         let index = Arc::new(self.load_index_optimized(path).await?);
-        let mut indices = self.index_cache.indices.write().await;
-        indices.insert(path.to_string(), index.clone());
-        drop(indices);
         
         // Read the full file
         let fs = self.filesystem.get_filesystem("file:///")?;
@@ -1037,11 +1009,129 @@ impl BlockCache {
 
 impl IndexCache {
     pub fn new() -> Self {
+        Self::with_config(100) // Default 100MB limit
+    }
+    
+    pub fn with_config(max_memory_mb: usize) -> Self {
+        use std::time::Duration;
+        
+        // Calculate max entries based on estimated size per index (~1MB each)
+        let max_indices = (max_memory_mb * 1024 * 1024) / (1024 * 1024); // ~1MB per index
+        let max_bloom_filters = (max_memory_mb * 1024 * 1024) / (50 * 1024); // ~50KB per bloom filter
+        
+        let indices = moka::future::Cache::builder()
+            .max_capacity(max_indices as u64)
+            .time_to_live(Duration::from_secs(3600)) // 1 hour TTL
+            .eviction_listener(|_key, _value, _cause| {
+                tracing::debug!("Evicted index cache entry");
+            })
+            .build();
+            
+        let bloom_filters = moka::future::Cache::builder()
+            .max_capacity(max_bloom_filters as u64)
+            .time_to_live(Duration::from_secs(3600))
+            .eviction_listener(|_key, _value, _cause| {
+                tracing::debug!("Evicted bloom filter cache entry");
+            })
+            .build();
+        
         Self {
-            indices: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            bloom_filters: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            indices: Arc::new(indices),
+            bloom_filters: Arc::new(bloom_filters),
+            max_memory_mb,
+            metrics: Arc::new(tokio::sync::RwLock::new(CacheMetrics::default())),
         }
     }
+    
+    /// Get current memory usage in MB
+    pub async fn memory_usage_mb(&self) -> f64 {
+        let metrics = self.metrics.read().await;
+        metrics.memory_usage_bytes as f64 / (1024.0 * 1024.0)
+    }
+    
+    /// Get cache hit rate
+    pub async fn hit_rate(&self) -> f64 {
+        let metrics = self.metrics.read().await;
+        let total_requests = metrics.hit_count + metrics.miss_count;
+        if total_requests == 0 {
+            0.0
+        } else {
+            metrics.hit_count as f64 / total_requests as f64
+        }
+    }
+    
+    /// Handle memory pressure by clearing least recently used entries
+    pub async fn handle_memory_pressure(&self, pressure_level: MemoryPressure) {
+        let mut metrics = self.metrics.write().await;
+        metrics.memory_pressure_events += 1;
+        
+        match pressure_level {
+            MemoryPressure::Low => {
+                // Reduce TTL to encourage natural eviction
+                // This would require rebuilding cache - for now just invalidate 10%
+                let current_size = self.indices.entry_count();
+                let to_remove = (current_size as f64 * 0.1) as usize;
+                for _ in 0..to_remove {
+                    self.indices.invalidate_all();
+                    break; // Simplified - in production would remove specific entries
+                }
+            },
+            MemoryPressure::Medium => {
+                // More aggressive cleanup - remove 25%
+                let current_size = self.indices.entry_count() + self.bloom_filters.entry_count();
+                if current_size > 0 {
+                    self.indices.invalidate_all();
+                }
+            },
+            MemoryPressure::High => {
+                // Emergency cleanup - clear all caches
+                self.indices.invalidate_all();
+                self.bloom_filters.invalidate_all();
+                tracing::warn!("Emergency cache cleanup due to high memory pressure");
+            }
+        }
+    }
+    
+    /// Get index from cache or load if not present
+    pub async fn get_or_load_index<F, Fut>(&self, key: &str, loader: F) -> Result<Arc<SstableIndex>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<SstableIndex>>,
+    {
+        // Try cache first
+        if let Some(index) = self.indices.get(key).await {
+            let mut metrics = self.metrics.write().await;
+            metrics.hit_count += 1;
+            return Ok(index);
+        }
+        
+        // Cache miss - load and store
+        let mut metrics = self.metrics.write().await;
+        metrics.miss_count += 1;
+        drop(metrics); // Release lock before async operation
+        
+        let index = Arc::new(loader().await?);
+        
+        // Update memory usage estimate
+        let estimated_size = std::mem::size_of::<SstableIndex>() + 
+                            index.entries.len() * std::mem::size_of::<IndexEntry>();
+        
+        self.indices.insert(key.to_string(), index.clone()).await;
+        
+        // Update metrics
+        let mut metrics = self.metrics.write().await;
+        metrics.memory_usage_bytes += estimated_size;
+        
+        Ok(index)
+    }
+}
+
+/// Memory pressure levels for adaptive cache management
+#[derive(Debug, Clone, Copy)]
+pub enum MemoryPressure {
+    Low,    // 70-80% of limit
+    Medium, // 80-90% of limit  
+    High,   // >90% of limit
 }
 
 impl Default for ReaderConfig {

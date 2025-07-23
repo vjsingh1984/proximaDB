@@ -348,16 +348,47 @@ mod backward_compatibility_tests {
 
 /// Helper to create mock VIPER engine for testing
 async fn create_mock_viper_engine() -> Result<Arc<ViperEngine>> {
-    // In real tests, this would create a proper mock or test instance
-    // For now, we'll skip the actual implementation
-    unimplemented!("Mock VIPER engine not implemented for unit tests")
+    use tempfile::TempDir;
+    use proximadb::storage::engines::viper::ViperConfig;
+    
+    let temp_dir = TempDir::new()?;
+    let mut config = ViperConfig::default();
+    config.base_path = temp_dir.path().to_path_buf();
+    config.columnar_config.data_dir = temp_dir.path().join("data").to_str().unwrap().to_string();
+    config.columnar_config.enable_compression = false; // Disable for tests
+    
+    let filesystem = Arc::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::new(
+            Default::default()
+        ).await?
+    );
+    
+    let engine = ViperEngine::new(config, filesystem).await?;
+    Ok(Arc::new(engine))
 }
 
 /// Helper to create mock LSM engine for testing  
 async fn create_mock_lsm_engine() -> Result<Arc<LsmTree>> {
-    // In real tests, this would create a proper mock or test instance
-    // For now, we'll skip the actual implementation
-    unimplemented!("Mock LSM engine not implemented for unit tests")
+    use proximadb::storage::engines::lsm::{LsmConfig, LsmTree};
+    
+    let mut config = LsmConfig::default();
+    config.max_memtable_size = 1024 * 1024; // 1MB for tests
+    config.level0_file_num_compaction_trigger = 2;
+    config.enable_compression = false;
+    
+    let filesystem = Arc::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::new(
+            Default::default()
+        ).await?
+    );
+    
+    let tree = LsmTree::new(
+        "test_collection".to_string(),
+        config,
+        filesystem,
+    ).await?;
+    
+    Ok(Arc::new(tree))
 }
 
 #[cfg(test)]

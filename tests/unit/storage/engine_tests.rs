@@ -1,7 +1,8 @@
 //! Comprehensive tests for storage engine module
 //! Target: 80%+ coverage for storage engine implementation
 
-use proximadb::storage::engine::{StorageEngine, StorageConfig};
+use proximadb::storage::engine::StorageEngine;
+use proximadb::core::config::StorageConfig;
 use proximadb::storage::builder::{StorageBuilder, StorageBuilderError};
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushResult, CompactionResult};
 use proximadb::core::{VectorRecord, Collection};
