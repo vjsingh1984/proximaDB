@@ -111,11 +111,11 @@ class ProximaDBClient:
         except Exception as e:
             raise ProximaDBError(f"Failed to connect to gRPC server: {e}")
     
-    async def connect(self):
-        """Async connect - for compatibility with existing tests"""
+    def connect(self):
+        """Connect - for compatibility with existing tests"""
         self._connect()
     
-    async def close(self):
+    def close(self):
         """Close the gRPC connection"""
         if self.channel:
             self.channel.close()
@@ -148,7 +148,7 @@ class ProximaDBClient:
         """
         return collection_id
     
-    async def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
+    def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
         """
         Get collection UUID by name using the dedicated gRPC operation.
         
@@ -168,7 +168,7 @@ class ProximaDBClient:
                 collection_id=collection_name
             )
             
-            response = await self._make_call(
+            response = self._call_with_timeout(
                 self.stub.CollectionOperation,
                 request
             )
@@ -184,21 +184,21 @@ class ProximaDBClient:
             logger.error(f"gRPC error getting collection ID by name: {e}")
             # Fallback to the original method
             try:
-                collection = await self.get_collection(collection_name)
+                collection = self.get_collection(collection_name)
                 if collection and hasattr(collection, 'id'):
                     return collection.id
                 return None
-            except CollectionNotFoundError:
+            except:
                 return None
         except Exception as e:
             logger.error(f"Error getting collection ID by name: {e}")
             # Fallback to the original method
             try:
-                collection = await self.get_collection(collection_name)
+                collection = self.get_collection(collection_name)
                 if collection and hasattr(collection, 'id'):
                     return collection.id
                 return None
-            except CollectionNotFoundError:
+            except:
                 return None
     
     def create_collection(
@@ -307,7 +307,7 @@ class ProximaDBClient:
         
         return True
     
-    async def update_collection(self, name: str, config):
+    def update_collection(self, name: str, config):
         """Update collection configuration"""
         
         # Use provided config directly (it's already a proto object)
@@ -699,7 +699,7 @@ class ProximaDBClient:
         # Use upsert to update the vector
         vector_dict = {
             "id": vector_id,
-            "vector": vector or [0.0],  # Placeholder if no vector provided
+            "vector": vector if vector is not None else [],  # Empty list if no vector provided
             "metadata": metadata or {}
         }
         
@@ -721,7 +721,7 @@ class ProximaDBClient:
         past_timestamp = int((time.time() - 1) * 1000)  # 1 second ago in milliseconds
         delete_record = {
             "id": vector_id,
-            "vector": [0.0],  # Placeholder vector
+            "vector": [],  # Empty vector - server should handle appropriately
             "metadata": {},
             "expires_at": past_timestamp  # Mark for deletion with past timestamp
         }
@@ -819,7 +819,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector get: {e}")
             return None
     
-    async def update_collection(
+    def update_collection_extended(
         self,
         collection_id: str,
         updates: Dict[str, Any]
@@ -841,7 +841,7 @@ class ProximaDBClient:
                 query_params=updates
             )
             
-            response = await self.stub.CollectionOperation(request, timeout=self.timeout)
+            response = self._call_with_timeout(self.stub.CollectionOperation, request)
             
             if response.success and response.collection:
                 return self._convert_collection(response.collection)
@@ -854,7 +854,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during collection update: {e}")
             raise ProximaDBError(f"Collection update failed: {str(e)}")
     
-    async def delete_vectors_by_filter(
+    def delete_vectors_by_filter(
         self,
         collection_id: str,
         filter: Dict[str, Any]
@@ -895,7 +895,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector deletion by filter: {e}")
             raise ProximaDBError(f"Vector deletion by filter failed: {str(e)}")
     
-    async def get_vector_history(
+    def get_vector_history(
         self,
         collection_id: str,
         vector_id: str,
@@ -915,7 +915,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Vector history not implemented on server yet")
     
-    async def multi_search(
+    def multi_search(
         self,
         collection_id: str,
         queries: List[List[float]],
@@ -961,7 +961,7 @@ class ProximaDBClient:
                 include_fields=include_fields
             )
             
-            response = await self.stub.VectorSearch(request, timeout=self.timeout)
+            response = self._call_with_timeout(self.stub.VectorSearch, request)
             
             if response.success:
                 results = []
@@ -990,7 +990,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during multi-search: {e}")
             raise ProximaDBError(f"Multi-search failed: {str(e)}")
     
-    async def search_with_aggregations(
+    def search_with_aggregations(
         self,
         collection_id: str,
         query: List[float],
@@ -1016,7 +1016,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Search with aggregations not implemented on server yet")
     
-    async def atomic_insert_vectors(
+    def atomic_insert_vectors(
         self,
         collection_id: str,
         vectors: List[List[float]],
@@ -1036,9 +1036,9 @@ class ProximaDBClient:
         """
         # For atomic operations, we could extend the VectorInsertRequest with an atomic flag
         # For now, use regular insert_vectors and hope for atomicity
-        return await self.insert_vectors(collection_id, vectors, ids, metadata)
+        return self.insert_vectors(collection_id, vectors, ids, metadata)
     
-    async def begin_transaction(self) -> str:
+    def begin_transaction(self) -> str:
         """Begin a new transaction and return transaction ID
         
         Returns:
@@ -1048,7 +1048,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Transactions not implemented on server yet")
     
-    async def commit_transaction(self, transaction_id: str) -> bool:
+    def commit_transaction(self, transaction_id: str) -> bool:
         """Commit a transaction
         
         Args:

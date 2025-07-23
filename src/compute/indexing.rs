@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use dashmap::DashMap;
 
-use crate::compute::distance::{DistanceMetric, DistanceCompute, CosineScalar, EuclideanScalar};
+use crate::compute::distance::DistanceMetric;
 use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 
@@ -70,32 +70,28 @@ pub struct IvfIndex {
     vectors: Arc<DashMap<String, Arc<VectorRecord>>>,
     /// Dimension of vectors
     dimension: usize,
+    /// Distance compute instance
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl IvfIndex {
     /// Create a new IVF index
     pub fn new(config: IvfConfig, dimension: usize) -> Self {
+        let distance_compute = UnifiedDistanceCompute::new(config.distance_metric);
         Self {
             config,
             centroids: Vec::new(),
             inverted_lists: Arc::new(DashMap::new()),
             vectors: Arc::new(DashMap::new()),
             dimension,
+            distance_compute,
         }
     }
     
     /// Compute distance between two vectors using configured metric
     fn compute_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        match self.config.distance_metric {
-            DistanceMetric::Euclidean => EuclideanScalar.distance(a, b),
-            DistanceMetric::Cosine => CosineScalar.distance(a, b),
-            _ => {
-                // For other metrics, use unified distance compute
-                let compute = UnifiedDistanceCompute::new(self.config.distance_metric);
-                let result = compute.calculate_distance(a, b, &self.config.distance_metric);
-                result.raw_value
-            }
-        }
+        let result = self.distance_compute.calculate_distance(a, b, &self.config.distance_metric);
+        result.raw_value
     }
     
     /// Train the index on a set of vectors
@@ -309,6 +305,8 @@ pub struct LshIndex {
     vectors: Arc<DashMap<String, Arc<VectorRecord>>>,
     /// Dimension
     dimension: usize,
+    /// Distance compute instance (LSH typically uses Cosine)
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl LshIndex {
@@ -334,12 +332,14 @@ impl LshIndex {
             projections.push(table_projections);
         }
         
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         Self {
             config,
             hash_tables: (0..n_tables).map(|_| DashMap::new()).collect(),
             projections,
             vectors: Arc::new(DashMap::new()),
             dimension,
+            distance_compute,
         }
     }
     
@@ -378,10 +378,12 @@ impl LshIndex {
         let mut results = Vec::new();
         for (vector_id, _) in candidates {
             if let Some(vector_record) = self.vectors.get(&vector_id) {
-                let dist = CosineScalar.distance(
+                let result = self.distance_compute.calculate_distance(
                     query,
-                    &vector_record.vector
+                    &vector_record.vector,
+                    &DistanceMetric::Cosine
                 );
+                let dist = result.raw_value;
                 results.push((vector_id, dist));
             }
         }
