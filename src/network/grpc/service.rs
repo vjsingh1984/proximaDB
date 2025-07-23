@@ -17,6 +17,7 @@ use crate::proto::proximadb::{
 };
 use crate::services::collection_service::CollectionService;
 use crate::services::direct_vector_service::DirectVectorService;
+use crate::network::grpc::conversions::convert_search_results;
 // Removed uuid import - no longer auto-generating vector IDs
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::StorageEngine as StorageEngineImpl;
@@ -818,7 +819,52 @@ impl ProximaDb for ProximaDbGrpcService {
                 .await
                 .map_err(|e| Status::internal(format!("Enhanced search failed: {}", e)))?;
             
-            // Convert to bytes format preserving unified distance scores
+            // OPTIMIZATION: Direct native-to-proto conversion for single queries
+            const USE_DIRECT_CONVERSION: bool = true;
+            if USE_DIRECT_CONVERSION {
+                let proto_results = convert_search_results(
+                    search_results,
+                    include_vectors,
+                    include_metadata,
+                );
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                let result_count = proto_results.len() as i64;
+                
+                return Ok(Response::new(VectorOperationResponse {
+                    success: true,
+                    operation: VectorOperation::VectorSearch as i32,
+                    metrics: Some(OperationMetrics {
+                        total_processed: 1,
+                        successful_count: 1,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: processing_time,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    result_payload: Some(
+                        crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(
+                            SearchResultsCompact {
+                                results: proto_results,
+                                total_found: result_count,
+                                search_algorithm_used: Some("DirectConversion".to_string()),
+                            }
+                        )
+                    ),
+                    vector_ids: vec![],
+                    error_message: None,
+                    error_code: None,
+                    result_info: Some(ResultMetadata {
+                        result_count,
+                        estimated_size_bytes: 0,
+                        is_avro_binary: false,
+                        avro_schema_version: "2".to_string(),
+                    }),
+                }));
+            }
+            
+            // Legacy path: Convert to bytes format preserving unified distance scores
             serde_json::to_vec(&serde_json::json!({
                 "results": search_results.iter().map(|result| {
                     serde_json::json!({
@@ -896,6 +942,72 @@ impl ProximaDb for ProximaDbGrpcService {
                 };
             }
 
+            // OPTIMIZATION: Use direct conversion for multi-query too
+            const USE_DIRECT_CONVERSION: bool = true;
+            if USE_DIRECT_CONVERSION {
+                let mut all_proto_results = Vec::new();
+                
+                for (index, query) in req.queries.iter().enumerate() {
+                    let search_results = self.direct_vector_service
+                        .search_vectors_unified(
+                            &req.collection_id,
+                            &query.vector,
+                            req.top_k as usize,
+                            crate::compute::distance::DistanceMetric::Cosine,
+                            None,
+                            None,
+                            include_vectors,
+                            include_metadata,
+                        )
+                        .await
+                        .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
+                    
+                    // Direct conversion for each query
+                    let proto_results = convert_search_results(
+                        search_results,
+                        include_vectors,
+                        include_metadata,
+                    );
+                    all_proto_results.extend(proto_results);
+                }
+                
+                let processing_time = start_time.elapsed().as_micros() as i64;
+                let result_count = all_proto_results.len() as i64;
+                
+                return Ok(Response::new(VectorOperationResponse {
+                    success: true,
+                    operation: VectorOperation::VectorSearch as i32,
+                    metrics: Some(OperationMetrics {
+                        total_processed: req.queries.len() as i64,
+                        successful_count: req.queries.len() as i64,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: processing_time,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    result_payload: Some(
+                        crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(
+                            SearchResultsCompact {
+                                results: all_proto_results,
+                                total_found: result_count,
+                                search_algorithm_used: Some("DirectConversion-Multi".to_string()),
+                            }
+                        )
+                    ),
+                    vector_ids: vec![],
+                    error_message: None,
+                    error_code: None,
+                    result_info: Some(ResultMetadata {
+                        result_count,
+                        estimated_size_bytes: 0,
+                        is_avro_binary: false,
+                        avro_schema_version: "2".to_string(),
+                    }),
+                }));
+            }
+            
+            // Legacy JSON path
             for (index, query) in req.queries.iter().enumerate() {
                 // Reuse the same search params for all queries
                 let query_params = search_params.clone();
@@ -1066,7 +1178,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 .map(|result| SearchResult {
                     id: Some(
                         result
-                            .get("vector_id")
+                            .get("id")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),

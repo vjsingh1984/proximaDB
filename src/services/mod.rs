@@ -11,6 +11,11 @@ pub mod migration;
 pub mod storage_path_service;
 pub mod streaming_search;
 
+#[cfg(test)]
+pub mod tests {
+    // Test modules will be added here as needed
+}
+
 pub use collection_service::CollectionService;
 pub use direct_vector_service::DirectVectorService;
 pub use streaming_search::{StreamingSearchService, StreamingSearchConfig, StreamingSearchResult};

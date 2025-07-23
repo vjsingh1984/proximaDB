@@ -450,6 +450,11 @@ impl DirectVectorService {
         );
         
         // Step 1: Create WalVectorBatch for memtable
+        debug!("🔍 Creating batch with {} vectors", vectors.len());
+        for (i, v) in vectors.iter().take(3).enumerate() {
+            debug!("  Vector[{}] ID before batch creation: {:?}", i, v.id);
+        }
+        
         let batch = WalVectorBatch {
             batch_id: BatchId::new(),
             vector_records: vectors.clone(),
@@ -555,6 +560,25 @@ impl DirectVectorService {
         Ok(all_vectors)
     }
 
+    /// Get a single vector by ID directly from WAL/memtable
+    pub async fn get_vector(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+    ) -> Result<Option<VectorRecord>> {
+        // First check WAL/memtable for unflushed data
+        if let Ok(Some(vector)) = self.global_memtable.get_vector_by_id(collection_id, vector_id).await {
+            debug!("🔍 Found vector {} in WAL/memtable", vector_id);
+            return Ok(Some(vector));
+        }
+        
+        // TODO: Check storage engines for flushed data
+        debug!("🔍 Vector {} not found in WAL/memtable, would check storage engines", vector_id);
+        Ok(None)
+    }
+    
     /// Get a single vector by ID using the search infrastructure
     /// This leverages bloom filters and columnar indexes for efficient lookup
     pub async fn get_vector_by_id(
@@ -629,8 +653,14 @@ impl DirectVectorService {
         
         // Convert unflushed vectors with metadata filtering and unified distance scoring
         if !unflushed_batches.is_empty() {
-            for batch in unflushed_batches {
-                for vector_record in batch.vector_records.iter() {
+            for (batch_idx, batch) in unflushed_batches.iter().enumerate() {
+                debug!("  Batch[{}] has {} vectors", batch_idx, batch.vector_records.len());
+                for (vec_idx, vector_record) in batch.vector_records.iter().enumerate() {
+                    if vec_idx < 3 {
+                        debug!("    Vector[{}] ID from WAL: {:?}", vec_idx, vector_record.id);
+                        debug!("    Vector[{}] Full record: id={:?}, vector_len={}, metadata_len={}", 
+                            vec_idx, vector_record.id, vector_record.vector.len(), vector_record.metadata.len());
+                    }
                     // Apply metadata filter predicate if specified
                     if let Some(filters) = metadata_filters {
                         if !self.apply_metadata_filter(vector_record, filters) {
@@ -641,9 +671,16 @@ impl DirectVectorService {
                     // Calculate similarity using unified distance computation
                     let similarity_result = self.distance_compute.calculate_distance(&vector_record.vector, query_vector, &effective_distance_metric);
                     
+                    // Log the ID value for search debugging
+                    debug!("🔍 SEARCH: vector_record.id = {:?}", vector_record.id);
+                    
+                    // Handle proto optional ID field properly
+                    let vector_id = vector_record.id.clone();
+                    let id_string = vector_id.clone().unwrap_or_default();
+                    
                     let search_result = SearchResult {
-                        id: vector_record.id.clone().unwrap_or_default(),
-                        vector_id: vector_record.id.clone(),
+                        id: id_string,
+                        vector_id: vector_id,
                         score: similarity_result.normalized_score, // Unified semantic score (0.0-1.0, higher = more similar)
                         distance: Some(similarity_result.raw_value), // Raw distance value
                         rank: None, // Will be set after sorting
@@ -1176,15 +1213,20 @@ impl DirectVectorService {
         
         debug!("📦 BATCH_OPERATION: Processing {} vectors for collection {}", vectors.len(), collection_id);
         
-        // Convert to Arc for zero-copy sharing
+        // Debug: Log what IDs we're actually receiving
+        for (i, v) in vectors.iter().enumerate() {
+            debug!("📝 INSERT[{}]: Received ID = {:?}", i, v.id);
+        }
+        
+        // Convert to Arc for zero-copy sharing - NO MUTATIONS to vector IDs
         let arc_vectors = Arc::new(vectors);
         
         // Use optimized direct insert
         let insert_result = self.insert_vectors_direct(collection_id, arc_vectors.clone()).await?;
         
-        // Extract vector IDs from the actual stored vectors
+        // Extract vector IDs as provided by client (None/empty stays as is)
         let vector_ids: Vec<String> = arc_vectors.iter()
-            .map(|v| v.id.clone().unwrap_or_else(|| format!("generated_id_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())))
+            .map(|v| v.id.clone().unwrap_or_default())
             .collect();
 
         // Create proper VectorInsertResponse with metrics

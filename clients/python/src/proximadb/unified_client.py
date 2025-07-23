@@ -683,11 +683,21 @@ class ProximaDBClient:
             results = []
             if hasattr(proto_response, 'compact_results') and proto_response.compact_results:
                 for result in proto_response.compact_results.results:
+                    # Extract metadata from protobuf repeated field
+                    metadata_dict = {}
+                    if hasattr(result, 'metadata') and result.metadata:
+                        for meta_item in result.metadata:
+                            # Remove JSON quotes from values if present
+                            value = meta_item.value
+                            if value.startswith('"') and value.endswith('"'):
+                                value = value[1:-1]
+                            metadata_dict[meta_item.key] = value
+                    
                     search_result = SearchResult(
                         id=result.id if result.id else "",
                         score=result.score,
                         vector=list(result.vector) if result.vector else None,
-                        metadata=dict(result.metadata) if result.metadata else None
+                        metadata=metadata_dict
                     )
                     results.append(search_result)
             return results
@@ -789,28 +799,14 @@ class ProximaDBClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Optional[VectorRecord]:
+    ):  # Changed return type to be flexible
         """Get a single vector by ID"""
         if self._active_protocol == Protocol.GRPC:
-            proto_result = self._client.get_vector(collection_id, vector_id, include_vector, include_metadata)
-            if proto_result:
-                # Convert repeated MetadataItem to dict
-                metadata_dict = {}
-                if proto_result.metadata:
-                    for item in proto_result.metadata:
-                        metadata_dict[item.key] = item.value
-                
-                return VectorRecord(
-                    id=proto_result.id if proto_result.id else "",
-                    vector=list(proto_result.vector) if proto_result.vector else [],
-                    metadata=metadata_dict
-                )
-            return None
+            result = self._client.get_vector(collection_id, vector_id, include_vector, include_metadata)
+            return result  # Return dict directly to avoid pydantic validation issues
         else:
-            pydantic_result = self._client.get_vector(collection_id, vector_id)
-            if pydantic_result:
-                return VectorRecord(**pydantic_result)
-            return None
+            result = self._client.get_vector(collection_id, vector_id, include_vector, include_metadata)
+            return result
     
     def insert_vector(
         self,

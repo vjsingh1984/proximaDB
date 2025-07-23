@@ -482,17 +482,27 @@ impl UnifiedSstableReader {
         let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
         // First, we need to get the index to know where blocks are located
-        // Check if index is cached
-        let indices = self.index_cache.indices.read().await;
-        let index = if let Some(index) = indices.get(&context.file_path) {
-            index.clone()
-        } else {
-            drop(indices);
-            // Load index if not cached
-            let idx = Arc::new(self.load_index_optimized(&context.file_path).await?);
-            let mut indices = self.index_cache.indices.write().await;
-            indices.insert(context.file_path.clone(), idx.clone());
-            idx
+        // Check if index is cached - use double-check locking pattern
+        let index = {
+            // First check with read lock
+            let indices = self.index_cache.indices.read().await;
+            if let Some(index) = indices.get(&context.file_path) {
+                index.clone()
+            } else {
+                // Drop read lock before acquiring write lock
+                drop(indices);
+                
+                // Acquire write lock and check again (another thread might have loaded it)
+                let mut indices = self.index_cache.indices.write().await;
+                if let Some(index) = indices.get(&context.file_path) {
+                    index.clone()
+                } else {
+                    // Load index if still not cached
+                    let idx = Arc::new(self.load_index_optimized(&context.file_path).await?);
+                    indices.insert(context.file_path.clone(), idx.clone());
+                    idx
+                }
+            }
         };
         
         // Check if block exists
@@ -669,9 +679,8 @@ impl UnifiedSstableReader {
             max_key: header.max_key,
         };
         
-        // Cache the index
-        let mut indices = self.index_cache.indices.write().await;
-        indices.insert(file_path.to_string(), Arc::new(index.clone()));
+        // Note: We don't cache here anymore as the caller handles caching
+        // to avoid double-locking issues
         
         Ok(index)
     }

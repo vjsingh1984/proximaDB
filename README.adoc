@@ -39,7 +39,7 @@ endif::[]
 // specific language governing permissions and limitations
 // under the License.
 
-image::docs/diagrams/images/proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
+image::proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
 
 [.lead]
 **ProximaDB** +

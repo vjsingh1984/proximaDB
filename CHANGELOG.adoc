@@ -34,6 +34,11 @@ and this project adheres to https://semver.org/spec/v2.0.0.html[Semantic Version
 - Final documentation polish for release readiness
 - Comprehensive AsciiDoc conversion for all documentation
 - Apache License 2.0 headers throughout codebase
+- Technical documentation for vector ID generation fix in link:docs/technical_reference.adoc#vector-id-generation-fix[Technical Reference]
+
+=== Fixed
+- DirectVectorService now properly assigns generated IDs to vectors when client doesn't provide them
+- Vector ID propagation through storage pipeline ensures all vectors are retrievable by ID
 
 == [1.0.0] - 2025-01-22
 

@@ -304,7 +304,7 @@ Batch insert, update, or delete vectors using expiration timestamps.
   "collection_id": "string",                // Required: collection ID
   "vectors": [                              // Required: vector array
     {
-      "id": "string",                       // Optional: vector ID
+      "id": "string",                       // Optional: vector ID (auto-generated if not provided)
       "vector": [0.1, 0.2, ...],           // Required: vector data
       "metadata": {                         // Optional: metadata
         "key": "value"

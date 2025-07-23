@@ -6,5 +6,6 @@
 //! gRPC protocol implementation with thin handlers
 
 pub mod service;
+pub mod conversions;
 
 pub use service::ProximaDbGrpcService;

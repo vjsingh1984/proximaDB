@@ -305,35 +305,41 @@ class ProximaDBClient:
         response = self._make_request("GET", f"/api/v1/collection/{collection_id}")
         response_data = response.json()
         
-        # Handle unified API response format
-        if "collection" in response_data and response_data["collection"]:
-            coll_data = response_data["collection"]
-            return Collection(
-                id=coll_data.get("id"),
-                config=CollectionConfig(
-                    name=coll_data["config"]["name"],
-                    dimension=coll_data["config"]["dimension"],
-                    distance_metric=coll_data["config"].get("distance_metric", "cosine"),
-                    storage_engine=coll_data["config"].get("storage_engine", "viper"),
-                    primary_indexing_algorithm=coll_data["config"].get("primary_indexing_algorithm", "hnsw")
-                ),
-                created_at=coll_data.get("created_at"),
-                updated_at=coll_data.get("updated_at")
-            )
-        elif "data" in response_data and isinstance(response_data["data"], dict):
-            # Legacy format
-            collection_data = response_data["data"]
-            return Collection(
-                id=collection_data.get("uuid", collection_data.get("name")),
-                name=collection_data.get("name"),
-                dimension=collection_data.get("dimension"),
-                metric=collection_data.get("distance_metric", "").lower(),
-                vector_count=collection_data.get("vector_count", 0),
-                status="active",
-                config=None
-            )
-        else:
-            raise ProximaDBError(f"Unexpected response format: {response_data}")
+        # Server returns simplified format:
+        # {
+        #   "id": "uuid",
+        #   "name": "collection_name",
+        #   "dimension": 768,
+        #   "metric": "cosine",
+        #   "created_at": 1737567890123,
+        #   "updated_at": 1737567890123,
+        #   "vector_count": 1000,
+        #   "indexed": true
+        # }
+        
+        # Create CollectionConfig from response
+        config = CollectionConfig(
+            name=response_data["name"],
+            dimension=response_data["dimension"],
+            distance_metric=response_data.get("metric", "cosine"),
+            storage_engine=response_data.get("storage_engine", "viper"),
+            primary_indexing_algorithm=response_data.get("indexing_algorithm", "hnsw")
+        )
+        
+        # Create CollectionStats if available
+        stats = CollectionStats(
+            vector_count=response_data.get("vector_count", 0),
+            index_size_bytes=response_data.get("index_size_bytes", 0),
+            data_size_bytes=response_data.get("data_size_bytes", 0)
+        )
+        
+        return Collection(
+            id=response_data["id"],
+            config=config,
+            stats=stats,
+            created_at=response_data.get("created_at"),
+            updated_at=response_data.get("updated_at")
+        )
     
     def list_collections(self) -> List[Collection]:
         """List all collections"""
@@ -341,14 +347,54 @@ class ProximaDBClient:
         logger.debug(f"Collection list request to GET /api/v1/collections")
         response = self._make_request("GET", "/api/v1/collections")
         response_data = response.json()
-        # Handle wrapped response format: {"success": True, "data": {"collections": [...]}}
-        if "data" in response_data and "collections" in response_data["data"]:
-            collections_data = response_data["data"]["collections"]
-        elif "collections" in response_data:
-            collections_data = response_data["collections"]
-        else:
-            collections_data = response_data if isinstance(response_data, list) else []
-        return [Collection(**item) for item in collections_data]
+        
+        # Server returns:
+        # {
+        #   "collections": [
+        #     {
+        #       "id": "uuid",
+        #       "name": "collection_name",
+        #       "dimension": 768,
+        #       "metric": "cosine",
+        #       "created_at": 1737567890123,
+        #       "updated_at": 1737567890123,
+        #       "vector_count": 1000,
+        #       "indexed": true
+        #     },
+        #     ...
+        #   ],
+        #   "total_count": 2
+        # }
+        
+        collections = []
+        collections_data = response_data.get("collections", [])
+        
+        for coll_data in collections_data:
+            # Create CollectionConfig from response
+            config = CollectionConfig(
+                name=coll_data["name"],
+                dimension=coll_data["dimension"],
+                distance_metric=coll_data.get("metric", "cosine"),
+                storage_engine=coll_data.get("storage_engine", "viper"),
+                primary_indexing_algorithm=coll_data.get("indexing_algorithm", "hnsw")
+            )
+            
+            # Create CollectionStats if available
+            stats = CollectionStats(
+                vector_count=coll_data.get("vector_count", 0),
+                index_size_bytes=coll_data.get("index_size_bytes", 0),
+                data_size_bytes=coll_data.get("data_size_bytes", 0)
+            )
+            
+            collections.append(Collection(
+                id=coll_data["id"],
+                config=config,
+                stats=stats,
+                created_at=coll_data.get("created_at"),
+                updated_at=coll_data.get("updated_at")
+            ))
+        
+        return collections
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
@@ -470,7 +516,7 @@ class ProximaDBClient:
         if len(vector_data) <= effective_batch_size:
             # Single batch - use unified API
             unified_request = {
-                "operation": "insert",
+                "operation": "upsert" if upsert else "insert",
                 "collection_id": collection_id,
                 "vectors": vector_data
             }
@@ -512,7 +558,7 @@ class ProximaDBClient:
                 try:
                     # Send batch using unified API
                     unified_request = {
-                        "operation": "insert",
+                        "operation": "upsert" if upsert else "insert",
                         "collection_id": collection_id,
                         "vectors": batch_data
                     }
@@ -756,6 +802,38 @@ class ProximaDBClient:
         except Exception:
             return None
     
+    def upsert_vectors(
+        self,
+        collection_id: str,
+        records: List[Any],
+    ) -> BatchResult:
+        """Upsert multiple vectors (insert or update)
+        
+        Args:
+            collection_id: Target collection ID
+            records: List of VectorRecord objects
+            
+        Returns:
+            Batch operation result
+        """
+        # Convert VectorRecord objects to the format expected by insert_vectors
+        vectors = []
+        ids = []
+        metadatas = []
+        
+        for record in records:
+            vectors.append(record.vector)
+            ids.append(record.id)
+            metadatas.append(record.metadata if record.metadata else {})
+        
+        return self.insert_vectors(
+            collection_id=collection_id,
+            vectors=vectors,
+            ids=ids,
+            metadata=metadatas,
+            upsert=True
+        )
+    
     def update_vector(
         self,
         collection_id: str,
@@ -784,8 +862,8 @@ class ProximaDBClient:
         # Convert response to BatchResult
         resp_data = response.json()
         return BatchResult(
-            total=resp_data.get('total', len(vectors)),
-            success=resp_data.get('success', len(vectors)),
+            total=resp_data.get('total', 1),
+            success=resp_data.get('success', 1),
             failed=resp_data.get('failed', 0),
             errors=resp_data.get('errors', []),
             duration_ms=resp_data.get('duration_ms', 0.0)

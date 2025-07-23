@@ -214,9 +214,8 @@ class ProximaDBClient:
     ):
         """Create a new collection"""
         
-        # Ensure pb2 is available
-        if pb2 is None:
-            from .. import proximadb_pb2 as pb2
+        # Import pb2 in method scope
+        from .. import proximadb_pb2 as pb2
         
         # Set default values if not provided
         if distance_metric is None:
@@ -653,6 +652,31 @@ class ProximaDBClient:
     
     # Removed _value_to_metadata_value - no longer needed with repeated MetadataItem structure
     
+    def upsert_vectors(
+        self,
+        collection_id: str,
+        records: List[Any],
+    ):
+        """Upsert multiple vectors (insert or update)
+        
+        Args:
+            collection_id: Target collection ID
+            records: List of VectorRecord objects
+            
+        Returns:
+            VectorOperationResponse
+        """
+        # Convert VectorRecord objects to dicts
+        vector_dicts = []
+        for record in records:
+            vector_dicts.append({
+                "id": record.id,
+                "vector": record.vector,
+                "metadata": record.metadata if record.metadata else {}
+            })
+        
+        return self.insert_vectors(collection_id, vector_dicts, upsert=True)
+    
     def update_vector(
         self,
         collection_id: str,
@@ -692,12 +716,14 @@ class ProximaDBClient:
         Returns:
             VectorOperationResponse proto
         """
-        # Create record with expires_at=0 to mark for deletion
+        # Create record with expires_at set to past timestamp to mark for deletion
+        import time
+        past_timestamp = int((time.time() - 1) * 1000)  # 1 second ago in milliseconds
         delete_record = {
             "id": vector_id,
             "vector": [0.0],  # Placeholder vector
             "metadata": {},
-            "expires_at": 0  # Mark for deletion
+            "expires_at": past_timestamp  # Mark for deletion with past timestamp
         }
         
         return self.insert_vectors(collection_id, [delete_record], upsert=False)
@@ -739,13 +765,53 @@ class ProximaDBClient:
         try:
             response = self._call_with_timeout(self.stub.VectorGet, request)
             
+            # Debug logging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"VectorGet response: success={response.success}, has_result_payload={hasattr(response, 'result_payload')}, has_results={hasattr(response, 'results')}")
+            if hasattr(response, 'result_payload') and response.result_payload:
+                logger.debug(f"result_payload type: {type(response.result_payload)}")
+                if hasattr(response.result_payload, 'compact_results'):
+                    logger.debug(f"compact_results: {response.result_payload.compact_results}")
+                    if response.result_payload.compact_results.results:
+                        logger.debug(f"First result: {response.result_payload.compact_results.results[0]}")
+            
             if response.success:
-                # Check for results in compact format
-                if hasattr(response, 'result_payload') and response.result_payload:
-                    if hasattr(response.result_payload, 'compact_results'):
-                        compact_results = response.result_payload.compact_results
-                        if compact_results.results:
-                            return compact_results.results[0]
+                # Check for results in compact format using protobuf oneof field
+                which_oneof = response.WhichOneof('result_payload')
+                logger.debug(f"WhichOneof result_payload: {which_oneof}")
+                
+                if which_oneof == 'compact_results':
+                    compact_results = response.compact_results
+                    logger.debug(f"compact_results found: {compact_results}")
+                    if compact_results.results:
+                        result = compact_results.results[0]
+                        # Convert proto result to dict format
+                        metadata = {}
+                        for item in result.metadata:
+                            metadata[item.key] = item.value
+                        return {
+                            'id': result.id,
+                            'vector': list(result.vector) if include_vector else None,
+                            'metadata': metadata if include_metadata else {},
+                            'score': result.score,
+                            'rank': result.rank
+                        }
+                
+                # Check for single result in regular format
+                if hasattr(response, 'results') and response.results:
+                    result = response.results[0]
+                    # Convert proto result to dict format
+                    metadata = {}
+                    for item in result.metadata:
+                        metadata[item.key] = item.value
+                    return {
+                        'id': result.id,
+                        'vector': list(result.vector) if include_vector else None,
+                        'metadata': metadata if include_metadata else {},
+                        'score': result.score,
+                        'rank': result.rank
+                    }
                 
             return None
             

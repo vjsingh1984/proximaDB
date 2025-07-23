@@ -1332,6 +1332,16 @@ Out of memory error during batch insert
 - Use streaming inserts for large datasets
 - Increase server memory allocation
 
+**Issue: Empty Vector IDs**
+```
+Vector IDs are empty or null after insertion
+```
+*Solution:*
+- Ensure you're using the latest version of ProximaDB
+- The DirectVectorService now properly generates IDs when not provided
+- For existing vectors with empty IDs, see migration guide in link:technical_reference.adoc#vector-id-generation-fix[Technical Reference]
+- Client-provided IDs are always preferred over auto-generated ones
+
 **Issue: Slow Search Performance**
 ```
 Search operations taking >5 seconds

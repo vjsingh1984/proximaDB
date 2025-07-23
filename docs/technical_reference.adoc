@@ -1288,6 +1288,111 @@ enable_column_projection = true
 }
 ----
 
+== Implementation Fixes and Known Issues
+
+=== Vector ID Generation Fix
+
+==== Issue Description
+
+Prior to the fix, the DirectVectorService was not properly handling vector IDs when client-provided IDs were not specified. The system would generate IDs in the service layer but then fail to propagate them correctly through the storage pipeline, resulting in:
+
+* Empty or null vector IDs in storage
+* Inability to retrieve vectors by ID
+* Inconsistent behavior between REST and gRPC endpoints
+
+==== Root Cause
+
+The issue occurred because:
+
+1. When no ID was provided, the service generated a UUID string
+2. However, the generated ID was not properly assigned back to the VectorRecord
+3. The storage engines received records with empty IDs
+
+[source,rust]
+----
+// BEFORE (broken):
+for vector in &mut vectors {
+    if vector.id.is_empty() {
+        let generated_id = Uuid::new_v4().to_string();
+        // ID was generated but not assigned back to the vector!
+    }
+}
+----
+
+==== Fix Implementation
+
+The fix ensures that generated IDs are properly assigned to the VectorRecord before storage:
+
+[source,rust]
+----
+// AFTER (fixed):
+impl DirectVectorService {
+    pub async fn insert_vectors(
+        &self,
+        collection_id: &str,
+        mut vectors: Vec<VectorRecord>,
+    ) -> Result<VectorOperationResponse> {
+        // Generate IDs for vectors that don't have them
+        for vector in &mut vectors {
+            if vector.id.is_empty() {
+                vector.id = Uuid::new_v4().to_string();
+                info!("Generated vector ID: {}", vector.id);
+            }
+        }
+        
+        // Now all vectors have IDs before storage
+        self.route_and_insert(collection_id, vectors).await
+    }
+}
+----
+
+==== Verification
+
+To verify the fix is working correctly:
+
+[source,python]
+----
+# Test 1: Insert without providing IDs
+vectors = [{"vector": [0.1, 0.2, 0.3]}]  # No ID provided
+response = client.insert_vectors(collection_id, vectors)
+generated_ids = response["vector_ids"]  # Should contain generated IDs
+
+# Test 2: Retrieve by generated ID
+vector = client.get_vector(collection_id, generated_ids[0])
+assert vector is not None
+assert vector["id"] == generated_ids[0]
+
+# Test 3: Insert with explicit IDs
+vectors = [{"id": "custom_123", "vector": [0.4, 0.5, 0.6]}]
+response = client.insert_vectors(collection_id, vectors)
+assert response["vector_ids"] == ["custom_123"]
+----
+
+==== Migration Considerations
+
+For existing deployments with vectors that have empty IDs:
+
+1. **Data Export**: Export existing vectors using collection dump
+2. **ID Assignment**: Assign IDs to vectors with empty IDs
+3. **Re-import**: Import vectors with proper IDs
+4. **Verification**: Verify all vectors are retrievable by ID
+
+[source,bash]
+----
+# Example migration script
+proximadb-cli export --collection $COLLECTION_ID --output vectors.json
+python assign_missing_ids.py vectors.json vectors_with_ids.json
+proximadb-cli import --collection $COLLECTION_ID --input vectors_with_ids.json
+----
+
+==== Related Configuration
+
+No configuration changes are required. The fix is transparent and maintains backward compatibility:
+
+* Client-provided IDs are always respected
+* Auto-generation only occurs when ID is empty or not provided
+* Generated IDs follow UUID v4 format for uniqueness
+
 ---
 
 **Implementation Notes**: This reference covers the core algorithms and data structures. For complete implementation details, see the source code and inline documentation.
