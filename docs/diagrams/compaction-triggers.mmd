@@ -11,12 +11,17 @@ flowchart TB
     
     subgraph "Flush Process"
         FLUSH[Flush to Storage<br/>WAL → Engine]
-        COMPACT[CompactionCoordinator<br/>Background compaction]
+        UAC[UnifiedAtomicCoordinator<br/>ACID guarantees]
+    end
+    
+    subgraph "Compaction Process"
+        COMPACT[CompactionCoordinator<br/>Collection-aware scheduling]
+        ATOMIC[Atomic Operations<br/>No concurrent compaction<br/>per collection]
     end
     
     subgraph "Storage Engines"
         VIPER[VIPER Engine<br/>Parquet files]
-        LSM[LSM Engine<br/>SSTables]
+        LSM[LSM Engine<br/>SSTables + Manifest]
     end
     
     SIZE --> DVS
@@ -24,14 +29,16 @@ flowchart TB
     FORCE --> DVS
     
     DVS --> FLUSH
-    FLUSH --> VIPER
-    FLUSH --> LSM
+    FLUSH --> UAC
+    UAC --> VIPER
+    UAC --> LSM
     
     VIPER --> COMPACT
     LSM --> COMPACT
     
-    COMPACT -->|Merge files| VIPER
-    COMPACT -->|Compact levels| LSM
+    COMPACT --> ATOMIC
+    ATOMIC -->|Merge files atomically| VIPER
+    ATOMIC -->|Compact levels with manifest| LSM
     
     style DVS fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
     style COMPACT fill:#fff3e0,stroke:#e65100,stroke-width:2px

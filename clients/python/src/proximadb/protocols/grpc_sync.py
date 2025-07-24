@@ -29,7 +29,7 @@ class ProximaDBSyncGrpcClient:
     Provides the same interface as the improved REST client
     """
     
-    def __init__(self, server_address: str, timeout: float = 30.0):
+    def __init__(self, server_address: str, timeout: float = 60.0):
         """Initialize sync gRPC client wrapper
         
         Args:

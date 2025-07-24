@@ -218,6 +218,7 @@ impl Default for MetricsConfig {
 }
 
 /// Rate limiter for metrics to prevent overload
+#[derive(Clone)]
 pub struct MetricsRateLimiter {
     last_emit: Arc<RwLock<Instant>>,
     min_interval: Duration,

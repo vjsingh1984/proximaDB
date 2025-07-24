@@ -41,8 +41,8 @@ async fn test_lsm_basic_operations() {
         filesystem.clone()
     ).await.expect("Failed to create LSM tree");
     
-    // Setup storage assignment
-    setup_storage_assignment(collection_id, &lsm_config.data_directory).await;
+    // Setup storage assignment - pass base path directly
+    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
     
     // Create test vectors
     let vectors = vec![
@@ -172,8 +172,8 @@ async fn test_lsm_compaction() {
         filesystem.clone()
     ).await.expect("Failed to create LSM tree");
     
-    // Setup storage assignment
-    setup_storage_assignment(collection_id, &lsm_config.data_directory).await;
+    // Setup storage assignment - pass base path directly
+    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
     
     // Create multiple flushes to trigger compaction
     for batch in 0..3 {
@@ -213,18 +213,14 @@ async fn test_lsm_compaction() {
 }
 
 /// Helper to setup storage assignment for tests
-async fn setup_storage_assignment(collection_id: &str, data_dir: &str) {
+async fn setup_storage_assignment(collection_id: &str, base_path: &str) {
     use proximadb::core::config::StorageLocation;
-    use std::path::Path;
     
     let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     
-    // Get the parent directory since UnifiedAssignment will add /{collection_id}/data
-    let data_path = Path::new(data_dir);
-    let base_path = data_path.parent().unwrap().parent().unwrap();
-    
+    // UnifiedAssignment will add /{collection_id}/data to the base URL
     let storage_location = StorageLocation {
-        url: format!("file://{}", base_path.display()),
+        url: format!("file://{}", base_path),
         weight: 1,
         tags: Default::default(),
     };

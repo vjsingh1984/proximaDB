@@ -6,17 +6,17 @@ graph TB
     end
 
     subgraph "Network Layer"
-        UH[UnifiedHandlers<br/>85% Code Reduction<br/>Protocol-agnostic]
+        UH[UnifiedHandlers<br/>Single Implementation<br/>Protocol-agnostic]
     end
 
     subgraph "Optimized Service Layer"
-        DVS[DirectVectorService<br/>40-60% Latency Reduction<br/>Engine-Specific Routing]
+        DVS[DirectVectorService<br/>Direct Memtable Access<br/>Engine-Specific Routing]
         CS[CollectionService<br/>Configuration Management<br/>Engine Selection]
         FC[FlushCoordinator<br/>Collection-Aware Flushing<br/>No Default Engine]
     end
 
     subgraph "Storage Layer"
-        WAL[WalManager<br/>14,939 vectors/sec<br/>Clean Separation]
+        WAL[WalManager<br/>Write-Ahead Logging<br/>Clean Separation]
         
         subgraph "Storage Engines"
             VIPER[ViperEngine<br/>Columnar Storage<br/>Predicate Pushdown]

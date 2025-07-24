@@ -42,9 +42,10 @@ pub fn create_test_lsm_config(base_path: &str) -> LsmConfig {
         sync_mode: "immediate".to_string(),  // Immediate sync for tests
         enable_wal: true,
         
-        // Directories
-        wal_directory: format!("{}/wal", base_path),
-        data_directory: format!("{}/data", base_path),
+        // Directories - these will be used by LSM directly, not through assignment service
+        // LSM tree will use collection-specific subdirectories
+        wal_directory: format!("{}/lsm/wal", base_path),
+        data_directory: format!("{}/lsm/data", base_path),
         
         // Memory mapping
         mmap_enabled: false,

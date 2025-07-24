@@ -21,6 +21,7 @@ use super::{
 };
 
 /// Central metrics collector that gathers system and application metrics
+#[derive(Clone)]
 pub struct MetricsCollector {
     config: MetricsConfig,
 
@@ -292,7 +293,7 @@ impl MetricsCollector {
         active_alerts.retain(|alert| {
             let is_resolved = match alert.metric_name.as_str() {
                 "cpu_usage_percent" => {
-                    current_metrics.server.cpu_usage_percent <= alert.threshold_value
+                    current_metrics.server.cpu_usage_percent <= self.config.alert_thresholds.max_cpu_usage_percent
                 }
                 "memory_usage_percent" => {
                     let memory_percent = if current_metrics.server.memory_available_bytes > 0 {
@@ -302,12 +303,12 @@ impl MetricsCollector {
                     } else {
                         0.0
                     };
-                    memory_percent <= alert.threshold_value
+                    memory_percent <= self.config.alert_thresholds.max_memory_usage_percent
                 }
                 "p99_query_latency_ms" => {
-                    current_metrics.query.p99_query_latency_ms <= alert.threshold_value
+                    current_metrics.query.p99_query_latency_ms <= self.config.alert_thresholds.max_query_latency_ms
                 }
-                "cache_hit_rate" => current_metrics.storage.cache_hit_rate >= alert.threshold_value,
+                "cache_hit_rate" => current_metrics.storage.cache_hit_rate >= self.config.alert_thresholds.min_cache_hit_rate,
                 _ => false,
             };
 
@@ -489,3 +490,7 @@ pub struct MetricsSummary {
     pub active_alerts_count: usize,
     pub critical_alerts_count: usize,
 }
+
+#[cfg(test)]
+#[path = "collector_tests.rs"]
+mod tests;

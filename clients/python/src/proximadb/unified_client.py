@@ -159,7 +159,7 @@ class ProximaDBClient:
         
         # Extract host and port from URL for gRPC
         url = self.config.url
-        if url.startswith(('http://', 'https://')):
+        if url.startswith(('http://', 'https://', 'grpc://')):
             url = url.split('://', 1)[1]
         
         # Default gRPC port is 5679
@@ -168,7 +168,7 @@ class ProximaDBClient:
         
         return ProximaDBSyncGrpcClient(
             server_address=url,
-            timeout=self.config.timeout
+            timeout=60.0
         )
     
     def _create_rest_client(self):

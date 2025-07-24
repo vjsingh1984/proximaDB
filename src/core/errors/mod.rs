@@ -8,6 +8,9 @@ pub mod metadata_error;
 pub mod service_error;
 pub mod core_error;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export all error types
 pub use config_error::*;
 pub use metadata_error::*;

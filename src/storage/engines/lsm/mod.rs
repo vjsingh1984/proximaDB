@@ -211,15 +211,26 @@ impl LsmTree {
     ) -> Result<Self> {
         info!("🌲 Creating LSM tree (pure SSTable storage) for collection: {}", collection_id);
         
-        // Create collection-specific directory for SSTables using plugin filesystem
-        let data_dir = PathBuf::from(format!("{}/{}", config.data_directory, collection_id));
+        // Get the assigned storage URL for this collection
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let storage_url = match assignment_service.get_assignment(&collection_id).await {
+            Some(assignment) => assignment.data_url,
+            None => {
+                // Fallback to config directory if no assignment
+                format!("{}/{}", config.data_directory, collection_id)
+            }
+        };
+        
+        // Create data directory from storage URL
+        let data_dir = if storage_url.starts_with("file://") {
+            PathBuf::from(storage_url.strip_prefix("file://").unwrap())
+        } else {
+            PathBuf::from(&storage_url)
+        };
         
         // Use plugin filesystem for directory creation
         let fs = filesystem.get_filesystem("file:///")?;
-        let data_dir_str = data_dir.to_string_lossy();
-        
-        // Create directory asynchronously
-        fs.create_dir_all(&data_dir_str).await?;
+        fs.create_dir_all(&storage_url).await?;
         
         // Always create atomic coordinator for safe operations
         let atomic_coordinator = Arc::new(
@@ -237,8 +248,13 @@ impl LsmTree {
         ));
         
         // Load existing manifest if present
-        if let Err(e) = manifest.load().await {
-            tracing::warn!("Failed to load existing manifest: {}", e);
+        match manifest.load().await {
+            Ok(()) => {
+                info!("📋 Loaded manifest successfully");
+            }
+            Err(e) => {
+                info!("📋 No existing manifest found (new collection): {}", e);
+            }
         }
 
         Ok(Self {
@@ -909,6 +925,10 @@ impl UnifiedStorageEngine for LsmTree {
         
         if sstable_files.is_empty() {
             debug!("📂 LSM: No SSTable files found in manifest");
+            // Debug: check manifest stats
+            let stats = self.manifest.get_stats().await;
+            debug!("📂 LSM: Manifest stats - total files: {}, levels: {:?}", 
+                stats.total_files, stats.files_per_level);
             return Ok(all_results);
         }
         

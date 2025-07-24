@@ -40,6 +40,8 @@ pub enum PlatformCapability {
     X86Avx,
     #[cfg(target_arch = "x86_64")]
     X86Avx2,
+    #[cfg(target_arch = "x86_64")]
+    X86Avx512,
     #[cfg(target_arch = "aarch64")]
     ArmNeon,
     #[cfg(target_arch = "aarch64")]
@@ -56,6 +58,8 @@ impl std::fmt::Display for PlatformCapability {
             PlatformCapability::X86Avx => write!(f, "x86_64 AVX"),
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 => write!(f, "x86_64 AVX2"),
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => write!(f, "x86_64 AVX-512"),
             #[cfg(target_arch = "aarch64")]
             PlatformCapability::ArmNeon => write!(f, "ARM NEON"),
             #[cfg(target_arch = "aarch64")]
@@ -73,6 +77,10 @@ pub fn detect_platform_capability() -> PlatformCapability {
         // x86_64 detection - only compiles on x86_64
         #[cfg(target_arch = "x86_64")]
         {
+            if is_x86_feature_detected!("avx512f") {
+                info!("🚀 Detected x86_64 AVX-512 SIMD support");
+                return PlatformCapability::X86Avx512;
+            }
             if is_x86_feature_detected!("avx2") {
                 info!("🚀 Detected x86_64 AVX2 SIMD support");
                 return PlatformCapability::X86Avx2;
@@ -120,6 +128,8 @@ pub fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCom
     match metric {
         DistanceMetric::Cosine => match capability {
             #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => Box::new(CosineAvx512),
+            #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 => Box::new(CosineAvx2),
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx => Box::new(CosineAvx),
@@ -131,6 +141,8 @@ pub fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCom
         },
         DistanceMetric::Euclidean => match capability {
             #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => Box::new(EuclideanAvx512),
+            #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 => Box::new(EuclideanAvx2),
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx => Box::new(EuclideanAvx),
@@ -141,6 +153,8 @@ pub fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCom
             _ => Box::new(EuclideanScalar),
         },
         DistanceMetric::DotProduct => match capability {
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => Box::new(DotProductAvx512),
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 => Box::new(DotProductAvx2),
             #[cfg(target_arch = "x86_64")]
@@ -609,6 +623,16 @@ mod x86_implementations {
 #[cfg(target_arch = "x86_64")]
 pub use x86_implementations::*;
 
+// AVX-512 implementations module
+#[cfg(target_arch = "x86_64")]
+mod avx512;
+#[cfg(target_arch = "x86_64")]
+pub use avx512::*;
+
+// Benchmarks
+#[cfg(test)]
+mod benchmark;
+
 // ============================================================================
 // ARM64 NEON IMPLEMENTATIONS - Only compile on aarch64
 // ============================================================================
@@ -734,6 +758,7 @@ pub enum SimdLevel {
     Sse4,
     Avx,
     Avx2,
+    Avx512,
     Neon,
 }
 
@@ -747,6 +772,8 @@ impl From<PlatformCapability> for SimdLevel {
             PlatformCapability::X86Avx => SimdLevel::Avx,
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 => SimdLevel::Avx2,
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => SimdLevel::Avx512,
             #[cfg(target_arch = "aarch64")]
             PlatformCapability::ArmNeon => SimdLevel::Neon,
             #[cfg(target_arch = "aarch64")]

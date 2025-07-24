@@ -8,8 +8,9 @@ graph TB
     end
 
     subgraph "API Layer"
-        RestAPI[REST API<br/>Port: 5678<br/>JSON ↔ Proto]
+        RestAPI[REST API<br/>Port: 5678<br/>JSON Format]
         GrpcAPI[gRPC API<br/>Port: 5679<br/>Native Proto]
+        SQL[SQL Query Engine<br/>Vector Similarity<br/>Metadata Filtering]
         
         subgraph "Unified Handlers"
             UH[UnifiedHandlers<br/>Single Business Logic<br/>Protocol Agnostic]
@@ -20,6 +21,7 @@ graph TB
         DVS[DirectVectorService<br/>Direct Memtable Access<br/>Engine Routing]
         CS[CollectionService<br/>Collection Management<br/>Metadata Storage]
         WM[WalManager<br/>Write-Ahead Log<br/>Durability]
+        MON[Monitoring Service<br/>Metrics Collection<br/>Prometheus Export]
     end
 
     subgraph "Storage Layer"
@@ -34,8 +36,9 @@ graph TB
     end
 
     subgraph "Compute Layer"
-        DC[Distance Compute<br/>Cosine, Euclidean, DotProduct<br/>SIMD Detection]
-        QE[Quantization Config<br/>Future Implementation]
+        DC[UnifiedDistanceCompute<br/>L1, L2, Cosine, DotProduct<br/>Hamming, Jaccard<br/>SIMD/AVX2/ROCm]
+        IDX[Indexing Algorithms<br/>HNSW Graph<br/>IVF Clustering<br/>LSH Hashing]
+        QE[Quantization<br/>Binary, PQ<br/>Scalar]
     end
 
     subgraph "Persistence"
@@ -50,8 +53,9 @@ graph TB
     GrpcClient --> GrpcAPI
 
     %% API to Handlers
-    RestAPI --> UH
+    RestAPI -.-> UH
     GrpcAPI --> UH
+    SQL --> DVS
 
     %% Handlers to Services
     UH --> DVS
@@ -62,6 +66,8 @@ graph TB
     DVS --> WM
     DVS --> MT
     CS --> META
+    MON --> DVS
+    MON --> CS
 
     %% Storage connections
     WM --> UAC
@@ -74,6 +80,8 @@ graph TB
     %% Compute connections
     LSM --> DC
     VIPER --> DC
+    DVS --> IDX
+    IDX --> DC
 
     %% Styling
     classDef client fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px
@@ -84,8 +92,8 @@ graph TB
     classDef persist fill:#f3f4f6,stroke:#4b5563,color:#1f2937,stroke-width:2px
 
     class Python,RestClient,GrpcClient client
-    class RestAPI,GrpcAPI,UH api
-    class DVS,CS,WM service
+    class RestAPI,GrpcAPI,UH,SQL api
+    class DVS,CS,WM,MON service
     class LSM,VIPER,MT,UAC storage
-    class DC,QE compute
+    class DC,IDX,QE compute
     class FS,META persist

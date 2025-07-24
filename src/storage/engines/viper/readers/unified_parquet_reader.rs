@@ -756,7 +756,7 @@ impl UnifiedParquetReader {
                         if list_array.is_valid(row_idx) {
                             let struct_array = list_array.value(row_idx);
                             if let Some(struct_array) = struct_array.as_any().downcast_ref::<arrow_array::StructArray>() {
-                                println!("📖 Extracting metadata from extra_meta column for row {}", row_idx);
+                                // Extracting metadata from extra_meta column
                                 // Extract key/value pairs
                                 if let (Some(keys), Some(values)) = (
                                     struct_array.column_by_name("key").and_then(|c| c.as_any().downcast_ref::<arrow_array::StringArray>()),

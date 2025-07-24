@@ -5,34 +5,28 @@ pub mod config;
 pub mod config_loader;
 pub mod vector_record_migration;
 pub mod error;
-pub mod global_coordination;
 pub mod grpc_metadata_parser;
 pub mod index;
 pub mod indexing;
 pub mod metadata_query;
-pub mod routing;
 pub mod search;
-pub mod serverless;
 pub mod storage_layout;
 // vector_record_adapter removed - proto-first architecture everywhere
 pub mod proto_metadata_helper;
 pub mod bloom;
+pub mod errors;
 
 #[cfg(test)]
 mod config_tests;
+
+#[cfg(test)]
+mod error_tests;
 
 // Legacy modules removed - using avro_unified as single source of truth
 
 pub use config::*;
 pub use config_loader::*;
 pub use error::*;
-pub use global_coordination::{
-    DeploymentTopology, GlobalCoordinationConfig, GlobalMetadataCoordinator,
-};
-pub use routing::{
-    AccountTier, CustomerSegment, RoutingContext, RoutingDecision, SmartRouter, WorkloadType,
-};
-pub use serverless::*;
 // Migration phase: Use selective exports and introduce Proto VectorRecord alias
 pub use avro_unified::{
     BatchSearchRequest, CollectionConfig, CollectionOperation, CollectionRequest,

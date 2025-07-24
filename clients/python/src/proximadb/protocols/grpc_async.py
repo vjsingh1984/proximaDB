@@ -43,7 +43,7 @@ class ProximaDBClient:
     def __init__(
         self,
         endpoint: str = "localhost:5679",
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         enable_debug_logging: bool = False,
         use_tls: bool = False,
         compression: Optional[grpc.Compression] = None
@@ -97,6 +97,12 @@ class ProximaDBClient:
             options = [
                 ('grpc.max_receive_message_length', max_message_size),
                 ('grpc.max_send_message_length', max_message_size),
+                ('grpc.keepalive_time_ms', 10000),
+                ('grpc.keepalive_timeout_ms', 5000),
+                ('grpc.keepalive_permit_without_calls', True),
+                ('grpc.http2.max_pings_without_data', 0),
+                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.http2.min_ping_interval_without_data_ms', 5000),
             ]
             
             if self.use_tls:
@@ -650,7 +656,23 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector search: {e}")
             raise ProximaDBError(f"Vector search failed: {str(e)}")
     
-    # Removed _value_to_metadata_value - no longer needed with repeated MetadataItem structure
+    def _value_to_metadata_value(self, value: Any) -> pb2.MetadataValue:
+        """Convert Python value to protobuf MetadataValue"""
+        metadata_value = pb2.MetadataValue()
+        
+        if isinstance(value, bool):
+            metadata_value.bool_value = value
+        elif isinstance(value, int):
+            metadata_value.int_value = value
+        elif isinstance(value, float):
+            metadata_value.float_value = value
+        elif isinstance(value, str):
+            metadata_value.string_value = value
+        else:
+            # Convert to string as fallback
+            metadata_value.string_value = str(value)
+            
+        return metadata_value
     
     def upsert_vectors(
         self,
@@ -854,7 +876,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during collection update: {e}")
             raise ProximaDBError(f"Collection update failed: {str(e)}")
     
-    def delete_vectors_by_filter(
+    async def delete_vectors_by_filter(
         self,
         collection_id: str,
         filter: Dict[str, Any]

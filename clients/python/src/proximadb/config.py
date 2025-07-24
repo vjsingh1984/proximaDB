@@ -130,14 +130,18 @@ class ClientConfig(BaseModel):
         
         parsed = urlparse(v)
         if not parsed.scheme:
-            # Add https as default scheme
+            # For gRPC format like "localhost:5679", keep as-is
+            if ':' in v and not v.startswith(('http://', 'https://', 'grpc://')):
+                # This looks like host:port format for gRPC
+                return v
+            # Otherwise add https as default scheme
             v = f"https://{v}"
             parsed = urlparse(v)
         
-        if parsed.scheme not in ('http', 'https'):
-            raise ValueError("URL must use http or https scheme")
+        if parsed.scheme and parsed.scheme not in ('http', 'https', 'grpc'):
+            raise ValueError("URL must use http, https, or grpc scheme")
         
-        if not parsed.netloc:
+        if parsed.scheme and not parsed.netloc:
             raise ValueError("URL must include hostname")
         
         return v

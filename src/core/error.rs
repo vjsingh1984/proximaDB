@@ -119,3 +119,7 @@ pub enum SchemaError {
     #[error("Schema validation error: {0}")]
     Validation(String),
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

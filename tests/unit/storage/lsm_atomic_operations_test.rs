@@ -24,6 +24,18 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     let lsm_config = create_test_lsm_config(base_path);
     let collection_id = "test_collection";
     
+    // Setup storage assignment
+    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    assignment_service.assign_collection(
+        collection_id,
+        &[proximadb::core::config::StorageLocation {
+            url: format!("file://{}", base_path),
+            weight: 1,
+            tags: Default::default(),
+        }],
+        "hash"
+    ).await.unwrap();
+    
     let lsm_tree = LsmTree::new(
         collection_id.to_string(),
         lsm_config,
@@ -61,14 +73,15 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     assert_eq!(result.entries_flushed, 1);
     
     // Verify staging directory was created and cleaned up
-    let staging_dir = format!("{}/lsm/{}/data/__flush", base_path, collection_id);
+    // Assignment service adds /{collection_id}/data to base URL
+    let staging_dir = format!("{}/{}/data/__flush", base_path, collection_id);
     let fs = filesystem.get_filesystem("file:///").unwrap();
     
     // Staging should be cleaned up after successful flush
     assert!(!fs.exists(&staging_dir).await.unwrap());
     
     // Verify final SSTable exists
-    let data_dir = format!("{}/lsm/{}/data", base_path, collection_id);
+    let data_dir = format!("{}/{}/data", base_path, collection_id);
     let entries = fs.list(&data_dir).await.unwrap();
     let sst_files: Vec<_> = entries.iter()
         .filter(|e| e.name.ends_with(".sst"))
@@ -89,6 +102,18 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
     // Create LSM tree with atomic coordinator
     let lsm_config = create_test_lsm_config(base_path);
     let collection_id = "test_collection";
+    
+    // Setup storage assignment
+    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    assignment_service.assign_collection(
+        collection_id,
+        &[proximadb::core::config::StorageLocation {
+            url: format!("file://{}", base_path),
+            weight: 1,
+            tags: Default::default(),
+        }],
+        "hash"
+    ).await.unwrap();
     
     let lsm_tree = LsmTree::new(
         collection_id.to_string(),

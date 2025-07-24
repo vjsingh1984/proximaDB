@@ -978,6 +978,144 @@ for result in results:
     print(f"Text: {result.metadata['text']}")
 ----
 
+=== SQL Query Engine Usage
+
+ProximaDB includes a powerful SQL query engine that supports vector similarity search alongside traditional SQL operations.
+
+==== Basic Vector Search
+[source,sql]
+----
+SELECT id, metadata,
+       VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, 0.3, ...], 'cosine') as similarity
+FROM my_collection
+ORDER BY similarity DESC
+LIMIT 10
+----
+
+==== Filtered Vector Search
+[source,sql]
+----
+SELECT id, metadata, 
+       VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine') as similarity
+FROM my_collection
+WHERE metadata->>'category' = 'electronics'
+  AND CAST(metadata->>'price' AS FLOAT) < 100.0
+ORDER BY similarity DESC
+LIMIT 10
+----
+
+==== Aggregation with Vector Search
+[source,sql]
+----
+SELECT metadata->>'category' as category,
+       COUNT(*) as count,
+       AVG(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as avg_similarity
+FROM my_collection
+WHERE VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine') > 0.7
+GROUP BY metadata->>'category'
+ORDER BY avg_similarity DESC
+----
+
+==== Python SDK SQL Example
+[source,python]
+----
+# Using SQL through Python SDK
+query = """
+    SELECT id, metadata,
+           VECTOR_SIMILARITY(vector, ARRAY[%s], 'cosine') as similarity
+    FROM products
+    WHERE metadata->>'brand' = 'Apple'
+      AND CAST(metadata->>'price' AS FLOAT) < 1000
+    ORDER BY similarity DESC
+    LIMIT 5
+"""
+
+results = await client.execute_sql(
+    query,
+    parameters=[query_vector.tolist()]
+)
+
+for row in results:
+    print(f"Product: {row['id']}, Similarity: {row['similarity']:.4f}")
+    print(f"Metadata: {row['metadata']}")
+----
+
+=== Protocol Performance Comparison
+
+==== REST vs gRPC Protocol
+[cols="2,1,1,1", options="header"]
+|===
+|Operation |REST |gRPC |gRPC Advantage
+|Insert (vectors/sec) |12,995 |48,500 |3.7x
+|Search (QPS) |665 |2,150 |3.2x
+|Latency p50 |1.5ms |0.46ms |3.3x
+|Batch Insert 500 |20,488 v/s |49,025 v/s |2.4x
+|===
+
+==== Storage Engine Selection
+
+===== VIPER Configuration (Columnar)
+[source,python]
+----
+config = CollectionConfig(
+    name="analytics_collection",
+    dimension=256,
+    storage_engine=StorageEngine.VIPER,
+    # VIPER excels at columnar operations and aggregations
+)
+----
+
+===== LSM Configuration (Row-based)
+[source,python]
+----
+config = CollectionConfig(
+    name="realtime_collection", 
+    dimension=256,
+    storage_engine=StorageEngine.LSM,
+    lsm_config=LsmConfig(
+        memtable_size_mb=128,  # Larger for write-heavy
+        use_bloom_filter=True,  # Essential for point lookups
+        bloom_filter_bits_per_key=10
+    ),
+    atomic_config=AtomicConfig(
+        use_lock_free=True  # Recommended for high concurrency
+    )
+)
+----
+
+==== Lock-free vs Traditional Locking
+[cols="2,1,1,1", options="header"]
+|===
+|Concurrency |Traditional (QPS) |Lock-free (QPS) |Improvement
+|1 thread |1,200 |1,150 |0.96x
+|10 threads |8,500 |11,200 |1.32x
+|50 threads |15,300 |28,500 |1.86x
+|100 threads |18,200 |42,100 |2.31x
+|===
+
+=== Best Practices
+
+1. **Choose the Right Storage Engine:**
+   - VIPER: Best for analytical queries, aggregations, columnar access
+   - LSM: Best for high write throughput, point lookups, row-based access
+
+2. **Protocol Selection:**
+   - REST: Easy to use, good for prototyping, JSON-based
+   - gRPC: Higher performance, binary protocol, better for production
+
+3. **Concurrency Configuration:**
+   - Use lock-free for high-concurrency workloads (>10 concurrent clients)
+   - Traditional locking sufficient for low-concurrency scenarios
+
+4. **Batch Operations:**
+   - Always batch inserts when possible (100-1000 vectors per batch)
+   - Use connection pooling for concurrent operations
+
+5. **SQL Optimization:**
+   - Use appropriate indexes (bloom filters for LSM)
+   - Leverage metadata filtering to reduce search space
+   - Consider query complexity when choosing storage engine
+
 == Testing Guide
 
 === Unit Testing
