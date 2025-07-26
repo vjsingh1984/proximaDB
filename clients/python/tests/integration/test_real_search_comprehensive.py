@@ -11,8 +11,9 @@ Uses cached 10MB corpus with bulk insertion and tests all search combinations:
 - All 3 combined with ranking and top-k results
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_real_search_comprehensive.py
+
 import json
 import time
 import asyncio
@@ -22,9 +23,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
-
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService

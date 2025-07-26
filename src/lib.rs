@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+// SIMD optimization features (using stable AVX2 instead of unstable AVX-512)
+
 //! # ProximaDB - Cloud-Native Vector Database
 //!
 //! **proximity at scale**

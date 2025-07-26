@@ -758,7 +758,7 @@ class ProximaDBClient:
         include_metadata: bool = True
     ):
         """
-        Get a single vector by ID using VectorGet RPC
+        Get a single vector by ID using the proper VectorGet RPC
         
         Args:
             collection_id: Collection name/ID
@@ -767,79 +767,92 @@ class ProximaDBClient:
             include_metadata: Include metadata
             
         Returns:
-            SearchResult proto or None if not found
+            Dict with vector data or raises ProximaDBError if not found
         """
-        # Create include fields
-        include_fields = pb2.IncludeFields(
-            vector=include_vector,
-            metadata=include_metadata,
-            score=True,
-            rank=True
-        )
-        
-        # Create vector get request
-        request = pb2.VectorGetRequest(
-            collection_id=collection_id,
-            vector_id=vector_id,
-            include_fields=include_fields
-        )
-        
         try:
+            # Create include fields
+            include_fields = pb2.IncludeFields(
+                vector=include_vector,
+                metadata=include_metadata,
+                score=False,  # Not relevant for get operation
+                rank=False   # Not relevant for get operation
+            )
+            
+            # Create get request
+            request = pb2.VectorGetRequest(
+                collection_id=collection_id,
+                vector_id=vector_id,
+                include_fields=include_fields
+            )
+            
+            # Call the proper VectorGet RPC
             response = self._call_with_timeout(self.stub.VectorGet, request)
             
-            # Debug logging
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.debug(f"VectorGet response: success={response.success}, has_result_payload={hasattr(response, 'result_payload')}, has_results={hasattr(response, 'results')}")
+            # Check if operation was successful
+            if not response.success:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
+                
+            # Extract result from response
+            result_data = None
             if hasattr(response, 'result_payload') and response.result_payload:
-                logger.debug(f"result_payload type: {type(response.result_payload)}")
-                if hasattr(response.result_payload, 'compact_results'):
-                    logger.debug(f"compact_results: {response.result_payload.compact_results}")
+                if hasattr(response.result_payload, 'compact_results') and response.result_payload.compact_results:
                     if response.result_payload.compact_results.results:
-                        logger.debug(f"First result: {response.result_payload.compact_results.results[0]}")
+                        result_data = response.result_payload.compact_results.results[0]
+            elif hasattr(response, 'compact_results') and response.compact_results:
+                if response.compact_results.results:
+                    result_data = response.compact_results.results[0]
             
-            if response.success:
-                # Check for results in compact format using protobuf oneof field
-                which_oneof = response.WhichOneof('result_payload')
-                logger.debug(f"WhichOneof result_payload: {which_oneof}")
-                
-                if which_oneof == 'compact_results':
-                    compact_results = response.compact_results
-                    logger.debug(f"compact_results found: {compact_results}")
-                    if compact_results.results:
-                        result = compact_results.results[0]
-                        # Convert proto result to dict format
-                        metadata = {}
-                        for item in result.metadata:
-                            metadata[item.key] = item.value
-                        return {
-                            'id': result.id,
-                            'vector': list(result.vector) if include_vector else None,
-                            'metadata': metadata if include_metadata else {},
-                            'score': result.score,
-                            'rank': result.rank
-                        }
-                
-                # Check for single result in regular format
-                if hasattr(response, 'results') and response.results:
-                    result = response.results[0]
-                    # Convert proto result to dict format
-                    metadata = {}
-                    for item in result.metadata:
-                        metadata[item.key] = item.value
-                    return {
-                        'id': result.id,
-                        'vector': list(result.vector) if include_vector else None,
-                        'metadata': metadata if include_metadata else {},
-                        'score': result.score,
-                        'rank': result.rank
-                    }
-                
-            return None
+            if not result_data:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
+            
+            # Parse metadata if included
+            metadata = {}
+            if include_metadata and result_data.metadata:
+                for item in result_data.metadata:
+                    # Parse metadata values properly
+                    value = item.value
+                    try:
+                        # Strip quotes if present
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        
+                        # Try to parse as int/float/bool
+                        if value.lower() == 'true':
+                            value = True
+                        elif value.lower() == 'false':  
+                            value = False
+                        elif value.isdigit():
+                            value = int(value)
+                        elif '.' in value:
+                            try:
+                                value = float(value)
+                            except:
+                                pass  # Keep as string
+                    except:
+                        pass  # Keep as string
+                    metadata[item.key] = value
+            
+            return {
+                'id': result_data.id,
+                'vector': list(result_data.vector) if include_vector and result_data.vector else None,
+                'metadata': metadata,
+                'score': result_data.score if hasattr(result_data, 'score') else 0.0,
+                'rank': result_data.rank if hasattr(result_data, 'rank') else 0
+            }
             
         except grpc.RpcError as e:
+            import logging
+            logger = logging.getLogger(__name__)
             logger.error(f"gRPC error during vector get: {e}")
-            return None
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
+            else:
+                raise ProximaDBError(f"Get vector failed: {str(e)}")
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error during vector get: {e}")
+            raise ProximaDBError(f"Get vector failed: {str(e)}")
     
     def update_collection_extended(
         self,

@@ -1,7 +1,9 @@
 //! Real performance benchmark for ProximaDB
 
 use proximadb::compute::distance::{detect_platform_capability, create_distance_calculator, DistanceMetric};
-use proximadb::compute::indexing::{HnswIndex, IvfIndex, LshIndex};
+use proximadb::index::axis::{AxisIvfIndex, AxisIvfConfig, AxisLshIndex, AxisLshConfig};
+use proximadb::core::VectorRecord;
+use std::sync::Arc;
 use std::time::Instant;
 use std::collections::HashMap;
 
@@ -47,7 +49,7 @@ fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
     results
 }
 
-fn benchmark_indexing() {
+async fn benchmark_indexing() {
     println!("\n=== Indexing Algorithm Benchmarks ===");
     
     let dataset_sizes = vec![10_000, 50_000, 100_000];
@@ -61,36 +63,48 @@ fn benchmark_indexing() {
             .map(|i| (0..dimension).map(|j| ((i * j) as f32).sin()).collect())
             .collect();
         
-        // HNSW benchmark
-        {
-            let start = Instant::now();
-            let mut index = HnswIndex::new(dimension);
-            for (i, vec) in vectors.iter().enumerate() {
-                index.add(&format!("vec_{}", i), vec.clone());
-            }
-            let build_time = start.elapsed();
-            
-            // Search benchmark
-            let query = &vectors[0];
-            let search_iterations = 1000;
-            let start = Instant::now();
-            for _ in 0..search_iterations {
-                let _ = index.search(query, 10);
-            }
-            let search_time = start.elapsed();
-            let qps = search_iterations as f64 / search_time.as_secs_f64();
-            
-            println!("  HNSW: build={:.2}s, QPS={:.0}", build_time.as_secs_f64(), qps);
-        }
-        
-        // IVF benchmark
+        // AXIS IVF benchmark
         {
             let num_clusters = ((size as f64).sqrt() as usize).max(10);
             
+            let config = AxisIvfConfig {
+                n_clusters: num_clusters,
+                n_probe: 5,
+                train_size: 0, // Auto-calculate
+                max_iterations: 20,
+                distance_metric: DistanceMetric::Cosine,
+                enable_pq: false,
+                pq_subquantizers: 8,
+            };
+            
             let start = Instant::now();
-            let mut index = IvfIndex::new(dimension, num_clusters);
+            let mut index = AxisIvfIndex::new(config, dimension);
+            
+            // Train the index
+            if let Err(e) = index.train(&vectors[..1000.min(size)]).await {
+                println!("  IVF training failed: {}", e);
+                continue;
+            }
+            
+            // Add vectors
             for (i, vec) in vectors.iter().enumerate() {
-                index.add(&format!("vec_{}", i), vec.clone());
+                let record = VectorRecord {
+                    id: Some(format!("vec_{}", i)),
+                    vector: vec.clone(),
+                    metadata: vec![],
+                    timestamp: 0,
+                    created_at: 0,
+                    updated_at: 0,
+                    expires_at: Some(0),
+                    version: 0,
+                    rank: Some(0),
+                    score: Some(0.0),
+                    distance: Some(0.0),
+                };
+                if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
+                    println!("  IVF add failed: {}", e);
+                    break;
+                }
             }
             let build_time = start.elapsed();
             
@@ -99,21 +113,48 @@ fn benchmark_indexing() {
             let search_iterations = 1000;
             let start = Instant::now();
             for _ in 0..search_iterations {
-                let _ = index.search(query, 10);
+                let _ = index.search(query, 10, None).await;
             }
             let search_time = start.elapsed();
             let qps = search_iterations as f64 / search_time.as_secs_f64();
             
-            println!("  IVF: build={:.2}s, QPS={:.0}, clusters={}", 
+            println!("  AXIS IVF: build={:.2}s, QPS={:.0}, clusters={}", 
                      build_time.as_secs_f64(), qps, num_clusters);
         }
         
-        // LSH benchmark
+        // AXIS LSH benchmark
         {
+            let config = AxisLshConfig {
+                n_tables: 10,
+                n_hashes: 8,
+                hash_width: 1.0,
+                seed: 42,
+                distance_metric: DistanceMetric::Cosine,
+                binary_mode: false,
+            };
+            
             let start = Instant::now();
-            let mut index = LshIndex::new(dimension, 10); // 10 hash tables
+            let index = AxisLshIndex::new(config, dimension);
+            
+            // Add vectors
             for (i, vec) in vectors.iter().enumerate() {
-                index.add(&format!("vec_{}", i), vec.clone());
+                let record = VectorRecord {
+                    id: Some(format!("vec_{}", i)),
+                    vector: vec.clone(),
+                    metadata: vec![],
+                    timestamp: 0,
+                    created_at: 0,
+                    updated_at: 0,
+                    expires_at: Some(0),
+                    version: 0,
+                    rank: Some(0),
+                    score: Some(0.0),
+                    distance: Some(0.0),
+                };
+                if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
+                    println!("  LSH add failed: {}", e);
+                    break;
+                }
             }
             let build_time = start.elapsed();
             
@@ -122,7 +163,7 @@ fn benchmark_indexing() {
             let search_iterations = 1000;
             let start = Instant::now();
             for _ in 0..search_iterations {
-                let _ = index.search(query, 10);
+                let _ = index.search(query, 10, None).await;
             }
             let search_time = start.elapsed();
             let qps = search_iterations as f64 / search_time.as_secs_f64();
@@ -175,12 +216,13 @@ fn benchmark_concurrent_operations() {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("ProximaDB Real Performance Benchmarks");
     println!("=====================================");
     
     benchmark_distance_metrics();
-    benchmark_indexing();
+    benchmark_indexing().await;
     benchmark_concurrent_operations();
     
     println!("\n✅ Benchmarks completed!");

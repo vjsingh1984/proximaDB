@@ -157,7 +157,7 @@ async fn test_register_storage_engine() {
     ).await;
     
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().entries_flushed, 1);
+    assert_eq!(result.unwrap().base.entries_flushed, 1);
 }
 
 #[tokio::test]
@@ -280,8 +280,8 @@ async fn test_execute_coordinated_flush_empty() {
     ).await.unwrap();
     
     // Should succeed with 0 entries
-    assert!(result.success);
-    assert_eq!(result.entries_flushed, 0);
+    assert!(result.base.success);
+    assert_eq!(result.base.entries_flushed, 0);
 }
 
 #[tokio::test]
@@ -311,9 +311,9 @@ async fn test_execute_coordinated_flush_with_data() {
     ).await.unwrap();
     
     // Should succeed with 3 entries
-    assert!(result.success);
-    assert_eq!(result.entries_flushed, 3);
-    assert_eq!(result.bytes_written, 300); // 3 * 100 from mock
+    assert!(result.base.success);
+    assert_eq!(result.base.entries_flushed, 3);
+    assert_eq!(result.base.bytes_written, 300); // 3 * 100 from mock
     
     // Verify flush was called
     let count = mock_engine.flush_count.lock().await;

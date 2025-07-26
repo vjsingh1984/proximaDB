@@ -20,6 +20,8 @@ use tracing::{debug, info, warn};
 use super::config::SyncMode;
 
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use super::enhanced_flush_result::EnhancedFlushResult;
+use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
 
 /// Flush state tracking for coordinated WAL cleanup
 #[derive(Debug, Clone)]
@@ -77,6 +79,8 @@ pub struct WalFlushCoordinator {
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
     /// AXIS manager for IndexConfig-based indexing after flush
     axis_manager: Option<Arc<crate::index::axis::manager::AxisManager>>,
+    /// Optimized flush coordinator for high-performance flushing
+    optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
 }
 
 impl WalFlushCoordinator {
@@ -87,7 +91,18 @@ impl WalFlushCoordinator {
             next_flush_id: Arc::new(tokio::sync::Mutex::new(1)),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
             axis_manager: None,
+            optimized_coordinator: None,
         }
+    }
+    
+    /// Enable optimized flush processing
+    pub fn enable_optimized_flush(&mut self, batch_size: usize, worker_count: usize, dimension: usize) {
+        self.optimized_coordinator = Some(Arc::new(OptimizedFlushCoordinator::new(
+            batch_size,
+            worker_count,
+            dimension,
+        )));
+        info!("🚀 FlushCoordinator: Optimized flush enabled with batch_size={}, workers={}", batch_size, worker_count);
     }
 
     /// Set the AXIS manager for IndexConfig-based indexing
@@ -129,7 +144,7 @@ impl WalFlushCoordinator {
         flush_data: FlushDataSource,
         preferred_engine: Option<&str>,
         wal_manager: Option<Arc<dyn crate::storage::persistence::wal::WalBatchStrategy>>,
-    ) -> Result<FlushResult> {
+    ) -> Result<EnhancedFlushResult> {
         info!(
             "🚀 Coordinator: Starting ATOMIC coordinated flush for collection {}",
             collection_id
@@ -186,7 +201,8 @@ impl WalFlushCoordinator {
             info!(
                 "📋 Coordinator: No vector records to flush, completing without storage operation"
             );
-            return Ok(FlushResult {
+            return Ok(EnhancedFlushResult::new(
+                FlushResult {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
                 entries_flushed: 0,
@@ -197,7 +213,9 @@ impl WalFlushCoordinator {
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
                 flushed_batch_ids: vec![],
-            });
+                },
+                Vec::new(),
+            ));
         }
 
         info!(
@@ -243,17 +261,39 @@ impl WalFlushCoordinator {
             Vec::new()
         };
 
-        let flush_params = FlushParameters {
-            collection_id: Some(collection_id.to_string()),
-            force: true,
-            synchronous: true,
-            vector_records,
-            batch_ids, // ✅ Include BatchIds for coordination
-            ..Default::default()
-        };
+        // Clone vector records for AXIS indexing before moving into flush params
+        let vector_records_for_axis = vector_records.clone();
 
-        // Step 4: Execute polymorphic flush via storage engine (calls do_flush internally)
-        let storage_result = engine.do_flush(&flush_params).await?;
+        // Check if optimized flush is enabled and use it
+        let storage_result = if let Some(optimized) = &self.optimized_coordinator {
+            info!("🚀 Coordinator: Using optimized flush path");
+            
+            // Execute optimized flush
+            let optimized_result = optimized
+                .execute_optimized_flush(collection_id, vector_records)
+                .await?;
+            
+            // Convert to standard flush result
+            let mut base_result = optimized_result.base.clone();
+            base_result.flushed_batch_ids = batch_ids.clone();
+            
+            // Store optimized vectors for later AXIS indexing
+            // The optimized result uses Arc<VectorRecord> to avoid cloning
+            base_result
+        } else {
+            // Regular flush path
+            let flush_params = FlushParameters {
+                collection_id: Some(collection_id.to_string()),
+                force: true,
+                synchronous: true,
+                vector_records,
+                batch_ids, // ✅ Include BatchIds for coordination
+                ..Default::default()
+            };
+
+            // Step 4: Execute polymorphic flush via storage engine (calls do_flush internally)
+            engine.do_flush(&flush_params).await?
+        };
 
         info!(
             "✅ Coordinator: Storage flush completed - {} entries, {} bytes, {} files",
@@ -315,7 +355,9 @@ impl WalFlushCoordinator {
             "🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}",
             collection_id
         );
-        Ok(storage_result)
+        
+        // Return enhanced result with vector data for AXIS indexing
+        Ok(EnhancedFlushResult::new(storage_result, vector_records_for_axis))
     }
 
     pub async fn initialize_flush_state(&self, collection_id: &str) -> Result<()> {

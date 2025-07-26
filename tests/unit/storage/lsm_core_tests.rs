@@ -33,16 +33,16 @@ async fn test_lsm_basic_operations() {
         FilesystemFactory::new(fs_config).await.unwrap()
     );
     
-    // Create LSM tree
+    // Setup storage assignment BEFORE creating LSM tree
     let collection_id = "test_collection";
+    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
+    
+    // Create LSM tree
     let engine = LsmTree::new(
         collection_id.to_string(),
         lsm_config.clone(),
         filesystem.clone()
     ).await.expect("Failed to create LSM tree");
-    
-    // Setup storage assignment - pass base path directly
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
     
     // Create test vectors
     let vectors = vec![
@@ -166,14 +166,14 @@ async fn test_lsm_compaction() {
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
     let collection_id = "compact_test";
+    // Setup storage assignment BEFORE creating LSM tree
+    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
+    
     let engine = LsmTree::new(
         collection_id.to_string(),
         lsm_config.clone(),
         filesystem.clone()
     ).await.expect("Failed to create LSM tree");
-    
-    // Setup storage assignment - pass base path directly
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await;
     
     // Create multiple flushes to trigger compaction
     for batch in 0..3 {
@@ -244,6 +244,9 @@ async fn test_lsm_recovery() {
     
     // Phase 1: Write data
     {
+        // Setup storage assignment BEFORE creating LSM tree
+        setup_storage_assignment(collection_id, base_path_str).await;
+        
         let lsm_config = create_test_lsm_config(base_path_str);
         let fs_config = create_test_filesystem_config();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
@@ -284,6 +287,7 @@ async fn test_lsm_recovery() {
     
     // Phase 2: Create new engine and verify data persisted
     {
+        // Storage assignment should persist from phase 1
         let lsm_config = create_test_lsm_config(base_path_str);
         let fs_config = create_test_filesystem_config();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());

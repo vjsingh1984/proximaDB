@@ -34,4 +34,4 @@ pub mod optimized_bloom_filter_test;
 
 // Phase 2 optimization tests
 pub mod unified_cache_test;
-pub mod lockfree_test;
+// pub mod lockfree_test; // Removed - lockfree is now integrated in main implementation

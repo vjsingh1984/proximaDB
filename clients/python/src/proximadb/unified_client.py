@@ -596,27 +596,35 @@ class ProximaDBClient:
         vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         metadata_filter: Optional[Union[Dict[str, Any], 'FilterBuilder']] = None,
-        optimization_level: str = "high",
-        optimization_hints: Optional[Dict[str, Any]] = None,
-        use_storage_aware: bool = True,
-        quantization_level: str = "FP32",
-        enable_simd: bool = True,
+        include_metadata: bool = True,
+        include_vectors: bool = False,
         **kwargs
     ) -> List[SearchResult]:
-        """Generic search method that forwards to search_single"""
-        # Merge optimization_hints into kwargs if provided
-        if optimization_hints:
-            kwargs.update(optimization_hints)
+        """Search for similar vectors
+        
+        Args:
+            collection_id: Target collection ID
+            vector: Query vector
+            top_k: Number of results to return
+            metadata_filter: Optional metadata filter
+            include_metadata: Include metadata in results
+            include_vectors: Include vectors in results
+            **kwargs: Additional search parameters
             
+        Returns:
+            List of search results ordered by similarity
+        """
+        # Validate top_k
+        if top_k <= 0:
+            raise ProximaDBError(f"top_k must be positive, got {top_k}")
+        
         return self.search_single(
             collection_id=collection_id,
             vector=vector,
             top_k=top_k,
             metadata_filter=metadata_filter,
-            optimization_level=optimization_level,
-            use_storage_aware=use_storage_aware,
-            quantization_level=quantization_level,
-            enable_simd=enable_simd,
+            include_metadata=include_metadata,
+            include_vectors=include_vectors,
             **kwargs
         )
 
@@ -687,10 +695,28 @@ class ProximaDBClient:
                     metadata_dict = {}
                     if hasattr(result, 'metadata') and result.metadata:
                         for meta_item in result.metadata:
-                            # Remove JSON quotes from values if present
+                            # Parse value based on type
                             value = meta_item.value
-                            if value.startswith('"') and value.endswith('"'):
-                                value = value[1:-1]
+                            # Try to parse as JSON first
+                            try:
+                                import json
+                                # Remove outer quotes if present
+                                if value.startswith('"') and value.endswith('"'):
+                                    value = value[1:-1]
+                                # Try to parse as int/float/bool
+                                if value.lower() == 'true':
+                                    value = True
+                                elif value.lower() == 'false':
+                                    value = False
+                                elif value.isdigit():
+                                    value = int(value)
+                                elif '.' in value:
+                                    try:
+                                        value = float(value)
+                                    except:
+                                        pass  # Keep as string
+                            except:
+                                pass  # Keep as string
                             metadata_dict[meta_item.key] = value
                     
                     search_result = SearchResult(
@@ -711,9 +737,9 @@ class ProximaDBClient:
             
             return self._client.search(
                 collection_id=collection_id,
-                query=vector,
-                k=top_k,
-                filter=metadata_filter,
+                vector=vector,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
                 optimization_level=optimization_level,
                 use_storage_aware=use_storage_aware,
                 quantization_level=quantization_level,
@@ -853,6 +879,80 @@ class ProximaDBClient:
             VectorOperationResponse
         """
         return self.delete_vectors(collection_id, [vector_id])
+    
+    def execute_sql(
+        self,
+        query: str,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Execute SQL query with vector similarity support
+        
+        Args:
+            query: SQL query string (e.g., "SELECT * FROM my_collection ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine') LIMIT 10")
+            parameters: Optional query parameters (not yet supported)
+            collection: Optional collection hint (if not specified in FROM clause)
+            
+        Returns:
+            Dict with 'rows', 'columns', and 'row_count' keys
+            
+        Example:
+            >>> result = client.execute_sql(
+            ...     "SELECT id, metadata FROM my_collection WHERE metadata.category = 'electronics' ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2], 'cosine') LIMIT 5"
+            ... )
+            >>> for row in result['rows']:
+            ...     print(row['id'], row['metadata'])
+        """
+        if self._active_protocol == Protocol.GRPC:
+            # gRPC doesn't support SQL yet, fall back to REST
+            if hasattr(self._client, '_rest_url'):
+                return self._execute_sql_rest(query, parameters, collection)
+            else:
+                raise ProximaDBError("SQL queries are only supported via REST API")
+        else:
+            # REST client
+            return self._execute_sql_rest(query, parameters, collection)
+    
+    def _execute_sql_rest(
+        self,
+        query: str,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Execute SQL query via REST API"""
+        # Build request payload
+        payload = {
+            "query": query
+        }
+        if parameters is not None:
+            payload["parameters"] = parameters
+        if collection is not None:
+            payload["collection"] = collection
+        
+        # Make REST request
+        if hasattr(self._client, '_session'):
+            # Using REST client directly
+            response = self._client._session.post(
+                f"{self._client._base_url}/api/v1/sql/execute",
+                json=payload
+            )
+            response.raise_for_status()
+            return response.json()
+        else:
+            # Need to use requests directly
+            import requests
+            headers = {}
+            if hasattr(self._client, '_api_key') and self._client._api_key:
+                headers['X-API-Key'] = self._client._api_key
+            
+            base_url = getattr(self._client, '_rest_url', None) or getattr(self._client, '_base_url', 'http://localhost:5678')
+            response = requests.post(
+                f"{base_url}/api/v1/sql/execute",
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
     
     def close(self):
         """Close the client and cleanup resources"""

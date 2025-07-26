@@ -43,6 +43,10 @@ pub mod recovery_thread_pool;  // Thread pool for parallel recovery
 pub mod flush_coordinator;
 pub mod optimized_wal_writer;
 pub mod compaction_coordinator;
+pub mod enhanced_flush_result;
+pub mod compaction_axis_integration;
+pub mod compaction_types;
+pub mod flush_result_optimization;
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WalManager
 pub mod simple_atomic_sync;
@@ -74,6 +78,8 @@ pub use compaction_coordinator::{
     CompactionCoordinator, CompactionConfig, CompactionResult, CollectionCompactionState,
     CompactionStats, CompactionTask,
 };
+pub use compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
+pub use compaction_types::EnhancedEngineCompactionResult;
 pub use memtable_manager::{MemtableManager, MemtableStats};
 pub use disk_manager::{WalDiskManager, DiskStats, WalFileInfo};
 pub use recovery_manager::{RecoveryManager, RecoveryStats, ParallelRecoveryManager, RecoveryMode};

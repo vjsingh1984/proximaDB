@@ -43,13 +43,8 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     
     // Create LSM engine
     let collection_id = "test_collection";
-    let lsm_engine = LsmTree::new(
-        collection_id.to_string(),
-        lsm_config.clone(),
-        filesystem.clone()
-    ).await.unwrap();
     
-    // Manually assign collection to set up storage URL
+    // Manually assign collection to set up storage URL BEFORE creating LSM tree
     let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     assignment_service.assign_collection(
         collection_id,
@@ -59,6 +54,12 @@ async fn test_lsm_do_flush_with_bloom_filter() {
             tags: vec![],
         }],
         "hash"
+    ).await.unwrap();
+    
+    let lsm_engine = LsmTree::new(
+        collection_id.to_string(),
+        lsm_config.clone(),
+        filesystem.clone()
     ).await.unwrap();
     
     // Create test vectors with metadata

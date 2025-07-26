@@ -65,6 +65,22 @@ pub struct CompactionStats {
     pub tombstones_removed: u64,
 }
 
+/// Enhanced compaction statistics with vector tracking for AXIS integration
+#[derive(Debug, Clone, Default)]
+pub struct EnhancedCompactionStats {
+    /// Basic compaction statistics
+    pub base_stats: CompactionStats,
+    
+    /// Vector IDs that were deleted (expired or tombstoned)
+    pub deleted_vector_ids: Vec<String>,
+    
+    /// Vectors that were merged/updated
+    pub merged_vectors: Vec<VectorRecord>,
+    
+    /// Whether a full index rebuild is recommended
+    pub recommend_full_rebuild: bool,
+}
+
 /// Manages background compaction of SST files
 #[derive(Debug)]
 pub struct CompactionManager {
@@ -367,6 +383,17 @@ impl CompactionManager {
         atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
         manifest: Option<Arc<super::LsmManifest>>,
     ) -> Result<CompactionStats> {
+        let enhanced_stats = Self::perform_compaction_enhanced(task, _config, atomic_coordinator, manifest).await?;
+        Ok(enhanced_stats.base_stats)
+    }
+    
+    /// Enhanced compaction that tracks vector changes for AXIS integration
+    pub async fn perform_compaction_enhanced(
+        task: &CompactionTask,
+        _config: &LsmConfig,
+        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        manifest: Option<Arc<super::LsmManifest>>,
+    ) -> Result<EnhancedCompactionStats> {
         let start_time = std::time::Instant::now();
         let mut merged_data = BTreeMap::<VectorId, LsmRecord>::new();
         let mut bytes_read = 0u64;
@@ -455,6 +482,10 @@ impl CompactionManager {
         let mut expired_records_count = 0;
         let mut tombstones_removed_count = 0;
         
+        // Track deleted vectors for AXIS
+        let mut deleted_vector_ids = Vec::new();
+        let mut merged_vectors = Vec::new();
+        
         for (id, lsm_record) in merged_data.iter() {
             // Check if record is expired (TTL-based expiry)
             let is_expired = if let Some(expires_at) = lsm_record.expires_at {
@@ -468,6 +499,8 @@ impl CompactionManager {
                 expired_records_count += 1;
                 debug!("⏰ LSM COMPACTION: Physically deleting expired record {} (expired at {})", 
                       id, lsm_record.expires_at.unwrap());
+                // Track deleted vector for AXIS
+                deleted_vector_ids.push(id.to_string());
                 continue;
             }
             
@@ -481,6 +514,8 @@ impl CompactionManager {
                     tombstones_removed_count += 1;
                     debug!("🗑️ LSM COMPACTION: Removing old tombstone {} (age: {}ms)", 
                           id, age);
+                    // Track deleted vector for AXIS
+                    deleted_vector_ids.push(id.to_string());
                 }
                 
                 keep_tombstone
@@ -491,6 +526,12 @@ impl CompactionManager {
             if should_keep {
                 // Convert LsmRecord to VectorRecord for sorting
                 let vector_record: VectorRecord = lsm_record.clone().into();
+                
+                // Track merged vectors for AXIS (non-tombstone records)
+                if !lsm_record.is_tombstone {
+                    merged_vectors.push(vector_record.clone());
+                }
+                
                 vector_records.push(vector_record);
             }
         }
@@ -752,15 +793,20 @@ impl CompactionManager {
             bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len(), expired_records_count, tombstones_removed_count
         );
 
-        Ok(CompactionStats {
-            total_compactions: 1,
-            bytes_written,
-            bytes_read,
-            files_merged: task.input_files.len() as u64,
-            avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
-            last_compaction_time: Some(Utc::now()),
-            expired_records_deleted: expired_records_count,
-            tombstones_removed: tombstones_removed_count,
+        Ok(EnhancedCompactionStats {
+            base_stats: CompactionStats {
+                total_compactions: 1,
+                bytes_written,
+                bytes_read,
+                files_merged: task.input_files.len() as u64,
+                avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
+                last_compaction_time: Some(Utc::now()),
+                expired_records_deleted: expired_records_count,
+                tombstones_removed: tombstones_removed_count,
+            },
+            deleted_vector_ids,
+            merged_vectors,
+            recommend_full_rebuild: false,
         })
     }
 
@@ -870,6 +916,11 @@ impl Drop for CompactionManager {
         }
     }
 }
+
+// Test module for vector tracking during compaction
+#[cfg(test)]
+#[path = "compaction_vector_tracking_tests.rs"]
+mod vector_tracking_tests;
 
 #[cfg(test)]
 mod tests {

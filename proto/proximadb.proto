@@ -55,6 +55,7 @@ enum IndexingAlgorithm {
   PQ = 3;
   FLAT = 4;
   ANNOY = 5;
+  LSH = 6;
 }
 
 enum CollectionOperation {
@@ -168,16 +169,17 @@ message IndexConfig {
   optional FlatConfig flat_config = 9;             // Configuration for flat/brute-force index
   optional PqConfig pq_config = 10;                // Configuration for product quantization index
   optional AnnoyConfig annoy_config = 11;          // Configuration for Annoy index
+  optional LshConfig lsh_config = 12;              // Configuration for LSH index
   
   // Performance tuning
-  optional int32 build_concurrency = 12;           // Parallel index building
-  optional int64 memory_limit_mb = 13;             // Memory limit per index
-  optional int32 checkpoint_interval_ms = 14;      // Index checkpoint frequency
+  optional int32 build_concurrency = 13;           // Parallel index building
+  optional int64 memory_limit_mb = 14;             // Memory limit per index
+  optional int32 checkpoint_interval_ms = 15;      // Index checkpoint frequency
   
   // Index usage configuration
-  bool is_primary = 15;                            // Whether this is the primary index
-  repeated string use_cases = 16;                  // When to use this index (e.g., "high_recall", "fast_search")
-  optional float selectivity_threshold = 17;       // Use this index when query selectivity is above threshold
+  bool is_primary = 16;                            // Whether this is the primary index
+  repeated string use_cases = 17;                  // When to use this index (e.g., "high_recall", "fast_search")
+  optional float selectivity_threshold = 18;       // Use this index when query selectivity is above threshold
 }
 
 // Index update behavior modes
@@ -234,6 +236,23 @@ message AnnoyConfig {
   int32 search_k = 2;                             // Search parameter (default: -1)
   int32 max_leaf_size = 3;                        // Maximum leaf size (default: 100)
   bool enable_mmap = 4;                           // Memory-map index files (default: true)
+}
+
+// LSH index configuration
+message LshConfig {
+  int32 n_hash_tables = 1;                        // Number of hash tables (default: 10)
+  int32 n_hash_functions = 2;                      // Hash functions per table (default: 8) 
+  float bucket_width = 3;                         // Bucket width for LSH (default: 4.0)
+  bool binary_vectors = 4;                        // Support binary vectors (default: false)
+  int32 max_candidates = 5;                       // Max candidates to check (default: 100)
+  RandomProjectionType projection = 6;            // Projection type (default: GAUSSIAN)
+}
+
+// Random projection types for LSH
+enum RandomProjectionType {
+  GAUSSIAN = 0;                                   // Gaussian random projection
+  BINARY = 1;                                     // Binary random projection  
+  SPARSE = 2;                                     // Sparse random projection
 }
 
 // Comprehensive quantization configuration with storage-aware strategies

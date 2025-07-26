@@ -15,7 +15,7 @@ from typing import Generator, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
+from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
 from proximadb.exceptions import ProximaDBError
 
 
@@ -195,6 +195,67 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "large_data: marks tests that work with large datasets"
     )
+
+
+# Additional fixtures for integration tests
+@pytest.fixture
+def client(rest_client):
+    """Alias for rest_client to match integration test expectations"""
+    return rest_client
+
+@pytest.fixture
+def cleanup_collection(unique_collection_name):
+    """Collection name that will be automatically cleaned up"""
+    return unique_collection_name
+
+@pytest.fixture(scope="session")
+def corpus_data():
+    """Generate sample corpus data for integration tests"""
+    try:
+        # Create a smaller sample corpus for unit tests (reduced from 10MB)
+        sample_docs = [
+            {
+                "id": f"doc_{i}",
+                "text": f"Sample document {i} about technology and innovation in artificial intelligence",
+                "category": "technology" if i % 2 == 0 else "science",
+                "importance": i % 10,
+                "author": f"Author_{i % 3}"
+            }
+            for i in range(100)  # 100 documents instead of 10MB
+        ]
+        return sample_docs
+    except Exception as e:
+        logging.warning(f"Failed to create corpus data: {e}")
+        return None
+
+@pytest.fixture(scope="session")
+def bert_service():
+    """BERT embedding service for tests"""
+    try:
+        # Try to import sentence_transformers
+        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer("all-MiniLM-L6-v2")  # 384 dimensions
+    except ImportError:
+        logging.warning("sentence-transformers not available, skipping BERT service")
+        return None
+    except Exception as e:
+        logging.warning(f"Failed to create BERT service: {e}")
+        return None
+
+@pytest.fixture(scope="session")
+def cached_embeddings(corpus_data, bert_service):
+    """Pre-computed embeddings for corpus data"""
+    if not corpus_data or not bert_service:
+        logging.warning("Corpus data or BERT service not available")
+        return None
+    
+    try:
+        texts = [doc["text"] for doc in corpus_data]
+        embeddings = bert_service.encode(texts, show_progress_bar=False)
+        return embeddings.tolist()  # Convert to list for JSON serialization
+    except Exception as e:
+        logging.warning(f"Failed to compute embeddings: {e}")
+        return None
 
 
 # Pytest hooks

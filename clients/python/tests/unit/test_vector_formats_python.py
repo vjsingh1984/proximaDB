@@ -4,15 +4,15 @@ Test vector insertion with both 1D and 2D array formats using ProximaDB Python S
 Tests single vector insertion and bulk vector insertion comprehensively
 """
 
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/unit/test_vector_formats_python.py
+
 import sys
 import time
 import random
 import numpy as np
 from typing import List, Dict, Any
 import asyncio
-
-# Add the Python client to path
-sys.path.insert(0, '../clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from proximadb.exceptions import ProximaDBError

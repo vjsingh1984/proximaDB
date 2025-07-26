@@ -282,8 +282,8 @@ mod tests {
             return;
         }
 
-        let a = vec![1.0, 2.0, 3.0, 4.0; 64];
-        let b = vec![4.0, 3.0, 2.0, 1.0; 64];
+        let a = vec![1.0; 256];
+        let b = vec![0.5; 256];
         
         let calc = CosineAvx512;
         let distance = calc.distance(&a, &b);

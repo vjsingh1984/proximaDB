@@ -778,4 +778,78 @@ impl UnifiedHandlers {
                 c.config.as_ref().map(|cfg| cfg.name == collection_id).unwrap_or(false)
             }))
     }
+    
+    /// Execute SQL query with vector similarity support
+    /// 
+    /// Supports queries like:
+    /// ```sql
+    /// SELECT id, metadata, distance
+    /// FROM my_collection
+    /// WHERE metadata.category = 'electronics'
+    /// ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
+    /// LIMIT 10
+    /// ```
+    pub async fn execute_sql_query(
+        &self,
+        query: String,
+        parameters: Option<Vec<serde_json::Value>>,
+        collection: Option<String>,
+    ) -> Result<SqlQueryResult> {
+        use crate::query::sql_engine::{SqlEngine, SqlExecutionResult};
+        
+        info!("Executing SQL query: {}", query);
+        
+        // TODO: Support parameterized queries in future
+        if parameters.is_some() {
+            return Err(anyhow!("Parameterized queries not yet supported"));
+        }
+        
+        // TODO: Handle collection hint in future
+        if let Some(coll) = collection {
+            debug!("Collection hint provided: {}", coll);
+        }
+        
+        // Create SQL engine instance
+        let sql_engine = SqlEngine::new(self.direct_vector_service.clone());
+        
+        // Execute the query
+        let result = sql_engine.execute(&query).await
+            .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
+        
+        // Convert SqlExecutionResult to our format
+        let rows: Vec<serde_json::Value> = result.rows.into_iter()
+            .map(|row| serde_json::Value::Object(
+                row.data.into_iter()
+                    .map(|(k, v)| (k, v))
+                    .collect()
+            ))
+            .collect();
+        
+        // Extract column information from the first row
+        let columns = if let Some(first_row) = rows.first() {
+            if let serde_json::Value::Object(map) = first_row {
+                map.keys()
+                    .map(|key| (key.clone(), "unknown".to_string())) // TODO: Type inference
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+        
+        Ok(SqlQueryResult {
+            rows,
+            columns,
+            row_count: result.stats.rows_returned,
+        })
+    }
+}
+
+/// SQL query result structure
+#[derive(Debug)]
+pub struct SqlQueryResult {
+    pub rows: Vec<serde_json::Value>,
+    pub columns: Vec<(String, String)>, // (name, type)
+    pub row_count: usize,
 }

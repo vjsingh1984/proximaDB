@@ -13,8 +13,9 @@ This test demonstrates the complete ProximaDB functionality:
 All tests use the real ProximaDB server, not mocks or simulations.
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_10mb_real_server_integration.py
+
 import json
 import time
 import numpy as np
@@ -23,9 +24,6 @@ from typing import List, Dict, Any, Tuple
 import uuid
 from datetime import datetime
 import asyncio
-
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService

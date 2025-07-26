@@ -20,6 +20,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 
 use super::parser::{ParsedQuery, SelectField, WhereClause, Condition, ComparisonOp, Value, OrderType};
@@ -144,25 +145,56 @@ impl QueryPlanner {
     fn convert_where_clause(&self, where_clause: &WhereClause) -> Result<MetadataFilter> {
         let mut conditions = HashMap::new();
         
-        // For now, only support simple equality conditions
+        // For now, only support simple equality and IN conditions
         match &where_clause.condition {
             Condition::Comparison { field, operator, value } => {
-                if !matches!(operator, ComparisonOp::Eq) {
-                    return Err(anyhow!("Only equality comparisons supported for now"));
+                match operator {
+                    ComparisonOp::Eq => {
+                        let json_value = match value {
+                            Value::String(s) => serde_json::Value::String(s.clone()),
+                            Value::Number(n) => serde_json::Value::Number(
+                                serde_json::Number::from_f64(*n)
+                                    .ok_or_else(|| anyhow!("Invalid number"))?
+                            ),
+                            Value::Bool(b) => serde_json::Value::Bool(*b),
+                            Value::Null => serde_json::Value::Null,
+                            Value::Vector(_) => return Err(anyhow!("Vector values not supported in WHERE")),
+                            Value::List(_) => return Err(anyhow!("List values not supported with = operator")),
+                        };
+                        
+                        conditions.insert(field.clone(), json_value);
+                    }
+                    ComparisonOp::In => {
+                        // For IN operator, we store the list as a special JSON structure
+                        // that the search implementation can interpret
+                        if let Value::List(values) = value {
+                            let json_values: Result<Vec<serde_json::Value>> = values.iter().map(|v| {
+                                match v {
+                                    Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+                                    Value::Number(n) => Ok(serde_json::Value::Number(
+                                        serde_json::Number::from_f64(*n)
+                                            .ok_or_else(|| anyhow!("Invalid number"))?
+                                    )),
+                                    Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+                                    Value::Null => Ok(serde_json::Value::Null),
+                                    _ => Err(anyhow!("Complex values not supported in IN clause")),
+                                }
+                            }).collect();
+                            
+                            let json_values = json_values?;
+                            
+                            // Store as a special object that indicates IN operation
+                            let in_obj = serde_json::json!({
+                                "$in": json_values
+                            });
+                            
+                            conditions.insert(field.clone(), in_obj);
+                        } else {
+                            return Err(anyhow!("IN operator requires a list of values"));
+                        }
+                    }
+                    _ => return Err(anyhow!("Operator {:?} not supported for metadata filters yet", operator)),
                 }
-                
-                let json_value = match value {
-                    Value::String(s) => serde_json::Value::String(s.clone()),
-                    Value::Number(n) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*n)
-                            .ok_or_else(|| anyhow!("Invalid number"))?
-                    ),
-                    Value::Bool(b) => serde_json::Value::Bool(*b),
-                    Value::Null => serde_json::Value::Null,
-                    Value::Vector(_) => return Err(anyhow!("Vector values not supported in WHERE")),
-                };
-                
-                conditions.insert(field.clone(), json_value);
             }
             _ => return Err(anyhow!("Complex conditions not supported yet")),
         }

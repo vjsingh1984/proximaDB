@@ -25,11 +25,13 @@ pub mod algorithms;
 pub mod distance;
 pub mod hardware;
 pub mod hardware_detection;
-pub mod indexing;
+// pub mod indexing;  // Removed - all indexing now in AXIS package
 // pub mod quantization;  // Removed - use unified_quantization instead
 pub mod unified_distance;
 pub mod memory_layout;
 pub mod unified_quantization;
+#[cfg(feature = "gpu")]
+pub mod gpu_distance;
 
 // Unit tests - will be added as modules are completed
 // #[cfg(test)]

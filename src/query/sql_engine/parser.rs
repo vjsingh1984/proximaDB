@@ -100,6 +100,7 @@ pub enum ComparisonOp {
     Gt,
     Ge,
     Like,
+    In,
 }
 
 /// Value types in conditions
@@ -110,6 +111,7 @@ pub enum Value {
     Bool(bool),
     Null,
     Vector(Vec<f32>),
+    List(Vec<Value>),
 }
 
 /// ORDER BY clause
@@ -132,7 +134,7 @@ pub enum OrderType {
 }
 
 /// Sort direction
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SortDirection {
     Asc,
     Desc,
@@ -240,22 +242,113 @@ impl SqlParser {
     
     /// Parse WHERE clause
     fn parse_where_clause(&mut self) -> Result<WhereClause> {
-        let condition = self.parse_condition()?;
+        let condition = self.parse_or_condition()?;
         Ok(WhereClause { condition })
+    }
+    
+    /// Parse OR conditions (lowest precedence)
+    fn parse_or_condition(&mut self) -> Result<Condition> {
+        let mut left = self.parse_and_condition()?;
+        
+        while self.check_keyword("OR") {
+            self.consume_keyword("OR");
+            let right = self.parse_and_condition()?;
+            left = Condition::Or(Box::new(left), Box::new(right));
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse AND conditions (higher precedence than OR)
+    fn parse_and_condition(&mut self) -> Result<Condition> {
+        let mut left = self.parse_not_condition()?;
+        
+        while self.check_keyword("AND") {
+            self.consume_keyword("AND");
+            let right = self.parse_not_condition()?;
+            left = Condition::And(Box::new(left), Box::new(right));
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse NOT conditions
+    fn parse_not_condition(&mut self) -> Result<Condition> {
+        if self.check_keyword("NOT") {
+            self.consume_keyword("NOT");
+            let condition = self.parse_primary_condition()?;
+            Ok(Condition::Not(Box::new(condition)))
+        } else {
+            self.parse_primary_condition()
+        }
+    }
+    
+    /// Parse primary condition (comparison or parenthesized expression)
+    fn parse_primary_condition(&mut self) -> Result<Condition> {
+        // Check for parentheses
+        if self.check_char('(') {
+            self.consume_char('(');
+            let condition = self.parse_or_condition()?;
+            if !self.consume_char(')') {
+                return Err(anyhow!("Expected ')' at position {}", self.position));
+            }
+            Ok(condition)
+        } else {
+            // Parse comparison
+            self.parse_condition()
+        }
     }
     
     /// Parse condition
     fn parse_condition(&mut self) -> Result<Condition> {
-        // Simple implementation - just parse comparison for now
-        let field = self.parse_identifier()?;
+        // Parse field which may include JSON path operators
+        let field = self.parse_field_with_json_path()?;
         let operator = self.parse_comparison_op()?;
-        let value = self.parse_value()?;
+        
+        // Special handling for IN operator - expect a list
+        let value = if matches!(operator, ComparisonOp::In) {
+            self.parse_value_list()?
+        } else {
+            self.parse_value()?
+        };
         
         Ok(Condition::Comparison {
             field,
             operator,
             value,
         })
+    }
+    
+    /// Parse field that may include JSON path operators like ->>'key'
+    fn parse_field_with_json_path(&mut self) -> Result<String> {
+        // First parse the base field name
+        let mut field = self.parse_identifier()?;
+        
+        // Check for JSON operators
+        self.skip_whitespace();
+        if self.check_chars("->>") {
+            self.position += 3; // consume ->>'
+            self.skip_whitespace();
+            
+            // Parse the JSON key (must be a string literal)
+            if !self.check_char('\'') {
+                return Err(anyhow!("Expected string literal after ->> at position {}", self.position));
+            }
+            
+            let json_key = self.parse_string_literal()?;
+            // Convert to metadata field access notation
+            field = format!("{}.{}", field, json_key);
+        } else if self.check_chars("->") {
+            self.position += 2; // consume ->
+            self.skip_whitespace();
+            
+            // Parse the JSON key
+            let json_key = self.parse_string_literal()?;
+            // Convert to metadata field access notation
+            field = format!("{}.{}", field, json_key);
+        }
+        
+        Ok(field)
     }
     
     /// Parse comparison operator
@@ -286,9 +379,48 @@ impl SqlParser {
         } else if self.check_keyword("LIKE") {
             self.consume_keyword("LIKE");
             Ok(ComparisonOp::Like)
+        } else if self.check_keyword("IN") {
+            self.consume_keyword("IN");
+            Ok(ComparisonOp::In)
         } else {
             Err(anyhow!("Expected comparison operator at position {}", self.position))
         }
+    }
+    
+    /// Parse value list for IN operator
+    fn parse_value_list(&mut self) -> Result<Value> {
+        self.skip_whitespace();
+        self.expect_char('(')?;
+        
+        let mut values = Vec::new();
+        
+        loop {
+            self.skip_whitespace();
+            
+            // Check for empty list
+            if self.check_char(')') {
+                self.position += 1;
+                break;
+            }
+            
+            // Parse individual value
+            let value = self.parse_value()?;
+            values.push(value);
+            
+            // Check for comma or closing paren
+            self.skip_whitespace();
+            if self.check_char(',') {
+                self.position += 1;
+                continue;
+            } else if self.check_char(')') {
+                self.position += 1;
+                break;
+            } else {
+                return Err(anyhow!("Expected ',' or ')' in value list at position {}", self.position));
+            }
+        }
+        
+        Ok(Value::List(values))
     }
     
     /// Parse value
@@ -413,6 +545,12 @@ impl SqlParser {
         }
     }
     
+    fn check_chars(&mut self, chars: &str) -> bool {
+        self.skip_whitespace();
+        let remaining = &self.query[self.position..];
+        remaining.starts_with(chars)
+    }
+    
     fn consume_char(&mut self, ch: char) -> bool {
         if self.check_char(ch) {
             self.position += 1;
@@ -422,17 +560,6 @@ impl SqlParser {
         }
     }
     
-    fn check_chars(&mut self, chars: &str) -> bool {
-        self.skip_whitespace();
-        let remaining = &self.query[self.position..];
-        
-        if remaining.starts_with(chars) {
-            self.position += chars.len();
-            true
-        } else {
-            false
-        }
-    }
     
     fn expect_char(&mut self, ch: char) -> Result<()> {
         if !self.consume_char(ch) {

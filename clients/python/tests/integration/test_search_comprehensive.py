@@ -4,8 +4,9 @@ Comprehensive Vector Search Test for ProximaDB with BERT Embeddings
 Tests search by ID, metadata filtering, and similarity search on 10MB corpus
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_search_comprehensive.py
+
 import json
 import time
 import asyncio
@@ -13,9 +14,6 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 import uuid
-
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService, create_sample_corpus

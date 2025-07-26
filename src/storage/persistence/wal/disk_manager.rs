@@ -317,13 +317,23 @@ impl WalDiskManager {
         let dir_url = format!("file://{}/", dir_path.display());
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
         
-        if !filesystem.exists(&dir_url).await? {
-            debug!("Creating directory recursively: {}", dir_url);
-            filesystem.create_dir_all(&dir_url).await
-                .context("Failed to create directory")?;
+        // Try to create directory - if it already exists, that's fine
+        match filesystem.create_dir_all(&dir_url).await {
+            Ok(_) => {
+                debug!("Created directory: {}", dir_url);
+                Ok(())
+            }
+            Err(e) => {
+                // Check if directory exists after the error
+                if filesystem.exists(&dir_url).await? {
+                    debug!("Directory already exists (created by another thread): {}", dir_url);
+                    Ok(())
+                } else {
+                    // Real error - directory creation failed
+                    Err(anyhow::anyhow!("Failed to create directory: {}", e))
+                }
+            }
         }
-        
-        Ok(())
     }
 }
 
@@ -331,7 +341,6 @@ impl WalDiskManager {
 mod tests {
     use super::*;
     use crate::storage::persistence::filesystem::FilesystemConfig;
-    use crate::core::VectorRecord;
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (WalDiskManager, TempDir) {

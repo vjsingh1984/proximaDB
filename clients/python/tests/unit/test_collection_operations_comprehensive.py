@@ -63,7 +63,17 @@ class TestCollectionCRUD:
             if isinstance(collections[0], str):
                 collection_names = collections
             else:
-                collection_names = [getattr(col, 'id', getattr(col, 'name', str(col))) for col in collections]
+                # Check both id and config.name for collections
+                collection_names = []
+                for col in collections:
+                    if hasattr(col, 'config') and hasattr(col.config, 'name'):
+                        collection_names.append(col.config.name)
+                    elif hasattr(col, 'name'):
+                        collection_names.append(col.name)
+                    elif hasattr(col, 'id'):
+                        collection_names.append(col.id)
+                    else:
+                        collection_names.append(str(col))
         else:
             collection_names = []
         assert collection_name in collection_names
@@ -82,7 +92,7 @@ class TestCollectionCRUD:
     def test_collection_lifecycle_grpc(self, grpc_client, collection_name):
         """Test complete collection lifecycle via gRPC"""
         config = CollectionConfig(
-            name="test_collection",
+            name=collection_name,
             dimension=256,
             distance_metric=DistanceMetric.DOT_PRODUCT,
             description="gRPC test collection"
@@ -125,8 +135,23 @@ class TestCollectionCRUD:
         grpc_collections = grpc_client.list_collections()
         
         # Both should see the collection
-        rest_names = [getattr(col, 'id', getattr(col, 'name', None)) for col in rest_collections]
-        grpc_names = [getattr(col, 'id', getattr(col, 'name', None)) for col in grpc_collections]
+        rest_names = []
+        for col in rest_collections:
+            if hasattr(col, 'config') and hasattr(col.config, 'name'):
+                rest_names.append(col.config.name)
+            elif hasattr(col, 'name'):
+                rest_names.append(col.name)
+            elif hasattr(col, 'id'):
+                rest_names.append(col.id)
+                
+        grpc_names = []
+        for col in grpc_collections:
+            if hasattr(col, 'config') and hasattr(col.config, 'name'):
+                grpc_names.append(col.config.name)
+            elif hasattr(col, 'name'):
+                grpc_names.append(col.name)
+            elif hasattr(col, 'id'):
+                grpc_names.append(col.id)
         
         assert collection_name in rest_names
         assert collection_name in grpc_names
@@ -219,7 +244,7 @@ class TestCollectionConfiguration:
         ]
         
         for algo in algorithms:
-            config = CollectionConfig(name="test", dimension=128, primary_indexing_algorithm=algo)
+            config = CollectionConfig(name="test_algo_config", dimension=128, primary_indexing_algorithm=algo)
             assert config.primary_indexing_algorithm == algo
     
     def test_storage_engines(self):
@@ -232,7 +257,7 @@ class TestCollectionConfiguration:
         ]
         
         for engine in engines:
-            config = CollectionConfig(name="test", dimension=128, storage_engine=engine)
+            config = CollectionConfig(name="test_engine_config", dimension=128, storage_engine=engine)
             assert config.storage_engine == engine
     
     def test_collection_with_filterable_columns(self):

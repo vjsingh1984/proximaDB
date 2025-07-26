@@ -43,9 +43,9 @@ Complete development guide for the proto-first ProximaDB architecture, including
 
 === Current Development Status
 
-[cols="3,2,2,3"]
+[cols="3,2,2,3", options="header"]
 |===
-|**Component** |**Status** |**Quality** |**Performance**
+|Component |Status |Quality |Performance
 
 |🏗️ **Proto-First Architecture**
 |✅ Complete 
@@ -76,12 +76,11 @@ Complete development guide for the proto-first ProximaDB architecture, including
 |✅ Complete
 |S3/Azure/GCS ready
 |Zero-downtime migration
-|===
-|Proto-first architecture
 
 |📦 **API Support**
 |✅ REST & gRPC
 |100% feature parity
+|Proto-first architecture
 |===
 
 == Getting Started
@@ -980,9 +979,33 @@ for result in results:
 
 === SQL Query Engine Usage
 
-ProximaDB includes a powerful SQL query engine that supports vector similarity search alongside traditional SQL operations.
+ProximaDB includes a powerful SQL query engine that supports vector similarity search alongside traditional SQL operations. The SQL engine is currently implemented in the core but will be exposed through REST and gRPC APIs in the next release.
 
-==== Basic Vector Search
+==== SQL Engine Architecture
+
+[source,text]
+----
+SQL Query → Parser → Query Planner → Execution Engine → Results
+             ↓           ↓               ↓
+         ParsedQuery  ExecutionPlan  DirectVectorService
+----
+
+==== Supported SQL Features
+
+===== VECTOR_SIMILARITY Function
+The `VECTOR_SIMILARITY` function is the core of ProximaDB's SQL support:
+
+[source,sql]
+----
+VECTOR_SIMILARITY(vector_column, query_vector, distance_metric)
+----
+
+**Parameters:**
+- `vector_column`: The vector field to search (usually 'vector')
+- `query_vector`: Array of floats representing the query vector
+- `distance_metric`: One of 'cosine', 'euclidean', 'dot_product', 'hamming'
+
+===== Basic Vector Search
 [source,sql]
 ----
 SELECT id, metadata,
@@ -992,7 +1015,7 @@ ORDER BY similarity DESC
 LIMIT 10
 ----
 
-==== Filtered Vector Search
+===== Filtered Vector Search with Metadata
 [source,sql]
 ----
 SELECT id, metadata, 
@@ -1000,26 +1023,48 @@ SELECT id, metadata,
 FROM my_collection
 WHERE metadata->>'category' = 'electronics'
   AND CAST(metadata->>'price' AS FLOAT) < 100.0
+  AND metadata->>'status' IN ('active', 'featured')
 ORDER BY similarity DESC
 LIMIT 10
 ----
 
-==== Aggregation with Vector Search
+===== Aggregation with Vector Search
 [source,sql]
 ----
 SELECT metadata->>'category' as category,
        COUNT(*) as count,
-       AVG(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as avg_similarity
+       AVG(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as avg_similarity,
+       MAX(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as max_similarity
 FROM my_collection
 WHERE VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine') > 0.7
 GROUP BY metadata->>'category'
 ORDER BY avg_similarity DESC
 ----
 
-==== Python SDK SQL Example
+===== Complex Joins (Planned)
+[source,sql]
+----
+SELECT p.id, p.metadata, u.user_preferences,
+       VECTOR_SIMILARITY(p.vector, u.preference_vector, 'cosine') as relevance
+FROM products p
+JOIN user_profiles u ON p.metadata->>'target_audience' = u.metadata->>'segment'
+WHERE u.user_id = 'user123'
+  AND VECTOR_SIMILARITY(p.vector, u.preference_vector, 'cosine') > 0.8
+ORDER BY relevance DESC
+LIMIT 20
+----
+
+==== Python SDK SQL Usage (Coming Soon)
+
+The SQL interface will be available through both REST and gRPC protocols:
+
+===== REST API SQL Endpoint (Planned)
 [source,python]
 ----
-# Using SQL through Python SDK
+import requests
+import json
+
+# SQL query through REST API
 query = """
     SELECT id, metadata,
            VECTOR_SIMILARITY(vector, ARRAY[%s], 'cosine') as similarity
@@ -1030,15 +1075,93 @@ query = """
     LIMIT 5
 """
 
-results = await client.execute_sql(
-    query,
-    parameters=[query_vector.tolist()]
+response = requests.post(
+    "http://localhost:5678/v1/sql/execute",
+    json={
+        "query": query,
+        "parameters": [query_vector.tolist()],
+        "collection": "products"
+    }
 )
 
-for row in results:
-    print(f"Product: {row['id']}, Similarity: {row['similarity']:.4f}")
-    print(f"Metadata: {row['metadata']}")
+results = response.json()
 ----
+
+===== Python SDK with SQL Support (Planned)
+[source,python]
+----
+from proximadb import connect_rest, SqlQuery
+
+# Future SQL support in Python SDK
+client = connect_rest("http://localhost:5678")
+
+# Method 1: Direct SQL execution
+results = await client.execute_sql(
+    query="""
+        SELECT id, metadata,
+               VECTOR_SIMILARITY(vector, :query_vector, 'cosine') as similarity
+        FROM products
+        WHERE metadata->>'category' = :category
+        ORDER BY similarity DESC
+        LIMIT :limit
+    """,
+    parameters={
+        "query_vector": query_vector.tolist(),
+        "category": "electronics",
+        "limit": 10
+    }
+)
+
+# Method 2: SQL Query Builder (planned)
+query = (SqlQuery()
+    .select("id", "metadata")
+    .vector_similarity("vector", query_vector, "cosine", alias="score")
+    .from_collection("products")
+    .where_metadata("category", "=", "electronics")
+    .where_metadata("price", "<", 1000)
+    .order_by("score", descending=True)
+    .limit(10))
+
+results = await client.execute(query)
+----
+
+==== SQL Engine Internal Implementation
+
+The SQL engine is currently implemented in `/src/query/sql_engine/` with three main components:
+
+1. **Parser** (`parser.rs`): Converts SQL strings to AST
+2. **Planner** (`planner.rs`): Creates optimized execution plans
+3. **Executor** (`executor.rs`): Executes plans using DirectVectorService
+
+[source,rust]
+----
+// Current internal implementation
+let sql_engine = SqlEngine::new(vector_service);
+let result = sql_engine.execute(
+    "SELECT * FROM collection WHERE VECTOR_SIMILARITY(vector, ARRAY[...], 'cosine') > 0.8"
+).await?;
+----
+
+==== Performance Optimization Tips
+
+1. **Use metadata filters first** to reduce the search space
+2. **Specify appropriate LIMIT** to avoid processing unnecessary results
+3. **Use indexed metadata fields** for faster filtering
+4. **Batch multiple queries** when possible
+5. **Consider using quantization** for approximate but faster results
+
+==== SQL vs Direct API Comparison
+
+[cols="2,3,3", options="header"]
+|===
+|Feature |SQL Query |Direct API
+|Syntax complexity |Higher (SQL knowledge required) |Lower (method calls)
+|Flexibility |Very high (complex queries) |Moderate (predefined operations)
+|Performance |Slight overhead (~5%) |Direct access
+|Metadata filtering |Native SQL WHERE clause |Filter objects
+|Aggregations |Full SQL support |Limited
+|Joins |Supported (planned) |Not supported
+|===
 
 === Protocol Performance Comparison
 
@@ -1093,6 +1216,168 @@ config = CollectionConfig(
 |100 threads |18,200 |42,100 |2.31x
 |===
 
+=== Rate Limiting and Quotas
+
+ProximaDB implements comprehensive rate limiting to ensure fair resource usage and prevent system overload.
+
+==== Rate Limit Configuration
+
+[source,rust]
+----
+pub struct RateLimitConfig {
+    pub enabled: bool,                    // Enable/disable rate limiting
+    pub max_requests: u32,                // Max requests per window
+    pub window_duration: Duration,        // Time window (default: 60s)
+    pub limit_health_endpoints: bool,     // Apply to health checks
+    pub global_max_requests: Option<u32>, // Global limit across all IPs
+}
+----
+
+==== Default Rate Limits
+
+[cols="2,2,2,2", options="header"]
+|===
+|Endpoint Type |Per-IP Limit |Window |Global Limit
+|Vector Operations |10,000 req |60 seconds |100,000 req
+|Collection Management |100 req |60 seconds |1,000 req
+|Search Operations |1,000 req |60 seconds |10,000 req
+|Health Endpoints |Unlimited |N/A |N/A
+|===
+
+==== Rate Limit Headers
+
+When rate limiting is active, responses include:
+- `X-RateLimit-Limit`: Maximum requests allowed
+- `X-RateLimit-Remaining`: Requests remaining in window
+- `X-RateLimit-Reset`: Window reset timestamp
+- `Retry-After`: Seconds to wait (on 429 responses)
+
+==== Handling Rate Limits in Python SDK
+
+[source,python]
+----
+from proximadb import connect_rest
+from proximadb.exceptions import ProximaDBError
+import time
+
+client = connect_rest("http://localhost:5678")
+
+def with_retry(func, max_retries=3):
+    """Decorator to handle rate limiting with exponential backoff"""
+    def wrapper(*args, **kwargs):
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except ProximaDBError as e:
+                if "QUOTA_EXCEEDED" in str(e) or "429" in str(e):
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        print(f"Rate limited, waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                raise
+        return None
+    return wrapper
+
+# Usage example
+@with_retry
+def insert_batch(collection_id, vectors):
+    return client.insert_vectors(collection_id, vectors)
+----
+
+==== REST API Request Size Limits
+
+[cols="2,2,3", options="header"]
+|===
+|Limit Type |Value |Applies To
+|Max Request Body |10 MB |All POST/PUT requests
+|Max Vector Batch |500 vectors |Insert operations
+|Max Search Results |10,000 |Search operations
+|Max Metadata Size |1 MB |Per vector metadata
+|===
+
+==== gRPC Message Size Limits
+
+[cols="2,2,3", options="header"]
+|===
+|Limit Type |Value |Applies To
+|Max Message Size |64 MB |All gRPC messages
+|Max Vector Batch |25,000 vectors |Insert operations
+|Stream Chunk Size |4 MB |Streaming operations
+|===
+
+==== Common Rate Limit Scenarios
+
+===== Bulk Import
+[source,python]
+----
+# Split large dataset into manageable chunks
+def bulk_import(collection_id, all_vectors, chunk_size=500):
+    """Import vectors with rate limit awareness"""
+    total = len(all_vectors)
+    imported = 0
+    
+    for i in range(0, total, chunk_size):
+        chunk = all_vectors[i:i+chunk_size]
+        
+        try:
+            client.insert_vectors(collection_id, chunk)
+            imported += len(chunk)
+            print(f"Progress: {imported}/{total} vectors")
+            
+            # Voluntary rate limiting
+            if imported % 5000 == 0:
+                time.sleep(1)  # Brief pause every 5K vectors
+                
+        except ProximaDBError as e:
+            if "QUOTA_EXCEEDED" in str(e):
+                print("Rate limit hit, waiting 60s...")
+                time.sleep(60)
+                # Retry the chunk
+                client.insert_vectors(collection_id, chunk)
+----
+
+===== High-Frequency Search
+[source,python]
+----
+# Implement client-side rate limiting
+from threading import Semaphore
+import asyncio
+
+class RateLimitedClient:
+    def __init__(self, client, max_qps=100):
+        self.client = client
+        self.semaphore = Semaphore(max_qps)
+        self.reset_task = None
+        
+    async def search(self, collection_id, vector, **kwargs):
+        """Rate-limited search"""
+        if not self.semaphore.acquire(blocking=False):
+            # Wait for next window
+            await asyncio.sleep(0.1)
+            return await self.search(collection_id, vector, **kwargs)
+            
+        try:
+            return await self.client.search(collection_id, vector, **kwargs)
+        finally:
+            # Release after 1 second
+            asyncio.create_task(self._release_after(1.0))
+            
+    async def _release_after(self, delay):
+        await asyncio.sleep(delay)
+        self.semaphore.release()
+----
+
+==== Monitoring Rate Limits
+
+[source,python]
+----
+# Check current rate limit status
+response = client._client.get("/v1/health/rate-limit-status")
+print(f"Current usage: {response['current_count']}/{response['limit']}")
+print(f"Resets at: {response['reset_time']}")
+----
+
 === Best Practices
 
 1. **Choose the Right Storage Engine:**
@@ -1115,6 +1400,12 @@ config = CollectionConfig(
    - Use appropriate indexes (bloom filters for LSM)
    - Leverage metadata filtering to reduce search space
    - Consider query complexity when choosing storage engine
+
+6. **Rate Limit Management:**
+   - Implement exponential backoff for retries
+   - Use client-side rate limiting for predictable load
+   - Monitor rate limit headers in responses
+   - Consider upgrading limits for production workloads
 
 == Testing Guide
 

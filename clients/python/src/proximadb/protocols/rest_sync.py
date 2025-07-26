@@ -594,9 +594,9 @@ class ProximaDBClient:
     def search(
         self,
         collection_id: str,
-        query: Union[List[float], np.ndarray],
-        k: int = 10,
-        filter: Optional[FilterDict] = None,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        metadata_filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         optimization_level: str = "high",
@@ -609,9 +609,9 @@ class ProximaDBClient:
         
         Args:
             collection_id: Target collection ID
-            query: Query vector
-            k: Number of results to return
-            filter: Metadata filter conditions
+            vector: Query vector
+            top_k: Number of results to return
+            metadata_filter: Metadata filter conditions
             include_vectors: Include vector data in results
             include_metadata: Include metadata in results
             optimization_level: Search optimization level ('high', 'medium', 'low')
@@ -624,45 +624,38 @@ class ProximaDBClient:
             List of search results ordered by similarity
         """
         # Normalize query vector
-        if isinstance(query, np.ndarray):
-            if query.dtype != np.float32:
-                query = query.astype(np.float32)
-            query = query.tolist()
+        if isinstance(vector, np.ndarray):
+            if vector.dtype != np.float32:
+                vector = vector.astype(np.float32)
+            vector = vector.tolist()
         
-        # Proto-aligned request data with storage-aware optimizations
+        # Simplified request aligned with server expectations
+        query = {"vector": vector}
+        
+        # Add metadata filter if provided  
+        if metadata_filter:
+            # Convert dict to proper filter format
+            query["metadata_filter"] = {
+                "operator": "AND",
+                "conditions": [
+                    {
+                        "field_name": key,
+                        "operation": "EQUALS", 
+                        "value": {"string_value": str(value)}
+                    }
+                    for key, value in metadata_filter.items()
+                ]
+            }
+        
         request_data = {
             "collection_id": collection_id,
-            "queries": [{
-                "vector": query,
-                "id": None,
-                "metadata_filter": None  # TODO: Convert filter format when needed
-            }],
-            "top_k": k,
-            "distance_metric_override": None,
-            "search_parameters": {
-                "batch_size": 1,
-                "timeout_ms": int(timeout * 1000) if timeout else None,
-                "enable_parallel_search": True,
-            },
+            "queries": [query],
+            "top_k": top_k,
             "include_fields": {
                 "vector": include_vectors,
                 "metadata": include_metadata,
                 "score": True,
                 "rank": True
-            },
-            "search_optimization": {
-                "top_k": k,
-                "filters": filter or {},
-                "accuracy_threshold": 0.95 if optimization_level == "high" else 0.85,
-                "include_expired": False,
-                "timeout_ms": int(timeout * 1000) if timeout else None,
-                "enable_two_stage": optimization_level != "low",
-                "enable_clustering_hint": use_storage_aware,
-                "enable_metadata_filtering_hint": bool(filter),
-                "quantization_hint": {
-                    "hint_type": quantization_level.lower().replace("fp32", "none"),
-                    "parameters": None
-                }
             }
         }
         
@@ -674,6 +667,16 @@ class ProximaDBClient:
         )
         
         response_data = response.json()
+        
+        # Check for errors in response
+        if response_data.get("error_message"):
+            error_msg = response_data.get("error_message")
+            if "not found" in error_msg.lower():
+                # For collection not found, return empty results (common pattern)
+                return []
+            else:
+                raise ProximaDBError(f"Search failed: {error_msg}")
+        
         # Handle proto-aligned response format
         if "results" in response_data:
             # Extract search results from results field
@@ -792,15 +795,18 @@ class ProximaDBClient:
             "include_metadata": include_metadata,
         }
         
-        try:
-            response = self._make_request(
-                "GET",
-                f"/api/v1/vector/get/{collection_id}/{vector_id}",
-                params=params
-            )
-            return response.json()
-        except Exception:
-            return None
+        response = self._make_request(
+            "GET",
+            f"/api/v1/vector/get/{collection_id}/{vector_id}",
+            params=params
+        )
+        data = response.json()
+        
+        # Check if vector was found
+        if not data or (isinstance(data, dict) and data.get('error')):
+            raise ProximaDBError(f"Vector not found: {vector_id}")
+        
+        return data
     
     def upsert_vectors(
         self,

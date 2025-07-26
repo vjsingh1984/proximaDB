@@ -18,7 +18,15 @@ mod tests {
 
     /// Create a test Avro batch strategy with temporary directory
     async fn create_test_avro_batch_strategy() -> (AvroSerializationStrategy, TempDir) {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        // Use timestamp-based directory names to avoid URL parsing issues
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let temp_dir = tempfile::Builder::new()
+            .prefix(&format!("wal_test_{}_", timestamp))
+            .tempdir_in("/tmp")
+            .expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
@@ -37,7 +45,15 @@ mod tests {
 
     /// Create a test Bincode batch strategy with temporary directory
     async fn create_test_bincode_batch_strategy() -> (BincodeSerializationStrategy, TempDir) {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        // Use timestamp-based directory names to avoid URL parsing issues
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let temp_dir = tempfile::Builder::new()
+            .prefix(&format!("wal_test_{}_", timestamp))
+            .tempdir_in("/tmp")
+            .expect("Failed to create temp dir");
 
         let mut config = WalConfig::default();
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];

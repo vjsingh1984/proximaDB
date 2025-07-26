@@ -187,13 +187,26 @@ impl LsmUnifiedSearchEngine {
         &self,
         context: &UnifiedSearchContext,
     ) -> Result<Vec<String>> {
-        // In production, this would list actual SSTable files
-        // For now, return placeholder paths
-        Ok(vec![
-            format!("{}/level0_001.sst", context.collection_id),
-            format!("{}/level0_002.sst", context.collection_id),
-            format!("{}/level1_001.sst", context.collection_id),
-        ])
+        // For LSM unified search engine, we need to integrate with the SSTable reader
+        // which already has access to the manifest and file listing capabilities.
+        // For now, just return the SSTable files from the context if available
+        
+        // Check if we have SSTable files in the collection context already
+        // The actual LSM implementation should query the manifest for active SSTable files
+        // This is a temporary implementation that demonstrates the structure
+        
+        debug!("🔍 LSM: Discovering SSTable files for collection {}", context.collection_id);
+        
+        // In a real implementation, this would:
+        // 1. Get the storage assignment for the collection
+        // 2. Query the LSM manifest for active SSTable files  
+        // 3. Return the full file paths
+        
+        // For now, return empty to avoid compilation errors
+        // The actual LSM search implementation in mod.rs already handles this correctly
+        // by querying the manifest directly
+        
+        Ok(Vec::new())
     }
     
     /// Apply optimization hints to reduce files to search

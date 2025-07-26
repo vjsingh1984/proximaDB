@@ -6,15 +6,15 @@ work correctly with vector search operations through the memtable.
 This test validates the fix for the memtable avro payload unified distance test.
 """
 
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_wal_strategies_comprehensive.py
+
 import sys
 import time
 import subprocess
 import pytest
 import numpy as np
 from pathlib import Path
-
-# Add the parent directory to the path to import our modules
-sys.path.insert(0, str(Path(__file__).parent.parent / "clients" / "python" / "src"))
 
 try:
     from proximadb import ProximaDBClient, Protocol

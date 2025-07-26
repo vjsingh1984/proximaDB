@@ -31,7 +31,7 @@ use tracing::info;
 pub use crate::proto::proximadb::DistanceMetric;
 
 /// Platform-agnostic SIMD capability detection
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformCapability {
     Scalar,
     #[cfg(target_arch = "x86_64")]
@@ -281,7 +281,8 @@ impl DistanceCompute for JaccardScalar {
             // Both vectors are zero vectors - identical, so distance = 0
             0.0
         } else {
-            1.0 - (intersection / union)  // Jaccard distance
+            // Clamp result to [0, 1] to handle edge cases with negative values
+            (1.0 - (intersection / union)).clamp(0.0, 1.0)
         }
     }
 
@@ -344,7 +345,8 @@ impl DistanceCompute for GenericScalar {
                     // Both vectors are zero vectors
                     0.0  // Identical, so distance = 0
                 } else {
-                    1.0 - (intersection / union)  // Jaccard distance
+                    // Clamp result to [0, 1] to handle edge cases with negative values
+                    (1.0 - (intersection / union)).clamp(0.0, 1.0)
                 }
             }
             DistanceMetric::Custom => {
@@ -375,6 +377,70 @@ impl DistanceCompute for GenericScalar {
 mod x86_implementations {
     use super::*;
     use std::arch::x86_64::*;
+    
+    // AVX-512 implementations
+    pub struct CosineAvx512;
+    impl DistanceCompute for CosineAvx512 {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            debug_assert_eq!(a.len(), b.len());
+            // AVX-512 temporarily disabled
+            unsafe { cosine_distance_avx2(a, b) }
+        }
+
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            vectors.iter().map(|v| self.distance(query, v)).collect()
+        }
+
+        fn is_similarity(&self) -> bool {
+            false
+        }
+
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Cosine
+        }
+    }
+
+    pub struct EuclideanAvx512;
+    impl DistanceCompute for EuclideanAvx512 {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            debug_assert_eq!(a.len(), b.len());
+            // AVX-512 temporarily disabled
+            unsafe { euclidean_distance_avx2(a, b) }
+        }
+
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            vectors.iter().map(|v| self.distance(query, v)).collect()
+        }
+
+        fn is_similarity(&self) -> bool {
+            false
+        }
+
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::Euclidean
+        }
+    }
+
+    pub struct DotProductAvx512;
+    impl DistanceCompute for DotProductAvx512 {
+        fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+            debug_assert_eq!(a.len(), b.len());
+            // AVX-512 temporarily disabled
+            unsafe { dot_product_avx2(a, b) }
+        }
+
+        fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
+            vectors.iter().map(|v| self.distance(query, v)).collect()
+        }
+
+        fn is_similarity(&self) -> bool {
+            true
+        }
+
+        fn metric(&self) -> DistanceMetric {
+            DistanceMetric::DotProduct
+        }
+    }
 
     pub struct CosineAvx2;
     impl DistanceCompute for CosineAvx2 {
@@ -440,6 +506,78 @@ mod x86_implementations {
         _mm_cvtss_f32(v32)
     }
 
+    // AVX-512 implementations
+    // AVX-512 disabled (unstable feature) - fallback to AVX2
+    #[allow(dead_code)]
+    unsafe fn cosine_distance_avx512(a: &[f32], b: &[f32]) -> f32 {
+        // AVX-512 intrinsics disabled - using AVX2 fallback
+        cosine_distance_avx2(a, b)
+    }
+
+    // AVX-512 disabled (unstable feature) - fallback to AVX2
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
+        let chunks = a.len() / 8;
+        let mut sum = _mm256_setzero_ps();
+
+        for i in 0..chunks {
+            let offset = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            let diff = _mm256_sub_ps(va, vb);
+            sum = _mm256_fmadd_ps(diff, diff, sum);
+        }
+
+        let mut sum_scalar = hsum_ps_avx2(sum);
+
+        // Handle remainder
+        let start = chunks * 8;
+        for i in start..a.len() {
+            let diff = a[i] - b[i];
+            sum_scalar += diff * diff;
+        }
+
+        sum_scalar.sqrt()
+    }
+
+    #[allow(dead_code)]
+    unsafe fn euclidean_distance_avx512(a: &[f32], b: &[f32]) -> f32 {
+        // AVX-512 intrinsics disabled - using AVX2 fallback
+        euclidean_distance_avx2(a, b)
+    }
+
+    // AVX-512 disabled (unstable feature) - fallback to AVX2
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> f32 {
+        let chunks = a.len() / 8;
+        let mut sum = _mm256_setzero_ps();
+
+        for i in 0..chunks {
+            let offset = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            
+            sum = _mm256_fmadd_ps(va, vb, sum);
+        }
+
+        let mut result = hsum_ps_avx2(sum);
+
+        // Handle remainder
+        let start = chunks * 8;
+        for i in start..a.len() {
+            result += a[i] * b[i];
+        }
+
+        result
+    }
+
+    #[allow(dead_code)]
+    unsafe fn dot_product_avx512(a: &[f32], b: &[f32]) -> f32 {
+        // AVX-512 intrinsics disabled - using AVX2 fallback
+        dot_product_avx2(a, b)
+    }
+
     // Stub implementations for other x86 variants (full implementations would follow similar pattern)
     pub struct CosineAvx;
     impl DistanceCompute for CosineAvx {
@@ -476,10 +614,10 @@ mod x86_implementations {
     pub struct EuclideanAvx2;
     impl DistanceCompute for EuclideanAvx2 {
         fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-            EuclideanScalar.distance(a, b)
+            unsafe { euclidean_distance_avx2(a, b) }
         }
         fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
-            EuclideanScalar.distance_batch(query, vectors)
+            vectors.iter().map(|v| self.distance(query, v)).collect()
         }
         fn is_similarity(&self) -> bool {
             false
@@ -524,10 +662,10 @@ mod x86_implementations {
     pub struct DotProductAvx2;
     impl DistanceCompute for DotProductAvx2 {
         fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-            DotProductScalar.distance(a, b)
+            unsafe { dot_product_avx2(a, b) }
         }
         fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
-            DotProductScalar.distance_batch(query, vectors)
+            vectors.iter().map(|v| self.distance(query, v)).collect()
         }
         fn is_similarity(&self) -> bool {
             true
@@ -619,15 +757,9 @@ mod x86_implementations {
     }
 }
 
-// Re-export x86 implementations
+// Re-export x86 implementations including AVX-512
 #[cfg(target_arch = "x86_64")]
 pub use x86_implementations::*;
-
-// AVX-512 implementations module
-#[cfg(target_arch = "x86_64")]
-mod avx512;
-#[cfg(target_arch = "x86_64")]
-pub use avx512::*;
 
 // Benchmarks
 #[cfg(test)]

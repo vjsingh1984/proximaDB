@@ -1051,7 +1051,8 @@ impl UnifiedStorageEngine for ViperEngine {
 
 impl ViperEngine {
     /// Convenient compact_collection method for CompactionCoordinator integration
-    pub async fn compact_collection(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+    /// Returns enhanced result with vector tracking for AXIS integration
+    pub async fn compact_collection(&self, collection_id: &str) -> Result<crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
         
         // Get collection configuration if available
@@ -1075,9 +1076,21 @@ impl ViperEngine {
         // Use the existing do_compact implementation
         let result = self.do_compact(&params).await?;
         
-        Ok(EngineCompactionResult {
+        // Extract vector tracking data from engine_metrics if available
+        let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+            )
+            .unwrap_or_default();
+            
+        Ok(crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult {
             files_processed: result.output_files,
             bytes_processed: result.bytes_written,
+            deleted_vector_ids,
+            merged_vectors: Vec::new(), // VIPER doesn't track individual merged vectors
+            recommend_full_rebuild: false,
         })
     }
 }

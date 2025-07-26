@@ -99,6 +99,50 @@ impl Default for IvfConfig {
     }
 }
 
+/// Random projection types for LSH
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RandomProjectionType {
+    Gaussian,
+    Binary,
+    Sparse,
+}
+
+impl Default for RandomProjectionType {
+    fn default() -> Self {
+        Self::Gaussian
+    }
+}
+
+/// LSH algorithm configuration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LshConfig {
+    /// Number of hash tables
+    pub n_hash_tables: u32,
+    /// Number of hash functions per table
+    pub n_hash_functions: u32,
+    /// Bucket width for LSH
+    pub bucket_width: f32,
+    /// Support binary vectors
+    pub binary_vectors: bool,
+    /// Maximum candidates to check during search
+    pub max_candidates: u32,
+    /// Random projection type
+    pub projection: RandomProjectionType,
+}
+
+impl Default for LshConfig {
+    fn default() -> Self {
+        Self {
+            n_hash_tables: 10,
+            n_hash_functions: 8,
+            bucket_width: 4.0,
+            binary_vectors: false,
+            max_candidates: 100,
+            projection: RandomProjectionType::default(),
+        }
+    }
+}
+
 /// Comprehensive index configuration for collections
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexConfig {
@@ -114,6 +158,8 @@ pub struct IndexConfig {
     pub hnsw_config: Option<HnswConfig>,
     /// IVF-specific configuration
     pub ivf_config: Option<IvfConfig>,
+    /// LSH-specific configuration
+    pub lsh_config: Option<LshConfig>,
     /// Parallel index building
     pub build_concurrency: Option<usize>,
     /// Memory limit per index (MB)
@@ -131,6 +177,7 @@ impl Default for IndexConfig {
             enable_background_optimization: true,
             hnsw_config: None, // Will be set if HNSW is selected
             ivf_config: None,  // Will be set if IVF is selected
+            lsh_config: None,  // Will be set if LSH is selected
             build_concurrency: None, // Use system default
             memory_limit_mb: Some(1024), // 1GB default
             checkpoint_interval_ms: Some(60000), // 1 minute
@@ -171,6 +218,19 @@ impl IndexConfig {
             min_train_size: i.min_train_size as usize,
         });
 
+        let lsh_config = proto.lsh_config.as_ref().map(|l| LshConfig {
+            n_hash_tables: l.n_hash_tables as u32,
+            n_hash_functions: l.n_hash_functions as u32,
+            bucket_width: l.bucket_width,
+            binary_vectors: l.binary_vectors,
+            max_candidates: l.max_candidates as u32,
+            projection: match l.projection {
+                1 => RandomProjectionType::Binary,
+                2 => RandomProjectionType::Sparse,
+                _ => RandomProjectionType::Gaussian,
+            },
+        });
+
         Ok(Self {
             update_mode,
             async_update_timeout_ms: proto.async_update_timeout_ms.map(|t| t as u64),
@@ -178,6 +238,7 @@ impl IndexConfig {
             enable_background_optimization: proto.enable_background_optimization,
             hnsw_config,
             ivf_config,
+            lsh_config,
             build_concurrency: proto.build_concurrency.map(|c| c as usize),
             memory_limit_mb: proto.memory_limit_mb.map(|m| m as u64),
             checkpoint_interval_ms: proto.checkpoint_interval_ms.map(|i| i as u64),
@@ -215,13 +276,29 @@ impl IndexConfig {
             min_train_size: i.min_train_size as i32,
         });
 
+        let lsh_config = self.lsh_config.as_ref().map(|l| crate::proto::proximadb::LshConfig {
+            n_hash_tables: l.n_hash_tables as i32,
+            n_hash_functions: l.n_hash_functions as i32,
+            bucket_width: l.bucket_width,
+            binary_vectors: l.binary_vectors,
+            max_candidates: l.max_candidates as i32,
+            projection: match l.projection {
+                RandomProjectionType::Gaussian => 0,
+                RandomProjectionType::Binary => 1,
+                RandomProjectionType::Sparse => 2,
+            },
+        });
+
         crate::proto::proximadb::IndexConfig {
             index_name: "default".to_string(), // Default index name
             algorithm: match &self.hnsw_config {
                 Some(_) => crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32,
                 None => match &self.ivf_config {
                     Some(_) => crate::proto::proximadb::IndexingAlgorithm::Ivf as i32,
-                    None => crate::proto::proximadb::IndexingAlgorithm::Flat as i32,
+                    None => match &self.lsh_config {
+                        Some(_) => crate::proto::proximadb::IndexingAlgorithm::Lsh as i32,
+                        None => crate::proto::proximadb::IndexingAlgorithm::Flat as i32,
+                    }
                 }
             },
             update_mode,
@@ -233,6 +310,7 @@ impl IndexConfig {
             flat_config: None, // Flat config is algorithm-specific, set when FLAT algorithm is selected
             pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected  
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
+            lsh_config,
             build_concurrency: self.build_concurrency.map(|c| c as i32),
             memory_limit_mb: self.memory_limit_mb.map(|m| m as i64),
             checkpoint_interval_ms: self.checkpoint_interval_ms.map(|i| i as i32),
@@ -270,6 +348,16 @@ impl IndexConfig {
                     config.insert("pq_subspaces".to_string(), serde_json::json!(ivf.pq_subspaces));
                     config.insert("train_on_insert".to_string(), serde_json::json!(ivf.train_on_insert));
                     config.insert("min_train_size".to_string(), serde_json::json!(ivf.min_train_size));
+                }
+            }
+            "LSH" => {
+                if let Some(lsh) = &self.lsh_config {
+                    config.insert("n_hash_tables".to_string(), serde_json::json!(lsh.n_hash_tables));
+                    config.insert("n_hash_functions".to_string(), serde_json::json!(lsh.n_hash_functions));
+                    config.insert("bucket_width".to_string(), serde_json::json!(lsh.bucket_width));
+                    config.insert("binary_vectors".to_string(), serde_json::json!(lsh.binary_vectors));
+                    config.insert("max_candidates".to_string(), serde_json::json!(lsh.max_candidates));
+                    config.insert("projection".to_string(), serde_json::json!(format!("{:?}", lsh.projection)));
                 }
             }
             _ => {}
@@ -341,6 +429,28 @@ impl IndexConfig {
             }
             if ivf.min_train_size < 100 {
                 return Err(anyhow::anyhow!("IVF min_train_size should be at least 100"));
+            }
+        }
+
+        // Validate LSH config
+        if let Some(lsh) = &self.lsh_config {
+            if lsh.n_hash_tables == 0 {
+                return Err(anyhow::anyhow!("LSH n_hash_tables must be greater than 0"));
+            }
+            if lsh.n_hash_functions == 0 {
+                return Err(anyhow::anyhow!("LSH n_hash_functions must be greater than 0"));
+            }
+            if lsh.bucket_width <= 0.0 {
+                return Err(anyhow::anyhow!("LSH bucket_width must be positive"));
+            }
+            if lsh.max_candidates == 0 {
+                return Err(anyhow::anyhow!("LSH max_candidates must be greater than 0"));
+            }
+            if lsh.n_hash_tables > 100 {
+                return Err(anyhow::anyhow!("LSH n_hash_tables should not exceed 100 for reasonable performance"));
+            }
+            if lsh.n_hash_functions > 32 {
+                return Err(anyhow::anyhow!("LSH n_hash_functions should not exceed 32 for reasonable performance"));
             }
         }
 
@@ -520,6 +630,52 @@ impl IndexConfig {
                 // Annoy-specific parameters could be added to a new AnnoyConfig struct
                 // For now, we use general config parameters
                 config.checkpoint_interval_ms = Some(30000); // More frequent checkpoints for tree-based
+            }
+            "LSH" => {
+                // Locality-Sensitive Hashing: probabilistic indexing
+                let mut lsh = LshConfig::default();
+                
+                // Adjust parameters based on collection size
+                if let Some(size) = collection_size_hint {
+                    if size < 10_000 {
+                        // Small collection: fewer hash tables, more accurate
+                        lsh.n_hash_tables = 5;
+                        lsh.n_hash_functions = 8;
+                        lsh.bucket_width = 2.0;
+                        lsh.max_candidates = 200;
+                        config.update_mode = IndexUpdateMode::Synchronous;
+                        config.memory_limit_mb = Some(256);
+                    } else if size < 100_000 {
+                        // Medium collection: balanced setup
+                        lsh.n_hash_tables = 10;
+                        lsh.n_hash_functions = 10;
+                        lsh.bucket_width = 4.0;
+                        lsh.max_candidates = 150;
+                        config.update_mode = IndexUpdateMode::Asynchronous;
+                        config.async_update_batch_size = Some(1000);
+                        config.memory_limit_mb = Some(512);
+                    } else if size < 1_000_000 {
+                        // Large collection: optimize for speed
+                        lsh.n_hash_tables = 15;
+                        lsh.n_hash_functions = 12;
+                        lsh.bucket_width = 6.0;
+                        lsh.max_candidates = 100;
+                        config.update_mode = IndexUpdateMode::Asynchronous;
+                        config.async_update_batch_size = Some(5000);
+                        config.memory_limit_mb = Some(1024);
+                    } else {
+                        // Very large collection: maximum scalability
+                        lsh.n_hash_tables = 20;
+                        lsh.n_hash_functions = 16;
+                        lsh.bucket_width = 8.0;
+                        lsh.max_candidates = 50;
+                        config.update_mode = IndexUpdateMode::Asynchronous;
+                        config.async_update_batch_size = Some(10000);
+                        config.memory_limit_mb = Some(2048);
+                    }
+                }
+                
+                config.lsh_config = Some(lsh);
             }
             _ => {
                 // Unknown algorithm: conservative defaults

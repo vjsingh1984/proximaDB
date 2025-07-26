@@ -858,7 +858,16 @@ impl FilesystemFactory {
             url.to_string()
         };
         
-        let parsed_url = Url::parse(&normalized_url)?;
+        // Log the normalized URL for debugging
+        info!("    normalized_url: {}", normalized_url);
+        
+        let parsed_url = match Url::parse(&normalized_url) {
+            Ok(url) => url,
+            Err(e) => {
+                error!("Failed to parse URL '{}': {}", normalized_url, e);
+                return Err(FilesystemError::UrlParse(e));
+            }
+        };
         let path = parsed_url.path();
         info!("    parsed path: {}", path);
 

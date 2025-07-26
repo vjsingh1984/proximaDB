@@ -4,16 +4,14 @@ Quick Demo of Vector Search Functionality
 Tests search by ID, metadata filtering, and similarity search
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_search_demo.py
+
 import json
 import time
 import numpy as np
 import uuid
 import requests
-
-# Add Python SDK to path  
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient
 

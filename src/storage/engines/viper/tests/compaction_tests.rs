@@ -529,10 +529,10 @@ async fn test_concurrent_compaction_and_reads() {
                         warn!("Read {} failed during compaction (expected): {}", attempt, e);
                         
                         // Check if it's a file access error (expected during compaction)
-                        let error_str = e.to_string();
-                        if error_str.contains("No such file") || 
+                        let error_str = e.to_string().to_lowercase();
+                        if error_str.contains("no such file") || 
                            error_str.contains("file not found") ||
-                           error_str.contains("No valid Parquet files") ||
+                           error_str.contains("no valid parquet files") ||
                            error_str.contains("compaction") {
                             // Expected during compaction - files being replaced
                             debug!("Expected file access error during compaction");

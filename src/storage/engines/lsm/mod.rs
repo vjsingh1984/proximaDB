@@ -456,8 +456,14 @@ impl LsmTree {
             max_sequence,
         };
         
-        if let Err(e) = self.manifest.add_sstable(file_info).await {
+        if let Err(e) = self.manifest.add_sstable(file_info.clone()).await {
             tracing::warn!("Failed to register SSTable in manifest: {}", e);
+            println!("❌ LSM: Failed to register SSTable in manifest: {}", e);
+        } else {
+            tracing::info!("✅ LSM: Registered SSTable in manifest - file_id: {}, path: {}, records: {}", 
+                file_info.file_id, file_info.file_path, file_info.record_count);
+            println!("✅ LSM: Registered SSTable in manifest - file_id: {}, path: {}, records: {}", 
+                file_info.file_id, file_info.file_path, file_info.record_count);
         }
 
         // Trigger compaction if manager is available
@@ -737,7 +743,7 @@ impl UnifiedStorageEngine for LsmTree {
         })
     }
 
-    /// LSM-specific compaction using level-based merge strategy
+    /// LSM-specific compaction using level-based merge strategy with vector tracking
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
         let collection_id = &self.collection_id;
@@ -782,28 +788,50 @@ impl UnifiedStorageEngine for LsmTree {
                 .await?
             {
                 tracing::info!(
-                    "🔄 LSM COMPACTION: Scheduling compaction for collection {} level {}",
+                    "🔄 LSM COMPACTION: Executing synchronous compaction for collection {} level {}",
                     task.collection_id, task.level
                 );
 
-                // Schedule the compaction task
-                compaction_manager.schedule_compaction(task).await?;
-
-                // Get compaction stats for result
-                let stats = compaction_manager.get_stats().await;
+                // Execute compaction synchronously to capture vector tracking
+                let enhanced_stats = compaction::CompactionManager::perform_compaction_enhanced(
+                    &task,
+                    &self.config,
+                    Some(self.atomic_coordinator.clone()),
+                    Some(self.manifest.clone()),
+                ).await?;
                 
                 result.collections_affected.push(collection_id.clone());
-                result.entries_processed = stats.files_merged * 1000; // Estimate
-                result.entries_removed = stats.expired_records_deleted + stats.tombstones_removed;
-                result.bytes_read = stats.bytes_read;
-                result.bytes_written = stats.bytes_written;
-                result.input_files = stats.files_merged;
-                result.output_files = stats.total_compactions;
+                result.entries_processed = enhanced_stats.merged_vectors.len() as u64;
+                result.entries_removed = enhanced_stats.deleted_vector_ids.len() as u64;
+                result.bytes_read = enhanced_stats.base_stats.bytes_read;
+                result.bytes_written = enhanced_stats.base_stats.bytes_written;
+                result.input_files = enhanced_stats.base_stats.files_merged;
+                result.output_files = 1; // One output file per compaction
                 result.success = true;
+                
+                // Store vector tracking data in engine_metrics
+                result.engine_metrics.insert(
+                    "deleted_vector_ids".to_string(),
+                    serde_json::Value::Array(
+                        enhanced_stats.deleted_vector_ids.into_iter()
+                            .map(serde_json::Value::String)
+                            .collect()
+                    )
+                );
+                result.engine_metrics.insert(
+                    "merged_vectors_count".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(enhanced_stats.merged_vectors.len()))
+                );
+                
+                // Note: We don't store the actual merged vectors in metrics to avoid memory bloat
+                // The compaction process has already updated the storage with the merged data
 
                 tracing::info!(
-                    "✅ LSM COMPACTION: Scheduled compaction for collection {} (files merged: {}, bytes written: {})",
-                    collection_id, stats.files_merged, stats.bytes_written
+                    "✅ LSM COMPACTION: Completed for collection {} (deleted: {}, merged: {}, bytes written: {})",
+                    collection_id, 
+                    result.entries_removed, 
+                    result.entries_processed, 
+                    enhanced_stats.base_stats.bytes_written
                 );
             } else {
                 tracing::debug!("📊 LSM COMPACTION: No compaction needed for collection {}", collection_id);
@@ -918,8 +946,17 @@ impl UnifiedStorageEngine for LsmTree {
             // Get all files from manifest
             let mut all_files = Vec::new();
             for level in 0..self.config.level_count {
-                all_files.extend(self.manifest.get_files_at_level(level).await);
+                let level_files = self.manifest.get_files_at_level(level).await;
+                println!("🔍 LSM: Checking level {} - found {} files", level, level_files.len());
+                info!("🔍 LSM: Checking level {} - found {} files", level, level_files.len());
+                for file in &level_files {
+                    println!("  📄 File: {} (path: {}, records: {})", file.file_id, file.file_path, file.record_count);
+                    info!("  📄 File: {} (path: {}, records: {})", file.file_id, file.file_path, file.record_count);
+                }
+                all_files.extend(level_files);
             }
+            println!("🔍 LSM: Total SSTable files from manifest: {}", all_files.len());
+            info!("🔍 LSM: Total SSTable files from manifest: {}", all_files.len());
             all_files
         };
         
@@ -927,12 +964,25 @@ impl UnifiedStorageEngine for LsmTree {
             debug!("📂 LSM: No SSTable files found in manifest");
             // Debug: check manifest stats
             let stats = self.manifest.get_stats().await;
-            debug!("📂 LSM: Manifest stats - total files: {}, levels: {:?}", 
+            info!("📂 LSM: Manifest stats - total files: {}, levels: {:?}", 
                 stats.total_files, stats.files_per_level);
+            
+            // List all files from manifest for debugging
+            for level in 0..self.config.level_count {
+                let level_files = self.manifest.get_files_at_level(level).await;
+                if !level_files.is_empty() {
+                    info!("📂 LSM: Level {} has {} files", level, level_files.len());
+                    for file in &level_files {
+                        info!("  - File: {} (records: {})", file.file_id, file.record_count);
+                    }
+                }
+            }
+            
             return Ok(all_results);
         }
         
         debug!("🔍 LSM: Found {} SSTable files to search", sstable_files.len());
+        println!("🔍 LSM: Found {} SSTable files to search", sstable_files.len());
         
         let collection_storage_url = self.get_collection_storage_url(collection_id).await?;
         let collection_dir = std::path::PathBuf::from(
@@ -958,6 +1008,7 @@ impl UnifiedStorageEngine for LsmTree {
             };
             
             debug!("🔍 LSM: Searching SSTable {} (level {})", file_info.file_id, file_info.level);
+            println!("🔍 LSM: Searching SSTable {} (level {}) at path: {}", file_info.file_id, file_info.level, path_str);
             
             match reader.load_metadata(&path_str).await {
                 Ok(_) => {
@@ -995,13 +1046,17 @@ impl UnifiedStorageEngine for LsmTree {
             match reader.search_vectors(&search_params, &context).await {
                 Ok(search_results) => {
                     debug!("🔍 LSM: SSTable {} returned {} results", file_info.file_id, search_results.len());
+                    println!("🔍 LSM: SSTable {} returned {} results", file_info.file_id, search_results.len());
                     records_evaluated += search_results.len();
                     
                     // Results from reader are already search::SearchResult type
                     all_results.extend(search_results);
                 }
                 Err(e) => {
-                    debug!("🔍 LSM: Error reading SSTable {}: {}", file_info.file_id, e);
+                    debug!("🔍 LSM: Error reading SSTable {}: {:?}", file_info.file_id, e);
+                    println!("🔍 LSM: Error reading SSTable {}: {:?}", file_info.file_id, e);
+                    println!("🔍 LSM: Full error details: {:#?}", e);
+                    println!("🔍 LSM: File path was: {}", file_path.display());
                 }
             }
         }
@@ -1386,7 +1441,7 @@ impl LsmTree {
 
         // Step 2: Build bloom filter for fast key existence checks
         let bloom_filter = self.build_bloom_filter(records).await?;
-        let bloom_data = bloom_filter.serialize()
+        let bloom_data = bincode::serialize(&bloom_filter)
             .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))?;
 
         // Step 3: Organize records into blocks for better cache performance
@@ -1436,18 +1491,108 @@ impl LsmTree {
         sstable_paths: &[std::path::PathBuf],
         flushed_records: &[LsmRecord],
     ) -> Result<()> {
-        // Update internal tracking of SSTable files
-        // In a full implementation, this would update:
-        // - Level manifests
-        // - Bloom filters for each SSTable
-        // - Key range metadata
-        // - File size statistics
-
-        tracing::debug!(
-            "📊 LSM METADATA: Updated after flush - {} SSTables, {} records",
+        tracing::info!(
+            "📊 LSM METADATA: Updating manifest for {} SSTables, {} records",
             sstable_paths.len(),
             flushed_records.len()
         );
+
+        // Register each SSTable file with the manifest
+        for path in sstable_paths {
+            // Extract filename from path
+            let filename = path.file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid SSTable filename"))?;
+            
+            // Parse level from filename (format: {collection}_level{N}_{timestamp}.sst)
+            let level = if let Some(level_pos) = filename.find("_level") {
+                let level_str = &filename[level_pos + 6..level_pos + 7];
+                level_str.parse::<u8>().unwrap_or(0)
+            } else {
+                0
+            };
+            
+            // Get file size
+            let metadata = tokio::fs::metadata(path).await?;
+            let file_size = metadata.len();
+            
+            // Calculate min/max keys and sequences from records in this SSTable
+            let sstable_records: Vec<&LsmRecord> = flushed_records.iter()
+                .filter(|r| r.level == level)
+                .collect();
+            
+            if sstable_records.is_empty() {
+                continue;
+            }
+            
+            let min_key = sstable_records.iter().map(|r| &r.id).min().cloned().unwrap_or_default();
+            let max_key = sstable_records.iter().map(|r| &r.id).max().cloned().unwrap_or_default();
+            let min_sequence = sstable_records.iter().map(|r| r.sequence_number).min().unwrap_or(0);
+            let max_sequence = sstable_records.iter().map(|r| r.sequence_number).max().unwrap_or(0);
+            
+            // Collect metadata statistics
+            let mut metadata_columns = HashMap::new();
+            for record in &sstable_records {
+                for (column, value) in &record.metadata {
+                    let stats = metadata_columns.entry(column.clone()).or_insert_with(|| {
+                        manifest::ColumnStats {
+                            min_value: value.clone(),
+                            max_value: value.clone(),
+                            null_count: 0,
+                            distinct_count_estimate: 0,
+                        }
+                    });
+                    
+                    // Update min/max values
+                    if let (Some(v), Some(min), Some(max)) = (value.as_f64(), stats.min_value.as_f64(), stats.max_value.as_f64()) {
+                        if v < min {
+                            stats.min_value = value.clone();
+                        }
+                        if v > max {
+                            stats.max_value = value.clone();
+                        }
+                    } else if let (Some(v), Some(min), Some(max)) = (value.as_str(), stats.min_value.as_str(), stats.max_value.as_str()) {
+                        if v < min {
+                            stats.min_value = value.clone();
+                        }
+                        if v > max {
+                            stats.max_value = value.clone();
+                        }
+                    }
+                    
+                    if value.is_null() {
+                        stats.null_count += 1;
+                    }
+                }
+            }
+            
+            let file_info = SstableFileInfo {
+                file_id: filename.to_string(),
+                file_path: filename.to_string(),
+                level,
+                size_bytes: file_size,
+                record_count: sstable_records.len() as u64,
+                min_key,
+                max_key,
+                created_at: chrono::Utc::now().timestamp(),
+                last_compacted_at: None,
+                bloom_fpr: 0.01,
+                metadata_columns,
+                marked_for_deletion: false,
+                min_sequence,
+                max_sequence,
+            };
+            
+            if let Err(e) = self.manifest.add_sstable(file_info.clone()).await {
+                tracing::warn!("Failed to register SSTable in manifest: {}", e);
+                println!("❌ LSM: Failed to register SSTable in manifest: {}", e);
+            } else {
+                tracing::info!("✅ LSM: Registered SSTable in manifest - file_id: {}, records: {}", 
+                    file_info.file_id, file_info.record_count);
+                println!("✅ LSM: Registered SSTable in manifest - file_id: {}, records: {}", 
+                    file_info.file_id, file_info.record_count);
+            }
+        }
 
         Ok(())
     }
@@ -1607,27 +1752,47 @@ impl LsmTree {
     }
 
     /// Build bloom filter for fast key existence checks
-    async fn build_bloom_filter(&self, records: &[LsmRecord]) -> Result<Box<dyn BloomFilterStrategy>> {
-        let config = BloomFilterConfig {
+    async fn build_bloom_filter(&self, records: &[LsmRecord]) -> Result<SstableBloomFilter> {
+        // Create key bloom filter
+        let key_config = BloomFilterConfig {
             strategy: BloomStrategy::ByteAligned,
             expected_items: records.len(),
             ..Default::default()
         };
-        let mut filter = BloomFilterFactory::create(&config);
+        let mut key_filter = BloomFilterFactory::create(&key_config);
         
-        // Add all keys to bloom filter
+        // Create metadata bloom filter
+        let metadata_config = BloomFilterConfig {
+            strategy: BloomStrategy::Composite,
+            expected_items: records.len(),
+            ..Default::default()
+        };
+        let mut metadata_builder = crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
+        
+        // Add all keys and metadata to filters
         for record in records {
-            filter.insert(record.id.as_bytes());
+            key_filter.insert(record.id.as_bytes());
+            
+            // Add metadata values
+            for (column, value) in &record.metadata {
+                if let Some(string_value) = value.as_str() {
+                    metadata_builder.add_metadata_value(column.clone(), string_value.to_string());
+                } else if let Some(num_value) = value.as_f64() {
+                    metadata_builder.add_metadata_value(column.clone(), num_value.to_string());
+                }
+            }
         }
         
+        let metadata_filter = metadata_builder.build();
+        let sstable_filter = SstableBloomFilter::new(key_filter.as_ref(), &metadata_filter)?;
+        
         debug!(
-            "📊 LSM: Built bloom filter with {} bits for {} keys (FPR: {:.2}%)",
-            filter.bit_count(),
+            "📊 LSM: Built SSTable bloom filter for {} keys (FPR: {:.2}%)",
             records.len(),
-            filter.false_positive_rate() * 100.0
+            key_filter.false_positive_rate() * 100.0
         );
         
-        Ok(filter)
+        Ok(sstable_filter)
     }
 
     /// Sort vector records by metadata for optimal SSTable encoding
@@ -1876,7 +2041,8 @@ impl LsmTree {
     }
 
     /// Convenient compact_collection method for CompactionCoordinator integration
-    pub async fn compact_collection(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+    /// Returns enhanced result with vector tracking for AXIS integration
+    pub async fn compact_collection(&self, collection_id: &str) -> Result<crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult> {
         info!("🗜️ LSM Engine: Starting collection compaction for {}", collection_id);
         
         // Check if this is the correct collection
@@ -1884,7 +2050,7 @@ impl LsmTree {
             return Err(anyhow::anyhow!("Collection ID mismatch: expected {}, got {}", self.collection_id, collection_id));
         }
         
-        // Create compaction parameters (LSM doesn't have collection service access)
+        // Create compaction parameters
         let params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -1892,15 +2058,31 @@ impl LsmTree {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
-            collection_config: None, // LSM doesn't have collection service
+            collection_config: None,
         };
         
-        // Use the existing do_compact implementation
+        // Use the consolidated do_compact implementation
         let result = self.do_compact(&params).await?;
         
-        Ok(EngineCompactionResult {
+        // Extract vector tracking data from engine_metrics
+        let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+            )
+            .unwrap_or_default();
+            
+        let merged_vectors = result.engine_metrics.get("merged_vectors_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+            
+        Ok(crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult {
             files_processed: result.output_files,
             bytes_processed: result.bytes_written,
+            deleted_vector_ids,
+            merged_vectors: Vec::new(), // Vectors are not stored in metrics to avoid memory bloat
+            recommend_full_rebuild: false,
         })
     }
 

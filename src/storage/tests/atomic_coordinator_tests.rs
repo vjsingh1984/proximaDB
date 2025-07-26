@@ -40,7 +40,15 @@ fn create_test_vector(id: &str) -> VectorRecord {
 
 #[tokio::test]
 async fn test_atomic_coordinator_creation() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     
     let coordinator = UnifiedAtomicCoordinator::new(
@@ -55,7 +63,15 @@ async fn test_atomic_coordinator_creation() {
 
 #[tokio::test]
 async fn test_begin_atomic_operation() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -83,7 +99,15 @@ async fn test_begin_atomic_operation() {
 
 #[tokio::test]
 async fn test_write_to_staging() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -120,7 +144,15 @@ async fn test_write_to_staging() {
 
 #[tokio::test]
 async fn test_finalize_atomic_operation() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -160,7 +192,15 @@ async fn test_finalize_atomic_operation() {
 
 #[tokio::test]
 async fn test_abort_atomic_operation() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -203,7 +243,15 @@ async fn test_abort_atomic_operation() {
 
 #[tokio::test]
 async fn test_transaction_lifecycle() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -235,7 +283,15 @@ async fn test_transaction_lifecycle() {
 
 #[tokio::test]
 async fn test_transaction_rollback() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory.clone(),
@@ -280,7 +336,15 @@ async fn test_transaction_rollback() {
 
 #[tokio::test]
 async fn test_concurrent_operations() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -337,7 +401,15 @@ async fn test_concurrent_operations() {
 
 #[tokio::test]
 async fn test_cleanup_orphaned_operations() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -378,7 +450,15 @@ async fn test_cleanup_orphaned_operations() {
 
 #[tokio::test]
 async fn test_viper_atomic_operations() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,
@@ -405,7 +485,15 @@ async fn test_viper_atomic_operations() {
 
 #[tokio::test]
 async fn test_wal_atomic_operations() {
-    let temp_dir = TempDir::new().unwrap();
+    // Use timestamp-based directory names to avoid URL parsing issues
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("atomic_test_{}_", timestamp))
+        .tempdir_in("/tmp")
+        .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let coordinator = UnifiedAtomicCoordinator::new(
         filesystem_factory,

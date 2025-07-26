@@ -4,16 +4,15 @@ ProximaDB Integration Test
 Tests the client SDK against a running ProximaDB server
 """
 
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/integration_test.py
+
 import os
-import sys
 import subprocess
 import time
 import requests
 import numpy as np
 from typing import List, Dict, Any
-
-# Add client library to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'clients', 'python', 'src'))
 
 from proximadb import ProximaDBClient, connect
 from proximadb.exceptions import ProximaDBError

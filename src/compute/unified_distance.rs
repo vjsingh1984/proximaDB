@@ -29,15 +29,17 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability, detect_platform_capability};
 use crate::services::collection_service::CollectionService;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::cmp::Ordering;
 
 /// Global hardware capability cache - detected once at startup
 static UNIFIED_PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
+/// Global GPU acceleration support cache
+static GPU_ACCELERATION: OnceLock<Option<Arc<dyn GpuAccelerator>>> = OnceLock::new();
 
 // ============================================================================
 // Metric-Aware Result Types
@@ -216,14 +218,75 @@ impl MetricProperties for DistanceMetric {
 
 // Note: Distributed distance computation was removed in favor of unified local computation
 
-/// Unified distance computation manager with hardware acceleration and optional distributed support
+/// Hardware acceleration backend
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareBackend {
+    /// CPU with SIMD (AVX-512, AVX2, SSE, NEON, etc.)
+    CpuSimd(PlatformCapability),
+    /// NVIDIA CUDA GPU
+    Cuda,
+    /// AMD ROCm GPU
+    Rocm,
+    /// Apple Metal Performance Shaders
+    Mps,
+    /// OpenCL (cross-platform GPU)
+    OpenCL,
+    /// CPU scalar (no acceleration)
+    Scalar,
+}
+
+impl std::fmt::Display for HardwareBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HardwareBackend::CpuSimd(cap) => write!(f, "CPU SIMD ({})", cap),
+            HardwareBackend::Cuda => write!(f, "NVIDIA CUDA"),
+            HardwareBackend::Rocm => write!(f, "AMD ROCm"),
+            HardwareBackend::Mps => write!(f, "Apple Metal"),
+            HardwareBackend::OpenCL => write!(f, "OpenCL"),
+            HardwareBackend::Scalar => write!(f, "CPU Scalar"),
+        }
+    }
+}
+
+/// GPU accelerator interface
+#[async_trait]
+pub trait GpuAccelerator: Send + Sync {
+    /// Get the backend type
+    fn backend(&self) -> HardwareBackend;
+    
+    /// Check if GPU is available
+    fn is_available(&self) -> bool;
+    
+    /// Calculate distance on GPU
+    async fn calculate_distance_gpu(
+        &self,
+        vec_a: &[f32],
+        vec_b: &[f32],
+        metric: DistanceMetric,
+    ) -> Result<f32>;
+    
+    /// Calculate batch distances on GPU
+    async fn calculate_batch_gpu(
+        &self,
+        query: &[f32],
+        vectors: &[Vec<f32>],
+        metric: DistanceMetric,
+    ) -> Result<Vec<f32>>;
+}
+
+/// Unified distance computation manager with hardware acceleration
 #[derive(Clone)]
 pub struct UnifiedDistanceCompute {
     /// System default distance metric
     system_default: DistanceMetric,
     /// Hardware capability for SIMD optimization
     platform_capability: PlatformCapability,
-    // Note: Local-only computation - distributed features were removed
+    /// GPU accelerator if available
+    gpu_accelerator: Option<Arc<dyn GpuAccelerator>>,
+    /// Preferred hardware backend
+    preferred_backend: HardwareBackend,
+    /// Enable GPU acceleration
+    gpu_enabled: bool,
 }
 
 impl std::fmt::Debug for UnifiedDistanceCompute {
@@ -238,9 +301,28 @@ impl std::fmt::Debug for UnifiedDistanceCompute {
 
 impl Default for UnifiedDistanceCompute {
     fn default() -> Self {
+        let platform_capability = Self::get_or_detect_platform_capability();
+        let gpu_accelerator = Self::get_or_detect_gpu_accelerator();
+        
+        // Determine preferred backend based on available hardware
+        let preferred_backend = if let Some(ref gpu) = gpu_accelerator {
+            if gpu.is_available() {
+                gpu.backend()
+            } else {
+                HardwareBackend::CpuSimd(platform_capability)
+            }
+        } else {
+            HardwareBackend::CpuSimd(platform_capability)
+        };
+        
+        info!("🚀 UnifiedDistanceCompute initialized with backend: {}", preferred_backend);
+        
         Self {
             system_default: DistanceMetric::Cosine,
-            platform_capability: Self::get_or_detect_platform_capability(),
+            platform_capability,
+            gpu_accelerator,
+            preferred_backend,
+            gpu_enabled: true,
         }
     }
 }
@@ -255,18 +337,92 @@ impl UnifiedDistanceCompute {
         })
     }
 
+    /// Get or detect GPU accelerator (cached globally)
+    fn get_or_detect_gpu_accelerator() -> Option<Arc<dyn GpuAccelerator>> {
+        GPU_ACCELERATION.get_or_init(|| {
+            // Try to initialize GPU acceleration
+            #[cfg(feature = "gpu")]
+            {
+                if let Ok(gpu) = super::gpu_distance::detect_best_gpu() {
+                    info!("🎮 GPU acceleration detected: {}", gpu.backend());
+                    return Some(Arc::new(gpu) as Arc<dyn GpuAccelerator>);
+                }
+            }
+            
+            debug!("No GPU acceleration available, using CPU only");
+            None
+        }).clone()
+    }
+    
     /// Create a new unified distance compute manager with default metric
     pub fn new(default_metric: DistanceMetric) -> Self {
-        Self {
-            system_default: default_metric,
-            platform_capability: Self::get_or_detect_platform_capability(),
+        let mut compute = Self::default();
+        compute.system_default = default_metric;
+        compute
+    }
+    
+    /// Enable or disable GPU acceleration
+    pub fn set_gpu_enabled(&mut self, enabled: bool) {
+        self.gpu_enabled = enabled;
+        if !enabled {
+            self.preferred_backend = HardwareBackend::CpuSimd(self.platform_capability);
         }
+    }
+    
+    /// Get available hardware backends
+    pub fn available_backends(&self) -> Vec<HardwareBackend> {
+        let mut backends = vec![HardwareBackend::CpuSimd(self.platform_capability)];
+        
+        if let Some(ref gpu) = self.gpu_accelerator {
+            if gpu.is_available() {
+                backends.push(gpu.backend());
+            }
+        }
+        
+        backends.push(HardwareBackend::Scalar);
+        backends
     }
 
 
+    /// Calculate distance using GPU (synchronous wrapper)
+    fn calculate_with_gpu(&self, vec_a: &[f32], vec_b: &[f32], metric: &DistanceMetric) -> Result<f32> {
+        if let Some(ref gpu) = self.gpu_accelerator {
+            // Block on async GPU computation
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    gpu.calculate_distance_gpu(vec_a, vec_b, metric.clone()).await
+                })
+            })
+        } else {
+            Err(anyhow::anyhow!("No GPU accelerator available"))
+        }
+    }
+    
+    /// Calculate batch distances using GPU (synchronous wrapper)
+    fn calculate_batch_with_gpu(&self, query: &[f32], vectors: &[&[f32]], metric: &DistanceMetric) -> Result<Vec<f32>> {
+        if let Some(ref gpu) = self.gpu_accelerator {
+            // Convert to owned vectors for GPU transfer
+            let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
+            
+            // Block on async GPU computation
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    gpu.calculate_batch_gpu(query, &owned_vectors, metric.clone()).await
+                })
+            })
+        } else {
+            Err(anyhow::anyhow!("No GPU accelerator available"))
+        }
+    }
+    
     /// Get the detected platform capability
     pub fn platform_capability(&self) -> PlatformCapability {
         self.platform_capability
+    }
+    
+    /// Get the preferred hardware backend
+    pub fn preferred_backend(&self) -> HardwareBackend {
+        self.preferred_backend
     }
     
     /// Calculate distance with rich semantic result
@@ -293,9 +449,22 @@ impl UnifiedDistanceCompute {
             };
         }
         
-        // Calculate raw distance
-        let calculator = create_distance_calculator(metric.clone());
-        let raw_value = calculator.distance(vec_a, vec_b);
+        // Calculate raw distance using best available hardware
+        let raw_value = if self.gpu_enabled && self.gpu_accelerator.is_some() && vec_a.len() >= 64 {
+            // Use GPU for larger vectors if available
+            match self.calculate_with_gpu(vec_a, vec_b, metric) {
+                Ok(value) => value,
+                Err(e) => {
+                    debug!("GPU calculation failed: {}, falling back to CPU", e);
+                    let calculator = create_distance_calculator(metric.clone());
+                    calculator.distance(vec_a, vec_b)
+                }
+            }
+        } else {
+            // Use CPU with SIMD
+            let calculator = create_distance_calculator(metric.clone());
+            calculator.distance(vec_a, vec_b)
+        };
         
         // Create normalization context
         let context = NormalizationContext {
@@ -373,11 +542,16 @@ impl UnifiedDistanceCompute {
             DistanceMetric::DotProduct => {
                 // Normalize by product of norms to get cosine similarity
                 if let (Some(norm_a), Some(norm_b)) = (context.vector_norm, context.query_norm) {
-                    let normalized = raw_value / (norm_a * norm_b);
-                    // Clamp to [-1, 1] then convert to [0, 1]
-                    (normalized.clamp(-1.0, 1.0) + 1.0) / 2.0
+                    // Handle edge case where norms are very small
+                    if norm_a < 1e-8 || norm_b < 1e-8 {
+                        0.5 // Neutral similarity when vectors are near zero
+                    } else {
+                        let normalized = raw_value / (norm_a * norm_b);
+                        // Clamp to [-1, 1] then convert to [0, 1]
+                        (normalized.clamp(-1.0, 1.0) + 1.0) / 2.0
+                    }
                 } else {
-                    0.0
+                    0.5 // Return neutral similarity when norms unavailable
                 }
             }
             DistanceMetric::Jaccard => {
@@ -463,13 +637,45 @@ impl UnifiedDistanceCompute {
     /// - Normalized scores for intuitive comparison
     /// - Rank values optimized for sorting
     /// 
-    /// **Hardware Acceleration**: Uses optimal SIMD implementation
+    /// **Hardware Acceleration**: Automatically uses GPU for large batches, SIMD for smaller ones
     pub fn calculate_distance_batch(
         &self,
         query: &[f32],
         vectors: &[&[f32]],
         metric: &DistanceMetric,
     ) -> Vec<SimilarityResult> {
+        // Use GPU for large batches if available
+        if self.gpu_enabled && self.gpu_accelerator.is_some() && vectors.len() >= 100 && query.len() >= 64 {
+            if let Ok(raw_values) = self.calculate_batch_with_gpu(query, vectors, metric) {
+                // Calculate query norm once
+                let query_norm = self.calculate_norm(query);
+                
+                // Convert raw GPU results to SimilarityResults
+                return raw_values.into_iter()
+                    .zip(vectors.iter())
+                    .map(|(raw_value, vector)| {
+                        let context = NormalizationContext {
+                            vector_norm: Some(self.calculate_norm(vector)),
+                            query_norm: Some(query_norm),
+                            dimension: query.len(),
+                            value_range: Some(metric.theoretical_range()),
+                        };
+                        
+                        let normalized_score = self.normalize_for_scoring(&raw_value, metric, &context);
+                        let rank_value = self.normalize_for_ranking(&raw_value, metric, &context);
+                        
+                        SimilarityResult {
+                            raw_value,
+                            metric: metric.clone(),
+                            normalized_score,
+                            rank_value,
+                        }
+                    })
+                    .collect();
+            }
+        }
+        
+        // Fall back to CPU implementation
         vectors
             .iter()
             .map(|vector| self.calculate_distance(query, vector, metric))

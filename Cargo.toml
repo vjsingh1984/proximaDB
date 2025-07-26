@@ -185,6 +185,8 @@ azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 cloud-full = ["aws", "azure", "gcp"]
 
+# Hardware acceleration features
+gpu = []  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 
@@ -231,12 +233,24 @@ opt-level = 1
 debug = true
 incremental = true
 
-# Benchmark configuration (temporarily disabled due to compilation issues)
+# Benchmark configuration
+[[bench]]
+name = "simd_distance_bench"
+harness = false
+path = "benches/simd_distance_bench.rs"
+
+[[bench]]
+name = "flush_optimization_bench"
+harness = false
+path = "benches/flush_optimization_bench.rs"
+
+# Temporarily disabled benchmarks
 # [[bench]]
 # name = "vector_operations"
 # harness = false
 # path = "benches/vector_operations.rs"
 
+# [[bench]]
 # name = "metadata_lifecycle"  
 # harness = false
 # path = "benches/metadata_lifecycle.rs"

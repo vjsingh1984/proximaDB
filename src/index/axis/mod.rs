@@ -11,8 +11,12 @@
 
 pub mod adaptive_engine;
 pub mod analyzer;
+pub mod annoy_index;
 pub mod clustering;
 pub mod hnsw_integration;
+pub mod index_factory;
+pub mod ivf_index;
+pub mod lsh_index;
 pub mod manager;
 pub mod migration_engine;
 pub mod monitor;
@@ -32,6 +36,7 @@ pub use adaptive_engine::{
     PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
 pub use analyzer::CollectionAnalyzer;
+pub use annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex, AnnoyStats};
 pub use clustering::{
     AxisClusteringEngine, ClusterAssignment, ClusteringAlgorithm, ClusteringConfig,
     ClusteringMetrics, ClusteringModel, DBSCANConfig, HierarchicalConfig, KMeansConfig,
@@ -40,6 +45,9 @@ pub use clustering::{
 pub use hnsw_integration::{
     AxisHnswConfig, AxisHnswManager, HnswStats, PartitionedHnswIndex,
 };
+pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
+pub use ivf_index::{AxisIvfConfig, AxisIvfIndex, IvfStats};
+pub use lsh_index::{AxisLshConfig, AxisLshIndex, LshStats};
 pub use manager::{
     AxisManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
     ScoredResult, VectorQuery,

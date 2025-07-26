@@ -12,6 +12,9 @@ pub mod storage_path_service;
 pub mod streaming_search;
 
 #[cfg(test)]
+pub mod comprehensive_search_tests;
+
+#[cfg(test)]
 pub mod tests {
     // Test modules will be added here as needed
 }

@@ -169,15 +169,22 @@ impl UnifiedSstableReader {
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
         
+        // Debug: print file paths
+        for (i, file_path) in collection_context.sstable_files.iter().enumerate() {
+            println!("  SSTable file {}: {}", i, file_path);
+        }
+        
         // 1. Select optimal reading strategy
         let strategy = self.strategy_selector.select_strategy(params, collection_context)?;
         debug!("📊 Selected strategy: {:?}", strategy);
         
         // 2. Apply strategy to read relevant blocks
         let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
+        println!("  DEBUG: Loaded {} data blocks", relevant_blocks.len());
         
         // 3. Perform vector search on loaded data
         let results = self.search_in_blocks(params, &relevant_blocks, &collection_context.collection_id).await?;
+        println!("  DEBUG: Found {} search results", results.len());
         
         Ok(results)
     }
@@ -881,8 +888,15 @@ impl UnifiedSstableReader {
         // Load index directly without caching (true direct access)
         let index = Arc::new(self.load_index_optimized(path).await?);
         
+        // Extract scheme from path for proper filesystem selection
+        let scheme = if path.contains("://") {
+            path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        
         // Read the full file
-        let fs = self.filesystem.get_filesystem("file:///")?;
         let data = fs.read(path).await?;
         let mut offset = 0usize;
         
@@ -913,23 +927,34 @@ impl UnifiedSstableReader {
         
         // Read all data blocks
         let mut blocks = Vec::new();
+        println!("  DEBUG: Starting to read data blocks at offset {}", offset);
         while offset + 4 <= data.len() {
             let block_len = u32::from_le_bytes([
                 data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
             ]) as usize;
             offset += 4;
             
+            println!("  DEBUG: Reading block of length {}", block_len);
+            
             if offset + block_len > data.len() {
+                println!("  DEBUG: Not enough data for block (need {}, have {})", block_len, data.len() - offset);
                 break;
             }
             
             let block_data = &data[offset..offset + block_len];
-            if let Ok(block) = bincode::deserialize::<DataBlock>(block_data) {
-                blocks.push(block);
+            match bincode::deserialize::<DataBlock>(block_data) {
+                Ok(block) => {
+                    println!("  DEBUG: Successfully deserialized block with {} records", block.records.len());
+                    blocks.push(block);
+                }
+                Err(e) => {
+                    println!("  DEBUG: Failed to deserialize block: {:?}", e);
+                }
             }
             offset += block_len;
         }
         
+        println!("  DEBUG: Total blocks read: {}", blocks.len());
         Ok(blocks)
     }
     

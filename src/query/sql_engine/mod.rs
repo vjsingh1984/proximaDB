@@ -22,6 +22,9 @@ pub mod parser;
 pub mod executor;
 pub mod planner;
 
+#[cfg(test)]
+pub mod comprehensive_sql_tests;
+
 pub use parser::{SqlParser, ParsedQuery};
 pub use executor::{SqlExecutor, SqlExecutionResult};
 pub use planner::{QueryPlanner, ExecutionPlan};

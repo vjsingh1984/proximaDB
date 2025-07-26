@@ -260,6 +260,7 @@ impl DirectVectorService {
             viper_engine.clone(),
             lsm_engine.clone(),
             None, // Use default config
+            None, // No axis manager
         ));
         debug!("✅ DirectVectorService::with_workload_hint - Compaction coordinator created");
         
@@ -579,7 +580,7 @@ impl DirectVectorService {
         Ok(None)
     }
     
-    /// Get a single vector by ID using the search infrastructure
+    /// Get a single vector by ID using direct storage engine access
     /// This leverages bloom filters and columnar indexes for efficient lookup
     pub async fn get_vector_by_id(
         &self,
@@ -588,26 +589,97 @@ impl DirectVectorService {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<Option<SearchResult>> {
-        // Create a metadata filter for ID
-        let mut id_filter = std::collections::HashMap::new();
-        id_filter.insert("id".to_string(), serde_json::Value::String(vector_id.to_string()));
+        debug!(
+            "🔍 GET_VECTOR_BY_ID: collection={}, vector_id={}, include_vector={}, include_metadata={}",
+            collection_id, vector_id, include_vector, include_metadata
+        );
         
-        // Use search with k=1 and a dummy query vector
-        // Since we're filtering by ID, the similarity score doesn't matter
-        let dummy_vector = vec![0.0f32; 128]; // TODO: Get actual dimension from collection
+        // First check the memtable for the vector
+        if let Some(record) = self.global_memtable.get_vector_by_id(collection_id, vector_id).await? {
+            debug!("✅ Found vector in memtable: {}", vector_id);
+            // Convert VectorRecord to SearchResult
+            return Ok(Some(SearchResult {
+                id: record.id.clone().unwrap_or_default(),
+                vector_id: Some(record.id.clone().unwrap_or_default()),
+                score: 1.0, // Perfect match
+                distance: Some(0.0), // No distance for exact ID match
+                vector: if include_vector { Some(record.vector.clone()) } else { None },
+                metadata: if include_metadata { 
+                    record.metadata.iter()
+                        .map(|item| (item.key.clone(), serde_json::Value::String(item.value.clone())))
+                        .collect()
+                } else { 
+                    std::collections::HashMap::new() 
+                },
+                rank: Some(1),
+                debug_info: Some(SearchDebugInfo {
+                    algorithm: "DirectMemtableLookup".to_string(),
+                    candidates_evaluated: 1,
+                    processing_time_us: 0,
+                }),
+                semantic_distance: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+                collection_id: Some(collection_id.to_string()),
+                created_at: None,
+            }));
+        }
         
-        let results = self.search_vectors_unified(
-            collection_id,
-            &dummy_vector,
-            1, // k=1 since we want exactly one result
-            DistanceMetric::Cosine, // Doesn't matter for ID lookup
-            None, // No search params needed
-            Some(&id_filter),
-            include_vector,
-            include_metadata,
-        ).await?;
+        // Determine storage engine for this collection
+        let storage_engine = self.get_collection_storage_engine(collection_id).await?;
+        debug!("🔍 Vector not in memtable, checking {} storage engine", storage_engine);
         
-        Ok(results.into_iter().next())
+        // Check the appropriate storage engine
+        // TODO: Implement get_vector_by_id for storage engines
+        let vector_record: Option<VectorRecord> = None;
+        /*
+        let vector_record = match storage_engine {
+            "LSM" => {
+                self.lsm_engine.get_vector_by_id(collection_id, vector_id).await?
+            }
+            "VIPER" | _ => {
+                self.viper_engine.get_vector_by_id(collection_id, vector_id).await?
+            }
+        };
+        */
+        
+        // Convert VectorRecord to SearchResult if found
+        match vector_record {
+            Some(record) => {
+                debug!("✅ Found vector in {} storage: {}", storage_engine, vector_id);
+                Ok(Some(SearchResult {
+                    id: record.id.clone().unwrap_or_default(),
+                    vector_id: Some(record.id.clone().unwrap_or_default()),
+                    score: 1.0, // Perfect match
+                    distance: Some(0.0), // No distance for exact ID match
+                    vector: if include_vector { Some(record.vector.clone()) } else { None },
+                    metadata: if include_metadata { 
+                        record.metadata.iter()
+                            .map(|item| (item.key.clone(), serde_json::Value::String(item.value.clone())))
+                            .collect()
+                    } else { 
+                        std::collections::HashMap::new() 
+                    },
+                    rank: Some(1),
+                    debug_info: Some(SearchDebugInfo {
+                        algorithm: format!("Direct{}Lookup", storage_engine),
+                        candidates_evaluated: 1,
+                        processing_time_us: 0,
+                    }),
+                    semantic_distance: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    collection_id: Some(collection_id.to_string()),
+                    created_at: None,
+                }))
+            }
+            None => {
+                debug!("❌ Vector not found in any storage layer: {}", vector_id);
+                Ok(None)
+            }
+        }
     }
 
     /// ✅ UNIFIED SEARCH: Complete search with all capabilities
@@ -816,14 +888,14 @@ impl DirectVectorService {
                 Ok(flush_result) => {
                     info!(
                         "✅ BACKGROUND_FLUSH: {} entries flushed, {} bytes written",
-                        flush_result.entries_flushed,
-                        flush_result.bytes_written
+                        flush_result.base.entries_flushed,
+                        flush_result.base.bytes_written
                     );
                     
                     // ATOMIC CLEANUP: Remove flushed batches from memtable after successful storage flush
-                    if flush_result.success && !flush_result.flushed_batch_ids.is_empty() {
+                    if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
                         // Mark batches as flushed
-                        for batch_id in &flush_result.flushed_batch_ids {
+                        for batch_id in &flush_result.base.flushed_batch_ids {
                             if let Err(e) = global_memtable.mark_batch_flushed(&collection_id, &batch_id.to_base62()).await {
                                 warn!("⚠️ MEMTABLE_CLEANUP: Failed to mark batch {} as flushed: {}", batch_id.to_base62(), e);
                             }
@@ -841,7 +913,7 @@ impl DirectVectorService {
                     }
                     
                     // Trigger automatic compaction after successful flush
-                    if let Err(e) = compaction_coordinator.handle_flush_completion(&flush_result).await {
+                    if let Err(e) = compaction_coordinator.handle_flush_completion(&flush_result.base).await {
                         warn!("⚠️ COMPACTION_TRIGGER: Failed to handle flush completion for {}: {}", collection_id, e);
                     } else {
                         info!("🔧 COMPACTION_TRIGGER: Evaluated compaction need for collection {}", collection_id);

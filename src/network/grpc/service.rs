@@ -595,39 +595,18 @@ impl ProximaDb for ProximaDbGrpcService {
             req.vectors.len()
         );
 
-        let result = self
-            .direct_vector_service
-            .handle_vector_batch_proto_vec(
-                &req.collection_id,
-                req.vectors,
-            )
-            .instrument(span!(Level::DEBUG, "grpc_vector_insert_zero_copy"))
+        // Use UnifiedHandlers to properly resolve collection name to ID
+        let unified_handlers = crate::handlers::UnifiedHandlers::new(
+            self.collection_service.clone(),
+            self.direct_vector_service.clone(),
+        );
+        
+        let proto_response = unified_handlers
+            .handle_vector_batch(req)
             .await
             .map_err(|e| Status::internal(format!("Vector insert failed: {}", e)))?;
-
-        // Parse the Avro result back to protobuf
-        let schema_response: SchemaVectorInsertResponse = serde_json::from_slice(&result)
-            .map_err(|e| Status::internal(format!("Failed to parse insert response: {}", e)))?;
-
-        let operation_metrics = self.convert_operation_metrics(&schema_response.metrics);
-
-        let result_count = schema_response.vector_ids.len() as i64;
-
-        Ok(Response::new(VectorOperationResponse {
-            success: schema_response.success,
-            operation: VectorOperation::VectorBatch as i32,
-            metrics: Some(operation_metrics),
-            result_payload: None, // No search results for insert
-            vector_ids: schema_response.vector_ids,
-            error_message: schema_response.error_message,
-            error_code: schema_response.error_code,
-            result_info: Some(ResultMetadata {
-                result_count,
-                estimated_size_bytes: 0,
-                is_avro_binary: true, // Always true - we always use zero-copy
-                avro_schema_version: "1".to_string(),
-            }),
-        }))
+        
+        return Ok(Response::new(proto_response));
     }
 
     // Vector mutation removed - using unified batch operations with expires_at for deletes

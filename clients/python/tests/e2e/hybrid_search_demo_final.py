@@ -17,8 +17,8 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/e2e/hybrid_search_demo_final.py
 
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 

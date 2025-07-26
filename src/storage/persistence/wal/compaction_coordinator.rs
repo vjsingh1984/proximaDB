@@ -21,6 +21,10 @@ use tracing::{debug, info, warn};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::lsm::LsmTree;
 use crate::storage::traits::FlushResult;
+use crate::index::axis::AxisManager;
+use crate::core::VectorRecord;
+
+use super::compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
 
 /// Background compaction coordinator
 /// 
@@ -46,6 +50,9 @@ pub struct CompactionCoordinator {
     
     /// Compaction statistics
     stats: Arc<RwLock<CompactionStats>>,
+    
+    /// AXIS index updater
+    axis_updater: CompactionAxisUpdater,
 }
 
 /// Per-collection compaction state
@@ -190,6 +197,7 @@ impl CompactionCoordinator {
         viper_engine: Arc<ViperEngine>,
         lsm_engine: Arc<LsmTree>,
         config: Option<CompactionConfig>,
+        axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
         let config = config.unwrap_or_default();
         
@@ -207,6 +215,7 @@ impl CompactionCoordinator {
             config,
             active_compactions: Arc::new(Mutex::new(HashMap::new())),
             stats: Arc::new(RwLock::new(CompactionStats::default())),
+            axis_updater: CompactionAxisUpdater::new(axis_manager),
         }
     }
     
@@ -419,6 +428,33 @@ impl CompactionCoordinator {
                     duration.as_millis()
                 );
                 
+                // Update AXIS indexes with compaction results
+                use std::collections::HashMap;
+                if let Err(e) = self.axis_updater.update_indexes_after_compaction(
+                    collection_id,
+                    &crate::storage::traits::CompactionResult {
+                        success: true,
+                        collections_affected: vec![collection_id.to_string()],
+                        entries_processed: result.files_compacted, // Map files to entries
+                        entries_removed: 0, // Not tracked in WAL compaction
+                        bytes_read: result.bytes_reclaimed, // Approximate
+                        bytes_written: 0, // Not tracked
+                        input_files: result.files_compacted,
+                        output_files: 1, // Typically compacts to single file
+                        duration_ms: duration.as_millis() as u64,
+                        completed_at: Utc::now(),
+                        engine_metrics: HashMap::new(),
+                    },
+                    &result.deleted_vector_ids,
+                    &result.merged_vectors,
+                ).await {
+                    warn!(
+                        "⚠️ CompactionCoordinator: Failed to update AXIS indexes after compaction: {}",
+                        e
+                    );
+                    // Continue - compaction succeeded even if index update failed
+                }
+                
                 Ok(CompactionResult {
                     success: true,
                     collections_affected: vec![collection_id.to_string()],
@@ -454,17 +490,21 @@ impl CompactionCoordinator {
     async fn execute_viper_compaction(&self, collection_id: &str) -> Result<EngineCompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing VIPER compaction for {}", collection_id);
         
-        // Use VIPER's built-in compaction
+        // Use VIPER's consolidated compaction with vector tracking
         match self.viper_engine.compact_collection(collection_id).await {
-            Ok(result) => {
+            Ok(enhanced_result) => {
                 info!(
-                    "✅ VIPER compaction completed: {} files compacted, {} bytes reclaimed",
-                    result.files_processed, result.bytes_processed
+                    "✅ VIPER compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
+                    enhanced_result.files_processed, 
+                    enhanced_result.bytes_processed,
+                    enhanced_result.deleted_vector_ids.len()
                 );
                 
                 Ok(EngineCompactionResult {
-                    files_compacted: result.files_processed,
-                    bytes_reclaimed: result.bytes_processed,
+                    files_compacted: enhanced_result.files_processed,
+                    bytes_reclaimed: enhanced_result.bytes_processed,
+                    deleted_vector_ids: enhanced_result.deleted_vector_ids,
+                    merged_vectors: enhanced_result.merged_vectors,
                 })
             }
             Err(e) => {
@@ -478,17 +518,21 @@ impl CompactionCoordinator {
     async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<EngineCompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing LSM compaction for {}", collection_id);
         
-        // Use LSM's built-in compaction
+        // Use LSM's consolidated compaction with vector tracking
         match self.lsm_engine.compact_collection(collection_id).await {
-            Ok(result) => {
+            Ok(enhanced_result) => {
                 info!(
-                    "✅ LSM compaction completed: {} files compacted, {} bytes reclaimed",
-                    result.files_processed, result.bytes_processed
+                    "✅ LSM compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
+                    enhanced_result.files_processed, 
+                    enhanced_result.bytes_processed,
+                    enhanced_result.deleted_vector_ids.len()
                 );
                 
                 Ok(EngineCompactionResult {
-                    files_compacted: result.files_processed,
-                    bytes_reclaimed: result.bytes_processed,
+                    files_compacted: enhanced_result.files_processed,
+                    bytes_reclaimed: enhanced_result.bytes_processed,
+                    deleted_vector_ids: enhanced_result.deleted_vector_ids,
+                    merged_vectors: enhanced_result.merged_vectors,
                 })
             }
             Err(e) => {
@@ -590,6 +634,8 @@ impl CompactionCoordinator {
 struct EngineCompactionResult {
     pub files_compacted: u64,
     pub bytes_reclaimed: u64,
+    pub deleted_vector_ids: Vec<String>,
+    pub merged_vectors: Vec<VectorRecord>,
 }
 
 /// Trait for compaction coordination callbacks

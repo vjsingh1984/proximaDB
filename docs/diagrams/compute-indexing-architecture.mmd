@@ -13,17 +13,24 @@ graph TB
             JAC["Jaccard<br/>intersection/union"]
         end
         
-        subgraph "Indexing Algorithms"
-            HNSW[HNSW Index<br/>Hierarchical Graph<br/>Multi-layer navigation]
-            IVF[IVF Index<br/>K-means clustering<br/>Inverted lists]
-            LSH[LSH Index<br/>Random projections<br/>Hash buckets]
+        subgraph "AXIS Framework"
+            AXIS[AxisManager<br/>Adaptive Index Selection<br/>Zero-downtime Migration]
+            
+            subgraph "Index Algorithms"
+                HNSW[HNSW<br/>Hierarchical Graph<br/>98% recall @ 15K QPS]
+                IVF[IVF<br/>K-means Clustering<br/>95% recall @ 22K QPS]
+                LSH[LSH<br/>Hash Buckets<br/>90% recall @ 45K QPS]
+                ANNOY[Annoy<br/>Tree-based<br/>92% recall @ 20K QPS]
+            end
         end
         
         subgraph "Hardware Acceleration"
-            AVX[AVX2/AVX512<br/>256/512-bit SIMD]
+            AVX[AVX2/AVX512<br/>256/512-bit SIMD<br/>1.3B elem/sec]
             NEON[ARM NEON<br/>128-bit SIMD]
             ROCM[AMD ROCm<br/>GPU acceleration]
             CUDA[NVIDIA CUDA<br/>GPU acceleration]
+            METAL[Metal<br/>Apple GPU]
+            OPENCL[OpenCL<br/>Cross-platform GPU]
         end
         
         subgraph "Platform-Specific Optimizations"
@@ -53,22 +60,31 @@ graph TB
     UC --> NEON
     UC --> ROCM
     UC --> CUDA
+    UC --> METAL
+    UC --> OPENCL
     
     %% Platform optimization connections
     AVX --> X86
     NEON --> ARM
     ROCM --> GPU_OPT
     CUDA --> GPU_OPT
+    METAL --> GPU_OPT
+    OPENCL --> GPU_OPT
+    
+    %% AXIS connections
+    AXIS --> HNSW
+    AXIS --> IVF
+    AXIS --> LSH
+    AXIS --> ANNOY
     
     %% Indexing algorithm connections
     HNSW --> UC
     IVF --> UC
     LSH --> UC
+    ANNOY --> UC
     
     %% Integration connections
-    DVS --> HNSW
-    DVS --> IVF
-    DVS --> LSH
+    DVS --> AXIS
     
     LSM_ENGINE --> UC
     VIPER_ENGINE --> UC
@@ -80,7 +96,7 @@ graph TB
     classDef integration fill:#d1fae5,stroke:#10b981,color:#064e3b,stroke-width:2px
     
     class UC,L1,L2,COS,DOT,HAM,JAC,GENERIC compute
-    class HNSW,IVF,LSH index
-    class AVX,NEON,ROCM,CUDA,X86,ARM,GPU_OPT hardware
+    class AXIS,HNSW,IVF,LSH,ANNOY index
+    class AVX,NEON,ROCM,CUDA,METAL,OPENCL,X86,ARM,GPU_OPT hardware
     class DVS,LSM_ENGINE,VIPER_ENGINE integration
     

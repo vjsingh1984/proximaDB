@@ -8,9 +8,8 @@ This test checks that:
 3. Both clients have consistent interfaces
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_sdk_alignment.py
 
 import pytest
 from proximadb import ProximaDBClient, Protocol

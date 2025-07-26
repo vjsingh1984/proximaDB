@@ -1663,6 +1663,326 @@ results = client.multi_search(collection_id, queries, top_k=3)
 * **Backward compatible**: The fix doesn't change APIs or data formats
 * **Proto-first architecture maintained**: Respects existing architecture
 
+== Flush Result Optimization
+
+=== Overview
+
+The flush optimization module provides high-performance mechanisms for flushing vector data from WAL to persistent storage with minimal memory allocations and maximum throughput.
+
+=== Key Optimizations
+
+==== 1. Memory Pool for Vector Buffers
+
+The `VectorMemoryPool` reuses pre-allocated buffers to avoid repeated allocations during flush operations:
+
+[source,rust]
+----
+let pool = VectorMemoryPool::new(max_size: 1000, dimension: 128);
+let buffer = pool.acquire().await;  // Get buffer from pool or allocate
+// ... use buffer ...
+pool.release(buffer).await;  // Return to pool for reuse
+----
+
+**Benefits:**
+
+* Reduces GC pressure
+* Avoids allocation overhead
+* Improves cache locality
+
+==== 2. Batch Processing with Parallelism
+
+The `BatchFlushProcessor` divides vectors into chunks and processes them in parallel:
+
+[source,rust]
+----
+let processor = BatchFlushProcessor::new(
+    batch_size: 100,
+    worker_count: 4,
+    dimension: 128
+);
+let processed = processor.process_batch(vectors).await?;
+----
+
+**Benefits:**
+
+* Utilizes multiple CPU cores
+* Maintains optimal batch sizes
+* Reduces processing latency
+
+==== 3. Arc-based Vector References
+
+The `OptimizedFlushResult` uses `Arc<Vec<Arc<VectorRecord>>>` to avoid cloning large vector datasets:
+
+[source,rust]
+----
+pub struct OptimizedFlushResult {
+    pub vector_refs: Arc<Vec<Arc<VectorRecord>>>,  // No cloning!
+    // ...
+}
+----
+
+**Benefits:**
+
+* Zero-copy for read operations
+* Shared ownership without duplication
+* Significant memory savings
+
+==== 4. Result Caching
+
+The `FlushResultCache` caches recent flush results to avoid redundant processing:
+
+[source,rust]
+----
+let cache = FlushResultCache::new(max_entries: 1000);
+if let Some(cached) = cache.get(&key).await {
+    return cached;  // Cache hit!
+}
+----
+
+**Benefits:**
+
+* Deduplication of identical flushes
+* Reduced CPU usage
+* Faster response times
+
+==== 5. Streaming Support
+
+For very large datasets, streaming flush avoids loading all vectors into memory:
+
+[source,rust]
+----
+pub struct StreamingFlushResult {
+    pub vector_stream: mpsc::Receiver<Arc<VectorRecord>>,
+    pub expected_count: usize,
+}
+----
+
+**Benefits:**
+
+* Handles datasets larger than memory
+* Constant memory usage
+* Progressive processing
+
+=== Performance Metrics
+
+The optimized flush coordinator tracks key metrics:
+
+* Total vectors flushed
+* Total bytes processed
+* Cache hit/miss ratio
+* Memory pool efficiency
+
+=== Usage Example
+
+[source,rust]
+----
+// Enable optimized flush
+let mut coordinator = WalFlushCoordinator::new();
+coordinator.enable_optimized_flush(
+    batch_size: 1000,
+    worker_count: 4,
+    dimension: 128
+);
+
+// Execute flush - automatically uses optimized path
+let result = coordinator.execute_coordinated_flush(
+    collection_id,
+    engine_type,
+    vector_records,
+    // ...
+).await?;
+----
+
+=== Benchmarks
+
+Run benchmarks to compare standard vs optimized flush:
+
+[source,bash]
+----
+cargo bench --bench flush_optimization_bench
+----
+
+Expected improvements:
+
+* 30-50% reduction in memory allocations
+* 2-4x throughput improvement with parallelism
+* Near-zero overhead for cached results
+
+=== Configuration
+
+Optimize for your workload:
+
+* **High throughput**: Increase batch_size and worker_count
+* **Low latency**: Decrease batch_size, use fewer workers
+* **Memory constrained**: Enable memory pool, use streaming
+* **CPU constrained**: Reduce worker_count, increase cache size
+
+=== Future Enhancements
+
+. **Zero-copy with memory-mapped files**: Direct mapping of vector data
+. **SIMD optimizations**: Vectorized operations for batch processing
+. **Adaptive batching**: Dynamic batch size based on system load
+. **Compression**: On-the-fly compression during flush
+. **GPU acceleration**: Offload vector processing to GPU
+
+== AXIS Integration with Flush and Compaction
+
+=== Overview
+
+AXIS indexing integrates with ProximaDB's flush and compaction processes to maintain consistent and up-to-date indexes through the data flow:
+
+```
+WAL → Memtable → Flush → SSTable/VIPER → Compaction → Merged Files
+                    ↓                           ↓
+                  AXIS                        AXIS
+```
+
+=== Flush Integration
+
+==== Enhanced FlushResult
+
+[source,rust]
+----
+// Enhanced FlushResult to carry vector data
+pub struct FlushResult {
+    pub collection_id: String,
+    pub flushed_files: Vec<String>,
+    pub vector_records: Vec<VectorRecord>,  // Actual vectors flushed
+    pub stats: FlushStats,
+}
+
+// In BackgroundManager::execute_flush_indexing_cycle()
+if let Some(axis) = &self.axis_manager {
+    let index_config = self.get_index_config(&collection_id).await?;
+    
+    match index_config.mode {
+        IndexingMode::Synchronous => {
+            // Block until indexing completes
+            axis.handle_flushed_vectors(
+                &collection_id,
+                flush_result.vector_records,
+                &flush_result.flushed_files,
+            ).await?;
+        }
+        IndexingMode::Asynchronous => {
+            // Queue for background indexing
+            axis.queue_vectors_for_indexing(
+                &collection_id,
+                flush_result.vector_records,
+                &flush_result.flushed_files,
+            ).await?;
+        }
+        IndexingMode::Hybrid => {
+            // Index metadata synchronously, vectors asynchronously
+            axis.handle_metadata_sync(&collection_id, &flush_result.vector_records).await?;
+            axis.queue_vectors_async(&collection_id, flush_result.vector_records).await?;
+        }
+    }
+}
+----
+
+=== Compaction Integration
+
+==== Enhanced CompactionResult
+
+[source,rust]
+----
+// Enhanced CompactionResult
+pub struct CompactionResult {
+    pub input_files: Vec<String>,
+    pub output_files: Vec<String>,
+    pub kept_records: Vec<VectorRecord>,     // Records in output
+    pub deleted_ids: Vec<String>,            // Deleted/expired IDs
+    pub updated_ids: Vec<(String, String)>,  // (old_id, new_id) for versions
+}
+
+// In BackgroundManager after compaction
+if let Some(axis) = &self.axis_manager {
+    // Update file references for moved vectors
+    axis.update_vector_file_references(
+        &collection_id,
+        &compaction_result.input_files,
+        &compaction_result.output_files,
+    ).await?;
+    
+    // Remove deleted vectors from indexes
+    for deleted_id in &compaction_result.deleted_ids {
+        axis.delete(&collection_id, deleted_id).await?;
+    }
+    
+    // Handle version updates
+    for (old_id, new_id) in &compaction_result.updated_ids {
+        axis.update_vector_version(&collection_id, old_id, new_id).await?;
+    }
+}
+----
+
+=== Index Update Strategies
+
+==== 1. Incremental Updates (Flush)
+* Best for HNSW: Can add vectors incrementally
+* Good for LSH: Add to hash tables
+* Challenge for IVF: May need periodic re-clustering
+
+==== 2. Batch Rebuild (Compaction)
+* Required when significant portion changes
+* Can optimize index structure during rebuild
+* Should be done during off-peak hours
+
+==== 3. Hybrid Approach
+
+[source,rust]
+----
+// In AxisManager
+pub async fn should_rebuild_index(&self, collection_id: &str) -> bool {
+    let stats = self.get_index_stats(collection_id).await?;
+    
+    // Rebuild if:
+    // - More than 20% vectors deleted
+    // - More than 50% vectors updated
+    // - Index fragmentation > threshold
+    stats.deleted_ratio > 0.2 || 
+    stats.updated_ratio > 0.5 ||
+    stats.fragmentation > 0.3
+}
+----
+
+=== Configuration
+
+[source,toml]
+----
+[indexing.flush]
+mode = "async"  # sync, async, hybrid
+batch_size = 1000
+queue_capacity = 10000
+
+[indexing.compaction]
+rebuild_threshold = 0.2  # Rebuild if 20% changed
+update_mode = "incremental"  # incremental, rebuild
+parallel_rebuilds = 2
+
+[indexing.recovery]
+rebuild_on_startup = true
+parallel_collections = 4
+----
+
+=== Performance Considerations
+
+1. **Async Indexing Queue**
+   - Prevents flush blocking on index updates
+   - Allows batching for better throughput
+   - Need to handle queue overflow
+
+2. **Index Versioning**
+   - Keep old index readable during rebuild
+   - Atomic swap when new index ready
+   - Allows zero-downtime updates
+
+3. **Memory Management**
+   - IVF training needs sample vectors in memory
+   - HNSW construction is memory intensive
+   - May need to spill to disk for large rebuilds
+
 ---
 
 **Implementation Notes**: This reference covers the core algorithms and data structures. For complete implementation details, see the source code and inline documentation.

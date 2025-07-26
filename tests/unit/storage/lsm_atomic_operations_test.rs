@@ -178,22 +178,22 @@ async fn test_lsm_atomic_compaction_with_staging() {
     lsm_config.compaction_threshold = 2; // Low threshold for testing
     let collection_id = "test_collection";
     
-    let lsm_tree = LsmTree::new(
-        collection_id.to_string(),
-        lsm_config,
-        filesystem.clone()
-    ).await.unwrap();
-    
-    // Create assignment for the collection
+    // Create assignment for the collection BEFORE creating LSM tree
     let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     assignment_service.assign_collection(
         collection_id,
         &[proximadb::core::config::StorageLocation {
-            url: format!("file://{}/lsm", base_path),
+            url: format!("file://{}", base_path),
             weight: 1,
             tags: vec![],
         }],
         "hash"
+    ).await.unwrap();
+    
+    let lsm_tree = LsmTree::new(
+        collection_id.to_string(),
+        lsm_config,
+        filesystem.clone()
     ).await.unwrap();
     
     // Flush multiple batches to trigger compaction

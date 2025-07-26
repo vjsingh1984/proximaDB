@@ -114,6 +114,7 @@ pub struct IndexConfiguration {
     pub flat_config: Option<FlatConfig>,
     pub pq_config: Option<PqConfig>,
     pub annoy_config: Option<AnnoyConfig>,
+    pub lsh_config: Option<LshConfig>,
     pub build_concurrency: Option<i32>,
     pub memory_limit_mb: Option<i64>,
     pub checkpoint_interval_ms: Option<i32>,
@@ -173,6 +174,17 @@ pub struct AnnoyConfig {
     pub search_k: i32,
     pub max_leaf_size: i32,
     pub enable_mmap: bool,
+}
+
+/// LSH configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LshConfig {
+    pub n_hash_tables: i32,
+    pub n_hash_functions: i32,
+    pub bucket_width: f32,
+    pub binary_vectors: bool,
+    pub max_candidates: i32,
+    pub projection: String, // "gaussian", "binary", "sparse"
 }
 
 /// Quantization configuration - aligned with proto
@@ -496,6 +508,34 @@ impl<T> ApiResponse<T> {
 }
 
 // ============================================================================
+// SQL QUERY TYPES
+// ============================================================================
+
+/// SQL query request - aligned with proto SqlQueryRequest
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SqlQueryRequest {
+    pub query: String,
+    pub parameters: Option<Vec<serde_json::Value>>,
+    pub collection: Option<String>,  // Optional if specified in FROM clause
+}
+
+/// SQL query response - aligned with proto SqlQueryResponse
+#[derive(Debug, Serialize)]
+pub struct SqlQueryResponse {
+    pub rows: Vec<serde_json::Value>,
+    pub columns: Vec<ColumnInfo>,
+    pub row_count: usize,
+    pub execution_time_ms: f64,
+}
+
+/// Column information for SQL results
+#[derive(Debug, Serialize)]
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: String,
+}
+
+// ============================================================================
 // ROUTER CONFIGURATION
 // ============================================================================
 
@@ -514,6 +554,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/vector/search", post(vector_search))      // search operations
         .route("/api/v1/vector/get/:collection_id/:vector_id", get(get_vector))  // get single vector
         .route("/api/v1/vectors/:collection_id", delete(delete_vectors))         // delete vectors
+        // SQL query endpoint
+        .route("/api/v1/sql/execute", post(execute_sql))          // execute SQL queries
         // Convenience endpoints for common operations
         // Single vector endpoints removed - use batch operations instead
         // Legacy single-vector APIs don't exist in proto-first architecture
@@ -810,6 +852,46 @@ pub async fn get_vector(
 // Legacy single-vector endpoints removed - use batch operations instead
 // These APIs don't exist in proto-first architecture
 
+/// Execute SQL query endpoint
+pub async fn execute_sql(
+    State(state): State<AppState>,
+    Json(request): Json<SqlQueryRequest>,
+) -> Result<JsonResponse<SqlQueryResponse>, ErrorResponse> {
+    // Track execution time
+    let start_time = std::time::Instant::now();
+    
+    // Delegate to unified handlers
+    match state.unified_handlers.execute_sql_query(
+        request.query,
+        request.parameters,
+        request.collection,
+    ).await {
+        Ok(result) => {
+            let elapsed_ms = start_time.elapsed().as_millis() as f64;
+            
+            let response = SqlQueryResponse {
+                rows: result.rows,
+                columns: result.columns.into_iter().map(|(name, data_type)| ColumnInfo {
+                    name,
+                    data_type,
+                }).collect(),
+                row_count: result.row_count,
+                execution_time_ms: elapsed_ms,
+            };
+            
+            Ok(JsonResponse(response))
+        }
+        Err(e) => {
+            let error_response = ErrorResponse {
+                status: 400,
+                message: e.to_string(),
+                error_code: "SQL_EXECUTION_ERROR".to_string(),
+            };
+            Err(error_response)
+        }
+    }
+}
+
 /// Get metrics endpoint - thin adapter to UnifiedHandlers
 pub async fn get_metrics(
     State(state): State<AppState>,
@@ -872,6 +954,7 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> crate::proto::pr
         "flat" => proximadb::IndexingAlgorithm::Flat as i32,
         "pq" => proximadb::IndexingAlgorithm::Pq as i32,
         "annoy" => proximadb::IndexingAlgorithm::Annoy as i32,
+        "lsh" => proximadb::IndexingAlgorithm::Lsh as i32,
         _ => proximadb::IndexingAlgorithm::Hnsw as i32,
     };
     
@@ -926,6 +1009,18 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> crate::proto::pr
             search_k: c.search_k,
             max_leaf_size: c.max_leaf_size,
             enable_mmap: c.enable_mmap,
+        }),
+        lsh_config: config.lsh_config.map(|c| proximadb::LshConfig {
+            n_hash_tables: c.n_hash_tables,
+            n_hash_functions: c.n_hash_functions,
+            bucket_width: c.bucket_width,
+            binary_vectors: c.binary_vectors,
+            max_candidates: c.max_candidates,
+            projection: match c.projection.as_str() {
+                "binary" => 1,
+                "sparse" => 2,
+                _ => 0, // gaussian
+            },
         }),
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
@@ -1059,6 +1154,7 @@ fn convert_to_proto_config(config: CollectionConfig) -> Result<crate::proto::pro
         "flat" => proximadb::IndexingAlgorithm::Flat as i32,
         "pq" => proximadb::IndexingAlgorithm::Pq as i32,
         "annoy" => proximadb::IndexingAlgorithm::Annoy as i32,
+        "lsh" => proximadb::IndexingAlgorithm::Lsh as i32,
         _ => proximadb::IndexingAlgorithm::Hnsw as i32,
     };
     
@@ -1124,6 +1220,7 @@ fn convert_index_config_from_proto(config: crate::proto::proximadb::IndexConfig)
             x if x == crate::proto::proximadb::IndexingAlgorithm::Flat as i32 => "flat",
             x if x == crate::proto::proximadb::IndexingAlgorithm::Pq as i32 => "pq",
             x if x == crate::proto::proximadb::IndexingAlgorithm::Annoy as i32 => "annoy",
+            x if x == crate::proto::proximadb::IndexingAlgorithm::Lsh as i32 => "lsh",
             _ => "hnsw",
         }.to_string(),
         update_mode: match config.update_mode {
@@ -1172,6 +1269,18 @@ fn convert_index_config_from_proto(config: crate::proto::proximadb::IndexConfig)
             search_k: c.search_k,
             max_leaf_size: c.max_leaf_size,
             enable_mmap: c.enable_mmap,
+        }),
+        lsh_config: config.lsh_config.map(|c| LshConfig {
+            n_hash_tables: c.n_hash_tables,
+            n_hash_functions: c.n_hash_functions,
+            bucket_width: c.bucket_width,
+            binary_vectors: c.binary_vectors,
+            max_candidates: c.max_candidates,
+            projection: match c.projection {
+                1 => "binary",
+                2 => "sparse",
+                _ => "gaussian",
+            }.to_string(),
         }),
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
@@ -1413,6 +1522,7 @@ fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> 
         x if x == crate::proto::proximadb::IndexingAlgorithm::Flat as i32 => "flat",
         x if x == crate::proto::proximadb::IndexingAlgorithm::Pq as i32 => "pq",
         x if x == crate::proto::proximadb::IndexingAlgorithm::Annoy as i32 => "annoy",
+        x if x == crate::proto::proximadb::IndexingAlgorithm::Lsh as i32 => "lsh",
         _ => "hnsw",
     }.to_string();
     

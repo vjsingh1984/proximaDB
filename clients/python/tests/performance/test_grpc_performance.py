@@ -28,7 +28,7 @@ def test_grpc_performance():
     print("🚀 gRPC Performance Test: LSM vs VIPER")
     print("=" * 80)
     
-    client = connect_grpc("localhost:5679")
+    client = connect_grpc("grpc://localhost:5679")
     print("✅ Connected via gRPC")
     
     dimension = 384
@@ -37,8 +37,11 @@ def test_grpc_performance():
     
     # Test each engine
     for engine in [StorageEngine.LSM, StorageEngine.VIPER]:
+        engine_name = engine.value if hasattr(engine, 'value') else str(engine)
+        if isinstance(engine_name, list):
+            engine_name = engine_name[0] if engine_name else "unknown"
         print(f"\n{'=' * 80}")
-        print(f"📦 Testing {engine.value} Storage Engine")
+        print(f"📦 Testing {engine_name} Storage Engine")
         print(f"{'=' * 80}")
         
         for size in test_sizes:
@@ -105,16 +108,14 @@ def test_grpc_performance():
             search_times_10 = []
             for _ in range(5):
                 start = time.time()
-                query = SearchQuery(vector=query_vector, top_k=10)
-                results_list = client.search(collection_name, [query])
+                results = client.search(collection_name, query_vector, top_k=10)
                 search_times_10.append((time.time() - start) * 1000)
             
             # Test k=100
             search_times_100 = []
             for _ in range(5):
                 start = time.time()
-                query = SearchQuery(vector=query_vector, top_k=100)
-                results_list = client.search(collection_name, [query])
+                results = client.search(collection_name, query_vector, top_k=100)
                 search_times_100.append((time.time() - start) * 1000)
             
             avg_10 = np.mean(search_times_10)
@@ -124,7 +125,8 @@ def test_grpc_performance():
             print(f"  k=100: {avg_100:.2f}ms (avg of 5 runs)")
             
             # Store results
-            results[engine.value][f"{size//1000}K"] = {
+            engine_key = engine_name.upper() if isinstance(engine_name, str) else "UNKNOWN"
+            results[engine_key][f"{size//1000}K"] = {
                 "insert_rate": insert_rate,
                 "search_k10_ms": avg_10,
                 "search_k100_ms": avg_100

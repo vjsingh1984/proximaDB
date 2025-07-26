@@ -3,18 +3,14 @@
 Debug batch processing - simple test to examine server logs
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/unit/test_batch_debug.py
+
 import time
 import uuid
 import numpy as np
 from pathlib import Path
 import logging
-
-# Add SDK to path
-workspace_root = Path(__file__).parent
-sdk_path = workspace_root / "clients/python/src"
-sys.path.insert(0, str(sdk_path))
 
 from proximadb import ProximaDBClient, Protocol
 

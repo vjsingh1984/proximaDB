@@ -33,8 +33,8 @@ from typing import Dict, List, Optional, Tuple, Any
 import httpx
 import numpy as np
 
-# Add the Python SDK to the path
-sys.path.insert(0, str(Path(__file__).parent.parent / "clients" / "python" / "src"))
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/integration_test_matrix.py
 
 try:
     import proximadb

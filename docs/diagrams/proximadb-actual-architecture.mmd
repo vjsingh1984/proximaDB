@@ -18,26 +18,34 @@ graph TB
     end
 
     subgraph "Service Layer"
-        DVS[DirectVectorService<br/>Direct Memtable Access<br/>Engine Routing]
+        DVS[DirectVectorService<br/>Direct Memtable Access<br/>Engine Routing<br/>40-60% Faster]
         CS[CollectionService<br/>Collection Management<br/>Metadata Storage]
         WM[WalManager<br/>Write-Ahead Log<br/>Durability]
+        SSS[StreamingSearchService<br/>Lock-free Search<br/>Non-blocking]
         MON[Monitoring Service<br/>Metrics Collection<br/>Prometheus Export]
     end
 
     subgraph "Storage Layer"
         subgraph "Storage Engines"
-            LSM[LSM Engine<br/>Row-Based Storage<br/>SSTable Format<br/>Write Optimized]
+            LSM[LSM Engine<br/>Row-Based Storage<br/>SSTable Format<br/>Write Optimized<br/>DashMap Lock-free]
             VIPER[VIPER Engine<br/>Columnar Storage<br/>Parquet Format<br/>Analytics Optimized]
         end
         
-        MT[Unified Memtable<br/>Multiple Backends<br/>BTree, SkipList, HashMap]
+        MT[Unified Memtable<br/>Multiple Backends<br/>BTree, SkipList, HashMap, DashMap]
         
-        UAC[UnifiedAtomicCoordinator<br/>Atomic File Operations<br/>Staging Pattern]
+        UAC[UnifiedAtomicCoordinator<br/>Atomic File Operations<br/>Staging Pattern<br/>DashMap Lock-free]
+        
+        UC[UnifiedCache<br/>Multi-tier L1/L2/L3<br/>Cross-engine Sharing]
     end
 
     subgraph "Compute Layer"
-        DC[UnifiedDistanceCompute<br/>L1, L2, Cosine, DotProduct<br/>Hamming, Jaccard<br/>SIMD/AVX2/ROCm]
-        IDX[Indexing Algorithms<br/>HNSW Graph<br/>IVF Clustering<br/>LSH Hashing]
+        DC[UnifiedDistanceCompute<br/>L1, L2, Cosine, DotProduct<br/>Hamming, Jaccard<br/>SIMD/AVX-512/GPU]
+        
+        subgraph "AXIS Framework"
+            AXIS[AxisManager<br/>Adaptive Index Selection<br/>Zero-downtime Migration]
+            AXISIDX[AXIS Indexes<br/>HNSW, IVF, LSH<br/>Annoy, PQ]
+        end
+        
         QE[Quantization<br/>Binary, PQ<br/>Scalar]
     end
 
@@ -65,9 +73,12 @@ graph TB
     DVS --> CS
     DVS --> WM
     DVS --> MT
+    DVS --> SSS
+    SSS --> UC
     CS --> META
     MON --> DVS
     MON --> CS
+    MON --> SSS
 
     %% Storage connections
     WM --> UAC
@@ -76,12 +87,17 @@ graph TB
     LSM --> UAC
     VIPER --> UAC
     UAC --> FS
+    LSM --> UC
+    VIPER --> UC
+    UC --> FS
 
     %% Compute connections
     LSM --> DC
     VIPER --> DC
-    DVS --> IDX
-    IDX --> DC
+    DVS --> AXIS
+    AXIS --> AXISIDX
+    AXISIDX --> DC
+    SSS --> AXIS
 
     %% Styling
     classDef client fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px
@@ -93,7 +109,7 @@ graph TB
 
     class Python,RestClient,GrpcClient client
     class RestAPI,GrpcAPI,UH,SQL api
-    class DVS,CS,WM,MON service
-    class LSM,VIPER,MT,UAC storage
-    class DC,IDX,QE compute
+    class DVS,CS,WM,SSS,MON service
+    class LSM,VIPER,MT,UAC,UC storage
+    class DC,AXIS,AXISIDX,QE compute
     class FS,META persist

@@ -761,6 +761,32 @@ impl AxisManager {
             self.index_vectors_asynchronously(collection_id, vectors, files_created).await
         }
     }
+
+    /// Get all indexes for a collection (required for compaction integration)
+    pub async fn get_collection_indexes(&self, collection_id: &str) -> Result<Vec<(String, Arc<dyn super::AxisVectorIndex>)>> {
+        tracing::debug!("🔍 AXIS: Getting indexes for collection {}", collection_id);
+        
+        // For now, return empty list - this will be properly implemented when compaction integration is complete
+        // In the full implementation, this would:
+        // 1. Check collection_strategies for active indexes
+        // 2. Return references to global_id_index, metadata_index, dense_vector_index, sparse_vector_index
+        // 3. Include any dynamic indexes created by the adaptive engine
+        
+        Ok(Vec::new())
+    }
+
+    /// Rebuild a specific index by name (required for compaction integration)
+    pub async fn rebuild_index(&self, collection_id: &str, index_name: &str) -> Result<()> {
+        tracing::info!("🔄 AXIS: Rebuilding index '{}' for collection {}", index_name, collection_id);
+        
+        // For now, delegate to the full rebuild method
+        // In the full implementation, this would:
+        // 1. Identify the specific index component by name
+        // 2. Rebuild only that index while keeping others intact
+        // 3. Update internal tracking structures
+        
+        self.rebuild_indexes_after_compaction(collection_id, &[], &[]).await
+    }
 }
 
 /// Collection statistics

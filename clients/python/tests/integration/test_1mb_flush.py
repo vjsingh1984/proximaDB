@@ -3,14 +3,13 @@
 Test script to verify VIPER collection flush at 1MB threshold
 """
 
-import sys
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_1mb_flush.py
+
 import os
 import time
 import random
 import numpy as np
-
-# Add the parent directory to Python path so we can import the client
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'clients', 'python', 'src'))
 
 from proximadb import ProximaDBClient, Protocol
 from proximadb.models import CollectionConfig, DistanceMetric

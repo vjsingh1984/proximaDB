@@ -5,16 +5,15 @@ Tests LSM vs VIPER with 1K, 5K, and 25K vectors
 Includes both insert and search performance
 """
 
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/performance/test_storage_engine_comparison.py
+
 import time
 import numpy as np
 import uuid
 import json
-import sys
 from pathlib import Path
 from typing import Dict, List, Any
-
-# Add SDK to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import requests
 

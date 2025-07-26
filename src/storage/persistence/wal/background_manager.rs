@@ -289,9 +289,9 @@ impl BackgroundMaintenanceManager {
                         info!(
                             "✅ [FLUSH] Coordinated flush successful for collection {}: {} entries, {} bytes, {} files",
                             collection_id_clone,
-                            result.entries_flushed,
-                            result.bytes_written,
-                            result.files_created
+                            result.base.entries_flushed,
+                            result.base.bytes_written,
+                            result.base.files_created
                         );
                         Some(result)
                     }
@@ -323,7 +323,7 @@ impl BackgroundMaintenanceManager {
             let needs_compaction = Self::should_trigger_compaction_after_flush(&collection_id_clone).await;
             let mut final_files_created = if let Some(ref result) = flush_result {
                 // Convert count to placeholder file paths - in production this would come from engine
-                let file_count = result.files_created;
+                let file_count = result.base.files_created;
                 (0..file_count)
                     .map(|i| format!("flushed_collection_{}_{}.parquet", collection_id_clone, i))
                     .collect::<Vec<String>>()
@@ -408,8 +408,11 @@ impl BackgroundMaintenanceManager {
                     let indexing_start = std::time::Instant::now();
                     
                     // Extract vectors from flush result for indexing
-                    // TODO: This should come from the actual flushed data, not simulated
-                    let vectors_to_index = Vec::new(); // Placeholder - get from flush result
+                    let vectors_to_index = if let Some(ref enhanced_result) = flush_result {
+                        enhanced_result.vector_records.clone()
+                    } else {
+                        Vec::new()
+                    };
                     
                     match axis.handle_flushed_vectors(
                         &collection_id_clone,

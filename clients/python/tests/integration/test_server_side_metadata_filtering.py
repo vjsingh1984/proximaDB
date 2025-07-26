@@ -4,8 +4,9 @@ Test Server-Side Metadata Filtering with VIPER Parquet Column Pushdown
 Demonstrates performance improvements with 1MB flush size
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_server_side_metadata_filtering.py
+
 import json
 import time
 import asyncio
@@ -14,9 +15,6 @@ import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
-
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService

@@ -1,0 +1,89 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#fff', 'primaryBorderColor':'#374151', 'lineColor':'#6b7280', 'secondaryColor':'#3b82f6', 'tertiaryColor':'#10b981', 'tertiaryTextColor':'#fff', 'tertiaryBorderColor':'#059669', 'background':'#ffffff', 'mainBkg':'#f3f4f6', 'secondBkg':'#e5e7eb', 'tertiaryBkg':'#d1d5db'}}}%%
+
+graph TB
+    subgraph "Storage Optimizations (Phase 2)"
+        subgraph "Unified Cache Layer"
+            L1[L1 Cache<br/>Memory<br/>Sub-microsecond]
+            L2[L2 Cache<br/>NVMe SSD<br/>~100μs]
+            L3[L3 Cache<br/>Network Cache<br/>~1ms]
+            
+            ADAPT[Adaptive Promotion<br/>Hot data moves up<br/>Cold data moves down]
+            SHARE[Cross-Engine Sharing<br/>LSM ↔ VIPER<br/>Deduplication]
+        end
+        
+        subgraph "Lock-Free Architecture (Integrated)"
+            LFE[StorageEngine<br/>DashMap for LSM trees<br/>DashMap for MMAP readers]
+            LFA[UnifiedAtomicCoordinator<br/>DashMap for active_operations<br/>Lock-free tracking]
+            LFM[DashMap Memtable<br/>Lock-free backend<br/>Concurrent writes]
+            
+            PERF[Performance Gains<br/>No write lock bottlenecks<br/>Better concurrent scaling]
+        end
+        
+        subgraph "Predictive Prefetching"
+            PATTERN[Pattern Detection<br/>Sequential access<br/>Stride tracking]
+            HOT[Hot Block Tracking<br/>Frequency analysis<br/>LRU tracking]
+            ML[ML Prediction<br/>Access history<br/>Pattern learning]
+            
+            QUEUE[Prefetch Queue<br/>Priority scheduling<br/>Async loading]
+        end
+        
+        subgraph "Memory Optimizations"
+            BLOOM[Optimized Bloom Filters<br/>40MB → 8MB per collection<br/>Memory sharing]
+            CACHE[SSTable Index Cache<br/>Moka LRU cache<br/>Bounded memory]
+            DOUBLE[Double-Check Fix<br/>Direct cache API<br/>No deadlocks]
+        end
+        
+        subgraph "Flush Result Optimization"
+            POOL[VectorMemoryPool<br/>Pre-allocated buffers<br/>Zero allocations]
+            BATCH[BatchFlushProcessor<br/>Parallel processing<br/>Multi-worker]
+            ARC[Arc-based References<br/>Zero-copy vectors<br/>Shared ownership]
+            FCACHE[FlushResultCache<br/>Deduplication<br/>Fast lookups]
+        end
+    end
+    
+    %% Cache tier connections
+    L1 --> L2
+    L2 --> L3
+    ADAPT --> L1
+    ADAPT --> L2
+    ADAPT --> L3
+    SHARE --> L1
+    
+    %% Lock-free connections
+    LFE --> LFM
+    LFA --> LFE
+    LFM --> PERF
+    
+    %% Prefetching connections
+    PATTERN --> QUEUE
+    HOT --> QUEUE
+    ML --> QUEUE
+    
+    %% Memory optimization connections
+    BLOOM --> CACHE
+    CACHE --> DOUBLE
+    
+    %% Flush optimization connections
+    POOL --> BATCH
+    BATCH --> ARC
+    ARC --> FCACHE
+    
+    %% Cross-component connections
+    L1 --> LFE
+    QUEUE --> L2
+    CACHE --> L1
+    BATCH --> LFE
+    FCACHE --> L1
+    
+    %% Styling
+    classDef cache fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+    classDef lockfree fill:#d1fae5,stroke:#10b981,color:#064e3b,stroke-width:2px
+    classDef prefetch fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+    classDef memory fill:#fce7f3,stroke:#ec4899,color:#831843,stroke-width:2px
+    classDef flush fill:#e0e7ff,stroke:#6366f1,color:#312e81,stroke-width:2px
+    
+    class L1,L2,L3,ADAPT,SHARE cache
+    class LFE,LFA,LFM,PERF lockfree
+    class PATTERN,HOT,ML,QUEUE prefetch
+    class BLOOM,CACHE,DOUBLE memory
+    class POOL,BATCH,ARC,FCACHE flush

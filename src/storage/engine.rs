@@ -10,6 +10,7 @@ use crate::storage::{
     traits::CollectionMetadataProvider,
     CollectionMetadata,
 };
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -64,8 +65,8 @@ fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
 
 pub struct StorageEngine {
     config: StorageConfig,
-    lsm_trees: Arc<RwLock<HashMap<String, LsmTree>>>,
-    mmap_readers: Arc<RwLock<HashMap<String, MmapReader>>>,
+    lsm_trees: Arc<DashMap<String, Arc<LsmTree>>>,
+    mmap_readers: Arc<DashMap<String, Arc<MmapReader>>>,
     disk_manager: Arc<DiskManager>,
     wal_manager: Arc<WalManager>,
     axis_index_manager: Arc<AxisManager>,
@@ -119,7 +120,18 @@ impl StorageEngine {
         // Initialize WAL configuration from storage locations
         let mut wal_config = WalConfig::default();
         wal_config.multi_disk.data_directories = config.storage_locations.iter()
-            .map(|loc| loc.url.clone())
+            .map(|loc| {
+                // Ensure proper file:// URL format
+                let url = if loc.url.starts_with("file://") {
+                    loc.url.clone()
+                } else if loc.url.starts_with("/") {
+                    format!("file://{}", loc.url)
+                } else {
+                    loc.url.clone()
+                };
+                tracing::debug!("WAL directory URL: {}", url);
+                url
+            })
             .collect();
 
         // Create filesystem factory for WAL
@@ -165,8 +177,8 @@ impl StorageEngine {
 
         Ok(Self {
             config,
-            lsm_trees: Arc::new(RwLock::new(HashMap::new())),
-            mmap_readers: Arc::new(RwLock::new(HashMap::new())),
+            lsm_trees: Arc::new(DashMap::new()),
+            mmap_readers: Arc::new(DashMap::new()),
             disk_manager,
             wal_manager,
             axis_index_manager,
@@ -234,7 +246,7 @@ impl StorageEngine {
         self.wal_manager.clone()
     }
 
-    #[deprecated(note = "Use DirectVectorService for writes. LSM is pure SSTable storage.")]
+    /// Write a vector to storage through WAL → memtable → flush pipeline
     pub async fn write(&self, collection_id: &str, record: &VectorRecord) -> crate::storage::Result<()> {
         // Direct field access - no function call overhead, no match expressions
         let vector_ref = &record.vector[..];
@@ -245,43 +257,44 @@ impl StorageEngine {
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
                        vector_id, collection_id, vector_ref.len(), vector_size);
 
-        tracing::debug!(
-            "🔒 Acquiring LSM trees write lock for collection {}",
-            collection_id
-        );
-        let mut trees = self.lsm_trees.write().await;
-        tracing::debug!(
-            "✅ Acquired LSM trees write lock for collection {}",
-            collection_id
-        );
+        // Get or create LSM tree using DashMap entry API
+        let _tree = match self.lsm_trees.get(collection_id) {
+            Some(tree) => tree.clone(),
+            None => {
+                tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
+                let new_tree = Arc::new(LsmTree::new(
+                    collection_id.to_string(),
+                    self.config.lsm_config.clone(),
+                    self.filesystem.clone(),
+                ).await.expect("Failed to create LSM tree"));
+                
+                self.lsm_trees.insert(collection_id.to_string(), new_tree.clone());
+                tracing::debug!("✅ Created new LSM tree for collection {}", collection_id);
+                new_tree
+            }
+        };
 
-        // Check if tree exists, create if needed
-        if !trees.contains_key(collection_id) {
-            tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
-            let new_tree = LsmTree::new(
-                collection_id.to_string(),
-                self.config.lsm_config.clone(),
-                self.filesystem.clone(),
-            ).await.expect("Failed to create LSM tree");
-            trees.insert(collection_id.to_string(), new_tree);
-        }
-        let _tree = trees.get_mut(collection_id).unwrap();
-
+        // Write through WAL → memtable → flush pipeline
         tracing::debug!(
-            "💾 Calling tree.put() for vector {} in collection {}",
+            "💾 Writing vector {} to WAL for collection {}",
             vector_id,
             collection_id
         );
-        // LSM is pure SSTable storage - no direct put operation
-        // tree.put(vector_id.to_string(), record).await?;
-        return Err(anyhow::anyhow!("Direct writes to LSM not supported. Use WAL → Flush → SSTable pipeline.").into());
-
-        // Release the trees lock before other operations
-        drop(trees);
+        
+        // Use modern WAL API with Arc for zero-copy
+        let vectors = Arc::new(vec![record.clone()]);
+        
+        // Write to WAL (which handles memtable insertion)
+        self.wal_manager.write_vector_batch_native_arc(collection_id, vectors).await
+            .map_err(|e| crate::core::StorageError::WalError(format!("Failed to write to WAL: {}", e)))?;
+        
         tracing::debug!(
-            "🔓 Released LSM trees write lock for collection {}",
+            "✅ Successfully wrote vector {} to WAL for collection {}",
+            vector_id,
             collection_id
         );
+
+        // No need to release lock with DashMap - operations are atomic
 
         // Add to search index
         tracing::debug!(
@@ -324,16 +337,14 @@ impl StorageEngine {
         id: &VectorId,
     ) -> crate::storage::Result<Option<VectorRecord>> {
         // First check LSM tree (recent writes)
-        let trees = self.lsm_trees.read().await;
-        if let Some(_tree) = trees.get(collection_id) {
+        if self.lsm_trees.contains_key(collection_id) {
             // LSM is pure SSTable storage - no direct get operation
             // Use search API to retrieve vectors from LSM
             return Err(anyhow::anyhow!("Direct gets from LSM not supported. Use search API.").into());
         }
 
         // Then check MMAP readers (historical data)
-        let readers = self.mmap_readers.read().await;
-        if let Some(reader) = readers.get(collection_id) {
+        if let Some(reader) = self.mmap_readers.get(collection_id) {
             return reader.get(id).await;
         }
 
@@ -366,8 +377,7 @@ impl StorageEngine {
 
         // Mark as deleted in LSM tree using tombstone
         if exists {
-            let trees = self.lsm_trees.read().await;
-            if let Some(_tree) = trees.get(collection_id) {
+            if self.lsm_trees.contains_key(collection_id) {
                 // LSM is pure SSTable storage - no direct delete operation
                 // Deletes should be handled through WAL tombstones
                 return Err(anyhow::anyhow!("Direct deletes from LSM not supported. Use WAL tombstones.").into());
@@ -412,17 +422,13 @@ impl StorageEngine {
             tracing::warn!("⚠️ No metadata provider available, skipping collection verification");
         }
 
-        // Create LSM tree
-        let mut trees = self.lsm_trees.write().await;
-        let new_tree = LsmTree::new(
+        // Create LSM tree using DashMap
+        let new_tree = Arc::new(LsmTree::new(
             collection_id.clone(),
             self.config.lsm_config.clone(),
             self.filesystem.clone(),
-        ).await.expect("Failed to create LSM tree");
-        trees.insert(collection_id.clone(), new_tree);
-
-        // Create MMAP reader
-        let mut readers = self.mmap_readers.write().await;
+        ).await.expect("Failed to create LSM tree"));
+        self.lsm_trees.insert(collection_id.clone(), new_tree);
         // Extract first local filesystem path for MMAP reader
         let data_dir = self.config.storage_locations
             .iter()
@@ -434,9 +440,9 @@ impl StorageEngine {
                 }
             })
             .unwrap_or_else(|| PathBuf::from("./data/storage"));
-        let reader = MmapReader::new(collection_id.clone(), data_dir)?;
+        let reader = Arc::new(MmapReader::new(collection_id.clone(), data_dir)?);
         reader.initialize().await?;
-        readers.insert(collection_id.clone(), reader);
+        self.mmap_readers.insert(collection_id.clone(), reader);
 
         // TODO: Create search index using metadata from SharedServices
         // For now, skip search index creation entirely
@@ -476,23 +482,21 @@ impl StorageEngine {
                     if let Some(collection_name) = path.file_name().and_then(|n| n.to_str()) {
                         let collection_id = collection_name.to_string();
 
-                        // Initialize LSM tree for this collection
-                        let mut trees = self.lsm_trees.write().await;
-                        if !trees.contains_key(&collection_id) {
-                            let new_tree = LsmTree::new(
+                        // Initialize LSM tree for this collection using DashMap
+                        if !self.lsm_trees.contains_key(&collection_id) {
+                            let new_tree = Arc::new(LsmTree::new(
                                 collection_id.clone(),
                                 self.config.lsm_config.clone(),
                                 self.filesystem.clone(),
-                            ).await.expect("Failed to create LSM tree");
-                            trees.insert(collection_id.clone(), new_tree);
+                            ).await.expect("Failed to create LSM tree"));
+                            self.lsm_trees.insert(collection_id.clone(), new_tree);
                         }
 
-                        // Initialize MMAP reader
-                        let mut readers = self.mmap_readers.write().await;
-                        if !readers.contains_key(&collection_id) {
-                            let reader = MmapReader::new(collection_id.clone(), data_dir.clone())?;
+                        // Initialize MMAP reader using DashMap
+                        if !self.mmap_readers.contains_key(&collection_id) {
+                            let reader = Arc::new(MmapReader::new(collection_id.clone(), data_dir.clone())?);
                             reader.initialize().await?;
-                            readers.insert(collection_id.clone(), reader);
+                            self.mmap_readers.insert(collection_id.clone(), reader);
                         }
 
                         // TODO: Initialize search index for existing collection using SharedServices
@@ -663,12 +667,9 @@ impl StorageEngine {
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<bool> {
-        // Remove from in-memory structures
-        let mut trees = self.lsm_trees.write().await;
-        let mut readers = self.mmap_readers.write().await;
-
-        let tree_removed = trees.remove(collection_id).is_some();
-        let reader_removed = readers.remove(collection_id).is_some();
+        // Remove from in-memory structures using DashMap
+        let tree_removed = self.lsm_trees.remove(collection_id).is_some();
+        let reader_removed = self.mmap_readers.remove(collection_id).is_some();
 
         if tree_removed || reader_removed {
             // Collection-aware WAL cleanup - remove only this collection's entries
@@ -1098,7 +1099,7 @@ impl StorageEngine {
         let mut inserted_ids = Vec::with_capacity(records.len());
 
         // Use existing write method for each record to ensure consistency
-        for (index, record) in records.into_iter().enumerate() {
+        for (index, record) in records.iter().enumerate() {
             let record_id = record.id.as_deref().unwrap_or("").to_string();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
@@ -1108,7 +1109,7 @@ impl StorageEngine {
                 collection_id
             );
 
-            self.write(collection_id, &record).await?;
+            self.write(collection_id, record).await?;
             inserted_ids.push(record_id.clone());
 
             tracing::debug!(
@@ -1209,15 +1210,9 @@ impl StorageEngine {
             // }
         }
 
-        // Clear in-memory structures
-        {
-            let mut trees = self.lsm_trees.write().await;
-            trees.clear();
-        }
-        {
-            let mut readers = self.mmap_readers.write().await;
-            readers.clear();
-        }
+        // Clear in-memory structures using DashMap
+        self.lsm_trees.clear();
+        self.mmap_readers.clear();
 
         tracing::debug!("✅ Completed storage cleanup for tests");
         Ok(())
@@ -1240,8 +1235,7 @@ impl StorageEngine {
         );
 
         // Get vectors from MMAP readers (historical data)
-        let readers = self.mmap_readers.read().await;
-        if let Some(reader) = readers.get(collection_id) {
+        if let Some(reader) = self.mmap_readers.get(collection_id) {
             match reader.iter_all().await {
                 Ok(mut mmap_vectors) => {
                     tracing::debug!(

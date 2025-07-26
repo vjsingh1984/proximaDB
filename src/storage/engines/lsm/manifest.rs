@@ -99,6 +99,7 @@ impl LsmManifest {
         atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
     ) -> Self {
         let manifest_path = manifest_dir.join(format!("{}_manifest.json", collection_id));
+        tracing::info!("📋 Creating manifest at: {:?}", manifest_path);
         
         Self {
             collection_id,
@@ -202,6 +203,8 @@ impl LsmManifest {
     
     /// Add a new SSTable file to the manifest
     pub async fn add_sstable(&self, file_info: SstableFileInfo) -> Result<()> {
+        tracing::info!("📋 Adding SSTable to manifest: file_id={}, path={}, records={}", 
+                      file_info.file_id, file_info.file_path, file_info.record_count);
         let mut current = self.current_version.write().await;
         let mut history = self.version_history.write().await;
         

@@ -291,6 +291,7 @@ impl CollectionService {
             3 => crate::core::IndexingAlgorithm::Pq,
             4 => crate::core::IndexingAlgorithm::Flat,
             5 => crate::core::IndexingAlgorithm::Annoy,
+            6 => crate::core::IndexingAlgorithm::Lsh,
             _ => crate::core::IndexingAlgorithm::Hnsw,
         };
         
@@ -300,6 +301,7 @@ impl CollectionService {
             crate::core::IndexingAlgorithm::Pq => "PQ",
             crate::core::IndexingAlgorithm::Flat => "FLAT",
             crate::core::IndexingAlgorithm::Annoy => "ANNOY",
+            crate::core::IndexingAlgorithm::Lsh => "LSH",
             crate::core::IndexingAlgorithm::Unspecified => "HNSW", // Default to HNSW
         };
         

@@ -10,8 +10,9 @@ This benchmark demonstrates the performance improvements of the metadata lifecyc
 Results are saved for comparison and analysis.
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/performance/benchmark_metadata_lifecycle.py
+
 import json
 import time
 import asyncio
@@ -21,11 +22,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, asdict
 import pickle
-
-# Add Python SDK to path  
-# IMPORTANT: This test requires the ProximaDB Python SDK to be in PYTHONPATH
-# Run with: PYTHONPATH=/workspace/clients/python/src python3 benchmark_metadata_lifecycle.py
-# Do NOT add sys.path.insert() - paths should be externalized via environment variables
 
 from tests.utils.bert_embedding_service import BERTEmbeddingService
 

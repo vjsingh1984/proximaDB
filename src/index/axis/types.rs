@@ -75,6 +75,13 @@ pub enum IndexAlgorithm {
         expected_elements: usize,
         false_positive_rate: f64,
     },
+    
+    /// Annoy (Approximate Nearest Neighbors Oh Yeah) - for fast tree-based search
+    Annoy {
+        n_trees: u32,        // Number of trees to build
+        search_k: i32,       // Number of nodes to inspect (-1 = auto)
+        max_leaf_size: u32,  // Maximum number of descendants in a leaf
+    },
 }
 
 /// Text analysis configuration
@@ -138,7 +145,8 @@ impl IndexSpecification {
             IndexAlgorithm::HNSW { .. } | 
             IndexAlgorithm::IVF { .. } | 
             IndexAlgorithm::PQ { .. } |
-            IndexAlgorithm::LSH { .. }
+            IndexAlgorithm::LSH { .. } |
+            IndexAlgorithm::Annoy { .. }
         )
     }
     

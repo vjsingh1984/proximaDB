@@ -191,27 +191,30 @@ pub struct IndexConfig {
     /// Configuration for Annoy index
     #[prost(message, optional, tag = "11")]
     pub annoy_config: ::core::option::Option<AnnoyConfig>,
+    /// Configuration for LSH index
+    #[prost(message, optional, tag = "12")]
+    pub lsh_config: ::core::option::Option<LshConfig>,
     /// Performance tuning
     ///
     /// Parallel index building
-    #[prost(int32, optional, tag = "12")]
+    #[prost(int32, optional, tag = "13")]
     pub build_concurrency: ::core::option::Option<i32>,
     /// Memory limit per index
-    #[prost(int64, optional, tag = "13")]
+    #[prost(int64, optional, tag = "14")]
     pub memory_limit_mb: ::core::option::Option<i64>,
     /// Index checkpoint frequency
-    #[prost(int32, optional, tag = "14")]
+    #[prost(int32, optional, tag = "15")]
     pub checkpoint_interval_ms: ::core::option::Option<i32>,
     /// Index usage configuration
     ///
     /// Whether this is the primary index
-    #[prost(bool, tag = "15")]
+    #[prost(bool, tag = "16")]
     pub is_primary: bool,
     /// When to use this index (e.g., "high_recall", "fast_search")
-    #[prost(string, repeated, tag = "16")]
+    #[prost(string, repeated, tag = "17")]
     pub use_cases: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Use this index when query selectivity is above threshold
-    #[prost(float, optional, tag = "17")]
+    #[prost(float, optional, tag = "18")]
     pub selectivity_threshold: ::core::option::Option<f32>,
 }
 /// HNSW algorithm configuration
@@ -327,6 +330,30 @@ pub struct AnnoyConfig {
     /// Memory-map index files (default: true)
     #[prost(bool, tag = "4")]
     pub enable_mmap: bool,
+}
+/// LSH index configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LshConfig {
+    /// Number of hash tables (default: 10)
+    #[prost(int32, tag = "1")]
+    pub n_hash_tables: i32,
+    /// Hash functions per table (default: 8)
+    #[prost(int32, tag = "2")]
+    pub n_hash_functions: i32,
+    /// Bucket width for LSH (default: 4.0)
+    #[prost(float, tag = "3")]
+    pub bucket_width: f32,
+    /// Support binary vectors (default: false)
+    #[prost(bool, tag = "4")]
+    pub binary_vectors: bool,
+    /// Max candidates to check (default: 100)
+    #[prost(int32, tag = "5")]
+    pub max_candidates: i32,
+    /// Projection type (default: GAUSSIAN)
+    #[prost(enumeration = "RandomProjectionType", tag = "6")]
+    pub projection: i32,
 }
 /// Comprehensive quantization configuration with storage-aware strategies
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1175,6 +1202,7 @@ pub enum IndexingAlgorithm {
     Pq = 3,
     Flat = 4,
     Annoy = 5,
+    Lsh = 6,
 }
 impl IndexingAlgorithm {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1189,6 +1217,7 @@ impl IndexingAlgorithm {
             IndexingAlgorithm::Pq => "PQ",
             IndexingAlgorithm::Flat => "FLAT",
             IndexingAlgorithm::Annoy => "ANNOY",
+            IndexingAlgorithm::Lsh => "LSH",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1200,6 +1229,7 @@ impl IndexingAlgorithm {
             "PQ" => Some(Self::Pq),
             "FLAT" => Some(Self::Flat),
             "ANNOY" => Some(Self::Annoy),
+            "LSH" => Some(Self::Lsh),
             _ => None,
         }
     }
@@ -1319,6 +1349,40 @@ impl IndexUpdateMode {
             "SYNCHRONOUS" => Some(Self::Synchronous),
             "ASYNCHRONOUS" => Some(Self::Asynchronous),
             "HYBRID_MODE" => Some(Self::HybridMode),
+            _ => None,
+        }
+    }
+}
+/// Random projection types for LSH
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RandomProjectionType {
+    /// Gaussian random projection
+    Gaussian = 0,
+    /// Binary random projection
+    Binary = 1,
+    /// Sparse random projection
+    Sparse = 2,
+}
+impl RandomProjectionType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            RandomProjectionType::Gaussian => "GAUSSIAN",
+            RandomProjectionType::Binary => "BINARY",
+            RandomProjectionType::Sparse => "SPARSE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "GAUSSIAN" => Some(Self::Gaussian),
+            "BINARY" => Some(Self::Binary),
+            "SPARSE" => Some(Self::Sparse),
             _ => None,
         }
     }

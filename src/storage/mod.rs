@@ -30,9 +30,9 @@ pub mod strategy;
 // Unified cross-engine cache system (Phase 2 optimization)
 pub mod unified_cache;
 
-// Lock-free implementations (Phase 2 optimization)
-pub mod lockfree_engine;
-pub mod lockfree_atomic;
+// Lock-free implementations have been integrated into the main implementations
+// UnifiedAtomicCoordinator now uses DashMap for active_operations
+// StorageEngine now uses DashMap for lsm_trees and mmap_readers
 
 
 // Main exports from organized structure

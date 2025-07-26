@@ -281,8 +281,8 @@ pub struct UnifiedAtomicCoordinator {
     /// Write strategy for optimized operations
     write_strategy: MetadataWriteStrategy,
 
-    /// Active operations tracker
-    active_operations: Arc<RwLock<HashMap<OperationId, AtomicOperationMetadata>>>,
+    /// Active operations tracker using lock-free DashMap
+    active_operations: Arc<DashMap<OperationId, AtomicOperationMetadata>>,
 
     /// Active ACID transactions
     transactions: Arc<DashMap<TransactionId, Arc<RwLock<ActiveTransaction>>>>,
@@ -301,7 +301,7 @@ impl std::fmt::Debug for UnifiedAtomicCoordinator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedAtomicCoordinator")
             .field("filesystem", &self.filesystem)
-            .field("active_operations_count", &"<RwLock>")
+            .field("active_operations_count", &self.active_operations.len())
             .field("config", &self.config)
             .finish()
     }
@@ -334,7 +334,7 @@ impl UnifiedAtomicCoordinator {
             filesystem,
             atomic_executor,
             write_strategy,
-            active_operations: Arc::new(RwLock::new(HashMap::new())),
+            active_operations: Arc::new(DashMap::new()),
             transactions: Arc::new(DashMap::new()),
             default_timeout_ms: 30000, // 30 seconds
             cleanup_handle: Arc::new(Mutex::new(None)),
@@ -389,11 +389,8 @@ impl UnifiedAtomicCoordinator {
             status: AtomicOperationStatus::Preparing,
         };
 
-        // Track operation
-        {
-            let mut active_ops = self.active_operations.write().await;
-            active_ops.insert(operation_id.clone(), metadata.clone());
-        }
+        // Track operation using DashMap
+        self.active_operations.insert(operation_id.clone(), metadata.clone());
 
         info!("✅ Atomic operation prepared: {}", operation_id);
         Ok(metadata)
@@ -411,14 +408,11 @@ impl UnifiedAtomicCoordinator {
         info!("    relative_path: {}", relative_path);
         info!("    data size: {} bytes", data.len());
         
-        // Get operation metadata
-        let metadata = {
-            let active_ops = self.active_operations.read().await;
-            active_ops
-                .get(operation_id)
-                .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
-                .clone()
-        };
+        // Get operation metadata from DashMap
+        let metadata = self.active_operations
+            .get(operation_id)
+            .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
+            .clone();
 
         info!("    metadata.staging_url: {}", metadata.staging_url);
 
@@ -472,14 +466,11 @@ impl UnifiedAtomicCoordinator {
     pub async fn finalize_atomic_operation(&self, operation_id: &OperationId) -> Result<()> {
         info!("🔄 Finalizing atomic operation: {}", operation_id);
 
-        // Get operation metadata
-        let metadata = {
-            let active_ops = self.active_operations.read().await;
-            active_ops
-                .get(operation_id)
-                .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
-                .clone()
-        };
+        // Get operation metadata from DashMap
+        let metadata = self.active_operations
+            .get(operation_id)
+            .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
+            .clone();
 
         info!("📋 Operation metadata:");
         info!("    staging_url: {}", metadata.staging_url);
@@ -550,11 +541,8 @@ impl UnifiedAtomicCoordinator {
         self.update_operation_status(operation_id, AtomicOperationStatus::Completed)
             .await?;
 
-        // Remove from active operations
-        {
-            let mut active_ops = self.active_operations.write().await;
-            active_ops.remove(operation_id);
-        }
+        // Remove from active operations using DashMap
+        self.active_operations.remove(operation_id);
 
         info!("🎉 Atomic operation completed: {}", operation_id);
         Ok(())
@@ -571,11 +559,8 @@ impl UnifiedAtomicCoordinator {
             operation_id, reason
         );
 
-        // Get operation metadata
-        let metadata = {
-            let active_ops = self.active_operations.read().await;
-            active_ops.get(operation_id).cloned()
-        };
+        // Get operation metadata from DashMap
+        let metadata = self.active_operations.get(operation_id).map(|entry| entry.clone());
 
         if let Some(metadata) = metadata {
             // Update status to failed
@@ -589,11 +574,8 @@ impl UnifiedAtomicCoordinator {
             self.filesystem.delete(&metadata.staging_url).await.ok();
             debug!("🧹 Cleaned up staging directory after abort");
 
-            // Remove from active operations
-            {
-                let mut active_ops = self.active_operations.write().await;
-                active_ops.remove(operation_id);
-            }
+            // Remove from active operations using DashMap
+            self.active_operations.remove(operation_id);
         }
 
         Ok(())
@@ -604,14 +586,12 @@ impl UnifiedAtomicCoordinator {
         &self,
         operation_id: &OperationId,
     ) -> Option<AtomicOperationStatus> {
-        let active_ops = self.active_operations.read().await;
-        active_ops.get(operation_id).map(|meta| meta.status.clone())
+        self.active_operations.get(operation_id).map(|entry| entry.status.clone())
     }
 
     /// List active operations
     pub async fn list_active_operations(&self) -> Vec<AtomicOperationMetadata> {
-        let active_ops = self.active_operations.read().await;
-        active_ops.values().cloned().collect()
+        self.active_operations.iter().map(|entry| entry.value().clone()).collect()
     }
 
     /// Cleanup orphaned operations older than configured age
@@ -1027,9 +1007,9 @@ impl UnifiedAtomicCoordinator {
         operation_id: &OperationId,
         status: AtomicOperationStatus,
     ) -> Result<()> {
-        let mut active_ops = self.active_operations.write().await;
-        if let Some(metadata) = active_ops.get_mut(operation_id) {
-            metadata.status = status;
+        // Update using DashMap's entry API
+        if let Some(mut entry) = self.active_operations.get_mut(operation_id) {
+            entry.status = status;
         }
         Ok(())
     }

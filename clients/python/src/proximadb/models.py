@@ -61,6 +61,7 @@ class IndexingAlgorithm(str, Enum):
     PQ = "pq"
     FLAT = "flat"
     ANNOY = "annoy"
+    LSH = "lsh"
 
 
 
@@ -287,6 +288,23 @@ class AnnoyConfig(BaseModel):
     enable_mmap: bool = True
 
 
+class RandomProjectionType(str, Enum):
+    """Random projection types for LSH"""
+    GAUSSIAN = "gaussian"
+    BINARY = "binary"
+    SPARSE = "sparse"
+
+
+class LshConfig(BaseModel):
+    """LSH index configuration"""
+    n_hash_tables: int = 10
+    n_hash_functions: int = 8
+    bucket_width: float = 4.0
+    binary_vectors: bool = False
+    max_candidates: int = 100
+    projection: RandomProjectionType = RandomProjectionType.GAUSSIAN
+
+
 class IndexConfiguration(BaseModel):
     """Index configuration"""
     index_name: str
@@ -300,6 +318,7 @@ class IndexConfiguration(BaseModel):
     flat_config: Optional[FlatConfig] = None
     pq_config: Optional[PqConfig] = None
     annoy_config: Optional[AnnoyConfig] = None
+    lsh_config: Optional[LshConfig] = None
     build_concurrency: Optional[int] = None
     memory_limit_mb: Optional[int] = None
     checkpoint_interval_ms: Optional[int] = None

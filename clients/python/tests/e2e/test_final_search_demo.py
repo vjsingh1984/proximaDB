@@ -4,8 +4,9 @@ Final Search Demonstration - All 7 Search Combinations
 Works with current ProximaDB server limitations and demonstrates full functionality
 """
 
-import sys
-import os
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/e2e/test_final_search_demo.py
+
 import json
 import time
 import asyncio
@@ -14,9 +15,6 @@ import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
-
-# Add Python SDK to path
-sys.path.insert(0, '/workspace/clients/python/src')
 
 from proximadb import ProximaDBClient, Protocol
 from tests.utils.bert_embedding_service import BERTEmbeddingService

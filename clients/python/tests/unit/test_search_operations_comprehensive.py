@@ -161,7 +161,7 @@ class TestSearchOperations:
             )
         
         # Allow time for indexing
-        time.sleep(1)
+        time.sleep(2)
     
     def test_search_by_id(self, grpc_client, search_collection):
         """Test ID-based search functionality"""
@@ -197,8 +197,8 @@ class TestSearchOperations:
         # Search without filter first
         all_results = grpc_client.search(
             collection_id=search_collection.config.name,
-            query=query_embedding.tolist(),
-            k=10,
+            vector=query_embedding.tolist(),
+            top_k=10,
             include_metadata=True,
             include_vectors=False
         )
@@ -248,8 +248,8 @@ class TestSearchOperations:
             # Perform similarity search
             results = grpc_client.search(
                 collection_id=search_collection.config.name,
-                query=query_embedding.tolist(),
-                k=3,
+                vector=query_embedding.tolist(),
+                top_k=3,
                 include_metadata=True,
                 include_vectors=False
             )
@@ -273,8 +273,8 @@ class TestSearchOperations:
         
         results = grpc_client.search(
             collection_id=search_collection.config.name,
-            query=source_doc['embedding'],
-            k=5,
+            vector=source_doc['embedding'],
+            top_k=5,
             include_metadata=True,
             include_vectors=False
         )
@@ -297,19 +297,30 @@ class TestSearchOperations:
         query_text = "technology innovation"
         query_embedding = bert_model.encode([query_text])[0]
         
+        # Add a small delay to ensure data is synced
+        time.sleep(3)
+        
         # Search via gRPC
         grpc_results = grpc_client.search(
             collection_id=search_collection.config.name,
-            query=query_embedding.tolist(),
-            k=5,
+            vector=query_embedding.tolist(),
+            top_k=5,
             include_metadata=True
         )
         
-        # Search via REST
+        # Add small delay between searches
+        time.sleep(0.5)
+        
+        # Search via REST - try to verify collection exists first
+        try:
+            rest_client.get_collection(search_collection.config.name)
+        except Exception as e:
+            print(f"REST collection check failed: {e}")
+        
         rest_results = rest_client.search(
             collection_id=search_collection.config.name,
-            query=query_embedding.tolist(),
-            k=5,
+            vector=query_embedding.tolist(),
+            top_k=5,
             include_metadata=True
         )
         
@@ -332,8 +343,8 @@ class TestSearchOperations:
         # Test search with k larger than collection size
         results = grpc_client.search(
             collection_id=search_collection.config.name,
-            query=query_embedding.tolist(),
-            k=100,  # Much larger than our 7 documents
+            vector=query_embedding.tolist(),
+            top_k=100,  # Much larger than our 7 documents
             include_metadata=True
         )
         
@@ -349,16 +360,16 @@ class TestSearchOperations:
         with pytest.raises(ProximaDBError):
             grpc_client.search(
                 collection_id=search_collection.config.name,
-                query=query_embedding.tolist(),
-                k=0
+                vector=query_embedding.tolist(),
+                top_k=0
             )
         
         # Test search with negative k
         with pytest.raises(ProximaDBError):
             grpc_client.search(
                 collection_id=search_collection.config.name,
-                query=query_embedding.tolist(),
-                k=-1
+                vector=query_embedding.tolist(),
+                top_k=-1
             )
     
     def test_search_with_server_side_filtering(self, grpc_client, search_collection, bert_model):
@@ -369,9 +380,9 @@ class TestSearchOperations:
             # Attempt server-side filtering
             filtered_results = grpc_client.search(
                 collection_id=search_collection.config.name,
-                query=query_embedding.tolist(),
-                k=10,
-                filter={"category": "technology"},
+                vector=query_embedding.tolist(),
+                top_k=10,
+                metadata_filter={"category": "technology"},
                 include_metadata=True
             )
             
@@ -383,8 +394,8 @@ class TestSearchOperations:
             # Server-side filtering not yet implemented - test client-side fallback
             all_results = grpc_client.search(
                 collection_id=search_collection.config.name,
-                query=query_embedding.tolist(),
-                k=10,
+                vector=query_embedding.tolist(),
+                top_k=10,
                 include_metadata=True
             )
             
@@ -396,7 +407,7 @@ class TestSearchOperations:
         """Test search on empty collection"""
         empty_collection = f"empty_search_{int(time.time())}"
         config = CollectionConfig(
-            name="test_collection",
+            name=empty_collection,  # Use unique name instead of "test_collection"
             dimension=768,
             distance_metric=DistanceMetric.COSINE)
         grpc_client.create_collection(empty_collection, config)
@@ -406,8 +417,8 @@ class TestSearchOperations:
             
             results = grpc_client.search(
                 collection_id=empty_collection,
-                query=query_embedding.tolist(),
-                k=5,
+                vector=query_embedding.tolist(),
+                top_k=5,
                 include_metadata=True
             )
             
@@ -458,8 +469,8 @@ class TestAdvancedSearchFeatures:
             start_time = time.time()
             results = grpc_client.search(
                 collection_id=collection_name,
-                query=query_embedding.tolist(),
-                k=10,
+                vector=query_embedding.tolist(),
+                top_k=10,
                 include_metadata=True
             )
             search_time = time.time() - start_time

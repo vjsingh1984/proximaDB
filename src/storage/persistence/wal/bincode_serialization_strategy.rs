@@ -80,7 +80,13 @@ impl BincodeSerializationStrategy {
         let memtable_manager = Arc::new(MemtableManager::new(memtable_config));
         
         // Create disk manager
-        let wal_base_dir = &config.multi_disk.data_directories[0];
+        let wal_base_url = &config.multi_disk.data_directories[0];
+        // Extract path from URL - remove "file://" prefix if present
+        let wal_base_dir = if wal_base_url.starts_with("file://") {
+            wal_base_url.strip_prefix("file://").unwrap()
+        } else {
+            wal_base_url
+        };
         let disk_manager = Arc::new(WalDiskManager::new(
             filesystem_factory,
             wal_base_dir,

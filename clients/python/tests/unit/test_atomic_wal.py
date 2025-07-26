@@ -4,9 +4,8 @@ Test WAL Atomicity Implementation
 Verifies that WAL writes are properly atomic between memtable and disk
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'clients/python/src'))
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/unit/test_atomic_wal.py
 
 import time
 import requests

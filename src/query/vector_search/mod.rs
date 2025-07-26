@@ -16,88 +16,139 @@
 
 //! Vector Search Algorithms Module
 //! 
-//! This module provides integration with the advanced indexing algorithms
-//! implemented in the compute module.
+//! This module provides integration with the AXIS adaptive indexing system
+//! for sophisticated vector search capabilities.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-// Re-export indexing algorithms from compute module
-pub use crate::compute::indexing::{
-    IvfIndex, IvfConfig,
-    LshIndex, LshConfig,
+// Import AXIS indexing components
+use crate::index::axis::{
+    AxisIndexCreationResult, AxisVectorIndex, IndexFactory,
+    AxisIvfConfig, AxisIvfIndex,
+    AxisLshConfig, AxisLshIndex,
+    IndexAlgorithm as AxisIndexAlgorithm,
 };
+use crate::compute::distance::DistanceMetric;
 
-/// Vector search algorithm types
+/// Vector search algorithm types (AXIS-based)
 #[derive(Debug, Clone)]
 pub enum SearchAlgorithm {
     /// Brute force search (exact)
     BruteForce,
-    /// IVF (Inverted File) index
-    IVF(IvfConfig),
-    /// LSH (Locality Sensitive Hashing)
-    LSH(LshConfig),
+    /// IVF (Inverted File) index with AXIS configuration
+    IVF {
+        n_clusters: usize,
+        n_probe: usize,
+        enable_pq: bool,
+    },
+    /// LSH (Locality Sensitive Hashing) with AXIS configuration
+    LSH {
+        n_tables: usize,
+        n_hashes: usize,
+        hash_width: f32,
+    },
     /// HNSW (Hierarchical Navigable Small World) - uses AXIS integration
-    HNSW,
+    HNSW {
+        m: usize,
+        ef_construction: usize,
+        ef_search: usize,
+    },
 }
 
-/// Vector search engine that can use different algorithms
+/// Vector search engine using AXIS indexes
 pub struct VectorSearchEngine {
     /// Selected algorithm
     algorithm: SearchAlgorithm,
-    /// IVF index (if using IVF)
-    ivf_index: Option<IvfIndex>,
-    /// LSH index (if using LSH)
-    lsh_index: Option<LshIndex>,
+    /// The AXIS index implementation
+    axis_index: Option<Box<dyn AxisVectorIndex>>,
+    /// Dimension of vectors
+    dimension: usize,
+    /// Distance metric
+    distance_metric: DistanceMetric,
 }
 
 impl VectorSearchEngine {
     /// Create new search engine with specified algorithm
-    pub fn new(algorithm: SearchAlgorithm, dimension: usize) -> Self {
-        let (ivf_index, lsh_index) = match &algorithm {
-            SearchAlgorithm::IVF(config) => {
-                (Some(IvfIndex::new(config.clone(), dimension)), None)
-            }
-            SearchAlgorithm::LSH(config) => {
-                (None, Some(LshIndex::new(config.clone(), dimension)))
-            }
-            _ => (None, None),
-        };
-        
+    pub fn new(algorithm: SearchAlgorithm, dimension: usize, distance_metric: DistanceMetric) -> Self {
+        // Don't create index immediately - wait for training if needed
         Self {
             algorithm,
-            ivf_index,
-            lsh_index,
+            axis_index: None,
+            dimension,
+            distance_metric,
         }
     }
     
-    /// Train the index (for algorithms that require training)
-    pub fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
-        match &mut self.ivf_index {
-            Some(ivf) => ivf.train(training_vectors),
-            None => Ok(()), // Other algorithms don't require training
-        }
+    /// Initialize the index (must be called before use, especially for IVF which needs training)
+    pub async fn initialize(&mut self, training_data: Option<&[Vec<f32>]>) -> Result<()> {
+        let axis_algorithm = match &self.algorithm {
+            SearchAlgorithm::IVF { n_clusters, n_probe, enable_pq } => {
+                AxisIndexAlgorithm::IVF {
+                    nlist: *n_clusters as u32,
+                    nprobe: *n_probe as u32,
+                    quantizer: if *enable_pq { 
+                        Some(Box::new(AxisIndexAlgorithm::PQ {
+                            m: 8,           // 8 subquantizers
+                            nbits: 8,       // 8 bits per subquantizer
+                            train_size: 10000,
+                        }))
+                    } else { 
+                        None 
+                    },
+                }
+            }
+            SearchAlgorithm::LSH { n_tables, n_hashes, hash_width } => {
+                AxisIndexAlgorithm::LSH {
+                    n_projections: *n_hashes as u32,
+                    n_hash_tables: *n_tables as u32,
+                    hash_width: *hash_width,
+                }
+            }
+            SearchAlgorithm::HNSW { m, ef_construction, ef_search } => {
+                AxisIndexAlgorithm::HNSW {
+                    m: *m as u32,
+                    ef_construction: *ef_construction as u32,
+                    ef_search: *ef_search as u32,
+                    max_elements: 1_000_000, // Default
+                }
+            }
+            SearchAlgorithm::BruteForce => {
+                return Ok(()); // No index needed for brute force
+            }
+        };
+        
+        // Create the AXIS index
+        self.axis_index = Some(IndexFactory::create_trained_index(
+            &axis_algorithm,
+            self.dimension,
+            self.distance_metric,
+            training_data,
+        ).await?);
+        
+        Ok(())
+    }
+    
+    /// Train the index (deprecated - use initialize instead)
+    #[deprecated(note = "Use initialize() with training data instead")]
+    pub async fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
+        self.initialize(Some(training_vectors)).await
     }
     
     /// Add vectors to the index
-    pub fn add_vectors(
+    pub async fn add_vectors(
         &self,
         vectors: Vec<(String, Arc<crate::core::VectorRecord>)>,
     ) -> Result<()> {
-        match (&self.ivf_index, &self.lsh_index) {
-            (Some(ivf), _) => {
-                for (id, record) in vectors {
-                    ivf.add(id, record)?;
-                }
-                Ok(())
+        if let Some(index) = &self.axis_index {
+            for (id, record) in vectors {
+                index.add(id, record).await?;
             }
-            (_, Some(lsh)) => {
-                for (id, record) in vectors {
-                    lsh.add(id, record)?;
-                }
-                Ok(())
-            }
-            _ => Ok(()), // Brute force doesn't maintain an index
+            Ok(())
+        } else if matches!(self.algorithm, SearchAlgorithm::BruteForce) {
+            Ok(()) // Brute force doesn't maintain an index
+        } else {
+            Err(anyhow!("Index not initialized. Call initialize() first."))
         }
     }
     
@@ -106,15 +157,16 @@ impl VectorSearchEngine {
         &self,
         query: &[f32],
         k: usize,
+        filter: Option<&(dyn for<'a> Fn(&'a crate::core::VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
-        match (&self.ivf_index, &self.lsh_index) {
-            (Some(ivf), _) => ivf.search(query, k),
-            (_, Some(lsh)) => lsh.search(query, k),
-            _ => {
-                // Brute force search would go through all vectors
-                // This should integrate with the storage engine
-                Ok(Vec::new())
-            }
+        if let Some(index) = &self.axis_index {
+            index.search(query, k, filter).await
+        } else if matches!(self.algorithm, SearchAlgorithm::BruteForce) {
+            // Brute force search would go through all vectors
+            // This should integrate with the storage engine
+            Ok(Vec::new())
+        } else {
+            Err(anyhow!("Index not initialized. Call initialize() first."))
         }
     }
     
@@ -122,14 +174,21 @@ impl VectorSearchEngine {
     pub fn algorithm_info(&self) -> String {
         match &self.algorithm {
             SearchAlgorithm::BruteForce => "Brute Force (Exact Search)".to_string(),
-            SearchAlgorithm::IVF(config) => {
-                format!("IVF with {} clusters, {} probe", config.n_clusters, config.n_probe)
+            SearchAlgorithm::IVF { n_clusters, n_probe, enable_pq } => {
+                format!("AXIS IVF: {} clusters, {} probe, PQ: {}", n_clusters, n_probe, enable_pq)
             }
-            SearchAlgorithm::LSH(config) => {
-                format!("LSH with {} tables, {} hashes", config.n_tables, config.n_hashes)
+            SearchAlgorithm::LSH { n_tables, n_hashes, hash_width } => {
+                format!("AXIS LSH: {} tables, {} hashes, width: {}", n_tables, n_hashes, hash_width)
             }
-            SearchAlgorithm::HNSW => "HNSW (via AXIS integration)".to_string(),
+            SearchAlgorithm::HNSW { m, ef_construction, ef_search } => {
+                format!("AXIS HNSW: M={}, ef_construction={}, ef_search={}", m, ef_construction, ef_search)
+            }
         }
+    }
+    
+    /// Get index statistics
+    pub fn stats(&self) -> Option<crate::index::axis::IndexStats> {
+        self.axis_index.as_ref().map(|index| index.stats())
     }
 }
 
@@ -149,23 +208,31 @@ impl SearchAlgorithmFactory {
             SearchAlgorithm::BruteForce
         } else if dimension > 512 && accuracy_target < 0.95 {
             // High dimension, moderate accuracy - use LSH
-            SearchAlgorithm::LSH(LshConfig::default())
+            SearchAlgorithm::LSH {
+                n_tables: 20,
+                n_hashes: 10,
+                hash_width: 1.0,
+            }
         } else if num_vectors < 1_000_000 {
             // Medium dataset - use IVF
             let n_clusters = (num_vectors as f64).sqrt() as usize;
-            SearchAlgorithm::IVF(IvfConfig {
+            SearchAlgorithm::IVF {
                 n_clusters: n_clusters.min(4096).max(256),
                 n_probe: 32,
-                ..Default::default()
-            })
+                enable_pq: false,
+            }
         } else {
-            // Large dataset - use HNSW (would integrate with AXIS)
-            SearchAlgorithm::HNSW
+            // Large dataset - use HNSW
+            SearchAlgorithm::HNSW {
+                m: 16,
+                ef_construction: 200,
+                ef_search: 64,
+            }
         }
     }
     
-    /// Create optimal configuration for IVF
-    pub fn optimize_ivf_config(num_vectors: usize, recall_target: f32) -> IvfConfig {
+    /// Create optimal IVF configuration
+    pub fn optimize_ivf_config(num_vectors: usize, recall_target: f32) -> SearchAlgorithm {
         let n_clusters = (num_vectors as f64).sqrt() as usize;
         let n_probe = if recall_target >= 0.99 {
             n_clusters / 4 // Search 25% of clusters for high recall
@@ -175,10 +242,27 @@ impl SearchAlgorithmFactory {
             n_clusters / 20 // Search 5% for fast search
         };
         
-        IvfConfig {
+        SearchAlgorithm::IVF {
             n_clusters: n_clusters.min(4096).max(256),
             n_probe: n_probe.min(256).max(1),
-            ..Default::default()
+            enable_pq: num_vectors > 10_000_000, // Enable PQ for very large datasets
+        }
+    }
+    
+    /// Create optimal LSH configuration
+    pub fn optimize_lsh_config(dimension: usize, recall_target: f32) -> SearchAlgorithm {
+        let (n_tables, n_hashes) = if recall_target >= 0.95 {
+            (30, 12) // High recall
+        } else if recall_target >= 0.85 {
+            (20, 10) // Balanced
+        } else {
+            (10, 8) // Fast search
+        };
+        
+        SearchAlgorithm::LSH {
+            n_tables,
+            n_hashes,
+            hash_width: 1.0,
         }
     }
 }

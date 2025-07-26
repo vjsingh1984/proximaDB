@@ -217,8 +217,8 @@ async fn test_lsm_collection_with_proper_routing() {
         .await
         .unwrap();
     
-    assert!(flush_result.success, "Flush should succeed");
-    println!("Flushed {} entries to {} engine", flush_result.entries_flushed, storage_engine);
+    assert!(flush_result.base.success, "Flush should succeed");
+    println!("Flushed {} entries to {} engine", flush_result.base.entries_flushed, storage_engine);
     
     // Verify SSTable was created in LSM
     let storage_url = lsm_engine.get_collection_storage_url(&collection_id).await.unwrap();

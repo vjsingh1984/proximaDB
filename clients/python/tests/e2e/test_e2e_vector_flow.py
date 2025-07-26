@@ -5,16 +5,15 @@ Verifies the complete flow from Python SDK to gRPC handlers to storage
 Based on current gRPC specifications and SDK implementation.
 """
 
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/e2e/test_e2e_vector_flow.py
+
 import os
-import sys
 import time
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import json
 import glob
-
-# Add the Python client to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'clients', 'python', 'src'))
 
 from proximadb import ProximaDBClient, Protocol
 from proximadb.models import Vector, CollectionConfig, DistanceMetric
