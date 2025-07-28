@@ -43,7 +43,7 @@ graph TB
     
     subgraph "Integration Points"
         DVS[DirectVectorService<br/>Main entry point]
-        LSM_ENGINE[LSM Engine<br/>UnifiedSearchEngine]
+        SST_ENGINE[SST Engine<br/>UnifiedSearchEngine]
         VIPER_ENGINE[VIPER Engine<br/>UnifiedSearchEngine]
     end
     
@@ -86,7 +86,7 @@ graph TB
     %% Integration connections
     DVS --> AXIS
     
-    LSM_ENGINE --> UC
+    SST_ENGINE --> UC
     VIPER_ENGINE --> UC
     
     %% Styling
@@ -98,5 +98,5 @@ graph TB
     class UC,L1,L2,COS,DOT,HAM,JAC,GENERIC compute
     class AXIS,HNSW,IVF,LSH,ANNOY index
     class AVX,NEON,ROCM,CUDA,METAL,OPENCL,X86,ARM,GPU_OPT hardware
-    class DVS,LSM_ENGINE,VIPER_ENGINE integration
+    class DVS,SST_ENGINE,VIPER_ENGINE integration
     

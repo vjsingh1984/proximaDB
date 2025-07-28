@@ -61,7 +61,7 @@ Multi-disk architecture for scalable persistence:
 include::diagrams/multi_disk_architecture.mmd[]
 ----
 
-=== WAL Strategy Pattern
+=== WriteBuffer Strategy Pattern
 
 Write-ahead log strategy pattern with assignment service:
 

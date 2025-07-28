@@ -4,10 +4,10 @@ sequenceDiagram
     participant CollSvc as Collection Service
     participant AvroSvc as Unified Avro Service
     participant AssignSvc as Assignment Service
-    participant WAL as WAL Manager
-    participant Strategy as WAL Strategy
+    participant WriteBuffer as WriteBuffer Manager
+    participant Strategy as WriteBuffer Strategy
     participant Memtable as Unified Memtable<br/>(BTree/HashMap)
-    participant WalWrapper as WAL Behavior Wrapper
+    participant WalWrapper as WriteBuffer Behavior Wrapper
     participant VIPER as VIPER Engine
     participant FS as Filesystem
     participant D1 as Disk 1
@@ -22,7 +22,7 @@ sequenceDiagram
         activate API
         API->>CollSvc: create_collection(name, config)
         activate CollSvc
-        CollSvc->>AssignSvc: assign_storage_url(collection_id, WAL)
+        CollSvc->>AssignSvc: assign_storage_url(collection_id, WriteBuffer)
         activate AssignSvc
         AssignSvc->>AssignSvc: round_robin_assignment()
         Note right of AssignSvc: Selects Disk 2 for this collection
@@ -31,14 +31,14 @@ sequenceDiagram
         D2-->>FS: success
         AssignSvc-->>CollSvc: assignment{url: "file:///data/disk2/wal", index: 1}
         deactivate AssignSvc
-        CollSvc->>WAL: initialize_collection_wal(collection_id, assignment)
-        activate WAL
-        WAL->>Strategy: set_assignment(collection_id, assignment)
+        CollSvc->>WriteBuffer: initialize_collection_wal(collection_id, assignment)
+        activate WriteBuffer
+        WriteBuffer->>Strategy: set_assignment(collection_id, assignment)
         activate Strategy
-        Strategy-->>WAL: configured
+        Strategy-->>WriteBuffer: configured
         deactivate Strategy
-        WAL-->>CollSvc: initialized
-        deactivate WAL
+        WriteBuffer-->>CollSvc: initialized
+        deactivate WriteBuffer
         CollSvc-->>API: collection_created{id, name, uuid}
         deactivate CollSvc
         API-->>Client: 201 Created
@@ -46,16 +46,16 @@ sequenceDiagram
     end
 
     rect rgb(240, 255, 240)
-        Note right of Client: Vector Insert & WAL Writing
+        Note right of Client: Vector Insert & WriteBuffer Writing
         Client->>API: POST /collections/{id}/vectors {vector_id, vector, metadata}
         activate API
         API->>AvroSvc: insert_vector(collection_id, vector_id, vector, metadata)
         activate AvroSvc
-        AvroSvc->>WAL: write_entry(collection_id, WalEntry)
-        activate WAL
-        WAL->>Strategy: get_assignment_service().get_assignment(collection_id, WAL)
+        AvroSvc->>WriteBuffer: write_entry(collection_id, WalEntry)
+        activate WriteBuffer
+        WriteBuffer->>Strategy: get_assignment_service().get_assignment(collection_id, WriteBuffer)
         activate Strategy
-        Strategy->>AssignSvc: get_assignment(collection_id, WAL)
+        Strategy->>AssignSvc: get_assignment(collection_id, WriteBuffer)
         activate AssignSvc
         AssignSvc-->>Strategy: cached_assignment{disk2}
         deactivate AssignSvc
@@ -64,7 +64,7 @@ sequenceDiagram
         WalWrapper->>Memtable: insert(vector_id, entry)
         activate Memtable
         Memtable->>Memtable: btree.insert(vector_id, entry)
-        Note right of Memtable: Unified memtable<br/>BTree for WAL ordered ops<br/>HashMap for random access
+        Note right of Memtable: Unified memtable<br/>BTree for WriteBuffer ordered ops<br/>HashMap for random access
         Memtable-->>WalWrapper: success
         deactivate Memtable
         WalWrapper->>WalWrapper: increment_sequence()
@@ -83,10 +83,10 @@ sequenceDiagram
             Memtable-->>Strategy: cleared
             deactivate Memtable
         end
-        Strategy-->>WAL: sequence_number
+        Strategy-->>WriteBuffer: sequence_number
         deactivate Strategy
-        WAL-->>AvroSvc: sequence_number
-        deactivate WAL
+        WriteBuffer-->>AvroSvc: sequence_number
+        deactivate WriteBuffer
         AvroSvc-->>API: insert_result{sequence_number}
         deactivate AvroSvc
         API-->>Client: 200 OK
@@ -94,7 +94,7 @@ sequenceDiagram
     end
 
     rect rgb(255, 248, 240)
-        Note over Strategy,VIPER: WAL Flush to VIPER Storage<br/>Periodic or threshold-triggered flush
+        Note over Strategy,VIPER: WriteBuffer Flush to VIPER Storage<br/>Periodic or threshold-triggered flush
         Strategy->>Strategy: collections_needing_flush()
         activate Strategy
         Strategy->>Memtable: get_all_entries(collection_id)
@@ -143,11 +143,11 @@ sequenceDiagram
             D3-->>FS: [collection_e]
             FS-->>AssignSvc: discovered_collections
             deactivate FS
-            AssignSvc->>AssignSvc: record_assignment(collection_id, WAL, disk_assignment)
+            AssignSvc->>AssignSvc: record_assignment(collection_id, WriteBuffer, disk_assignment)
         end
         AssignSvc-->>AssignSvc: discovery_complete{5_collections_recovered}
         deactivate AssignSvc
-        WAL->>Strategy: recover()
+        WriteBuffer->>Strategy: recover()
         activate Strategy
         Strategy->>FS: read_wal_segments(assigned_directories)
         activate FS
@@ -161,7 +161,7 @@ sequenceDiagram
         activate Memtable
         Memtable-->>Strategy: restored
         deactivate Memtable
-        Strategy-->>WAL: recovery_complete{entries_recovered}
+        Strategy-->>WriteBuffer: recovery_complete{entries_recovered}
         deactivate Strategy
     end
 

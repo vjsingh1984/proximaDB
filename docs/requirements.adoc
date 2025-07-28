@@ -41,10 +41,10 @@ System requirements and implementation status for ProximaDB, tracking what has b
 |Insert, search, delete working
 
 |**Storage Engines**
-|✅ LSM & VIPER
+|✅ SST & VIPER
 |Both engines functional
 
-|**WAL System**
+|**WriteBuffer System**
 |✅ Implemented
 |Basic durability
 
@@ -72,7 +72,7 @@ System requirements and implementation status for ProximaDB, tracking what has b
 ✅ **REST API Implementation** - Complete REST API with OpenAPI specification  
 ✅ **Unified Dual-Protocol Server** - Single server supporting both protocols on port 5678
 ✅ **VIPER Storage Engine** - Advanced vector-optimized storage with Parquet format
-✅ **Write-Ahead Log (WAL)** - Durability and consistency with Avro/Bincode serialization
+✅ **Write-Ahead Log (WriteBuffer)** - Durability and consistency with Avro/Bincode serialization
 ✅ **Search Engine** - Multi-strategy vector search with HNSW and metadata filtering
 
 [NOTE]
@@ -120,7 +120,7 @@ Deliver a cloud-native vector database that provides:
 |VR-001
 |Vector similarity search with cosine, euclidean, and dot product distance metrics
 |Critical
-|✅ IMPLEMENTED (Storage-aware search engines: VIPER + LSM)
+|✅ IMPLEMENTED (Storage-aware search engines: VIPER + SST)
 
 |VR-002
 |CRUD operations on vector collections with metadata filtering and ID-based lookups including collection persistence across restarts
@@ -188,7 +188,7 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |VR-015
-|Sparse Vector Index with LSM tree + MinHash LSH for ANN queries
+|Sparse Vector Index with SST tree + MinHash LSH for ANN queries
 |High
 |🚧 PARTIAL
 
@@ -263,7 +263,7 @@ Deliver a cloud-native vector database that provides:
 |🚧 PARTIAL (predicate pushdown only, ML clustering not implemented)
 
 |VR-030
-|LSM search optimizations: memtable priority, bloom filters, level-aware search
+|SST search optimizations: memtable priority, bloom filters, level-aware search
 |Critical
 |📋 PLANNED (Phase 2)
 
@@ -375,7 +375,7 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-002
-|LSM tree-based append-only writes for internet scale
+|SST tree-based append-only writes for internet scale
 |Critical
 |✅ IMPLEMENTED
 
@@ -420,12 +420,12 @@ Deliver a cloud-native vector database that provides:
 |🚧 IN PROGRESS
 
 |ST-011
-|Multi-cloud Write-Ahead Log (WAL) with S3/ADLS/GCS backend support
+|Multi-cloud Write-Ahead Log (WriteBuffer) with S3/ADLS/GCS backend support
 |Critical
 |✅ IMPLEMENTED
 
 |ST-012
-|Avro-based WAL serialization with schema evolution and compression
+|Avro-based WriteBuffer serialization with schema evolution and compression
 |Critical
 |✅ IMPLEMENTED (Proto-first with zero double serialization, Avro/Bincode strategies)
 
@@ -435,27 +435,27 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-014
-|Multi-disk WAL with parallel writes for critical systems (RAID-like distribution)
+|Multi-disk WriteBuffer with parallel writes for critical systems (RAID-like distribution)
 |High
 |✅ IMPLEMENTED
 
 |ST-015
-|Parallel WAL recovery with disk I/O bottleneck optimization (not CPU)
+|Parallel WriteBuffer recovery with disk I/O bottleneck optimization (not CPU)
 |Critical
 |✅ IMPLEMENTED
 
 |ST-016
-|Cloud-native WAL batching and cost optimization (lifecycle management)
+|Cloud-native WriteBuffer batching and cost optimization (lifecycle management)
 |High
 |🚧 IN PROGRESS
 
 |ST-017
-|Hybrid WAL: local cache + cloud backup with configurable sync strategies
+|Hybrid WriteBuffer: local cache + cloud backup with configurable sync strategies
 |High
 |🚧 IN PROGRESS
 
 |ST-018
-|WAL segment rotation with automatic cleanup and retention policies
+|WriteBuffer segment rotation with automatic cleanup and retention policies
 |High
 |✅ IMPLEMENTED
 
@@ -465,17 +465,17 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-020
-|Unified storage engine supporting VIPER and LSM layouts via strategy pattern
+|Unified storage engine supporting VIPER and SST layouts via strategy pattern
 |High
 |✅ IMPLEMENTED
 
 |ST-021
-|Hybrid WAL flush trigger system: background age-based + immediate size-based triggers
+|Hybrid WriteBuffer flush trigger system: background age-based + immediate size-based triggers
 |Critical
 |✅ IMPLEMENTED
 
 |ST-022
-|Background WAL age monitoring with configurable inspection intervals (default: 5 minutes)
+|Background WriteBuffer age monitoring with configurable inspection intervals (default: 5 minutes)
 |Critical
 |✅ IMPLEMENTED
 
@@ -530,7 +530,7 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-033
-|WAL durability configuration with sync mode options (Always, PerBatch, Periodic, Never, MemoryOnly)
+|WriteBuffer durability configuration with sync mode options (Always, PerBatch, Periodic, Never, MemoryOnly)
 |Critical
 |✅ IMPLEMENTED
 
@@ -540,29 +540,29 @@ Deliver a cloud-native vector database that provides:
 |✅ IMPLEMENTED
 
 |ST-035
-|Search integration over unflushed WAL data for complete result coverage
+|Search integration over unflushed WriteBuffer data for complete result coverage
 |Critical
 |✅ IMPLEMENTED
 
 |ST-036
-|Atomic WAL flush coordination with no gaps or duplicates guarantee
+|Atomic WriteBuffer flush coordination with no gaps or duplicates guarantee
 |Critical
 |✅ IMPLEMENTED
 |===
 
-=== WAL Flush Coordination Architecture
+=== WriteBuffer Flush Coordination Architecture
 
-NOTE: WAL Strategy Pattern diagram shows the pluggable WAL batch strategies (Proto, Avro, Bincode) with unified interface.
+NOTE: WriteBuffer Strategy Pattern diagram shows the pluggable WriteBuffer batch strategies (Proto, Avro, Bincode) with unified interface.
 
 _Diagram source: link:diagrams/wal_strategy_pattern.mmd[View Mermaid source] (PNG generation pending due to syntax issues)_
 
-==== WAL Durability Strategy Configuration
+==== WriteBuffer Durability Strategy Configuration
 
-ProximaDB provides comprehensive WAL configuration through `config.toml`:
+ProximaDB provides comprehensive WriteBuffer configuration through `config.toml`:
 
 ```toml
 [storage.wal_config]
-# WAL durability and performance configuration
+# WriteBuffer durability and performance configuration
 strategy_type = "Avro"  # Options: "Avro" (schema evolution), "Bincode" (performance)
 
 # Memtable strategy - choose based on your sync_mode and workload:
@@ -577,7 +577,7 @@ memtable_type = "BTree"
 # - "PerBatch": fsync() after batch completion (balanced, recommended for production)
 # - "Periodic": fsync() on timer (good for high throughput)
 # - "Never": no fsync() (fastest, data loss risk on crash)
-# - "MemoryOnly": no disk WAL, flush directly to storage files (fastest writes)
+# - "MemoryOnly": no disk WriteBuffer, flush directly to storage files (fastest writes)
 sync_mode = "PerBatch"
 ```
 
@@ -601,7 +601,7 @@ sync_mode = "PerBatch"
 
 |`MemoryOnly`
 |`HashMap`
-|Fastest writes, no disk WAL (flush to storage only)
+|Fastest writes, no disk WriteBuffer (flush to storage only)
 
 |`Never`
 |`HashMap`
@@ -644,7 +644,7 @@ sync_mode = "PerBatch"
 |🚧 IN PROGRESS
 
 |IX-007
-|Sparse Vector Index with LSM tree for ID → sparse vector mapping
+|Sparse Vector Index with SST tree for ID → sparse vector mapping
 |High
 |❌ NOT IMPLEMENTED
 
@@ -1188,7 +1188,7 @@ sync_mode = "PerBatch"
 == Technical Architecture Requirements
 
 === Storage Engine
-- LSM tree implementation with configurable bloom filters
+- SST tree implementation with configurable bloom filters
 - MMAP-based read path with intelligent prefetching
 - URL-based storage policies with flexible filesystem routing
 - Column-oriented storage with compression
@@ -1228,7 +1228,7 @@ sync_mode = "PerBatch"
 - **Storage Engine**: VIPER with Parquet, multi-cloud filesystem, ML clustering
 - **Collection Management**: Full CRUD with persistence across restarts
 - **Multi-Server Architecture**: REST:5678, gRPC:5679 with identical feature parity
-- **WAL System**: Avro/Bincode strategies, MVCC support, atomic operations
+- **WriteBuffer System**: Avro/Bincode strategies, MVCC support, atomic operations
 - **Python SDK**: Complete client library with async support
 - **BERT Integration**: 384, 768, 1024 dimensions tested and validated
 - **AXIS Indexing**: Framework complete, per-collection coordinators
@@ -1314,7 +1314,7 @@ sync_mode = "PerBatch"
 |High
 
 |Persistence
-|Durable storage with WAL and snapshots
+|Durable storage with WriteBuffer and snapshots
 |Critical
 
 |Monitoring

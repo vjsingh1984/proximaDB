@@ -35,7 +35,7 @@ This guide covers the configuration and deployment of ProximaDB's multi-disk per
 
 [source,toml]
 ----
-# Multi-disk WAL configuration
+# Multi-disk WriteBuffer configuration
 [storage.wal_config]
 wal_urls = [
     "file:///data/disk1/wal",
@@ -313,12 +313,12 @@ capacity_config = { max_wal_size_mb = 10240, metadata_reserved_mb = 1024, warnin
 
 [source,toml]
 ----
-# Local high-performance WAL with cloud storage
+# Local high-performance WriteBuffer with cloud storage
 [storage.wal_config]
 wal_urls = [
     "file:///mnt/nvme1/wal",     # Local NVMe for performance
     "file:///mnt/nvme2/wal",     # Local NVMe for performance
-    "s3://backup-wal/cluster1"   # Cloud backup WAL
+    "s3://backup-wal/cluster1"   # Cloud backup WriteBuffer
 ]
 distribution_strategy = "PerformanceBased"
 
@@ -339,7 +339,7 @@ storage_url = "s3://metadata-backup/cluster1"  # Cloud metadata for durability
 
 == Performance Tuning
 
-=== WAL Configuration Tuning
+=== WriteBuffer Configuration Tuning
 
 [source,toml]
 ----
@@ -362,7 +362,7 @@ global_flush_threshold = 2147483648    # 2GB - aggressive memory usage
 [[storage.storage_layout.base_paths]]
 disk_type = { NvmeSsd = { max_iops = 1000000 } }
 capacity_config = { 
-    max_wal_size_mb = 20480,           # 20GB WAL per collection
+    max_wal_size_mb = 20480,           # 20GB WriteBuffer per collection
     metadata_reserved_mb = 2048,       # 2GB metadata space
     warning_threshold_percent = 95.0   # Use more space on fast disks
 }
@@ -371,7 +371,7 @@ capacity_config = {
 [[storage.storage_layout.base_paths]]
 disk_type = { NetworkStorage = { latency_ms = 5.0 } }
 capacity_config = {
-    max_wal_size_mb = 1024,            # 1GB WAL per collection
+    max_wal_size_mb = 1024,            # 1GB WriteBuffer per collection
     metadata_reserved_mb = 256,        # 256MB metadata space  
     warning_threshold_percent = 80.0   # Conservative on network storage
 }
@@ -403,8 +403,8 @@ tail -f /var/log/proximadb/server.log | grep "assignment"
 # Monitor multi-disk operations
 tail -f /var/log/proximadb/server.log | grep "multi-disk\|round-robin"
 
-# Monitor WAL flush operations
-tail -f /var/log/proximadb/server.log | grep "flush\|WAL"
+# Monitor WriteBuffer flush operations
+tail -f /var/log/proximadb/server.log | grep "flush\|WriteBuffer"
 ----
 
 === Disk Space Monitoring
@@ -436,7 +436,7 @@ ls -la /data/disk*/wal /data/disk*/storage
 sudo -u proximadb mkdir -p /data/disk1/wal/test_collection
 ----
 
-==== WAL URL Conversion Errors
+==== WriteBuffer URL Conversion Errors
 [source,bash]
 ----
 # Check for URL parsing errors

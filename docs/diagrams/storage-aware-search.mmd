@@ -5,18 +5,18 @@ graph LR
     
     subgraph "Storage-Aware Router"
         ROUTER[Polymorphic Router<br/>Auto Engine Selection]
-        DETECT[Location Detection<br/>WAL/Storage/Compacted]
+        DETECT[Location Detection<br/>WriteBuffer/Storage/Compacted]
     end
     
     subgraph "Three-Layer Search"
-        subgraph "Layer 1: WAL"
-            WAL_SEARCH[WAL Search<br/>Recent Vectors]
-            WAL_RESULTS[Latest Updates]
+        subgraph "Layer 1: WriteBuffer"
+            WriteBuffer_SEARCH[WriteBuffer Search<br/>Recent Vectors]
+            WriteBuffer_RESULTS[Latest Updates]
         end
         
         subgraph "Layer 2: Storage"
             VIPER_SEARCH[VIPER Search<br/>Columnar Scan]
-            LSM_SEARCH[LSM Search<br/>SSTable Scan]
+            SST_SEARCH[SST Search<br/>SSTable Scan]
             STORAGE_RESULTS[Main Dataset]
         end
         
@@ -35,17 +35,17 @@ graph LR
     QUERY --> ROUTER
     ROUTER --> DETECT
     
-    DETECT --> WAL_SEARCH
+    DETECT --> WriteBuffer_SEARCH
     DETECT --> VIPER_SEARCH
-    DETECT --> LSM_SEARCH
+    DETECT --> SST_SEARCH
     DETECT --> COMPACT_SEARCH
     
-    WAL_SEARCH --> WAL_RESULTS
+    WriteBuffer_SEARCH --> WriteBuffer_RESULTS
     VIPER_SEARCH --> STORAGE_RESULTS
-    LSM_SEARCH --> STORAGE_RESULTS
+    SST_SEARCH --> STORAGE_RESULTS
     COMPACT_SEARCH --> COMPACT_RESULTS
     
-    WAL_RESULTS --> MERGE
+    WriteBuffer_RESULTS --> MERGE
     STORAGE_RESULTS --> MERGE
     COMPACT_RESULTS --> MERGE
     
@@ -57,4 +57,4 @@ graph LR
     style TOPK fill:#bfb,stroke:#333,stroke-width:2px
     
     classDef performance fill:#ffd,stroke:#330,stroke-width:2px
-    class DETECT,WAL_SEARCH,VIPER_SEARCH,LSM_SEARCH performance
+    class DETECT,WriteBuffer_SEARCH,VIPER_SEARCH,SST_SEARCH performance

@@ -445,7 +445,7 @@ ProximaDB implements a storage-aware polymorphic search system that automaticall
 The storage-aware search system routes search requests to optimized search engines:
 
 - **VIPER Search Engine**: Optimized for Parquet columnar storage
-- **LSM Search Engine**: Optimized for log-structured storage
+- **SST Search Engine**: Optimized for log-structured storage
 
 Each engine leverages storage-format-specific optimizations for maximum performance.
 
@@ -507,13 +507,13 @@ let request = SearchVectorsRequest {
 };
 ----
 
-==== LSM Search Optimizations
+==== SST Search Optimizations
 
-**For collections using LSM storage engine:**
+**For collections using SST storage engine:**
 
 [source,rust]
 ----
-// LSM search provides:
+// SST search provides:
 // - Tiered search strategy (MemTable → Level 0 → Higher Levels)
 // - Bloom filter optimization (90-95% false positive reduction)
 // - Level-aware search prioritization
@@ -526,13 +526,13 @@ let request = SearchVectorsRequest {
     k: 10,
     search_hints: Some(SearchHints {
         use_bloom_filters: true,        // Skip irrelevant SSTables
-        max_levels_to_search: 5,        // Search up to 5 LSM levels
+        max_levels_to_search: 5,        // Search up to 5 SST levels
         search_strategy: "tiered_memtable_first",
     }),
 };
 ----
 
-**LSM Search Strategy:**
+**SST Search Strategy:**
 1. **MemTable Search**: Search active memtable (most recent data)
 2. **Level 0 Search**: Search recent flush files
 3. **Higher Level Search**: Search older, compacted data
@@ -605,7 +605,7 @@ async def storage_aware_search():
         )
     )
     
-    # For LSM collections - automatic optimization
+    # For SST collections - automatic optimization
     lsm_results = await client.search_vectors(
         collection_id="lsm_collection", 
         query_vector=query_embedding,
@@ -618,7 +618,7 @@ async def storage_aware_search():
     
     # Print optimization results
     print(f"VIPER search: {len(viper_results)} results")
-    print(f"LSM search: {len(lsm_results)} results")
+    print(f"SST search: {len(lsm_results)} results")
 
 asyncio.run(storage_aware_search())
 ----
@@ -646,7 +646,7 @@ asyncio.run(storage_aware_search())
 |20-30x faster
 |85% accuracy
 
-|LSM + Bloom filters
+|SST + Bloom filters
 |Tiered search + bloom filtering
 |2-3x faster
 |100% (baseline)
@@ -655,7 +655,7 @@ asyncio.run(storage_aware_search())
 **Memory Usage:**
 - **VIPER PQ4**: 75% memory reduction vs FP32
 - **VIPER Binary**: 96% memory reduction vs FP32  
-- **LSM Bloom filters**: 90-95% false positive reduction
+- **SST Bloom filters**: 90-95% false positive reduction
 
 === REST API
 
@@ -1188,13 +1188,13 @@ config = CollectionConfig(
 )
 ----
 
-===== LSM Configuration (Row-based)
+===== SST Configuration (Row-based)
 [source,python]
 ----
 config = CollectionConfig(
     name="realtime_collection", 
     dimension=256,
-    storage_engine=StorageEngine.LSM,
+    storage_engine=StorageEngine.SST,
     lsm_config=LsmConfig(
         memtable_size_mb=128,  # Larger for write-heavy
         use_bloom_filter=True,  # Essential for point lookups
@@ -1382,7 +1382,7 @@ print(f"Resets at: {response['reset_time']}")
 
 1. **Choose the Right Storage Engine:**
    - VIPER: Best for analytical queries, aggregations, columnar access
-   - LSM: Best for high write throughput, point lookups, row-based access
+   - SST: Best for high write throughput, point lookups, row-based access
 
 2. **Protocol Selection:**
    - REST: Easy to use, good for prototyping, JSON-based
@@ -1397,7 +1397,7 @@ print(f"Resets at: {response['reset_time']}")
    - Use connection pooling for concurrent operations
 
 5. **SQL Optimization:**
-   - Use appropriate indexes (bloom filters for LSM)
+   - Use appropriate indexes (bloom filters for SST)
    - Leverage metadata filtering to reduce search space
    - Consider query complexity when choosing storage engine
 
@@ -1731,9 +1731,9 @@ export PROXIMADB_DATA_DIR="/data/proximadb"
 export PROXIMADB_STORAGE_URL="s3://my-bucket/proximadb"
 export PROXIMADB_STORAGE_ENGINE="viper"
 
-# WAL configuration
-export PROXIMADB_WAL_STRATEGY="avro"
-export PROXIMADB_WAL_MAX_MEMORY_MB=2048
+# WriteBuffer configuration
+export PROXIMADB_WriteBuffer_STRATEGY="avro"
+export PROXIMADB_WriteBuffer_MAX_MEMORY_MB=2048
 
 # Authentication
 export PROXIMADB_AUTH_ENABLED=true
@@ -1993,7 +1993,7 @@ Detailed description of the change, including:
 
 Examples:
 feat(api): add vector similarity search endpoint
-fix(storage): resolve race condition in WAL flushing  
+fix(storage): resolve race condition in WriteBuffer flushing  
 docs(readme): update installation instructions
 test(integration): add BERT collection persistence tests
 ```
@@ -2034,11 +2034,11 @@ cargo build --release --all-targets
 cargo publish
 ----
 
-== WAL Cloud Integration
+== WriteBuffer Cloud Integration
 
 === Overview
 
-ProximaDB's WAL (Write-Ahead Log) system features comprehensive cloud integration through the enhanced `WalBatchStrategy` interface, enabling seamless operations across multiple cloud storage providers with URL-based routing and atomic operations.
+ProximaDB's WriteBuffer (Write-Ahead Log) system features comprehensive cloud integration through the enhanced `WalBatchStrategy` interface, enabling seamless operations across multiple cloud storage providers with URL-based routing and atomic operations.
 
 === Enhanced Multi-Cloud URL Routing
 
@@ -2073,7 +2073,7 @@ abfs://invalid-format/file.bin          // @ format required
 **Core Cloud Methods:**
 [source,rust]
 ----
-/// Write WAL batch to cloud storage with URL-based routing
+/// Write WriteBuffer batch to cloud storage with URL-based routing
 async fn write_batch_to_cloud(
     &self,
     collection_id: &CollectionId,
@@ -2081,13 +2081,13 @@ async fn write_batch_to_cloud(
     cloud_url: &str,
 ) -> Result<String>;
 
-/// Read WAL batch from cloud storage with URL-based routing
+/// Read WriteBuffer batch from cloud storage with URL-based routing
 async fn read_batch_from_cloud(
     &self,
     cloud_url: &str,
 ) -> Result<WalVectorBatch>;
 
-/// Migrate WAL batch from local to cloud storage
+/// Migrate WriteBuffer batch from local to cloud storage
 async fn migrate_batch_to_cloud(
     &self,
     collection_id: &CollectionId,
@@ -2096,14 +2096,14 @@ async fn migrate_batch_to_cloud(
     cloud_url: &str,
 ) -> Result<String>;
 
-/// List WAL batches from cloud storage
+/// List WriteBuffer batches from cloud storage
 async fn list_cloud_batches(
     &self,
     collection_id: &CollectionId,
     cloud_base_url: &str,
 ) -> Result<Vec<String>>;
 
-/// Delete WAL batch from cloud storage
+/// Delete WriteBuffer batch from cloud storage
 async fn delete_cloud_batch(&self, cloud_url: &str) -> Result<()>;
 
 /// Check if cloud storage is available and accessible
@@ -2241,7 +2241,7 @@ The ProximaDB Python SDK includes a comprehensive test suite in `/clients/python
 - `test_collection_operations.py` - Collection CRUD operations and configuration  
 - `test_vector_operations.py` - Vector CRUD operations and batch processing
 - `test_search_operations.py` - Search functionality and similarity operations
-- `test_persistence_wal.py` - Data persistence and WAL operations
+- `test_persistence_wal.py` - Data persistence and WriteBuffer operations
 - `test_storage_layouts.py` - Storage engine testing with flush and compaction
 
 === Running Tests

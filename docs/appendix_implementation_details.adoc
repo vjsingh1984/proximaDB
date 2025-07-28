@@ -6,11 +6,11 @@
 
 This appendix provides detailed implementation patterns, code examples, and technical insights for ProximaDB components.
 
-== WAL Implementation Patterns
+== WriteBuffer Implementation Patterns
 
 === Three-Phase Atomic Flush
 
-The WAL system implements a three-phase atomic flush pattern ensuring data durability:
+The WriteBuffer system implements a three-phase atomic flush pattern ensuring data durability:
 
 [source,rust]
 ----
@@ -33,7 +33,7 @@ atomic_coordinator.commit_flush(
 memtable.cleanup_flushed(segment.id).await?;
 ----
 
-=== WAL Writer Pattern
+=== WriteBuffer Writer Pattern
 
 Batching for improved throughput:
 
@@ -80,9 +80,9 @@ impl DirectVectorService {
         
         // Route based on storage engine
         match collection.config.storage_engine {
-            StorageEngineType::LSM => {
+            StorageEngineType::SST => {
                 self.storage_engines.get("lsm")
-                    .ok_or_else(|| anyhow!("LSM engine not available"))
+                    .ok_or_else(|| anyhow!("SST engine not available"))
                     .map(|e| e.clone())
             }
             StorageEngineType::VIPER => {
@@ -129,7 +129,7 @@ pub async fn create_collection(&self, config: CollectionConfig) -> Result<Collec
 
 == Storage Engine Patterns
 
-=== LSM Engine Implementation
+=== SST Engine Implementation
 
 ==== Atomic Compaction
 

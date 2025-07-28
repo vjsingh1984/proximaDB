@@ -23,7 +23,7 @@ For accurate performance testing, use:
 
 * **Batch Size**: Larger batches improve throughput but increase latency
 * **Vector Dimensionality**: Higher dimensions require more memory and computation
-* **Storage Engine**: LSM optimized for writes, VIPER for analytics
+* **Storage Engine**: SST optimized for writes, VIPER for analytics
 * **Concurrency**: Multiple writers can improve throughput
 
 === Search Performance Factors
@@ -73,11 +73,11 @@ Key observations:
 
 == Storage Engine Comparison
 
-=== LSM vs VIPER Performance
+=== SST vs VIPER Performance
 
 [cols="4,2,2,2"]
 |===
-| Metric | LSM Engine | VIPER Engine | Winner
+| Metric | SST Engine | VIPER Engine | Winner
 
 | Write Throughput
 | 12,000 vec/s
@@ -87,7 +87,7 @@ Key observations:
 | Random Read Latency
 | 0.5ms
 | 2ms
-| LSM (4x faster)
+| SST (4x faster)
 
 | Range Scan (1M rows)
 | 5 seconds
@@ -117,7 +117,7 @@ Key observations:
 | Use Case | Recommended Engine | Reason
 
 | High-frequency updates
-| LSM
+| SST
 | Optimized for writes
 
 | Analytics workloads
@@ -125,7 +125,7 @@ Key observations:
 | Columnar storage benefits
 
 | Mixed workloads
-| LSM
+| SST
 | Balanced performance
 
 | Metadata-heavy queries
@@ -133,7 +133,7 @@ Key observations:
 | Predicate pushdown
 
 | Real-time serving
-| LSM
+| SST
 | Lower read latency
 |===
 
@@ -229,11 +229,11 @@ Optimal concurrency: **50-100 clients**
 
 == Recovery Performance
 
-=== WAL Recovery
+=== WriteBuffer Recovery
 
 [cols="3,2,2"]
 |===
-| WAL Size | Recovery Time | Throughput
+| WriteBuffer Size | Recovery Time | Throughput
 
 | 100 MB
 | 0.5 seconds
@@ -401,7 +401,7 @@ bloom_filter_bits_per_key = 10
 
 4. **Maintenance**
    - ✓ Schedule regular compaction
-   - ✓ Monitor WAL growth
+   - ✓ Monitor WriteBuffer growth
    - ✓ Plan for index rebuilds
    - ✓ Implement backup strategy
 

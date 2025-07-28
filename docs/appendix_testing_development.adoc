@@ -171,7 +171,7 @@ async fn test_direct_vector_service_routing() {
     
     // Test routing
     let lsm_engine = service.route_to_engine("lsm_test").await.unwrap();
-    assert_eq!(lsm_engine.engine_name(), "LSM");
+    assert_eq!(lsm_engine.engine_name(), "SST");
     
     let viper_engine = service.route_to_engine("viper_test").await.unwrap();
     assert_eq!(viper_engine.engine_name(), "VIPER");
@@ -607,7 +607,7 @@ Brief description of changes
 * **Result**: Full SQL feature parity with API
 
 ==== 3. Race Condition Fixes
-* **Fixed**: WAL directory creation race in `test_batch_write_concurrency`
+* **Fixed**: WriteBuffer directory creation race in `test_batch_write_concurrency`
 * **Solution**: Changed from check-then-create to create-first pattern
 * **Impact**: Eliminated intermittent test failures
 

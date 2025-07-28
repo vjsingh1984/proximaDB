@@ -4,7 +4,7 @@
 :icons: font
 :source-highlighter: highlightjs
 
-This document consolidates all storage engine optimization insights from LSM and VIPER improvements.
+This document consolidates all storage engine optimization insights from SST and VIPER improvements.
 
 == Overview
 
@@ -13,7 +13,7 @@ Both storage engines underwent significant optimizations achieving:
 - **2.6x query performance** improvement
 - **Zero code duplication** with polymorphic designs
 
-== LSM Engine Optimizations
+== SST Engine Optimizations
 
 === Unified SSTable Reader
 
@@ -100,7 +100,7 @@ pub struct MetadataBloomFilter {
 === Unified Parquet Reader
 
 ==== Problem
-Similar to LSM, multiple reader implementations:
+Similar to SST, multiple reader implementations:
 - Basic reader
 - Filtered reader
 - Clustering-aware reader
@@ -166,7 +166,7 @@ Both engines now use the same bloom filter infrastructure:
 // Factory pattern for strategy selection
 let bloom_filter = BloomFilterFactory::create(&BloomFilterConfig {
     strategy: match engine_type {
-        EngineType::LSM => BloomFilterStrategy::ByteAligned,
+        EngineType::SST => BloomFilterStrategy::ByteAligned,
         EngineType::VIPER => BloomFilterStrategy::Composite,
     },
     target_fpr: 0.01,
@@ -186,7 +186,7 @@ Both engines use UnifiedAtomicCoordinator:
 
 [cols="3,2,2,2"]
 |===
-| Metric | Before | LSM After | VIPER After
+| Metric | Before | SST After | VIPER After
 
 | Code Lines
 | 15,000

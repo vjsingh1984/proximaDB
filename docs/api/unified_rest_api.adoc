@@ -24,7 +24,7 @@ include::../diagrams/proximadb-proto-first-data-flow.mmd[]
 **Type Safety**:: Proto-generated types ensure consistency across all protocols
 **Batch Optimization**:: 64MB message support for high-throughput operations
 **Hardware Integration**:: Native quantization hints and search optimization
-**Storage-Aware**:: Automatic VIPER/LSM engine selection through API hints
+**Storage-Aware**:: Automatic VIPER/SST engine selection through API hints
 
 === Core Design Principles
 
@@ -485,7 +485,7 @@ WARNING: These endpoints are for testing only and should not be used in producti
 
 ==== Flush All Collections
 
-Force flush all WAL entries to storage engines.
+Force flush all WriteBuffer entries to storage engines.
 
 [cols="1,4"]
 |===
@@ -496,7 +496,7 @@ Force flush all WAL entries to storage engines.
 
 ==== Flush Specific Collection
 
-Force flush WAL entries for a specific collection.
+Force flush WriteBuffer entries for a specific collection.
 
 [cols="1,4"]
 |===
@@ -646,8 +646,8 @@ ProximaDB implements a sophisticated polymorphic search architecture that automa
 ----
 Query → SearchEngineFactory → Multi-Tier Search → Deduplication → Results
          ↓                    ↓
-         Storage Detection    ├─ WAL (Unflushed data)
-         ↓                    ├─ LSM (Recent data)
+         Storage Detection    ├─ WriteBuffer (Unflushed data)
+         ↓                    ├─ SST (Recent data)
          Optimization Hints   └─ VIPER (Compacted data)
 ----
 

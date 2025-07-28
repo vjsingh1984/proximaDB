@@ -27,7 +27,7 @@ graph TB
 
     subgraph "Storage Layer"
         subgraph "Storage Engines"
-            LSM[LSM Engine<br/>Row-Based Storage<br/>SSTable Format<br/>Write Optimized<br/>DashMap Lock-free]
+            SST[SST Engine<br/>Row-Based Storage<br/>SSTable Format<br/>Write Optimized<br/>DashMap Lock-free]
             VIPER[VIPER Engine<br/>Columnar Storage<br/>Parquet Format<br/>Analytics Optimized]
         end
         
@@ -82,17 +82,17 @@ graph TB
 
     %% Storage connections
     WM --> UAC
-    MT --> LSM
+    MT --> SST
     MT --> VIPER
-    LSM --> UAC
+    SST --> UAC
     VIPER --> UAC
     UAC --> FS
-    LSM --> UC
+    SST --> UC
     VIPER --> UC
     UC --> FS
 
     %% Compute connections
-    LSM --> DC
+    SST --> DC
     VIPER --> DC
     DVS --> AXIS
     AXIS --> AXISIDX
@@ -110,6 +110,6 @@ graph TB
     class Python,RestClient,GrpcClient client
     class RestAPI,GrpcAPI,UH,SQL api
     class DVS,CS,WM,SSS,MON service
-    class LSM,VIPER,MT,UAC,UC storage
+    class SST,VIPER,MT,UAC,UC storage
     class DC,AXIS,AXISIDX,QE compute
     class FS,META persist

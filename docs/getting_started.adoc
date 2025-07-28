@@ -200,7 +200,7 @@ quantization_config = {"quantization_level": "binary"}
 |Connection refused |Server not running |Check `cargo run --bin proximadb-server`
 |Dimension mismatch |Vector size mismatch |Verify collection dimension=384
 |Slow search (>100ms) |No quantization |Enable `two_stage_search: True`
-|High memory usage |Large vectors in memory |Configure WAL flush thresholds
+|High memory usage |Large vectors in memory |Configure WriteBuffer flush thresholds
 |Proto parse errors |Mismatched schemas |Update to latest Python SDK
 |===
 
@@ -217,7 +217,7 @@ collection_config = {
     "parquet_compression": "zstd"
 }
 
-# LSM engine for high-write workloads  
+# SST engine for high-write workloads  
 collection_config = {
     "storage_engine": "lsm",
     "enable_bloom_filters": True,
@@ -229,9 +229,9 @@ collection_config = {
 
 ProximaDB automatically selects the optimal search strategy:
 
-- **WAL search**: Latest unflushed vectors
+- **WriteBuffer search**: Latest unflushed vectors
 - **VIPER search**: Columnar Parquet with predicate pushdown
-- **LSM search**: Row-based SSTable with bloom filters
+- **SST search**: Row-based SSTable with bloom filters
 
 == Next Steps
 

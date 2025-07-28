@@ -31,13 +31,13 @@ graph TB
     
     subgraph "Storage Tiers"
         subgraph "Hot Tier - NVMe"
-            WAL[WAL Logs<br/>2MB flush]
+            WriteBuffer[WriteBuffer Logs<br/>2MB flush]
             MEM[Active Memtables<br/>Recent vectors]
         end
         
         subgraph "Warm Tier - SSD"
             VIPER[VIPER Parquet<br/>ML clustering]
-            LSM[LSM SSTables<br/>Bloom filters]
+            SST[SST SSTables<br/>Bloom filters]
         end
         
         subgraph "Cold Tier - HDD"
@@ -66,15 +66,15 @@ graph TB
     LB --> GRPC2
     LB --> GRPC3
     
-    DVS1 --> WAL
-    DVS2 --> WAL
-    DVS3 --> WAL
+    DVS1 --> WriteBuffer
+    DVS2 --> WriteBuffer
+    DVS3 --> WriteBuffer
     
-    WAL --> VIPER
-    WAL --> LSM
+    WriteBuffer --> VIPER
+    WriteBuffer --> SST
     
     VIPER --> COMPACT
-    LSM --> COMPACT
+    SST --> COMPACT
     
     COMPACT --> S3
     
@@ -87,6 +87,6 @@ graph TB
     style DVS1 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
     style DVS2 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
     style DVS3 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style WAL fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style WriteBuffer fill:#fff3e0,stroke:#e65100,stroke-width:2px
     style VIPER fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
-    style LSM fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    style SST fill:#fce4ec,stroke:#880e4f,stroke-width:2px

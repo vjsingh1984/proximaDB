@@ -67,7 +67,7 @@ classDiagram
     }
     
     %% Storage Behaviors
-    class WAL_Behavior {
+    class WriteBuffer_Behavior {
         <<behavior>>
         Sequence Management
         - Auto-incrementing sequences
@@ -83,9 +83,9 @@ classDiagram
         - AvroPayload (6)
     }
     
-    class LSM_Behavior {
+    class SST_Behavior {
         <<behavior>>
-        LSM Operations
+        SST Operations
         - Tombstone tracking
         - Range optimization
         - SSTable preparation
@@ -113,8 +113,8 @@ classDiagram
     WalBehaviorWrapper o-- MemtableCore : wraps
     LsmBehaviorWrapper o-- MemtableCore : wraps
     
-    WalBehaviorWrapper ..> WAL_Behavior : applies
-    LsmBehaviorWrapper ..> LSM_Behavior : applies
+    WalBehaviorWrapper ..> WriteBuffer_Behavior : applies
+    LsmBehaviorWrapper ..> SST_Behavior : applies
     
     MemtableFactory --> BTreeMemtable : creates
     MemtableFactory --> SkipListMemtable : creates
@@ -126,7 +126,7 @@ classDiagram
     MemtableFactory ..> MemtableConfig : uses
     
     %% Notes
-    note "WAL Optimal Pairings:<br/>• BTree for Bincode WAL (ordered flush)<br/>• HashMap for Avro WAL (random access)<br/>• DashMap for high-concurrency WAL"
+    note "WriteBuffer Optimal Pairings:<br/>• BTree for Bincode WriteBuffer (ordered flush)<br/>• HashMap for Avro WriteBuffer (random access)<br/>• DashMap for high-concurrency WriteBuffer"
     
-    note "LSM Optimal Pairings:<br/>• BTree for SSTable generation<br/>• SkipList for concurrent writes<br/>• Both maintain sorted order"
+    note "SST Optimal Pairings:<br/>• BTree for SSTable generation<br/>• SkipList for concurrent writes<br/>• Both maintain sorted order"
     

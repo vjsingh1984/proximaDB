@@ -10,7 +10,7 @@ flowchart TB
     end
     
     subgraph "Flush Process"
-        FLUSH[Flush to Storage<br/>WAL → Engine]
+        FLUSH[Flush to Storage<br/>WriteBuffer → Engine]
         UAC[UnifiedAtomicCoordinator<br/>ACID guarantees]
     end
     
@@ -21,7 +21,7 @@ flowchart TB
     
     subgraph "Storage Engines"
         VIPER[VIPER Engine<br/>Parquet files]
-        LSM[LSM Engine<br/>SSTables + Manifest]
+        SST[SST Engine<br/>SSTables + Manifest]
     end
     
     SIZE --> DVS
@@ -31,16 +31,16 @@ flowchart TB
     DVS --> FLUSH
     FLUSH --> UAC
     UAC --> VIPER
-    UAC --> LSM
+    UAC --> SST
     
     VIPER --> COMPACT
-    LSM --> COMPACT
+    SST --> COMPACT
     
     COMPACT --> ATOMIC
     ATOMIC -->|Merge files atomically| VIPER
-    ATOMIC -->|Compact levels with manifest| LSM
+    ATOMIC -->|Compact levels with manifest| SST
     
     style DVS fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
     style COMPACT fill:#fff3e0,stroke:#e65100,stroke-width:2px
     style VIPER fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
-    style LSM fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    style SST fill:#fce4ec,stroke:#880e4f,stroke-width:2px

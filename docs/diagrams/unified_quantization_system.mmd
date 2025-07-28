@@ -17,8 +17,8 @@ graph TB
     
     subgraph "Storage Integration"
         VIPER_Q[VIPER Quantization<br/>Column Projection]
-        LSM_Q[LSM Quantization<br/>Row-based Storage]
-        WAL_Q[WAL Quantization<br/>In-memory Cache]
+        SST_Q[SST Quantization<br/>Row-based Storage]
+        WriteBuffer_Q[WriteBuffer Quantization<br/>In-memory Cache]
     end
     
     subgraph "Search Optimization"
@@ -39,13 +39,13 @@ graph TB
     SCALAR --> VIPER_Q
     PQ --> VIPER_Q
     
-    BINARY --> LSM_Q
-    SCALAR --> LSM_Q
-    PQ --> LSM_Q
+    BINARY --> SST_Q
+    SCALAR --> SST_Q
+    PQ --> SST_Q
     
     VIPER_Q --> TWO_STAGE
-    LSM_Q --> TWO_STAGE
-    WAL_Q --> TWO_STAGE
+    SST_Q --> TWO_STAGE
+    WriteBuffer_Q --> TWO_STAGE
     
     TWO_STAGE --> REFINE
     TWO_STAGE --> MULTIPLIER

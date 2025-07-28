@@ -54,11 +54,11 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 **Unified Vector Operations**:: Single API surface for insert, search, update, delete across REST/gRPC
 
-**Storage-Aware Intelligence**:: Automatic WAL → VIPER → LSM engine selection based on data location
+**Storage-Aware Intelligence**:: Automatic WriteBuffer → VIPER → SST engine selection based on data location
 
 **Two-Stage Search**:: Binary quantization for candidate selection + FP32 refinement for accuracy
 
-**Multi-Engine Architecture**:: VIPER (Parquet columnar) and LSM (row-based SSTable) storage engines
+**Multi-Engine Architecture**:: VIPER (Parquet columnar) and SST (row-based SSTable) storage engines
 
 == Getting Started Tutorial
 
@@ -84,7 +84,7 @@ collection_config = {
     "collection_id": "ai_documents",
     "dimension": 768,  # BERT/Sentence Transformer dimension
     "distance_metric": "cosine",
-    "storage_engine": "auto",  # Auto-select VIPER or LSM
+    "storage_engine": "auto",  # Auto-select VIPER or SST
     "quantization_config": {
         "quantization_level": "pq8",  # Product quantization
         "enable_two_stage_search": True,

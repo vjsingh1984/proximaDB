@@ -16,11 +16,11 @@ graph TB
     end
 
     subgraph "Storage Layer"
-        WAL[WalManager<br/>Write-Ahead Logging<br/>Clean Separation]
+        WriteBuffer[WalManager<br/>Write-Ahead Logging<br/>Clean Separation]
         
         subgraph "Storage Engines"
             VIPER[ViperEngine<br/>Columnar Storage<br/>Predicate Pushdown]
-            LSM[LsmEngine<br/>Atomic Compaction<br/>Metadata Filtering]
+            SST[LsmEngine<br/>Atomic Compaction<br/>Metadata Filtering]
         end
         
         UAC[UnifiedAtomicCoordinator<br/>ACID Operations<br/>Staging Pattern]
@@ -33,16 +33,16 @@ graph TB
     UH --> DVS
     DVS --> CS
     DVS --> FC
-    DVS --> WAL
+    DVS --> WriteBuffer
     
     CS --> VIPER
-    CS --> LSM
+    CS --> SST
     
-    WAL --> UAC
+    WriteBuffer --> UAC
     FC --> UAC
     
     UAC --> VIPER
-    UAC --> LSM
+    UAC --> SST
 
     classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
     classDef network fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
@@ -52,4 +52,4 @@ graph TB
     class Python,REST,gRPC client
     class UH network
     class DVS,CS,FC service
-    class WAL,VIPER,LSM,UAC storage
+    class WriteBuffer,VIPER,SST,UAC storage

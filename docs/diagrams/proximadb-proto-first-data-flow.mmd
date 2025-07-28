@@ -7,7 +7,7 @@ sequenceDiagram
     participant CollectionSvc as CollectionService
     participant WalProto as ProtoWalBatchStrategy
     participant Viper as ViperEngine
-    participant LSM as LsmEngine
+    participant SST as LsmEngine
     participant Filestore as FilestoreBackend
 
     Note over REST,Filestore: ProximaDB Proto-First Data Flow - Zero Double Serialization
@@ -48,10 +48,10 @@ sequenceDiagram
             CollectionSvc-->>Viper: proto::IndexConfig
             Viper->>Viper: generate_dynamic_schema(collection_config)<br/>write_to_parquet(proto_vectors)
             Viper-->>VectorSvc: VectorOperationResult
-        else LSM Engine Selected
-            VectorSvc->>LSM: insert_vector_batch(proto_vectors)
-            LSM->>LSM: write_to_memtable(proto_vectors)<br/>update_bloom_filters()
-            LSM-->>VectorSvc: VectorOperationResult
+        else SST Engine Selected
+            VectorSvc->>SST: insert_vector_batch(proto_vectors)
+            SST->>SST: write_to_memtable(proto_vectors)<br/>update_bloom_filters()
+            SST-->>VectorSvc: VectorOperationResult
         end
         
         VectorSvc-->>Handlers: proto::VectorOperationResponse
@@ -59,7 +59,7 @@ sequenceDiagram
         GRPC-->>Client: gRPC Response
     end
 
-    Note over VectorSvc,Viper: **Storage-Aware Optimization**<br/>• Automatic engine selection<br/>• VIPER: Parquet + predicate pushdown<br/>• LSM: Memtable + bloom filters<br/>• Proto vectors flow directly to storage
+    Note over VectorSvc,Viper: **Storage-Aware Optimization**<br/>• Automatic engine selection<br/>• VIPER: Parquet + predicate pushdown<br/>• SST: Memtable + bloom filters<br/>• Proto vectors flow directly to storage
 
     rect rgb(255, 248, 240)
         Note right of Client: Vector Search (Storage-Aware Polymorphic)
@@ -72,7 +72,7 @@ sequenceDiagram
         
         Note over VectorSvc: Three-Layer Search Coordination
         
-        VectorSvc->>VectorSvc: Layer 1: Search unflushed WAL
+        VectorSvc->>VectorSvc: Layer 1: Search unflushed WriteBuffer
         VectorSvc->>WalProto: search_unflushed_vectors(query)
         WalProto->>WalProto: deserialize proto records<br/>compute similarities
         WalProto-->>VectorSvc: unflushed_results: Vec<SearchResult>
@@ -82,10 +82,10 @@ sequenceDiagram
             VectorSvc->>Viper: search_vectors_with_hints(query, search_hints)
             Viper->>Viper: parquet_predicate_pushdown(filters)<br/>ml_clustering_optimization()
             Viper-->>VectorSvc: viper_results: Vec<SearchResult>
-        else LSM Search Path
-            VectorSvc->>LSM: search_vectors_with_hints(query, search_hints)
-            LSM->>LSM: bloom_filter_optimization()<br/>memtable_scan() + sst_search()
-            LSM-->>VectorSvc: lsm_results: Vec<SearchResult>
+        else SST Search Path
+            VectorSvc->>SST: search_vectors_with_hints(query, search_hints)
+            SST->>SST: bloom_filter_optimization()<br/>memtable_scan() + sst_search()
+            SST-->>VectorSvc: lsm_results: Vec<SearchResult>
         end
         
         VectorSvc->>VectorSvc: Layer 3: Search compacted storage
@@ -97,10 +97,10 @@ sequenceDiagram
         REST-->>Client: HTTP 200 OK
     end
 
-    Note over VectorSvc,LSM: **6.10x Performance Improvement**<br/>• Storage-aware engine selection<br/>• Three-layer search with deduplication<br/>• Engine-specific optimizations<br/>• MVCC version ordering
+    Note over VectorSvc,SST: **6.10x Performance Improvement**<br/>• Storage-aware engine selection<br/>• Three-layer search with deduplication<br/>• Engine-specific optimizations<br/>• MVCC version ordering
 
     rect rgb(250, 245, 255)
-        Note right of VectorSvc: WAL Flush to Storage (Proto-First)
+        Note right of VectorSvc: WriteBuffer Flush to Storage (Proto-First)
         VectorSvc->>VectorSvc: background_flush_trigger()
         VectorSvc->>WalProto: flush_to_storage(collection_id)
         WalProto->>WalProto: deserialize_proto_batches()<br/>group_by_collection()
@@ -112,10 +112,10 @@ sequenceDiagram
                 VectorSvc->>Viper: flush_vectors_to_parquet(proto_vectors)
                 Viper->>Viper: append_to_parquet_files()<br/>update_ml_clusters()
                 Viper-->>VectorSvc: FlushResult
-            else Collection uses LSM
-                VectorSvc->>LSM: flush_vectors_to_sst(proto_vectors)
-                LSM->>LSM: write_sorted_sst_file()<br/>update_level_structure()
-                LSM-->>VectorSvc: FlushResult
+            else Collection uses SST
+                VectorSvc->>SST: flush_vectors_to_sst(proto_vectors)
+                SST->>SST: write_sorted_sst_file()<br/>update_level_structure()
+                SST-->>VectorSvc: FlushResult
             end
         end
         
@@ -123,7 +123,7 @@ sequenceDiagram
         WalProto-->>VectorSvc: flush_complete
     end
 
-    Note over WalProto,LSM: **Proto-First WAL Design**<br/>• One API call = One batch<br/>• Proto serialization throughout<br/>• 50% reduction in flush overhead<br/>• Zero double serialization
+    Note over WalProto,SST: **Proto-First WriteBuffer Design**<br/>• One API call = One batch<br/>• Proto serialization throughout<br/>• 50% reduction in flush overhead<br/>• Zero double serialization
 
     rect rgb(245, 255, 245)
         Note right of VectorSvc: Collection Metadata Update (Proto-Native)

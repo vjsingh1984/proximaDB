@@ -8,11 +8,11 @@ graph TB
             L3[L3 Cache<br/>Network Cache<br/>~1ms]
             
             ADAPT[Adaptive Promotion<br/>Hot data moves up<br/>Cold data moves down]
-            SHARE[Cross-Engine Sharing<br/>LSM ↔ VIPER<br/>Deduplication]
+            SHARE[Cross-Engine Sharing<br/>SST ↔ VIPER<br/>Deduplication]
         end
         
         subgraph "Lock-Free Architecture (Integrated)"
-            LFE[StorageEngine<br/>DashMap for LSM trees<br/>DashMap for MMAP readers]
+            LFE[StorageEngine<br/>DashMap for SST trees<br/>DashMap for MMAP readers]
             LFA[UnifiedAtomicCoordinator<br/>DashMap for active_operations<br/>Lock-free tracking]
             LFM[DashMap Memtable<br/>Lock-free backend<br/>Concurrent writes]
             

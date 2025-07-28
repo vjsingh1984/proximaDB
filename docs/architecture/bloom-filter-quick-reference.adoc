@@ -13,7 +13,7 @@ Quick reference guide for using ProximaDB's unified bloom filter architecture.
 
 == Configuration Templates
 
-=== LSM SSTable Configuration
+=== SST SSTable Configuration
 
 [source,toml]
 ----

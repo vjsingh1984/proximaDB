@@ -9,7 +9,7 @@
 
 [abstract]
 --
-ProximaDB is a high-performance vector database built with Rust, featuring a proto-first architecture, dual storage engines (LSM and VIPER), and enterprise-grade capabilities. This technical reference provides comprehensive documentation of ProximaDB's architecture, implementation, and operational characteristics.
+ProximaDB is a high-performance vector database built with Rust, featuring a proto-first architecture, dual storage engines (SST and VIPER), and enterprise-grade capabilities. This technical reference provides comprehensive documentation of ProximaDB's architecture, implementation, and operational characteristics.
 --
 
 == Introduction
@@ -26,7 +26,7 @@ image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, widt
 === Key Features
 
 * **Proto-First Design**: Zero serialization overhead
-* **Dual Storage Engines**: LSM (row-based) and VIPER (columnar)
+* **Dual Storage Engines**: SST (row-based) and VIPER (columnar)
 * **Direct Vector Service**: 40-60% latency reduction
 * **Unified Architectures**: Consistent APIs across all components
 * **Enterprise Ready**: Multi-cloud support, monitoring, security
@@ -67,7 +67,7 @@ ProximaDB employs a layered architecture with clean separation of concerns:
 ┌─────────────────────────────────────────────────┐
 │             Storage Layer                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
-│  │ LSM Engine  │  │VIPER Engine │  │   WAL   │ │
+│  │ SST Engine  │  │VIPER Engine │  │   WriteBuffer   │ │
 │  └─────────────┘  └─────────────┘  └─────────┘ │
 └──────────────────────────────────────────────────┘
 ----
@@ -109,9 +109,9 @@ image::direct-vector-service.png[Direct Vector Service Architecture, width=80%]
 
 === Storage Engines
 
-==== LSM Engine
+==== SST Engine
 
-The Log-Structured Merge (LSM) engine provides:
+The Log-Structured Merge (SST) engine provides:
 
 * **Atomic compaction**: ACID guarantees via staging
 * **Metadata filtering**: Block-level statistics
@@ -137,11 +137,11 @@ The Vectorized Parquet Engine provides:
 * **ML clustering**: Locality-preserving organization
 * **Quantization support**: Reduced memory footprint
 
-=== WAL Architecture
+=== WriteBuffer Architecture
 
 The Write-Ahead Log system features clean separation of concerns:
 
-image::wal_strategy_pattern.png[WAL Strategy Pattern, width=100%]
+image::wal_strategy_pattern.png[WriteBuffer Strategy Pattern, width=100%]
 
 Components:
 * **WalManager**: Orchestration only
@@ -272,7 +272,7 @@ CreateCollectionRequest {
   config: {
     vector_dimension: 768,
     distance_metric: COSINE,
-    storage_engine: LSM
+    storage_engine: SST
   }
 }
 ----

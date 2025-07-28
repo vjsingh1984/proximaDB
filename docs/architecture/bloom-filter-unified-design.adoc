@@ -56,7 +56,7 @@ pub struct ByteAlignedBloomFilter {
 }
 ----
 
-* **Use Case**: LSM SSTable storage
+* **Use Case**: SST SSTable storage
 * **Benefits**: Efficient disk I/O, byte-aligned access
 * **Memory**: ~10 bits per key for 1% false positive rate
 
@@ -189,9 +189,9 @@ pub enum BloomStrategy {
 
 == Integration Points
 
-=== LSM Engine Integration
+=== SST Engine Integration
 
-The LSM engine uses ByteAligned filters for SSTable files:
+The SST engine uses ByteAligned filters for SSTable files:
 
 [source,rust]
 ----
@@ -432,7 +432,7 @@ impl BloomFilterFactory {
 
 == Migration Guide
 
-=== From Old LSM Implementation
+=== From Old SST Implementation
 
 [source,rust]
 ----

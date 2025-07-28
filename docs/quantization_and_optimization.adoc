@@ -38,7 +38,7 @@ ProximaDB's **unified quantization engine** integrates seamlessly with the proto
 
 * **Zero Double Serialization**: Quantization hints flow natively through proto messages
 * **Hardware-Aware Selection**: Automatic SIMD/GPU backend detection and optimization
-* **Storage-Aware Integration**: VIPER and LSM engines with native quantization support
+* **Storage-Aware Integration**: VIPER and SST engines with native quantization support
 * **Memory Efficiency**: 4-32x compression with 85-99% accuracy retention
 * **Search Acceleration**: Two-stage search with 3-6x speedup guarantee
 * **Progressive Deployment**: Add quantization to existing collections without downtime
@@ -445,11 +445,11 @@ VIPER leverages Parquet's columnar format:
 * Row group pruning based on statistics
 * Memory-mapped access for large files
 
-==== LSM Engine
+==== SST Engine
 
-LSM uses dedicated column families:
+SST uses dedicated column families:
 
-.LSM Column Family Structure
+.SST Column Family Structure
 [width="100%",cols="2,3,2",options="header"]
 |===
 |Column Family |Content |Purpose

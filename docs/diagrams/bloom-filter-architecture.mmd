@@ -28,12 +28,12 @@ graph TB
         NoOp -.->|implements| Trait
         
         subgraph "Storage Engines"
-            LSM["LSM Engine<br/>SSTables"]
+            SST["SST Engine<br/>SSTables"]
             VIPER["VIPER Engine<br/>Parquet"]
             Memtable["Memtable<br/>In-Memory"]
         end
         
-        LSM -->|uses| ByteAligned
+        SST -->|uses| ByteAligned
         VIPER -->|uses| Composite
         Memtable -->|uses| BitPacked
         
@@ -57,5 +57,5 @@ graph TB
     class Config configClass
     class Factory factoryClass
     class ByteAligned,BitPacked,Simple,Composite,NoOp strategyClass
-    class LSM,VIPER,Memtable engineClass
+    class SST,VIPER,Memtable engineClass
     class Hash,Serial,Edge featureClass
