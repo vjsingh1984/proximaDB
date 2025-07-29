@@ -16,30 +16,50 @@ This document provides visual representations of ProximaDB's architecture using 
 
 == System Architecture
 
-The complete system architecture with DirectVectorService at its core:
+The complete current system architecture with accurate component relationships:
 
-[mermaid]
-----
-include::diagrams/proximadb-architecture-overview.mmd[]
-----
+image::current-architecture-accurate.png[Current ProximaDB Architecture, width=100%, align=center]
 
-== DirectVectorService Architecture
+_Diagram source: link:diagrams/current-architecture-accurate.mmd[View Mermaid source]_
 
-The optimized DirectVectorService eliminates registry overhead for 40-60% latency reduction:
+This diagram shows the actual implementation with:
 
-[mermaid]
-----
-include::diagrams/direct-vector-service.mmd[]
-----
+* **MultiServer**: Concurrent REST and gRPC servers on separate ports
+* **SharedServices**: Business logic hub coordinating all services
+* **DirectVectorService**: Core service providing 40-60% latency reduction
+* **Dual Storage Strategy**: VIPER (default) and SST (alternative) engines
+* **AXIS Integration**: Fully implemented adaptive indexing system
 
-== Proto-First Data Flow
+== Service Interaction Flow
 
-Zero double serialization throughout the request pipeline:
+Detailed sequence showing how requests flow through the actual system:
 
-[mermaid]
-----
-include::diagrams/proximadb-proto-first-data-flow.mmd[]
-----
+image::service-interactions.png[Service Interaction Sequence, width=100%, align=center]
+
+_Diagram source: link:diagrams/service-interactions.mmd[View Mermaid source]_
+
+This sequence diagram illustrates:
+
+* **Request Routing**: MultiServer to UnifiedHandlers to DirectVectorService
+* **Storage Strategy Selection**: VIPER (default) vs SST (alternative)
+* **Write Buffer Integration**: Atomic persistence with cloud storage
+* **Search Flow**: Unified search across memory and persistent storage
+
+== Storage Engine Class Structure
+
+Actual class relationships and dependencies in the storage layer:
+
+image::storage-engine-classes.png[Storage Engine Classes, width=100%, align=center]
+
+_Diagram source: link:diagrams/storage-engine-classes.mmd[View Mermaid source]_
+
+Key architectural elements:
+
+* **StorageEngine**: Central coordinator using DashMap for concurrent access
+* **DirectVectorService**: Optimized service with direct memtable access
+* **Dual Storage Engines**: ViperEngine (default) and SstStorage (alternative)
+* **WriteBufferManager**: Handles persistence with multiple serialization strategies
+* **AxisManager**: Fully implemented adaptive indexing system
 
 == Storage Architecture
 
@@ -63,7 +83,7 @@ include::diagrams/multi_disk_architecture.mmd[]
 
 === WriteBuffer Strategy Pattern
 
-Write-ahead log strategy pattern with assignment service:
+WriteBuffer strategy pattern with assignment service:
 
 [mermaid]
 ----
@@ -106,7 +126,7 @@ include::diagrams/python-sdk-architecture.mmd[]
 * **DirectVectorService**: 40-60% insert latency reduction
 * **Proto-First**: Zero double serialization
 * **Unified Architecture**: 85% code reduction
-* **Storage-Aware**: 6.10x search performance
+* **Storage-Aware**: Optimized search with unified algorithms
 * **Hardware Optimization**: SIMD/GPU acceleration
 
 ---

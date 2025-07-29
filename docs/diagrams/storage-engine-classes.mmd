@@ -1,0 +1,136 @@
+classDiagram
+    %% Main Database Class
+    class ProximaDB {
+        -storage: Arc~RwLock~StorageEngine~~
+        -multi_server: Option~MultiServer~
+        -_query_engine: QueryEngine
+        -_config: Config
+        +new(config: Config) ProximaDB
+        +start() Result
+        +stop() Result
+        +is_server_running() bool
+    }
+    
+    %% Central Storage Coordination
+    class StorageEngine {
+        -config: StorageConfig
+        -sst_storages: Arc~DashMap~String, Arc~SstStorage~~~
+        -mmap_readers: Arc~DashMap~String, Arc~MmapReader~~~
+        -write_buffer_manager: Arc~WriteBufferManager~
+        -axis_index_manager: Arc~AxisManager~
+        -metadata_provider: Arc~RwLock~Option~Arc~dyn CollectionMetadataProvider~~~~
+        +ensure_sst_storage_initialized(collection_id: str) Arc~SstStorage~
+        +search_vectors(query: SearchQuery) Vec~SearchResult~
+        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+    }
+    
+    %% DirectVectorService - Core Service
+    class DirectVectorService {
+        -global_memtable: Arc~WriteBufferBehaviorWrapper~
+        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
+        -compaction_coordinator: Arc~CompactionCoordinator~
+        -viper_engine: Arc~ViperEngine~
+        -sst_engine: Arc~SstStorage~
+        -write_buffer_config: WriteBufferConfig
+        -distance_compute: UnifiedDistanceCompute
+        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+        +search_vectors(query: SearchQuery) Vec~SearchResult~
+    }
+    
+    %% Storage Engines
+    class ViperEngine {
+        -collection_id: String
+        -config: ViperConfig
+        -ml_clustering: Option~KMeansCluster~
+        -quantization_engine: Arc~UnifiedQuantizationEngine~
+        +write_vectors(vectors: Vec~VectorRecord~) Result
+        +search_unified(query: SearchQuery) Vec~SearchResult~
+        +compact() Result
+    }
+    
+    class SstStorage {
+        -collection_id: String
+        -config: SstConfig
+        -filesystem: Arc~FilesystemFactory~
+        +write_vectors(vectors: Vec~VectorRecord~) Result
+        +search_unified(query: SearchQuery) Vec~SearchResult~
+        +compact() Result
+    }
+    
+    %% Write Buffer System
+    class WriteBufferManager {
+        -config: WriteBufferConfig
+        -serialization_strategy: Box~dyn SerializationStrategy~
+        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
+        +write_batch(collection_id: str, batch: WriteBufferVectorBatch) Result
+        +flush_collection(collection_id: str) Result
+    }
+    
+    class WriteBufferBehaviorWrapper {
+        -inner: Arc~dyn Memtable~VectorRecord~~
+        -behavior: WriteBufferBehavior
+        +insert(key: String, value: VectorRecord) Result
+        +search(query: SearchQuery) Vec~SearchResult~
+        +should_flush() bool
+    }
+    
+    %% AXIS Indexing
+    class AxisManager {
+        -indexes: HashMap~String, Box~dyn VectorIndex~~
+        -config: AxisConfig
+        +insert(collection_id: str, vector: VectorRecord) Result
+        +search(collection_id: str, query: Vec~f32~, k: usize) Vec~SearchResult~
+        +build_index(collection_id: str, index_type: IndexType) Result
+    }
+    
+    %% Storage Strategy Enum
+    class StorageEngineStrategy {
+        <<enumeration>>
+        Viper
+        Lsm
+        Hybrid
+    }
+    
+    %% Collection Service
+    class CollectionService {
+        -metadata_backend: Arc~dyn MetadataBackend~
+        -storage_config: StorageConfig
+        +create_collection(collection: Collection) Result
+        +get_collection(collection_id: str) Option~Collection~
+        +delete_collection(collection_id: str) Result
+    }
+    
+    %% Relationships
+    ProximaDB --> StorageEngine
+    StorageEngine --> DirectVectorService
+    StorageEngine --> ViperEngine
+    StorageEngine --> SstStorage
+    StorageEngine --> WriteBufferManager
+    StorageEngine --> AxisManager
+    StorageEngine --> CollectionService
+    
+    DirectVectorService --> WriteBufferBehaviorWrapper
+    DirectVectorService --> ViperEngine
+    DirectVectorService --> SstStorage
+    
+    WriteBufferManager --> WriteBufferBehaviorWrapper
+    
+    StorageEngine ..> StorageEngineStrategy : uses
+    
+    %% Interface Implementation
+    CollectionService ..|> CollectionMetadataProvider : implements
+    
+    %% Styling
+    classDef coreClass fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef storageClass fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef serviceClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    
+    class ProximaDB coreClass
+    class StorageEngine coreClass  
+    class DirectVectorService coreClass
+    class ViperEngine storageClass
+    class SstStorage storageClass
+    class WriteBufferManager storageClass
+    class WriteBufferBehaviorWrapper storageClass
+    class AxisManager serviceClass
+    class CollectionService serviceClass

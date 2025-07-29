@@ -23,7 +23,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-*ProximaDB Documentation Portal* provides comprehensive navigation and quick access to all documentation resources for the **DirectVectorService-powered** vector database delivering **40-60% insert latency reduction** and **6.10x search performance**.
+*ProximaDB Documentation Portal* provides comprehensive navigation and quick access to all documentation resources for the **DirectVectorService-powered** vector database delivering **40-60% insert latency reduction** and **optimized search performance**.
 
 == 🚀 Quick Start Guide
 

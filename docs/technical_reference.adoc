@@ -77,8 +77,11 @@ _Diagram source: link:diagrams/direct-vector-service.mmd[View Mermaid source]_
 ----
 pub struct DirectVectorService {
     global_memtable: Arc<WriteBufferBehaviorWrapper>,     // Direct access
+    flush_coordinator: Arc<WriteBufferFlushCoordinator>,
     compaction_coordinator: Arc<CompactionCoordinator>,
-    streaming_service: Arc<StreamingSearchService>,
+    viper_engine: Arc<ViperEngine>,
+    sst_engine: Arc<SstStorage>,
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl DirectVectorService {
@@ -102,7 +105,7 @@ impl DirectVectorService {
 }
 ----
 
-**Performance Achievement**: 6.10x improvement through automatic engine selection
+**Performance Achievement**: 40-60% latency reduction through direct memtable access and dual-engine architecture
 
 == Performance Characteristics
 
@@ -667,9 +670,10 @@ The DirectVectorService architecture provides 40-60% latency reduction through d
 [source,rust]
 ----
 pub struct DirectVectorService {
-    memtable: Arc<GlobalPartitionedMemtable>,
-    wal_config: WalConfig,               // Actual config from config.toml
-    assignment_service: Arc<AssignmentService>,
+    global_memtable: Arc<WriteBufferBehaviorWrapper>,
+    write_buffer_config: WriteBufferConfig,     // Actual config from config.toml
+    collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
+    distance_compute: UnifiedDistanceCompute,
 }
 
 impl DirectVectorService {

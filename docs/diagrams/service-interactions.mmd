@@ -1,0 +1,57 @@
+sequenceDiagram
+    participant Client
+    participant MultiServer
+    participant UnifiedHandlers
+    participant DirectVectorService
+    participant StorageEngine
+    participant ViperEngine
+    participant WriteBuffer
+    participant CloudStorage
+    
+    %% Vector Insert Flow
+    Note over Client,CloudStorage: Vector Insert Operation
+    Client->>MultiServer: POST /vectors (REST) or InsertVectors (gRPC)
+    MultiServer->>UnifiedHandlers: Route request to unified logic
+    UnifiedHandlers->>DirectVectorService: insert_vectors(collection_id, vectors)
+    
+    DirectVectorService->>DirectVectorService: Generate IDs if missing
+    DirectVectorService->>StorageEngine: Route to storage strategy
+    
+    alt VIPER Engine (Default)
+        StorageEngine->>ViperEngine: write_vectors(vectors)
+        ViperEngine->>WriteBuffer: Buffer for persistence
+    else SST Engine (Alternative)
+        StorageEngine->>SstEngine: write_vectors(vectors)
+        SstEngine->>WriteBuffer: Buffer for persistence
+    end
+    
+    WriteBuffer->>CloudStorage: Atomic write with staging
+    CloudStorage-->>WriteBuffer: Write confirmation
+    WriteBuffer-->>DirectVectorService: Success response
+    DirectVectorService-->>UnifiedHandlers: VectorOperationResponse
+    UnifiedHandlers-->>MultiServer: Proto response
+    MultiServer-->>Client: HTTP 200 or gRPC Success
+    
+    %% Vector Search Flow
+    Note over Client,CloudStorage: Vector Search Operation
+    Client->>MultiServer: GET /search (REST) or SearchVectors (gRPC)
+    MultiServer->>UnifiedHandlers: Route search request
+    UnifiedHandlers->>DirectVectorService: search_vectors(collection_id, query)
+    
+    DirectVectorService->>DirectVectorService: Search unflushed WriteBuffer
+    DirectVectorService->>StorageEngine: Search persisted data
+    
+    alt VIPER Engine
+        StorageEngine->>ViperEngine: search_unified(query)
+        ViperEngine->>ViperEngine: Parquet predicate pushdown + ML clustering
+    else SST Engine
+        StorageEngine->>SstEngine: search_unified(query)
+        SstEngine->>SstEngine: SSTable search + bloom filters
+    end
+    
+    StorageEngine-->>DirectVectorService: Storage results
+    DirectVectorService->>DirectVectorService: Merge WriteBuffer + Storage results
+    DirectVectorService->>DirectVectorService: Deduplicate with MVCC ordering
+    DirectVectorService-->>UnifiedHandlers: SearchResults with scores
+    UnifiedHandlers-->>MultiServer: Proto response
+    MultiServer-->>Client: HTTP 200 or gRPC Success

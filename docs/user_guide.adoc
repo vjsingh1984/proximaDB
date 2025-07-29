@@ -25,7 +25,7 @@ endif::[]
 [abstract]
 == Abstract
 
-Comprehensive production workflows for ProximaDB's **DirectVectorService architecture**, delivering **40-60% insert latency reduction**, **6.10x search performance**, and **unified SDK experience** for modern AI applications.
+Comprehensive production workflows for ProximaDB's **DirectVectorService architecture**, delivering **40-60% insert latency reduction**, **optimized search performance**, and **unified SDK experience** for modern AI applications.
 
 [NOTE]
 ====
@@ -38,7 +38,7 @@ Comprehensive production workflows for ProximaDB's **DirectVectorService archite
 
 **85% Code Reduction**:: Unified handlers eliminate REST/gRPC duplication
 
-**Storage-Aware Search**:: Automatic engine selection delivers 6.10x performance improvement
+**Storage-Aware Search**:: Automatic engine selection delivers optimized performance improvement
 
 **Unified Python SDK**:: Single client (87% smaller) supports both REST and gRPC protocols
 
@@ -1282,14 +1282,14 @@ async def performance_monitoring_example():
 ProximaDB is **production-ready** with complete proto-first architecture:
 
 ✅ **Production Ready**: Proto-first architecture, storage-aware search, unified handlers, multi-engine storage  
-✅ **Performance Validated**: 6.10x search improvement, 50,000+ vectors/sec insertion, sub-100ms latency
+✅ **Performance Validated**: optimized search improvement, 50,000+ vectors/sec insertion, sub-100ms latency
 ✅ **Quality Assured**: 520+ tests passing, gcc-14 optimized builds, comprehensive coverage
 ✅ **SDK Complete**: Unified Python client (87% smaller), REST/gRPC dual protocol support
 
 **Key Achievements**:
 - **Zero Double Serialization**: Direct proto types throughout the system
 - **Handler Consolidation**: 85% code reduction eliminating REST/gRPC duplication
-- **Storage-Aware Search**: Automatic engine selection with 6.10x performance improvement
+- **Storage-Aware Search**: Automatic engine selection with optimized performance improvement
 - **Hardware Optimization**: SIMD/GPU acceleration with intelligent quantization
 
 == Troubleshooting
@@ -1460,7 +1460,7 @@ client = ProximaDBClient("localhost:5679")
 2. **Enhanced Connection Management**: HTTP/2, connection pooling, keepalive
 3. **Better Error Handling**: Unified error types across protocols
 4. **TLS/mTLS Support**: Client certificates for secure connections
-5. **Storage-Aware Search**: 6.10x performance improvement with optimizations
+5. **Storage-Aware Search**: optimized performance improvement with optimizations
 
 === Performance Guidelines
 

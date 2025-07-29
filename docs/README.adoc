@@ -14,7 +14,7 @@
 ProximaDB is a **DirectVectorService-powered vector database** engineered for AI-first applications with breakthrough performance:
 
 * **40-60% Insert Latency Reduction**: DirectVectorService eliminates registry overhead
-* **6.10x Search Performance**: Storage-aware polymorphic search with automatic engine selection
+* **Optimized Search Performance**: Storage-aware polymorphic search with automatic engine selection
 * **85% Code Reduction**: Handler consolidation through proto-first architecture
 * **Zero Double Serialization**: Direct Protocol Buffers throughout the entire pipeline
 
@@ -30,7 +30,7 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 |Proto-First Architecture |Zero serialization overhead |✅ **Complete**
 |Handler Consolidation |85% code reduction |✅ **Complete** 
-|Storage-Aware Search |6.10x performance improvement |✅ **Complete**
+|Storage-Aware Search |Optimized performance improvement |✅ **Complete**
 |Python SDK Unification |87% reduction (6,467→800 lines) |✅ **Complete**
 |Hardware Optimization |SIMD/GPU acceleration |✅ **Complete**
 |Multi-Cloud Support |S3/Azure/GCS integration |✅ **Complete**

@@ -38,7 +38,7 @@ Complete development guide for the proto-first ProximaDB architecture, including
 - **Zero double serialization**: Direct proto types throughout the system
 - **85% code reduction**: Handler consolidation eliminates duplication  
 - **87% SDK reduction**: 6,467 → 800 lines in Python client
-- **6.10x performance**: Storage-aware polymorphic search improvement
+- **Optimized search**: Storage-aware polymorphic search improvement
 - **520+ tests passing**: Comprehensive coverage with production scenarios
 
 === Current Development Status
@@ -60,7 +60,7 @@ Complete development guide for the proto-first ProximaDB architecture, including
 |🔍 **Storage-Aware Search**
 |✅ Complete
 |100% accuracy maintained
-|6.10x speed improvement
+|Optimized search performance
 
 |🐍 **Python SDK**
 |✅ Complete
@@ -463,7 +463,7 @@ Each engine leverages storage-format-specific optimizations for maximum performa
 // - Hardware acceleration (SIMD, NEON, CUDA, ROCm, MPS)
 // - Two-stage search with quantized filtering
 
-// Expected performance: 6.10x faster with 100% accuracy
+// Expected performance: Optimized search with 100% accuracy
 let request = SearchVectorsRequest {
     collection_id: viper_collection_id,
     query_vector: query_embedding,

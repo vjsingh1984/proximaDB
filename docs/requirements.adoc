@@ -1233,7 +1233,7 @@ sync_mode = "PerBatch"
 - **BERT Integration**: 384, 768, 1024 dimensions tested and validated
 - **AXIS Indexing**: Framework complete, per-collection coordinators
 - **ML Clustering**: K-means++ with 20% growth threshold, model persistence
-- **Storage-Aware Search**: Polymorphic search with 6.10x performance improvement
+- **Storage-Aware Search**: Polymorphic search with optimized performance improvement
 
 ==== 🚧 **In Progress**
 - **Vector Operations**: Advanced server-side operations (7 methods pending)

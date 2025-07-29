@@ -1,0 +1,105 @@
+graph TB
+    %% Client Layer
+    RestClient[REST Client<br/>:5678]
+    GrpcClient[gRPC Client<br/>:5679]
+    
+    %% Network Layer - MultiServer Architecture
+    subgraph MultiServer["🌐 MultiServer (network::MultiServer)"]
+        RestServer[REST Server<br/>Axum-based]
+        GrpcServer[gRPC Server<br/>Tonic-based]
+        SharedServices[SharedServices<br/>Business Logic Hub]
+    end
+    
+    %% Handler Layer
+    subgraph Handlers["🔧 Request Processing"]
+        UnifiedHandlers[UnifiedHandlers<br/>Protocol-Agnostic Logic]
+        Conversions[Proto Conversions<br/>REST ↔ gRPC]
+    end
+    
+    %% Core Service Layer - Actual Implementation
+    subgraph CoreServices["⚡ Core Services"]
+        DirectVectorService[DirectVectorService<br/>40-60% Latency Reduction]
+        CollectionService[CollectionService<br/>Metadata Management]
+        QueryEngine[SQL QueryEngine<br/>Vector Similarity Queries]
+    end
+    
+    %% Storage Layer - Current Implementation
+    subgraph StorageLayer["🗄️ Storage Engine"]
+        StorageEngine[StorageEngine<br/>Central Coordinator]
+        
+        subgraph Memtable["Memory Layer"]
+            GlobalMemtable[WriteBufferBehaviorWrapper<br/>Global Partitioned Memtable]
+            WriteBufferMgr[WriteBufferManager<br/>Persistence Coordination]
+        end
+        
+        subgraph StorageEngines["Dual Storage Strategy"]
+            ViperEngine[VIPER Engine<br/>Default - Parquet + ML]
+            SstEngine[SST Engine<br/>Alternative - SSTables]
+        end
+        
+        subgraph Persistence["Persistence Layer"]
+            WriteBuffer[WriteBuffer System<br/>Proto/Avro/Bincode]
+            AtomicCoord[UnifiedAtomicCoordinator<br/>ACID Transactions]
+        end
+    end
+    
+    %% Indexing System - AXIS
+    subgraph AxisSystem["🎯 AXIS Indexing"]
+        AxisManager[AxisManager<br/>Adaptive Selection]
+        IndexTypes[HNSW, IVF, LSH, Annoy<br/>Fully Implemented]
+    end
+    
+    %% Cloud Storage
+    subgraph CloudStorage["☁️ Multi-Cloud Storage"]
+        S3[Amazon S3]
+        Azure[Azure Blob]
+        GCS[Google Cloud]
+        Local[Local Filesystem]
+    end
+    
+    %% Connections
+    RestClient --> RestServer
+    GrpcClient --> GrpcServer
+    
+    RestServer --> SharedServices
+    GrpcServer --> SharedServices
+    
+    SharedServices --> UnifiedHandlers
+    UnifiedHandlers --> Conversions
+    
+    UnifiedHandlers --> DirectVectorService
+    UnifiedHandlers --> CollectionService
+    UnifiedHandlers --> QueryEngine
+    
+    DirectVectorService --> StorageEngine
+    CollectionService --> StorageEngine
+    
+    StorageEngine --> GlobalMemtable
+    StorageEngine --> WriteBufferMgr
+    
+    GlobalMemtable --> ViperEngine
+    GlobalMemtable --> SstEngine
+    
+    WriteBufferMgr --> WriteBuffer
+    WriteBuffer --> AtomicCoord
+    
+    StorageEngine --> AxisManager
+    AxisManager --> IndexTypes
+    
+    AtomicCoord --> S3
+    AtomicCoord --> Azure
+    AtomicCoord --> GCS
+    AtomicCoord --> Local
+    
+    %% Styling
+    classDef clientStyle fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef serverStyle fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef serviceStyle fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef storageStyle fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef cloudStyle fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    
+    class RestClient,GrpcClient clientStyle
+    class RestServer,GrpcServer,SharedServices,UnifiedHandlers,Conversions serverStyle
+    class DirectVectorService,CollectionService,QueryEngine serviceStyle
+    class StorageEngine,GlobalMemtable,WriteBufferMgr,ViperEngine,SstEngine,WriteBuffer,AtomicCoord,AxisManager,IndexTypes storageStyle
+    class S3,Azure,GCS,Local cloudStyle

@@ -100,16 +100,16 @@ image::multi_disk_architecture.png[Multi-Disk Storage Architecture, width=800, a
 _Diagram source: link:diagrams/multi_disk_architecture.mmd[View Mermaid source]_
 
 **Dual Storage Strategy**::
-- **VIPER Engine**: Parquet columnar storage with ML clustering
-- **SST Engine**: Row-based SSTable with bloom filter optimization
-- **Automatic engine selection** based on collection configuration
-- **Storage-aware polymorphic search** with unified search interface
+- **VIPER Engine**: Vector-optimized Intelligent Parquet with Efficient Retrieval (Primary/Default)
+- **SST Engine**: Sorted String Table storage engine (Alternative)
+- **Strategy-based selection** via StorageEngineStrategy enum
+- **Unified search interface** across both engines with automatic routing
 
 **Proto-First Write Buffer System**::
-- **ProtoWriteBufferBatchStrategy**: Native proto serialization (default)
-- **One API call = One batch** design for optimal throughput
-- **Legacy compatibility** via AvroWriteBufferBatchStrategy and BincodeWriteBufferBatchStrategy
-- **Automatic format detection** with graceful migration support
+- **WriteBufferManager**: Central coordination for persistence operations
+- **OptimizedWriteBufferWriter**: High-performance writes with proto serialization
+- **Multiple serialization strategies**: Proto (default), Avro, Bincode
+- **Automatic threshold-based flushing** with configurable batch sizes
 
 === Unified Quantization System
 
@@ -224,22 +224,22 @@ Cloud storage integration is planned for future releases.
 
 [source,text]
 ----
-Client API Call
+Client API Call (REST:5678 or gRPC:5679)
     ↓ (JSON→Proto or Direct Proto)
-UnifiedHandlers
-    ↓ (proto::CollectionConfig | proto::VectorRecord)
-DirectVectorService
-    ↓ (Direct Memtable Access)
-Storage Engine Selection
-    ↓
+MultiServer → SharedServices → UnifiedHandlers
+    ↓ (Business Logic Coordination)
+DirectVectorService (40-60% faster via direct access)
+    ↓ (WriteBufferBehaviorWrapper)
+Global Memtable → WriteBufferManager
+    ↓ (StorageEngineStrategy selection)
 ┌─────────────────┬─────────────────┐
-│   VIPER Engine  │    SST Engine   │
-│   (Columnar)    │   (Row-based)   │
-│   Parquet       │   SSTable       │
-│   Storage       │   Storage       │
+│  VIPER Engine   │   SST Engine    │
+│   (Default)     │  (Alternative)  │
+│ Parquet + ML    │  SSTables +     │
+│ Clustering      │  Bloom Filters  │
 └─────────────────┴─────────────────┘
-    ↓
-Search Results
+    ↓ (UnifiedSearchEngine)
+Search Results + Similarity Scores
 ----
 
 == Performance Characteristics

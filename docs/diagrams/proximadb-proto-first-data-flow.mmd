@@ -97,7 +97,7 @@ sequenceDiagram
         REST-->>Client: HTTP 200 OK
     end
 
-    Note over VectorSvc,SST: **6.10x Performance Improvement**<br/>• Storage-aware engine selection<br/>• Three-layer search with deduplication<br/>• Engine-specific optimizations<br/>• MVCC version ordering
+    Note over VectorSvc,SST: **Optimized Performance Improvement**<br/>• Storage-aware engine selection<br/>• Three-layer search with deduplication<br/>• Engine-specific optimizations<br/>• MVCC version ordering
 
     rect rgb(250, 245, 255)
         Note right of VectorSvc: WriteBuffer Flush to Storage (Proto-First)

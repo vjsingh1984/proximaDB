@@ -22,7 +22,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-**ProximaDB's unified quantization engine** with **DirectVectorService integration** delivers hardware-accelerated vector compression, achieving **32x compression** and **6.10x search acceleration** while maintaining production-grade accuracy through the optimized architecture.
+**ProximaDB's unified quantization engine** with **DirectVectorService integration** delivers hardware-accelerated vector compression, achieving **32x compression** and **optimized search acceleration** while maintaining production-grade accuracy through the optimized architecture.
 
 [NOTE]
 ====
@@ -279,7 +279,7 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
 
 === Performance Analysis
 
-// Performance comparisons show 6.10x search improvement with quantization
+// Performance comparisons show optimized search improvement with quantization
 
 .Two-Stage Search Performance Metrics
 [width="100%",cols="2,2,2,2",options="header"]

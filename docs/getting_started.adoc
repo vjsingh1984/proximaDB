@@ -13,7 +13,7 @@
 :version: 2025.1
 
 [.lead]
-Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes with **40-60% insert latency reduction**, **6.10x search performance**, and **unified Python SDK**.
+Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes with **40-60% insert latency reduction**, **optimized search performance**, and **unified Python SDK**.
 
 == What Makes ProximaDB Different
 
@@ -22,7 +22,7 @@ Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes 
 |**Innovation** |**Benefit**
 
 |DirectVectorService |40-60% insert latency reduction, no registry overhead
-|Storage-Aware Search |6.10x performance with automatic engine selection
+|Storage-Aware Search |Optimized performance with automatic engine selection
 |Proto-First Architecture |Zero double serialization throughout pipeline
 |Unified Python SDK |87% smaller (6,467 → 800 lines)
 |Hardware Optimization |SIMD/GPU acceleration for quantization
@@ -103,7 +103,7 @@ collection = client.create_collection(collection_config)
 # 3. Generate embeddings with modern model
 model = SentenceTransformer('all-MiniLM-L6-v2')
 texts = [
-    "ProximaDB delivers 6.10x search performance",
+    "ProximaDB delivers optimized search performance",
     "Proto-first architecture eliminates double serialization",
     "Storage-aware search automatically selects optimal engines",
     "Unified quantization provides hardware acceleration"
