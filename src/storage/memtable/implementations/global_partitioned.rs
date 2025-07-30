@@ -93,10 +93,13 @@ impl CollectionPartition {
                     let sequence = batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     let version = vector_record.version;
                     
-                    // Check if this is a newer version
+                    // Check if this is a newer version (prioritize version number over timestamp)
                     let is_newer = match &latest_record {
                         Some((_, existing_seq, existing_version)) => {
-                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
+                            // Primary: Compare by version number (higher version wins)
+                            version > *existing_version || 
+                            // Fallback: If same version, compare by sequence/timestamp
+                            (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true, // First occurrence
                     };
@@ -180,10 +183,13 @@ impl CollectionPartition {
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
-                    // Check if this is the latest version
+                    // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, existing_seq, existing_version)) => {
-                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
+                            // Primary: Compare by version number (higher version wins)
+                            version > *existing_version || 
+                            // Fallback: If same version, compare by sequence/timestamp
+                            (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true,
                     };
@@ -246,10 +252,13 @@ impl CollectionPartition {
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
-                    // Check if this is the latest version
+                    // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, _, existing_seq, existing_version)) => {
-                            sequence > *existing_seq || (sequence == *existing_seq && version > *existing_version)
+                            // Primary: Compare by version number (higher version wins)
+                            version > *existing_version || 
+                            // Fallback: If same version, compare by sequence/timestamp
+                            (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true,
                     };
