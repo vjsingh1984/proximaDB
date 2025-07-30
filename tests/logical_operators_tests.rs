@@ -13,7 +13,7 @@ mod tests {
         ComparisonOperator, VectorRecord
     };
     use proximadb::core::search::{
-        MultiTierDeduplicator, TieredSearchResult, StorageTier, DeduplicationStorageEngine
+        MultiTierDeduplicator, SearchResult, StorageTier, DeduplicationStorageEngine
     };
     use chrono::Utc;
 
@@ -57,16 +57,8 @@ mod tests {
     }
 
     /// Create test tiered search result
-    fn create_tiered_result(vector_record: VectorRecord, score: f32) -> TieredSearchResult {
-        TieredSearchResult {
-            vector_record,
-            score,
-            tier: StorageTier::Unflushed,
-            engine: DeduplicationStorageEngine::WAL,
-            timestamp: Utc::now(),
-            sequence: 1,
-            file_path: None,
-        }
+    fn create_tiered_result(vector_record: VectorRecord, score: f32) -> SearchResult {
+        SearchResult::new(vector_record.id.clone().unwrap_or_default(), score)
     }
 
     #[test]

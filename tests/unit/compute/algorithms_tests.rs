@@ -4,8 +4,9 @@
 //! implementations, including HNSW and BruteForce algorithms.
 
 use proximadb::compute::algorithms::{
-    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex, SearchResult
+    VectorSearchAlgorithm, HNSWIndex, BruteForceIndex
 };
+use proximadb::core::search::SearchResult;
 use proximadb::compute::DistanceMetric;
 use std::collections::HashMap;
 
@@ -28,7 +29,7 @@ fn test_brute_force_search_basic() {
     let results = index.search(&[1.0, 0.0, 0.0], 2).unwrap();
 
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].vector_id, "vec1"); // Should be most similar
+    assert_eq!(results[0].vector_id, Some("vec1".to_string())); // Should be most similar
 }
 
 #[test]
@@ -66,7 +67,7 @@ fn test_brute_force_search_with_metadata() {
     // Should only return vectors with category "A"
     assert_eq!(results.len(), 2);
     for result in &results {
-        let metadata = result.metadata.as_ref().unwrap();
+        let metadata = &result.metadata;
         assert_eq!(metadata.get("category").unwrap().as_str().unwrap(), "A");
     }
 }
@@ -85,7 +86,7 @@ fn test_brute_force_add_vectors_batch() {
     assert_eq!(index.size(), 3);
     
     let results = index.search(&[1.0, 0.0, 0.0], 1).unwrap();
-    assert_eq!(results[0].vector_id, "vec1");
+    assert_eq!(results[0].vector_id, Some("vec1".to_string()));
 }
 
 #[test]
@@ -153,7 +154,7 @@ fn test_hnsw_basic_operations() {
     assert_eq!(results.len(), 2);
     
     // First result should be the exact match
-    assert_eq!(results[0].vector_id, "vec1");
+    assert_eq!(results[0].vector_id, Some("vec1".to_string()));
 }
 
 #[test]
@@ -168,7 +169,7 @@ fn test_hnsw_with_metadata() {
     
     let results = index.search(&[1.0, 0.0], 1).unwrap();
     assert_eq!(results.len(), 1);
-    assert!(results[0].metadata.is_some());
+    assert!(!results[0].metadata.is_empty());
 }
 
 #[test]
@@ -193,7 +194,7 @@ fn test_hnsw_search_with_filter() {
     
     let results = index.search_with_filter(&[1.0, 0.0], 5, &filter).unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].vector_id, "vec1");
+    assert_eq!(results[0].vector_id, Some("vec1".to_string()));
 }
 
 #[test]
@@ -227,7 +228,7 @@ fn test_hnsw_remove_vector() {
     // Search should not return the removed vector
     let results = index.search(&[1.0, 0.0], 5).unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].vector_id, "vec2");
+    assert_eq!(results[0].vector_id, Some("vec2".to_string()));
 }
 
 #[test]
@@ -313,7 +314,7 @@ fn test_different_distance_metrics() {
         assert_eq!(results.len(), 2);
         
         // For all metrics, vec1 should be closer to [1.0, 0.0] than vec2
-        assert_eq!(results[0].vector_id, "vec1");
+        assert_eq!(results[0].vector_id, Some("vec1".to_string()));
     }
 }
 

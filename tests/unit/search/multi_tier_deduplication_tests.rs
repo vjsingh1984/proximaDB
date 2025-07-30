@@ -1,7 +1,7 @@
 //! Unit tests for multi-tier deduplication system
 
 use proximadb::core::search::multi_tier_deduplication::{
-    MultiTierDeduplicator, TieredSearchResult, StorageTier, DeduplicationStorageEngine
+    MultiTierDeduplicator, TieredSearchCandidate, StorageTier, DeduplicationStorageEngine
 };
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
@@ -46,7 +46,7 @@ fn test_basic_deduplication() {
     
     // Add same vector from different tiers
     let results = vec![
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: base_record.clone(),
             score: 0.8,
             tier: StorageTier::Compacted,
@@ -55,7 +55,7 @@ fn test_basic_deduplication() {
             sequence: 100,
             file_path: Some("/data/compacted.db".to_string()),
         },
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
                 rec.version = 2;
@@ -84,7 +84,7 @@ fn test_deduplication_without_ids() {
     
     // Create vectors without IDs (immutable vectors)
     let results = vec![
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: None,
                 vector: vec![1.0, 0.0, 0.0],
@@ -105,7 +105,7 @@ fn test_deduplication_without_ids() {
             sequence: 100,
             file_path: Some("/data/viper/vectors.parquet".to_string()),
         },
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: None,
                 vector: vec![0.0, 1.0, 0.0],
@@ -181,8 +181,8 @@ fn test_metadata_filtering() {
         },
     ];
     
-    let results: Vec<TieredSearchResult> = records.into_iter().enumerate().map(|(i, record)| {
-        TieredSearchResult {
+    let results: Vec<TieredSearchCandidate> = records.into_iter().enumerate().map(|(i, record)| {
+        TieredSearchCandidate {
             vector_record: record,
             score: 0.9 - (i as f32 * 0.1),
             tier: StorageTier::Flushed,
@@ -245,8 +245,8 @@ fn test_simple_metadata_query() {
         },
     ];
     
-    let results: Vec<TieredSearchResult> = records.into_iter().enumerate().map(|(i, record)| {
-        TieredSearchResult {
+    let results: Vec<TieredSearchCandidate> = records.into_iter().enumerate().map(|(i, record)| {
+        TieredSearchCandidate {
             vector_record: record,
             score: 0.9 - (i as f32 * 0.1),
             tier: StorageTier::Flushed,
@@ -285,7 +285,7 @@ fn test_mixed_engine_deduplication() {
     
     // Add results from different engines
     let results = vec![
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: base_record.clone(),
             score: 0.8,
             tier: StorageTier::Compacted,
@@ -294,7 +294,7 @@ fn test_mixed_engine_deduplication() {
             sequence: 100,
             file_path: Some("/data/lsm/compacted.db".to_string()),
         },
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
                 rec.version = 2;
@@ -307,7 +307,7 @@ fn test_mixed_engine_deduplication() {
             sequence: 200,
             file_path: Some("/data/viper/cluster.parquet".to_string()),
         },
-        TieredSearchResult {
+        TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
                 rec.version = 3;
@@ -338,7 +338,7 @@ fn test_k_limit_enforcement() {
     // Add 20 unique results
     let mut results = Vec::new();
     for i in 0..20 {
-        results.push(TieredSearchResult {
+        results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some(format!("vec{}", i)),
                 vector: vec![i as f32, 0.0, 0.0],
@@ -385,7 +385,7 @@ fn test_complex_deduplication_scenario() {
         (2, StorageTier::Flushed, DeduplicationStorageEngine::LSM, 12),
         (3, StorageTier::Unflushed, DeduplicationStorageEngine::WAL, 0),
     ] {
-        results.push(TieredSearchResult {
+        results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vecA".to_string()),
                 vector: vec![1.0, 0.0, 0.0],
@@ -413,7 +413,7 @@ fn test_complex_deduplication_scenario() {
         (1, StorageTier::Compacted, DeduplicationStorageEngine::VIPER, 20),
         (2, StorageTier::Flushed, DeduplicationStorageEngine::VIPER, 8),
     ] {
-        results.push(TieredSearchResult {
+        results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vecB".to_string()),
                 vector: vec![0.0, 1.0, 0.0],
@@ -437,7 +437,7 @@ fn test_complex_deduplication_scenario() {
     }
     
     // Vector C: no ID (immutable)
-    results.push(TieredSearchResult {
+    results.push(TieredSearchCandidate {
         vector_record: VectorRecord {
             id: None,
             vector: vec![0.0, 0.0, 1.0],

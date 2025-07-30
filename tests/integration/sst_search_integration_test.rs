@@ -534,6 +534,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     let lsm_config = create_test_lsm_config(base_path);
     // Reuse the same collection_id that was assigned storage
     
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_engine = Arc::new(
         SstStorage::new(collection_id.to_string(), lsm_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
