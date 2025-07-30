@@ -627,6 +627,28 @@ impl FileSystem for AzureFileSystem {
         // Azure operations are immediately durable
         Ok(())
     }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // Azure doesn't support or need file-level sync
+        // When using UnifiedAtomicCoordinator pattern:
+        // 1. Data is written to staging location (possibly local)
+        // 2. Move operation from staging to final location is atomic
+        // 3. Once move completes, data is durable in Azure
+        
+        tracing::debug!("sync_file called on Azure path {} - no-op as Azure guarantees durability after atomic move", path);
+        
+        // Note: Azure Blob Storage provides durability guarantees:
+        // - LRS: 99.999999999% (11 9's) durability 
+        // - ZRS: 99.9999999999% (12 9's) durability
+        // - GRS: 99.99999999999999% (16 9's) durability
+        // 
+        // The atomic move operation ensures:
+        // 1. Old file is not deleted until new file is confirmed written
+        // 2. If move fails, original data remains intact
+        // 3. No partial writes are visible to readers
+        
+        Ok(())
+    }
 
     async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         // Not used in ProximaDB - all operations go through read/write methods

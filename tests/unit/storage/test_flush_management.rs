@@ -10,9 +10,9 @@ use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use proximadb::storage::persistence::wal::background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus};
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
+use proximadb::storage::persistence::write_buffer::background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus};
+use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -38,13 +38,13 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let vector_count = vectors.len() as u64;
     let end_sequence = if vector_count > 0 { vector_count } else { 1 };
     let batch_id = BatchId::new(collection_id.to_string(), 1, end_sequence);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
@@ -165,7 +165,7 @@ async fn test_global_memory_threshold_calculation() -> Result<()> {
 #[tokio::test]
 async fn test_background_manager_flush_trigger() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -199,7 +199,7 @@ async fn test_background_manager_flush_trigger() -> Result<()> {
 #[tokio::test]
 async fn test_flush_coordination_prevents_concurrent_flushes() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -229,7 +229,7 @@ async fn test_flush_coordination_prevents_concurrent_flushes() -> Result<()> {
 #[tokio::test]
 async fn test_collection_isolation_in_flush_decisions() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));

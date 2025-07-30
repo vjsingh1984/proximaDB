@@ -49,7 +49,7 @@ mod tests {
                 name: name.to_string(),
                 dimension: 768,
                 distance_metric: DistanceMetric::DotProduct as i32,
-                storage_engine: StorageEngine::Lsm as i32,
+                storage_engine: StorageEngine::Sst as i32,
                 primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
                 filterable_columns: vec![
                     FilterableColumnSpec {

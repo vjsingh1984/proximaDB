@@ -1,4 +1,4 @@
-use proximadb::storage::engines::lsm::bloom_filter::{BloomFilter, MetadataBloomFilter, SstableBloomFilter};
+use proximadb::storage::engines::sst::bloom_filter::{BloomFilter, MetadataBloomFilter, SstableBloomFilter};
 use proximadb::core::bloom::BloomFilterConfig;
 
 fn main() {

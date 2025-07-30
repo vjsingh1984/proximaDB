@@ -22,7 +22,7 @@ mod tests {
             metadata_url: "file:///nvme1/proximadb/metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
-            lsm_config: Default::default(),
+            sst_config: Default::default(),
             cache_size_mb: 2048,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 12,
@@ -59,10 +59,10 @@ mod tests {
             ..Default::default()
         };
         
-        let wal_urls = config.get_wal_urls();
-        assert_eq!(wal_urls.len(), 2);
-        assert_eq!(wal_urls[0], "file:///nvme1/proximadb/wal");
-        assert_eq!(wal_urls[1], "s3://bucket/proximadb/wal"); // Trailing slash handled
+        let write_buffer_urls = config.get_write_buffer_urls();
+        assert_eq!(write_buffer_urls.len(), 2);
+        assert_eq!(write_buffer_urls[0], "file:///nvme1/proximadb/wal");
+        assert_eq!(write_buffer_urls[1], "s3://bucket/proximadb/wal"); // Trailing slash handled
         
         let data_urls = config.get_data_urls();
         assert_eq!(data_urls.len(), 2);
@@ -112,12 +112,12 @@ mod tests {
         assert!(urls[3].starts_with("adls://"));
         
         // WAL URLs should be derived correctly for each
-        let wal_urls = config.get_wal_urls();
-        assert_eq!(wal_urls.len(), 4);
-        assert_eq!(wal_urls[0], "file:///local/proximadb/wal");
-        assert_eq!(wal_urls[1], "s3://aws-bucket/proximadb/wal");
-        assert_eq!(wal_urls[2], "gs://gcp-bucket/proximadb/wal");
-        assert_eq!(wal_urls[3], "adls://azure-account.dfs.core.windows.net/container/proximadb/wal");
+        let write_buffer_urls = config.get_write_buffer_urls();
+        assert_eq!(write_buffer_urls.len(), 4);
+        assert_eq!(write_buffer_urls[0], "file:///local/proximadb/wal");
+        assert_eq!(write_buffer_urls[1], "s3://aws-bucket/proximadb/wal");
+        assert_eq!(write_buffer_urls[2], "gs://gcp-bucket/proximadb/wal");
+        assert_eq!(write_buffer_urls[3], "adls://azure-account.dfs.core.windows.net/container/proximadb/wal");
     }
     
     #[test]

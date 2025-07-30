@@ -71,7 +71,7 @@ impl BaseConfig for CompactionConfig {
 
 /// WAL strategy type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum WalStrategyType {
+pub enum WriteBufferStrategyType {
     /// Apache Avro format
     Avro,
     /// Bincode binary format
@@ -80,7 +80,7 @@ pub enum WalStrategyType {
     Json,
 }
 
-impl Default for WalStrategyType {
+impl Default for WriteBufferStrategyType {
     fn default() -> Self {
         Self::Avro
     }

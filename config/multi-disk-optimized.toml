@@ -71,7 +71,7 @@ background_thread_count = 4
 sync_mode = "sync"
 enable_wal = true
 # LSM gets its own subdirectory under first storage base
-wal_directory = "/home/vsingh/code/proximaDB/test_data_fresh/disk1/lsm_wal"
+write_buffer_directory = "/home/vsingh/code/proximaDB/test_data_fresh/disk1/lsm_wal"
 data_directory = "/home/vsingh/code/proximaDB/test_data_fresh/disk1/lsm_data"
 mmap_enabled = true
 prefetch_enabled = true

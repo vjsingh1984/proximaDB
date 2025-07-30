@@ -12,9 +12,23 @@ impl From<NativeSearchResult> for ProtoSearchResult {
             vector: native.vector.unwrap_or_default(),
             metadata: native.metadata
                 .into_iter()
-                .map(|(key, value)| MetadataItem {
-                    key,
-                    value: value.to_string(),
+                .map(|(key, value)| {
+                    let metadata_value = match value {
+                        serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)),
+                        serde_json::Value::Number(n) => {
+                            if let Some(f) = n.as_f64() {
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                            } else {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                            }
+                        },
+                        serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)),
+                        _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
+                    };
+                    MetadataItem {
+                        key,
+                        value: metadata_value,
+                    }
                 })
                 .collect(),
             rank: native.rank,
@@ -30,9 +44,23 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
             vector: native.vector.clone().unwrap_or_default(),
             metadata: native.metadata
                 .iter()
-                .map(|(key, value)| MetadataItem {
-                    key: key.clone(),
-                    value: value.to_string(),
+                .map(|(key, value)| {
+                    let metadata_value = match value {
+                        serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                        serde_json::Value::Number(n) => {
+                            if let Some(f) = n.as_f64() {
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                            } else {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                            }
+                        },
+                        serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                        _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
+                    };
+                    MetadataItem {
+                        key: key.clone(),
+                        value: metadata_value,
+                    }
                 })
                 .collect(),
             rank: native.rank,

@@ -1,8 +1,8 @@
-//! Unit tests for cloud URL routing in WalBatchStrategy
+//! Unit tests for cloud URL routing in WriteBufferBatchStrategy
 //!
 //! Tests comprehensive URL validation, parsing, and routing for different cloud providers.
 //!
-//! NOTE: These tests are disabled as they use obsolete WalBatchStrategy APIs.
+//! NOTE: These tests are disabled as they use obsolete WriteBufferBatchStrategy APIs.
 //! Cloud URL routing is now handled internally by the unified batch strategy.
 
 #![cfg(disabled_due_to_obsolete_apis)]
@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
+use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalBatchStrategy;
-use proximadb::storage::persistence::wal::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::persistence::write_buffer::batch_strategy::WriteBufferBatchStrategy;
+use proximadb::storage::persistence::write_buffer::bincode_batch::BincodeWalBatchStrategy;
+use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -43,11 +43,11 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
@@ -207,7 +207,7 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
     
     // Create WAL batch strategy
     let mut strategy = BincodeWalBatchStrategy::new();
-    let config = WalConfig::default();
+    let config = WriteBufferConfig::default();
     
     // Initialize with filesystem
     strategy.initialize(&config, filesystem_factory.clone()).await?;

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use proximadb::core::{LsmConfig, VectorRecord};
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::lsm::LsmRecord;
+use proximadb::core::{SstConfig, VectorRecord};
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::SstRecord;
 use proximadb::storage::engines::viper::engine::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -19,7 +19,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     let data_dir = temp_dir.path().to_path_buf();
     
     // Create LSM config with aggressive compaction settings
-    let mut config = LsmConfig::default();
+    let mut config = SstConfig::default();
     config.compaction_threshold = 1; // Trigger compaction with just 1 file
     config.memtable_size_mb = 1; // Small memtable to trigger frequent flushes
     config.data_directory = data_dir.join("lsm").to_string_lossy().to_string();
@@ -32,7 +32,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     // Create test records with different expiry states
     let records = vec![
         // Record 1: Active (no expiry)
-        LsmRecord {
+        SstRecord {
             id: "active_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -47,7 +47,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             level: 0,
         },
         // Record 2: Expired (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -62,7 +62,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             level: 0,
         },
         // Record 3: Active with future expiry
-        LsmRecord {
+        SstRecord {
             id: "future_expiry_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -150,7 +150,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

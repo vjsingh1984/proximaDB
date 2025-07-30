@@ -331,7 +331,14 @@ mod tests {
                 let struct_builder = extra_meta_builder.values();
                 for meta_item in &record.metadata {
                     struct_builder.field_builder::<StringBuilder>(0).unwrap().append_value(&meta_item.key);
-                    struct_builder.field_builder::<StringBuilder>(1).unwrap().append_value(&meta_item.value);
+                    // Convert metadata value to string
+                    let value_str = match &meta_item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                        None => String::new(),
+                    };
+                    struct_builder.field_builder::<StringBuilder>(1).unwrap().append_value(&value_str);
                     struct_builder.append(true);
                 }
                 extra_meta_builder.append(true);
@@ -387,11 +394,11 @@ mod tests {
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: format!("cat_{}", i % 3),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 3))),
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: (i as f32 * 0.5).to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i as f32 * 0.5).to_string())),
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -481,7 +488,6 @@ mod tests {
             query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
             top_k: Some(3),
             distance_metric: Some(DistanceMetric::Cosine),
-            filters: None,
             filter_expression: None,
             accuracy_threshold: None,
             custom_hints: None,

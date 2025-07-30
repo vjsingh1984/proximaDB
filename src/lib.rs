@@ -135,8 +135,9 @@ impl ProximaDB {
         tracing::debug!("✅ ProximaDB::new - Collection service created successfully");
 
         tracing::debug!("🔧 ProximaDB::new - Creating storage engine...");
-        let storage_engine =
-            storage::StorageEngine::new(config.storage.clone(), collection_service.clone()).await?;
+        let storage_engine = storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
+        // Inject the collection service as metadata provider
+        storage_engine.set_metadata_provider(collection_service.clone()).await;
         tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
         let storage = Arc::new(RwLock::new(storage_engine));
 

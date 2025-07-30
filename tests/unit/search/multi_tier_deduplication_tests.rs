@@ -32,7 +32,7 @@ fn test_basic_deduplication() {
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![MetadataItem {
             key: "type".to_string(),
-            value: "test".to_string(),
+            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
         }],
         timestamp: Utc::now().timestamp_micros(),
         created_at: Utc::now().timestamp_micros(),
@@ -151,8 +151,8 @@ fn test_metadata_filtering() {
             id: Some("doc1".to_string()),
             vector: vec![1.0, 0.0],
             metadata: vec![
-                MetadataItem { key: "category".to_string(), value: "science".to_string() },
-                MetadataItem { key: "published".to_string(), value: "true".to_string() },
+                MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("science".to_string())) },
+                MetadataItem { key: "published".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("true".to_string())) },
             ],
             timestamp: Utc::now().timestamp_micros(),
             created_at: Utc::now().timestamp_micros(),
@@ -167,8 +167,8 @@ fn test_metadata_filtering() {
             id: Some("doc2".to_string()),
             vector: vec![0.0, 1.0],
             metadata: vec![
-                MetadataItem { key: "category".to_string(), value: "history".to_string() },
-                MetadataItem { key: "published".to_string(), value: "true".to_string() },
+                MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("history".to_string())) },
+                MetadataItem { key: "published".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("true".to_string())) },
             ],
             timestamp: Utc::now().timestamp_micros(),
             created_at: Utc::now().timestamp_micros(),
@@ -215,8 +215,8 @@ fn test_simple_metadata_query() {
             id: Some("doc1".to_string()),
             vector: vec![1.0, 0.0],
             metadata: vec![
-                MetadataItem { key: "language".to_string(), value: "en".to_string() },
-                MetadataItem { key: "category".to_string(), value: "tech".to_string() },
+                MetadataItem { key: "language".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("en".to_string())) },
+                MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("tech".to_string())) },
             ],
             timestamp: Utc::now().timestamp_micros(),
             created_at: Utc::now().timestamp_micros(),
@@ -231,8 +231,8 @@ fn test_simple_metadata_query() {
             id: Some("doc2".to_string()),
             vector: vec![0.0, 1.0],
             metadata: vec![
-                MetadataItem { key: "language".to_string(), value: "fr".to_string() },
-                MetadataItem { key: "category".to_string(), value: "tech".to_string() },
+                MetadataItem { key: "language".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("fr".to_string())) },
+                MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("tech".to_string())) },
             ],
             timestamp: Utc::now().timestamp_micros(),
             created_at: Utc::now().timestamp_micros(),
@@ -389,7 +389,7 @@ fn test_complex_deduplication_scenario() {
             vector_record: VectorRecord {
                 id: Some("vecA".to_string()),
                 vector: vec![1.0, 0.0, 0.0],
-                metadata: vec![MetadataItem { key: "version".to_string(), value: version.to_string() }],
+                metadata: vec![MetadataItem { key: "version".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(version.to_string())) }],
                 timestamp: Utc::now().timestamp_micros(),
                 created_at: Utc::now().timestamp_micros(),
                 updated_at: Utc::now().timestamp_micros(),
@@ -417,7 +417,7 @@ fn test_complex_deduplication_scenario() {
             vector_record: VectorRecord {
                 id: Some("vecB".to_string()),
                 vector: vec![0.0, 1.0, 0.0],
-                metadata: vec![MetadataItem { key: "version".to_string(), value: version.to_string() }],
+                metadata: vec![MetadataItem { key: "version".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(version.to_string())) }],
                 timestamp: Utc::now().timestamp_micros(),
                 created_at: Utc::now().timestamp_micros(),
                 updated_at: Utc::now().timestamp_micros(),

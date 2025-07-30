@@ -1,0 +1,22 @@
+# ProximaDB Performance Test Configuration
+
+[server]
+node_id = "test-node-1"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "./test_data"
+
+[storage]
+# Storage location for performance test
+storage_locations = [
+    { url = "file:///home/vsingh/code/proximaDB/test_data/perf_test", weight = 1, tags = ["local", "test"] }
+]
+metadata_url = "file:///home/vsingh/code/proximaDB/test_data/perf_test/metadata"
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+
+[monitoring]
+metrics_enabled = false
+log_level = "info"

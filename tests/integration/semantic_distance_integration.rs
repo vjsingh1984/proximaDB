@@ -28,8 +28,8 @@ use proximadb::compute::unified_distance::{
     UnifiedDistanceCompute, MetricProperties,
 };
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use proximadb::storage::persistence::wal::BatchId;
+use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
+use proximadb::storage::persistence::write_buffer::BatchId;
 use proximadb::core::VectorRecord;
 use std::sync::Arc;
 
@@ -220,7 +220,7 @@ async fn test_memtable_semantic_search() {
     ];
     
     // Create WAL batch
-    let batch = WalVectorBatch {
+    let batch = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(test_vectors),
         created_at: std::time::SystemTime::now(),

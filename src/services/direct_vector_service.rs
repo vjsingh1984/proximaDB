@@ -20,11 +20,11 @@ use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo};
 use crate::core::VectorRecord;
 use crate::storage::engines::viper::ViperEngine;
-use crate::storage::engines::lsm::LsmTree;
-use crate::storage::memtable::specialized::wal_behavior::{WalBehaviorWrapper, WalVectorBatch};
-use crate::storage::persistence::wal::{WalConfig, WalFlushCoordinator, CompactionCoordinator, BatchId};
-use crate::storage::persistence::wal::optimized_wal_writer::OptimizedWalWriter;
-use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, StreamingSearchResult};
+use crate::storage::engines::sst::SstStorage;
+use crate::storage::memtable::specialized::write_buffer_behavior::{WriteBufferBehaviorWrapper, WriteBufferVectorBatch};
+use crate::storage::persistence::write_buffer::{WriteBufferConfig, WriteBufferFlushCoordinator, CompactionCoordinator, BatchId};
+use crate::storage::persistence::write_buffer::optimized_write_buffer_writer::OptimizedWriteBufferWriter;
+use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
 use crate::storage::traits::{UnifiedStorageEngine, CollectionMetadataProvider};
 
 /// Optimized Vector Service with direct memtable access
@@ -37,10 +37,10 @@ use crate::storage::traits::{UnifiedStorageEngine, CollectionMetadataProvider};
 #[derive(Clone)]
 pub struct DirectVectorService {
     /// Direct access to global partitioned memtable (no registry indirection)
-    global_memtable: Arc<WalBehaviorWrapper>,
+    global_memtable: Arc<WriteBufferBehaviorWrapper>,
     
     /// Flush coordinator for automatic operations
-    flush_coordinator: Arc<WalFlushCoordinator>,
+    flush_coordinator: Arc<WriteBufferFlushCoordinator>,
     
     /// Compaction coordinator for automatic background compaction
     compaction_coordinator: Arc<CompactionCoordinator>,
@@ -48,11 +48,11 @@ pub struct DirectVectorService {
     /// VIPER storage engine
     viper_engine: Arc<ViperEngine>,
     
-    /// LSM storage engine  
-    lsm_engine: Arc<LsmTree>,
+    /// SST storage engine  
+    sst_engine: Arc<SstStorage>,
     
     /// WAL configuration
-    wal_config: WalConfig,
+    write_buffer_config: WriteBufferConfig,
     
     /// Optimized serialization format (proto default for zero-copy writes)
     optimized_format: OptimizedFormat,
@@ -66,7 +66,7 @@ pub struct DirectVectorService {
     failed_operations: Arc<AtomicU64>,
     
     /// Optimized WAL writer for high-performance writes
-    optimized_wal_writer: Arc<OptimizedWalWriter>,
+    optimized_write_buffer_writer: Arc<OptimizedWriteBufferWriter>,
     
     /// Collection service for metadata and engine routing (optional)
     collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
@@ -136,24 +136,24 @@ pub enum WorkloadType {
 impl DirectVectorService {
     /// Create new direct vector service with optimized architecture
     pub async fn new(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
     ) -> Result<Self> {
-        Self::with_format(wal_config, viper_engine, lsm_engine, OptimizedFormat::default()).await
+        Self::with_format(write_buffer_config, viper_engine, sst_engine, OptimizedFormat::default()).await
     }
     
     /// Create new direct vector service with collection service for engine routing
     pub async fn with_collection_service(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
         collection_service: Arc<dyn CollectionMetadataProvider>,
     ) -> Result<Self> {
         Self::with_collection_service_and_format(
-            wal_config,
+            write_buffer_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
             collection_service,
             OptimizedFormat::default()
         ).await
@@ -161,26 +161,26 @@ impl DirectVectorService {
     
     /// Create direct vector service with specific serialization format for workload optimization
     pub async fn with_format(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
         format: OptimizedFormat,
     ) -> Result<Self> {
-        Self::with_workload_hint(wal_config, viper_engine, lsm_engine, WorkloadType::Balanced, Some(format)).await
+        Self::with_workload_hint(write_buffer_config, viper_engine, sst_engine, WorkloadType::Balanced, Some(format)).await
     }
     
     /// Create direct vector service with collection service and specific format
     pub async fn with_collection_service_and_format(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
         collection_service: Arc<dyn CollectionMetadataProvider>,
         format: OptimizedFormat,
     ) -> Result<Self> {
         Self::with_collection_service_and_workload_hint(
-            wal_config,
+            write_buffer_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
             Some(collection_service),
             WorkloadType::Balanced,
             Some(format)
@@ -189,16 +189,16 @@ impl DirectVectorService {
     
     /// Create direct vector service with workload hint for automatic format selection
     pub async fn with_workload_hint(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
         workload: WorkloadType,
         format_override: Option<OptimizedFormat>,
     ) -> Result<Self> {
         Self::with_collection_service_and_workload_hint(
-            wal_config,
+            write_buffer_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
             None,
             workload,
             format_override
@@ -207,9 +207,9 @@ impl DirectVectorService {
     
     /// Create direct vector service with all options
     pub async fn with_collection_service_and_workload_hint(
-        wal_config: WalConfig,
+        write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
-        lsm_engine: Arc<LsmTree>,
+        sst_engine: Arc<SstStorage>,
         collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
         workload: WorkloadType,
         format_override: Option<OptimizedFormat>,
@@ -232,24 +232,24 @@ impl DirectVectorService {
         // Create global memtable with WAL behavior
         debug!("🔧 DirectVectorService::with_workload_hint - Creating global memtable...");
         let memtable_config = crate::storage::memtable::core::MemtableConfig {
-            max_size_bytes: wal_config.memtable.global_memory_limit,
-            flush_threshold_bytes: wal_config.performance.memory_flush_size_bytes, // Use collection-level flush size (2MB) for faster recovery
-            enable_mvcc: wal_config.enable_mvcc,
-            mvcc_cleanup_interval_secs: wal_config.performance.mvcc_cleanup_interval_secs,
-            max_versions_per_key: wal_config.memtable.mvcc_versions_retained,
+            max_size_bytes: write_buffer_config.memtable.global_memory_limit,
+            flush_threshold_bytes: write_buffer_config.performance.memory_flush_size_bytes, // Use collection-level flush size (2MB) for faster recovery
+            enable_mvcc: write_buffer_config.enable_mvcc,
+            mvcc_cleanup_interval_secs: write_buffer_config.performance.mvcc_cleanup_interval_secs,
+            max_versions_per_key: write_buffer_config.memtable.mvcc_versions_retained,
         };
         
-        let global_memtable = Arc::new(WalBehaviorWrapper::new(memtable_config));
+        let global_memtable = Arc::new(WriteBufferBehaviorWrapper::new(memtable_config));
         debug!("✅ DirectVectorService::with_workload_hint - Global memtable created");
         
         // Create flush coordinator
         debug!("🔧 DirectVectorService::with_workload_hint - Creating flush coordinator...");
-        let flush_coordinator = WalFlushCoordinator::new();
+        let flush_coordinator = WriteBufferFlushCoordinator::new();
         
         // Register storage engines with flush coordinator
         debug!("🔧 DirectVectorService::with_workload_hint - Registering storage engines...");
         flush_coordinator.register_storage_engine("VIPER", viper_engine.clone()).await;
-        flush_coordinator.register_storage_engine("LSM", lsm_engine.clone()).await;
+        flush_coordinator.register_storage_engine("SST", sst_engine.clone()).await;
         
         let flush_coordinator = Arc::new(flush_coordinator);
         debug!("✅ DirectVectorService::with_workload_hint - Flush coordinator created and engines registered");
@@ -258,7 +258,7 @@ impl DirectVectorService {
         debug!("🔧 DirectVectorService::with_workload_hint - Creating compaction coordinator...");
         let compaction_coordinator = Arc::new(CompactionCoordinator::new(
             viper_engine.clone(),
-            lsm_engine.clone(),
+            sst_engine.clone(),
             None, // Use default config
             None, // No axis manager
         ));
@@ -266,7 +266,7 @@ impl DirectVectorService {
         
         // Create optimized WAL writer - always use it for best performance
         debug!("🔧 DirectVectorService::with_workload_hint - Creating optimized WAL writer...");
-        info!("🚀 Initializing OptimizedWalWriter for high-performance WAL writes");
+        info!("🚀 Initializing OptimizedWriteBufferWriter for high-performance WAL writes");
         
         // Create filesystem factory for the writer
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -276,15 +276,15 @@ impl DirectVectorService {
                 .context("Failed to create filesystem factory for WAL writer")?
         );
         
-        let optimized_wal_writer = Arc::new(
-            OptimizedWalWriter::new(
-                Arc::new(wal_config.clone()),
+        let optimized_write_buffer_writer = Arc::new(
+            OptimizedWriteBufferWriter::new(
+                Arc::new(write_buffer_config.clone()),
                 filesystem_factory,
             ).await
-            .context("Failed to initialize OptimizedWalWriter")?
+            .context("Failed to initialize OptimizedWriteBufferWriter")?
         );
         
-        info!("✅ OptimizedWalWriter initialized successfully");
+        info!("✅ OptimizedWriteBufferWriter initialized successfully");
         debug!("✅ DirectVectorService::with_workload_hint - Optimized WAL writer created");
         
         debug!("🔧 DirectVectorService::with_workload_hint - Creating service instance...");
@@ -293,14 +293,14 @@ impl DirectVectorService {
             flush_coordinator,
             compaction_coordinator,
             viper_engine,
-            lsm_engine,
-            wal_config,
+            sst_engine,
+            write_buffer_config,
             optimized_format: selected_format,
             distance_compute: UnifiedDistanceCompute::default(),
             total_operations: Arc::new(AtomicU64::new(0)),
             successful_operations: Arc::new(AtomicU64::new(0)),
             failed_operations: Arc::new(AtomicU64::new(0)),
-            optimized_wal_writer,
+            optimized_write_buffer_writer,
             collection_service,
         };
         debug!("✅ DirectVectorService::with_workload_hint - Service instance created");
@@ -367,7 +367,7 @@ impl DirectVectorService {
     }
     
     /// Get WAL behavior wrapper for direct memtable access (used by streaming search)
-    pub fn get_wal_behavior_wrapper(&self) -> Option<&WalBehaviorWrapper> {
+    pub fn get_write_buffer_behavior_wrapper(&self) -> Option<&WriteBufferBehaviorWrapper> {
         Some(&self.global_memtable)
     }
     
@@ -379,7 +379,7 @@ impl DirectVectorService {
                 if let Some(config) = collection.config {
                     // Map storage engine enum value to engine name
                     let engine_name = match config.storage_engine {
-                        x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => "LSM",
+                        x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
                         x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
                         x if x == crate::proto::proximadb::StorageEngine::Mmap as i32 => "MMAP",
                         x if x == crate::proto::proximadb::StorageEngine::Hybrid as i32 => "HYBRID",
@@ -403,22 +403,22 @@ impl DirectVectorService {
         Ok("VIPER")
     }
     
-    /// ✅ LOCK-FREE STREAMING SEARCH: High-performance non-blocking search
-    /// Streams results as they are found without blocking on large result sets
+    /// Streaming search wrapper - uses the main search_vectors method internally
     pub async fn search_vectors_streaming(
         self: Arc<Self>,
         collection_id: String,
         query_vector: Vec<f32>,
         k: usize,
         distance_metric: DistanceMetric,
+        search_params: Option<crate::core::search::SearchParams>,
         config: Option<StreamingSearchConfig>,
-    ) -> Result<StreamingSearchResult> {
+    ) -> Result<SearchResultStream> {
         info!(
             "🚀 STREAMING_SEARCH: Starting for collection={}, k={}, metric={:?}",
             collection_id, k, distance_metric
         );
         
-        // Create streaming search service
+        // Create streaming search service that internally uses search_vectors
         let streaming_service = StreamingSearchService::new(self, config);
         
         // Start streaming search
@@ -435,7 +435,7 @@ impl DirectVectorService {
     }
     
     /// ✅ OPTIMIZED INSERT: Direct memtable access with automatic flushing
-    /// Eliminates: WAL Manager Registry lookup + WalManager + WalBatchStrategy indirection
+    /// Eliminates: WAL Manager Registry lookup + WriteBufferManager + WriteBufferBatchStrategy indirection
     pub async fn insert_vectors_direct(
         &self,
         collection_id: &str,
@@ -450,13 +450,13 @@ impl DirectVectorService {
             self.optimized_format.name()
         );
         
-        // Step 1: Create WalVectorBatch for memtable
+        // Step 1: Create WriteBufferVectorBatch for memtable
         debug!("🔍 Creating batch with {} vectors", vectors.len());
         for (i, v) in vectors.iter().take(3).enumerate() {
             debug!("  Vector[{}] ID before batch creation: {:?}", i, v.id);
         }
         
-        let batch = WalVectorBatch {
+        let batch = WriteBufferVectorBatch {
             batch_id: BatchId::new(),
             vector_records: vectors.clone(),
             created_at: std::time::SystemTime::now(),
@@ -479,7 +479,7 @@ impl DirectVectorService {
         if self.should_persist_to_disk() {
             // Convert Arc<Vec<VectorRecord>> to Vec<VectorRecord> for the writer
             let vectors_vec = (*vectors).clone();
-            match self.optimized_wal_writer.write_vectors(
+            match self.optimized_write_buffer_writer.write_vectors(
                 collection_id,
                 vectors_vec,
                 sequences.clone(),
@@ -550,7 +550,13 @@ impl DirectVectorService {
                 
                 // Log metadata details
                 for (meta_idx, meta_item) in vector_record.metadata.iter().enumerate() {
-                    info!("🔍 DEBUG:     Metadata[{}]: {} = {}", meta_idx, meta_item.key, meta_item.value);
+                    let value_str = match &meta_item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                        None => "null".to_string(),
+                    };
+                    info!("🔍 DEBUG:     Metadata[{}]: {} = {}", meta_idx, meta_item.key, value_str);
                 }
                 
                 all_vectors.push(vector_record.clone());
@@ -605,9 +611,7 @@ impl DirectVectorService {
                 distance: Some(0.0), // No distance for exact ID match
                 vector: if include_vector { Some(record.vector.clone()) } else { None },
                 metadata: if include_metadata { 
-                    record.metadata.iter()
-                        .map(|item| (item.key.clone(), serde_json::Value::String(item.value.clone())))
-                        .collect()
+                    crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)
                 } else { 
                     std::collections::HashMap::new() 
                 },
@@ -635,8 +639,8 @@ impl DirectVectorService {
         let vector_record: Option<VectorRecord> = None;
         /*
         let vector_record = match storage_engine {
-            "LSM" => {
-                self.lsm_engine.get_vector_by_id(collection_id, vector_id).await?
+            "SST" => {
+                self.sst_engine.get_vector_by_id(collection_id, vector_id).await?
             }
             "VIPER" | _ => {
                 self.viper_engine.get_vector_by_id(collection_id, vector_id).await?
@@ -655,9 +659,7 @@ impl DirectVectorService {
                     distance: Some(0.0), // No distance for exact ID match
                     vector: if include_vector { Some(record.vector.clone()) } else { None },
                     metadata: if include_metadata { 
-                        record.metadata.iter()
-                            .map(|item| (item.key.clone(), serde_json::Value::String(item.value.clone())))
-                            .collect()
+                        crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)
                     } else { 
                         std::collections::HashMap::new() 
                     },
@@ -682,17 +684,30 @@ impl DirectVectorService {
         }
     }
 
-    /// ✅ UNIFIED SEARCH: Complete search with all capabilities
-    /// Supports metadata filtering, multiple distance algorithms, and unified scoring
-    /// Combines WAL + Storage with automatic deduplication and ranking
-    pub async fn search_vectors_unified(
+    /// ✅ PRIMARY SEARCH METHOD: Comprehensive search with all capabilities
+    /// 
+    /// This is the ONLY search method you should use. All other search variations 
+    /// have been consolidated into this single method for simplicity and consistency.
+    /// 
+    /// Features:
+    /// - WAL + Storage engine search with automatic deduplication
+    /// - Metadata filtering with FilterExpression support (via search_params)
+    /// - Multiple distance algorithms (Cosine, Euclidean, DotProduct, Manhattan, etc.)
+    /// - Unified semantic scoring (0.0-1.0, higher = more similar)
+    /// - Optional vector and metadata inclusion for memory efficiency
+    /// - Hardware-accelerated distance computation (AVX-512, GPU, etc.)
+    /// - Predicate pushdown for both VIPER (columnar) and LSM engines
+    /// - Automatic result ranking and deduplication by vector ID
+    /// - Parallel search across storage engines for performance
+    /// 
+    /// For streaming results, use search_vectors_streaming() which wraps this method
+    pub async fn search_vectors(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        _distance_metric: DistanceMetric,
+        distance_metric: DistanceMetric,
         search_params: Option<&crate::core::search::SearchParams>,
-        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
@@ -701,14 +716,12 @@ impl DirectVectorService {
         // Use distance metric from search params if provided, otherwise use default
         let effective_distance_metric = search_params
             .and_then(|p| p.distance_metric)
-            .unwrap_or_else(|| {
-                // Default to cosine similarity
-                DistanceMetric::Cosine
-            });
+            .unwrap_or(distance_metric);
         
         debug!(
             "🔍 UNIFIED_SEARCH: collection={}, k={}, metric={:?} (effective), filters={:?}",
-            collection_id, k, effective_distance_metric, metadata_filters.is_some()
+            collection_id, k, effective_distance_metric, 
+            search_params.and_then(|p| p.filter_expression.as_ref()).is_some()
         );
         
         // Step 1: Search WAL memtable with metadata predicate pushdown
@@ -733,9 +746,9 @@ impl DirectVectorService {
                         debug!("    Vector[{}] Full record: id={:?}, vector_len={}, metadata_len={}", 
                             vec_idx, vector_record.id, vector_record.vector.len(), vector_record.metadata.len());
                     }
-                    // Apply metadata filter predicate if specified
-                    if let Some(filters) = metadata_filters {
-                        if !self.apply_metadata_filter(vector_record, filters) {
+                    // Apply filter expression if specified
+                    if let Some(filter_expr) = search_params.and_then(|p| p.filter_expression.as_ref()) {
+                        if !self.apply_filter_expression(vector_record, filter_expr) {
                             continue; // Skip vectors that don't match filter
                         }
                     }
@@ -758,9 +771,7 @@ impl DirectVectorService {
                         rank: None, // Will be set after sorting
                         vector: if include_vectors { Some(vector_record.vector.clone()) } else { None },
                         metadata: if include_metadata {
-                            vector_record.metadata.iter().map(|item| {
-                                (item.key.clone(), serde_json::Value::String(item.value.clone()))
-                            }).collect()
+                            crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
                         } else { std::collections::HashMap::new() },
                         debug_info: Some(SearchDebugInfo {
                             algorithm: format!("UnifiedDistance::{:?}", effective_distance_metric),
@@ -792,8 +803,8 @@ impl DirectVectorService {
             
             // Parallel storage search with metadata predicate pushdown
             let (viper_results, lsm_results) = tokio::try_join!(
-                self.search_viper_engine_enhanced(collection_id, query_vector, search_k, effective_distance_metric, metadata_filters, include_vectors, include_metadata),
-                self.search_lsm_engine_enhanced(collection_id, query_vector, search_k, effective_distance_metric, metadata_filters, include_vectors, include_metadata)
+                self.search_viper_engine_enhanced(collection_id, query_vector, search_k, effective_distance_metric, search_params, include_vectors, include_metadata),
+                self.search_lsm_engine_enhanced(collection_id, query_vector, search_k, effective_distance_metric, search_params, include_vectors, include_metadata)
             )?;
             
             // Add storage results
@@ -863,7 +874,7 @@ impl DirectVectorService {
                 if let Ok(Some(collection)) = service.get_collection_metadata(&collection_id).await {
                     if let Some(config) = collection.config {
                         match config.storage_engine {
-                            x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => "LSM",
+                            x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
                             x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
                             _ => "VIPER",
                         }
@@ -879,7 +890,7 @@ impl DirectVectorService {
             
             info!("🔍 FLUSH_ENGINE: Collection {} will flush to {} engine", collection_id, storage_engine);
             
-            let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::Memory;
+            let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::Memory;
             
             match flush_coordinator
                 .execute_coordinated_flush(&collection_id, flush_data, Some(storage_engine), None)
@@ -926,7 +937,7 @@ impl DirectVectorService {
         });
     }
     
-    // Legacy WAL writing methods removed - using OptimizedWalWriter exclusively
+    // Legacy WAL writing methods removed - using OptimizedWriteBufferWriter exclusively
     
     /*
         &self,
@@ -935,8 +946,8 @@ impl DirectVectorService {
         sequences: &[u64],
     ) {
         // Use optimized writer if available
-        if let Some(ref optimized_writer) = self.optimized_wal_writer {
-            debug!("💾 DISK_PERSIST: Using OptimizedWalWriter for {} vectors", vectors.len());
+        if let Some(ref optimized_writer) = self.optimized_write_buffer_writer {
+            debug!("💾 DISK_PERSIST: Using OptimizedWriteBufferWriter for {} vectors", vectors.len());
             
             match optimized_writer.write_vectors(
                 collection_id.to_string(),
@@ -946,13 +957,13 @@ impl DirectVectorService {
             ).await {
                 Ok(wal_path) => {
                     info!(
-                        "✅ DISK_PERSIST: OptimizedWalWriter successfully wrote {} vectors to: {}",
+                        "✅ DISK_PERSIST: OptimizedWriteBufferWriter successfully wrote {} vectors to: {}",
                         vectors.len(),
                         wal_path
                     );
                 }
                 Err(e) => {
-                    warn!("⚠️ DISK_PERSIST: OptimizedWalWriter failed: {}", e);
+                    warn!("⚠️ DISK_PERSIST: OptimizedWriteBufferWriter failed: {}", e);
                 }
             }
         } else {
@@ -961,7 +972,7 @@ impl DirectVectorService {
             let vectors = vectors.to_vec();
             let sequences = sequences.to_vec();
             let optimized_format = self.optimized_format.clone();
-            let wal_config = self.wal_config.clone();
+            let write_buffer_config = self.write_buffer_config.clone();
             
             tokio::spawn(async move {
                 match Self::serialize_vectors_optimized(&vectors, &optimized_format) {
@@ -974,7 +985,7 @@ impl DirectVectorService {
                         );
                         
                         // Use assignment service to get WAL directory for this collection
-                        match Self::write_wal_to_disk(&collection_id, &serialized_data, &sequences, &wal_config, &optimized_format).await {
+                        match Self::write_wal_to_disk(&collection_id, &serialized_data, &sequences, &write_buffer_config, &optimized_format).await {
                             Ok(wal_file_path) => {
                                 info!(
                                     "✅ DISK_PERSIST: Successfully wrote {} vectors to WAL file: {}",
@@ -1000,7 +1011,7 @@ impl DirectVectorService {
         collection_id: &str,
         serialized_data: &[u8],
         sequences: &[u64],
-        wal_config: &crate::storage::persistence::wal::WalConfig,
+        write_buffer_config: &crate::storage::persistence::write_buffer::WriteBufferConfig,
         optimized_format: &OptimizedFormat,
     ) -> Result<String> {
         use crate::storage::assignment_service::{get_assignment_service, StorageAssignmentConfig, StorageComponentType};
@@ -1011,9 +1022,9 @@ impl DirectVectorService {
         
         // Create assignment config for WAL
         let assignment_config = StorageAssignmentConfig {
-            storage_urls: wal_config.multi_disk.data_directories.clone(),
+            storage_urls: write_buffer_config.multi_disk.data_directories.clone(),
             component_type: StorageComponentType::Wal,
-            collection_affinity: wal_config.multi_disk.collection_affinity,
+            collection_affinity: write_buffer_config.multi_disk.collection_affinity,
         };
         
         // Get WAL directory assignment for this collection
@@ -1100,29 +1111,27 @@ impl DirectVectorService {
     }
     */
     
-    /// Search VIPER engine with predicate pushdown and columnar optimizations
+    /// Internal: Search VIPER engine with predicate pushdown and columnar optimizations
+    /// Used by the main search_vectors method - DO NOT CALL DIRECTLY
     async fn search_viper_engine_enhanced(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        search_params: Option<&crate::core::search::SearchParams>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 Searching VIPER engine for collection {} with predicate pushdown", collection_id);
         
         // VIPER ENGINE OPTIMIZATION: Use columnar capabilities and predicate pushdown
-        // Convert metadata filters to VIPER-native filterable column predicates
-        let viper_predicates = if let Some(filters) = metadata_filters {
-            // TODO: Convert HashMap filters to VIPER FilterPredicates for columnar pushdown
-            // This enables efficient filtering at the Parquet level before vector computation
-            debug!("🎯 VIPER: Converting {} metadata filters to columnar predicates", filters.len());
-            Some(filters.clone()) // Placeholder - should be FilterPredicates
-        } else {
-            None
-        };
+        // Extract filter expression from search params
+        let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
+        
+        if let Some(expr) = filter_expression {
+            debug!("🎯 VIPER: Using filter expression for columnar predicate pushdown");
+        }
 
         // Use VIPER's unified search interface with engine-specific optimizations
         // VIPER implements columnar predicate pushdown and Parquet filtering
@@ -1131,7 +1140,7 @@ impl DirectVectorService {
             query_vector,
             k,
             &distance_metric,
-            viper_predicates.as_ref(),
+            filter_expression,
             include_vectors,
             include_metadata,
         ).await {
@@ -1146,38 +1155,36 @@ impl DirectVectorService {
         }
     }
     
-    /// Search LSM engine with bloom filter optimizations and range scans
+    /// Internal: Search LSM engine with bloom filter optimizations and range scans
+    /// Used by the main search_vectors method - DO NOT CALL DIRECTLY
     async fn search_lsm_engine_enhanced(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        search_params: Option<&crate::core::search::SearchParams>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 Searching LSM engine for collection {} with bloom filter optimization", collection_id);
         
         // LSM ENGINE OPTIMIZATION: Use bloom filters, range scans, and SSTable optimizations
-        // Convert metadata filters to LSM-native range queries and bloom filter hints
-        let lsm_range_queries = if let Some(filters) = metadata_filters {
-            // TODO: Convert HashMap filters to LSM RangeQueries for efficient SSTable scanning
-            // This enables bloom filter checks and efficient range scans before vector computation
-            debug!("🎯 LSM: Converting {} metadata filters to range queries with bloom filter hints", filters.len());
-            Some(filters.clone()) // Placeholder - should be RangeQueries
-        } else {
-            None
-        };
+        // Extract filter expression from search params
+        let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
+        
+        if let Some(expr) = filter_expression {
+            debug!("🎯 LSM: Using filter expression for bloom filter hints and range queries");
+        }
 
         // Use LSM's unified search interface with engine-specific optimizations
         // LSM implements bloom filter hints and range scans
-        match self.lsm_engine.search_vectors_unified(
+        match self.sst_engine.search_vectors_unified(
             collection_id,
             query_vector,
             k,
             &distance_metric,
-            lsm_range_queries.as_ref(),
+            filter_expression,
             include_vectors,
             include_metadata,
         ).await {
@@ -1204,7 +1211,7 @@ impl DirectVectorService {
         match format {
             OptimizedFormat::Proto => {
                 // Zero-copy proto serialization (default)
-                use crate::storage::persistence::wal::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_buffer::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
                 let serializer = ProtocolBuffersSerializer::new();
                 serializer.serialize_batch(vectors)
                     .context("Failed to serialize vectors in Proto format")
@@ -1216,7 +1223,7 @@ impl DirectVectorService {
             }
             OptimizedFormat::Avro => {
                 // Schema evolution support for complex upgrade scenarios
-                use crate::storage::persistence::wal::serialization::{AvroSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_buffer::serialization::{AvroSerializer, VectorBatchSerializer};
                 let serializer = AvroSerializer::new();
                 serializer.serialize_batch(vectors)
                     .context("Failed to serialize vectors in Avro format")
@@ -1228,7 +1235,7 @@ impl DirectVectorService {
     fn deserialize_vectors_optimized(data: &[u8], format: &OptimizedFormat) -> Result<Vec<VectorRecord>> {
         match format {
             OptimizedFormat::Proto => {
-                use crate::storage::persistence::wal::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_buffer::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
                 let serializer = ProtocolBuffersSerializer::new();
                 serializer.deserialize_batch(data)
                     .context("Failed to deserialize vectors from Proto format")
@@ -1238,7 +1245,7 @@ impl DirectVectorService {
                     .context("Failed to deserialize vectors from Bincode format")
             }
             OptimizedFormat::Avro => {
-                use crate::storage::persistence::wal::serialization::{AvroSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_buffer::serialization::{AvroSerializer, VectorBatchSerializer};
                 let serializer = AvroSerializer::new();
                 serializer.deserialize_batch(data)
                     .context("Failed to deserialize vectors from Avro format")
@@ -1267,9 +1274,9 @@ impl DirectVectorService {
     
     /// Check if disk persistence is enabled
     fn should_persist_to_disk(&self) -> bool {
-        match self.wal_config.performance.sync_mode {
-            crate::storage::persistence::wal::config::SyncMode::Always |
-            crate::storage::persistence::wal::config::SyncMode::PerBatch => true,
+        match self.write_buffer_config.performance.sync_mode {
+            crate::storage::persistence::write_buffer::config::SyncMode::Always |
+            crate::storage::persistence::write_buffer::config::SyncMode::PerBatch => true,
             _ => false,
         }
     }
@@ -1340,7 +1347,7 @@ impl DirectVectorService {
                 .flat_map(|batch| batch.vector_records.as_ref().clone())
                 .collect();
             
-            let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vectors);
+            let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors);
             
             // Determine storage engine for this collection
             let storage_engine = self.get_collection_storage_engine(collection_id).await.unwrap_or("VIPER");
@@ -1387,7 +1394,7 @@ impl DirectVectorService {
             .flat_map(|batch| batch.vector_records.as_ref().clone())
             .collect();
         
-        let flush_data = crate::storage::persistence::wal::flush_coordinator::FlushDataSource::VectorRecords(vectors);
+        let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors);
         
         // Determine storage engine for this collection
         let storage_engine = self.get_collection_storage_engine(collection_id).await.unwrap_or("VIPER");
@@ -1423,7 +1430,7 @@ impl DirectVectorService {
     
     /// ✅ GET WAL METRICS: Get detailed WAL optimization metrics
     pub async fn get_wal_metrics_report(&self) -> Option<String> {
-        Some(self.optimized_wal_writer.get_metrics_report().await)
+        Some(self.optimized_write_buffer_writer.get_metrics_report().await)
     }
     
     /// ✅ GET METRICS: Comprehensive performance metrics
@@ -1440,7 +1447,7 @@ impl DirectVectorService {
                 avg_processing_time_us: 0.0, // TODO: Implement average tracking
                 last_operation_time: Some(chrono::Utc::now().timestamp_micros()),
             },
-            wal_metrics: crate::core::WalMetrics {
+            wal_metrics: crate::core::WriteBufferMetrics {
                 total_entries: entry_count as i64,
                 memory_entries: entry_count as i64,
                 disk_segments: 0, // TODO: Add actual disk segment tracking
@@ -1476,8 +1483,8 @@ impl DirectVectorService {
         info!("🛑 Shutting down DirectVectorService...");
         
         // Shutdown optimized WAL writer
-        info!("🛑 Shutting down OptimizedWalWriter...");
-        self.optimized_wal_writer.shutdown().await?;
+        info!("🛑 Shutting down OptimizedWriteBufferWriter...");
+        self.optimized_write_buffer_writer.shutdown().await?;
         
         // Future: Add other cleanup tasks here
         
@@ -1485,35 +1492,23 @@ impl DirectVectorService {
         Ok(())
     }
     
-    /// Apply metadata filter predicate to vector record
-    fn apply_metadata_filter(
+    /// Apply filter expression to vector record
+    fn apply_filter_expression(
         &self,
         vector_record: &crate::proto::proximadb::VectorRecord,
-        filters: &std::collections::HashMap<String, serde_json::Value>,
+        filter_expr: &crate::core::search::FilterExpression,
     ) -> bool {
-        for (filter_key, filter_value) in filters {
-            // Special handling for ID filter
-            if filter_key == "__id" || filter_key == "id" {
-                if let Some(ref record_id) = vector_record.id {
-                    if let serde_json::Value::String(filter_id) = filter_value {
-                        if record_id != filter_id {
-                            return false;
-                        }
-                    }
-                }
-                continue;
-            }
-            
-            // Regular metadata filtering
-            let found_match = vector_record.metadata.iter().any(|item| {
-                item.key == *filter_key && serde_json::Value::String(item.value.clone()) == *filter_value
-            });
-            
-            if !found_match {
-                return false; // All filters must match (AND logic)
-            }
+        // Convert proto metadata to JSON format
+        let mut metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
+        
+        // Special handling for ID field
+        if let Some(ref record_id) = vector_record.id {
+            metadata_map.insert("__id".to_string(), serde_json::Value::String(record_id.clone()));
+            metadata_map.insert("id".to_string(), serde_json::Value::String(record_id.clone()));
         }
-        true
+        
+        // Use centralized filter evaluation
+        crate::core::search::json_comparison::evaluate_filter(filter_expr, &metadata_map)
     }
     
     // Removed get_unified_similarity_score - now using SimilarityResult.normalized_score directly
@@ -1583,13 +1578,13 @@ impl DirectWalRecovery for DirectVectorService {
         debug!("✅ DirectVectorService::discover_wal_files - Assignment service obtained");
         
         // Get all configured WAL directories
-        debug!("🔧 DirectVectorService::discover_wal_files - Checking {} WAL directories", self.wal_config.multi_disk.data_directories.len());
-        for wal_url in &self.wal_config.multi_disk.data_directories {
-            debug!("🔧 DirectVectorService::discover_wal_files - Processing WAL URL: {}", wal_url);
-            let base_path = if wal_url.starts_with("file://") {
-                wal_url.strip_prefix("file://").unwrap_or(wal_url)
+        debug!("🔧 DirectVectorService::discover_wal_files - Checking {} WAL directories", self.write_buffer_config.multi_disk.data_directories.len());
+        for write_buffer_url in &self.write_buffer_config.multi_disk.data_directories {
+            debug!("🔧 DirectVectorService::discover_wal_files - Processing WAL URL: {}", write_buffer_url);
+            let base_path = if write_buffer_url.starts_with("file://") {
+                write_buffer_url.strip_prefix("file://").unwrap_or(write_buffer_url)
             } else {
-                wal_url
+                write_buffer_url
             };
             
             debug!("🔧 DirectVectorService::discover_wal_files - Base path: {}", base_path);
@@ -1697,10 +1692,10 @@ impl DirectWalRecovery for DirectVectorService {
             );
             
             // Read WAL file
-            let wal_data = std::fs::read(wal_file_path)
+            let write_buffer_data = std::fs::read(wal_file_path)
                 .with_context(|| format!("Failed to read WAL file: {:?}", wal_file_path))?;
             
-            total_bytes += wal_data.len();
+            total_bytes += write_buffer_data.len();
             
             // Determine format from file extension
             let format = if wal_file_path.extension().and_then(|s| s.to_str()) == Some("proto") {
@@ -1712,7 +1707,7 @@ impl DirectWalRecovery for DirectVectorService {
             };
             
             // Deserialize vectors
-            let vectors = Self::deserialize_vectors_optimized(&wal_data, &format)
+            let vectors = Self::deserialize_vectors_optimized(&write_buffer_data, &format)
                 .with_context(|| format!("Failed to deserialize WAL file: {:?}", wal_file_path))?;
             
             if vectors.is_empty() {
@@ -1733,7 +1728,7 @@ impl DirectWalRecovery for DirectVectorService {
                         success: true,
                         collections_affected: vec![collection_id.to_string()],
                         entries_flushed: vector_count as u64,
-                        bytes_written: wal_data.len() as u64,
+                        bytes_written: write_buffer_data.len() as u64,
                         files_created: 1,
                         duration_ms: file_start_time.elapsed().as_millis() as u64,
                         completed_at: chrono::Utc::now(),
@@ -1742,12 +1737,12 @@ impl DirectWalRecovery for DirectVectorService {
                         flushed_batch_ids: vec![],
                     })
             } else {
-                self.lsm_engine.flush_vectors_direct(collection_id, vectors).await
+                self.sst_engine.flush_vectors_direct(collection_id, vectors).await
                     .map(|_| crate::storage::traits::FlushResult {
                         success: true,
                         collections_affected: vec![collection_id.to_string()],
                         entries_flushed: vector_count as u64,
-                        bytes_written: wal_data.len() as u64,
+                        bytes_written: write_buffer_data.len() as u64,
                         files_created: 1,
                         duration_ms: file_start_time.elapsed().as_millis() as u64,
                         completed_at: chrono::Utc::now(),

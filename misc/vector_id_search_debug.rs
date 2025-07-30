@@ -11,7 +11,7 @@ use tracing::{info, debug, error};
 
 use proximadb::services::DirectVectorService;
 use proximadb::storage::assignment_service::{HashBasedAssignmentService, AssignmentService};
-use proximadb::proto::proximadb::{VectorRecord, MetadataItem, DistanceMetric, VectorSearchRequest};
+use crate::proto::proximadb::{VectorRecord, MetadataItem, DistanceMetric, VectorSearchRequest};
 
 /// Create a test vector with explicit ID
 fn create_test_vector(id: &str, vector: Vec<f32>, metadata: Vec<(&str, &str)>) -> VectorRecord {
@@ -20,7 +20,7 @@ fn create_test_vector(id: &str, vector: Vec<f32>, metadata: Vec<(&str, &str)>) -
         vector,
         metadata: metadata.into_iter().map(|(k, v)| MetadataItem {
             key: k.to_string(),
-            value: v.to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
         }).collect(),
         timestamp: chrono::Utc::now().timestamp_millis(),
         created_at: chrono::Utc::now().timestamp_millis(),
@@ -78,8 +78,8 @@ async fn debug_via_grpc_client() -> Result<()> {
 
     // Use the existing Python SDK pattern but in Rust
     // This allows us to debug the actual server behavior
-    use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
-    use proximadb::proto::proximadb::{VectorBatchRequest, CollectionRequest, CollectionOperation, CollectionConfig, StorageEngine};
+    use crate::proto::proximadb::proxima_db_client::ProximaDbClient;
+    use crate::proto::proximadb::{VectorBatchRequest, CollectionRequest, CollectionOperation, CollectionConfig, StorageEngine};
     use tonic::Request;
 
     let mut client = ProximaDbClient::connect("http://localhost:5679").await?;
@@ -145,7 +145,7 @@ async fn debug_via_grpc_client() -> Result<()> {
         let vector_id = test_vector.id.as_ref().unwrap();
         info!("🔍 Testing get_vector for ID: {}", vector_id);
 
-        let get_request = proximadb::proto::proximadb::VectorGetRequest {
+        let get_request = crate::proto::proximadb::VectorGetRequest {
             collection_id: collection_id.clone(),
             vector_id: vector_id.clone(),
             include_vector: true,

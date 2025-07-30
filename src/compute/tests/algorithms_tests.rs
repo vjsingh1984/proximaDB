@@ -7,6 +7,7 @@
 mod tests {
     use crate::compute::algorithms::*;
     use crate::compute::DistanceMetric;
+    use crate::core::search::SearchResult;
     use std::collections::HashMap;
     
     fn create_test_vectors(n: usize, dim: usize) -> Vec<(String, Vec<f32>)> {
@@ -39,23 +40,14 @@ mod tests {
     #[test]
     fn test_search_result_ordering() {
         // Test with distance scores (lower is better)
-        let r1 = SearchResult {
-            vector_id: "vec1".to_string(),
-            score: 0.1,  // Good match (low distance)
-            metadata: None,
-        };
+        let mut r1 = SearchResult::new("vec1".to_string(), 0.1);  // Good match (low distance)
+        r1.vector_id = Some("vec1".to_string());
         
-        let r2 = SearchResult {
-            vector_id: "vec2".to_string(),
-            score: 0.5,  // Worse match (higher distance)
-            metadata: None,
-        };
+        let mut r2 = SearchResult::new("vec2".to_string(), 0.5);  // Worse match (higher distance)
+        r2.vector_id = Some("vec2".to_string());
         
-        let r3 = SearchResult {
-            vector_id: "vec3".to_string(),
-            score: 0.05, // Best match (lowest distance)
-            metadata: None,
-        };
+        let mut r3 = SearchResult::new("vec3".to_string(), 0.05); // Best match (lowest distance)
+        r3.vector_id = Some("vec3".to_string());
         
         // The Ord implementation does: other.score.partial_cmp(&self.score)
         // This means: if self.score < other.score, then self > other
@@ -98,7 +90,7 @@ mod tests {
         // Search in single-vector index
         let results = index.search(&[0.1, 0.2, 0.3, 0.4], 1).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].vector_id, "vec1");
+        assert_eq!(results[0].vector_id, Some("vec1".to_string()));
         // For cosine distance, perfect match should have score close to 0
         assert!(results[0].score < 0.01); // Should be very small distance
         
@@ -152,8 +144,8 @@ mod tests {
         
         // Verify all results match filter
         for result in &filtered_results {
-            if let Some(metadata) = &result.metadata {
-                assert_eq!(metadata.get("category").unwrap().as_str().unwrap(), "cat_0");
+            if !result.metadata.is_empty() {
+                assert_eq!(result.metadata.get("category").unwrap().as_str().unwrap(), "cat_0");
             }
         }
     }
@@ -175,7 +167,7 @@ mod tests {
         
         // Search should find the first vector (since duplicate was rejected)
         let results = index.search(&[1.0, 2.0], 1).unwrap();
-        assert_eq!(results[0].vector_id, "dup");
+        assert_eq!(results[0].vector_id, Some("dup".to_string()));
         
         // Request more results than available
         index.add_vector("vec2".to_string(), vec![5.0, 6.0], None).unwrap();

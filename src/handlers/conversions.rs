@@ -63,7 +63,7 @@ pub fn parse_distance_metric(metric: &str) -> DistanceMetric {
 pub fn parse_storage_engine(engine: &str) -> StorageEngine {
     match engine.to_lowercase().as_str() {
         "viper" => StorageEngine::Viper,
-        "lsm" => StorageEngine::Lsm,
+        "sst" => StorageEngine::Sst,
         _ => StorageEngine::Viper, // Default
     }
 }
@@ -94,7 +94,7 @@ pub fn distance_metric_to_string(metric: i32) -> &'static str {
 pub fn storage_engine_to_string(engine: i32) -> &'static str {
     match StorageEngine::try_from(engine) {
         Ok(StorageEngine::Viper) => "viper",
-        Ok(StorageEngine::Lsm) => "lsm",
+        Ok(StorageEngine::Sst) => "sst",
         _ => "viper",
     }
 }
@@ -304,15 +304,21 @@ impl VectorBatchRequestBuilder {
                 use crate::proto::proximadb::MetadataItem;
                 obj.iter()
                     .map(|(k, v)| {
-                        let value_str = match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            _ => v.to_string(),
+                        let metadata_value = match v {
+                            serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                            serde_json::Value::Number(n) => {
+                                if let Some(f) = n.as_f64() {
+                                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                } else {
+                                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                }
+                            },
+                            serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                            _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
                         };
                         MetadataItem {
                             key: k.clone(),
-                            value: value_str,
+                            value: metadata_value,
                         }
                     })
                     .collect()

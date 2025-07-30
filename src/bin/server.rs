@@ -79,17 +79,17 @@ async fn ensure_required_directories(config: &proximadb::core::Config) -> anyhow
         }
     }
     
-    // LSM directories are now created per-collection under storage locations
-    // The LSM config only contains operational parameters
-    let lsm_config = &config.storage.lsm_config;
+    // SST directories are now created per-collection under storage locations
+    // The SST config only contains operational parameters
+    let sst_config = &config.storage.sst_config;
     
-    info!("📂 Creating LSM WAL directory: {}", lsm_config.wal_directory);
-    tokio::fs::create_dir_all(&lsm_config.wal_directory).await
-        .map_err(|e| anyhow::anyhow!("Failed to create LSM WAL directory: {}", e))?;
+    info!("📂 Creating SST WAL directory: {}", sst_config.write_buffer_directory);
+    tokio::fs::create_dir_all(&sst_config.write_buffer_directory).await
+        .map_err(|e| anyhow::anyhow!("Failed to create SST WAL directory: {}", e))?;
     
-    info!("📂 Creating LSM data directory: {}", lsm_config.data_directory);
-    tokio::fs::create_dir_all(&lsm_config.data_directory).await
-        .map_err(|e| anyhow::anyhow!("Failed to create LSM data directory: {}", e))?;
+    info!("📂 Creating SST data directory: {}", sst_config.data_directory);
+    tokio::fs::create_dir_all(&sst_config.data_directory).await
+        .map_err(|e| anyhow::anyhow!("Failed to create SST data directory: {}", e))?;
     
     // Log directory creation is handled by the logging framework itself
     

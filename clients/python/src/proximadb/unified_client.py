@@ -692,32 +692,8 @@ class ProximaDBClient:
             if hasattr(proto_response, 'compact_results') and proto_response.compact_results:
                 for result in proto_response.compact_results.results:
                     # Extract metadata from protobuf repeated field
-                    metadata_dict = {}
-                    if hasattr(result, 'metadata') and result.metadata:
-                        for meta_item in result.metadata:
-                            # Parse value based on type
-                            value = meta_item.value
-                            # Try to parse as JSON first
-                            try:
-                                import json
-                                # Remove outer quotes if present
-                                if value.startswith('"') and value.endswith('"'):
-                                    value = value[1:-1]
-                                # Try to parse as int/float/bool
-                                if value.lower() == 'true':
-                                    value = True
-                                elif value.lower() == 'false':
-                                    value = False
-                                elif value.isdigit():
-                                    value = int(value)
-                                elif '.' in value:
-                                    try:
-                                        value = float(value)
-                                    except:
-                                        pass  # Keep as string
-                            except:
-                                pass  # Keep as string
-                            metadata_dict[meta_item.key] = value
+                    from .metadata_utils import proto_metadata_to_dict
+                    metadata_dict = proto_metadata_to_dict(result.metadata) if hasattr(result, 'metadata') else {}
                     
                     search_result = SearchResult(
                         id=result.id if result.id else "",
@@ -795,24 +771,35 @@ class ProximaDBClient:
         """Delete vectors from a collection"""
         if self._active_protocol == Protocol.GRPC:
             proto_response = self._client.delete_vectors(collection_id, vector_ids)
-            # Handle case where metrics might not be present in the response
-            metrics = None
-            if hasattr(proto_response, 'metrics') and proto_response.metrics:
+            # Handle case where proto_response is a dict or object
+            if isinstance(proto_response, dict):
+                success = proto_response.get('success', True)
+                metrics_data = proto_response.get('metrics', {})
                 metrics = OperationMetrics(
-                    total_processed=proto_response.metrics.total_processed,
-                    successful_count=proto_response.metrics.successful_count,
-                    failed_count=proto_response.metrics.failed_count
+                    total_processed=metrics_data.get('total_processed', len(vector_ids)),
+                    successful_count=metrics_data.get('successful_count', len(vector_ids) if success else 0),
+                    failed_count=metrics_data.get('failed_count', 0 if success else len(vector_ids))
                 )
             else:
-                # Default metrics if not provided
-                metrics = OperationMetrics(
-                    total_processed=len(vector_ids),
-                    successful_count=len(vector_ids) if proto_response.success else 0,
-                    failed_count=0 if proto_response.success else len(vector_ids)
-                )
+                # Handle case where metrics might not be present in the response
+                metrics = None
+                if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                    metrics = OperationMetrics(
+                        total_processed=proto_response.metrics.total_processed,
+                        successful_count=proto_response.metrics.successful_count,
+                        failed_count=proto_response.metrics.failed_count
+                    )
+                else:
+                    # Default metrics if not provided
+                    metrics = OperationMetrics(
+                        total_processed=len(vector_ids),
+                        successful_count=len(vector_ids) if proto_response.success else 0,
+                        failed_count=0 if proto_response.success else len(vector_ids)
+                    )
+                success = proto_response.success
             
             return VectorOperationResponse(
-                success=proto_response.success,
+                success=success,
                 operation="delete",
                 metrics=metrics
             )

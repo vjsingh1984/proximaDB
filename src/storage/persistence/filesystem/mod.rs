@@ -41,6 +41,9 @@ pub mod manager;
 pub mod s3;
 pub mod write_strategy;
 
+#[cfg(test)]
+pub mod tests;
+
 use azure::AzureFileSystem;
 use gcs::GcsFileSystem;
 use hdfs::HdfsFileSystem;
@@ -315,6 +318,15 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 
     /// Write file contents
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
+    
+    /// Sync file data to disk (fsync/fdatasync)
+    /// Ensures data durability after write operations
+    /// Returns Ok(()) if sync is not supported by the filesystem
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // Default implementation - no sync
+        // Filesystems that support sync should override
+        Ok(())
+    }
 
     /// Append to file
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()>;
@@ -1123,7 +1135,7 @@ impl FilesystemFactory {
 }
 
 #[cfg(test)]
-mod tests {
+mod inline_tests {
     use super::*;
 
     #[tokio::test]

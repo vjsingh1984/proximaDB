@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
+use crate::core::search::SearchResult;
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
 const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
@@ -275,9 +276,12 @@ impl VectorRecord {
             vector: Some(self.vector.clone()),
             metadata: self.metadata.clone(),
             collection_id: Some(self.collection_id.clone()),
-            created_at: Some(self.created_at),
-            algorithm_used: None,
-            processing_time_us: None,
+            created_at: Some(chrono::DateTime::from_timestamp(self.created_at, 0).unwrap_or_default()),
+            debug_info: None,
+            semantic_distance: None,
+            quantization_info: None,
+            engine_stats: None,
+            index_path: None,
         }
     }
 
@@ -337,45 +341,8 @@ impl VectorRecord {
     }
 }
 
-/// Unified search result - zero-copy from storage to client
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SearchResult {
-    pub id: String,
-    pub vector_id: Option<String>,
-    pub score: f32,
-    pub distance: Option<f32>,
-    pub rank: Option<i32>,
-    pub vector: Option<Vec<f32>>,
-    pub metadata: HashMap<String, serde_json::Value>,
-    pub collection_id: Option<String>,
-    pub created_at: Option<i64>,
-    pub algorithm_used: Option<String>,
-    pub processing_time_us: Option<i64>,
-}
-
-impl SearchResult {
-    /// Zero-copy serialization to Avro binary
-    pub fn to_avro_bytes(&self) -> Result<Vec<u8>, apache_avro::Error> {
-        let mut writer = Writer::new(&VECTOR_RECORD_SCHEMA, Vec::new());
-        writer.append_ser(self)?;
-        Ok(writer.into_inner()?)
-    }
-
-    /// Zero-copy deserialization from Avro binary
-    pub fn from_avro_bytes(bytes: &[u8]) -> Result<Self, apache_avro::Error> {
-        let cursor = Cursor::new(bytes);
-        let reader = Reader::new(cursor)?;
-
-        for record in reader {
-            let record = record?;
-            return Ok(apache_avro::from_value::<Self>(&record)?);
-        }
-
-        Err(apache_avro::Error::DeserializeValue(
-            "No records found".to_string(),
-        ))
-    }
-}
+// SearchResult removed - now using unified SearchResult from core::search::results
+// Avro serialization is obsolete in proto-first architecture
 
 // Collection struct removed - use crate::proto::proximadb::Collection for proto-first architecture
 
@@ -733,22 +700,7 @@ pub struct CollectionResponse {
     pub processing_time_us: i64,
 }
 
-/// Binary search results for zero-copy large dataset operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResultsBinary {
-    /// Search results
-    pub results: Vec<SearchResult>,
-    /// Total results found (before pagination)
-    pub total_found: i64,
-    /// Search algorithm used
-    pub search_algorithm_used: Option<String>,
-    /// Query metadata and parameters
-    pub query_metadata: Option<HashMap<String, serde_json::Value>>,
-    /// Processing time in microseconds
-    pub processing_time_us: i64,
-    /// Collection ID searched
-    pub collection_id: String,
-}
+// SearchResultsBinary removed - obsolete in proto-first architecture
 
 // Implementation blocks for new types
 impl CollectionRequest {
@@ -1038,8 +990,8 @@ pub struct HealthResponse {
 pub struct MetricsResponse {
     /// Service-level metrics
     pub service_metrics: ServiceMetrics,
-    /// WAL-specific metrics
-    pub wal_metrics: WalMetrics,
+    /// Write Buffer-specific metrics
+    pub wal_metrics: WriteBufferMetrics,
     /// Timestamp when metrics were collected (microseconds)
     pub timestamp: i64,
 }
@@ -1059,9 +1011,9 @@ pub struct ServiceMetrics {
     pub last_operation_time: Option<i64>,
 }
 
-/// WAL-specific metrics
+/// Write Buffer-specific metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalMetrics {
+pub struct WriteBufferMetrics {
     /// Total entries in WAL
     pub total_entries: i64,
     /// Entries currently in memory

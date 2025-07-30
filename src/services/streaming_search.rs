@@ -95,8 +95,8 @@ pub struct StreamingSearchStats {
     pub memory_pressure_events: u64,
 }
 
-/// Streaming search result
-pub struct StreamingSearchResult {
+/// Streaming search iterator - provides incremental search results
+pub struct SearchResultStream {
     /// Result receiver channel
     receiver: mpsc::Receiver<SearchResultBatch>,
     
@@ -167,7 +167,7 @@ impl StreamingSearchService {
         query_vector: Vec<f32>,
         k: usize,
         distance_metric: DistanceMetric,
-    ) -> Result<StreamingSearchResult> {
+    ) -> Result<SearchResultStream> {
         let start_time = std::time::Instant::now();
         let request_id = uuid::Uuid::new_v4().to_string();
         
@@ -214,7 +214,7 @@ impl StreamingSearchService {
             }
         });
         
-        Ok(StreamingSearchResult {
+        Ok(SearchResultStream {
             receiver: rx,
             metadata,
         })
@@ -290,13 +290,12 @@ impl StreamingSearchService {
             let search_k = ((remaining_k as f32) * 1.5).ceil() as usize;
             
             // Search using unified method
-            let results = self.direct_service.search_vectors_unified(
+            let results = self.direct_service.search_vectors(
                 &collection_id,
                 &query_vector,
                 search_k,
                 distance_metric,
                 None,  // search_params
-                None,  // metadata_filters
                 false, // include_vectors
                 false  // include_metadata
             ).await?;
@@ -391,7 +390,7 @@ impl StreamingSearchService {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
         
         // Get direct access to WAL memtable
-        if let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
+        if let Some(wal_behavior) = self.direct_service.get_write_buffer_behavior_wrapper() {
             let unflushed_batches = wal_behavior
                 .get_unflushed_batches(collection_id)
                 .await?;
@@ -414,9 +413,7 @@ impl StreamingSearchService {
                         distance: Some(similarity.rank_value),
                         rank: None,
                         vector: Some(record.vector.clone()),
-                        metadata: record.metadata.iter().map(|item| {
-                            (item.key.clone(), serde_json::Value::String(item.value.clone()))
-                        }).collect(),
+                        metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata),
                         debug_info: Some(SearchDebugInfo {
                             algorithm: format!("StreamingWAL::{:?}", distance_metric),
                             candidates_evaluated: 0,
@@ -469,7 +466,7 @@ impl Clone for StreamingSearchService {
 }
 
 /// Stream implementation for search results
-impl Stream for StreamingSearchResult {
+impl Stream for SearchResultStream {
     type Item = Result<SearchResultBatch>;
     
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -481,7 +478,7 @@ impl Stream for StreamingSearchResult {
     }
 }
 
-impl StreamingSearchResult {
+impl SearchResultStream {
     /// Get search metadata
     pub fn metadata(&self) -> &SearchMetadata {
         &self.metadata

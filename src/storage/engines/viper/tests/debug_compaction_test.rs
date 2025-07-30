@@ -97,7 +97,7 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "test_key".to_string(),
-                value: "test_value".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test_value".to_string())),
             },
         ],
         timestamp: chrono::Utc::now().timestamp_millis(),

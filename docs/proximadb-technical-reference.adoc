@@ -21,7 +21,7 @@ ProximaDB is a high-performance vector database built with Rust, featuring:
 * **Unified architectures** reducing code duplication
 * **Dual storage engines** for different workload types
 
-image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=100%]
+image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=100%]
 
 === Key Features
 
@@ -76,7 +76,7 @@ ProximaDB employs a layered architecture with clean separation of concerns:
 
 All data flows through Protocol Buffers, eliminating serialization overhead:
 
-image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=80%]
+image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=80%]
 
 Key benefits:
 * Single business logic implementation
@@ -105,7 +105,7 @@ Features:
 * **Collection-aware**: Operations consider collection configuration
 * **Explicit configuration**: No hidden defaults
 
-image::direct-vector-service.png[Direct Vector Service Architecture, width=80%]
+image::direct-vector-service.svg[Direct Vector Service Architecture, width=80%]
 
 === Storage Engines
 
@@ -141,7 +141,7 @@ The Vectorized Parquet Engine provides:
 
 The Write-Ahead Log system features clean separation of concerns:
 
-image::wal_strategy_pattern.png[WriteBuffer Strategy Pattern, width=100%]
+image::write-buffer-strategy-pattern.svg[WriteBuffer Strategy Pattern, width=100%]
 
 Components:
 * **WalManager**: Orchestration only
@@ -161,7 +161,7 @@ Features:
 
 ProximaDB uses a unified polymorphic bloom filter design:
 
-image::bloom-filter-architecture.png[Bloom Filter Architecture, width=80%]
+image::bloom-filter-architecture.svg[Bloom Filter Architecture, width=80%]
 
 [source,rust]
 ----

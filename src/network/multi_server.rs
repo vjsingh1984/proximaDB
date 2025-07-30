@@ -375,7 +375,7 @@ impl SharedServices {
         // 🚀 Create DirectVectorService directly for 40-60% performance improvement
         // Create WAL config with optimized defaults
         debug!("🔧 SharedServices::new - Creating WAL config...");
-        let wal_config = crate::storage::persistence::wal::config::WalConfig::default();
+        let write_buffer_config = crate::storage::persistence::write_buffer::config::WriteBufferConfig::default();
         debug!("✅ SharedServices::new - WAL config created successfully");
         
         // Create filesystem factory for engines
@@ -394,21 +394,22 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
         
-        // Create LSM engine
-        debug!("🔧 SharedServices::new - Creating LSM engine...");
-        let lsm_engine = Arc::new(
-            crate::storage::engines::lsm::LsmTree::new(
-                "lsm_tree".to_string(),
-                storage_config.lsm_config.clone(),
+        // Create SST engine
+        debug!("🔧 SharedServices::new - Creating SST engine...");
+        let sst_engine = Arc::new(
+            crate::storage::engines::sst::SstStorage::new(
+                "sst_storage".to_string(),
+                storage_config.sst_config.clone(),
                 filesystem_factory.clone(),
+                Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
             ).await?
         );
-        debug!("✅ SharedServices::new - LSM engine created successfully");
+        debug!("✅ SharedServices::new - SST engine created successfully");
         
         // Create DirectVectorService with optimized architecture
         debug!("🔧 SharedServices::new - About to create DirectVectorService...");
         let direct_vector_service = Arc::new(
-            DirectVectorService::new(wal_config, viper_engine, lsm_engine).await?
+            DirectVectorService::new(write_buffer_config, viper_engine, sst_engine).await?
         );
         
         info!("✅ SharedServices: DirectVectorService created successfully - 40-60% performance boost enabled");

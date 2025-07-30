@@ -10,7 +10,7 @@ use proximadb::storage::{
     unified_cache::{UnifiedCrossEngineCache, UnifiedCacheConfig},
     lockfree_engine::LockFreeStorageEngine,
     memtable::lockfree_implementations::LockFreeHashMapMemtable,
-    engines::lsm::readers::predictive_prefetcher::{PredictivePrefetcher, PrefetchConfig},
+    engines::sst::readers::predictive_prefetcher::{PredictivePrefetcher, PrefetchConfig},
 };
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -132,7 +132,7 @@ fn benchmark_predictive_prefetching(c: &mut Criterion) {
                 
                 // Simulate sequential access
                 for i in 0..100 {
-                    let key = proximadb::storage::engines::lsm::readers::predictive_prefetcher::BlockCacheKey {
+                    let key = proximadb::storage::engines::sst::readers::predictive_prefetcher::BlockCacheKey {
                         file_path: "test.sst".to_string(),
                         block_id: i,
                         block_index: i as usize,
@@ -142,7 +142,7 @@ fn benchmark_predictive_prefetching(c: &mut Criterion) {
                     
                     // Check if prefetched
                     if i > 10 {
-                        let next_key = proximadb::storage::engines::lsm::readers::predictive_prefetcher::BlockCacheKey {
+                        let next_key = proximadb::storage::engines::sst::readers::predictive_prefetcher::BlockCacheKey {
                             file_path: "test.sst".to_string(),
                             block_id: i + 1,
                             block_index: (i + 1) as usize,

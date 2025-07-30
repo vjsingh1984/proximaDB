@@ -457,28 +457,6 @@ impl ViperEngine {
         &self.config
     }
     
-    /// Predict cluster for a vector using ML clustering
-    /// DEPRECATED: This functionality should be moved to AXIS indexing service
-    pub async fn predict_cluster(&self, _collection_id: &str, _vector: &[f32]) -> Result<Option<String>> {
-        // ML clustering belongs in AXIS, not in the storage engine
-        // VIPER should focus on storage operations only
-        Ok(None)
-    }
-    
-    /// Train ML clustering model for a collection
-    /// DEPRECATED: This functionality should be moved to AXIS indexing service
-    pub async fn train_clustering_model(&self, _collection_id: &str, _vectors: Vec<Vec<f32>>) -> Result<()> {
-        // ML clustering belongs in AXIS, not in the storage engine
-        // AXIS should handle all indexing strategies including ML models
-        info!("🧠 ML clustering should be handled by AXIS, not VIPER storage engine");
-        Ok(())
-    }
-    
-    // Clustering moved to AXIS
-    // /// Get clustering model for a collection
-    // pub async fn get_clustering_model(&self, collection_id: &str) -> Option<super::ml_clustering::MLClusteringModel> {
-    //     self.ml_clustering_engine.get_model().cloned()
-    // }
     
     /// Record operation performance metrics
     pub async fn record_operation_metrics(&self, metrics: super::utilities::OperationMetrics) -> Result<()> {
@@ -511,95 +489,32 @@ impl ViperEngine {
     /// - ML-driven cluster optimization for large collections
     /// - Direct search for small collections 
     /// - Hybrid strategies combining clustering with metadata filtering
+    /// Public search method - delegates to unified search
+    /// 
+    /// This is a convenience method that uses default parameters.
+    /// For full control, use search_vectors_unified directly via the UnifiedStorageEngine trait.
     pub async fn search_vectors(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
-        info!("🔍 VIPER Engine: Polymorphic vector search - collection={}, k={}", collection_id, k);
+        info!("🔍 VIPER Engine: Delegating to unified search - collection={}, k={}", collection_id, k);
         
-        let collection_id_typed = String::from(collection_id.to_string());
-        
-        // Create search parameters with query vector
-        let search_params = crate::core::search::SearchParams {
-            query_vectors: Some(vec![query_vector.to_vec()]),
-            top_k: Some(k),
-            distance_metric: Some(crate::compute::distance::DistanceMetric::Cosine),
-            filters: None,
-            filter_expression: None,
-            accuracy_threshold: None,
-            include_expired: None,
-            timeout_ms: None,
-            enable_two_stage: None,
-            quantization_hint: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            custom_hints: None,
-        };
-        
-        // Build search context for unified interface
-        let context = crate::core::search::UnifiedSearchContext {
-            collection_id: collection_id_typed.clone(),
-            collection_config: Some(crate::core::search::CollectionConfig {
-                default_distance_metric: crate::compute::distance::DistanceMetric::Cosine,
-                vector_dimension: query_vector.len(),
-                enable_quantization: false,
-                enable_metadata_filtering: false,
-                estimated_document_count: 0,
-            }),
-            filterable_columns: vec![],
-            available_quantization: vec![],
-            storage_info: crate::core::search::StorageInfo {
-                is_cloud_storage: false,
-                storage_type: "Local".to_string(),
-                estimated_size_mb: 0.0,
-                file_count: 0,
-                supports_range_requests: true,
-            },
-        };
-        
-        // Use unified search interface
-        let distance_compute = UnifiedDistanceCompute::default();
-        let result_set = self.search_engine.search_unified(
-            &context,
-            &search_params,
-            &distance_compute,
-            None, // quantization_engine - already in search_engine
-        ).await?;
-        
-        // Return native search results directly
-        Ok(result_set.results)
+        // Delegate to the unified search implementation with default parameters
+        self.search_vectors_unified(
+            collection_id,
+            query_vector,
+            k,
+            &crate::compute::distance::DistanceMetric::Cosine, // Default metric
+            None, // No filters
+            true, // Include vectors
+            true, // Include metadata
+        ).await
     }
     
-    /// Search vectors in a specific cluster using ML clustering optimization
-    /// 
-    /// This method searches within a specific cluster identified by cluster_id.
-    /// For now, it delegates to the general search method, but in a full implementation
-    /// it would use cluster-specific optimizations and predicate pushdown.
-    pub async fn search_vectors_in_cluster(
-        &self,
-        collection_id: &str,
-        _query_vector: &[f32],
-        k: usize,
-        cluster_id: &str,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
-        info!("🔍 VIPER Engine: Cluster search - collection={}, cluster={}, k={}", collection_id, cluster_id, k);
-        
-        // Note: Cluster-based search should be handled by AXIS indexing service
-        // VIPER should only provide raw vector retrieval from Parquet files
-        // AXIS will determine which clusters/files to search based on its ML models
-        
-        // For cluster-specific search, return empty results for now
-        // Real implementation would:
-        // 1. Get cluster metadata from the ML clustering engine
-        // 2. Filter Parquet files specific to this cluster
-        // 3. Apply cluster-specific distance optimizations
-        // 4. Use predicate pushdown for cluster boundaries
-        
-        warn!("🔍 VIPER Engine: Cluster-specific search not yet implemented for cluster {}", cluster_id);
-        Ok(Vec::new())
-    }
+    // REMOVED: search_vectors_in_cluster - Clustering is handled by AXIS indexing service
+    // VIPER provides raw vector retrieval; AXIS determines which files to search
 
     /// Get all Parquet files associated with a collection
     pub async fn get_parquet_files_for_collection(&self, collection_id: &str) -> Result<Vec<String>> {
@@ -852,7 +767,7 @@ impl UnifiedStorageEngine for ViperEngine {
         query_vector: &[f32],
         k: usize,
         distance_metric: &crate::compute::distance::DistanceMetric,
-        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
@@ -861,14 +776,13 @@ impl UnifiedStorageEngine for ViperEngine {
         info!("🔍 VIPER: Searching collection {} with unified search engine", collection_id);
         
         // Build search params from parameters
-        if let Some(filters) = metadata_filters {
-            debug!("Search with metadata filters: {:?}", filters);
+        if let Some(filter_expr) = filter_expression {
+            debug!("Search with filter expression: {:?}", filter_expr);
         }
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.to_vec()]),
             top_k: Some(k),
-            filters: metadata_filters.cloned(),
-            filter_expression: None,
+            filter_expression: filter_expression.cloned(),
             distance_metric: Some(distance_metric.clone()),
             accuracy_threshold: None,
             custom_hints: None,
@@ -1052,7 +966,7 @@ impl UnifiedStorageEngine for ViperEngine {
 impl ViperEngine {
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
-    pub async fn compact_collection(&self, collection_id: &str) -> Result<crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult> {
+    pub async fn compact_collection(&self, collection_id: &str) -> Result<crate::storage::persistence::write_buffer::compaction_types::EnhancedEngineCompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
         
         // Get collection configuration if available
@@ -1085,7 +999,7 @@ impl ViperEngine {
             )
             .unwrap_or_default();
             
-        Ok(crate::storage::persistence::wal::compaction_types::EnhancedEngineCompactionResult {
+        Ok(crate::storage::persistence::write_buffer::compaction_types::EnhancedEngineCompactionResult {
             files_processed: result.output_files,
             bytes_processed: result.bytes_written,
             deleted_vector_ids,

@@ -160,7 +160,7 @@ impl Default for CollectionStrategyConfig {
                 parameters: HashMap::new(),
             },
             storage_config: StorageConfig {
-                engine_type: ProtoStorageEngine::Lsm,
+                engine_type: ProtoStorageEngine::Sst,
                 parameters: HashMap::new(),
             },
             search_config: SearchConfig {

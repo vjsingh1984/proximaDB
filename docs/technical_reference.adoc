@@ -19,7 +19,7 @@ Comprehensive technical implementation details for ProximaDB's proto-first archi
 
 === Zero Double Serialization Pipeline
 
-image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
@@ -67,7 +67,7 @@ impl UnifiedHandlers {
 
 === DirectVectorService Architecture
 
-image::direct-vector-service.png[DirectVectorService Architecture, width=800, align=center]
+image::direct-vector-service.svg[DirectVectorService Architecture, width=800, align=center]
 
 _Diagram source: link:diagrams/direct-vector-service.mmd[View Mermaid source]_
 

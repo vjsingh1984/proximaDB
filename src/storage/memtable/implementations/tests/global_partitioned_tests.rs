@@ -1,12 +1,12 @@
-//! Tests for GlobalPartitionedMemtable using modern WalVectorBatch architecture
+//! Tests for GlobalPartitionedMemtable using modern WriteBufferVectorBatch architecture
 //!
 //! These tests verify the batch-oriented operations without legacy WalEntry
 
 use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
-use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use crate::storage::persistence::wal::BatchId;
+use crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
+use crate::storage::persistence::write_buffer::BatchId;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -44,7 +44,7 @@ async fn test_global_partitioned_batch_operations() {
     };
 
     // Create a batch with multiple vectors
-    let batch = WalVectorBatch {
+    let batch = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_record1.clone(), vector_record2.clone()]),
         created_at: std::time::SystemTime::now(),
@@ -83,7 +83,7 @@ async fn test_global_partitioned_multi_collection() {
     let now = chrono::Utc::now().timestamp_millis();
     
     // Collection A batch
-    let batch_a = WalVectorBatch {
+    let batch_a = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
             id: Some("vec_a1".to_string()),
@@ -104,7 +104,7 @@ async fn test_global_partitioned_multi_collection() {
     };
 
     // Collection B batch
-    let batch_b = WalVectorBatch {
+    let batch_b = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
             id: Some("vec_b1".to_string()),
@@ -204,7 +204,7 @@ async fn test_mvcc_and_logical_deletes() {
     };
 
     // Insert all versions in separate batches
-    let batch1 = WalVectorBatch {
+    let batch1 = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v1]),
         created_at: std::time::SystemTime::now(),
@@ -212,7 +212,7 @@ async fn test_mvcc_and_logical_deletes() {
         is_flushed: false,
     };
 
-    let batch2 = WalVectorBatch {
+    let batch2 = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v2]),
         created_at: std::time::SystemTime::now(),
@@ -220,7 +220,7 @@ async fn test_mvcc_and_logical_deletes() {
         is_flushed: false,
     };
 
-    let batch3 = WalVectorBatch {
+    let batch3 = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v3_delete]),
         created_at: std::time::SystemTime::now(),
@@ -288,7 +288,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
         distance: None,
     };
 
-    let batch = WalVectorBatch {
+    let batch = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![expired_vector, valid_vector]),
         created_at: std::time::SystemTime::now(),
@@ -318,7 +318,7 @@ async fn test_global_partitioned_clear_operations() {
     let memtable = GlobalPartitionedMemtable::new();
     
     // Add some test data
-    let batch = WalVectorBatch {
+    let batch = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![
             create_test_vector("vec1", "test_collection", vec![1.0, 0.0]),

@@ -37,7 +37,7 @@ NOTE: See link:appendix_performance_metrics.adoc[Appendix: Performance Metrics] 
 
 == Proto-First Architecture Foundation
 
-image::proximadb-actual-architecture.png[ProximaDB Architecture, width=100%, align=center]
+image::proximadb-actual-architecture.svg[ProximaDB Architecture, width=100%, align=center]
 
 _Diagram source: link:diagrams/proximadb-actual-architecture.mmd[View Mermaid source]_
 
@@ -50,7 +50,7 @@ _Diagram source: link:diagrams/proximadb-actual-architecture.mmd[View Mermaid so
 
 === Key Architectural Innovations
 
-image::two-stage-search.png[Two-Stage Search Process, width=800, align=center]
+image::two-stage-search.svg[Two-Stage Search Process, width=800, align=center]
 
 _Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 
@@ -73,11 +73,23 @@ _Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 - **StreamingSearchService** for lock-free non-blocking search
 - **Unified batch strategies** eliminating 90% duplicate code
 
+==== 4. Memory Optimization Framework
+- **Vector Memory Pool** with size-bucketed allocation reducing 30-50% allocations
+- **RAII Pooled Vectors** with automatic return-to-pool lifecycle management  
+- **Global Memory Pool** with comprehensive statistics and utilization tracking
+- **Adaptive sizing** with configurable bucket limits and capacity thresholds
+
+==== 5. Query Plan Caching System
+- **Async Query Cache** using moka library for high-performance caching
+- **LRU eviction policy** with time-to-live and access pattern tracking
+- **Parsed query caching** reducing SQL parsing overhead in repeated queries
+- **Execution plan caching** with hit rate monitoring and cache warming
+
 == System Architecture
 
 === Handler Consolidation Layer
 
-image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
@@ -95,7 +107,7 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 === Storage-Aware Engine Layer
 
-image::multi_disk_architecture.png[Multi-Disk Storage Architecture, width=800, align=center]
+image::multi_disk_architecture.svg[Multi-Disk Storage Architecture, width=800, align=center]
 
 _Diagram source: link:diagrams/multi_disk_architecture.mmd[View Mermaid source]_
 
@@ -113,7 +125,7 @@ _Diagram source: link:diagrams/multi_disk_architecture.mmd[View Mermaid source]_
 
 === Unified Quantization System
 
-image::unified_quantization_system.png[Unified Quantization System, width=800, align=center]
+image::unified_quantization_system.svg[Unified Quantization System, width=800, align=center]
 
 _Diagram source: link:diagrams/unified_quantization_system.mmd[View Mermaid source]_
 
@@ -131,7 +143,7 @@ _Diagram source: link:diagrams/unified_quantization_system.mmd[View Mermaid sour
 
 === Unified Bloom Filter Architecture
 
-image::bloom-filter-architecture.png[Unified Bloom Filter Architecture, width=800, align=center]
+image::bloom-filter-architecture.svg[Unified Bloom Filter Architecture, width=800, align=center]
 
 _Diagram source: link:diagrams/bloom-filter-architecture.mmd[View Mermaid source]_
 
@@ -158,7 +170,7 @@ NOTE: See link:architecture/bloom-filter-unified-design.adoc[Bloom Filter Archit
 
 === Proto-First Data Flow
 
-image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 
@@ -176,7 +188,7 @@ _Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid 
 
 === Storage-Aware Search Infrastructure
 
-image::storage-aware-search.png[Storage-Aware Search Infrastructure, width=800, align=center]
+image::storage-aware-search.svg[Storage-Aware Search Infrastructure, width=800, align=center]
 
 _Diagram source: link:diagrams/storage-aware-search.mmd[View Mermaid source]_
 
@@ -194,7 +206,7 @@ _Diagram source: link:diagrams/storage-aware-search.mmd[View Mermaid source]_
 
 == Production Deployment
 
-image::deployment-architecture.png[Production Deployment Architecture, width=800, align=center]
+image::deployment-architecture.svg[Production Deployment Architecture, width=800, align=center]
 
 _Diagram source: link:diagrams/deployment-architecture.mmd[View Mermaid source]_
 
@@ -395,7 +407,7 @@ NOTE: REST API has request size limitations. Use gRPC for bulk operations exceed
 
 === Phase 2 Storage Optimizations
 
-image::storage-optimizations.png[Storage Optimizations, width=900, align=center]
+image::storage-optimizations.svg[Storage Optimizations, width=900, align=center]
 
 _Diagram source: link:diagrams/storage-optimizations.mmd[View Mermaid source]_
 

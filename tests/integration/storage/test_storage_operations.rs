@@ -19,11 +19,11 @@ use proximadb::proto::proximadb::{
 use proximadb::services::direct_vector_service::DirectVectorService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::{WalManager, WalConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalStrategyType;
+use proximadb::storage::persistence::write_buffer::{WriteBufferManager, WriteBufferConfig};
+use proximadb::storage::persistence::write_buffer::batch_strategy::WriteBufferStrategyType;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::lsm::LsmEngine;
+use proximadb::storage::engines::sst::SstStorage as LsmEngine;
 
 /// Test setup helper
 async fn create_test_setup() -> (
@@ -111,7 +111,7 @@ async fn test_wal_operations_and_batching() {
     collection_service.create_collection(&config).await.unwrap();
     
     // Create WAL manager
-    let wal_config = WalConfig {
+    let write_buffer_config = WriteBufferConfig {
         wal_dir: _temp_dir.path().join("wal"),
         max_batch_size: 1000,
         flush_interval_ms: 5000,
@@ -119,10 +119,10 @@ async fn test_wal_operations_and_batching() {
         ..Default::default()
     };
     
-    let wal_manager = WalManager::new(
+    let write_buffer_manager = WriteBufferManager::new(
         "wal_test_collection",
-        WalStrategyType::ProtoBatch,
-        &wal_config,
+        WriteBufferStrategyType::ProtoBatch,
+        &write_buffer_config,
         filesystem.clone(),
     ).await.unwrap();
     
@@ -130,7 +130,7 @@ async fn test_wal_operations_and_batching() {
     let batch_size = 100;
     let vectors = create_test_vectors("wal_test_collection", batch_size);
     
-    let sequences = wal_manager
+    let sequences = write_buffer_manager
         .insert_vectors("wal_test_collection".to_string(), vectors.clone())
         .await
         .unwrap();
@@ -143,7 +143,7 @@ async fn test_wal_operations_and_batching() {
     }
     
     // Test reading from WAL
-    let read_vectors = wal_manager
+    let read_vectors = write_buffer_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -151,7 +151,7 @@ async fn test_wal_operations_and_batching() {
     assert_eq!(read_vectors.len(), batch_size);
     
     // Test WAL recovery
-    let recovery_vectors = wal_manager
+    let recovery_vectors = write_buffer_manager
         .recover_vectors_from_sequence(0)
         .await
         .unwrap();
@@ -159,10 +159,10 @@ async fn test_wal_operations_and_batching() {
     assert!(recovery_vectors.len() >= batch_size);
     
     // Test WAL compaction
-    wal_manager.compact_wal().await.unwrap();
+    write_buffer_manager.compact_wal().await.unwrap();
     
     // Verify data is still readable after compaction
-    let post_compaction_vectors = wal_manager
+    let post_compaction_vectors = write_buffer_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -286,7 +286,7 @@ async fn test_compaction_operations() {
         name: "compaction_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Manhattan as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
         ..Default::default()
     };
@@ -335,7 +335,7 @@ async fn test_compaction_operations() {
     assert!(pre_compaction_results.vectors.len() > 0);
     
     // Create LSM engine for compaction testing
-    let lsm_config = proximadb::core::LsmConfig {
+    let lsm_config = proximadb::core::SstConfig {
         memtable_size_mb: 1,
         level_count: 7,
         compaction_threshold: 2,
@@ -343,28 +343,18 @@ async fn test_compaction_operations() {
         memory_flush_size_bytes: 1024 * 1024,
         write_buffer_size_mb: 1,
         max_levels: 7,
-        compaction_strategy: "level".to_string(),
-        enable_bloom_filter: true,
+        compaction_strategy: "leveled".to_string(),
+        compression: "lz4".to_string(),
         bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
             ..Default::default()
         }),
-        enable_compression: true,
-        compression_algorithm: "lz4".to_string(),
-        max_open_files: 1000,
         cache_size_mb: 128,
-        enable_statistics: true,
-        paranoid_checks: false,
-        disable_auto_compaction: false,
-        block_cache_size_mb: 64,
-        index_cache_size_mb: 32,
-        compaction_readahead_size_mb: 2,
-        enable_write_ahead_log: true,
-        wal_sync_mode: "sync".to_string(),
-        level_size_multiplier: 10,
-        target_file_size_mb: 64,
-        target_level_size_mb: 256,
+        level_size_multiplier: 10.0,
+        enable_write_buffer: true,
+        sync_mode: "sync".to_string(),
+        ..Default::default()
     };
     
     let lsm_engine = LsmEngine::new(lsm_config, filesystem.clone()).await.unwrap();
@@ -413,7 +403,7 @@ async fn test_cross_engine_consistency() {
         name: "lsm_consistency_test".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
         ..Default::default()
     };

@@ -1,0 +1,803 @@
+    Checking proximadb v0.1.0 (/home/vsingh/code/proximaDB)
+warning: unused import: `SqlExecutionResult`
+   --> src/handlers/unified_handlers.rs:805:51
+    |
+805 |         use crate::query::sql_engine::{SqlEngine, SqlExecutionResult};
+    |                                                   ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::storage::StorageEngine as StorageEngineImpl`
+  --> src/network/grpc/service.rs:23:5
+   |
+23 | use crate::storage::StorageEngine as StorageEngineImpl;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `VectorInsertResponse as SchemaVectorInsertResponse`
+  --> src/network/grpc/service.rs:26:5
+   |
+26 |     VectorInsertResponse as SchemaVectorInsertResponse,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::json`
+  --> src/query/sql_engine/planner.rs:23:5
+   |
+23 | use serde_json::json;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AxisIndexCreationResult`, `AxisIvfConfig`, `AxisIvfIndex`, `AxisLshConfig`, and `AxisLshIndex`
+  --> src/query/vector_search/mod.rs:27:5
+   |
+27 |     AxisIndexCreationResult, AxisVectorIndex, IndexFactory,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+28 |     AxisIvfConfig, AxisIvfIndex,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+29 |     AxisLshConfig, AxisLshIndex,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `ComparisonOperator`
+    --> src/services/direct_vector_service.rs:1510:53
+     |
+1510 |         use crate::core::search::{FilterExpression, ComparisonOperator};
+     |                                                     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+  --> src/storage/engines/sst/manifest.rs:17:5
+   |
+17 | use std::path::PathBuf;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `StagingConfig` and `StagingOperationType`
+  --> src/storage/engines/sst/manifest.rs:24:56
+   |
+24 | use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+   |                                                        ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::core::search::SearchParams`
+  --> src/storage/engines/sst/mod.rs:32:5
+   |
+32 | use crate::core::search::SearchParams;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> src/storage/engines/sst/mod.rs:52:35
+   |
+52 | use tracing::{debug, error, info, warn};
+   |                                   ^^^^
+
+warning: unused import: `OptimizedFlushResult`
+  --> src/storage/persistence/write_buffer/flush_coordinator.rs:24:67
+   |
+24 | use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
+   |                                                                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `CompactionIndexStats`
+  --> src/storage/persistence/write_buffer/compaction_coordinator.rs:27:65
+   |
+27 | use super::compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::core::VectorRecord`
+  --> src/storage/unified_cache.rs:17:5
+   |
+17 | use crate::core::VectorRecord;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/lib.rs:138:13
+    |
+138 |         let mut storage_engine = storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
+    |             ----^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `search_params`
+   --> src/services/direct_vector_service.rs:413:9
+    |
+413 |         search_params: Option<crate::core::search::SearchParams>,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_search_params`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `include_vector`
+   --> src/services/direct_vector_service.rs:569:9
+    |
+569 |         include_vector: bool,
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_include_vector`
+
+warning: unused variable: `include_metadata`
+   --> src/services/direct_vector_service.rs:570:9
+    |
+570 |         include_metadata: bool,
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_include_metadata`
+
+warning: unused variable: `merged_vectors`
+    --> src/storage/engines/sst/mod.rs:2449:13
+     |
+2449 |         let merged_vectors = result.engine_metrics.get("merged_vectors_count")
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_merged_vectors`
+
+warning: unused variable: `compaction_result`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration.rs:44:9
+   |
+44 |         compaction_result: &CompactionResult,
+   |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_compaction_result`
+
+warning: unused variable: `deleted_set`
+   --> src/storage/persistence/write_buffer/compaction_axis_integration.rs:121:13
+    |
+121 |         let deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_deleted_set`
+
+warning: unused variable: `expr`
+    --> src/services/direct_vector_service.rs:1132:21
+     |
+1132 |         if let Some(expr) = filter_expression {
+     |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_expr`
+
+warning: unused variable: `expr`
+    --> src/services/direct_vector_service.rs:1176:21
+     |
+1176 |         if let Some(expr) = filter_expression {
+     |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_expr`
+
+warning: unused variable: `start`
+   --> src/storage/engines/sst/readers/predictive_prefetcher.rs:355:13
+    |
+355 |         let start = Instant::now();
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_start`
+
+warning: unused variable: `stats`
+   --> src/storage/engines/sst/unified_search_engine.rs:205:13
+    |
+205 |         let stats = self.manifest.get_stats().await;
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_stats`
+
+warning: unused variable: `columns`
+   --> src/storage/engines/viper/readers/unified_parquet_reader.rs:576:13
+    |
+576 |         let columns = self.select_optimal_columns(params, context);
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_columns`
+
+warning: variable does not need to be mutable
+   --> src/storage/engines/viper/readers/unified_parquet_reader.rs:573:13
+    |
+573 |         let mut all_vectors = Vec::new();
+    |             ----^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `base_path`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:471:13
+    |
+471 |         let base_path = if assignment.write_buffer_url.starts_with("file://") {
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_base_path`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:492:9
+    |
+492 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+error[E0599]: no method named `get_write_buffer_behavior` found for struct `Box<(dyn WriteBufferBatchStrategy + 'static)>` in the current scope
+    --> src/storage/persistence/write_buffer/mod.rs:1533:60
+     |
+1533 |         if let Some(write_buffer_behavior) = self.strategy.get_write_buffer_behavior() {
+     |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: there is a method `get_wal_behavior` with a similar name
+     |
+1533 -         if let Some(write_buffer_behavior) = self.strategy.get_write_buffer_behavior() {
+1533 +         if let Some(write_buffer_behavior) = self.strategy.get_wal_behavior() {
+     |
+
+error[E0308]: mismatched types
+   --> src/storage/metadata/atomic.rs:306:41
+    |
+306 |                         access_pattern: super::AccessPattern::Normal, // Convert enum
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `AccessPattern`, found `storage::metadata::AccessPattern`
+    |
+    = note: `storage::metadata::AccessPattern` and `AccessPattern` have similar names, but are actually distinct types
+note: `storage::metadata::AccessPattern` is defined in module `crate::storage::metadata` of the current crate
+   --> src/storage/metadata/mod.rs:91:1
+    |
+91  | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: `AccessPattern` is defined in module `crate::storage::metadata::write_buffer` of the current crate
+   --> src/storage/metadata/write_buffer.rs:120:1
+    |
+120 | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> src/storage/metadata/atomic.rs:337:41
+    |
+337 |                         access_pattern: super::AccessPattern::Normal,
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `AccessPattern`, found `storage::metadata::AccessPattern`
+    |
+    = note: `storage::metadata::AccessPattern` and `AccessPattern` have similar names, but are actually distinct types
+note: `storage::metadata::AccessPattern` is defined in module `crate::storage::metadata` of the current crate
+   --> src/storage/metadata/mod.rs:91:1
+    |
+91  | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: `AccessPattern` is defined in module `crate::storage::metadata::write_buffer` of the current crate
+   --> src/storage/metadata/write_buffer.rs:120:1
+    |
+120 | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `key`
+   --> src/storage/unified_cache.rs:544:44
+    |
+544 |     async fn is_cross_engine_access(&self, key: &CacheKey) -> bool {
+    |                                            ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+error[E0599]: no method named `get_write_buffer_behavior` found for struct `Box<(dyn WriteBufferBatchStrategy + 'static)>` in the current scope
+    --> src/storage/persistence/write_buffer/mod.rs:1286:23
+     |
+1286 |         self.strategy.get_write_buffer_behavior()
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: there is a method `get_wal_behavior` with a similar name
+     |
+1286 -         self.strategy.get_write_buffer_behavior()
+1286 +         self.strategy.get_wal_behavior()
+     |
+
+error[E0609]: no field `wal_writes` on type `storage::metadata::write_buffer::MetadataStats`
+   --> src/storage/metadata/atomic.rs:756:45
+    |
+756 |             wal_entries: write_buffer_stats.wal_writes,
+    |                                             ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `total_collections`, `cache_hits`, `cache_misses`, `write_buffer_writes`, `write_buffer_reads`
+
+error[E0308]: mismatched types
+   --> src/storage/metadata/store.rs:466:33
+    |
+466 |                 access_pattern: super::AccessPattern::Normal,
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `AccessPattern`, found `storage::metadata::AccessPattern`
+    |
+    = note: `storage::metadata::AccessPattern` and `AccessPattern` have similar names, but are actually distinct types
+note: `storage::metadata::AccessPattern` is defined in module `crate::storage::metadata` of the current crate
+   --> src/storage/metadata/mod.rs:91:1
+    |
+91  | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: `AccessPattern` is defined in module `crate::storage::metadata::write_buffer` of the current crate
+   --> src/storage/metadata/write_buffer.rs:120:1
+    |
+120 | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> src/storage/metadata/store.rs:536:33
+    |
+536 |                 access_pattern: super::AccessPattern::Normal,
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `AccessPattern`, found `storage::metadata::AccessPattern`
+    |
+    = note: `storage::metadata::AccessPattern` and `AccessPattern` have similar names, but are actually distinct types
+note: `storage::metadata::AccessPattern` is defined in module `crate::storage::metadata` of the current crate
+   --> src/storage/metadata/mod.rs:91:1
+    |
+91  | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: `AccessPattern` is defined in module `crate::storage::metadata::write_buffer` of the current crate
+   --> src/storage/metadata/write_buffer.rs:120:1
+    |
+120 | pub enum AccessPattern {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0609]: no field `wal_writes` on type `storage::metadata::write_buffer::MetadataStats`
+   --> src/storage/metadata/store.rs:679:40
+    |
+679 |                 wal_entries: wal_stats.wal_writes,
+    |                                        ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `total_collections`, `cache_hits`, `cache_misses`, `write_buffer_writes`, `write_buffer_reads`
+
+warning: unused variable: `k`
+   --> src/index/axis/annoy_index.rs:229:9
+    |
+229 |         k: usize,
+    |         ^ help: if this is intentional, prefix it with an underscore: `_k`
+
+warning: unused variable: `m`
+  --> src/index/axis/index_factory.rs:91:36
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                    ^ help: try ignoring the field: `m: _`
+
+warning: unused variable: `ef_construction`
+  --> src/index/axis/index_factory.rs:91:39
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                       ^^^^^^^^^^^^^^^ help: try ignoring the field: `ef_construction: _`
+
+warning: unused variable: `ef_search`
+  --> src/index/axis/index_factory.rs:91:56
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                                        ^^^^^^^^^ help: try ignoring the field: `ef_search: _`
+
+warning: unused variable: `max_elements`
+  --> src/index/axis/index_factory.rs:91:67
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                                                   ^^^^^^^^^^^^ help: try ignoring the field: `max_elements: _`
+
+warning: unused variable: `dimension`
+   --> src/query/vector_search/mod.rs:247:32
+    |
+247 |     pub fn optimize_lsh_config(dimension: usize, recall_target: f32) -> SearchAlgorithm {
+    |                                ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `algorithm_name`
+   --> src/services/collection_service.rs:260:13
+    |
+260 |         let algorithm_name = match _proto_config.algorithm {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_algorithm_name`
+
+warning: unused variable: `fs`
+   --> src/storage/assignment_service.rs:305:17
+    |
+305 |             let fs = filesystem.get_filesystem(&location.url)?;
+    |                 ^^ help: if this is intentional, prefix it with an underscore: `_fs`
+
+warning: variable does not need to be mutable
+   --> src/storage/assignment_service.rs:297:13
+    |
+297 |         let mut orphaned_data = Vec::new();
+    |             ----^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:140:13
+    |
+140 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:172:13
+    |
+172 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:202:13
+    |
+202 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `temp_space`
+   --> src/storage/validation.rs:316:19
+    |
+316 |         if let Ok(temp_space) = std::fs::metadata("/tmp") {
+    |                   ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_space`
+
+warning: unused variable: `distance_compute`
+  --> src/storage/engines/sst/unified_search_engine.rs:99:9
+   |
+99 |         distance_compute: &UnifiedDistanceCompute,
+   |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_compute`
+
+warning: unused variable: `quantization_engine`
+   --> src/storage/engines/sst/unified_search_engine.rs:100:9
+    |
+100 |         quantization_engine: Option<&UnifiedQuantizationEngine>,
+    |         ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `context`
+   --> src/storage/engines/sst/unified_search_engine.rs:157:32
+    |
+157 |     async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool {
+    |                                ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `params`
+   --> src/storage/engines/sst/unified_search_engine.rs:157:64
+    |
+157 |     async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool {
+    |                                                                ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `batch_idx`
+   --> src/storage/engines/viper/readers/test_data_generator.rs:169:13
+    |
+169 |         for batch_idx in 0..(config.num_rows / batch_size) {
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_batch_idx`
+
+warning: unused variable: `quant_type`
+   --> src/storage/engines/viper/readers/test_data_generator.rs:395:13
+    |
+395 |         for quant_type in &config.quantization_types {
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quant_type`
+
+warning: unused variable: `metadata`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:252:9
+    |
+252 |         metadata: &ParquetMetaData,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:308:9
+    |
+308 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:341:9
+    |
+341 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:402:9
+    |
+402 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:499:36
+    |
+499 |     fn extract_string_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<String> {
+    |                                    ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:504:36
+    |
+504 |     fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+    |                                    ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `row_idx`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:504:61
+    |
+504 |     fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+    |                                                             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:509:38
+    |
+509 |     fn extract_metadata_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    |                                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `row_idx`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:509:63
+    |
+509 |     fn extract_metadata_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    |                                                               ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: unused variable: `distance_compute`
+   --> src/storage/engines/viper/unified_search_engine.rs:105:9
+    |
+105 |         distance_compute: &UnifiedDistanceCompute,
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_compute`
+
+warning: unused variable: `quantization_engine`
+   --> src/storage/engines/viper/unified_search_engine.rs:106:9
+    |
+106 |         quantization_engine: Option<&UnifiedQuantizationEngine>,
+    |         ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `filter_expr`
+   --> src/storage/engines/viper/unified_search_engine.rs:111:21
+    |
+111 |         if let Some(filter_expr) = &params.filter_expression {
+    |                     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_filter_expr`
+
+warning: unreachable pattern
+   --> src/storage/engines/viper/pipeline.rs:836:13
+    |
+836 |             _ => a.to_string().cmp(&b.to_string()),
+    |             ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> src/storage/engines/viper/pipeline.rs:836:13
+    |
+777 |             (Value::Number(a_num), Value::Number(b_num)) => {
+    |             -------------------------------------------- matches some of the same values
+...
+787 |             (Value::String(a_str), Value::String(b_str)) => a_str.cmp(b_str),
+    |             -------------------------------------------- matches some of the same values
+...
+790 |             (Value::Bool(a_bool), Value::Bool(b_bool)) => a_bool.cmp(b_bool),
+    |             ------------------------------------------ matches some of the same values
+...
+793 |             (Value::Array(a_arr), Value::Array(b_arr)) => {
+    |             ------------------------------------------ matches some of the same values
+...
+836 |             _ => a.to_string().cmp(&b.to_string()),
+    |             ^ ...and 20 other patterns collectively make this unreachable
+    = note: `#[warn(unreachable_patterns)]` on by default
+
+warning: unreachable pattern
+    --> src/storage/engines/viper/pipeline.rs:1390:13
+     |
+1390 |             _ => {} // Handle other strategies as no-op
+     |             ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> src/storage/engines/viper/pipeline.rs:1390:13
+     |
+1320 |             SortingStrategy::ByTimestamp => {
+     |             ---------------------------- matches some of the same values
+...
+1323 |             SortingStrategy::BySimilarity => {
+     |             ----------------------------- matches some of the same values
+...
+1350 |             SortingStrategy::ById => {
+     |             --------------------- matches some of the same values
+...
+1353 |             SortingStrategy::ByMetadata(fields) => {
+     |             ----------------------------------- matches some of the same values
+...
+1390 |             _ => {} // Handle other strategies as no-op
+     |             ^ ...and 4 other patterns collectively make this unreachable
+
+warning: unused variable: `dimension`
+   --> src/storage/engines/viper/quantization.rs:780:13
+    |
+780 |         let dimension = vectors[0].len();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `dimension`
+   --> src/storage/engines/viper/quantization.rs:813:13
+    |
+813 |         let dimension = vectors[0].len();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `level`
+   --> src/storage/engines/viper/quantization.rs:936:9
+    |
+936 |         level: QuantizationLevel,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_level`
+
+warning: unused variable: `sample_size`
+    --> src/storage/engines/viper/quantization.rs:1087:13
+     |
+1087 |         let sample_size = original_vectors.len().min(100); // Sample for evaluation
+     |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_size`
+
+warning: unused variable: `entries_processed`
+   --> src/storage/engines/viper/engine.rs:719:13
+    |
+719 |         let entries_processed = if input_files.is_empty() {
+    |             ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_entries_processed`
+
+warning: unused variable: `options`
+   --> src/storage/persistence/filesystem/atomic_strategy.rs:176:9
+    |
+176 |         options: Option<FileOptions>,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_options`
+
+warning: unused variable: `filesystem`
+   --> src/storage/persistence/filesystem/atomic_strategy.rs:324:40
+    |
+324 |     async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
+    |                                        ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_filesystem`
+
+warning: unused variable: `container`
+   --> src/storage/persistence/filesystem/azure.rs:594:14
+    |
+594 |         let (container, prefix) = self.parse_azure_url(path)?;
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_container`
+
+warning: unused variable: `prefix`
+   --> src/storage/persistence/filesystem/azure.rs:594:25
+    |
+594 |         let (container, prefix) = self.parse_azure_url(path)?;
+    |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_prefix`
+
+warning: unused variable: `key_json`
+   --> src/storage/persistence/filesystem/gcs.rs:755:13
+    |
+755 |         let key_json: serde_json::Value = serde_json::from_str(&key_data).map_err(|e| {
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_key_json`
+
+warning: unused variable: `key_json`
+   --> src/storage/persistence/filesystem/gcs.rs:791:13
+    |
+791 |         let key_json: serde_json::Value = serde_json::from_str(&self.key_json).map_err(|e| {
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_key_json`
+
+warning: unused variable: `path_suffix`
+   --> src/storage/persistence/filesystem/hdfs.rs:555:13
+    |
+555 |         let path_suffix = file_status["pathSuffix"].as_str().unwrap_or("");
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_path_suffix`
+
+warning: unused variable: `access_time`
+   --> src/storage/persistence/filesystem/hdfs.rs:561:13
+    |
+561 |         let access_time = file_status["accessTime"]
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_access_time`
+
+warning: unused variable: `method`
+   --> src/storage/persistence/filesystem/s3.rs:441:9
+    |
+441 |         method: &str,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_method`
+
+warning: unused variable: `bucket`
+   --> src/storage/persistence/filesystem/s3.rs:442:9
+    |
+442 |         bucket: &str,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_bucket`
+
+warning: unused variable: `key`
+   --> src/storage/persistence/filesystem/s3.rs:443:9
+    |
+443 |         key: &str,
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `response_data`
+   --> src/storage/persistence/filesystem/s3.rs:503:13
+    |
+503 |         let response_data = self.client.get_object_range(&bucket, &key, &credentials, Some(&range_header)).await?;
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response_data`
+
+warning: unused variable: `bucket`
+   --> src/storage/persistence/filesystem/s3.rs:656:14
+    |
+656 |         let (bucket, prefix) = self.parse_s3_url(path)?;
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_bucket`
+
+warning: unused variable: `prefix`
+   --> src/storage/persistence/filesystem/s3.rs:656:22
+    |
+656 |         let (bucket, prefix) = self.parse_s3_url(path)?;
+    |                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_prefix`
+
+warning: unused variable: `credentials`
+   --> src/storage/persistence/filesystem/s3.rs:657:13
+    |
+657 |         let credentials = self.credential_provider.get_credentials().await?;
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_credentials`
+
+warning: unused variable: `from_bucket`
+   --> src/storage/persistence/filesystem/s3.rs:675:14
+    |
+675 |         let (from_bucket, from_key) = self.parse_s3_url(from)?;
+    |              ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_bucket`
+
+warning: unused variable: `from_key`
+   --> src/storage/persistence/filesystem/s3.rs:675:27
+    |
+675 |         let (from_bucket, from_key) = self.parse_s3_url(from)?;
+    |                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_key`
+
+warning: unused variable: `to_bucket`
+   --> src/storage/persistence/filesystem/s3.rs:676:14
+    |
+676 |         let (to_bucket, to_key) = self.parse_s3_url(to)?;
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_to_bucket`
+
+warning: unused variable: `to_key`
+   --> src/storage/persistence/filesystem/s3.rs:676:25
+    |
+676 |         let (to_bucket, to_key) = self.parse_s3_url(to)?;
+    |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_to_key`
+
+warning: unused variable: `credentials`
+   --> src/storage/persistence/filesystem/s3.rs:677:13
+    |
+677 |         let credentials = self.credential_provider.get_credentials().await?;
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_credentials`
+
+warning: unused variable: `path`
+   --> src/storage/persistence/filesystem/mod.rs:325:31
+    |
+325 |     async fn sync_file(&self, path: &str) -> FsResult<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:144:17
+    |
+144 |             let collection_id = {
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `vectors`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:496:42
+    |
+496 |     fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    |                                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_vectors`
+
+warning: unused variable: `data`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:503:45
+    |
+503 |     fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+    |                                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: value assigned to `counter` is never read
+   --> src/storage/persistence/write_buffer/compact_batch_id.rs:104:17
+    |
+104 |         let mut counter = 0;
+    |                 ^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:219:9
+    |
+219 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `vector_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:220:9
+    |
+220 |         vector_id: &crate::core::VectorId,
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_vector_id`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:237:9
+    |
+237 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `query_vector`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:238:9
+    |
+238 |         query_vector: &[f32],
+    |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_query_vector`
+
+warning: unused variable: `k`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:239:9
+    |
+239 |         k: usize,
+    |         ^ help: if this is intentional, prefix it with an underscore: `_k`
+
+warning: unused variable: `distance_metric`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:240:9
+    |
+240 |         distance_metric: Option<crate::compute::distance::DistanceMetric>,
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_metric`
+
+warning: unused variable: `engine`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:244:21
+    |
+244 |         if let Some(engine) = engine.as_ref() {
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_engine`
+
+warning: variable `total_vectors` is assigned to, but never used
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:290:17
+    |
+290 |         let mut total_vectors = 0;
+    |                 ^^^^^^^^^^^^^
+    |
+    = note: consider using `_total_vectors` instead
+
+warning: variable `total_bytes` is assigned to, but never used
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:291:17
+    |
+291 |         let mut total_bytes = 0u64;
+    |                 ^^^^^^^^^^^
+    |
+    = note: consider using `_total_bytes` instead
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:348:40
+    |
+348 |     async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
+    |                                        ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `engine`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:351:21
+    |
+351 |         if let Some(engine) = engine.as_ref() {
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_engine`
+
+warning: variable does not need to be mutable
+   --> src/storage/metadata/backends/mod.rs:418:13
+    |
+418 |         let mut backends = vec![MetadataBackendType::Disk];
+    |             ----^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+Some errors have detailed explanations: E0308, E0599, E0609.
+For more information about an error, try `rustc --explain E0308`.
+warning: `proximadb` (lib) generated 104 warnings
+error: could not compile `proximadb` (lib) due to 8 previous errors; 104 warnings emitted

@@ -13,11 +13,11 @@ Quick reference guide for using ProximaDB's unified bloom filter architecture.
 
 == Configuration Templates
 
-=== SST SSTable Configuration
+=== SST Configuration
 
 [source,toml]
 ----
-[storage.lsm.bloom_filter]
+[storage.sst.bloom_filter]
 enabled = true
 strategy = "ByteAligned"
 bits_per_key = 10              # 10 bits = ~1% false positive rate

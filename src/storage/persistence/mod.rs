@@ -5,10 +5,10 @@
 
 pub mod disk_manager;
 pub mod filesystem;
-pub mod wal;
+pub mod write_buffer;
 
 // Re-export main persistence types
 pub use disk_manager::DiskManager;
 pub use filesystem::{FilesystemConfig, FilesystemFactory};
-pub use wal::{WalConfig, WalManager, WalStrategyType};
-// WalFactory removed - use WalBatchFactory for modern implementations
+pub use write_buffer::{WriteBufferConfig, WriteBufferManager, WriteBufferStrategyType};
+// WalFactory removed - use WriteBufferBatchFactory for modern implementations

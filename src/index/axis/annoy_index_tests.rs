@@ -146,7 +146,7 @@ mod tests {
             
             let metadata = vec![MetadataItem {
                 key: "category".to_string(),
-                value: (i % 2).to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i % 2).to_string())),
             }];
             
             let record = create_test_record(format!("vec_{}", i), vec, metadata);
@@ -159,7 +159,7 @@ mod tests {
         // Search with filter
         let query = vec![1.0, 0.0, 0.0, 0.0];
         let filter = |record: &VectorRecord| -> bool {
-            record.metadata.iter().any(|item| item.key == "category" && item.value == "1")
+            record.metadata.iter().any(|item| item.key == "category" && matches!(&item.value, Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) if s == "1"))
         };
 
         let results = index.search(&query, 5, Some(&filter)).await.unwrap();

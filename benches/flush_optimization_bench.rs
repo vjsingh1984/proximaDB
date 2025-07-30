@@ -9,10 +9,10 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use proximadb::core::VectorRecord;
-use proximadb::storage::persistence::wal::flush_result_optimization::{
+use proximadb::storage::persistence::write_buffer::flush_result_optimization::{
     OptimizedFlushCoordinator, BatchFlushProcessor, VectorMemoryPool,
 };
-use proximadb::storage::persistence::wal::enhanced_flush_result::EnhancedFlushResult;
+use proximadb::storage::persistence::write_buffer::enhanced_flush_result::EnhancedFlushResult;
 use proximadb::storage::traits::FlushResult;
 use std::sync::Arc;
 use tokio::runtime::Runtime;

@@ -21,4 +21,4 @@ pub mod tests {
 
 pub use collection_service::CollectionService;
 pub use direct_vector_service::DirectVectorService;
-pub use streaming_search::{StreamingSearchService, StreamingSearchConfig, StreamingSearchResult};
+pub use streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};

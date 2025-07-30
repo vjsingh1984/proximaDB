@@ -28,7 +28,7 @@ mmap_enabled = true
 cache_size_mb = 256
 bloom_filter_bits = 10
 
-[storage.lsm_config]
+[storage.sst_config]
 memtable_size_mb = 8
 memory_flush_size_bytes = 2097152  # 2MB
 compression = "snappy"

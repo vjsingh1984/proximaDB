@@ -17,7 +17,7 @@ from proximadb.models import (
     DistanceMetric,
     QuantizationConfig,
     QuantizationType,
-    SearchOptimizationHints
+    SearchOptimization as SearchOptimizationHints
 )
 from proximadb import proximadb_pb2
 

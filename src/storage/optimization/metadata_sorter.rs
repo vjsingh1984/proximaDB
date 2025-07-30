@@ -141,7 +141,27 @@ impl MetadataSorter {
         // Find the metadata item
         for item in &record.metadata {
             if item.key == key {
-                return SortableValue::from_string(&item.value);
+                match &item.value {
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        return SortableValue::from_string(s);
+                    },
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        // Check if it's an integer
+                        if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                            return SortableValue::Number(*n as i64);
+                        } else {
+                            // Store floats as string for consistent ordering
+                            return SortableValue::Float(n.to_string());
+                        }
+                    },
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        // Convert bool to string for sorting
+                        return SortableValue::String(b.to_string());
+                    },
+                    None => {
+                        return SortableValue::Null;
+                    },
+                }
             }
         }
         
@@ -315,11 +335,11 @@ mod tests {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: category.to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(category.to_string())),
                 },
                 MetadataItem {
                     key: "priority".to_string(),
-                    value: priority.to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(priority.to_string())),
                 },
             ],
             timestamp: chrono::Utc::now().timestamp(),

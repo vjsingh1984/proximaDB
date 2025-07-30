@@ -20,18 +20,22 @@ pub mod single_index_tests;
 pub mod unified_index_tests;
 pub mod metadata_indexes_tests;
 pub mod metadata_backend_tests;
-pub mod test_wal_config_simple;
+pub mod test_write_buffer_config_simple;
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
-// LSM tests with consistent configuration
-pub mod lsm_test_config;
-pub mod lsm_core_tests;
-pub mod lsm_atomic_operations_test;
-pub mod lsm_sstable_format_test;
-pub mod lsm_flush_test;
+// SST tests with consistent configuration
+pub mod sst_test_config;
+pub mod sst_core_tests;
+pub mod sst_atomic_operations_test;
+pub mod sst_sstable_format_test;
+pub mod sst_flush_test;
 
 // Phase 1 optimization tests
-pub mod optimized_bloom_filter_test;
+// pub mod optimized_bloom_filter_test; // Module removed during bloom filter consolidation
 
 // Phase 2 optimization tests
 pub mod unified_cache_test;
 // pub mod lockfree_test; // Removed - lockfree is now integrated in main implementation
+
+// Coverage improvement tests
+pub mod storage_assignment_tests;
+pub mod assignment_service_advanced_tests;

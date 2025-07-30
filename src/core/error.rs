@@ -29,8 +29,8 @@ pub enum VectorDBError {
 
 #[derive(Error, Debug)]
 pub enum StorageError {
-    #[error("LSM tree error: {0}")]
-    LsmTree(String),
+    #[error("SST storage error: {0}")]
+    SstStorage(String),
 
     #[error("MMAP error: {0}")]
     Mmap(String),

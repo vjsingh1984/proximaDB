@@ -84,7 +84,7 @@ Performance depends on hardware, dataset size, and configuration. Actual results
 
 The ProximaDB architecture must deliver:
 
-image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
@@ -1364,6 +1364,94 @@ services:
 - Performance benchmarking tools
 - One-command startup: `docker run -p 8080:8080 proximadb/demo`
 
+== Known Issues and Future Enhancements
+
+=== Metadata Type System Enhancement ✅ COMPLETED
+[IMPORTANT]
+====
+**Status**: ✅ Implemented in July 2025
+
+**Issue**: Current metadata implementation stores all values as strings in the proto definition, 
+but the system attempts type conversion for JSON compatibility, leading to inconsistencies.
+
+**Solution Implemented**: Option 1 - Enhanced proto with type information
+- Proto definition updated to use `oneof` for type-safe value storage
+- Supports string, number, and boolean types natively
+- Python SDK updated with type-aware metadata utilities
+- All tests updated and passing with typed metadata
+
+**Implementation Details**:
+```proto
+message MetadataItem {
+  string key = 1;
+  oneof value {
+    string string_value = 2;
+    double number_value = 3;
+    bool bool_value = 4;
+  }
+```
+
+**Benefits**:
+- Type safety in proto messages
+- No more string-to-type conversion ambiguity
+- Proper comparison operators work as expected
+- Backward compatible with proper type handling
+====
+
+== Architecture Optimization Opportunities
+
+=== Identified Redundancies (TODO: Refactor)
+
+==== Distance Calculation Duplication
+- **Issue**: Multiple implementations of distance calculations in `StorageEngine` (cosine, euclidean, manhattan, dot product)
+- **Current**: Local implementations in storage engine
+- **Solution**: Use unified implementation from `compute::unified_distance` module
+- **Benefits**: Single source of truth, hardware acceleration support, reduced code duplication
+
+==== Search Result Types Consolidation
+- **Issue**: Multiple similar result structures across modules
+- **Current**: Different result types in various search components
+- **Solution**: Consolidate to single `SearchResult` type
+- **Benefits**: Simplified API, easier maintenance, consistent behavior
+
+==== Metadata Handling Separation
+- **Issue**: Some duplication between collection service and storage engine metadata handling
+- **Current**: Both services handle metadata in overlapping ways
+- **Solution**: Clear separation of concerns - collection service for schema, storage for data
+- **Benefits**: Cleaner architecture, reduced coupling
+
+=== Performance Optimization Opportunities (TODO: Implement)
+
+==== Memory Pool for Vector Operations
+- **Opportunity**: Implement object pooling for vector allocations
+- **Current**: New allocations for each vector operation
+- **Solution**: Pre-allocated vector pools with reuse
+- **Benefits**: Reduced GC pressure, improved throughput in high-load scenarios
+
+==== Query Plan Caching
+- **Opportunity**: Cache SQL query execution plans
+- **Current**: Re-parsing and planning for each query
+- **Solution**: LRU cache for prepared statements and metadata filter compilation
+- **Benefits**: Faster query execution for repeated patterns
+
+==== Batch Operation Enhancements
+- **Opportunity**: More aggressive batching in write buffer
+- **Current**: Individual operation processing
+- **Solution**: Coalesce operations, vectorized distance calculations
+- **Benefits**: Better throughput, reduced syscalls
+
+==== Index Warm-up and Background Optimization
+- **Opportunity**: Pre-load frequently accessed indexes
+- **Current**: Cold start for index access
+- **Solution**: Background index optimization, hot index caching
+- **Benefits**: Improved query latency, better resource utilization
+
+==== Lock-Free Extensions
+- **Opportunity**: Extend lock-free patterns to more components
+- **Current**: DashMap used in critical paths only
+- **Solution**: Replace more RwLock usage with lock-free structures
+- **Benefits**: Better concurrent performance, reduced contention
+
 == Future Roadmap
 
 === Next Quarter (Q1 2025)
@@ -1371,6 +1459,7 @@ services:
 - **Integration Testing**: Comprehensive test suite with real server testing
 - **Performance Optimization**: Fix remaining ~380 compiler warnings
 - **Documentation**: Complete API documentation and examples
+- **Architecture Refactoring**: Address identified redundancies and optimizations
 
 === Future Considerations (Beyond 2025)
 - **Distributed Architecture**: Re-enable Raft consensus if demand exists

@@ -3,9 +3,9 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use proximadb::core::LsmConfig;
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
-use proximadb::storage::engines::lsm::LsmRecord;
+use proximadb::core::SstConfig;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
+use proximadb::storage::engines::sst::SstRecord;
 
 /// Unit test for LSM compaction expired record deletion logic
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     
     let test_records = vec![
         // Active record (no expiry)
-        LsmRecord {
+        SstRecord {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -32,7 +32,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Expired record (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -47,7 +47,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Active record with future expiry
-        LsmRecord {
+        SstRecord {
             id: "future_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -62,7 +62,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Old tombstone (should be removed)
-        LsmRecord {
+        SstRecord {
             id: "old_tombstone".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![],
@@ -105,7 +105,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     };
     
     // Create config and perform compaction
-    let config = LsmConfig::default();
+    let config = SstConfig::default();
     let stats = CompactionManager::perform_compaction(&task, &config).await?;
     
     // Verify statistics
@@ -139,7 +139,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

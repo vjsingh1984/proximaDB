@@ -437,7 +437,7 @@ async fn test_metadata_backend_deletion() {
                 name: format!("delete_collection_{}", i),
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: ProtoStorageEngine::Lsm as i32,
+                storage_engine: ProtoStorageEngine::Sst as i32,
                 primary_indexing_algorithm: IndexingAlgorithm::Flat as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],

@@ -19,7 +19,6 @@ pub mod atomic;
 
 // Core modules
 pub mod engine;
-pub mod mmap;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
@@ -47,7 +46,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::{lsm::LsmTree, viper::ViperEngine};
+pub use engines::{sst::SstStorage, viper::ViperEngine};
 
 // Persistence exports
 pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
@@ -66,10 +65,10 @@ pub use unified_cache::{
 
 // Storage engine exports
 pub use engine::StorageEngine;
-// WAL system exports
+// Write Buffer system exports
 use crate::core::StorageError;
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
-pub use persistence::wal::{BatchId, WalConfig, WalManager, WalOperation};
+pub use persistence::write_buffer::{BatchId, WriteBufferConfig, WriteBufferManager, WriteBufferOperation};
 
 // ResultProcessor has naming conflicts, import explicitly when needed
 

@@ -119,13 +119,13 @@ mod assignment_service_tests {
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(RoundRobinAssignmentService::new());
         
-        let wal_urls = vec![format!("file://{}", base_path)];
+        let write_buffer_urls = vec![format!("file://{}", base_path)];
         let storage_urls = vec![format!("file://{}", base_path)];
         
         // Discover WAL collections
         let wal_count = AssignmentDiscovery::discover_and_record_assignments(
             StorageComponentType::Wal,
-            &wal_urls,
+            &write_buffer_urls,
             &filesystem,
             &assignment_service,
         ).await.unwrap();

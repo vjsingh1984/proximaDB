@@ -53,11 +53,11 @@ fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> Vecto
         metadata: vec![
             proximadb::MetadataItem {
                 key: "category".to_string(),
-                value: "test".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
             },
             proximadb::MetadataItem {
                 key: "score".to_string(),
-                value: "0.95".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("0.95".to_string())),
             },
         ],
         created_at: Utc::now().timestamp_micros(),

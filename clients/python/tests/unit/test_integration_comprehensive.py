@@ -41,18 +41,20 @@ class TestComprehensiveIntegration:
         
         # Prepare data for insertion
         vector_ids = [f"corpus_vec_{i:05d}" for i in range(test_size)]
-        vectors = [emb.tolist() for emb in test_embeddings]
+        # test_embeddings is already a list of lists, no need to call tolist()
+        vectors = test_embeddings
         metadata_list = []
         
         for i, doc in enumerate(test_corpus):
             metadata = {
-                "category": doc["category"],
-                "author": doc["author"],
-                "doc_type": doc["doc_type"],
-                "year": doc["year"],
-                "length": doc["length"],
+                "category": doc.get("category", "unknown"),
+                "author": doc.get("author", f"Author_{i}"),
+                "doc_type": doc.get("doc_type", "article"),
+                "year": doc.get("year", 2024),
+                "length": doc.get("length", len(doc.get("text", ""))),
                 "title": doc.get("title", f"Document {i}"),
-                "source": "corpus_test"
+                "source": "corpus_test",
+                "importance": doc.get("importance", 5)
             }
             metadata_list.append(metadata)
         
@@ -96,8 +98,8 @@ class TestComprehensiveIntegration:
         results = self.client.search(
             self.collection_name,
             [0.1] * 384,  # dummy vector
-            k=1,
-            filter={"id": test_id}
+            top_k=1,
+            metadata_filter={"id": test_id}
         )
         search_time = (time.time() - start_time) * 1000
         print(f"   ID search: {search_time:.2f}ms")
@@ -107,21 +109,21 @@ class TestComprehensiveIntegration:
         results = self.client.search(
             self.collection_name,
             [0.1] * 384,  # dummy vector
-            k=10,
-            filter={"category": "AI"}
+            top_k=10,
+            metadata_filter={"category": "AI"}
         )
         search_time = (time.time() - start_time) * 1000
         print(f"   Metadata filter: {search_time:.2f}ms")
         
         # 3. Test similarity search
         query_text = "machine learning algorithms"
-        query_embedding = bert_service.embed_texts([query_text])[0]
+        query_embedding = bert_service.encode([query_text])[0]
         
         start_time = time.time()
         results = self.client.search(
             self.collection_name,
             query_embedding.tolist(),
-            k=10
+            top_k=10
         )
         search_time = (time.time() - start_time) * 1000
         print(f"   Similarity search: {search_time:.2f}ms")
@@ -131,8 +133,8 @@ class TestComprehensiveIntegration:
         results = self.client.search(
             self.collection_name,
             query_embedding.tolist(),
-            k=10,
-            filter={"category": "AI"}
+            top_k=10,
+            metadata_filter={"category": "AI"}
         )
         search_time = (time.time() - start_time) * 1000
         print(f"   Hybrid search: {search_time:.2f}ms")
@@ -173,7 +175,7 @@ class TestComprehensiveIntegration:
             results = self.client.search(
                 self.collection_name,
                 query_vector,
-                k=5
+                top_k=5
             )
             search_time = (time.time() - start_time) * 1000
             search_times.append(search_time)
@@ -251,8 +253,8 @@ class TestComprehensiveIntegration:
             results = self.client.search(
                 self.collection_name,
                 [0.1] * 384,  # dummy vector
-                k=5,
-                filter=filter_dict
+                top_k=5,
+                metadata_filter=filter_dict
             )
             # Just verify the search executed without error
             assert results is not None

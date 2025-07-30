@@ -13,7 +13,7 @@ mod tests {
             vector,
             metadata: metadata.into_iter().map(|(k, v)| MetadataItem {
                 key: k.to_string(),
-                value: v.to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
             }).collect(),
             timestamp: 1000,
             created_at: 1000,

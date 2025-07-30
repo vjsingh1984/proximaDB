@@ -125,14 +125,20 @@ impl SqlExecutor {
             None
         };
         
+        // Convert metadata filter to SearchParams
+        let search_params_obj = if let Some(filter) = metadata_filter {
+            Some(crate::core::search::SearchParams::default().with_simple_filters(filter))
+        } else {
+            None
+        };
+        
         // Execute search
-        let search_results = self.vector_service.search_vectors_unified(
+        let search_results = self.vector_service.search_vectors(
             &plan.collection,
             &search_params.query_vector,
             search_params.top_k,
             metric,
-            None,  // search_params
-            metadata_filter.as_ref(),
+            search_params_obj.as_ref(),
             true,  // include_vectors
             true,  // include_metadata
         ).await?;

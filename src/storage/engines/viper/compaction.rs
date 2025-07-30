@@ -83,10 +83,13 @@ impl CompactionManager {
         
         // Get storage assignment for the collection
         let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = assignment_service
-            .get_assignment(collection_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", collection_id))?;
+        let storage_assignment = match assignment_service.get_assignment(collection_id).await {
+            Some(assignment) => assignment,
+            None => {
+                debug!("🔍 No storage assignment found for collection {}, skipping compaction", collection_id);
+                return Ok(vec![]); // Return empty list instead of failing
+            }
+        };
         
         debug!("Storage assignment data_url: {}", storage_assignment.data_url);
         info!("🔍 Looking for parquet files in data_url: {}", storage_assignment.data_url);
@@ -208,10 +211,20 @@ impl CompactionManager {
         
         // Determine base storage directory from storage assignment
         let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = assignment_service
-            .get_assignment(collection_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", collection_id))?;
+        let storage_assignment = match assignment_service.get_assignment(collection_id).await {
+            Some(assignment) => assignment,
+            None => {
+                info!("🔍 No storage assignment found for collection {}, compaction not needed", collection_id);
+                return Ok(ViperCompactionResult {
+                    input_files: vec![],
+                    output_files: vec![],
+                    entries_processed: 0,
+                    entries_removed: 0,
+                    bytes_read: 0,
+                    bytes_written: 0,
+                });
+            }
+        };
         
         // The output file should go in the same directory as the input files
         let base_storage_url = &storage_assignment.data_url;

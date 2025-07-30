@@ -1153,22 +1153,8 @@ class ProximaDBClient:
                     
                     # Set metadata (repeated MetadataItem for zero-copy efficiency)
                     if vec.get('metadata') and isinstance(vec['metadata'], dict):
-                        for key, value in vec['metadata'].items():
-                            metadata_item = pb2.MetadataItem()
-                            metadata_item.key = str(key)
-                            # Convert all values to string for consistent handling
-                            if isinstance(value, str):
-                                metadata_item.value = value
-                            elif isinstance(value, (int, float, bool)):
-                                metadata_item.value = str(value)
-                            elif value is None:
-                                metadata_item.value = ""
-                            else:
-                                # Convert complex types to JSON string
-                                import json
-                                metadata_item.value = json.dumps(value)
-                            
-                            proto_vector.metadata.append(metadata_item)
+                        from ..metadata_utils import dict_to_proto_metadata
+                        proto_vector.metadata.extend(dict_to_proto_metadata(vec['metadata']))
                     
                     # Set timestamp (optional, microseconds since epoch)
                     timestamp = vec.get('timestamp')

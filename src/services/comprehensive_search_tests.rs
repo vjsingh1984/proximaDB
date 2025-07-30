@@ -34,9 +34,9 @@ mod tests {
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
     use crate::services::direct_vector_service::DirectVectorService;
     use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig};
-    use crate::storage::engines::lsm::unified_search_engine::{LsmUnifiedSearchEngine, LsmSearchConfig};
+    use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
     use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
-    use crate::storage::engines::lsm::readers::unified_sstable_reader::UnifiedSstableReader;
+    use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
     use crate::compute::unified_quantization::UnifiedQuantizationEngine;
 
     /// Test data structure for comprehensive testing
@@ -423,7 +423,6 @@ mod tests {
                 top_k: Some(test_case.top_k),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
-                filters: None,
                 accuracy_threshold: Some(0.95),
                 include_expired: Some(false),
                 timeout_ms: Some(5000),
@@ -481,7 +480,6 @@ mod tests {
                 top_k: Some(test_case.top_k),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
-                filters: None,
                 accuracy_threshold: Some(0.95),
                 include_expired: Some(false),
                 timeout_ms: Some(5000),

@@ -22,15 +22,21 @@ mod tests {
         // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
         let metadata_items: Vec<proximadb::proto::proximadb::MetadataItem> = metadata.iter()
             .map(|(key, value)| {
-                let string_value = match value {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    _ => value.to_string(),
+                let metadata_value = match value {
+                    serde_json::Value::String(s) => Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                    serde_json::Value::Number(n) => {
+                        if let Some(f) = n.as_f64() {
+                            Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(f))
+                        } else {
+                            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                        }
+                    },
+                    serde_json::Value::Bool(b) => Some(proximadb::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                    _ => Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
                 };
                 proximadb::proto::proximadb::MetadataItem {
                     key: key.clone(),
-                    value: string_value,
+                    value: metadata_value,
                 }
             })
             .collect();

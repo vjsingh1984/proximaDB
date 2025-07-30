@@ -329,21 +329,21 @@ impl GcsClient {
             }
             Ok(data)
         } else if status.as_u16() == 404 {
-            tracing::warn!("🔍 GCS object not found: gcs://{}/{}", bucket, object_path);
+            tracing::warn!("🔍 GCS object not found: gs://{}/{}", bucket, object_path);
             Err(FilesystemError::NotFound(format!(
-                "gcs://{}/{}",
+                "gs://{}/{}",
                 bucket, object_path
             )))
         } else if status.as_u16() == 416 {
             // Range not satisfiable
             Err(FilesystemError::Config(format!(
-                "Invalid range request for gcs://{}/{}",
+                "Invalid range request for gs://{}/{}",
                 bucket, object_path
             )))
         } else {
             tracing::error!("❌ GCS GET error: {}", status);
             Err(FilesystemError::Network(format!(
-                "GCS error: {} for gcs://{}/{}",
+                "GCS error: {} for gs://{}/{}",
                 status, bucket, object_path
             )))
         }
@@ -588,7 +588,7 @@ impl FileSystem for GcsFileSystem {
             tracing::debug!("✅ GCS metadata retrieved: {} bytes", size);
 
             Ok(FileMetadata {
-                path: format!("gcs://{}/{}", bucket, object_path),
+                path: format!("gs://{}/{}", bucket, object_path),
                 size,
                 created: None,       // Would need to parse timeCreated field
                 modified: None,      // Would need to parse updated field
@@ -599,12 +599,12 @@ impl FileSystem for GcsFileSystem {
             })
         } else if response.status().as_u16() == 404 {
             tracing::warn!(
-                "🔍 GCS metadata not found: gcs://{}/{}",
+                "🔍 GCS metadata not found: gs://{}/{}",
                 bucket,
                 object_path
             );
             Err(FilesystemError::NotFound(format!(
-                "gcs://{}/{}",
+                "gs://{}/{}",
                 bucket, object_path
             )))
         } else {
@@ -665,6 +665,29 @@ impl FileSystem for GcsFileSystem {
     async fn sync(&self) -> FsResult<()> {
         tracing::trace!("🔄 GCS sync (no-op)");
         // GCS operations are immediately durable
+        Ok(())
+    }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // GCS doesn't support or need file-level sync
+        // When using UnifiedAtomicCoordinator pattern:
+        // 1. Data is written to staging location (possibly local)
+        // 2. Move operation from staging to final location is atomic
+        // 3. Once move completes, data is durable in GCS
+        
+        tracing::debug!("sync_file called on GCS path {} - no-op as GCS guarantees durability after atomic move", path);
+        
+        // Note: Google Cloud Storage provides durability guarantees:
+        // - 99.999999999% (11 9's) annual durability
+        // - Data is automatically replicated across multiple regions/zones
+        // - Strong global consistency for object operations
+        // 
+        // The atomic move operation ensures:
+        // 1. Data is fully written before becoming visible
+        // 2. Move operation is atomic - either succeeds or fails completely
+        // 3. No partial writes or corrupted data visible to readers
+        // 4. Immediate consistency after successful write/move
+        
         Ok(())
     }
 

@@ -23,7 +23,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 /// Storage component type for assignment tracking
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum StorageComponentType {
-    /// Write-Ahead Log
+    /// Write Buffer
     Wal,
     /// Vector storage (engine-agnostic: works for VIPER, LSM, or any storage engine)
     Storage,
@@ -49,7 +49,7 @@ pub struct UnifiedAssignment {
     /// Base storage URL
     pub location_url: String,
     /// Derived WAL URL: {location_url}/{collection_id}/wal
-    pub wal_url: String,
+    pub write_buffer_url: String,
     /// Derived data URL: {location_url}/{collection_id}/data
     pub data_url: String,
     /// Derived index URL: {location_url}/{collection_id}/index
@@ -65,7 +65,7 @@ impl UnifiedAssignment {
         Self {
             location_index,
             location_url: location_url.to_string(),
-            wal_url: format!("{}/{}/wal", base_url, collection_id),
+            write_buffer_url: format!("{}/{}/write_buffer", base_url, collection_id),
             data_url: format!("{}/{}/data", base_url, collection_id),
             index_url: format!("{}/{}/index", base_url, collection_id),
             assigned_at: Utc::now(),
@@ -153,6 +153,8 @@ pub struct OrphanedData {
 pub struct HashBasedAssignmentService {
     /// Assignment cache: collection_id -> assignment
     assignments: Arc<RwLock<HashMap<String, UnifiedAssignment>>>,
+    /// Round-robin counter
+    round_robin_counter: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl HashBasedAssignmentService {
@@ -160,6 +162,7 @@ impl HashBasedAssignmentService {
     pub fn new() -> Self {
         Self {
             assignments: Arc::new(RwLock::new(HashMap::new())),
+            round_robin_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -194,6 +197,11 @@ impl AssignmentService for HashBasedAssignmentService {
 
         // Determine location index based on strategy
         let location_index = match strategy {
+            "round-robin" => {
+                // Get next index and increment counter atomically
+                let current = self.round_robin_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                current % storage_locations.len()
+            }
             "hash" => {
                 let hash = self.hash_collection_id(collection_id);
                 hash % storage_locations.len()
@@ -403,7 +411,7 @@ pub struct AssignmentDiscovery;
 impl AssignmentDiscovery {
     /// Discover assignments from ALL component types concurrently using 3 threads
     pub async fn discover_all_components_concurrent(
-        wal_urls: &[String],
+        write_buffer_urls: &[String],
         storage_urls: &[String],
         index_urls: &[String],
         filesystem: &Arc<FilesystemFactory>,
@@ -422,7 +430,7 @@ impl AssignmentDiscovery {
         let assignment_service_index = Arc::clone(assignment_service);
 
         // Clone URL vectors for tasks
-        let wal_urls = wal_urls.to_vec();
+        let write_buffer_urls = write_buffer_urls.to_vec();
         let storage_urls = storage_urls.to_vec();
         let index_urls = index_urls.to_vec();
 
@@ -432,7 +440,7 @@ impl AssignmentDiscovery {
         join_set.spawn(async move {
             Self::discover_and_record_assignments(
                 StorageComponentType::Wal,
-                &wal_urls,
+                &write_buffer_urls,
                 &filesystem_wal,
                 &assignment_service_wal,
             )
@@ -794,13 +802,13 @@ mod tests {
         let assignment_service: Arc<dyn AssignmentService> =
             Arc::new(HashBasedAssignmentService::new());
 
-        let wal_urls = vec![format!("file://{}", base_path)];
+        let write_buffer_urls = vec![format!("file://{}", base_path)];
         let storage_urls = vec![format!("file://{}", base_path)];
 
         // Discover WAL collections
         let wal_count = AssignmentDiscovery::discover_and_record_assignments(
             StorageComponentType::Wal,
-            &wal_urls,
+            &write_buffer_urls,
             &filesystem,
             &assignment_service,
         )

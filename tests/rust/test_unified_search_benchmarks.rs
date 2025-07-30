@@ -18,7 +18,7 @@ use proximadb::core::SearchResult;
 use proximadb::services::direct_vector_service::DirectVectorService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::lsm::LsmTree;
+use proximadb::storage::engines::sst::LsmTree;
 use proximadb::storage::memtable::implementations::GlobalPartitionedMemtable;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
@@ -197,7 +197,7 @@ impl UnifiedSearchBenchmark {
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: (i % 100).to_string(),
+                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 100).to_string())),
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp_millis(),

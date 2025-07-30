@@ -206,4 +206,21 @@ pub struct SearchResultSet {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-// BaseResult trait implementation removed - not needed for unified architecture
+// Manual trait implementations for ordering (HashMap doesn't implement Ord)
+impl Eq for SearchResult {}
+
+impl PartialOrd for SearchResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SearchResult {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Order by score in REVERSE order (higher scores first)
+        // For distance metrics, lower is better, so this gives us better results first
+        other.score.partial_cmp(&self.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| self.id.cmp(&other.id)) // Tie-break by ID for consistency
+    }
+}

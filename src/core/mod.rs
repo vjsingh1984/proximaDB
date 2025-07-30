@@ -33,11 +33,11 @@ pub use avro_unified::{
     CollectionResponse, CompactionConfig, CompactionStrategy, CompressionAlgorithm,
     DistanceMetric, FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm,
     MetadataFilter, MetricsResponse, NodeId, OperationResponse, SearchContext,
-    SearchDebugInfo, SearchMetadata, SearchResultsBinary, SearchStrategy,
+    SearchDebugInfo, SearchMetadata, SearchStrategy,
     ServiceMetrics,
     StorageEngine, String, Vector, VectorId, VectorInsertRequest, VectorInsertResponse,
     VectorOperation, VectorOperationMetrics, VectorSearchRequest, VectorSearchResponse,
-    WalMetrics,
+    WriteBufferMetrics,
 };
 
 // PROTO-FIRST ARCHITECTURE: Direct proto usage for zero overhead

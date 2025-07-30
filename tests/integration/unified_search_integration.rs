@@ -30,15 +30,15 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
         let metadata = vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: format!("cat_{}", i % 3),
+                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 3))),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: (i as f64 / count as f64).to_string(),
+                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i as f64 / count as f64).to_string())),
             },
             MetadataItem {
                 key: "active".to_string(),
-                value: (i % 2 == 0).to_string(),
+                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
             },
         ];
         
@@ -175,11 +175,11 @@ async fn test_search_params_functionality() {
         query_vectors: Some(vec![query_vectors[1].clone()]),
         top_k: Some(20),
         distance_metric: Some(DistanceMetric::Manhattan),
-        filters: Some(filters.clone()),
         ..Default::default()
-    };
+    }.with_simple_filters(filters.clone());
     
-    assert_eq!(filtered_search.filters.as_ref().unwrap().len(), 2);
+    // Can't assert on filters directly anymore, but we can verify the filter_expression
+    assert!(filtered_search.filter_expression.is_some());
     assert_eq!(filtered_search.distance_metric, Some(DistanceMetric::Manhattan));
     
     println!("✅ SearchParams functionality test passed");
@@ -243,15 +243,30 @@ async fn test_vector_record_structure() {
         
         // Test metadata content - metadata is now Vec<MetadataItem>
         let category_item = vector.metadata.iter().find(|item| item.key == "category").unwrap();
-        assert!(category_item.value.starts_with("cat_"));
+        match &category_item.value {
+            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                assert!(s.starts_with("cat_"));
+            }
+            _ => panic!("Expected string value for category"),
+        }
         
         let score_item = vector.metadata.iter().find(|item| item.key == "score").unwrap();
-        let score: f64 = score_item.value.parse().unwrap();
-        assert!(score >= 0.0 && score <= 1.0);
+        match &score_item.value {
+            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                let score: f64 = s.parse().unwrap();
+                assert!(score >= 0.0 && score <= 1.0);
+            }
+            _ => panic!("Expected string value for score"),
+        }
         
         let active_item = vector.metadata.iter().find(|item| item.key == "active").unwrap();
-        let active: bool = active_item.value.parse().unwrap();
-        assert!(active == (i % 2 == 0));
+        match &active_item.value {
+            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                let active: bool = s.parse().unwrap();
+                assert!(active == (i % 2 == 0));
+            }
+            _ => panic!("Expected string value for active"),
+        }
     }
     
     println!("✅ VectorRecord structure test passed");
@@ -381,7 +396,7 @@ async fn test_search_params_edge_cases() {
     assert_eq!(default_params.query_vectors, None);
     assert_eq!(default_params.top_k, Some(10));
     assert_eq!(default_params.distance_metric, Some(DistanceMetric::Cosine));
-    assert_eq!(default_params.filters, None);
+    assert!(default_params.filter_expression.is_none());
     assert_eq!(default_params.accuracy_threshold, Some(0.95));
     assert_eq!(default_params.timeout_ms, Some(5000));
     
@@ -449,12 +464,12 @@ async fn test_api_usage_patterns() {
     
     let filtered_search = SearchParams {
         query_vectors: Some(vec![vec![0.5; 128]]),
-        filters: Some(filters),
         top_k: Some(50),
         ..Default::default()
-    };
+    }.with_simple_filters(filters);
     
-    assert_eq!(filtered_search.filters.as_ref().unwrap().len(), 2);
+    // Can't assert on filters directly anymore, but we can verify the filter_expression
+    assert!(filtered_search.filter_expression.is_some());
     assert_eq!(filtered_search.top_k, Some(50));
     
     println!("✅ API usage patterns test passed");

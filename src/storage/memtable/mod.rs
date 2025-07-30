@@ -3,7 +3,7 @@
 //! Provides pluggable memtable implementations optimized for different workloads:
 //!
 //! ## Implementation Strategy:
-//! - **WAL (Write-Ahead Log)**: BTree for ordered writes and optimal compression
+//! - **WAL (Write Buffer)**: BTree for ordered writes and optimal compression
 //! - **LSM (Log-Structured Merge-tree)**: SkipList for concurrent access and range queries
 //! - **Performance Testing**: Multiple implementations for benchmark comparison
 //!
@@ -121,15 +121,15 @@ pub struct MemtableFactory;
 
 impl MemtableFactory {
     /// Create WAL-optimized memtable (global partitioned for collection isolation + vector content search)
-    pub fn create_for_wal(config: MemtableConfig) -> specialized::wal_behavior::WalBehaviorWrapper {
+    pub fn create_for_wal(config: MemtableConfig) -> specialized::write_buffer_behavior::WriteBufferBehaviorWrapper {
         specialized::SpecializedMemtableFactory::create_global_partitioned_for_wal(config)
     }
 
-    /// Create LSM-optimized memtable (SkipList for concurrent access)
-    pub fn create_for_lsm(
+    /// Create SST-optimized memtable (SkipList for concurrent access)
+    pub fn create_for_sst(
         config: MemtableConfig,
-    ) -> specialized::LsmMemtable<String, crate::storage::engines::lsm::LsmRecord> {
-        specialized::SpecializedMemtableFactory::create_skiplist_for_lsm(config)
+    ) -> specialized::LsmMemtable<String, crate::storage::engines::sst::SstRecord> {
+        specialized::SpecializedMemtableFactory::create_skiplist_for_sst(config)
     }
 
     /// Create specific memtable type for testing/benchmarking
@@ -467,11 +467,11 @@ mod tests {
     async fn test_memtable_factory() {
         let config = MemtableConfig::default();
 
-        // Test WAL creation
-        let _wal_memtable = MemtableFactory::create_for_wal(config.clone());
+        // Test WriteBuffer creation
+        let _write_buffer_memtable = MemtableFactory::create_for_wal(config.clone());
 
-        // Test LSM creation
-        let _lsm_memtable = MemtableFactory::create_for_lsm(config.clone());
+        // Test SST creation
+        let _sst_memtable = MemtableFactory::create_for_sst(config.clone());
 
         // Test typed creation
         let _btree_memtable: Box<dyn MemtableCore<String, String> + Send + Sync> =

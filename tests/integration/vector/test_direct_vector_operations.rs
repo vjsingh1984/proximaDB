@@ -18,7 +18,7 @@ use proximadb::proto::proximadb::{
 use proximadb::services::direct_vector_service::DirectVectorService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::WalManager;
+use proximadb::storage::persistence::write_buffer::WriteBufferManager;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 
 /// Helper to create test configuration
@@ -67,11 +67,11 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 },
                 MetadataItem {
                     key: "score".to_string(),
-                    value: (i as f64 / count as f64).to_string(),
+                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i as f64 / count as f64).to_string())),
                 },
                 MetadataItem {
                     key: "is_active".to_string(),
-                    value: (i % 2 == 0).to_string(),
+                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
                 },
             ];
             
@@ -160,7 +160,7 @@ async fn test_batch_vector_insertion() {
         name: "batch_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
         ..Default::default()
     };
@@ -368,7 +368,7 @@ async fn test_flush_operations() {
         name: "flush_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::DotProduct as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
         ..Default::default()
     };

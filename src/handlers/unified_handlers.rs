@@ -384,12 +384,7 @@ impl UnifiedHandlers {
                     id: Some(result.id.clone()),
                     score: result.score,
                     vector: result.vector.unwrap_or_default(),
-                    metadata: result.metadata.into_iter().map(|(k, v)| {
-                        crate::proto::proximadb::MetadataItem {
-                            key: k,
-                            value: v.to_string(),
-                        }
-                    }).collect(),
+                    metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata),
                     rank: result.rank,
                 };
                 
@@ -464,14 +459,11 @@ impl UnifiedHandlers {
         let distance_metric = crate::compute::distance::DistanceMetric::Cosine;
         
         // Extract search parameters and metadata filters from request
-        // Convert proto SearchParams to core SearchParams
-        let search_params = None; // TODO: Convert proto SearchParams to core::search::SearchParams
-        let metadata_filters = if let Some(first_query) = request.queries.first() {
+        // Convert proto SearchParams to core SearchParams with filter expressions
+        let search_params = if let Some(first_query) = request.queries.first() {
             if let Some(ref metadata_filter) = first_query.metadata_filter {
-                if metadata_filter.conditions.is_empty() {
-                    None
-                } else {
-                    // Convert proto MetadataFilter to HashMap
+                if !metadata_filter.conditions.is_empty() {
+                    // Convert proto MetadataFilter to HashMap first
                     let mut filters = std::collections::HashMap::new();
                     for condition in &metadata_filter.conditions {
                         if let Some(value) = &condition.value {
@@ -492,24 +484,34 @@ impl UnifiedHandlers {
                             }
                         }
                     }
-                    if filters.is_empty() { None } else { Some(filters) }
+                    if !filters.is_empty() {
+                        // Create SearchParams with converted filters
+                        let params = crate::core::search::SearchParams::default()
+                            .with_simple_filters(filters);
+                        Some(params)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             } else {
                 None
             }
-        } else { None };
+        } else { 
+            None 
+        };
 
         let include_vectors = request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false);
         let include_metadata = request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true);
 
         // Use optimized unified search with all capabilities
-        match self.direct_vector_service.search_vectors_unified(
+        match self.direct_vector_service.search_vectors(
             collection_id,
             query_vector,
             request.top_k as usize,
             distance_metric,
-            search_params,
-            metadata_filters.as_ref(),
+            search_params.as_ref(),
             include_vectors,
             include_metadata,
         ).await {
@@ -520,16 +522,7 @@ impl UnifiedHandlers {
                     let vector = result.vector.unwrap_or_default();
                     
                     // Convert metadata from HashMap to Vec<MetadataItem>
-                    let metadata = result.metadata.into_iter().map(|(key, value)| {
-                        let value_str = match value {
-                            serde_json::Value::String(s) => s,
-                            other => other.to_string(),
-                        };
-                        crate::proto::proximadb::MetadataItem {
-                            key,
-                            value: value_str,
-                        }
-                    }).collect();
+                    let metadata = crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata);
                     
                     SearchResult {
                         id: Some(result.id),
@@ -795,7 +788,7 @@ impl UnifiedHandlers {
         parameters: Option<Vec<serde_json::Value>>,
         collection: Option<String>,
     ) -> Result<SqlQueryResult> {
-        use crate::query::sql_engine::{SqlEngine, SqlExecutionResult};
+        use crate::query::sql_engine::SqlEngine;
         
         info!("Executing SQL query: {}", query);
         

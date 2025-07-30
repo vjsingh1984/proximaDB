@@ -108,8 +108,8 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         let start_time = std::time::Instant::now();
         
         info!("🔍 VIPER Search: collection={}, k={}", context.collection_id, params.top_k.unwrap_or(10));
-        if let Some(filters) = &params.filters {
-            info!("🔍 VIPER Search has filters: {:?}", filters);
+        if let Some(filter_expr) = &params.filter_expression {
+            info!("🔍 VIPER Search has filter expression");
         }
         
         // 1. Build file paths using collection context and ML clustering
@@ -206,7 +206,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         
         // Query complexity
         let k_factor = (params.top_k.unwrap_or(10) as f64).sqrt();
-        let filter_factor = if params.filters.is_some() { 0.5 } else { 1.0 }; // Filters reduce cost
+        let filter_factor = if params.filter_expression.is_some() { 0.5 } else { 1.0 }; // Filters reduce cost
         let quantization_factor = if params.quantization_hint.is_some() { 0.3 } else { 1.0 }; // Quantization reduces cost
         
         // Storage type impact

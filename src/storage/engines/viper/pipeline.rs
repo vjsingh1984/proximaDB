@@ -749,8 +749,27 @@ impl VectorRecordProcessor {
             let b_val = b.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
-                    let a_json = serde_json::Value::String(a_meta.clone());
-                    let b_json = serde_json::Value::String(b_meta.clone());
+                    // Convert metadata values to JSON for comparison
+                    let a_json = match a_meta {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                            serde_json::Number::from_f64(*n)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                        },
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        None => serde_json::Value::Null,
+                    };
+                    let b_json = match b_meta {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                            serde_json::Number::from_f64(*n)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                        },
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        None => serde_json::Value::Null,
+                    };
                     let cmp = self.compare_metadata_values(&a_json, &b_json);
                     if cmp != std::cmp::Ordering::Equal {
                         return cmp;
@@ -831,9 +850,6 @@ impl VectorRecordProcessor {
             (Value::Array(_), Value::Object(_)) => std::cmp::Ordering::Less,
 
             (Value::Object(_), _) => std::cmp::Ordering::Greater,
-
-            // Fallback to string comparison
-            _ => a.to_string().cmp(&b.to_string()),
         }
     }
 
@@ -1387,7 +1403,6 @@ impl VectorRecordProcessor {
             // For ClusterThenSort, treat as no-op (already handled in parent)
             SortingStrategy::ClusterThenSort { .. } => {}
             SortingStrategy::None => {}
-            _ => {} // Handle other strategies as no-op
         }
         Ok(())
     }
@@ -3076,7 +3091,15 @@ impl CompactionEngine {
                         .metadata
                         .iter()
                         .find(|item| &item.key == field)
-                        .map(|item| format!("{}:{}", field, item.value))
+                        .map(|item| {
+                            let value_str = match &item.value {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
+                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                                None => String::new(),
+                            };
+                            format!("{}:{}", field, value_str)
+                        })
                 })
                 .collect::<Vec<_>>()
                 .join("|");

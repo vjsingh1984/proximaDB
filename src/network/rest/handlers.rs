@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::handlers::{UnifiedHandlers, conversions};
+use crate::core::search::SearchResult;
 
 /// Shared application state for REST handlers
 #[derive(Clone)]
@@ -456,15 +457,7 @@ pub struct OperationMetrics {
     pub index_update_time_us: i64,
 }
 
-/// Search result
-#[derive(Debug, Serialize)]
-pub struct SearchResult {
-    pub id: String,
-    pub score: f32,
-    pub vector: Option<Vec<f32>>,
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
-    pub rank: Option<i32>,
-}
+// SearchResult now imported from crate::core::search::SearchResult - unified type
 
 /// API response wrapper
 #[derive(Debug, Serialize)]
@@ -735,15 +728,24 @@ pub async fn vector_search(
             crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(compact) => {
                 compact.results.into_iter()
                     .map(|r| SearchResult {
-                        id: r.id.unwrap_or_default(),
+                        id: r.id.clone().unwrap_or_default(),
+                        vector_id: r.id,
                         score: r.score,
-                        vector: if r.vector.is_empty() { None } else { Some(r.vector) },
-                        metadata: if r.metadata.is_empty() { None } else { 
-                            Some(r.metadata.into_iter()
-                                .map(|item| (item.key, serde_json::Value::String(item.value)))
-                                .collect()) 
-                        },
+                        distance: None,
                         rank: r.rank,
+                        vector: if r.vector.is_empty() { None } else { Some(r.vector) },
+                        metadata: if r.metadata.is_empty() { 
+                            std::collections::HashMap::new() 
+                        } else { 
+                            crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
+                        },
+                        debug_info: None,
+                        semantic_distance: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                        collection_id: None,
+                        created_at: None,
                     })
                     .collect()
             }
@@ -809,9 +811,7 @@ pub async fn get_vector(
                             collection_id: collection_id.clone(),
                             vector: if include_vector { Some(result.vector.clone()) } else { None },
                             metadata: if include_metadata { 
-                                Some(result.metadata.iter().map(|item| {
-                                    (item.key.clone(), item.value.clone())
-                                }).collect())
+                                Some(crate::core::proto_metadata_helper::proto_metadata_to_hashmap(&result.metadata))
                             } else { None },
                             score: Some(result.score),
                             rank: result.rank,
@@ -1143,7 +1143,7 @@ fn convert_to_proto_config(config: CollectionConfig) -> Result<crate::proto::pro
     let storage_engine_str = config.storage_engine.as_deref().unwrap_or("viper");
     let storage_engine = match storage_engine_str {
         "viper" => proximadb::StorageEngine::Viper as i32,
-        "lsm" => proximadb::StorageEngine::Lsm as i32,
+        "sst" => proximadb::StorageEngine::Sst as i32,
         _ => proximadb::StorageEngine::Viper as i32,
     };
     
@@ -1512,7 +1512,7 @@ fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> 
     
     let storage_engine = match config.storage_engine {
         x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "viper",
-        x if x == crate::proto::proximadb::StorageEngine::Lsm as i32 => "lsm",
+        x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "sst",
         _ => "viper",
     }.to_string();
     

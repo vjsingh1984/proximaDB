@@ -25,7 +25,7 @@ fn create_test_vector(id: &str) -> VectorRecord {
         vector: vec![0.1; 128],
         metadata: vec![MetadataItem {
             key: "atomic_test".to_string(),
-            value: "true".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("true".to_string())),
         }],
         timestamp: chrono::Utc::now().timestamp_millis(),
         created_at: chrono::Utc::now().timestamp_millis(),

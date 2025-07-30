@@ -13,7 +13,7 @@ impl StorageEngine {
     pub fn all() -> &'static [StorageEngine] {
         &[
             StorageEngine::Viper,
-            StorageEngine::Lsm,
+            StorageEngine::Sst,
             StorageEngine::Mmap,
             StorageEngine::Hybrid,
             StorageEngine::Memory,
@@ -25,13 +25,13 @@ impl StorageEngine {
     pub fn supports_compression(&self) -> bool {
         matches!(
             self, 
-            StorageEngine::Viper | StorageEngine::Lsm | StorageEngine::ObjectStore
+            StorageEngine::Viper | StorageEngine::Sst | StorageEngine::ObjectStore
         )
     }
     
     /// Check if engine supports transactions
     pub fn supports_transactions(&self) -> bool {
-        matches!(self, StorageEngine::Lsm | StorageEngine::Hybrid)
+        matches!(self, StorageEngine::Sst | StorageEngine::Hybrid)
     }
     
     /// Check if engine is persistent

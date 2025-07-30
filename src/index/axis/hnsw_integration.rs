@@ -9,7 +9,8 @@ use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as AsyncRwLock;
 
-use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm, SearchResult as AlgoSearchResult};
+use crate::compute::algorithms::{HNSWIndex, VectorSearchAlgorithm};
+use crate::core::search::SearchResult;
 use crate::compute::DistanceMetric;
 use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
 use crate::index::axis::types::DataType;
@@ -339,24 +340,24 @@ impl PartitionedHnswIndex {
     }
 
     /// Convert algorithm search results to VectorRecord format
-    fn convert_search_results_to_vector_records(&self, results: Vec<AlgoSearchResult>) -> Result<Vec<VectorRecord>> {
+    fn convert_search_results_to_vector_records(&self, results: Vec<SearchResult>) -> Result<Vec<VectorRecord>> {
         let mut vector_records = Vec::new();
         
         for result in results {
             // Find the vector in partitions
-            if let Some(partition_id) = self.vector_partitions.get(&result.vector_id) {
-                if let Some(_partition) = self.partitions.get(partition_id) {
+            if let Some(vector_id) = &result.vector_id {
+                if let Some(partition_id) = self.vector_partitions.get(vector_id) {
+                    if let Some(_partition) = self.partitions.get(partition_id) {
                     // Extract vector and metadata from HNSW
                     // TODO: Add method to HNSWIndex to get vector by ID
                     let vector_record = VectorRecord {
-                        id: Some(result.vector_id),
+                        id: Some(vector_id.clone()),
                         vector: vec![], // TODO: Get actual vector
                         metadata: result.metadata
-                            .unwrap_or_default()
                             .into_iter()
                             .map(|(k, v)| crate::proto::proximadb::MetadataItem {
                                 key: k,
-                                value: v.to_string(),
+                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
                             })
                             .collect(),
                         timestamp: chrono::Utc::now().timestamp_millis(),
@@ -368,7 +369,8 @@ impl PartitionedHnswIndex {
                         score: Some(result.score),
                         distance: Some(1.0 - result.score), // Convert score to distance
                     };
-                    vector_records.push(vector_record);
+                        vector_records.push(vector_record);
+                    }
                 }
             }
         }
@@ -530,7 +532,7 @@ mod tests {
         let metadata = vec![
             crate::proto::proximadb::MetadataItem {
                 key: "category".to_string(),
-                value: "test".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
             }
         ];
         

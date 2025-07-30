@@ -1,11 +1,9 @@
 use crate::core::search::SearchResult;
 use crate::core::{BatchSearchRequest, String, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
-use crate::services::collection_service::CollectionService;
-use crate::storage::persistence::wal::{WalConfig, WalManager};
+use crate::storage::persistence::write_buffer::{WriteBufferConfig, WriteBufferManager};
 use crate::storage::{
-    engines::lsm::{CompactionManager, LsmTree},
-    mmap::MmapReader,
+    engines::sst::{CompactionManager, SstStorage, mmap::MmapReader},
     persistence::disk_manager::DiskManager,
     traits::CollectionMetadataProvider,
     CollectionMetadata,
@@ -16,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
+use futures;
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -65,19 +64,60 @@ fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
 
 pub struct StorageEngine {
     config: StorageConfig,
-    lsm_trees: Arc<DashMap<String, Arc<LsmTree>>>,
+    sst_storages: Arc<DashMap<String, Arc<SstStorage>>>,
     mmap_readers: Arc<DashMap<String, Arc<MmapReader>>>,
     disk_manager: Arc<DiskManager>,
-    wal_manager: Arc<WalManager>,
+    write_buffer_manager: Arc<WriteBufferManager>,
     axis_index_manager: Arc<AxisManager>,
     compaction_manager: Arc<CompactionManager>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+
+    /// Shared distance computation engine for all storage operations
+    distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,
 
     /// Collection metadata provider - injected after construction to break circular dependency
     metadata_provider: Arc<RwLock<Option<Arc<dyn CollectionMetadataProvider>>>>,
 }
 
 impl StorageEngine {
+    /// Ensure LSM tree is initialized for a collection (lazy loading)
+    async fn ensure_sst_storage_initialized(&self, collection_id: &str) -> crate::storage::Result<Arc<SstStorage>> {
+        // Check if already initialized
+        if let Some(tree) = self.sst_storages.get(collection_id) {
+            return Ok(tree.clone());
+        }
+        
+        // Not initialized, create it now
+        tracing::info!("🔧 Lazy initializing LSM tree for collection: {}", collection_id);
+        let new_tree = Arc::new(SstStorage::new(
+            collection_id.to_string(),
+            self.config.sst_config.clone(),
+            self.filesystem.clone(),
+            self.distance_compute.clone(),
+        ).await?);
+        
+        self.sst_storages.insert(collection_id.to_string(), new_tree.clone());
+        
+        // Also initialize MMAP reader if needed
+        if !self.mmap_readers.contains_key(collection_id) {
+            // Get storage location for this collection
+            let assignment_service = crate::storage::assignment_service::get_assignment_service();
+            if let Some(assignment) = assignment_service.get_assignment(collection_id).await {
+                let data_dir = if assignment.data_url.starts_with("file://") {
+                    PathBuf::from(assignment.data_url.strip_prefix("file://").unwrap())
+                } else {
+                    PathBuf::from(&assignment.data_url)
+                };
+                
+                let reader = Arc::new(MmapReader::new(collection_id.to_string(), data_dir)?);
+                reader.initialize().await?;
+                self.mmap_readers.insert(collection_id.to_string(), reader);
+            }
+        }
+        
+        tracing::info!("✅ Lazy initialized LSM tree for collection: {}", collection_id);
+        Ok(new_tree)
+    }
     /// Get storage configuration
     pub fn get_config(&self) -> &StorageConfig {
         &self.config
@@ -91,13 +131,6 @@ impl StorageEngine {
         Self::new_internal(config, None).await
     }
     
-    /// Legacy constructor - kept for backward compatibility
-    pub async fn new(
-        config: StorageConfig,
-        collection_service: Arc<CollectionService>,
-    ) -> crate::storage::Result<Self> {
-        Self::new_internal(config, Some(collection_service as Arc<dyn CollectionMetadataProvider>)).await
-    }
     
     /// Internal constructor used by both public constructors
     async fn new_internal(
@@ -118,8 +151,8 @@ impl StorageEngine {
         let disk_manager = Arc::new(DiskManager::new(data_dirs.clone())?);
 
         // Initialize WAL configuration from storage locations
-        let mut wal_config = WalConfig::default();
-        wal_config.multi_disk.data_directories = config.storage_locations.iter()
+        let mut write_buffer_config = WriteBufferConfig::default();
+        write_buffer_config.multi_disk.data_directories = config.storage_locations.iter()
             .map(|loc| {
                 // Ensure proper file:// URL format
                 let url = if loc.url.starts_with("file://") {
@@ -149,10 +182,10 @@ impl StorageEngine {
         );
 
         // Create WAL manager using modern batch factory pattern
-        let wal_manager = Arc::new(
-            WalManager::create_with_batch_factory(
-                wal_config.strategy_type.clone(),
-                wal_config,
+        let write_buffer_manager = Arc::new(
+            WriteBufferManager::create_with_batch_factory(
+                write_buffer_config.strategy_type.clone(),
+                write_buffer_config,
                 filesystem.clone(),
             )
             .await
@@ -173,17 +206,18 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Initialize compaction manager
-        let compaction_manager = Arc::new(CompactionManager::new(config.lsm_config.clone()));
+        let compaction_manager = Arc::new(CompactionManager::new(config.sst_config.clone()));
 
         Ok(Self {
             config,
-            lsm_trees: Arc::new(DashMap::new()),
+            sst_storages: Arc::new(DashMap::new()),
             mmap_readers: Arc::new(DashMap::new()),
             disk_manager,
-            wal_manager,
+            write_buffer_manager,
             axis_index_manager,
             compaction_manager,
             filesystem,
+            distance_compute: Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
             metadata_provider: Arc::new(RwLock::new(metadata_provider)),
         })
     }
@@ -215,7 +249,7 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let mut temp_manager = CompactionManager::new(self.config.lsm_config.clone());
+        let mut temp_manager = CompactionManager::new(self.config.sst_config.clone());
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
 
@@ -229,12 +263,12 @@ impl StorageEngine {
             manager.stop().await?;
         }
 
-        // LSM is pure SSTable storage - no memtable to flush
+        // SST is pure SSTable storage - no memtable to flush
         // All data is already persisted through WAL → Flush → SSTable pipeline
 
         // Force WAL flush during shutdown
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
-        if let Err(e) = self.wal_manager.flush(None).await {
+        if let Err(e) = self.write_buffer_manager.flush(None).await {
             tracing::warn!("Failed to flush WAL during shutdown: {}", e);
         }
 
@@ -242,8 +276,8 @@ impl StorageEngine {
     }
 
     /// Get WAL manager for sharing between services
-    pub fn get_wal_manager(&self) -> Arc<WalManager> {
-        self.wal_manager.clone()
+    pub fn get_write_buffer_manager(&self) -> Arc<WriteBufferManager> {
+        self.write_buffer_manager.clone()
     }
 
     /// Write a vector to storage through WAL → memtable → flush pipeline
@@ -257,22 +291,8 @@ impl StorageEngine {
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
                        vector_id, collection_id, vector_ref.len(), vector_size);
 
-        // Get or create LSM tree using DashMap entry API
-        let _tree = match self.lsm_trees.get(collection_id) {
-            Some(tree) => tree.clone(),
-            None => {
-                tracing::debug!("🆕 Creating new LSM tree for collection {}", collection_id);
-                let new_tree = Arc::new(LsmTree::new(
-                    collection_id.to_string(),
-                    self.config.lsm_config.clone(),
-                    self.filesystem.clone(),
-                ).await.expect("Failed to create LSM tree"));
-                
-                self.lsm_trees.insert(collection_id.to_string(), new_tree.clone());
-                tracing::debug!("✅ Created new LSM tree for collection {}", collection_id);
-                new_tree
-            }
-        };
+        // Get or create LSM tree using lazy initialization
+        let _tree = self.ensure_sst_storage_initialized(collection_id).await?;
 
         // Write through WAL → memtable → flush pipeline
         tracing::debug!(
@@ -285,7 +305,7 @@ impl StorageEngine {
         let vectors = Arc::new(vec![record.clone()]);
         
         // Write to WAL (which handles memtable insertion)
-        self.wal_manager.write_vector_batch_native_arc(collection_id, vectors).await
+        self.write_buffer_manager.write_vector_batch_native_arc(collection_id, vectors).await
             .map_err(|e| crate::core::StorageError::WalError(format!("Failed to write to WAL: {}", e)))?;
         
         tracing::debug!(
@@ -330,25 +350,27 @@ impl StorageEngine {
         Ok(())
     }
 
-    #[deprecated(note = "Use search API for LSM data access")]
-    pub async fn read(
+
+    /// Check if a vector exists in the storage engine
+    pub async fn exists(
         &self,
         collection_id: &str,
         id: &VectorId,
-    ) -> crate::storage::Result<Option<VectorRecord>> {
-        // First check LSM tree (recent writes)
-        if self.lsm_trees.contains_key(collection_id) {
-            // LSM is pure SSTable storage - no direct get operation
-            // Use search API to retrieve vectors from LSM
-            return Err(anyhow::anyhow!("Direct gets from LSM not supported. Use search API.").into());
+    ) -> crate::storage::Result<bool> {
+        // Check SST storage
+        if self.sst_storages.contains_key(collection_id) {
+            // For SST, we need to check via the unified search engine
+            // This is a simplified check - in production, you might want to 
+            // implement a more efficient existence check
+            return Ok(false); // Conservative approach - assume not exists for LSM
         }
 
-        // Then check MMAP readers (historical data)
+        // Check MMAP readers (VIPER storage)
         if let Some(reader) = self.mmap_readers.get(collection_id) {
-            return reader.get(id).await;
+            return Ok(reader.get(id).await?.is_some());
         }
 
-        Ok(None)
+        Ok(false)
     }
 
     pub async fn soft_delete(
@@ -357,13 +379,13 @@ impl StorageEngine {
         id: &VectorId,
     ) -> crate::storage::Result<bool> {
         // Write delete marker to WAL using new interface
-        self.wal_manager
+        self.write_buffer_manager
             .delete(collection_id.to_string(), id.clone())
             .await
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
 
         // Check if the record exists
-        let exists = self.read(collection_id, id).await?.is_some();
+        let exists = self.exists(collection_id, id).await?;
 
         // Remove from search index
         if exists {
@@ -377,8 +399,8 @@ impl StorageEngine {
 
         // Mark as deleted in LSM tree using tombstone
         if exists {
-            if self.lsm_trees.contains_key(collection_id) {
-                // LSM is pure SSTable storage - no direct delete operation
+            if self.sst_storages.contains_key(collection_id) {
+                // SST is pure SSTable storage - no direct delete operation
                 // Deletes should be handled through WAL tombstones
                 return Err(anyhow::anyhow!("Direct deletes from LSM not supported. Use WAL tombstones.").into());
             }
@@ -422,27 +444,45 @@ impl StorageEngine {
             tracing::warn!("⚠️ No metadata provider available, skipping collection verification");
         }
 
-        // Create LSM tree using DashMap
-        let new_tree = Arc::new(LsmTree::new(
-            collection_id.clone(),
-            self.config.lsm_config.clone(),
-            self.filesystem.clone(),
-        ).await.expect("Failed to create LSM tree"));
-        self.lsm_trees.insert(collection_id.clone(), new_tree);
-        // Extract first local filesystem path for MMAP reader
-        let data_dir = self.config.storage_locations
-            .iter()
-            .find_map(|loc| {
-                if loc.url.starts_with("file://") {
-                    Some(PathBuf::from(loc.url.strip_prefix("file://").unwrap_or(&loc.url)))
-                } else {
-                    None
+        // Get or create storage assignment
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let assignment = assignment_service
+            .assign_collection(&collection_id, &self.config.storage_locations, "hash")
+            .await
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to assign storage: {}", e)
+            )))?;
+        
+        // Create all required directories for the collection
+        // This ensures directories exist before any writes occur
+        for url in &[&assignment.write_buffer_url, &assignment.data_url, &assignment.index_url] {
+            let dir_url = if url.ends_with('/') {
+                url.to_string()
+            } else {
+                format!("{}/", url)
+            };
+            
+            if let Ok(fs) = self.filesystem.get_filesystem(&dir_url) {
+                match fs.create_dir_all(&dir_url).await {
+                    Ok(_) => tracing::debug!("Created directory: {}", dir_url),
+                    Err(e) => {
+                        // Check if already exists
+                        if !fs.exists(&dir_url).await.unwrap_or(false) {
+                            return Err(crate::core::StorageError::DiskIO(
+                                std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    format!("Failed to create directory {}: {}", dir_url, e)
+                                )
+                            ));
+                        }
+                    }
                 }
-            })
-            .unwrap_or_else(|| PathBuf::from("./data/storage"));
-        let reader = Arc::new(MmapReader::new(collection_id.clone(), data_dir)?);
-        reader.initialize().await?;
-        self.mmap_readers.insert(collection_id.clone(), reader);
+            }
+        }
+
+        // Don't eagerly create LSM tree and MMAP reader - they will be created on first access
+        tracing::debug!("📁 Collection directories created, LSM tree will be initialized on first access");
 
         // TODO: Create search index using metadata from SharedServices
         // For now, skip search index creation entirely
@@ -451,64 +491,166 @@ impl StorageEngine {
             collection_id
         );
 
+        tracing::info!("✅ Created collection: {} with directories at {}", collection_id, assignment.location_url);
         Ok(())
     }
 
     async fn load_collections(&self) -> crate::storage::Result<()> {
-        // Scan storage locations for existing collections
-        for location in &self.config.storage_locations {
-            if !location.url.starts_with("file://") {
-                continue; // Skip non-local storage for now
-            }
-            
-            let path = location.url.strip_prefix("file://").unwrap_or(&location.url);
-            let data_dir = PathBuf::from(path);
-            
-            if !data_dir.exists() {
-                continue;
-            }
-
-            let mut entries = tokio::fs::read_dir(&data_dir)
-                .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?;
-
-            while let Some(entry) = entries
-                .next_entry()
-                .await
-                .map_err(|e| crate::core::StorageError::DiskIO(e))?
-            {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(collection_name) = path.file_name().and_then(|n| n.to_str()) {
-                        let collection_id = collection_name.to_string();
-
-                        // Initialize LSM tree for this collection using DashMap
-                        if !self.lsm_trees.contains_key(&collection_id) {
-                            let new_tree = Arc::new(LsmTree::new(
-                                collection_id.clone(),
-                                self.config.lsm_config.clone(),
-                                self.filesystem.clone(),
-                            ).await.expect("Failed to create LSM tree"));
-                            self.lsm_trees.insert(collection_id.clone(), new_tree);
-                        }
-
-                        // Initialize MMAP reader using DashMap
-                        if !self.mmap_readers.contains_key(&collection_id) {
-                            let reader = Arc::new(MmapReader::new(collection_id.clone(), data_dir.clone())?);
-                            reader.initialize().await?;
-                            self.mmap_readers.insert(collection_id.clone(), reader);
-                        }
-
-                        // TODO: Initialize search index for existing collection using SharedServices
-                        // For now, skip search index initialization
-                        tracing::debug!(
-                            "TODO: Initialize search index for collection {} via SharedServices",
-                            collection_id
-                        );
-                    }
+        tracing::info!("🔍 STORAGE_ENGINE: Loading collections from metadata provider");
+        
+        // Get collections from metadata provider which has access to the filestore backend
+        let collections = if let Some(provider) = self.get_metadata_provider().await {
+            match provider.list_collections().await {
+                Ok(collections) => {
+                    tracing::info!("📋 Found {} collections in metadata store", collections.len());
+                    collections
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to get collections from metadata: {}", e);
+                    return Err(crate::core::StorageError::SstStorage(
+                        format!("Failed to load collections from metadata: {}", e)
+                    ));
                 }
             }
+        } else {
+            tracing::warn!("⚠️ No metadata provider available, cannot load collections");
+            return Ok(());
+        };
+        
+        if collections.is_empty() {
+            tracing::info!("📋 No collections to load");
+            return Ok(());
         }
+        
+        // Populate assignment service for each collection
+        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        
+        for collection in &collections {
+            let collection_id = &collection.id;
+            let collection_name = collection.config.as_ref()
+                .map(|c| c.name.as_str())
+                .unwrap_or(collection_id);
+            
+            // Check if assignment already exists
+            if assignment_service.get_assignment(collection_id).await.is_none() {
+                // Create assignment for this collection
+                tracing::info!("🔧 Creating assignment for recovered collection: {}", collection_name);
+                
+                let assignment = assignment_service
+                    .assign_collection(
+                        collection_name,
+                        &self.config.storage_locations,
+                        &self.config.assignment_config.strategy,
+                    )
+                    .await?;
+                
+                tracing::info!("✅ Assignment created for collection {} at {}", 
+                    collection_name, assignment.location_url);
+            } else {
+                tracing::debug!("📋 Assignment already exists for collection: {}", collection_name);
+            }
+        }
+        
+        // Extract collection IDs for parallel loading
+        let collection_ids: Vec<String> = collections.into_iter()
+            .map(|c| c.id)
+            .collect();
+        
+        let total_collections = collection_ids.len();
+        tracing::info!("📊 Found {} collections to load", total_collections);
+        
+        if total_collections == 0 {
+            return Ok(());
+        }
+        
+        // Determine optimal parallelism based on CPU cores
+        let num_cpus = num_cpus::get();
+        let chunk_size = (total_collections + num_cpus - 1) / num_cpus;
+        let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 collections per task
+        
+        tracing::info!("🚀 Loading collections in parallel with chunk size: {}", chunk_size);
+        
+        // Process collections in parallel chunks
+        let mut tasks = Vec::new();
+        for chunk in collection_ids.chunks(chunk_size) {
+            let chunk_vec = chunk.to_vec();
+            let sst_config = self.config.sst_config.clone();
+            let filesystem = self.filesystem.clone();
+            let sst_storages = self.sst_storages.clone();
+            let mmap_readers = self.mmap_readers.clone();
+            let distance_compute = self.distance_compute.clone();
+            
+            let task = tokio::spawn(async move {
+                for collection_id in chunk_vec {
+                    // Initialize SST storage for this collection
+                    if !sst_storages.contains_key(&collection_id) {
+                        match SstStorage::new(
+                            collection_id.clone(),
+                            sst_config.clone(),
+                            filesystem.clone(),
+                            distance_compute.clone(),
+                        ).await {
+                            Ok(tree) => {
+                                sst_storages.insert(collection_id.clone(), Arc::new(tree));
+                                tracing::debug!("✅ Loaded SST storage for collection: {}", collection_id);
+                            }
+                            Err(e) => {
+                                tracing::warn!("⚠️ Failed to load LSM tree for {}: {}", collection_id, e);
+                            }
+                        }
+                    }
+                    
+                    // Initialize MMAP reader
+                    if !mmap_readers.contains_key(&collection_id) {
+                        // Get data directory from assignment service
+                        let data_dir = if let Some(assignment) = crate::storage::assignment_service::get_assignment_service().get_assignment(&collection_id).await {
+                            if assignment.data_url.starts_with("file://") {
+                                PathBuf::from(assignment.data_url.strip_prefix("file://").unwrap())
+                            } else {
+                                PathBuf::from(&assignment.data_url)
+                            }
+                        } else {
+                            tracing::warn!("⚠️ No assignment found for collection: {}", collection_id);
+                            continue;
+                        };
+                            
+                        match MmapReader::new(collection_id.clone(), data_dir) {
+                            Ok(reader) => {
+                                let reader = Arc::new(reader);
+                                if reader.initialize().await.is_ok() {
+                                    mmap_readers.insert(collection_id.clone(), reader);
+                                    tracing::debug!("✅ Loaded MMAP reader for collection: {}", collection_id);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("⚠️ Failed to create MMAP reader for {}: {}", collection_id, e);
+                            }
+                        }
+                    }
+                }
+            });
+            
+            tasks.push(task);
+        }
+        
+        // Wait for all parallel loading tasks to complete
+        let results = futures::future::join_all(tasks).await;
+        
+        let mut failed_count = 0;
+        for result in results {
+            if result.is_err() {
+                failed_count += 1;
+            }
+        }
+        
+        if failed_count > 0 {
+            tracing::warn!("⚠️ {} parallel loading tasks failed", failed_count);
+        }
+        
+        tracing::info!(
+            "✅ STORAGE_ENGINE: Parallel loading complete. Loaded {} collections",
+            total_collections
+        );
         Ok(())
     }
 
@@ -545,8 +687,8 @@ impl StorageEngine {
         };
 
         // Use the new WAL interface to recover
-        tracing::info!("📊 STORAGE_ENGINE: About to call wal_manager.recover()");
-        match self.wal_manager.recover().await {
+        tracing::info!("📊 STORAGE_ENGINE: About to call write_buffer_manager.recover()");
+        match self.write_buffer_manager.recover().await {
             Ok(recovered_entries) => {
                 tracing::info!(
                     "✅ STORAGE_ENGINE: WAL recovery completed successfully, recovered {} entries",
@@ -584,7 +726,7 @@ impl StorageEngine {
         let mut seen_collections = std::collections::HashSet::new();
 
         // Get all collections that have entries in the WAL
-        match self.wal_manager.stats().await {
+        match self.write_buffer_manager.stats().await {
             Ok(stats) => {
                 tracing::info!(
                     "📊 WAL stats: {} total entries across {} collections",
@@ -607,7 +749,7 @@ impl StorageEngine {
 
                 for collection_id in potential_collection_names {
                     match self
-                        .wal_manager
+                        .write_buffer_manager
                         .get_collection_entries(&collection_id.to_string())
                         .await
                     {
@@ -668,7 +810,7 @@ impl StorageEngine {
         collection_id: &str,
     ) -> crate::storage::Result<bool> {
         // Remove from in-memory structures using DashMap
-        let tree_removed = self.lsm_trees.remove(collection_id).is_some();
+        let tree_removed = self.sst_storages.remove(collection_id).is_some();
         let reader_removed = self.mmap_readers.remove(collection_id).is_some();
 
         if tree_removed || reader_removed {
@@ -678,7 +820,7 @@ impl StorageEngine {
                 collection_id
             );
             // Note: WAL no longer handles collection operations - handled by CollectionService
-            if let Err(e) = self.wal_manager.flush(Some(&collection_id.to_string())).await {
+            if let Err(e) = self.write_buffer_manager.flush(Some(&collection_id.to_string())).await {
                 tracing::warn!(
                     "Failed to cleanup WAL entries for collection {}: {}",
                     collection_id,
@@ -702,6 +844,11 @@ impl StorageEngine {
         }
     }
 
+    /// Get the shared distance computation engine
+    pub fn distance_compute(&self) -> &Arc<crate::compute::unified_distance::UnifiedDistanceCompute> {
+        &self.distance_compute
+    }
+
     /// Calculate distance/similarity based on collection's configured metric
     fn calculate_distance_metric(
         &self,
@@ -709,10 +856,8 @@ impl StorageEngine {
         vector: &[f32],
         distance_metric: &crate::compute::distance::DistanceMetric,
     ) -> crate::storage::Result<f32> {
-        // Use unified distance computation which already provides
-        // semantically consistent distances where lower = more similar
-        let distance_compute = crate::compute::unified_distance::UnifiedDistanceCompute::default();
-        let result = distance_compute.calculate_distance(query, vector, distance_metric);
+        // Use shared unified distance computation engine
+        let result = self.distance_compute.calculate_distance(query, vector, distance_metric);
         Ok(result.rank_value)
     }
 
@@ -919,7 +1064,7 @@ impl StorageEngine {
         );
 
         // Get all entries for the collection from WAL/memtable
-        let entries = match self.wal_manager.get_collection_entries(collection_id).await {
+        let entries = match self.write_buffer_manager.get_collection_entries(collection_id).await {
             Ok(entries) => entries,
             Err(e) => {
                 tracing::debug!("🔍 No entries in memtable: {}", e);
@@ -1182,7 +1327,7 @@ impl StorageEngine {
             );
             for collection_id in &collection_ids {
                 // Note: WAL no longer handles collection operations - handled by CollectionService
-                if let Err(e) = self.wal_manager.flush(Some(collection_id)).await {
+                if let Err(e) = self.write_buffer_manager.flush(Some(collection_id)).await {
                     tracing::warn!(
                         "Failed to cleanup WAL entries for collection {}: {}",
                         collection_id,
@@ -1193,7 +1338,7 @@ impl StorageEngine {
         } else {
             // If no collections found, flush all WAL data
             tracing::debug!("🧹 No collections found, performing WAL flush");
-            if let Err(e) = self.wal_manager.flush(None).await {
+            if let Err(e) = self.write_buffer_manager.flush(None).await {
                 tracing::warn!("Failed to flush WAL: {}", e);
             }
         }
@@ -1211,7 +1356,7 @@ impl StorageEngine {
         }
 
         // Clear in-memory structures using DashMap
-        self.lsm_trees.clear();
+        self.sst_storages.clear();
         self.mmap_readers.clear();
 
         tracing::debug!("✅ Completed storage cleanup for tests");

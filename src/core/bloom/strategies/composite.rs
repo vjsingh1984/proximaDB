@@ -121,15 +121,20 @@ impl BloomFilterStrategy for CompositeBloomFilter {
 }
 
 impl MetadataBloomFilter for CompositeBloomFilter {
-    fn insert_metadata(&mut self, column: &str, value: &str) {
+    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb::MetadataItem) {
         let filter = self.get_or_create_metadata_filter(column);
-        filter.insert(value.as_bytes());
+        // Serialize the metadata item for consistent hashing
+        let serialized = crate::core::bloom::serialize_metadata_value(item);
+        filter.insert(serialized.as_bytes());
     }
     
-    fn might_match_metadata(&self, column: &str, value: &str) -> bool {
+    fn might_match_metadata(&self, column: &str, item: &crate::proto::proximadb::MetadataItem) -> bool {
         self.metadata_filters
             .get(column)
-            .map(|filter| filter.might_contain(value.as_bytes()))
+            .map(|filter| {
+                let serialized = crate::core::bloom::serialize_metadata_value(item);
+                filter.might_contain(serialized.as_bytes())
+            })
             .unwrap_or(false)
     }
     
@@ -142,7 +147,7 @@ impl MetadataBloomFilter for CompositeBloomFilter {
 pub struct CompositeBloomFilterBuilder {
     config: BloomFilterConfig,
     key_filter: ByteAlignedBloomFilter,
-    metadata_values: HashMap<String, Vec<String>>,
+    metadata_values: HashMap<String, Vec<crate::proto::proximadb::MetadataItem>>,
 }
 
 impl CompositeBloomFilterBuilder {
@@ -163,11 +168,11 @@ impl CompositeBloomFilterBuilder {
     }
     
     /// Add a metadata value
-    pub fn add_metadata_value(&mut self, column: String, value: String) {
+    pub fn add_metadata_item(&mut self, column: String, item: crate::proto::proximadb::MetadataItem) {
         self.metadata_values
             .entry(column)
             .or_insert_with(Vec::new)
-            .push(value);
+            .push(item);
     }
     
     /// Build the composite filter
@@ -181,10 +186,9 @@ impl CompositeBloomFilterBuilder {
         };
         
         // Create metadata filters
-        for (column, values) in self.metadata_values {
-            let column_filter = filter.get_or_create_metadata_filter(&column);
-            for value in values {
-                column_filter.insert(value.as_bytes());
+        for (column, items) in self.metadata_values {
+            for item in items {
+                filter.insert_metadata(&column, &item);
             }
         }
         
@@ -212,16 +216,37 @@ mod tests {
         assert!(filter.might_contain(b"key1"));
         assert!(!filter.might_contain(b"key2"));
         
-        // Test metadata operations
-        filter.insert_metadata("category", "electronics");
-        filter.insert_metadata("category", "books");
-        filter.insert_metadata("type", "premium");
+        // Test metadata operations - create MetadataItem instances for testing
+        let electronics_item = crate::proto::proximadb::MetadataItem {
+            key: "category".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("electronics".to_string())),
+        };
+        let books_item = crate::proto::proximadb::MetadataItem {
+            key: "category".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("books".to_string())),
+        };
+        let clothing_item = crate::proto::proximadb::MetadataItem {
+            key: "category".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("clothing".to_string())),
+        };
+        let premium_item = crate::proto::proximadb::MetadataItem {
+            key: "type".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("premium".to_string())),
+        };
+        let basic_item = crate::proto::proximadb::MetadataItem {
+            key: "type".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("basic".to_string())),
+        };
         
-        assert!(filter.might_match_metadata("category", "electronics"));
-        assert!(filter.might_match_metadata("category", "books"));
-        assert!(!filter.might_match_metadata("category", "clothing"));
-        assert!(filter.might_match_metadata("type", "premium"));
-        assert!(!filter.might_match_metadata("type", "basic"));
+        filter.insert_metadata("category", &electronics_item);
+        filter.insert_metadata("category", &books_item);
+        filter.insert_metadata("type", &premium_item);
+        
+        assert!(filter.might_match_metadata("category", &electronics_item));
+        assert!(filter.might_match_metadata("category", &books_item));
+        assert!(!filter.might_match_metadata("category", &clothing_item));
+        assert!(filter.might_match_metadata("type", &premium_item));
+        assert!(!filter.might_match_metadata("type", &basic_item));
         
         assert_eq!(filter.num_columns(), 2);
     }
@@ -233,14 +258,25 @@ mod tests {
         
         builder.add_key("product_1");
         builder.add_key("product_2");
-        builder.add_metadata_value("category".to_string(), "electronics".to_string());
-        builder.add_metadata_value("category".to_string(), "books".to_string());
+        
+        // Create MetadataItems for testing
+        let electronics_item = crate::proto::proximadb::MetadataItem {
+            key: "category".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("electronics".to_string())),
+        };
+        let books_item = crate::proto::proximadb::MetadataItem {
+            key: "category".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("books".to_string())),
+        };
+        
+        builder.add_metadata_item("category".to_string(), electronics_item.clone());
+        builder.add_metadata_item("category".to_string(), books_item.clone());
         
         let filter = builder.build();
         
         assert!(filter.might_contain(b"product_1"));
         assert!(filter.might_contain(b"product_2"));
-        assert!(filter.might_match_metadata("category", "electronics"));
-        assert!(filter.might_match_metadata("category", "books"));
+        assert!(filter.might_match_metadata("category", &electronics_item));
+        assert!(filter.might_match_metadata("category", &books_item));
     }
 }

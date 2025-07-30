@@ -19,7 +19,6 @@
 //! This module provides utilities for migrating from Avro VectorRecord to Proto VectorRecord.
 //! It serves as a compatibility layer during the transition period.
 
-use std::collections::HashMap;
 use crate::proto::proximadb::VectorRecord;
 
 /// Legacy Avro VectorRecord type alias for compatibility
@@ -33,15 +32,21 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> Pr
     // Convert metadata from HashMap<String, serde_json::Value> to Vec<MetadataItem>
     let metadata: Vec<crate::proto::proximadb::MetadataItem> = avro_record.metadata.iter()
         .map(|(key, value)| {
-            let string_value = match value {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                _ => value.to_string()
+            let metadata_value = match value {
+                serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                    } else {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                    }
+                },
+                serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string()))
             };
             crate::proto::proximadb::MetadataItem {
                 key: key.clone(),
-                value: string_value,
+                value: metadata_value,
             }
         })
         .collect();
@@ -64,11 +69,7 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> Pr
 /// Convert Proto VectorRecord to Avro VectorRecord
 pub fn proto_to_avro(proto_record: &ProtoVectorRecord, collection_id: &str) -> AvroVectorRecord {
     // Convert metadata from Vec<MetadataItem> to HashMap<String, serde_json::Value>
-    let metadata: HashMap<String, serde_json::Value> = proto_record.metadata.iter()
-        .map(|item| {
-            (item.key.clone(), serde_json::Value::String(item.value.clone()))
-        })
-        .collect();
+    let metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(&proto_record.metadata);
 
     AvroVectorRecord {
         id: proto_record.id.clone().unwrap_or_default(),
@@ -133,9 +134,12 @@ mod tests {
         
         // Check metadata items
         let metadata_items = &proto_record.metadata;
-        assert!(metadata_items.iter().any(|item| item.key == "category" && item.value == "test"));
-        assert!(metadata_items.iter().any(|item| item.key == "score" && item.value == "42"));
-        assert!(metadata_items.iter().any(|item| item.key == "active" && item.value == "true"));
+        assert!(metadata_items.iter().any(|item| item.key == "category" && 
+            matches!(&item.value, Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) if s == "test")));
+        assert!(metadata_items.iter().any(|item| item.key == "score" && 
+            matches!(&item.value, Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) if *n == 42.0)));
+        assert!(metadata_items.iter().any(|item| item.key == "active" && 
+            matches!(&item.value, Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) if *b)));
     }
 
     #[test]
@@ -145,11 +149,11 @@ mod tests {
         let metadata = vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: "test".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: "42".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("42".to_string())),
             },
         ];
 

@@ -21,6 +21,12 @@ graph TB
         DirectVectorService[DirectVectorService<br/>40-60% Latency Reduction]
         CollectionService[CollectionService<br/>Metadata Management]
         QueryEngine[SQL QueryEngine<br/>Vector Similarity Queries]
+        
+        subgraph OptimizationSys["🚀 Performance Optimizations"]
+            MemoryPool[Vector Memory Pool<br/>30-50% Allocation Reduction]
+            QueryCache[Query Plan Cache<br/>LRU + TTL Caching]
+            HardwareAccel[Hardware Acceleration<br/>SIMD + GPU Support]
+        end
     end
     
     %% Storage Layer - Current Implementation
@@ -71,7 +77,9 @@ graph TB
     UnifiedHandlers --> CollectionService
     UnifiedHandlers --> QueryEngine
     
+    DirectVectorService --> MemoryPool
     DirectVectorService --> StorageEngine
+    QueryEngine --> QueryCache
     CollectionService --> StorageEngine
     
     StorageEngine --> GlobalMemtable

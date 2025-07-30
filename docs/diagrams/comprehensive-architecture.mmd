@@ -1,0 +1,288 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#fff', 'primaryBorderColor':'#333', 'fontFamily':'Arial', 'fontSize':'12px'}}}%%
+classDiagram
+    %% Core Entry Point
+    class ProximaDB {
+        -storage: Arc~RwLock~StorageEngine~~
+        -multi_server: Option~MultiServer~
+        -_query_engine: QueryEngine
+        -_config: Config
+        +new(config: Config) ProximaDB
+        +start() Result
+        +stop() Result
+    }
+
+    %% Network Layer
+    class MultiServer {
+        -rest_server: RestServer
+        -grpc_server: GrpcServer
+        -shared_services: Arc~SharedServices~
+        +start_servers() Result
+        +shutdown() Result
+    }
+
+    class SharedServices {
+        -vector_service: Arc~VectorService~
+        -collection_service: Arc~CollectionService~
+        -assignment_service: Arc~AssignmentService~
+        +get_vector_service() Arc~VectorService~
+        +get_collection_service() Arc~CollectionService~
+    }
+
+    %% Handler Layer
+    class UnifiedHandlers {
+        -vector_service: Arc~DirectVectorService~
+        -collection_service: Arc~CollectionService~
+        -sql_engine: Arc~SqlEngine~
+        +handle_collection_operation(op: proto::CollectionOperation) proto::CollectionResponse
+        +handle_vector_batch(req: proto::VectorBatchRequest) proto::VectorOperationResponse
+        +handle_vector_search(req: proto::VectorSearchRequest) proto::SearchResponse
+        +handle_sql_query(query: String) proto::SqlResponse
+    }
+
+    %% Core Services
+    class DirectVectorService {
+        -global_memtable: Arc~WriteBufferBehaviorWrapper~
+        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
+        -compaction_coordinator: Arc~CompactionCoordinator~
+        -viper_engine: Arc~ViperEngine~
+        -sst_engine: Arc~SstStorage~
+        -write_buffer_config: WriteBufferConfig
+        -distance_compute: UnifiedDistanceCompute
+        -quantization_engine: UnifiedQuantizationEngine
+        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+        +search_vectors(query: SearchQuery) Vec~SearchResult~
+        +delete_vectors(collection_id: str, vector_ids: Vec~str~) Result
+        +update_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+    }
+
+    class CollectionService {
+        -metadata_backend: Arc~dyn MetadataBackend~
+        -storage_config: StorageConfig
+        -assignment_service: Arc~AssignmentService~
+        -index_config_cache: DashMap~String, IndexConfig~
+        +create_collection(collection: Collection) Result
+        +get_collection(collection_id: str) Option~Collection~
+        +delete_collection(collection_id: str) Result
+        +list_collections() Vec~Collection~
+    }
+
+    class AssignmentService {
+        -assignments: DashMap~String, Assignment~
+        -filesystem: Arc~FilesystemFactory~
+        +get_assignment(collection_id: str) Option~Assignment~
+        +create_assignment(collection_id: str, config: StorageConfig) Result
+        +cleanup_orphaned_data() Result
+    }
+
+    %% Storage Layer
+    class StorageEngine {
+        -config: StorageConfig
+        -sst_storages: Arc~DashMap~String, Arc~SstStorage~~~
+        -viper_engines: Arc~DashMap~String, Arc~ViperEngine~~~
+        -write_buffer_manager: Arc~WriteBufferManager~
+        -axis_index_manager: Arc~AxisManager~
+        -metadata_provider: Arc~RwLock~Option~Arc~dyn CollectionMetadataProvider~~~~
+        -assignment_service: Arc~AssignmentService~
+        +ensure_sst_storage_initialized(collection_id: str) Arc~SstStorage~
+        +ensure_viper_engine_initialized(collection_id: str) Arc~ViperEngine~
+        +search_vectors_unified(query: SearchQuery) Vec~SearchResult~
+        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+    }
+
+    %% Storage Engines
+    class ViperEngine {
+        -collection_id: String
+        -config: ViperConfig
+        -ml_clustering: Option~KMeansCluster~
+        -quantization_engine: Arc~UnifiedQuantizationEngine~
+        -unified_search_engine: ViperUnifiedSearchEngine
+        -distance_compute: UnifiedDistanceCompute
+        +write_vectors(vectors: Vec~VectorRecord~) Result
+        +search_unified(query: SearchQuery) Vec~SearchResult~
+        +compact(params: CompactionParameters) Result
+        +do_flush(params: FlushParameters) Result
+    }
+
+    class SstStorage {
+        -collection_id: String
+        -config: SstConfig
+        -filesystem: Arc~FilesystemFactory~
+        -search_engine: SstUnifiedSearchEngine
+        -distance_compute: UnifiedDistanceCompute
+        -bloom_filter_factory: Arc~BloomFilterFactory~
+        +write_vectors(vectors: Vec~VectorRecord~) Result
+        +search_unified(query: SearchQuery) Vec~SearchResult~
+        +compact(params: CompactionParameters) Result
+        +do_flush(params: FlushParameters) Result
+    }
+
+    %% Write Buffer System
+    class WriteBufferManager {
+        -config: WriteBufferConfig
+        -serialization_strategy: Box~dyn SerializationStrategy~
+        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
+        -memtable_manager: MemtableManager
+        -disk_manager: DiskManager
+        -recovery_manager: RecoveryManager
+        +write_batch(collection_id: str, batch: WriteBufferVectorBatch) Result
+        +flush_collection(collection_id: str) Result
+        +recover_collection(collection_id: str) Result
+    }
+
+    class WriteBufferBehaviorWrapper {
+        -inner: Arc~dyn Memtable~VectorRecord~~
+        -behavior: WriteBufferBehavior
+        -write_buffer_writer: Option~Arc~WriteBufferWriter~~
+        +insert(key: String, value: VectorRecord) Result
+        +search(query: SearchQuery) Vec~SearchResult~
+        +should_flush() bool
+        +flush_to_write_buffer() Result
+    }
+
+    %% Unified Components
+    class UnifiedAtomicCoordinator {
+        -staging_area: Arc~FilesystemFactory~
+        -active_operations: DashMap~String, ActiveOperation~
+        -config: AtomicConfig
+        +begin_atomic_operation(config: StagingConfig) AtomicOperation
+        +write_to_staging(operation_id: str, filename: str, data: bytes) Result
+        +finalize_atomic_operation(operation_id: str) Result
+        +abort_atomic_operation(operation_id: str) Result
+    }
+
+    class UnifiedDistanceCompute {
+        -backend: HardwareBackend
+        -simd_support: SimdSupport
+        -gpu_context: Option~GpuContext~
+        +compute_distance(v1: Vec~f32~, v2: Vec~f32~, metric: DistanceMetric) f32
+        +compute_batch_distances(query: Vec~f32~, vectors: Vec~Vec~f32~~, metric: DistanceMetric) Vec~f32~
+        +select_optimal_backend() HardwareBackend
+    }
+
+    class UnifiedQuantizationEngine {
+        -strategies: HashMap~QuantizationLevel, Box~dyn QuantizationStrategy~~
+        -config: QuantizationConfig
+        +quantize_vectors(vectors: Vec~Vec~f32~~, level: QuantizationLevel) QuantizedVectors
+        +reconstruct_vectors(quantized: QuantizedVectors) Vec~Vec~f32~~
+        +compute_quantized_distance(q1: QuantizedVector, q2: QuantizedVector) f32
+    }
+
+    %% AXIS Indexing System
+    class AxisManager {
+        -indexes: DashMap~String, Arc~RwLock~Box~dyn AxisVectorIndex~~~~
+        -config: AxisConfig
+        -adaptive_engine: AdaptiveEngine
+        -migration_coordinator: MigrationCoordinator
+        +insert(collection_id: str, vector: VectorRecord) Result
+        +search(collection_id: str, query: Vec~f32~, k: usize) Vec~SearchResult~
+        +build_index(collection_id: str, algorithm: IndexAlgorithm) Result
+        +migrate_index(collection_id: str, new_algorithm: IndexAlgorithm) Result
+    }
+
+    class AdaptiveEngine {
+        -performance_monitor: PerformanceMonitor
+        -index_selector: IndexSelector
+        +analyze_workload(collection_id: str) WorkloadPattern
+        +recommend_index(pattern: WorkloadPattern) IndexAlgorithm
+        +should_migrate(current: IndexStats, workload: WorkloadPattern) bool
+    }
+
+    %% Search Infrastructure
+    class UnifiedSearchEngine {
+        <<interface>>
+        +engine_id() str
+        +search_unified(context: UnifiedSearchContext, params: SearchParams) SearchResultSet
+        +can_handle(context: UnifiedSearchContext, params: SearchParams) bool
+        +optimization_hints(context: UnifiedSearchContext) Vec~OptimizationHint~
+    }
+
+    class SstUnifiedSearchEngine {
+        -sstable_reader: Arc~UnifiedSstableReader~
+        -distance_compute: Arc~UnifiedDistanceCompute~
+        -quantization_engine: Option~Arc~UnifiedQuantizationEngine~~
+        -config: SstSearchConfig
+        +search_unified(context: UnifiedSearchContext, params: SearchParams) SearchResultSet
+        +discover_sstable_files(context: UnifiedSearchContext) Vec~String~
+    }
+
+    class ViperUnifiedSearchEngine {
+        -parquet_reader: Arc~UnifiedParquetReader~
+        -distance_compute: Arc~UnifiedDistanceCompute~
+        -quantization_engine: Option~Arc~UnifiedQuantizationEngine~~
+        -config: ViperSearchConfig
+        +search_unified(context: UnifiedSearchContext, params: SearchParams) SearchResultSet
+        +apply_metadata_filtering(records: Vec~VectorRecord~, filter: FilterExpression) Vec~VectorRecord~
+    }
+
+    %% SQL Engine
+    class SqlEngine {
+        -parser: SqlParser
+        -planner: QueryPlanner
+        -executor: SqlExecutor
+        -vector_search_engine: Arc~VectorSearchEngine~
+        +execute_query(sql: String) SqlExecutionResult
+        +parse_query(sql: String) ParsedQuery
+        +create_execution_plan(parsed: ParsedQuery) ExecutionPlan
+    }
+
+    %% Relationships
+    ProximaDB --> StorageEngine
+    ProximaDB --> MultiServer
+    
+    MultiServer --> SharedServices
+    SharedServices --> DirectVectorService
+    SharedServices --> CollectionService
+    SharedServices --> AssignmentService
+    
+    UnifiedHandlers --> DirectVectorService
+    UnifiedHandlers --> CollectionService
+    UnifiedHandlers --> SqlEngine
+    
+    DirectVectorService --> WriteBufferBehaviorWrapper
+    DirectVectorService --> WriteBufferManager
+    DirectVectorService --> ViperEngine
+    DirectVectorService --> SstStorage
+    DirectVectorService --> UnifiedDistanceCompute
+    DirectVectorService --> UnifiedQuantizationEngine
+    
+    StorageEngine --> SstStorage
+    StorageEngine --> ViperEngine
+    StorageEngine --> WriteBufferManager
+    StorageEngine --> AxisManager
+    StorageEngine --> AssignmentService
+    
+    WriteBufferManager --> WriteBufferBehaviorWrapper
+    WriteBufferManager --> UnifiedAtomicCoordinator
+    
+    SstStorage --> SstUnifiedSearchEngine
+    SstStorage --> UnifiedAtomicCoordinator
+    SstStorage ..|> UnifiedStorageEngine
+    
+    ViperEngine --> ViperUnifiedSearchEngine
+    ViperEngine --> UnifiedAtomicCoordinator
+    ViperEngine ..|> UnifiedStorageEngine
+    
+    SstUnifiedSearchEngine ..|> UnifiedSearchEngine
+    ViperUnifiedSearchEngine ..|> UnifiedSearchEngine
+    
+    SstUnifiedSearchEngine --> UnifiedDistanceCompute
+    ViperUnifiedSearchEngine --> UnifiedDistanceCompute
+    
+    AxisManager --> AdaptiveEngine
+    
+    SqlEngine --> DirectVectorService
+    
+    %% Styling
+    classDef interfaceClass fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,stroke-dasharray: 5 5
+    classDef coreClass fill:#e8f5e8,stroke:#1b5e20,stroke-width:3px
+    classDef storageClass fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef serviceClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef networkClass fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef utilityClass fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    
+    class UnifiedSearchEngine,UnifiedStorageEngine interfaceClass
+    class ProximaDB,StorageEngine,DirectVectorService coreClass
+    class ViperEngine,SstStorage,WriteBufferManager,WriteBufferBehaviorWrapper storageClass
+    class CollectionService,AssignmentService,AxisManager,SqlEngine serviceClass
+    class MultiServer,SharedServices,UnifiedHandlers networkClass
+    class UnifiedAtomicCoordinator,UnifiedDistanceCompute,UnifiedQuantizationEngine,AdaptiveEngine utilityClass

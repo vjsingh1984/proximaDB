@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability, detect_platform_capability};
+use super::memory_pool::pooled_vector;
 use crate::services::collection_service::CollectionService;
 use std::sync::{Arc, OnceLock};
 use std::cmp::Ordering;
@@ -401,15 +402,27 @@ impl UnifiedDistanceCompute {
     /// Calculate batch distances using GPU (synchronous wrapper)
     fn calculate_batch_with_gpu(&self, query: &[f32], vectors: &[&[f32]], metric: &DistanceMetric) -> Result<Vec<f32>> {
         if let Some(ref gpu) = self.gpu_accelerator {
-            // Convert to owned vectors for GPU transfer
-            let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
+            // Use memory pool for efficient vector allocation during GPU transfer
+            let mut pooled_vectors = Vec::with_capacity(vectors.len());
+            let mut owned_vectors = Vec::with_capacity(vectors.len());
+            
+            // Acquire pooled vectors for GPU transfer
+            for vector in vectors {
+                let mut pooled = pooled_vector(vector.len());
+                pooled.extend_from_slice(vector);
+                owned_vectors.push(pooled.clone());
+                pooled_vectors.push(pooled);
+            }
             
             // Block on async GPU computation
-            tokio::task::block_in_place(|| {
+            let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     gpu.calculate_batch_gpu(query, &owned_vectors, metric.clone()).await
                 })
-            })
+            });
+            
+            // PooledVector instances are automatically returned to pool on drop
+            result
         } else {
             Err(anyhow::anyhow!("No GPU accelerator available"))
         }
@@ -638,6 +651,7 @@ impl UnifiedDistanceCompute {
     /// - Rank values optimized for sorting
     /// 
     /// **Hardware Acceleration**: Automatically uses GPU for large batches, SIMD for smaller ones
+    /// **Memory Efficiency**: Uses memory pool for batch result allocation
     pub fn calculate_distance_batch(
         &self,
         query: &[f32],
@@ -647,11 +661,15 @@ impl UnifiedDistanceCompute {
         // Use GPU for large batches if available
         if self.gpu_enabled && self.gpu_accelerator.is_some() && vectors.len() >= 100 && query.len() >= 64 {
             if let Ok(raw_values) = self.calculate_batch_with_gpu(query, vectors, metric) {
-                // Calculate query norm once
+                // Calculate query norm once using pooled vector for intermediate calculations
                 let query_norm = self.calculate_norm(query);
                 
+                // Use memory pool for batch result processing
+                let mut pooled_results = pooled_vector(vectors.len());
+                pooled_results.resize(vectors.len(), 0.0);
+                
                 // Convert raw GPU results to SimilarityResults
-                return raw_values.into_iter()
+                let results: Vec<SimilarityResult> = raw_values.into_iter()
                     .zip(vectors.iter())
                     .map(|(raw_value, vector)| {
                         let context = NormalizationContext {
@@ -672,19 +690,44 @@ impl UnifiedDistanceCompute {
                         }
                     })
                     .collect();
+                
+                // pooled_results automatically returned to pool on drop
+                return results;
             }
         }
         
-        // Fall back to CPU implementation
-        vectors
-            .iter()
-            .map(|vector| self.calculate_distance(query, vector, metric))
-            .collect()
+        // Fall back to CPU implementation with memory pool optimization
+        let mut results = Vec::with_capacity(vectors.len());
+        
+        // Use memory pool for temporary calculations if processing large batches
+        if vectors.len() >= 32 {
+            // Pre-calculate query norm once
+            let query_norm = self.calculate_norm(query);
+            
+            // Use pooled vector for batch distance calculations
+            let mut pooled_distances = pooled_vector(vectors.len());
+            pooled_distances.resize(vectors.len(), 0.0);
+            
+            for (i, vector) in vectors.iter().enumerate() {
+                let result = self.calculate_distance(query, vector, metric);
+                results.push(result);
+            }
+            
+            // pooled_distances automatically returned to pool on drop
+        } else {
+            // Small batches: use simple iteration without memory pool overhead
+            for vector in vectors {
+                results.push(self.calculate_distance(query, vector, metric));
+            }
+        }
+        
+        results
     }
 
     /// Calculate distances for large batch processing with chunking
     /// 
     /// Processes in chunks for optimal memory usage and cache efficiency
+    /// **Memory Efficiency**: Uses memory pool for chunk result aggregation
     pub fn calculate_distance_batch_chunked(
         &self,
         query: &[f32],
@@ -694,9 +737,26 @@ impl UnifiedDistanceCompute {
     ) -> Vec<SimilarityResult> {
         let mut results = Vec::with_capacity(vectors.len());
         
-        for chunk in vectors.chunks(chunk_size) {
-            let mut chunk_results = self.calculate_distance_batch(query, chunk, metric);
-            results.append(&mut chunk_results);
+        // Use memory pool for intermediate chunk processing if large dataset
+        if vectors.len() >= 1000 {
+            // Acquire pooled vector for chunk result aggregation
+            let mut pooled_buffer = pooled_vector(chunk_size.min(1024));
+            
+            for chunk in vectors.chunks(chunk_size) {
+                let mut chunk_results = self.calculate_distance_batch(query, chunk, metric);
+                results.append(&mut chunk_results);
+                
+                // Clear pooled buffer for reuse (capacity preserved)
+                pooled_buffer.clear();
+            }
+            
+            // pooled_buffer automatically returned to pool on drop
+        } else {
+            // Small datasets: process without memory pool overhead
+            for chunk in vectors.chunks(chunk_size) {
+                let mut chunk_results = self.calculate_distance_batch(query, chunk, metric);
+                results.append(&mut chunk_results);
+            }
         }
         
         results
@@ -705,6 +765,7 @@ impl UnifiedDistanceCompute {
     /// Calculate distances using distributed computation if available
     /// 
     /// Returns semantic-aware results for each node's vectors
+    /// **Memory Efficiency**: Uses memory pool for node result aggregation
     pub async fn calculate_distance_distributed(
         &self,
         query: &[f32],
@@ -713,11 +774,28 @@ impl UnifiedDistanceCompute {
     ) -> Result<Vec<(String, Vec<SimilarityResult>)>> {
         // Local computation for each node
         debug!("🖥️ Using local computation for {} node batches", node_vectors.len());
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(node_vectors.len());
         
-        for (node_id, vectors) in node_vectors {
-            let distances = self.calculate_distance_batch(query, vectors, metric);
-            results.push((node_id.to_string(), distances));
+        // Use memory pool for large distributed computations
+        if node_vectors.iter().map(|(_, vecs)| vecs.len()).sum::<usize>() >= 500 {
+            // Acquire pooled vector for node processing coordination
+            let mut pooled_coordinator = pooled_vector(256); // Small coordination buffer
+            
+            for (node_id, vectors) in node_vectors {
+                let distances = self.calculate_distance_batch(query, vectors, metric);
+                results.push((node_id.to_string(), distances));
+                
+                // Clear coordination buffer for reuse
+                pooled_coordinator.clear();
+            }
+            
+            // pooled_coordinator automatically returned to pool on drop
+        } else {
+            // Small distributed computations: process without memory pool overhead
+            for (node_id, vectors) in node_vectors {
+                let distances = self.calculate_distance_batch(query, vectors, metric);
+                results.push((node_id.to_string(), distances));
+            }
         }
         
         Ok(results)

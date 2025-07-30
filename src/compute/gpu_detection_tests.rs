@@ -9,9 +9,10 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::gpu_distance::{GpuBackend, GpuDistanceCompute, detect_best_gpu};
-    use super::super::unified_distance::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
-    use super::super::distance::DistanceMetric;
+    use crate::compute::gpu_distance::{GpuBackend, GpuDistanceCompute, detect_best_gpu};
+    use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
+    use crate::compute::distance::DistanceMetric;
+    use crate::compute::PlatformCapability;
     
     /// Test GPU backend detection and selection
     #[tokio::test]
@@ -238,9 +239,9 @@ mod tests {
         ];
         
         let cpu_backends = vec![
-            HardwareBackend::CpuSimd(super::super::distance::PlatformCapability::X86Avx512),
-            HardwareBackend::CpuSimd(super::super::distance::PlatformCapability::X86Avx2),
-            HardwareBackend::CpuSimd(super::super::distance::PlatformCapability::ArmNeon),
+            HardwareBackend::CpuSimd(PlatformCapability::X86Avx512),
+            HardwareBackend::CpuSimd(PlatformCapability::X86Avx2),
+            HardwareBackend::CpuSimd(PlatformCapability::ArmNeon),
             HardwareBackend::Scalar,
         ];
         

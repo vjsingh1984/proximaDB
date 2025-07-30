@@ -330,11 +330,30 @@ impl FileSystem for LocalFileSystem {
         // Calculate actual bytes to read (handle case where offset + length > file_size)
         let bytes_to_read = std::cmp::min(length, file_size - offset) as usize;
         
+        // Debug log for SSTable bloom filter issue
+        if path.contains(".sst") && offset < 1000 {
+            tracing::debug!(
+                "DEBUG LocalFS read_range: path={}, offset={}, length={}, file_size={}, bytes_to_read={}",
+                path, offset, length, file_size, bytes_to_read
+            );
+        }
+        
         // Read the exact amount of bytes
         let mut buffer = vec![0u8; bytes_to_read];
-        file.read_exact(&mut buffer)
-            .await
-            .map_err(FilesystemError::Io)?;
+        match file.read_exact(&mut buffer).await {
+            Ok(_) => {
+                // Success
+            }
+            Err(e) => {
+                // Get current position for debugging
+                let current_pos = file.stream_position().await.unwrap_or(0);
+                tracing::error!(
+                    "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
+                    path, offset, bytes_to_read, current_pos, file_size, e
+                );
+                return Err(FilesystemError::Io(e));
+            }
+        }
         
         Ok(buffer)
     }
@@ -458,6 +477,37 @@ impl FileSystem for LocalFileSystem {
     async fn sync(&self) -> FsResult<()> {
         // For local filesystem, sync is handled at the file level
         // This is a no-op for the filesystem as a whole
+        Ok(())
+    }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // Extract actual file path from URL (stateless design)
+        let file_path = self.extract_path_from_url(path)?;
+        let resolved_path = self.resolve_path(&file_path);
+        
+        // Only sync if enabled in config
+        if !self.config.sync_enabled {
+            return Ok(());
+        }
+        
+        // Open the file for sync
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    FilesystemError::NotFound(resolved_path.display().to_string())
+                }
+                _ => FilesystemError::Io(e),
+            })?;
+        
+        // Call sync_all() which performs fsync on the file
+        file.sync_all().await
+            .map_err(FilesystemError::Io)?;
+        
+        tracing::debug!("✅ File synced to disk: {}", resolved_path.display());
         Ok(())
     }
 

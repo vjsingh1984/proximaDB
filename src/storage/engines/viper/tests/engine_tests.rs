@@ -59,11 +59,11 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: format!("cat_{}", (value * 10.0) as i32 % 5),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", (value * 10.0) as i32 % 5))),
             },
             MetadataItem {
                 key: "timestamp".to_string(),
-                value: chrono::Utc::now().timestamp().to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(chrono::Utc::now().timestamp().to_string())),
             },
         ],
         timestamp: chrono::Utc::now().timestamp_millis(),
@@ -505,7 +505,7 @@ async fn test_search_vectors_unified() {
         vector.vector = vector_data;
         vector.metadata = vec![MetadataItem {
             key: key.to_string(),
-            value: value.to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
         }];
         vectors_to_flush.push(vector);
     }
@@ -721,15 +721,18 @@ async fn test_search_vectors_unified() {
             "Results should contain category metadata");
     
     // Test that we can search with filters (even if filtering is not applied without config)
-    let mut metadata_filters = std::collections::HashMap::new();
-    metadata_filters.insert("category".to_string(), serde_json::Value::String("A".to_string()));
+    let filter_expr = crate::core::search::FilterExpression::Comparison {
+        field: "category".to_string(),
+        operator: crate::core::search::ComparisonOperator::Equals,
+        value: serde_json::Value::String("A".to_string()),
+    };
     
     let filtered_results = engine.search_vectors_unified(
         collection_id,
         &[0.5, 0.5, 0.5],
         10,
         &DistanceMetric::Euclidean,
-        Some(&metadata_filters),
+        Some(&filter_expr),
         true,
         true,
     ).await.expect("Failed to search with filters");

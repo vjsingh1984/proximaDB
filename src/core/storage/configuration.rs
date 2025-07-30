@@ -15,7 +15,7 @@ pub struct UnifiedStorageConfig {
     pub data_dirs: Vec<std::path::PathBuf>,
     /// Maximum file size before splitting
     pub max_file_size_mb: usize,
-    /// Enable write-ahead logging
+    /// Enable write bufferging
     pub enable_wal: bool,
     /// Sync frequency in seconds
     pub sync_interval_secs: u64,

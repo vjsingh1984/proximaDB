@@ -762,10 +762,12 @@ impl CollectionService {
         );
 
         // Get unified assignment for the collection (only need to do this once)
+        // CRITICAL FIX: Use collection UUID (not name) for assignment storage
+        // This ensures WAL writer can find assignments when using resolved collection IDs
         let assignment = self
             .assignment_service
             .assign_collection(
-                collection_name,
+                &collection_uuid,  // Use UUID instead of collection_name
                 &self.storage_config.storage_locations,
                 &self.storage_config.assignment_config.strategy,
             )
@@ -776,16 +778,16 @@ impl CollectionService {
         // Create WAL directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(&assignment.location_url) {
             // Create WAL directory and subdirectories
-            if let Err(e) = filesystem.create_dir_all(&assignment.wal_url).await {
-                warn!("⚠️ Failed to create WAL directory {}: {}", assignment.wal_url, e);
+            if let Err(e) = filesystem.create_dir_all(&assignment.write_buffer_url).await {
+                warn!("⚠️ Failed to create WAL directory {}: {}", assignment.write_buffer_url, e);
             } else {
                 for subdir in &["logs", "checkpoints"] {
-                    let full_path = format!("{}/{}", assignment.wal_url, subdir);
+                    let full_path = format!("{}/{}", assignment.write_buffer_url, subdir);
                     if let Err(e) = filesystem.create_dir_all(&full_path).await {
                         warn!("⚠️ Failed to create WAL subdirectory {}: {}", full_path, e);
                     }
                 }
-                info!("✅ Created WAL storage directory: {}", assignment.wal_url);
+                info!("✅ Created WAL storage directory: {}", assignment.write_buffer_url);
                 created_components.push(StorageComponentType::Wal);
             }
 

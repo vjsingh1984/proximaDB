@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -29,7 +30,7 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Storage locations - each can host WAL, data, and indexes
+    /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
     
     /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata")
@@ -41,7 +42,7 @@ pub struct StorageConfig {
 
     /// Storage engine configuration
     pub mmap_enabled: bool,
-    pub lsm_config: LsmConfig,
+    pub sst_config: SstConfig,
     pub cache_size_mb: u64,
     // bloom_filter_bits removed - use bloom_filter_config instead
     pub bloom_filter_config: Option<BloomFilterConfig>,
@@ -224,7 +225,7 @@ impl StorageConfig {
     }
     
     /// Get WAL URLs derived from storage URLs
-    pub fn get_wal_urls(&self) -> Vec<String> {
+    pub fn get_write_buffer_urls(&self) -> Vec<String> {
         self.storage_locations.iter()
             .map(|loc| format!("{}/wal", loc.url.trim_end_matches('/')))
             .collect()
@@ -263,7 +264,7 @@ impl Default for StorageConfig {
             metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
-            lsm_config: LsmConfig::default(),
+            sst_config: SstConfig::default(),
             cache_size_mb: 2048,
             // Use unified bloom filter config
             bloom_filter_config: Some(BloomFilterConfig::default()),
@@ -273,10 +274,21 @@ impl Default for StorageConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LsmConfig {
+pub struct SstConfig {
     pub memtable_size_mb: u64,
     pub level_count: u8,
     pub compaction_threshold: u32,
+    /// SSTable block size in KB. Configurable from TOML, defaults to 1MB.
+    /// 
+    /// **Performance Guidelines:**
+    /// - **256-512KB**: Good for memory-constrained environments
+    /// - **1MB**: Optimal for EC2 GP2/GP3 and modern SSDs (default)
+    /// - **2-4MB**: Best for high-throughput workloads with ample memory
+    /// 
+    /// **Backward Compatibility:** 
+    /// Changing this value during restarts is safe. Each SSTable block stores its own
+    /// length prefix [block_len:4][block_data], so existing files continue to work.
+    /// Mixed block sizes within the same system are fully supported.
     pub block_size_kb: u32,
     pub memory_flush_size_bytes: usize,
     pub memtable_type: String,
@@ -290,8 +302,8 @@ pub struct LsmConfig {
     pub max_levels: u8,
     pub background_thread_count: u32,
     pub sync_mode: String,
-    pub enable_wal: bool,
-    pub wal_directory: String,
+    pub enable_write_buffer: bool,
+    pub write_buffer_directory: String,
     pub data_directory: String,
     pub mmap_enabled: bool,
     pub prefetch_enabled: bool,
@@ -302,13 +314,13 @@ pub struct LsmConfig {
 // Re-export for backward compatibility
 pub use crate::core::bloom::BloomFilterConfig;
 
-impl Default for LsmConfig {
+impl Default for SstConfig {
     fn default() -> Self {
         Self {
             memtable_size_mb: 64,
             level_count: 7,
             compaction_threshold: 4,
-            block_size_kb: 64,
+            block_size_kb: 1024, // 1MB blocks optimized for EC2 GP2/GP3 IOPS and modern storage
             memory_flush_size_bytes: 64 * 1024 * 1024, // 64MB
             memtable_type: "skiplist".to_string(),
             compaction_strategy: "leveled".to_string(),
@@ -321,13 +333,71 @@ impl Default for LsmConfig {
             max_levels: 7,
             background_thread_count: 4,
             sync_mode: "sync".to_string(),
-            enable_wal: true,
-            wal_directory: "./lsm_wal".to_string(),
-            data_directory: "./lsm_data".to_string(),
+            enable_write_buffer: true,
+            write_buffer_directory: "./sst_wal".to_string(),
+            data_directory: "./sst_data".to_string(),
             mmap_enabled: true,
             prefetch_enabled: true,
             prefetch_size_kb: 64,
         }
+    }
+}
+
+impl SstConfig {
+    /// Validate SST configuration parameters for optimal performance and correctness
+    /// 
+    /// Note: block_size_kb changes are backward compatible since each SSTable block
+    /// stores its own length prefix [block_len:4][block_data], allowing mixed block sizes.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.memtable_size_mb == 0 {
+            return Err("memtable_size_mb must be greater than 0".to_string());
+        }
+        if self.level_count == 0 {
+            return Err("level_count must be greater than 0".to_string());
+        }
+        if self.compaction_threshold == 0 {
+            return Err("compaction_threshold must be greater than 0".to_string());
+        }
+        
+        // Validate block size for optimal performance and storage compatibility
+        if self.block_size_kb < 4 {
+            return Err("block_size_kb must be at least 4KB for reasonable I/O performance".to_string());
+        }
+        if self.block_size_kb > 16 * 1024 {
+            return Err("block_size_kb should not exceed 16MB to avoid excessive memory usage per block".to_string());
+        }
+        
+        // Performance recommendations for common deployment scenarios
+        match self.block_size_kb {
+            1024 => {
+                // 1MB - Optimal for EC2 GP2/GP3 and modern SSDs
+                info!("block_size_kb=1MB - Optimized for EC2 GP2/GP3 and modern storage IOPS");
+            }
+            256 | 512 => {
+                // Good for memory-constrained environments
+                info!("block_size_kb={}KB - Good for memory-constrained deployments", self.block_size_kb);
+            }
+            2048 | 4096 => {
+                // Good for high-throughput scenarios
+                info!("block_size_kb={}KB - Optimized for high-throughput workloads", self.block_size_kb);
+            }
+            _ if self.block_size_kb < 256 => {
+                warn!("block_size_kb={}KB - Consider 256KB+ for better I/O efficiency", self.block_size_kb);
+            }
+            _ if self.block_size_kb > 4096 => {
+                warn!("block_size_kb={}KB - Very large blocks may increase memory pressure", self.block_size_kb);
+            }
+            _ => {
+                // Any other size is fine
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get block size in bytes for internal use
+    pub fn block_size_bytes(&self) -> usize {
+        (self.block_size_kb as usize) * 1024
     }
 }
 
@@ -354,7 +424,7 @@ pub struct ApiConfig {
 pub struct WalStorageConfig {
     /// WAL storage URLs - supports file://, s3://, adls://, gcs://
     /// Multiple URLs enable multi-disk performance scaling
-    pub wal_urls: Vec<String>,
+    pub write_buffer_urls: Vec<String>,
 
     /// Distribution strategy for collections across WAL directories
     #[serde(default)]
@@ -421,7 +491,7 @@ impl Default for WalDistributionStrategy {
 impl Default for WalStorageConfig {
     fn default() -> Self {
         Self {
-            wal_urls: vec!["file://./data/wal".to_string()],
+            write_buffer_urls: vec!["file://./data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
             memory_flush_size_bytes: 10 * 1024 * 1024,  // 10MB - recommended for collection-level flush

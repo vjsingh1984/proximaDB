@@ -44,7 +44,7 @@ Comprehensive production workflows for ProximaDB's **DirectVectorService archite
 
 **Hardware Optimization**:: SIMD/GPU acceleration with intelligent quantization selection
 
-image::proximadb-architecture-overview.png[ProximaDB Architecture Overview, width=800, align=center]
+image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
 
@@ -64,7 +64,7 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 === Step 1: Create Your First Proto-Native Collection
 
-image::proximadb-proto-first-data-flow.png[Proto-First Data Flow, width=800, align=center]
+image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=800, align=center]
 
 _Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
 

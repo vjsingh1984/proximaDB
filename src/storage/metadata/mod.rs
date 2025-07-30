@@ -20,7 +20,7 @@ pub mod indexes;
 pub mod single_index;
 pub mod store;
 pub mod unified_index;
-pub mod wal;
+pub mod write_buffer;
 
 
 use crate::storage::strategy::CollectionStrategyConfig;
@@ -33,7 +33,7 @@ use std::collections::HashMap;
 // Re-exports
 pub use atomic::{AtomicMetadataStore, MetadataTransaction, TransactionId};
 pub use store::{MetadataStore, MetadataStoreConfig};
-pub use wal::{MetadataWalConfig, MetadataWalManager, SystemMetadata, VersionedCollectionMetadata};
+pub use write_buffer::{MetadataWriteBufferConfig, MetadataWriteBufferManager, SystemMetadata, VersionedCollectionMetadata};
 
 // Re-export strategy types for convenience
 pub use crate::storage::strategy::{StorageEngineType, IndexingAlgorithm, DistanceMetric};

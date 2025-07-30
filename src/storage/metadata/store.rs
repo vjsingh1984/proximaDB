@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::{
     atomic::AtomicMetadataStore,
-    wal::{MetadataWalConfig, MetadataWalManager},
+    write_buffer::{MetadataWriteBufferConfig, MetadataWriteBufferManager},
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -164,7 +164,7 @@ pub struct MetadataStore {
     atomic_store: Option<Arc<AtomicMetadataStore>>,
 
     /// Direct WAL manager for simple operations
-    wal_manager: Arc<MetadataWalManager>,
+    write_buffer_manager: Arc<MetadataWriteBufferManager>,
 
     /// Filesystem factory
     filesystem: Arc<FilesystemFactory>,
@@ -201,21 +201,21 @@ impl MetadataStore {
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
 
         // Create WAL configuration for metadata
-        let mut metadata_wal_config = MetadataWalConfig::default();
+        let mut metadata_write_buffer_config = MetadataWriteBufferConfig::default();
 
         // Override data directories to use metadata-specific locations
-        metadata_wal_config.base_config.multi_disk.data_directories =
+        metadata_write_buffer_config.base_config.multi_disk.data_directories =
             vec![format!("file://{}", config.metadata_base_dir.display())];
 
         // Create WAL manager
-        let wal_manager = Arc::new(
-            MetadataWalManager::new(metadata_wal_config.clone(), filesystem.clone()).await?,
+        let write_buffer_manager = Arc::new(
+            MetadataWriteBufferManager::new(metadata_write_buffer_config.clone(), filesystem.clone()).await?,
         );
 
         // Create atomic store if enabled
         let atomic_store = if config.enable_atomic_operations {
             Some(Arc::new(
-                AtomicMetadataStore::new(metadata_wal_config, filesystem.clone()).await?,
+                AtomicMetadataStore::new(metadata_write_buffer_config, filesystem.clone()).await?,
             ))
         } else {
             None
@@ -229,7 +229,7 @@ impl MetadataStore {
         let mut store = Self {
             config,
             atomic_store,
-            wal_manager,
+            write_buffer_manager,
             filesystem,
             system_metadata,
             background_tasks: Vec::new(),
@@ -276,7 +276,7 @@ impl MetadataStore {
         &self,
         backup_config: MetadataBackupConfig,
     ) -> Result<tokio::task::JoinHandle<()>> {
-        let wal_manager = self.wal_manager.clone();
+        let write_buffer_manager = self.write_buffer_manager.clone();
         let filesystem = self.filesystem.clone();
 
         let task = tokio::spawn(async move {
@@ -291,7 +291,7 @@ impl MetadataStore {
 
                 // Perform backup
                 if let Err(e) =
-                    Self::perform_backup(&wal_manager, &filesystem, &backup_config).await
+                    Self::perform_backup(&write_buffer_manager, &filesystem, &backup_config).await
                 {
                     tracing::error!("❌ Metadata backup failed: {}", e);
                 } else {
@@ -323,7 +323,7 @@ impl MetadataStore {
 
     /// Start statistics collection task
     async fn start_stats_collection_task(&self) -> Result<tokio::task::JoinHandle<()>> {
-        let wal_manager = self.wal_manager.clone();
+        let write_buffer_manager = self.write_buffer_manager.clone();
         let system_metadata = self.system_metadata.clone();
 
         let task = tokio::spawn(async move {
@@ -333,7 +333,7 @@ impl MetadataStore {
                 interval.tick().await;
 
                 // Update system metadata with current statistics
-                if let Ok(stats) = wal_manager.get_stats().await {
+                if let Ok(stats) = write_buffer_manager.get_stats().await {
                     let mut sys_meta = system_metadata.write().await;
                     sys_meta.total_collections = stats.total_collections;
                     sys_meta.updated_at = Utc::now();
@@ -346,12 +346,12 @@ impl MetadataStore {
 
     /// Perform metadata backup
     async fn perform_backup(
-        wal_manager: &MetadataWalManager,
+        write_buffer_manager: &MetadataWriteBufferManager,
         _filesystem: &FilesystemFactory,
         backup_config: &MetadataBackupConfig,
     ) -> Result<()> {
         // Flush WAL to ensure all data is persisted
-        wal_manager.flush().await?;
+        write_buffer_manager.flush().await?;
 
         // TODO: Implement actual backup logic
         // 1. Create backup manifest
@@ -373,8 +373,8 @@ impl MetadataStore {
     }
 
     /// Get underlying WAL manager (for advanced operations)
-    pub fn wal_manager(&self) -> &Arc<MetadataWalManager> {
-        &self.wal_manager
+    pub fn write_buffer_manager(&self) -> &Arc<MetadataWriteBufferManager> {
+        &self.write_buffer_manager
     }
 
     /// Shutdown the metadata store gracefully
@@ -387,7 +387,7 @@ impl MetadataStore {
         }
 
         // Flush any remaining data
-        self.wal_manager.flush().await?;
+        self.write_buffer_manager.flush().await?;
 
         tracing::info!("✅ MetadataStore shutdown complete");
         Ok(())
@@ -448,7 +448,7 @@ impl MetadataStoreInterface for MetadataStore {
             atomic_store.create_collection(metadata).await
         } else {
             // Direct WAL operation
-            let versioned = super::wal::VersionedCollectionMetadata {
+            let versioned = super::write_buffer::VersionedCollectionMetadata {
                 id: metadata.id,
                 name: metadata.name,
                 dimension: metadata.dimension,
@@ -463,11 +463,11 @@ impl MetadataStoreInterface for MetadataStore {
                 description: metadata.description,
                 tags: metadata.tags,
                 owner: metadata.owner,
-                access_pattern: super::wal::AccessPattern::Normal,
+                access_pattern: super::write_buffer::AccessPattern::Normal,
                 retention_policy: None,
             };
 
-            self.wal_manager.upsert_collection(versioned).await
+            self.write_buffer_manager.upsert_collection(versioned).await
         }
     }
 
@@ -479,7 +479,7 @@ impl MetadataStoreInterface for MetadataStore {
             atomic_store.get_collection(collection_id).await
         } else {
             // Direct WAL read
-            if let Some(versioned) = self.wal_manager.get_collection(collection_id).await? {
+            if let Some(versioned) = self.write_buffer_manager.get_collection(collection_id).await? {
                 let metadata = CollectionMetadata {
                     id: versioned.id,
                     name: versioned.name,
@@ -518,7 +518,7 @@ impl MetadataStoreInterface for MetadataStore {
                 .await
         } else {
             // Direct WAL operation
-            let versioned = super::wal::VersionedCollectionMetadata {
+            let versioned = super::write_buffer::VersionedCollectionMetadata {
                 id: metadata.id,
                 name: metadata.name,
                 dimension: metadata.dimension,
@@ -533,11 +533,11 @@ impl MetadataStoreInterface for MetadataStore {
                 description: metadata.description,
                 tags: metadata.tags,
                 owner: metadata.owner,
-                access_pattern: super::wal::AccessPattern::Normal,
+                access_pattern: super::write_buffer::AccessPattern::Normal,
                 retention_policy: None,
             };
 
-            self.wal_manager.upsert_collection(versioned).await
+            self.write_buffer_manager.upsert_collection(versioned).await
         }
     }
 
@@ -545,7 +545,7 @@ impl MetadataStoreInterface for MetadataStore {
         if let Some(atomic_store) = &self.atomic_store {
             atomic_store.delete_collection(collection_id).await
         } else {
-            self.wal_manager.delete_collection(collection_id).await
+            self.write_buffer_manager.delete_collection(collection_id).await
         }
     }
 
@@ -557,7 +557,7 @@ impl MetadataStoreInterface for MetadataStore {
             atomic_store.list_collections(filter).await
         } else {
             // TODO: Implement filtering for direct WAL access
-            let versioned_list = self.wal_manager.list_collections(None).await?;
+            let versioned_list = self.write_buffer_manager.list_collections(None).await?;
 
             let metadata_list = versioned_list
                 .into_iter()
@@ -593,7 +593,7 @@ impl MetadataStoreInterface for MetadataStore {
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {
-        self.wal_manager
+        self.write_buffer_manager
             .update_stats(collection_id, vector_delta, size_delta)
             .await
     }
@@ -650,7 +650,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn health_check(&self) -> Result<bool> {
         // Check WAL manager health
-        let _stats = self.wal_manager.get_stats().await?;
+        let _stats = self.write_buffer_manager.get_stats().await?;
 
         // Check filesystem connectivity
         // TODO: Add filesystem health check
@@ -662,7 +662,7 @@ impl MetadataStoreInterface for MetadataStore {
         if let Some(atomic_store) = &self.atomic_store {
             atomic_store.get_storage_stats().await
         } else {
-            let wal_stats = self.wal_manager.get_stats().await?;
+            let wal_stats = self.write_buffer_manager.get_stats().await?;
 
             Ok(MetadataStorageStats {
                 total_collections: wal_stats.total_collections,
@@ -674,9 +674,9 @@ impl MetadataStoreInterface for MetadataStore {
                     0.0
                 },
                 avg_operation_latency_ms: 0.0,
-                storage_backend: "metadata-wal-btree".to_string(),
+                storage_backend: "metadata-write-buffer-btree".to_string(),
                 last_backup_time: None,
-                wal_entries: wal_stats.wal_writes,
+                wal_entries: wal_stats.write_buffer_writes,
                 wal_size_bytes: 0,
             })
         }

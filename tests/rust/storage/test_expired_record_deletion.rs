@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::lsm::mod::LsmRecord;
-use proximadb::core::LsmConfig;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::mod::SstRecord;
+use proximadb::core::SstConfig;
 
 #[tokio::test]
 async fn test_lsm_expired_record_deletion() -> Result<()> {
@@ -14,7 +14,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     let data_dir = temp_dir.path().to_path_buf();
     
     // Create LSM config
-    let mut config = LsmConfig::default();
+    let mut config = SstConfig::default();
     config.compaction_threshold = 1; // Trigger compaction with just 1 file
     config.data_directory = data_dir.join("lsm").to_string_lossy().to_string();
     
@@ -28,7 +28,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     
     let test_records = vec![
         // Active record
-        LsmRecord {
+        SstRecord {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -43,7 +43,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
             level: 0,
         },
         // Expired record (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -58,7 +58,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
             level: 0,
         },
         // Record without expiry (should be kept)
-        LsmRecord {
+        SstRecord {
             id: "permanent_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -132,7 +132,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

@@ -270,6 +270,7 @@ impl ActiveTransaction {
     }
 }
 
+
 /// Unified atomic operations coordinator with ACID support
 pub struct UnifiedAtomicCoordinator {
     /// Filesystem factory for multi-cloud support
@@ -514,7 +515,15 @@ impl UnifiedAtomicCoordinator {
                 match self.filesystem
                     .move_atomic(&staging_file_url, &final_file_url)
                     .await {
-                    Ok(_) => info!("    ✅ Move successful"),
+                    Ok(_) => {
+                        info!("    ✅ Move successful");
+                        // Verify the file exists at the final location
+                        if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
+                            if let Ok(exists) = fs.exists(&final_file_url).await {
+                                info!("    ✅ Verified file exists at final location: {}", exists);
+                            }
+                        }
+                    },
                     Err(e) => {
                         error!("    ❌ Move failed: {}", e);
                         return Err(anyhow::anyhow!(
@@ -543,6 +552,15 @@ impl UnifiedAtomicCoordinator {
 
         // Remove from active operations using DashMap
         self.active_operations.remove(operation_id);
+
+        // List the final directory to confirm files are there
+        info!("📂 Listing final directory after operation: {}", metadata.final_url);
+        if let Ok(final_entries) = self.filesystem.list(&metadata.final_url).await {
+            info!("📂 Found {} files in final location", final_entries.len());
+            for (idx, entry) in final_entries.iter().enumerate() {
+                info!("    [{}] {} (size: {} bytes)", idx, entry.name, entry.metadata.size);
+            }
+        }
 
         info!("🎉 Atomic operation completed: {}", operation_id);
         Ok(())
@@ -1013,6 +1031,7 @@ impl UnifiedAtomicCoordinator {
         }
         Ok(())
     }
+
 }
 
 /// Handle for an active transaction
@@ -1021,6 +1040,7 @@ pub struct TransactionHandle<'a> {
     coordinator: &'a UnifiedAtomicCoordinator,
     transaction: Arc<RwLock<ActiveTransaction>>,
 }
+
 
 impl<'a> TransactionHandle<'a> {
     /// Prepare the transaction (phase 1 of 2PC)
@@ -1118,7 +1138,7 @@ impl ViperAtomicOperations {
     }
 }
 
-/// Convenience wrapper for WAL-specific atomic operations
+/// Convenience wrapper for Write Buffer-specific atomic operations
 pub struct WalAtomicOperations {
     coordinator: Arc<UnifiedAtomicCoordinator>,
 }
@@ -1129,9 +1149,9 @@ impl WalAtomicOperations {
     }
 
     /// Begin WAL segment rotation operation
-    pub async fn begin_segment_rotation(&self, wal_url: &str) -> Result<AtomicOperationMetadata> {
+    pub async fn begin_segment_rotation(&self, write_buffer_url: &str) -> Result<AtomicOperationMetadata> {
         let config = StagingConfig {
-            base_url: wal_url.to_string(),
+            base_url: write_buffer_url.to_string(),
             collection_id: None,
             operation_type: StagingOperationType::Wal,
             auto_cleanup: true,

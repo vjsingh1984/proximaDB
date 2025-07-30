@@ -14,7 +14,7 @@ use url::Url;
 
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
 use super::persistence::filesystem::FilesystemConfig;
-use super::persistence::wal::WalConfig;
+use super::persistence::write_buffer::WriteBufferConfig;
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator
@@ -27,7 +27,7 @@ impl ConfigValidator {
             .context("Data storage configuration validation failed")?;
 
         Self::validate_wal_system(&config.wal_system)
-            .context("WAL system configuration validation failed")?;
+            .context("Write Buffer system configuration validation failed")?;
 
         Self::validate_filesystem(&config.filesystem)
             .context("Filesystem configuration validation failed")?;
@@ -85,11 +85,11 @@ impl ConfigValidator {
         Ok(())
     }
 
-    /// Validate WAL system configuration
-    pub fn validate_wal_system(config: &WalConfig) -> Result<()> {
+    /// Validate Write Buffer system configuration
+    pub fn validate_wal_system(config: &WriteBufferConfig) -> Result<()> {
         // Validate multi-disk configuration
         if config.multi_disk.data_directories.is_empty() {
-            bail!("WAL system must have at least one data directory");
+            bail!("Write Buffer system must have at least one data directory");
         }
 
         // Validate each data directory URL

@@ -4,7 +4,7 @@
 //! the best strategy based on query characteristics and storage type.
 
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -309,11 +309,9 @@ impl UnifiedParquetReader {
         columns.insert("timestamp".to_string());
         columns.insert("version".to_string());
         
-        // Add filterable columns if filters are present
-        if let Some(filters) = &params.filters {
-            for (field_name, _) in filters {
-                columns.insert(field_name.clone());
-            }
+        // Add filterable columns if filter expression is present
+        if let Some(filter_expr) = &params.filter_expression {
+            self.extract_filter_columns(filter_expr, &mut columns);
         }
         
         // Add quantization columns based on accuracy requirements
@@ -347,6 +345,13 @@ impl UnifiedParquetReader {
         
         debug!("📊 Selected {} columns for projection based on query requirements", column_vec.len());
         column_vec
+    }
+    
+    /// Extract column names from filter expression
+    fn extract_filter_columns(&self, expr: &FilterExpression, columns: &mut HashSet<String>) {
+        // Use centralized filter column extraction
+        let extracted = crate::core::search::filter_extraction::extract_filter_columns(expr);
+        columns.extend(extracted);
     }
     
     /// Build Parquet reader with row group and column selection
@@ -414,9 +419,9 @@ impl UnifiedParquetReader {
             } else { 
                 SearchType::ExactKNN 
             },
-            has_filters: params.filters.is_some(),
+            has_filters: params.filter_expression.is_some(),
             has_quantization: params.quantization_hint.is_some(),
-            estimated_selectivity: if params.filters.is_some() { 0.1 } else { 1.0 },
+            estimated_selectivity: if params.filter_expression.is_some() { 0.1 } else { 1.0 },
             top_k: params.top_k.unwrap_or(10),
             file_count: context.file_paths.len(),
             is_cloud_storage: context.is_cloud_storage,
@@ -527,20 +532,11 @@ impl UnifiedParquetReader {
                 self.read_all_vectors(file_path, &[]).await?
             };
             
-            // Apply filters (both simple and complex)
-            debug!("📖 Filtering {} vectors, filters present: {}", vectors.len(), params.filters.is_some());
+            // Apply filters
+            debug!("📖 Filtering {} vectors, filter expression present: {}", vectors.len(), params.filter_expression.is_some());
             let filtered_vectors: Vec<_> = vectors.into_iter()
                 .filter(|vector| {
-                    // Apply simple filters if present
-                    if let Some(filters) = &params.filters {
-                        let passes = self.apply_metadata_filters(vector, filters, context);
-                        debug!("📖 Vector {:?} filter result: {}", vector.id, passes);
-                        if !passes {
-                            return false;
-                        }
-                    }
-                    
-                    // Apply complex filter expression if present
+                    // Apply filter expression if present
                     if let Some(expr) = &params.filter_expression {
                         if !self.apply_filter_expression(vector, expr, context) {
                             return false;
@@ -569,13 +565,8 @@ impl UnifiedParquetReader {
         // Select optimal columns for metadata filtering
         let columns = self.select_optimal_columns(params, context);
         
-        for file_path in &context.file_paths {
-            if let Some(filters) = &params.filters {
-                // Push filters to Parquet level for maximum efficiency
-                let filtered_vectors = self.read_with_parquet_filters(file_path, filters, context, &columns).await?;
-                all_vectors.extend(filtered_vectors);
-            }
-        }
+        // Note: Parquet-level filter pushdown can be added here in the future
+        // for complex FilterExpression optimization
         
         Ok(all_vectors)
     }
@@ -603,27 +594,6 @@ impl UnifiedParquetReader {
         Ok(all_vectors)
     }
     
-    /// Read vectors with Parquet-level filter pushdown
-    async fn read_with_parquet_filters(
-        &self,
-        file_path: &str,
-        filters: &std::collections::HashMap<String, serde_json::Value>,
-        context: &CollectionContext,
-        columns: &[String],
-    ) -> Result<Vec<VectorRecord>> {
-        // Convert to &str for the reader
-        let column_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
-        
-        // Read with column projection
-        let all_vectors = self.read_all_vectors(file_path, &column_refs).await?;
-        
-        // Apply filters efficiently
-        let filtered: Vec<_> = all_vectors.into_iter()
-            .filter(|vector| self.apply_metadata_filters(vector, filters, context))
-            .collect();
-            
-        Ok(filtered)
-    }
     
     /// Read all vectors from file with optional column projection
     async fn read_all_vectors(&self, file_path: &str, columns: &[&str]) -> Result<Vec<VectorRecord>> {
@@ -741,10 +711,42 @@ impl UnifiedParquetReader {
                         
                         if !value_str.is_empty() {
                             debug!("📖 Extracted filterable metadata: {} = {}", field_name, value_str);
-                            record.metadata.push(crate::proto::proximadb::MetadataItem {
-                                key: field_name.to_string(),
-                                value: value_str,
-                            });
+                            // Determine the appropriate typed value based on the column type
+                            let metadata_item = if let Some(bool_array) = column.as_any().downcast_ref::<arrow_array::BooleanArray>() {
+                                if bool_array.is_valid(row_idx) {
+                                    crate::proto::proximadb::MetadataItem {
+                                        key: field_name.to_string(),
+                                        value: Some(crate::proto::proximadb::metadata_item::Value::BoolValue(bool_array.value(row_idx))),
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            } else if let Some(int_array) = column.as_any().downcast_ref::<arrow_array::Int64Array>() {
+                                if int_array.is_valid(row_idx) {
+                                    crate::proto::proximadb::MetadataItem {
+                                        key: field_name.to_string(),
+                                        value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(int_array.value(row_idx) as f64)),
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            } else if let Some(float_array) = column.as_any().downcast_ref::<arrow_array::Float64Array>() {
+                                if float_array.is_valid(row_idx) {
+                                    crate::proto::proximadb::MetadataItem {
+                                        key: field_name.to_string(),
+                                        value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(float_array.value(row_idx))),
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            } else {
+                                // Default to string value
+                                crate::proto::proximadb::MetadataItem {
+                                    key: field_name.to_string(),
+                                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(value_str)),
+                                }
+                            };
+                            record.metadata.push(metadata_item);
                         }
                     }
                 }
@@ -766,9 +768,17 @@ impl UnifiedParquetReader {
                                         if keys.is_valid(i) && values.is_valid(i) {
                                             let key = keys.value(i);
                                             let value = values.value(i);
+                                            // Parse value string to determine type
+                                            let metadata_value = if let Ok(bool_val) = value.parse::<bool>() {
+                                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(bool_val))
+                                            } else if let Ok(num_val) = value.parse::<f64>() {
+                                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(num_val))
+                                            } else {
+                                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string()))
+                                            };
                                             record.metadata.push(crate::proto::proximadb::MetadataItem {
                                                 key: key.to_string(),
-                                                value: value.to_string(),
+                                                value: metadata_value,
                                             });
                                         }
                                     }
@@ -780,8 +790,26 @@ impl UnifiedParquetReader {
                     // Old format support
                     if let Some(meta_array) = batch.column(idx).as_any().downcast_ref::<arrow_array::StringArray>() {
                         if meta_array.is_valid(row_idx) {
-                            if let Ok(metadata) = serde_json::from_str(meta_array.value(row_idx)) {
-                                record.metadata = metadata;
+                            if let Ok(metadata_map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(meta_array.value(row_idx)) {
+                                // Convert serde_json::Value to proto metadata items
+                                record.metadata = metadata_map.into_iter().map(|(key, value)| {
+                                    let metadata_value = match value {
+                                        serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)),
+                                        serde_json::Value::Number(n) => {
+                                            if let Some(f) = n.as_f64() {
+                                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                            } else {
+                                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                            }
+                                        },
+                                        serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)),
+                                        _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
+                                    };
+                                    crate::proto::proximadb::MetadataItem {
+                                        key,
+                                        value: metadata_value,
+                                    }
+                                }).collect();
                             }
                         }
                     }
@@ -862,48 +890,6 @@ impl UnifiedParquetReader {
         self.create_placeholder_vectors_simple(count).await
     }
     
-    /// Apply metadata filters efficiently with support for complex expressions
-    fn apply_metadata_filters(
-        &self,
-        vector: &VectorRecord,
-        filters: &std::collections::HashMap<String, serde_json::Value>,
-        context: &CollectionContext,
-    ) -> bool {
-        // Convert metadata items to a HashMap for easier access
-        let metadata_map = self.convert_vector_metadata(&vector.metadata);
-        
-        debug!("📖 Applying filters to vector {:?} with metadata: {:?}", vector.id, metadata_map);
-        debug!("📖 Filters to apply: {:?}", filters);
-        debug!("📖 Context filterable columns: {:?}", context.filterable_columns);
-        
-        // Apply simple filters (for backward compatibility)
-        for (key, expected_value) in filters {
-            // Check if this is a filterable column
-            // NOTE: If no filterable columns are specified (e.g., in tests), check all metadata
-            // If filterable columns ARE specified, only check those columns
-            if !context.filterable_columns.is_empty() {
-                let is_filterable = context.filterable_columns.iter()
-                    .any(|col| &col.name == key);
-                    
-                if !is_filterable {
-                    println!("📖 Skipping non-filterable column: {}", key);
-                    continue; // Skip non-filterable columns
-                }
-            }
-            
-            let actual_value = metadata_map.get(key);
-            println!("📖 Checking filter: {} = {:?} (actual: {:?})", key, expected_value, actual_value);
-            
-            // Parse filter value to extract operation
-            let filter_op = self.parse_filter_value(expected_value);
-            if !self.evaluate_filter(actual_value, &filter_op) {
-                println!("📖 Filter failed for key: {}", key);
-                return false;
-            }
-        }
-        debug!("📖 All filters passed");
-        true
-    }
     
     /// Apply complex filter expression
     fn apply_filter_expression(
@@ -1035,14 +1021,8 @@ impl UnifiedParquetReader {
 
     /// Convert vector metadata with type preservation
     fn convert_vector_metadata(&self, metadata: &[crate::proto::proximadb::MetadataItem]) -> HashMap<String, serde_json::Value> {
-        metadata.iter()
-            .map(|item| {
-                // Try to parse as JSON first, fallback to string
-                let value = serde_json::from_str(&item.value)
-                    .unwrap_or_else(|_| serde_json::Value::String(item.value.clone()));
-                (item.key.clone(), value)
-            })
-            .collect()
+        // Use the helper function to convert proto metadata to JSON
+        crate::core::proto_metadata_helper::proto_metadata_to_json(metadata)
     }
     
     /// Filter row groups based on predicate statistics (from cloud_optimized_reader)
@@ -1195,7 +1175,7 @@ impl UnifiedParquetReader {
                 vector: vec![0.1; 128], // Placeholder vector
                 metadata: vec![MetadataItem {
                     key: "category".to_string(),
-                    value: "test".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
                 }],
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 distance: Some(0.1 * i as f32),
@@ -1441,7 +1421,6 @@ mod tests {
             query_vectors: Some(vec![query_vector]),
             top_k: Some(10),
             distance_metric: Some(DistanceMetric::Cosine),
-            filters: None,
             ..Default::default()
         };
         

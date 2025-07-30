@@ -20,13 +20,13 @@ use crate::compute::unified_distance::{
     DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
 };
 use crate::core::VectorRecord;
-// WalEntry removed - working directly with VectorRecord and WalVectorBatch
+// WalEntry removed - working directly with VectorRecord and WriteBufferVectorBatch
 
 /// Collection partition within the global memtable
 #[derive(Debug)]
 struct CollectionPartition {
     /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
-    wal_batches: HashMap<String, crate::storage::memtable::specialized::wal_behavior::WalVectorBatch>,
+    wal_batches: HashMap<String, crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch>,
 
     /// Vector ID to batch lookup index for fast get operations
     vector_id_index: HashMap<String, String>, // vector_id -> batch_id
@@ -53,7 +53,7 @@ impl CollectionPartition {
     }
 
     /// Add WAL batch to this collection partition
-    fn add_batch(&mut self, batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<()> {
+    fn add_batch(&mut self, batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
@@ -312,7 +312,7 @@ impl CollectionPartition {
         final_results
     }
 
-    // Legacy append method removed - use add_batch() directly with WalVectorBatch
+    // Legacy append method removed - use add_batch() directly with WriteBufferVectorBatch
 }
 
 /// Global partitioned memtable implementation for WAL operations
@@ -347,7 +347,7 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Add native WAL batch to the appropriate collection partition (STREAMLINED ARCHITECTURE)
-    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::wal_behavior::WalVectorBatch) -> Result<Vec<u64>> {
+    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;
@@ -407,7 +407,7 @@ impl GlobalPartitionedMemtable {
         Ok(sequences)
     }
 
-    // Legacy append() method removed - use add_wal_batch() with modern WalVectorBatch architecture
+    // Legacy append() method removed - use add_wal_batch() with modern WriteBufferVectorBatch architecture
 
     /// Get any vector from the memtable (useful for testing/debugging)
     pub async fn get_any_vector(&self) -> Result<Option<VectorRecord>> {
@@ -879,7 +879,7 @@ impl GlobalPartitionedMemtable {
     }
 }
 
-// MemtableCore trait removed - GlobalPartitionedMemtable works directly with VectorRecord/WalVectorBatch
+// MemtableCore trait removed - GlobalPartitionedMemtable works directly with VectorRecord/WriteBufferVectorBatch
 
 impl GlobalPartitionedMemtable {
     /// Get all vectors without sequences (for flush operations) - MODERN

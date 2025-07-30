@@ -132,7 +132,7 @@ impl AvroSerializer {
                 }},
                 {"name": "wal_metrics", "type": {
                     "type": "record",
-                    "name": "WalMetrics",
+                    "name": "WriteBufferMetrics",
                     "fields": [
                         {"name": "total_entries", "type": "long"},
                         {"name": "memory_entries", "type": "long"},

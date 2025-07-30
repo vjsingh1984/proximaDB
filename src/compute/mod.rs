@@ -29,6 +29,7 @@ pub mod hardware_detection;
 // pub mod quantization;  // Removed - use unified_quantization instead
 pub mod unified_distance;
 pub mod memory_layout;
+pub mod memory_pool;
 pub mod unified_quantization;
 #[cfg(feature = "gpu")]
 pub mod gpu_distance;
@@ -42,6 +43,7 @@ pub use distance::*;
 pub use hardware::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
 // Old quantization module removed - use unified_quantization types instead
+pub use memory_pool::*;
 pub use unified_distance::*;
 pub use unified_quantization::*;
 

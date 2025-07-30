@@ -3,7 +3,7 @@
 //! These tests verify that atomic disk-to-cloud operations work correctly
 //! with comprehensive transaction management and rollback capabilities.
 //!
-//! NOTE: These tests are disabled as they use obsolete WalBatchStrategy APIs.
+//! NOTE: These tests are disabled as they use obsolete WriteBufferBatchStrategy APIs.
 //! They need to be rewritten to use DirectVectorService when cloud atomicity
 //! is integrated with the new architecture.
 
@@ -16,14 +16,14 @@ use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
 use proximadb::storage::atomicity::AtomicityManager;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
+use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalBatchStrategy;
-use proximadb::storage::persistence::wal::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::wal::cloud_atomicity::{
+use proximadb::storage::persistence::write_buffer::batch_strategy::WriteBufferBatchStrategy;
+use proximadb::storage::persistence::write_buffer::bincode_batch::BincodeWalBatchStrategy;
+use proximadb::storage::persistence::write_buffer::cloud_atomicity::{
     CloudAtomicityManager, CloudAtomicityConfig, CloudTransactionMetadata,
 };
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -48,11 +48,11 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
@@ -75,7 +75,7 @@ async fn create_test_cloud_atomicity_manager() -> Result<Arc<CloudAtomicityManag
         verification_timeout: std::time::Duration::from_secs(30),
         max_concurrent_transactions: 5,
         enable_integrity_verification: true,
-        retry_config: proximadb::storage::persistence::wal::cloud_atomicity::CloudRetryPolicy {
+        retry_config: proximadb::storage::persistence::write_buffer::cloud_atomicity::CloudRetryPolicy {
             max_retries: 3,
             initial_delay: std::time::Duration::from_millis(100),
             max_delay: std::time::Duration::from_secs(5),
@@ -101,10 +101,10 @@ async fn create_test_wal_strategy_with_cloud_atomicity() -> Result<BincodeWalBat
     let filesystem = Arc::new(factory);
     
     let mut strategy = BincodeWalBatchStrategy::new();
-    let wal_config = WalConfig::default();
+    let write_buffer_config = WriteBufferConfig::default();
     
     // Initialize the strategy
-    strategy.initialize(&wal_config, filesystem.clone()).await?;
+    strategy.initialize(&write_buffer_config, filesystem.clone()).await?;
     
     // Enable cloud atomicity
     let cloud_config = CloudAtomicityConfig::default();
@@ -336,14 +336,14 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
             
             // Create a dummy strategy for testing
             let mut strategy = BincodeWalBatchStrategy::new();
-            let wal_config = WalConfig::default();
+            let write_buffer_config = WriteBufferConfig::default();
             
             let config = FilesystemConfig::default();
             let mut factory = FilesystemFactory::new(config);
             factory.initialize().await?;
             let filesystem = Arc::new(factory);
             
-            strategy.initialize(&wal_config, filesystem).await?;
+            strategy.initialize(&write_buffer_config, filesystem).await?;
             
             // Commit transaction
             manager.commit_cloud_transaction(transaction_id, &strategy).await?;

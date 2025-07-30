@@ -13,9 +13,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::persistence::wal::config::{MemTableType, WalStrategyType};
-use super::persistence::wal::{WalConfig, WalManager};
-// Legacy WalFactory removed - WalManager now uses WalBatchFactory internally
+use super::persistence::write_buffer::config::{MemTableType, WriteBufferStrategyType};
+use super::persistence::write_buffer::{WriteBufferConfig, WriteBufferManager};
+// Legacy WalFactory removed - WriteBufferManager now uses WriteBufferBatchFactory internally
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -121,8 +121,8 @@ pub struct StorageSystemConfig {
     /// Data storage configuration
     pub data_storage: DataStorageConfig,
 
-    /// WAL system configuration
-    pub wal_system: WalConfig,
+    /// Write Buffer system configuration
+    pub wal_system: WriteBufferConfig,
 
     /// Filesystem configuration
     pub filesystem: FilesystemConfig,
@@ -204,7 +204,7 @@ impl Default for StorageSystemConfig {
                     compaction_interval_seconds: 300,
                 },
             },
-            wal_system: WalConfig::default(),
+            wal_system: WriteBufferConfig::default(),
             filesystem: FilesystemConfig::default(),
             metadata_backend: None, // Use default filestore backend
             storage_performance: StoragePerformanceConfig {
@@ -332,14 +332,14 @@ impl StorageSystemBuilder {
         self
     }
 
-    /// Configure WAL system
-    pub fn with_wal_config(mut self, config: WalConfig) -> Self {
+    /// Configure Write Buffer system
+    pub fn with_write_buffer_config(mut self, config: WriteBufferConfig) -> Self {
         self.config.wal_system = config;
         self
     }
 
     /// Set WAL strategy (Avro for schema evolution, Bincode for performance)
-    pub fn with_wal_strategy(mut self, strategy: WalStrategyType) -> Self {
+    pub fn with_wal_strategy(mut self, strategy: WriteBufferStrategyType) -> Self {
         self.config.wal_system.strategy_type = strategy;
         self
     }
@@ -364,31 +364,31 @@ impl StorageSystemBuilder {
 
     /// Configure high-throughput WAL
     pub fn with_high_throughput_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::high_throughput();
+        self.config.wal_system = WriteBufferConfig::high_throughput();
         self
     }
 
     /// Configure low-latency WAL
     pub fn with_low_latency_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::low_latency();
+        self.config.wal_system = WriteBufferConfig::low_latency();
         self
     }
 
     /// Configure storage-optimized WAL
     pub fn with_storage_optimized_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::storage_optimized();
+        self.config.wal_system = WriteBufferConfig::storage_optimized();
         self
     }
 
     /// Configure range-query optimized WAL
     pub fn with_range_query_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::range_query_optimized();
+        self.config.wal_system = WriteBufferConfig::range_query_optimized();
         self
     }
 
     /// Configure high-concurrency WAL
     pub fn with_high_concurrency_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::high_concurrency();
+        self.config.wal_system = WriteBufferConfig::high_concurrency();
         self
     }
 
@@ -607,20 +607,20 @@ impl StorageSystemBuilder {
         let filesystem = Arc::new(FilesystemFactory::new(self.config.filesystem.clone()).await?);
         tracing::info!("✅ Filesystem factory initialized");
 
-        // Build WAL system using new factory pattern
+        // Build Write Buffer system using new factory pattern
         tracing::info!(
             "🔧 Creating WAL strategy: {:?} with memtable: {:?}",
             self.config.wal_system.strategy_type,
             self.config.wal_system.memtable.memtable_type
         );
 
-        let wal_manager = WalManager::create_with_batch_factory(
+        let write_buffer_manager = WriteBufferManager::create_with_batch_factory(
             self.config.wal_system.strategy_type.clone(),
             self.config.wal_system.clone(),
             filesystem.clone()
         ).await?;
         tracing::info!(
-            "✅ WAL system initialized with {:?} strategy",
+            "✅ Write Buffer system initialized with {:?} strategy",
             self.config.wal_system.strategy_type
         );
 
@@ -631,7 +631,7 @@ impl StorageSystemBuilder {
         let system = StorageSystem {
             config: self.config,
             filesystem,
-            wal_manager: Arc::new(wal_manager),
+            write_buffer_manager: Arc::new(write_buffer_manager),
         };
 
         tracing::info!("🎉 Storage system build complete");
@@ -655,7 +655,7 @@ impl Default for StorageSystemBuilder {
 pub struct StorageSystem {
     config: StorageSystemConfig,
     filesystem: Arc<FilesystemFactory>,
-    wal_manager: Arc<WalManager>,
+    write_buffer_manager: Arc<WriteBufferManager>,
 }
 
 impl StorageSystem {
@@ -670,8 +670,8 @@ impl StorageSystem {
     }
 
     /// Get WAL manager
-    pub fn wal_manager(&self) -> &Arc<WalManager> {
-        &self.wal_manager
+    pub fn write_buffer_manager(&self) -> &Arc<WriteBufferManager> {
+        &self.write_buffer_manager
     }
 
     /// Get current storage layout strategy
@@ -720,7 +720,7 @@ mod tests {
     async fn test_storage_system_builder() {
         let builder = StorageSystemBuilder::new()
             .with_viper_layout()
-            .with_wal_strategy(WalStrategyType::AvroBatch)
+            .with_wal_strategy(WriteBufferStrategyType::AvroBatch)
             .with_wal_memtable(MemTableType::BTree)
             .with_high_data_compression();
 
@@ -730,7 +730,7 @@ mod tests {
         );
         assert_eq!(
             builder.config.wal_system.strategy_type,
-            WalStrategyType::AvroBatch
+            WriteBufferStrategyType::AvroBatch
         );
         assert_eq!(
             builder.config.wal_system.memtable.memtable_type,

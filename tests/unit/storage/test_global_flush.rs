@@ -9,9 +9,9 @@ use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use proximadb::storage::persistence::wal::background_manager::BackgroundMaintenanceManager;
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
+use proximadb::storage::persistence::write_buffer::background_manager::BackgroundMaintenanceManager;
+use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records with specific size
@@ -38,11 +38,11 @@ fn create_sized_vector_records(collection_id: &str, count: usize, size_per_vecto
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
@@ -223,7 +223,7 @@ async fn test_global_flush_config_integration() -> Result<()> {
     ];
     
     for (collection_threshold, global_threshold, shrink_factor) in configs {
-        let mut config = WalConfig::default();
+        let mut config = WriteBufferConfig::default();
         config.performance.memory_flush_size_bytes = collection_threshold;
         config.performance.global_flush_threshold = global_threshold;
         config.performance.global_shrink_factor = shrink_factor;
@@ -249,7 +249,7 @@ async fn test_global_flush_config_integration() -> Result<()> {
 #[tokio::test]
 async fn test_global_flush_background_manager_integration() -> Result<()> {
     // Test background manager with global flush settings
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 2 * 1024 * 1024; // 2MB
     config.performance.global_flush_threshold = 8 * 1024 * 1024; // 8MB
     config.performance.global_shrink_factor = 0.4; // 40%

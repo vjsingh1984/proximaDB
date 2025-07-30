@@ -17,7 +17,8 @@ use crate::core::{VectorRecord, MetadataQuery, MetadataQueryEngine};
 
 /// Vector search result with storage tier metadata
 #[derive(Debug, Clone)]
-pub struct TieredSearchResult {
+/// A search candidate from a specific storage tier awaiting deduplication
+pub struct TieredSearchCandidate {
     pub vector_record: VectorRecord,
     pub score: f32,
     pub tier: StorageTier,
@@ -50,9 +51,9 @@ pub type MetadataFilter = HashMap<String, JsonValue>;
 /// Multi-tier deduplication manager with advanced metadata filtering support
 pub struct MultiTierDeduplicator {
     /// Track latest version of each vector ID across tiers
-    id_to_latest: HashMap<String, TieredSearchResult>,
+    id_to_latest: HashMap<String, TieredSearchCandidate>,
     /// Results without IDs (no deduplication possible)
-    results_without_id: Vec<TieredSearchResult>,
+    results_without_id: Vec<TieredSearchCandidate>,
     /// Legacy simple metadata filters for backward compatibility
     metadata_filters: Option<MetadataFilter>,
     /// Advanced logical metadata query for complex filtering
@@ -137,13 +138,24 @@ impl MultiTierDeduplicator {
                 // Apply each filter
                 let metadata = &vector_record.metadata;
                 for (key, expected_value) in filters {
-                    match metadata.iter().find(|item| &item.key == key).map(|item| &item.value) {
-                        Some(actual_value) => {
+                    match metadata.iter().find(|item| &item.key == key) {
+                        Some(item) => {
+                            // Convert metadata value to JSON for comparison
+                            let actual_json = match &item.value {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                                    serde_json::Number::from_f64(*n)
+                                        .map(serde_json::Value::Number)
+                                        .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                                },
+                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                None => serde_json::Value::Null,
+                            };
                             // Compare values (strict equality for now)
-                            if actual_value != expected_value {
+                            if &actual_json != expected_value {
                                 tracing::debug!(
                                     "🔍 Simple filter mismatch: {} expected {:?}, got {:?}",
-                                    key, expected_value, actual_value
+                                    key, expected_value, actual_json
                                 );
                                 return false;
                             }
@@ -160,7 +172,7 @@ impl MultiTierDeduplicator {
     }
 
     /// Add search results from a specific storage tier
-    pub fn add_tier_results(&mut self, results: Vec<TieredSearchResult>) {
+    pub fn add_tier_results(&mut self, results: Vec<TieredSearchCandidate>) {
         for result in results {
             // Apply metadata filters first
             if !self.matches_filters(&result.vector_record) {
@@ -243,7 +255,7 @@ impl MultiTierDeduplicator {
     }
 
     /// Get final deduplicated results sorted by score
-    pub fn get_final_results(self, k: usize) -> Vec<TieredSearchResult> {
+    pub fn get_final_results(self, k: usize) -> Vec<TieredSearchCandidate> {
         let mut final_results = Vec::new();
         
         // Capture lengths before moving
@@ -308,7 +320,7 @@ mod tests {
         let now = chrono::Utc::now();
         
         // Add compacted result
-        let compacted_result = TieredSearchResult {
+        let compacted_result = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
@@ -331,7 +343,7 @@ mod tests {
         };
         
         // Add flushed result (should override compacted)
-        let flushed_result = TieredSearchResult {
+        let flushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],
@@ -354,7 +366,7 @@ mod tests {
         };
         
         // Add unflushed result (should override flushed)
-        let unflushed_result = TieredSearchResult {
+        let unflushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.2, 2.2, 3.2],
@@ -394,7 +406,7 @@ mod tests {
         let now = chrono::Utc::now();
         
         // Add two unflushed results with same sequence but different versions
-        let unflushed_v1 = TieredSearchResult {
+        let unflushed_v1 = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
@@ -416,7 +428,7 @@ mod tests {
             file_path: None,
         };
         
-        let unflushed_v2 = TieredSearchResult {
+        let unflushed_v2 = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],

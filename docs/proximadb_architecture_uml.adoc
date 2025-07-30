@@ -18,7 +18,7 @@ This document provides visual representations of ProximaDB's architecture using 
 
 The complete current system architecture with accurate component relationships:
 
-image::current-architecture-accurate.png[Current ProximaDB Architecture, width=100%, align=center]
+image::current-architecture-accurate.svg[Current ProximaDB Architecture, width=100%, align=center]
 
 _Diagram source: link:diagrams/current-architecture-accurate.mmd[View Mermaid source]_
 
@@ -34,7 +34,7 @@ This diagram shows the actual implementation with:
 
 Detailed sequence showing how requests flow through the actual system:
 
-image::service-interactions.png[Service Interaction Sequence, width=100%, align=center]
+image::service-interactions.svg[Service Interaction Sequence, width=100%, align=center]
 
 _Diagram source: link:diagrams/service-interactions.mmd[View Mermaid source]_
 
@@ -49,7 +49,7 @@ This sequence diagram illustrates:
 
 Actual class relationships and dependencies in the storage layer:
 
-image::storage-engine-classes.png[Storage Engine Classes, width=100%, align=center]
+image::storage-engine-classes.svg[Storage Engine Classes, width=100%, align=center]
 
 _Diagram source: link:diagrams/storage-engine-classes.mmd[View Mermaid source]_
 

@@ -695,6 +695,20 @@ impl FileSystem for S3FileSystem {
         // S3 operations are immediately durable
         Ok(())
     }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // S3 doesn't support or need file-level sync
+        // Data is already durable after successful PutObject
+        tracing::debug!("sync_file called on S3 path {} - no-op as S3 guarantees durability after successful write", path);
+        
+        // Note: S3 provides 99.999999999% (11 9's) durability
+        // Once a PutObject operation returns successfully, the data is:
+        // 1. Replicated across multiple availability zones
+        // 2. Protected against hardware failures
+        // 3. Immediately durable without need for explicit sync
+        
+        Ok(())
+    }
 
     async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         // Not used in ProximaDB - all operations go through read/write methods

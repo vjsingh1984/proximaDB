@@ -12,7 +12,7 @@
 
 pub mod generic_wrappers;
 pub mod lsm_behavior;
-pub mod wal_behavior;
+pub mod write_buffer_behavior;
 
 // Type aliases for convenience - these expose the actual data structures
 pub type LsmMemtable<K, V> = lsm_behavior::LsmBehaviorWrapper<
@@ -34,13 +34,13 @@ use crate::storage::memtable::core::MemtableConfig;
 pub struct SpecializedMemtableFactory;
 
 impl SpecializedMemtableFactory {
-    /// Create global partitioned memtable with WAL-specific behavior
-    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> wal_behavior::WalBehaviorWrapper {
-        wal_behavior::WalBehaviorWrapper::new(config)
+    /// Create global partitioned memtable with Write Buffer-specific behavior
+    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> write_buffer_behavior::WriteBufferBehaviorWrapper {
+        write_buffer_behavior::WriteBufferBehaviorWrapper::new(config)
     }
 
-    /// Create SkipList with LSM-specific behavior
-    pub fn create_skiplist_for_lsm<K, V>(config: MemtableConfig) -> LsmMemtable<K, V>
+    /// Create SkipList with SST-specific behavior
+    pub fn create_skiplist_for_sst<K, V>(config: MemtableConfig) -> LsmMemtable<K, V>
     where
         K: Clone + Ord + std::hash::Hash + Send + Sync + std::fmt::Debug,
         V: Clone + Send + Sync + std::fmt::Debug,

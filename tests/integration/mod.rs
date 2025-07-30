@@ -22,6 +22,17 @@
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
+// Test utilities for isolated integration testing
+pub mod test_utils;
+
+// Isolated integration tests with individual collections
+pub mod isolated_storage_assignment_test;
+pub mod isolated_filesystem_test;
+// SST engine integration tests
+pub mod isolated_sst_engine_test;
+// TODO: Fix API mismatches before enabling this test
+// pub mod isolated_write_buffer_test;
+
 // gRPC integration tests
 pub mod grpc;
 
@@ -40,15 +51,15 @@ pub mod semantic_distance_integration;
 // Unified search integration tests - NEW unified search interface
 pub mod unified_search_integration;
 
-// WAL optimization integration tests - NEW optimized WAL writer
-pub mod wal_optimization_integration_test;
+// Write Buffer optimization integration tests - NEW optimized Write Buffer writer
+pub mod write_buffer_optimization_integration_test;
 
 // VIPER engine integration tests
 pub mod viper;
 
-// LSM engine integration tests
-pub mod lsm_search_integration_test;
-pub mod lsm_collection_test;
+// SST engine integration tests
+pub mod sst_search_integration_test;
+pub mod sst_collection_test;
 
 // Storage-aware search integration tests - REMOVED (obsolete APIs)
 // pub mod storage_aware_search_tests;

@@ -242,7 +242,7 @@ impl FlushManager {
             completed_at: chrono::Utc::now(),
             flushed_batch_ids: batch_ids.iter().map(|_id| {
                 // Use compact BatchId for minimal storage overhead (10 bytes vs 100+ bytes)
-                crate::storage::persistence::wal::BatchId::default()
+                crate::storage::persistence::write_buffer::BatchId::default()
             }).collect(), // ✅ Include for WAL cleanup
             engine_metrics: {
                 let mut metrics = std::collections::HashMap::new();
@@ -369,7 +369,18 @@ impl FlushManager {
                 let values = filterable_arrays.get_mut(&filterable_column.name).unwrap();
                 let value = record.metadata.iter()
                     .find(|item| item.key == filterable_column.name)
-                    .map(|item| serde_json::Value::String(item.value.clone()))
+                    .map(|item| {
+                        match &item.value {
+                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                                serde_json::Number::from_f64(*n)
+                                    .map(serde_json::Value::Number)
+                                    .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                            },
+                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                            None => serde_json::Value::Null,
+                        }
+                    })
                     .unwrap_or(serde_json::Value::Null);
                 values.push(value);
             }
@@ -379,7 +390,14 @@ impl FlushManager {
             for item in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
                 if !filterable_field_names.contains(&item.key) {
-                    extra_kvs.push((item.key.clone(), item.value.clone()));
+                    // Convert metadata value to string for storage
+                    let value_str = match &item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                        None => String::new(),
+                    };
+                    extra_kvs.push((item.key.clone(), value_str));
                 }
             }
             extra_metadata_data.push(extra_kvs);

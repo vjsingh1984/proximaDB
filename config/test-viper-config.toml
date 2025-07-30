@@ -15,7 +15,7 @@ storage_locations = [
     { url = "file:///tmp/proximadb-viper-test/storage1", weight = 1 }
 ]
 
-[wal]
+[write_buffer]
 enabled = true
 batch_size = 10  # Very small batch size
 flush_interval_ms = 1000  # 1 second flush interval

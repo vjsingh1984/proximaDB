@@ -43,7 +43,7 @@ max_levels = 7
 background_thread_count = 4
 sync_mode = "perbatch"
 enable_wal = true
-wal_directory = "./test_data/lsm_wal"
+write_buffer_directory = "./test_data/lsm_wal"
 data_directory = "./test_data/lsm_data"
 mmap_enabled = true
 prefetch_enabled = true
@@ -75,11 +75,11 @@ enable_tls = false
 
 [monitoring]
 metrics_enabled = false
-log_level = "info"
+log_level = "error"
 
 [consensus]
 node_id = 1
 cluster_peers = []
 election_timeout_ms = 5000
 heartbeat_interval_ms = 1000
-snapshot_threshold = 10
+snapshot_threshold = 100

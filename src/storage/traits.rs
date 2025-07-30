@@ -99,7 +99,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         query_vector: &[f32],
         k: usize,
         distance_metric: &crate::compute::distance::DistanceMetric,
-        metadata_filters: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::SearchResult>>;
@@ -149,9 +149,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             } // Use VIPER for hybrid
         };
 
-        match assignment_service.get_assignment(
-            &crate::core::String::from(collection_id.to_string())
-        ).await {
+        match assignment_service.get_assignment(collection_id).await {
             Some(assignment) => {
                 // Return the assigned data URL (already includes collection id)
                 Ok(assignment.data_url)
@@ -182,9 +180,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         };
 
         match assignment_service
-            .get_assignment(
-                &crate::core::String::from(collection_id.to_string())
-            )
+            .get_assignment(collection_id)
             .await
         {
             Some(assignment) => Ok(assignment.data_url),
@@ -212,9 +208,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         };
 
         assignment_service
-            .get_assignment(
-                &crate::core::String::from(collection_id.to_string())
-            )
+            .get_assignment(collection_id)
             .await
             .is_some()
     }
@@ -689,7 +683,7 @@ pub struct FlushParameters {
     pub trigger_compaction: bool,
 
     /// Batch IDs involved in this flush operation (for coordination)
-    pub batch_ids: Vec<crate::storage::persistence::wal::BatchId>,
+    pub batch_ids: Vec<crate::storage::persistence::write_buffer::BatchId>,
     
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
@@ -797,7 +791,7 @@ pub struct FlushResult {
     pub compaction_triggered: bool,
 
     /// Batch IDs that were successfully flushed (for WAL cleanup coordination)
-    pub flushed_batch_ids: Vec<crate::storage::persistence::wal::BatchId>,
+    pub flushed_batch_ids: Vec<crate::storage::persistence::write_buffer::BatchId>,
 }
 
 /// Unified compaction result that accommodates different engine types

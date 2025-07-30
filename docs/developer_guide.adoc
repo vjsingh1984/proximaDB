@@ -2298,7 +2298,7 @@ ProximaDB documentation uses Mermaid diagrams that can be embedded directly in A
 **Using Mermaid Diagrams:**
 [source,asciidoc]
 ----
-image::diagram-name.png[Description, width=800, align=center]
+image::diagram-name.svg[Description, width=800, align=center]
 
 _Diagram source: link:diagrams/diagram-name.mmd[View Mermaid source]_
 ----
@@ -2318,7 +2318,7 @@ _Diagram source: link:diagrams/diagram-name.mmd[View Mermaid source]_
 3. Use Mermaid syntax (flowchart, sequence, class diagrams)
 4. Reference in AsciiDoc:
    ```asciidoc
-   image::proximadb-feature-name.png[Feature Name, width=800, align=center]
+   image::proximadb-feature-name.svg[Feature Name, width=800, align=center]
    
    _Diagram source: link:diagrams/proximadb-feature-name.mmd[View Mermaid source]_
    ```

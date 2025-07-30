@@ -12,7 +12,7 @@
                 expires_at: None,
                 version: 1,
                 batch_id: None,
-                operation: WalOperation::AvroPayload {
+                operation: WriteBufferOperation::AvroPayload {
                     operation_type: "upsert".to_string(),
                     avro_data: create_test_vector_record("vector_1", collection_id, vec![1.0, 0.0, 0.0], now)
                         .to_avro_bytes().expect("Failed to serialize test vector"),
@@ -27,7 +27,7 @@
                 expires_at: None,
                 version: 1,
                 batch_id: None,
-                operation: WalOperation::AvroPayload {
+                operation: WriteBufferOperation::AvroPayload {
                     operation_type: "upsert".to_string(),
                     avro_data: create_test_vector_record("vector_2", collection_id, vec![0.0, 1.0, 0.0], now)
                         .to_avro_bytes().expect("Failed to serialize test vector"),
@@ -42,7 +42,7 @@
                 expires_at: None,
                 version: 1,
                 batch_id: None,
-                operation: WalOperation::AvroPayload {
+                operation: WriteBufferOperation::AvroPayload {
                     operation_type: "upsert".to_string(),
                     avro_data: create_test_vector_record("vector_3", collection_id, vec![0.0, 0.0, 1.0], now)
                         .to_avro_bytes().expect("Failed to serialize test vector"),
@@ -57,7 +57,7 @@
                 expires_at: None,
                 version: 1,
                 batch_id: None,
-                operation: WalOperation::AvroPayload {
+                operation: WriteBufferOperation::AvroPayload {
                     operation_type: "upsert".to_string(),
                     avro_data: create_test_vector_record("vector_4", collection_id, vec![-1.0, 0.0, 0.0], now)
                         .to_avro_bytes().expect("Failed to serialize test vector"),

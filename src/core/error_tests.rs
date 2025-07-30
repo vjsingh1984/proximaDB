@@ -12,8 +12,8 @@ mod tests {
     fn test_vector_db_error_display() {
         // Test each error variant's display formatting
         
-        let storage_err = VectorDBError::Storage(StorageError::LsmTree("LSM compaction failed".to_string()));
-        assert_eq!(storage_err.to_string(), "Storage error: LSM tree error: LSM compaction failed");
+        let storage_err = VectorDBError::Storage(StorageError::SstStorage("SST compaction failed".to_string()));
+        assert_eq!(storage_err.to_string(), "Storage error: SST storage error: SST compaction failed");
         
         let consensus_err = VectorDBError::Consensus(ConsensusError::Raft("Leader election timeout".to_string()));
         assert_eq!(consensus_err.to_string(), "Consensus error: Raft error: Leader election timeout");
@@ -30,8 +30,8 @@ mod tests {
     
     #[test]
     fn test_storage_error_variants() {
-        let lsm_err = StorageError::LsmTree("Compaction failed".to_string());
-        assert!(lsm_err.to_string().contains("LSM tree error"));
+        let sst_err = StorageError::SstStorage("Compaction failed".to_string());
+        assert!(sst_err.to_string().contains("SST storage error"));
         
         let mmap_err = StorageError::Mmap("Memory mapping failed".to_string());
         assert!(mmap_err.to_string().contains("MMAP error"));

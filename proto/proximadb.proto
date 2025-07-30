@@ -43,7 +43,7 @@ enum DistanceMetric {
 enum StorageEngine {
   STORAGE_ENGINE_UNSPECIFIED = 0;
   VIPER = 1;
-  LSM = 2;
+  SST = 2;
   MMAP = 3;
   HYBRID = 4;
 }
@@ -82,10 +82,19 @@ enum VectorOperation {
 // CORE DATA TYPES - Aligned with Avro schema
 // ============================================================================
 
-// Metadata item for efficient key-value storage without JSON parsing
+// Metadata item with type-safe value storage
 message MetadataItem {
   string key = 1;
-  string value = 2;
+  
+  // Type-safe value storage using oneof
+  oneof value {
+    string string_value = 2;
+    double number_value = 3;
+    bool bool_value = 4;
+    // Note: arrays and objects can be added later if needed
+    // e.g., repeated string array_value = 5;
+    // e.g., google.protobuf.Struct object_value = 6;
+  }
 }
 
 message VectorRecord {

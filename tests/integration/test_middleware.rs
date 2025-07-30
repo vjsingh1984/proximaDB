@@ -15,7 +15,7 @@
  */
 
 use proximadb::core::{
-    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+    ApiConfig, Config, ConsensusConfig, SstConfig, MonitoringConfig, ServerConfig, StorageConfig,
     bloom::BloomFilterConfig,
 };
 use proximadb::network::middleware::auth::UserInfo;
@@ -53,7 +53,7 @@ async fn test_authentication_middleware() {
             data_dirs: vec![data_dir.clone()],
             wal_dir: wal_dir.clone(),
             mmap_enabled: true,
-            lsm_config: LsmConfig {
+            sst_config: SstConfig {
                 memtable_size_mb: 10,
                 level_count: 7,
                 compaction_threshold: 4,
@@ -164,7 +164,7 @@ async fn test_rate_limiting_middleware() {
             data_dirs: vec![data_dir.clone()],
             wal_dir: wal_dir.clone(),
             mmap_enabled: true,
-            lsm_config: LsmConfig {
+            sst_config: SstConfig {
                 memtable_size_mb: 10,
                 level_count: 7,
                 compaction_threshold: 4,

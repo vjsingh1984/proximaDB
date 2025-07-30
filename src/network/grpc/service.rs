@@ -38,19 +38,7 @@ pub struct ProximaDbGrpcService {
 }
 
 impl ProximaDbGrpcService {
-    // Legacy constructors - deprecated in favor of new_with_services
-    // These constructors are kept for backward compatibility but should not be used
-    // All services should be created via SharedServices in multi_server.rs
-    pub async fn new(_storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>) -> Self {
-        panic!("ProximaDbGrpcService::new is deprecated. Use new_with_services with SharedServices instead");
-    }
-
-    pub async fn new_with_config(
-        _storage: Arc<tokio::sync::RwLock<StorageEngineImpl>>,
-        _metadata_config: Option<crate::core::config::MetadataBackendConfig>,
-    ) -> Self {
-        panic!("ProximaDbGrpcService::new_with_config is deprecated. Use new_with_services with SharedServices instead");
-    }
+    // Legacy constructors removed - use new_with_services with SharedServices instead
 
     async fn create_collection_service(
         metadata_config: Option<crate::core::config::MetadataBackendConfig>,
@@ -668,9 +656,7 @@ impl ProximaDb for ProximaDbGrpcService {
             // Build native SearchParams from proto SearchParams
             let mut search_params = crate::core::search::SearchParams::default();
             search_params.top_k = Some(req.top_k as usize);
-            // Convert MetadataFilter to HashMap<String, Value> for now
-            // TODO: Update SearchParams to use MetadataFilter directly
-            search_params.filters = None;
+            // MetadataFilter conversion handled by SearchParams::with_simple_filters if needed
             
             if let Some(proto_params) = search_optimization {
                 // Direct field mapping - no complex conversions!
@@ -690,7 +676,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         let json_value = self.convert_prost_value_to_json(v);
                         filters.insert(k.clone(), json_value);
                     }
-                    search_params.filters = Some(filters);
+                    search_params = search_params.with_simple_filters(filters);
                 }
                 
                 // Convert quantization hint using proto oneof
@@ -747,7 +733,7 @@ impl ProximaDb for ProximaDbGrpcService {
             }
 
             // Extract metadata filters from the first query (for now)
-            let metadata_filters = if let Some(first_query) = req.queries.first() {
+            let metadata_filters: Option<std::collections::HashMap<String, serde_json::Value>> = if let Some(first_query) = req.queries.first() {
                 if let Some(_metadata_filter) = &first_query.metadata_filter {
                     // Convert MetadataFilter to HashMap<String, Value> 
                     // For now, just return None as proper conversion is complex
@@ -771,26 +757,30 @@ impl ProximaDb for ProximaDbGrpcService {
                     2 => Some(crate::compute::distance::DistanceMetric::DotProduct),
                     _ => Some(crate::compute::distance::DistanceMetric::Cosine),
                 };
-                Some(crate::core::search::SearchParams {
+                let mut params = crate::core::search::SearchParams {
                     top_k: Some(req.top_k as usize),
                     distance_metric,
-                    filters: metadata_filters.clone(),
                     ..Default::default()
-                })
+                };
+                if let Some(filters) = &metadata_filters {
+                    params = params.with_simple_filters(filters.clone());
+                }
+                Some(params)
             } else {
                 None // Will use collection's default
             };
             
             // Enhanced DirectVectorService search with metadata predicates and unified distance
             // Pass Cosine as fallback, but search_params will override if present
+            let combined_search_params = search_params;
+            
             let search_results = self.direct_vector_service
-                .search_vectors_unified(
+                .search_vectors(
                     &req.collection_id,
                     &req.queries[0].vector,
                     req.top_k as usize,
                     crate::compute::distance::DistanceMetric::Cosine, // Fallback, will be overridden
-                    search_params.as_ref(),
-                    metadata_filters.as_ref(),
+                    combined_search_params.as_ref(),
                     include_vectors,
                     include_metadata,
                 )
@@ -865,9 +855,7 @@ impl ProximaDb for ProximaDbGrpcService {
             // Build native SearchParams for multi-query (same as single query)
             let mut search_params = crate::core::search::SearchParams::default();
             search_params.top_k = Some(req.top_k as usize);
-            // Convert MetadataFilter to HashMap<String, Value> for now
-            // TODO: Update SearchParams to use MetadataFilter directly
-            search_params.filters = None;
+            // MetadataFilter conversion handled by SearchParams::with_simple_filters if needed
             
             if let Some(proto_params) = search_optimization {
                 // Direct field mapping - no complex conversions!
@@ -928,13 +916,12 @@ impl ProximaDb for ProximaDbGrpcService {
                 
                 for (index, query) in req.queries.iter().enumerate() {
                     let search_results = self.direct_vector_service
-                        .search_vectors_unified(
+                        .search_vectors(
                             &req.collection_id,
                             &query.vector,
                             req.top_k as usize,
                             crate::compute::distance::DistanceMetric::Cosine,
-                            None,
-                            None,
+                            None, // search_params
                             include_vectors,
                             include_metadata,
                         )
@@ -1034,15 +1021,21 @@ impl ProximaDb for ProximaDbGrpcService {
                 };
 
                 // Use DirectVectorService unified search with full capabilities
+                // Create search params with metadata filters if present
+                let search_params = if let Some(filters) = metadata_filters {
+                    Some(crate::core::search::SearchParams::default().with_simple_filters(filters))
+                } else {
+                    None
+                };
+                
                 let search_results = self
                     .direct_vector_service
-                    .search_vectors_unified(
+                    .search_vectors(
                         &req.collection_id,
                         &query.vector,
                         req.top_k as usize,
                         crate::proto::proximadb::DistanceMetric::Cosine, // Default to cosine
-                        None, // search_params
-                        metadata_filters.as_ref(),
+                        search_params.as_ref(),
                         include_vectors,
                         include_metadata,
                     )
@@ -1182,9 +1175,23 @@ impl ProximaDb for ProximaDbGrpcService {
                             .and_then(|m| m.as_object())
                             .map(|obj| {
                                 obj.iter()
-                                    .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                                        key: k.clone(),
-                                        value: v.to_string(),
+                                    .map(|(k, v)| {
+                                        let metadata_value = match v {
+                                            serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                                            serde_json::Value::Number(n) => {
+                                                if let Some(f) = n.as_f64() {
+                                                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                                } else {
+                                                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                                }
+                                            },
+                                            serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                                            _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
+                                        };
+                                        crate::proto::proximadb::MetadataItem {
+                                            key: k.clone(),
+                                            value: metadata_value,
+                                        }
                                     })
                                     .collect()
                             })

@@ -47,16 +47,57 @@ pub trait BloomFilterStrategy: Send + Sync {
     fn num_elements(&self) -> usize;
 }
 
-/// Trait for metadata-aware bloom filters
+/// Trait for metadata-aware bloom filters with type-safe operations
 pub trait MetadataBloomFilter: BloomFilterStrategy {
-    /// Insert a metadata key-value pair
-    fn insert_metadata(&mut self, column: &str, value: &str);
+    /// Insert a metadata item with proper type handling
+    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb::MetadataItem);
     
-    /// Check if metadata might match
-    fn might_match_metadata(&self, column: &str, value: &str) -> bool;
+    /// Check if metadata might match with proper type handling
+    fn might_match_metadata(&self, column: &str, item: &crate::proto::proximadb::MetadataItem) -> bool;
     
     /// Get the number of metadata columns tracked
     fn num_columns(&self) -> usize;
+}
+
+/// Serialize metadata value for bloom filter hashing
+/// This ensures consistent serialization across all types
+pub fn serialize_metadata_value(item: &crate::proto::proximadb::MetadataItem) -> String {
+    use crate::proto::proximadb::metadata_item::Value;
+    
+    match &item.value {
+        Some(Value::StringValue(s)) => s.clone(),
+        Some(Value::NumberValue(n)) => {
+            // Use consistent number formatting to avoid precision issues
+            // For integers, format without decimal point
+            if n.fract() == 0.0 && n.is_finite() {
+                format!("{:.0}", n)
+            } else {
+                // Use scientific notation for consistent representation
+                format!("{:e}", n)
+            }
+        }
+        Some(Value::BoolValue(b)) => b.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Convert JSON value to MetadataItem for bloom filter operations
+pub fn json_to_metadata_item(key: &str, value: &serde_json::Value) -> crate::proto::proximadb::MetadataItem {
+    use crate::proto::proximadb::metadata_item::Value as ProtoValue;
+    
+    let proto_value = match value {
+        serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),
+        serde_json::Value::Number(n) => {
+            Some(ProtoValue::NumberValue(n.as_f64().unwrap_or(0.0)))
+        }
+        serde_json::Value::Bool(b) => Some(ProtoValue::BoolValue(*b)),
+        _ => None, // Null, Array, Object not supported in MetadataItem
+    };
+    
+    crate::proto::proximadb::MetadataItem {
+        key: key.to_string(),
+        value: proto_value,
+    }
 }
 
 /// Bloom filter strategy types

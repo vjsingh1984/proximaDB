@@ -23,34 +23,32 @@
 //! - Brute force for exact search
 
 use crate::compute::{DistanceCompute, DistanceMetric};
+use crate::core::search::SearchResult;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
-/// Search result with similarity score
+// SearchResult now imported from crate::core::search::SearchResult - unified type
+// Local helper for BinaryHeap ordering
 #[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub vector_id: String,
-    pub score: f32,
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
-}
+pub struct ScoredSearchResult(pub SearchResult);
 
-impl PartialEq for SearchResult {
+impl PartialEq for ScoredSearchResult {
     fn eq(&self, other: &Self) -> bool {
-        self.score == other.score
+        self.0.score == other.0.score
     }
 }
 
-impl Eq for SearchResult {}
+impl Eq for ScoredSearchResult {}
 
-impl PartialOrd for SearchResult {
+impl PartialOrd for ScoredSearchResult {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // For max heap (highest scores first)
-        other.score.partial_cmp(&self.score)
+        other.0.score.partial_cmp(&self.0.score)
     }
 }
 
-impl Ord for SearchResult {
+impl Ord for ScoredSearchResult {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
@@ -408,9 +406,20 @@ impl VectorSearchAlgorithm for HNSWIndex {
                     self.vectors.get(&node_id),
                 ) {
                     results.push(SearchResult {
-                        vector_id: external_id.clone(),
+                        id: external_id.clone(),
+                        vector_id: Some(external_id.clone()),
                         score,
-                        metadata: metadata.clone(),
+                        distance: None,
+                        rank: None,
+                        vector: None,
+                        metadata: metadata.clone().unwrap_or_default(),
+                        debug_info: None,
+                        semantic_distance: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                        collection_id: None,
+                        created_at: None,
                     });
                 }
             }
@@ -444,28 +453,28 @@ impl VectorSearchAlgorithm for HNSWIndex {
         let filtered: Vec<_> = all_results
             .into_iter()
             .filter(|result| {
-                if let Some(ref metadata) = result.metadata {
-                    let matches = filter(metadata);
+                if !result.metadata.is_empty() {
+                    let matches = filter(&result.metadata);
                     if matches {
                         filter_matches += 1;
                         tracing::debug!(
                             "🔍 Filter match #{}: vector_id={}, metadata={:?}",
                             filter_matches,
-                            result.vector_id,
-                            metadata
+                            result.vector_id.as_deref().unwrap_or("none"),
+                            result.metadata
                         );
                     } else {
                         tracing::debug!(
                             "🔍 Filter NO MATCH: vector_id={}, metadata={:?}",
-                            result.vector_id,
-                            metadata
+                            result.vector_id.as_deref().unwrap_or("none"),
+                            result.metadata
                         );
                     }
                     matches
                 } else {
                     tracing::debug!(
                         "🔍 No metadata for vector_id={}, skipping",
-                        result.vector_id
+                        result.vector_id.as_deref().unwrap_or("none")
                     );
                     false
                 }
@@ -600,9 +609,20 @@ impl VectorSearchAlgorithm for BruteForceIndex {
         for (id, (vector, metadata)) in &self.vectors {
             let score = self.distance_computer.distance(query, vector);
             results.push(SearchResult {
-                vector_id: id.clone(),
+                id: id.clone(),
+                vector_id: Some(id.clone()),
                 score,
-                metadata: metadata.clone(),
+                distance: None,
+                rank: None,
+                vector: None,
+                metadata: metadata.clone().unwrap_or_default(),
+                debug_info: None,
+                semantic_distance: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+                collection_id: None,
+                created_at: None,
             });
         }
 
@@ -637,9 +657,20 @@ impl VectorSearchAlgorithm for BruteForceIndex {
 
             let score = self.distance_computer.distance(query, vector);
             results.push(SearchResult {
-                vector_id: id.clone(),
+                id: id.clone(),
+                vector_id: Some(id.clone()),
                 score,
-                metadata: metadata.clone(),
+                distance: None,
+                rank: None,
+                vector: None,
+                metadata: metadata.clone().unwrap_or_default(),
+                debug_info: None,
+                semantic_distance: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+                collection_id: None,
+                created_at: None,
             });
         }
 

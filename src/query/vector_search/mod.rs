@@ -129,12 +129,6 @@ impl VectorSearchEngine {
         Ok(())
     }
     
-    /// Train the index (deprecated - use initialize instead)
-    #[deprecated(note = "Use initialize() with training data instead")]
-    pub async fn train(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
-        self.initialize(Some(training_vectors)).await
-    }
-    
     /// Add vectors to the index
     pub async fn add_vectors(
         &self,
