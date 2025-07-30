@@ -184,7 +184,7 @@ proximadb/
 │   ├── storage/            # Storage layer
 │   │   ├── engine.rs       # Storage engine abstraction
 │   │   ├── viper/          # VIPER storage implementation
-│   │   ├── wal/            # Write-ahead log
+│   │   ├── write_buffer/   # WriteBuffer system
 │   │   ├── metadata/       # Metadata management
 │   │   └── filesystem/     # Multi-cloud filesystem abstraction
 │   ├── services/           # Business logic services
@@ -521,7 +521,7 @@ let request = SearchVectorsRequest {
 
 // Expected performance: 2-3x faster than generic search
 let request = SearchVectorsRequest {
-    collection_id: lsm_collection_id,
+    collection_id: sst_collection_id,
     query_vector: query_embedding,
     k: 10,
     search_hints: Some(SearchHints {
@@ -606,8 +606,8 @@ async def storage_aware_search():
     )
     
     # For SST collections - automatic optimization
-    lsm_results = await client.search_vectors(
-        collection_id="lsm_collection", 
+    sst_results = await client.search_vectors(
+        collection_id="sst_collection", 
         query_vector=query_embedding,
         k=10,
         search_hints=SearchHints(
@@ -618,7 +618,7 @@ async def storage_aware_search():
     
     # Print optimization results
     print(f"VIPER search: {len(viper_results)} results")
-    print(f"SST search: {len(lsm_results)} results")
+    print(f"SST search: {len(sst_results)} results")
 
 asyncio.run(storage_aware_search())
 ----
@@ -1195,7 +1195,7 @@ config = CollectionConfig(
     name="realtime_collection", 
     dimension=256,
     storage_engine=StorageEngine.SST,
-    lsm_config=LsmConfig(
+    sst_config=SstConfig(
         memtable_size_mb=128,  # Larger for write-heavy
         use_bloom_filter=True,  # Essential for point lookups
         bloom_filter_bits_per_key=10
@@ -1685,13 +1685,13 @@ parquet_row_group_size = 10000
 compression = "zstd"
 enable_vectorization = true
 
-[wal]
-strategy = "avro"
+[write_buffer]
+strategy = "bincode"  # Default: fastest performance
 max_memory_mb = 1024
 max_entries = 75000
 flush_interval_secs = 300
 
-[wal.avro]
+[write_buffer.bincode]
 compression = "lz4"
 schema_evolution = true
 
@@ -1732,7 +1732,7 @@ export PROXIMADB_STORAGE_URL="s3://my-bucket/proximadb"
 export PROXIMADB_STORAGE_ENGINE="viper"
 
 # WriteBuffer configuration
-export PROXIMADB_WriteBuffer_STRATEGY="avro"
+export PROXIMADB_WriteBuffer_STRATEGY="bincode"
 export PROXIMADB_WriteBuffer_MAX_MEMORY_MB=2048
 
 # Authentication
@@ -2115,23 +2115,23 @@ async fn check_cloud_health(&self, cloud_base_url: &str) -> Result<bool>;
 **TOML Configuration Example:**
 [source,toml]
 ----
-[storage.wal_config.performance.cloud_backup]
+[storage.write_buffer_config.performance.cloud_backup]
 enabled = true
-backup_url = "s3://my-bucket/proximadb-wal/"
+backup_url = "s3://my-bucket/proximadb-write-buffer/"
 strategy = "OnFlush"
 verify_integrity = true
 
-[storage.wal_config.performance.cloud_backup.frequency]
+[storage.write_buffer_config.performance.cloud_backup.frequency]
 operations_threshold = 1000
 time_threshold_secs = 300
 size_threshold_bytes = 104857600  # 100MB
 
-[storage.wal_config.performance.cloud_backup.cleanup_policy]
+[storage.write_buffer_config.performance.cloud_backup.cleanup_policy]
 retention_days = 7
 max_backups = 100
 cleanup_frequency_hours = 24
 
-[storage.wal_config.performance.cloud_backup.retry_config]
+[storage.write_buffer_config.performance.cloud_backup.retry_config]
 max_retries = 3
 initial_delay_ms = 100
 max_delay_ms = 5000
@@ -2154,7 +2154,7 @@ backoff_multiplier = 2.0
 let mut config = WalConfig::default();
 config.performance.cloud_backup = Some(CloudBackupConfig {
     enabled: true,
-    backup_url: "s3://my-bucket/wal/".to_string(),
+    backup_url: "s3://my-bucket/write-buffer/".to_string(),
     strategy: CloudBackupStrategy::OnFlush,
     ..Default::default()
 });
@@ -2163,7 +2163,7 @@ config.performance.cloud_backup = Some(CloudBackupConfig {
 let sequences = strategy.insert_vectors_with_cloud_backup(
     collection_id,
     vectors,
-    Some("s3://my-bucket/wal/"),
+    Some("s3://my-bucket/write-buffer/"),
 ).await?;
 ----
 
@@ -2174,8 +2174,8 @@ let sequences = strategy.insert_vectors_with_cloud_backup(
 let cloud_url = strategy.migrate_batch_to_cloud(
     &collection_id,
     &batch,
-    "/local/path/wal_batch.bin",
-    "gcs://my-bucket/wal/",
+    "/local/path/write_buffer_batch.bin",
+    "gcs://my-bucket/write-buffer/",
 ).await?;
 
 println!("Migrated batch to: {}", cloud_url);
@@ -2186,7 +2186,7 @@ println!("Migrated batch to: {}", cloud_url);
 ----
 // Verify cloud accessibility
 let is_healthy = strategy.check_cloud_health(
-    "adls://account.dfs.core.windows.net/container/wal/"
+    "adls://account.dfs.core.windows.net/container/write-buffer/"
 ).await?;
 
 if !is_healthy {
@@ -2241,7 +2241,7 @@ The ProximaDB Python SDK includes a comprehensive test suite in `/clients/python
 - `test_collection_operations.py` - Collection CRUD operations and configuration  
 - `test_vector_operations.py` - Vector CRUD operations and batch processing
 - `test_search_operations.py` - Search functionality and similarity operations
-- `test_persistence_wal.py` - Data persistence and WriteBuffer operations
+- `test_persistence_write_buffer.py` - Data persistence and WriteBuffer operations
 - `test_storage_layouts.py` - Storage engine testing with flush and compaction
 
 === Running Tests

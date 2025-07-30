@@ -8,7 +8,7 @@
 //! Benchmarks for SIMD-accelerated distance computation
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use crate::proto::proximadb::DistanceMetric;
+use proximadb::compute::distance::DistanceMetric;
 use proximadb::compute::unified_distance::UnifiedDistanceCompute;
 use rand::prelude::*;
 

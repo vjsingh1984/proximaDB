@@ -219,7 +219,7 @@ collection_config = {
 
 # SST engine for high-write workloads  
 collection_config = {
-    "storage_engine": "lsm",
+    "storage_engine": "sst",
     "enable_bloom_filters": True,
     "compaction_style": "leveled"
 }
@@ -262,4 +262,4 @@ ProximaDB automatically selects the optimal search strategy:
 
 ---
 
-**Ready for production?** See the link:../demo/README.adoc[Demo Guide] for real-world examples with 1M+ vectors.
+**Ready for production?** See the link:user_guide.adoc[User Guide] for real-world examples with production workflows.

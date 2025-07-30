@@ -335,7 +335,7 @@ Regular maintenance tasks:
 * link:https://github.com/proximadb/proximadb[GitHub Repository]
 * link:https://proximadb.io/docs[Online Documentation]
 * link:https://proximadb.io/community[Community Forums]
-* link:CHANGELOG.adoc[Release History]
+* link:../CHANGELOG.md[Release History]
 
 ---
 _Last updated: {docdate}_

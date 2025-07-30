@@ -112,13 +112,10 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
             println!("🔎 SST Search Engine: No filter expression");
         }
         
-        // 1. Build SSTable file paths - get the collection-specific URL
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let collection_assignment = assignment_service.get_assignment(&context.collection_id).await
-            .ok_or_else(|| anyhow::anyhow!("No assignment found for collection {}", context.collection_id))?;
-        let collection_storage_url = collection_assignment.data_url.clone();
+        // 1. Use cached storage URL instead of querying assignment service
+        let collection_storage_url = &self.storage_url;
         
-        let sstable_files = self.discover_sstable_files(context, &collection_storage_url).await?;
+        let sstable_files = self.discover_sstable_files(context, collection_storage_url).await?;
         println!("📁 Found {} SSTable files", sstable_files.len());
         
         // 2. Apply optimization hints
@@ -284,6 +281,7 @@ impl SstUnifiedSearchEngine {
         results: Vec<SearchResult>,
     ) -> Result<Vec<SearchResult>> {
         // Group by ID and keep only latest version (based on metadata version field)
+        // For records without version information, keep the first occurrence (best score)
         let mut latest_versions: std::collections::HashMap<String, SearchResult> = 
             std::collections::HashMap::new();
         
@@ -292,23 +290,37 @@ impl SstUnifiedSearchEngine {
         for result in results {
             // Extract version from metadata if available
             let version = result.metadata.get("_version")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                .and_then(|v| v.as_i64());
             
             match latest_versions.get(&result.id) {
                 Some(existing) => {
                     let existing_version = existing.metadata.get("_version")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    if existing_version >= version {
-                        // Keep existing (newer or same version)
-                        continue;
+                        .and_then(|v| v.as_i64());
+                    
+                    match (existing_version, version) {
+                        (Some(existing_v), Some(new_v)) => {
+                            // Both have explicit versions - keep newer version
+                            if existing_v >= new_v {
+                                continue;
+                            }
+                        }
+                        (Some(_), None) => {
+                            // Existing has version, new doesn't - keep existing (versioned)
+                            continue;
+                        }
+                        (None, Some(_)) => {
+                            // Existing has no version, new has version - replace with versioned
+                        }
+                        (None, None) => {
+                            // Neither has version - keep first occurrence (already in map)
+                            continue;
+                        }
                     }
                 }
                 None => {}
             }
             
-            // Insert new or replace with newer version
+            // Insert new or replace with newer/versioned record
             latest_versions.insert(result.id.clone(), result);
         }
         

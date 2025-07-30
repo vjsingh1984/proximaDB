@@ -604,8 +604,8 @@ async fn select_search_engine(&self, query: &SearchQuery) -> Vec<Box<dyn SearchE
     let mut engines = Vec::new();
     
     // WriteBuffer search for unflushed data
-    if self.wal_has_unflushed_data(query.collection_id) {
-        engines.push(Box::new(WalSearchEngine::new(self.wal.clone())));
+    if self.write_buffer_has_unflushed_data(query.collection_id) {
+        engines.push(Box::new(WriteBufferSearchEngine::new(self.write_buffer.clone())));
     }
     
     // VIPER search with two-stage strategy for quantized data
@@ -622,8 +622,8 @@ async fn select_search_engine(&self, query: &SearchQuery) -> Vec<Box<dyn SearchE
     }
     
     // SST search for compacted data
-    if self.lsm_has_data(query.collection_id) {
-        engines.push(Box::new(LsmSearchEngine::new(self.lsm.clone())));
+    if self.sst_has_data(query.collection_id) {
+        engines.push(Box::new(SstSearchEngine::new(self.sst.clone())));
     }
     
     engines
@@ -696,17 +696,17 @@ impl DirectVectorService {
 [source,rust]
 ----
 pub async fn persist_vectors_async(&self, vectors: Vec<VectorRecord>) -> Result<()> {
-    let wal_path = self.assignment_service.resolve_wal_path(&collection_id).await?;
+    let write_buffer_path = self.assignment_service.resolve_write_buffer_path(&collection_id).await?;
     
     // Atomic write: temp → rename pattern
-    let temp_path = format!("{}.tmp", wal_path);
+    let temp_path = format!("{}.tmp", write_buffer_path);
     let serialized = self.serialize_vectors(&vectors).await?;
     
     // Write to temp file
     filesystem.write(&temp_path, &serialized, None).await?;
     
     // Atomic rename
-    filesystem.move_file(&temp_path, &wal_path).await?;
+    filesystem.move_file(&temp_path, &write_buffer_path).await?;
     
     Ok(())
 }
@@ -740,19 +740,19 @@ trait DirectWalRecovery {
     async fn recover_collection_direct(
         &self,
         collection_id: &str, 
-        wal_files: Vec<PathBuf>
+        write_buffer_files: Vec<PathBuf>
     ) -> Result<RecoveryStats>;
 }
 
 impl DirectVectorService {
     async fn startup_recovery(&self) -> Result<()> {
         // 1. Discover WriteBuffer files using assignment service
-        let wal_files = self.discover_wal_files().await?;
+        let write_buffer_files = self.discover_write_buffer_files().await?;
         
         // 2. Stream process each WriteBuffer file directly to storage
-        for (collection_id, files) in wal_files {
-            for wal_file in files {
-                let vectors = self.deserialize_wal_streaming(&wal_file).await?;
+        for (collection_id, files) in write_buffer_files {
+            for write_buffer_file in files {
+                let vectors = self.deserialize_write_buffer_streaming(&write_buffer_file).await?;
                 
                 // Direct flush to storage engine (bypasses memtable)
                 for chunk in vectors.chunks(1000) {
@@ -760,7 +760,7 @@ impl DirectVectorService {
                 }
                 
                 // Immediate cleanup
-                filesystem.delete(&wal_file).await?;
+                filesystem.delete(&write_buffer_file).await?;
             }
         }
         
@@ -780,14 +780,27 @@ impl DirectVectorService {
 pub trait UnifiedWalStrategy {
     async fn force_sync(&self) -> Result<()>;              // Atomic disk sync
     async fn persist_vectors(&self, vectors: Vec<VectorRecord>) -> Result<()>;
-    async fn recover_vectors(&self, wal_files: Vec<PathBuf>) -> Result<Vec<VectorRecord>>;
+    async fn recover_vectors(&self, write_buffer_files: Vec<PathBuf>) -> Result<Vec<VectorRecord>>;
 }
 ----
 
-**Proto Strategy (Default)**:
+**Bincode Strategy (Default)**:
 [source,rust]
 ----
-pub struct ProtoWalStrategy {
+pub struct BincodeWriteBufferStrategy {
+    config: Config,
+}
+----
+
+**Performance Characteristics**:
+- **Speed**: 8-21% faster than Avro, fastest serialization
+- **Size**: More compact than Avro
+- **Compatibility**: Rust-native only
+
+**Proto Strategy**:
+[source,rust]
+----
+pub struct ProtoWriteBufferStrategy {
     config: ProtoConfig,
     assignment_service: Arc<AssignmentService>,
 }
@@ -798,10 +811,10 @@ pub struct ProtoWalStrategy {
 - **Compatibility**: Cross-language protobuf support
 - **Integration**: Direct with DirectVectorService architecture
 
-**Avro Strategy**:
+**Avro Strategy (Legacy)**:
 [source,rust]
 ----
-pub struct AvroWalStrategy {
+pub struct AvroWriteBufferStrategy {
     schema: Schema,
     writer: Writer<Vec<u8>>,
 }
@@ -812,19 +825,6 @@ pub struct AvroWalStrategy {
 - **Cross-language**: Schema evolution support
 - **Latency**: 2-3ms serialization overhead
 
-**Bincode Strategy**:
-[source,rust]
-----
-pub struct BincodeWalStrategy {
-    config: Config,
-}
-----
-
-**Performance Characteristics**:
-- **Speed**: 8-21% faster than Avro
-- **Size**: More compact than Avro
-- **Compatibility**: Rust-native only
-
 **Critical Configuration Fix**:
 
 The DirectVectorService was fixed to use actual WriteBuffer configuration instead of hardcoded defaults:
@@ -832,10 +832,10 @@ The DirectVectorService was fixed to use actual WriteBuffer configuration instea
 [source,rust]
 ----
 // BEFORE (broken):
-let wal_config = WalConfig::default(); // Used wrong directory paths
+let write_buffer_config = WriteBufferConfig::default(); // Used wrong directory paths
 
 // AFTER (fixed):  
-let wal_config = vector_service.get_wal_config(); // Uses config.toml settings
+let write_buffer_config = vector_service.get_write_buffer_config(); // Uses config.toml settings
 ----
 
 This ensures PerBatch sync mode works correctly for production durability guarantees.
@@ -846,7 +846,7 @@ This ensures PerBatch sync mode works correctly for production durability guaran
 - **Zero Double Serialization**: Direct proto types throughout the system
 - **No Wrappers**: Direct field access pattern for performance
 - **Unified Enums**: Proto-generated enums as single source of truth
-- **Binary Payloads**: Vector data stays as Avro binary for zero-copy
+- **Binary Payloads**: Vector data uses efficient binary serialization
 
 **Proto-Native Collections**:
 [source,rust]
@@ -947,7 +947,7 @@ pub struct ProductQuantization {
 ----
 [storage]
 data_directory = "/data/proximadb"
-wal_flush_threshold_mb = 64
+write_buffer_flush_threshold_mb = 64
 compaction_enabled = true
 
 [storage.viper]
@@ -955,7 +955,7 @@ enable_clustering = true
 clustering_threshold = 1000000
 quantization_enabled = true
 
-[storage.lsm]
+[storage.sst]
 bloom_filter_fp_rate = 0.001
 compaction_style = "leveled"
 ----
@@ -1267,7 +1267,7 @@ ProximaDB leverages hardware-specific optimizations:
 [source,toml]
 ----
 # High-write workload (SST)
-[storage.lsm]
+[storage.sst]
 memtable_size_mb = 256
 write_buffer_size_mb = 64
 block_cache_size_mb = 128
@@ -1477,7 +1477,7 @@ impl OptimizedIndexCache {
 
 **Bloom Filter Memory Optimization - Implemented**
 - Reduced from ~40MB to <8MB per collection (80% reduction)
-- File: `/src/storage/engines/lsm/optimized_bloom_filter.rs`
+- File: `/src/storage/engines/sst/optimized_bloom_filter.rs`
 - Features: Memory constraints, sharing manager, adaptive sizing
 
 **Async Concurrency Fixes - Completed**
@@ -1495,13 +1495,13 @@ impl OptimizedIndexCache {
 - ~40% improvement in concurrent operations
 
 **Lock-free Implementations - Completed**
-- `LockFreeStorageEngine`: DashMap for concurrent SST tree access
-- `LockFreeAtomicCoordinator`: Lock-free atomic operations
-- `LockFreeHashMapMemtable`: DashMap-based memtable
+- `StorageEngine`: DashMap for concurrent SST tree access
+- `UnifiedAtomicCoordinator`: Lock-free atomic operations
+- `MemtableImplementations`: DashMap-based memtable
 - Files: `/src/storage/lockfree_*.rs`
 
 **Predictive Prefetching - Implemented**
-- File: `/src/storage/engines/lsm/readers/predictive_prefetcher.rs`
+- File: `/src/storage/engines/sst/readers/predictive_prefetcher.rs`
 - Features: Pattern detection, hot block identification, ML-based prediction
 - Separate prefetch cache to avoid pollution
 - Comprehensive metrics tracking

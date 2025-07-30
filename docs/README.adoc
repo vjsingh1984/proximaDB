@@ -120,12 +120,12 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 |===
 | Document | Description | Status
 
-| link:appendix_implementation_notes.adoc[Implementation Notes]
+| link:appendix_implementation_details.adoc[Implementation Details]
 | Deep dive into specific implementations
 | ✅ Complete
 
-| link:appendix_technical_details.adoc[Technical Details]
-| Algorithms, data structures, optimizations
+| link:appendix_testing_development.adoc[Testing & Development]
+| Testing guide and contribution details
 | ✅ Complete
 |===
 
