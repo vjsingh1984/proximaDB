@@ -182,9 +182,15 @@ impl PersistentTestAssignments {
         // Acquire semaphore for file access
         let _permit = self.file_semaphore.acquire().await.unwrap();
 
-        // Clear disk storage
+        // Clear disk storage and any temp files
         if self.assignment_file.exists() {
             fs::remove_file(&self.assignment_file).await?;
+        }
+        
+        // Clean up any temp files
+        let temp_file = format!("{}.tmp", self.assignment_file.display());
+        if std::path::Path::new(&temp_file).exists() {
+            let _ = fs::remove_file(&temp_file).await;
         }
 
         // Clear cache
@@ -196,7 +202,7 @@ impl PersistentTestAssignments {
         Ok(())
     }
 
-    /// Load assignments from disk file
+    /// Load assignments from disk file with corruption recovery
     async fn load_assignments_from_disk(&self) -> Result<HashMap<String, TestAssignmentData>> {
         if !self.assignment_file.exists() {
             return Ok(HashMap::new());
@@ -208,15 +214,35 @@ impl PersistentTestAssignments {
             return Ok(HashMap::new());
         }
 
-        let assignments: HashMap<String, TestAssignmentData> = serde_json::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Failed to parse assignment file: {}", e))?;
-        Ok(assignments)
+        // Try to parse the JSON
+        match serde_json::from_str::<HashMap<String, TestAssignmentData>>(&content) {
+            Ok(assignments) => Ok(assignments),
+            Err(e) => {
+                eprintln!("Warning: Assignment file corrupted, recreating: {}", e);
+                eprintln!("File content: {}", content);
+                
+                // Remove corrupted file and start fresh
+                let _ = fs::remove_file(&self.assignment_file).await;
+                Ok(HashMap::new())
+            }
+        }
     }
 
-    /// Save assignments to disk file
+    /// Save assignments to disk file with atomic write
     async fn save_assignments_to_disk(&self, assignments: &HashMap<String, TestAssignmentData>) -> Result<()> {
         let content = serde_json::to_string_pretty(assignments)?;
-        fs::write(&self.assignment_file, content).await?;
+        
+        // Write to a temporary file first, then atomically move it
+        let temp_file = format!("{}.tmp", self.assignment_file.display());
+        fs::write(&temp_file, &content).await?;
+        
+        // Ensure content is synced to disk
+        let file = fs::OpenOptions::new().write(true).open(&temp_file).await?;
+        file.sync_all().await?;
+        drop(file);
+        
+        // Atomically move the temp file to the final location
+        fs::rename(&temp_file, &self.assignment_file).await?;
         Ok(())
     }
 }

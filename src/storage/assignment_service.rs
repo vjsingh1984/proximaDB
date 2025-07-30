@@ -186,8 +186,13 @@ impl AssignmentService for HashBasedAssignmentService {
         storage_locations: &[StorageLocation],
         strategy: &str,
     ) -> Result<UnifiedAssignment> {
-        // Check if already assigned
+        // Check if already assigned - assignments are sticky and immutable
         if let Some(existing) = self.get_assignment(collection_id).await {
+            tracing::debug!(
+                "📂 Collection '{}' already assigned to location: {} - returning existing assignment",
+                collection_id,
+                existing.data_url
+            );
             return Ok(existing);
         }
 
@@ -257,7 +262,25 @@ impl AssignmentService for HashBasedAssignmentService {
         assignment: UnifiedAssignment,
     ) -> Result<()> {
         let mut assignments = self.assignments.write().await;
-        assignments.insert(collection_id.to_string(), assignment);
+        
+        // Check if we're overwriting an existing assignment (this should not happen)
+        if let Some(existing) = assignments.get(collection_id) {
+            tracing::warn!(
+                "⚠️ Overwriting existing assignment for collection '{}': {} -> {}",
+                collection_id,
+                existing.data_url,
+                assignment.data_url
+            );
+        }
+        
+        assignments.insert(collection_id.to_string(), assignment.clone());
+        
+        tracing::debug!(
+            "📝 Recorded assignment for collection '{}': {}",
+            collection_id,
+            assignment.data_url
+        );
+        
         Ok(())
     }
 

@@ -29,12 +29,14 @@ graph TB
         
         subgraph "Storage Engines"
             SST["SST Engine<br/>SSTables"]
-            VIPER["VIPER Engine<br/>Parquet"]
             Memtable["Memtable<br/>In-Memory"]
         end
         
+        subgraph "External Systems"
+            VIPER["VIPER Engine<br/>Uses Parquet Native<br/>Bloom Filters"]
+        end
+        
         SST -->|uses| ByteAligned
-        VIPER -->|uses| Composite
         Memtable -->|uses| BitPacked
         
         subgraph "Features"
@@ -57,5 +59,6 @@ graph TB
     class Config configClass
     class Factory factoryClass
     class ByteAligned,BitPacked,Simple,Composite,NoOp strategyClass
-    class SST,VIPER,Memtable engineClass
+    class SST,Memtable engineClass
+    class VIPER featureClass
     class Hash,Serial,Edge featureClass

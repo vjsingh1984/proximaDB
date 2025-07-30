@@ -278,17 +278,8 @@ fn test_brute_force_duplicate_vector_error() {
 
 #[test]
 fn test_search_result_ordering() {
-    let result1 = SearchResult {
-        vector_id: "vec1".to_string(),
-        score: 0.5,
-        metadata: None,
-    };
-    
-    let result2 = SearchResult {
-        vector_id: "vec2".to_string(),
-        score: 0.8,
-        metadata: None,
-    };
+    let result1 = SearchResult::new("vec1".to_string(), 0.5);
+    let result2 = SearchResult::new("vec2".to_string(), 0.8);
     
     // Higher scores should be ordered first (max heap behavior)
     // Note: PartialOrd is reversed for max heap, so result2 < result1 when result2.score > result1.score

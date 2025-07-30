@@ -1,6 +1,8 @@
 // Common test utilities
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod test_assignments;
+
 // Global test counter to ensure unique collection IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 

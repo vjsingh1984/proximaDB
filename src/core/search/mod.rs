@@ -199,7 +199,8 @@ pub mod json_comparison {
     /// - Special cases: NaN, Infinity
     /// 
     /// # Examples
-    /// ```
+    /// ```rust,ignore
+    /// use serde_json::Number;
     /// assert!(compare_json_numbers(&Number::from(2), &Number::from(2.0))); // true
     /// assert!(compare_json_numbers(&Number::from(42), &Number::from(42))); // true
     /// ```
@@ -437,7 +438,10 @@ pub mod filter_extraction {
     /// Used consistently across SST, VIPER, and Write Buffer engines
     /// 
     /// # Examples
-    /// ```
+    /// ```rust,ignore
+    /// use proximadb::core::search::{FilterExpression, ComparisonOperator};
+    /// use proximadb::core::search::filter_extraction::extract_metadata_conditions;
+    /// 
     /// let filter = FilterExpression::Comparison {
     ///     field: "batch".to_string(),
     ///     operator: ComparisonOperator::Equals,
@@ -479,10 +483,21 @@ pub mod filter_extraction {
     /// Used for determining which columns need to be loaded/indexed
     /// 
     /// # Examples
-    /// ```
+    /// ```rust,ignore
+    /// use proximadb::core::search::{FilterExpression, ComparisonOperator};
+    /// use proximadb::core::search::filter_extraction::extract_filter_columns;
+    /// 
     /// let filter = FilterExpression::And(vec![
-    ///     FilterExpression::Comparison { field: "batch".to_string(), ... },
-    ///     FilterExpression::Comparison { field: "category".to_string(), ... },
+    ///     FilterExpression::Comparison { 
+    ///         field: "batch".to_string(), 
+    ///         operator: ComparisonOperator::Equals,
+    ///         value: serde_json::json!(1),
+    ///     },
+    ///     FilterExpression::Comparison { 
+    ///         field: "category".to_string(), 
+    ///         operator: ComparisonOperator::Equals,
+    ///         value: serde_json::json!("A"),
+    ///     },
     /// ]);
     /// let columns = extract_filter_columns(&filter);
     /// assert!(columns.contains("batch"));

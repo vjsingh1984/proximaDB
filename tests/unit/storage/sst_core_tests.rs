@@ -17,12 +17,12 @@ mod common {
 }
 use common::unique_collection_id;
 
+// Use the inline test assignment helper from sst_test_config.rs for now
+use super::sst_test_config::{setup_storage_assignment, cleanup_assignment};
 use super::sst_test_config::{
     create_test_sst_config, 
     create_test_filesystem_config,
-    setup_test_directories,
-    setup_storage_assignment,
-    cleanup_assignment
+    setup_test_directories
 };
 
 /// Test basic SST operations: insert, flush, search
@@ -44,28 +44,46 @@ async fn test_lsm_basic_operations() {
     );
     
     // Setup storage assignment BEFORE creating SST storage
-    let collection_id = &unique_collection_id("test_collection");
+    let collection_id = unique_collection_id("test_collection");
+    println!("DEBUG: Using collection_id: {}", collection_id);
     
-    // Clear any existing assignment first
-    cleanup_assignment(collection_id).await.unwrap();
+    // Clean up any existing assignment and directory first to prevent data contamination
+    cleanup_assignment(&collection_id).await.unwrap();
     
-    // Setup storage assignment and verify it works
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
-    
-    // Verify assignment was created successfully
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await;
-    if assignment.is_none() {
-        panic!("Failed to create storage assignment for collection {}", collection_id);
+    // Also clean up the potential persistent directory to prevent data contamination
+    let potential_data_dir = format!("/tmp/proximadb_test_{}", collection_id);
+    if std::path::Path::new(&potential_data_dir).exists() {
+        let _ = tokio::fs::remove_dir_all(&potential_data_dir).await;
+        println!("DEBUG: Cleaned up potential leftover directory: {}", potential_data_dir);
     }
-    println!("DEBUG: Storage assignment created for {}: {:?}", collection_id, assignment.unwrap().data_url);
+    
+    // Setup storage assignment and get the persistent assignment data
+    setup_storage_assignment(&collection_id, base_path.to_str().unwrap()).await.unwrap();
+    
+    // Get the assignment service to access the assignment data
+    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    let test_assignment = assignment_service.get_assignment(&collection_id).await
+        .expect("Assignment should exist after setup");
+    println!("DEBUG: Using assignment: {}", test_assignment.data_url);
+    
+    // Ensure the data directory is clean before starting the test
+    if test_assignment.data_url.starts_with("file://") {
+        let data_path = test_assignment.data_url.strip_prefix("file://").unwrap();
+        if std::path::Path::new(data_path).exists() {
+            let _ = tokio::fs::remove_dir_all(data_path).await;
+            println!("DEBUG: Cleaned up existing data directory: {}", data_path);
+        }
+        // Recreate the clean directory
+        let _ = tokio::fs::create_dir_all(data_path).await;
+        println!("Created clean data directory: {}", data_path);
+    }
     
     // Create distance compute for SST storage
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     
     // Create SST storage
     let engine = SstStorage::new(
-        collection_id.to_string(),
+        collection_id.clone(),
         sst_config.clone(),
         filesystem.clone(),
         distance_compute.clone()
@@ -110,42 +128,80 @@ async fn test_lsm_basic_operations() {
     
     // Flush vectors
     let flush_params = FlushParameters {
-        collection_id: Some(collection_id.to_string()),
+        collection_id: Some(collection_id.clone()),
         vector_records: vectors,
         force: true,
         synchronous: true,
         ..Default::default()
     };
     
-    let flush_result = engine.do_flush(&flush_params).await.unwrap();
+    let flush_result = engine.flush(flush_params).await.unwrap();
     println!("Flush result: {:?}", flush_result);
     assert!(flush_result.success, "Flush should succeed");
     assert_eq!(flush_result.entries_flushed, 3, "Should flush 3 vectors");
     
-    // Wait a bit to ensure file is fully written
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Use the persistent assignment data for all operations
+    println!("DEBUG: Using consistent assignment data URL: {}", test_assignment.data_url);
     
-    // Get the storage assignment to find the actual data directory
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
+    // Wait for file system synchronization and SSTable files to be fully written
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     
-    // Debug: check if SSTable files exist
-    let data_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
-    let fs = filesystem.get_filesystem("file:///").unwrap();
-    if fs.exists(data_path).await.unwrap() {
-        let entries = fs.list(data_path).await.unwrap();
-        println!("Files in data directory {}:", data_path);
-        for entry in &entries {
-            println!("  - {}", entry.name);
-        }
+    // Use the original test assignment consistently (don't refetch from service)
+    // Handle multi-cloud storage URLs (S3, Azure, GCS, file://)
+    let data_url = &test_assignment.data_url;
+    println!("DEBUG: Looking for SSTable files in data URL: {}", data_url);
+    
+    // Get appropriate filesystem for the URL type
+    let fs = filesystem.get_filesystem(data_url).unwrap();
+    
+    // For file:// URLs, extract path for existence check, otherwise use URL directly
+    let data_path = if data_url.starts_with("file://") {
+        data_url.strip_prefix("file://").unwrap_or(data_url)
     } else {
-        println!("Data directory does not exist: {}", data_path);
+        data_url
+    };
+    
+    // Only check local file existence for file:// URLs
+    if data_url.starts_with("file://") {
+        if !std::path::Path::new(data_path).exists() {
+            println!("ERROR: Data directory does not exist: {}", data_path);
+            panic!("Data directory {} does not exist after flush", data_path);
+        }
     }
+    
+    // Retry up to 3 times with increasing delays to handle filesystem sync issues
+    let mut sst_files_found = false;
+    for retry in 0..3 {
+        // Use data_url for cloud storage, data_path for local files
+        let check_path = if data_url.starts_with("file://") { data_path } else { data_url };
+        
+        if fs.exists(check_path).await.unwrap() {
+            let entries = fs.list(check_path).await.unwrap();
+            let sst_files: Vec<_> = entries.iter().filter(|e| e.name.ends_with(".sst")).collect();
+            
+            println!("Files in data location {} (attempt {}):", check_path, retry + 1);
+            for entry in &entries {
+                println!("  - {}", entry.name);
+            }
+            
+            if !sst_files.is_empty() {
+                sst_files_found = true;
+                break;
+            }
+        } else {
+            println!("Data location does not exist: {} (attempt {})", check_path, retry + 1);
+        }
+        
+        if retry < 2 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200 * (retry + 1) as u64)).await;
+        }
+    }
+    
+    assert!(sst_files_found, "SSTable files should exist after flush operation");
     
     // Search without filters
     let results = engine.search_vectors_unified(
-        collection_id,
+        &collection_id,
         &vec![1.0, 0.0, 0.0],  // Query closest to vec1
         3,
         &DistanceMetric::Cosine,
@@ -167,7 +223,7 @@ async fn test_lsm_basic_operations() {
     };
     
     let filtered_results = engine.search_vectors_unified(
-        collection_id,
+        &collection_id,
         &vec![0.0, 1.0, 0.0],  // Query closest to vec2 (category B)
         3,
         &DistanceMetric::Cosine,
@@ -181,6 +237,18 @@ async fn test_lsm_basic_operations() {
     for result in &filtered_results {
         assert!(result.id == "vec1" || result.id == "vec3", 
                 "Results should only be category A vectors");
+    }
+    
+    // Cleanup test assignment and directories
+    cleanup_assignment(&collection_id).await.unwrap();
+    
+    // Clean up the actual directories  
+    if test_assignment.data_url.starts_with("file://") {
+        let data_path = test_assignment.data_url.strip_prefix("file://").unwrap();
+        let base_dir = std::path::Path::new(data_path).parent().unwrap().parent().unwrap();
+        if base_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(base_dir).await;
+        }
     }
 }
 
@@ -198,11 +266,14 @@ async fn test_lsm_compaction() {
     
     let collection_id = &unique_collection_id("compact_test");
     
-    // Clear any existing assignment first
-    cleanup_assignment(collection_id).await.unwrap();
-    
-    // Setup storage assignment BEFORE creating SST storage
+    // Setup storage assignment
     setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    
+    // Get the assignment service to access the assignment data
+    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    let test_assignment = assignment_service.get_assignment(collection_id).await
+        .expect("Assignment should exist after setup");
+    println!("DEBUG: Using assignment: {}", test_assignment.data_url);
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let engine = SstStorage::new(
@@ -231,7 +302,7 @@ async fn test_lsm_compaction() {
             ..Default::default()
         };
         
-        let result = engine.do_flush(&flush_params).await.unwrap();
+        let result = engine.flush(flush_params).await.unwrap();
         assert!(result.success);
     }
     
@@ -247,6 +318,18 @@ async fn test_lsm_compaction() {
     ).await.expect("Search should succeed");
     
     assert_eq!(all_results.len(), 15, "Should find all 15 vectors");
+    
+    // Cleanup test assignment and directories
+    cleanup_assignment(collection_id).await.unwrap();
+    
+    // Clean up the actual directories
+    if test_assignment.data_url.starts_with("file://") {
+        let data_path = test_assignment.data_url.strip_prefix("file://").unwrap();
+        let base_dir = std::path::Path::new(data_path).parent().unwrap().parent().unwrap();
+        if base_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(base_dir).await;
+        }
+    }
 }
 
 
@@ -263,10 +346,7 @@ async fn test_lsm_recovery() {
     
     // Phase 1: Write data
     {
-        // Clear any existing assignment first
-        cleanup_assignment(collection_id).await.unwrap();
-        
-        // Setup storage assignment BEFORE creating SST storage
+        // Setup storage assignment
         setup_storage_assignment(collection_id, base_path_str).await.unwrap();
         
         let sst_config = create_test_sst_config(base_path_str);
@@ -304,7 +384,7 @@ async fn test_lsm_recovery() {
             ..Default::default()
         };
         
-        let result = engine.do_flush(&flush_params).await.unwrap();
+        let result = engine.flush(flush_params).await.unwrap();
         assert!(result.success);
         assert_eq!(result.entries_flushed, 2);
     }
@@ -326,14 +406,26 @@ async fn test_lsm_recovery() {
         
         // Debug: Check what files exist in the data directory
         let storage_url = engine.get_collection_storage_url(collection_id).await.unwrap();
-        let data_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
-        println!("DEBUG: Checking data directory: {}", data_path);
+        println!("DEBUG: Checking data URL: {}", storage_url);
         
-        if let Ok(entries) = tokio::fs::read_dir(data_path).await {
-            let mut entries = entries;
-            println!("DEBUG: Files in data directory:");
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                println!("  - {}", entry.file_name().to_string_lossy());
+        // Handle multi-cloud storage URLs properly
+        if storage_url.starts_with("file://") {
+            let data_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
+            if let Ok(entries) = tokio::fs::read_dir(data_path).await {
+                let mut entries = entries;
+                println!("DEBUG: Files in data directory:");
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    println!("  - {}", entry.file_name().to_string_lossy());
+                }
+            }
+        } else {
+            // For cloud storage, use filesystem abstraction
+            let fs = filesystem.get_filesystem(&storage_url).unwrap();
+            if let Ok(entries) = fs.list(&storage_url).await {
+                println!("DEBUG: Files in data location:");
+                for entry in entries {
+                    println!("  - {}", entry.name);
+                }
             }
         }
         
@@ -360,4 +452,7 @@ async fn test_lsm_recovery() {
         assert!(vec_ids.contains(&"persist1"), "Should find persist1");
         assert!(vec_ids.contains(&"persist2"), "Should find persist2");
     }
+    
+    // Cleanup test assignment and directories
+    cleanup_assignment(collection_id).await.unwrap();
 }

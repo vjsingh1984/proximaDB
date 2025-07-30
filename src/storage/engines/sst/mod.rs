@@ -835,6 +835,7 @@ impl SstStorage {
         &self.data_dir
     }
     
+    
     /// Enable compaction with the SST tree's atomic coordinator
     pub async fn enable_compaction(&mut self, worker_count: usize) -> Result<()> {
         if self.compaction_manager.is_none() {
@@ -1458,6 +1459,7 @@ impl UnifiedStorageEngine for SstStorage {
 
         Ok(metrics)
     }
+    
 }
 
 // =============================================================================

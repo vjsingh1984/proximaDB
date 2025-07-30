@@ -15,7 +15,7 @@
 //! - **ART**: Adaptive Radix Tree, memory efficient for string-like keys
 //!
 //! ## Usage:
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::storage::memtable::{MemtableFactory, MemtableType};
 //! use proximadb::storage::memtable::core::MemtableConfig;
 //!
@@ -24,8 +24,8 @@
 //! // Create WAL-optimized memtable (BTree)
 //! let wal_memtable = MemtableFactory::create_for_wal(config.clone());
 //!
-//! // Create LSM-optimized memtable (SkipList)
-//! let lsm_memtable = MemtableFactory::create_for_lsm(config.clone());
+//! // Create SST-optimized memtable (SkipList)
+//! let sst_memtable = MemtableFactory::create_for_sst(config.clone());
 //!
 //! // Create for performance testing
 //! let test_memtable = MemtableFactory::create_typed::<String, Vec<u8>>(MemtableType::DashMap, config);

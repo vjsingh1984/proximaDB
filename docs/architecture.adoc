@@ -162,7 +162,7 @@ _Diagram source: link:diagrams/bloom-filter-architecture.mmd[View Mermaid source
 
 **Integration Points**::
 - **SST Engine**: ByteAligned filters in SSTables for key lookups
-- **VIPER Engine**: Composite filters for metadata queries
+- **VIPER Engine**: Parquet native Bloom filters for column filtering
 - **Memtable**: BitPacked filters for memory efficiency
 - **Factory Pattern**: Unified creation and serialization
 
