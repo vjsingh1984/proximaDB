@@ -337,11 +337,33 @@ impl UnifiedSstableReader {
         println!("📊 Search stats: {} total records, {} tombstones, {} filtered out, {} candidates", 
               total_records, tombstones, filtered_out, scored_results.len());
         
-        // Sort by score (descending) and take top k
-        scored_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        scored_results.truncate(k);
+        // Apply diversity-aware selection: group by ID, take best from each group, then sort
+        let mut id_groups: std::collections::HashMap<String, Vec<SearchResult>> = 
+            std::collections::HashMap::new();
         
-        Ok(scored_results)
+        // Group results by ID
+        for result in scored_results {
+            id_groups.entry(result.id.clone()).or_default().push(result);
+        }
+        
+        // Select best representative from each ID group
+        let mut diverse_results = Vec::new();
+        for (_id, mut group) in id_groups {
+            // Sort group by score and take the best one
+            group.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+            if let Some(best) = group.into_iter().next() {
+                diverse_results.push(best);
+            }
+        }
+        
+        // Sort diverse results by score and take top k
+        diverse_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        diverse_results.truncate(k);
+        
+        debug!("🔍 Diversity-aware selection: {} unique IDs from {} candidates", 
+               diverse_results.len(), total_records - tombstones - filtered_out);
+        
+        Ok(diverse_results)
     }
     
     /// Full scan strategy implementation
