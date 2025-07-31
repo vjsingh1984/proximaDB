@@ -8,6 +8,7 @@ pub mod unified_interface;
 // pub mod viper_search; // Obsolete - uses old storage_aware interface
 
 use std::collections::HashMap;
+use tracing::{debug, info, warn, error};
 use serde::{Deserialize, Serialize};
 
 /// Unified search parameters for all storage engines
@@ -318,17 +319,20 @@ pub mod json_comparison {
                 match (field_value, operator) {
                     (Some(field_val), ComparisonOperator::Equals) => {
                         // Add debug output for filter evaluation
-                        println!("    🔍 Evaluating filter: field={}, metadata_val={:?}, filter_val={:?}", 
+                        #[cfg(feature = "debug-filters")]
+                        debug!("    🔍 Evaluating filter: field={}, metadata_val={:?}, filter_val={:?}", 
                             field, field_val, value);
                         
                         // For numbers, use type-aware numeric comparison
                         if let (Value::Number(n1), Value::Number(n2)) = (field_val, value) {
                             let result = compare_json_numbers(n1, n2);
-                            println!("      Number comparison: {} vs {} = {}", n1, n2, result);
+                            #[cfg(feature = "debug-filters")]
+                            debug!("      Number comparison: {} vs {} = {}", n1, n2, result);
                             result
                         } else {
                             let result = field_val == value;
-                            println!("      Direct comparison: {:?} == {:?} = {}", field_val, value, result);
+                            #[cfg(feature = "debug-filters")]
+                            debug!("      Direct comparison: {:?} == {:?} = {}", field_val, value, result);
                             result
                         }
                     }

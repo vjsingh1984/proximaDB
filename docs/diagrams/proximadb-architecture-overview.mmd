@@ -12,6 +12,11 @@ graph TB
         UnifiedAPI["Unified API<br/>📁 proto/proximadb.proto<br/>🎯 Single Schema"]
     end
     
+    %% SharedServices Layer
+    subgraph SharedServices["🌐 SharedServices Hub"]
+        SharedSvc["SharedServices<br/>📁 network/multi_server.rs<br/>🏛️ Business Logic Hub<br/>🔄 No Circular Dependencies"]
+    end
+    
     %% Core Services Layer  
     subgraph CoreServices["⚡ Core Services"]
         DirectVector["DirectVectorService<br/>📁 services/direct_vector_service.rs<br/>🎯 40-60% Latency Reduction<br/>🔧 Direct Memtable Access"]
@@ -62,9 +67,11 @@ graph TB
     RestHandler --> UnifiedAPI
     GrpcHandler --> UnifiedAPI
     
-    UnifiedAPI --> DirectVector
-    UnifiedAPI --> Collection
-    UnifiedAPI --> SQLEngine
+    UnifiedAPI --> SharedSvc
+    
+    SharedSvc --> DirectVector
+    SharedSvc --> Collection
+    SharedSvc --> SQLEngine
     
     DirectVector --> MemoryPool
     DirectVector --> StorageCoord
@@ -88,13 +95,15 @@ graph TB
     
     %% Styling
     classDef clientStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
-    classDef serviceStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff  
+    classDef serviceStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff
+    classDef sharedStyle fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff  
     classDef storageStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
     classDef cloudStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
     classDef perfStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
     
     class RestClient,GrpcClient clientStyle
     class DirectVector,Collection,SQLEngine serviceStyle
+    class SharedSvc sharedStyle
     class StorageCoord,VIPER,SST,IndexMgr,WriteBuffer,AtomicCoord storageStyle
     class S3,Azure,GCS,Local cloudStyle
     class MemoryPool,QueryCache,Hardware perfStyle

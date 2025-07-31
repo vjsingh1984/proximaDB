@@ -340,7 +340,7 @@ pub fn global_pool_stats() -> MemoryPoolStats {
 /// Print global pool utilization summary
 pub fn print_global_pool_stats() {
     let summary = global_vector_pool().utilization_summary();
-    println!("📊 {}", summary);
+    debug!("📊 {}", summary);
 }
 
 #[cfg(test)]

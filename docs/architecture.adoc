@@ -238,8 +238,13 @@ Cloud storage integration is planned for future releases.
 ----
 Client API Call (REST:5678 or gRPC:5679)
     ↓ (JSON→Proto or Direct Proto)
-MultiServer → SharedServices → UnifiedHandlers
-    ↓ (Business Logic Coordination)
+MultiServer (Network Orchestration)
+    ↓
+SharedServices (Business Logic Hub)
+    ├→ CollectionService (Metadata)
+    ├→ DirectVectorService (Vectors)
+    └→ UnifiedHandlers (API Logic)
+         ↓
 DirectVectorService (40-60% faster via direct access)
     ↓ (WriteBufferBehaviorWrapper)
 Global Memtable → WriteBufferManager
@@ -623,6 +628,62 @@ axis_manager.set_collection_strategy(&collection_id, collection_strategy).await?
 |LSH |Very Fast |Low |Very Fast |Binary vectors
 |Annoy |Fast |Low |Fast |Static datasets
 |===
+
+== Initialization and Startup Architecture
+
+=== Clean Initialization Order (Fixed 2025-07-31)
+
+ProximaDB now implements a clean initialization sequence that eliminates circular dependencies:
+
+[mermaid]
+....
+sequenceDiagram
+    participant Main as ProximaDB::new
+    participant SS as SharedServices
+    participant CS as CollectionService
+    participant SE as StorageEngine
+    participant MS as MultiServer
+    
+    Main->>SS: 1. Create SharedServices first
+    SS->>CS: Create CollectionService
+    SS-->>Main: Return (SharedServices, CollectionService)
+    
+    Main->>SE: 2. Create StorageEngine
+    Main->>SE: Inject CollectionService from SharedServices
+    
+    Main->>SE: 3. Start StorageEngine
+    SE->>SE: Recover collections from metadata
+    
+    Main->>SS: 4. Recover vectors from write buffer
+    SS->>SE: Get recovered collections
+    SS->>SS: Load vectors into memtable
+    
+    Main->>MS: 5. Create MultiServer with SharedServices
+    Main->>MS: 6. Start servers (HTTP:5678, gRPC:5679)
+....
+
+==== Key Improvements
+
+1. **SharedServices Created First**: Owns all business logic and services
+2. **No Circular Dependencies**: SharedServices doesn't depend on StorageEngine
+3. **Clean Dependency Injection**: CollectionService passed from SharedServices to StorageEngine
+4. **Proper Recovery Order**: Collections → Assignments → Vectors
+
+==== Code Structure
+
+[source,rust]
+----
+// SharedServices now returns CollectionService for StorageEngine
+pub async fn new(
+    metrics_collector: Option<Arc<MetricsCollector>>,
+    storage_config: &StorageConfig,
+) -> Result<(Self, Arc<CollectionService>)>
+
+// ProximaDB::new follows proper initialization order
+let (shared_services, collection_service) = SharedServices::new(...).await?;
+let storage_engine = StorageEngine::new_without_collection_service(...).await?;
+storage_engine.set_metadata_provider(collection_service).await;
+----
 
 == Recovery Architecture
 

@@ -890,7 +890,29 @@ impl DirectVectorService {
             
             info!("🔍 FLUSH_ENGINE: Collection {} will flush to {} engine", collection_id, storage_engine);
             
-            let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::Memory;
+            // Get vectors from memtable for flushing
+            let vectors_to_flush = match global_memtable.get_unflushed_batches(collection_id).await {
+                Ok(batches) => {
+                    let mut all_vectors = Vec::new();
+                    for batch in batches {
+                        all_vectors.extend(batch.vector_records.iter().cloned());
+                    }
+                    info!("📋 FLUSH_PREPARATION: Retrieved {} vectors from memtable for collection {}", 
+                          all_vectors.len(), collection_id);
+                    all_vectors
+                }
+                Err(e) => {
+                    warn!("⚠️ FLUSH_PREPARATION: Failed to get vectors from memtable: {}", e);
+                    Vec::new()
+                }
+            };
+            
+            if vectors_to_flush.is_empty() {
+                info!("📋 FLUSH_SKIP: No vectors to flush for collection {}", collection_id);
+                return;
+            }
+            
+            let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors_to_flush);
             
             match flush_coordinator
                 .execute_coordinated_flush(&collection_id, flush_data, Some(storage_engine), None)

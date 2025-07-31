@@ -42,6 +42,9 @@ pub mod specialized;
 // Re-export core traits
 pub use core::{MemtableConfig, MemtableCore, MemtableMVCC, MemtableMetrics};
 
+// Import tracing for debug macros
+use tracing::debug;
+
 // Re-export implementations
 pub use implementations::{
     bplustree::BPlusTreeMemtable,
@@ -342,22 +345,22 @@ pub struct BenchmarkReport {
 impl BenchmarkReport {
     /// Print formatted report
     pub fn print(&self) {
-        println!("Memtable Performance Benchmark Report");
-        println!("=====================================");
-        println!(
+        debug!("Memtable Performance Benchmark Report");
+        debug!("=====================================");
+        debug!(
             "Timestamp: {}",
             self.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
         );
-        println!();
+        debug!("");
 
-        println!("INSERT PERFORMANCE:");
-        println!(
+        debug!("INSERT PERFORMANCE:");
+        debug!(
             "{:<12} {:>12} {:>12} {:>12} {:>10}",
             "Type", "Ops/Sec", "Duration", "Memory", "Entries"
         );
-        println!("{}", "-".repeat(60));
+        debug!("{}", "-".repeat(60));
         for result in &self.insert_results {
-            println!(
+            debug!(
                 "{:<12} {:>12.1} {:>10.3}s {:>10}B {:>8}",
                 format!("{:?}", result.memtable_type),
                 result.ops_per_second,
@@ -366,14 +369,14 @@ impl BenchmarkReport {
                 result.entry_count
             );
         }
-        println!();
+        debug!("");
 
-        println!("LOOKUP PERFORMANCE:");
-        println!(
+        debug!("LOOKUP PERFORMANCE:");
+        debug!(
             "{:<12} {:>12} {:>12} {:>12} {:>10}",
             "Type", "Ops/Sec", "Duration", "Hit Rate", "Entries"
         );
-        println!("{}", "-".repeat(60));
+        debug!("{}", "-".repeat(60));
         for result in &self.lookup_results {
             let hit_rate = if result.success_count + result.error_count > 0 {
                 result.success_count as f64 / (result.success_count + result.error_count) as f64
@@ -381,7 +384,7 @@ impl BenchmarkReport {
             } else {
                 0.0
             };
-            println!(
+            debug!(
                 "{:<12} {:>12.1} {:>10.3}s {:>11.1}% {:>8}",
                 format!("{:?}", result.memtable_type),
                 result.ops_per_second,
@@ -390,16 +393,16 @@ impl BenchmarkReport {
                 result.entry_count
             );
         }
-        println!();
+        debug!("");
 
-        println!("RANGE SCAN PERFORMANCE:");
-        println!(
+        debug!("RANGE SCAN PERFORMANCE:");
+        debug!(
             "{:<12} {:>12} {:>12} {:>12} {:>10}",
             "Type", "Scans/Sec", "Duration", "Success", "Entries"
         );
-        println!("{}", "-".repeat(60));
+        debug!("{}", "-".repeat(60));
         for result in &self.scan_results {
-            println!(
+            debug!(
                 "{:<12} {:>12.1} {:>10.3}s {:>11} {:>8}",
                 format!("{:?}", result.memtable_type),
                 result.ops_per_second,
@@ -408,7 +411,7 @@ impl BenchmarkReport {
                 result.entry_count
             );
         }
-        println!();
+        debug!("");
     }
 
     /// Get winner for each operation type

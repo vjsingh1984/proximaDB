@@ -235,7 +235,7 @@ impl SstRecord {
         // Debug: log the first few records' metadata conversion
         static LOG_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         if LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 10 {
-            println!("🔧 SST Converting record {} with proto metadata: {:?} -> json: {:?}", 
+            debug!("🔧 SST Converting record {} with proto metadata: {:?} -> json: {:?}", 
                      record.id.as_deref().unwrap_or("no-id"), 
                      record.metadata.iter().map(|m| format!("{}={:?}", m.key, m.value)).collect::<Vec<_>>(),
                      metadata);
@@ -1505,7 +1505,7 @@ impl SstStorage {
                 
                 // Debug: log metadata before conversion
                 if global_index < 5 {
-                    println!("🔍 Pre-conversion record {}: id={:?}, metadata={:?}", 
+                    debug!("🔍 Pre-conversion record {}: id={:?}, metadata={:?}", 
                              global_index,
                              vector_record.id,
                              vector_record.metadata.iter().map(|m| format!("{}={:?}", m.key, m.value)).collect::<Vec<_>>());

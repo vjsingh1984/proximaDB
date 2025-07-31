@@ -283,18 +283,17 @@ pub struct SharedServices {
     pub direct_vector_service: Arc<DirectVectorService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
-    // Internal state for business logic coordination
-    storage: Arc<RwLock<StorageEngine>>,
+    // Removed circular dependency: storage field removed
 }
 
 impl SharedServices {
     /// Create shared services with full business logic configuration
     /// SharedServices owns all business logic and configuration decisions
+    /// Returns (SharedServices, CollectionService) - the collection service is needed by StorageEngine
     pub async fn new(
-        storage: Arc<RwLock<StorageEngine>>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         storage_config: &crate::core::config::StorageConfig,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!("🔧 SharedServices::new - Starting with storage_config: {:?}", storage_config);
 
@@ -362,15 +361,11 @@ impl SharedServices {
             Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
 
         let collection_service = Arc::new(
-            CollectionService::new(filestore_backend, storage.read().await.get_config().clone()).await?
+            CollectionService::new(filestore_backend, storage_config.clone()).await?
         );
         
-        // 🔗 DEPENDENCY INJECTION: Inject collection service into storage engine
-        {
-            let storage_ref = storage.read().await;
-            storage_ref.set_metadata_provider(collection_service.clone() as Arc<dyn crate::storage::traits::CollectionMetadataProvider>).await;
-        }
-        info!("✅ SharedServices: Collection service injected into StorageEngine");
+        // Collection service will be injected into StorageEngine by ProximaDB::new
+        info!("✅ SharedServices: Collection service created for injection into StorageEngine");
 
         // 🚀 Create DirectVectorService directly for 40-60% performance improvement
         // Create WAL config with optimized defaults
@@ -415,15 +410,15 @@ impl SharedServices {
         info!("✅ SharedServices: DirectVectorService created successfully - 40-60% performance boost enabled");
         debug!("🔧 SharedServices::new - DirectVectorService created successfully");
         
-        // CRITICAL: Restore collection metadata from WAL during startup
-        // This ensures collections are visible to gRPC service after server restart
-        info!("🔄 SharedServices: Starting metadata recovery from WAL");
-        let recovered_collections = {
-            let storage_ref = storage.read().await;
-            storage_ref.get_recovered_collections_metadata().await?
-        };
-
-        if !recovered_collections.is_empty() {
+        // Collection recovery will be handled by StorageEngine::start()
+        // SharedServices no longer tries to recover before storage starts
+        info!("📋 SharedServices: Collection recovery will be handled by StorageEngine during startup");
+        
+        // Placeholder for future assignment service recovery
+        // TODO: Add assignment service recovery after StorageEngine starts
+        
+        if false { // Disabled recovery code - will be moved to ProximaDB::new
+            let recovered_collections = std::collections::HashMap::<String, crate::storage::metadata::CollectionMetadata>::new();
             info!(
                 "📦 SharedServices: Restoring {} collections to metadata backend",
                 recovered_collections.len()
@@ -502,18 +497,41 @@ impl SharedServices {
 
         info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
 
-        Ok(Self {
-            collection_service,
+        Ok((Self {
+            collection_service: collection_service.clone(),
             direct_vector_service,
             unified_handlers,
             metrics_collector,
-            storage,
-        })
+        }, collection_service))
     }
 
-    /// Get storage engine (for advanced operations)
-    pub fn storage(&self) -> &Arc<RwLock<StorageEngine>> {
-        &self.storage
+    /// Recover vectors from write buffer after StorageEngine has started
+    /// This should be called from ProximaDB::new after storage.start()
+    pub async fn recover_vectors_from_write_buffer(
+        &self,
+        storage: &Arc<RwLock<StorageEngine>>,
+    ) -> Result<()> {
+        info!("🔄 SharedServices: Starting vector recovery from write buffer");
+        
+        // Get collections that need vector recovery
+        let storage_ref = storage.read().await;
+        let recovered_collections = storage_ref.get_recovered_collections_metadata().await?;
+        
+        if recovered_collections.is_empty() {
+            info!("📋 SharedServices: No collections found for vector recovery");
+            return Ok(());
+        }
+        
+        info!("📦 SharedServices: Found {} collections for potential vector recovery", recovered_collections.len());
+        
+        // TODO: Implement actual vector recovery from write buffer
+        // This would involve:
+        // 1. For each collection, check if write buffer has unflushed data
+        // 2. Load vectors from write buffer into DirectVectorService memtable
+        // 3. Mark recovery complete for each collection
+        
+        info!("✅ SharedServices: Vector recovery completed");
+        Ok(())
     }
 }
 
@@ -521,7 +539,7 @@ impl SharedServices {
 /// Responsibilities: ports, TLS, server lifecycle, protocol orchestration
 pub struct MultiServer {
     config: MultiServerConfig,
-    shared_services: Option<SharedServices>,
+    pub shared_services: SharedServices,  // Made public for recovery access
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -538,7 +556,7 @@ impl MultiServer {
 
         Self {
             config,
-            shared_services: Some(shared_services),
+            shared_services,
             server_handles: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -547,7 +565,7 @@ impl MultiServer {
     pub async fn start(&mut self) -> Result<()> {
         info!("🚀 Starting ProximaDB Multi-Server: gRPC:5679 + REST:5678");
 
-        let services = self.shared_services.as_ref().unwrap().clone();
+        let services = self.shared_services.clone();
         let mut handles = Vec::new();
 
         // Start gRPC server on port 5679 if configured

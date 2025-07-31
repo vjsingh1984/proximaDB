@@ -8,6 +8,7 @@
 
 use anyhow::Result;
 // async_trait removed - no longer implementing trait methods
+use tracing::{debug, info, warn, error};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -450,9 +451,9 @@ impl GlobalPartitionedMemtable {
     ) -> Result<Vec<(SimilarityResult, VectorRecord)>> {
         let collections = self.collections.read().await;
         
-        eprintln!("🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections", collection_id, collections.len());
+        debug!("🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections", collection_id, collections.len());
         for (id, partition) in collections.iter() {
-            eprintln!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
+            debug!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
         }
 
         if let Some(partition) = collections.get(collection_id) {

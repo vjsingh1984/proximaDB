@@ -171,43 +171,43 @@ impl UnifiedSstableReader {
         params: &SearchParams,
         collection_context: &CollectionContext,
     ) -> Result<Vec<SearchResult>> {
-        println!("🔍 LSM Unified Search: {} files, k={}", 
+        debug!("🔍 LSM Unified Search: {} files, k={}", 
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
         
         // Debug: print file paths
         for (i, file_path) in collection_context.sstable_files.iter().enumerate() {
-            println!("📁 SSTable file {}: {}", i, file_path);
+            debug!("📁 SSTable file {}: {}", i, file_path);
         }
         
         // Debug: print filter expression
         if let Some(filter) = &params.filter_expression {
-            println!("🔎 Filter expression: {:?}", filter);
+            debug!("🔎 Filter expression: {:?}", filter);
         }
         
         // 1. Select optimal reading strategy
         let strategy = self.strategy_selector.select_strategy(params, collection_context)?;
-        println!("📊 Selected strategy: {:?}", strategy);
+        debug!("📊 Selected strategy: {:?}", strategy);
         
         // 2. Apply strategy to read relevant blocks
         let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
-        println!("📦 Loaded {} data blocks total from all files", relevant_blocks.len());
+        debug!("📦 Loaded {} data blocks total from all files", relevant_blocks.len());
         
         // Debug: print some sample records from blocks
         for (i, block) in relevant_blocks.iter().take(2).enumerate() {
-            println!("  Block {}: {} records", i, block.records.len());
+            debug!("  Block {}: {} records", i, block.records.len());
             for (j, record) in block.records.iter().take(3).enumerate() {
-                println!("    Record {}: id={}, metadata={:?}", j, record.id, record.metadata);
+                debug!("    Record {}: id={}, metadata={:?}", j, record.id, record.metadata);
             }
         }
         
         // 3. Perform vector search on loaded data
         let results = self.search_in_blocks(params, &relevant_blocks, &collection_context.collection_id).await?;
-        println!("🎯 Found {} search results after filtering and scoring", results.len());
+        debug!("🎯 Found {} search results after filtering and scoring", results.len());
         
         // Debug: print sample results
         for (i, result) in results.iter().take(3).enumerate() {
-            println!("  Result {}: id={}, score={}, metadata={:?}", 
+            debug!("  Result {}: id={}, score={}, metadata={:?}", 
                   i, result.id, result.score, result.metadata);
         }
         
@@ -255,7 +255,7 @@ impl UnifiedSstableReader {
         let k = params.top_k.unwrap_or(10);
         let distance_metric = params.distance_metric.unwrap_or(crate::compute::distance::DistanceMetric::Cosine);
         
-        println!("🔍 Searching in {} blocks for top {} results", blocks.len(), k);
+        debug!("🔍 Searching in {} blocks for top {} results", blocks.len(), k);
         
         // Compute distances for all vectors
         let mut scored_results = Vec::new();
@@ -266,12 +266,12 @@ impl UnifiedSstableReader {
         for (block_idx, block) in blocks.iter().enumerate() {
             let block_records = block.records.len();
             total_records += block_records;
-            println!("📊 Processing block {} with {} records", block_idx, block_records);
+            debug!("📊 Processing block {} with {} records", block_idx, block_records);
             
             for (record_idx, record) in block.records.iter().enumerate() {
                 // Debug first few records from each block
                 if record_idx < 3 {
-                    println!("  🔍 Block {} Record {}: id={}, metadata={:?}", block_idx, record_idx, record.id, record.metadata);
+                    debug!("  🔍 Block {} Record {}: id={}, metadata={:?}", block_idx, record_idx, record.id, record.metadata);
                 }
                 
                 if record.is_tombstone {
@@ -281,20 +281,20 @@ impl UnifiedSstableReader {
                 
                 // Apply metadata filters
                 if let Some(filter_expr) = &params.filter_expression {
-                    println!("  🔍 Checking filter for record: id={}, metadata={:?}", record.id, record.metadata);
+                    debug!("  🔍 Checking filter for record: id={}, metadata={:?}", record.id, record.metadata);
                     if !self.evaluate_filter(filter_expr, &record.metadata) {
                         filtered_out += 1;
                         // Debug first few filtered records
                         if filtered_out <= 5 {
-                            println!("  ❌ Filtered out record: id={}, metadata={:?}", record.id, record.metadata);
+                            debug!("  ❌ Filtered out record: id={}, metadata={:?}", record.id, record.metadata);
                             // Debug the filter evaluation
                             if let FilterExpression::Comparison { field, operator: _, value } = filter_expr {
                                 if let Some(field_val) = record.metadata.get(field) {
-                                    println!("    📊 Filter comparison: field_val={:?} vs filter_value={:?} (equal={})", 
+                                    debug!("    📊 Filter comparison: field_val={:?} vs filter_value={:?} (equal={})", 
                                              field_val, value, field_val == value);
                                     // Try numeric comparison
                                     if let (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) = (field_val, value) {
-                                        println!("    📊 Numeric values: {} vs {} (f64: {} vs {})",
+                                        debug!("    📊 Numeric values: {} vs {} (f64: {} vs {})",
                                                  n1, n2, n1.as_f64().unwrap_or(0.0), n2.as_f64().unwrap_or(0.0));
                                     }
                                 }
@@ -330,11 +330,11 @@ impl UnifiedSstableReader {
             }
             
             if block_idx == 0 || block_idx == blocks.len() - 1 {
-                println!("  Block {}: {} records processed", block_idx, block_records);
+                debug!("  Block {}: {} records processed", block_idx, block_records);
             }
         }
         
-        println!("📊 Search stats: {} total records, {} tombstones, {} filtered out, {} candidates", 
+        debug!("📊 Search stats: {} total records, {} tombstones, {} filtered out, {} candidates", 
               total_records, tombstones, filtered_out, scored_results.len());
         
         // Apply diversity-aware selection: group by ID, take best from each group, then sort
@@ -372,30 +372,30 @@ impl UnifiedSstableReader {
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<DataBlock>> {
-        println!("🔍 Full scan strategy for {} files (cache={})", context.sstable_files.len(), use_block_cache);
+        debug!("🔍 Full scan strategy for {} files (cache={})", context.sstable_files.len(), use_block_cache);
         let mut all_blocks = Vec::new();
         
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
-            println!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            debug!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
             let blocks = if use_block_cache {
                 self.read_file_with_cache(file_path).await?
             } else {
                 self.read_file_direct(file_path).await?
             };
-            println!("  📦 Loaded {} blocks from this file", blocks.len());
+            debug!("  📦 Loaded {} blocks from this file", blocks.len());
             
             // Debug: print sample records from first block
             if let Some(first_block) = blocks.first() {
-                println!("  🔎 First block has {} records", first_block.records.len());
+                debug!("  🔎 First block has {} records", first_block.records.len());
                 for (i, record) in first_block.records.iter().take(3).enumerate() {
-                    println!("    Record {}: id={}, metadata={:?}", i, record.id, record.metadata);
+                    debug!("    Record {}: id={}, metadata={:?}", i, record.id, record.metadata);
                 }
             }
             
             all_blocks.extend(blocks);
         }
         
-        println!("✅ Full scan loaded {} total blocks from all files", all_blocks.len());
+        debug!("✅ Full scan loaded {} total blocks from all files", all_blocks.len());
         Ok(all_blocks)
     }
     
@@ -407,7 +407,7 @@ impl UnifiedSstableReader {
         end_block: usize,
         use_bloom: bool,
     ) -> Result<Vec<DataBlock>> {
-        println!("🔍 Index range scan strategy for {} files (blocks {}-{}, bloom={})", 
+        debug!("🔍 Index range scan strategy for {} files (blocks {}-{}, bloom={})", 
                  context.sstable_files.len(), start_block, end_block, use_bloom);
         
         let mut all_blocks = Vec::new();
@@ -415,14 +415,14 @@ impl UnifiedSstableReader {
         // For now, just read all files like full scan
         // TODO: Implement proper block-level indexing
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
-            println!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            debug!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
             let blocks = self.read_file_direct(file_path).await?;
-            println!("  📦 Loaded {} blocks from this file", blocks.len());
+            debug!("  📦 Loaded {} blocks from this file", blocks.len());
             
             all_blocks.extend(blocks);
         }
         
-        println!("📦 Total blocks loaded: {}", all_blocks.len());
+        debug!("📦 Total blocks loaded: {}", all_blocks.len());
         Ok(all_blocks)
     }
     
@@ -433,15 +433,15 @@ impl UnifiedSstableReader {
         blocks: &[usize],
         skip_bloom: bool,
     ) -> Result<Vec<DataBlock>> {
-        println!("🔍 Using metadata filtered strategy for {} files", context.sstable_files.len());
+        debug!("🔍 Using metadata filtered strategy for {} files", context.sstable_files.len());
         
         let mut all_blocks = Vec::new();
         let metadata_conditions = self.extract_metadata_conditions(params);
-        println!("📋 Extracted metadata conditions: {:?}", metadata_conditions);
+        debug!("📋 Extracted metadata conditions: {:?}", metadata_conditions);
         
         // Process each SSTable file
         for (file_idx, file_path) in context.sstable_files.iter().enumerate() {
-            println!("📂 Processing SSTable file {} of {}: {}", file_idx + 1, context.sstable_files.len(), file_path);
+            debug!("📂 Processing SSTable file {} of {}: {}", file_idx + 1, context.sstable_files.len(), file_path);
             
             // Get bloom filter from cache
             let bloom_filter = if !skip_bloom {
@@ -454,7 +454,7 @@ impl UnifiedSstableReader {
             let index = self.index_cache.get_or_load_index(file_path, || async {
                 self.load_index_optimized(file_path).await
             }).await?;
-            println!("  📊 Loaded index with {} entries", index.entries.len());
+            debug!("  📊 Loaded index with {} entries", index.entries.len());
 
             // First check bloom filter for quick rejection
             if let Some(bloom_filter) = bloom_filter {
@@ -469,10 +469,10 @@ impl UnifiedSstableReader {
                 }
                 
                 if !any_match {
-                    println!("  ❌ Bloom filter rejected file {} (no metadata matches)", file_path);
+                    debug!("  ❌ Bloom filter rejected file {} (no metadata matches)", file_path);
                     continue; // Skip this file entirely
                 }
-                println!("  ✅ Bloom filter indicates potential matches");
+                debug!("  ✅ Bloom filter indicates potential matches");
             }
 
             // Use block-level metadata statistics to filter blocks
@@ -521,12 +521,12 @@ impl UnifiedSstableReader {
             }
         }
 
-            println!("  📦 Selected {} blocks out of {} after metadata filtering for file {}", 
+            debug!("  📦 Selected {} blocks out of {} after metadata filtering for file {}", 
                    selected_blocks.len(), total_blocks, file_path);
 
             // Load the selected blocks from this file
             for block_idx in selected_blocks {
-                println!("    📄 Loading block {} from file {}", block_idx, file_path);
+                debug!("    📄 Loading block {} from file {}", block_idx, file_path);
                 // Create a temporary context for this specific file
                 let file_context = CollectionContext {
                     collection_id: context.collection_id.clone(),
@@ -540,17 +540,17 @@ impl UnifiedSstableReader {
                 
                 if let Some(block) = self.load_block_with_cache(&file_context, block_idx).await? {
                     // Debug: print first few records from loaded block
-                    println!("    📦 Loaded block {} with {} records from {}", 
+                    debug!("    📦 Loaded block {} with {} records from {}", 
                           block_idx, block.records.len(), file_path);
                     for (i, record) in block.records.iter().take(3).enumerate() {
-                        println!("      Record {}: id={}, metadata={:?}", i, record.id, record.metadata);
+                        debug!("      Record {}: id={}, metadata={:?}", i, record.id, record.metadata);
                     }
                     all_blocks.push(block);
                 }
             }
         }
 
-        println!("Loaded {} blocks total after metadata filtering from {} files", 
+        debug!("Loaded {} blocks total after metadata filtering from {} files", 
               all_blocks.len(), context.sstable_files.len());
         Ok(all_blocks)
     }

@@ -1,0 +1,75 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#fff', 'primaryBorderColor':'#374151', 'lineColor':'#6b7280', 'secondaryColor':'#3b82f6', 'tertiaryColor':'#10b981', 'tertiaryTextColor':'#fff', 'tertiaryBorderColor':'#059669', 'background':'#ffffff', 'mainBkg':'#f3f4f6', 'secondBkg':'#e5e7eb', 'tertiaryBkg':'#d1d5db'}}}%%
+
+sequenceDiagram
+    participant Main as ProximaDB::new
+    participant SS as SharedServices
+    participant CS as CollectionService  
+    participant DVS as DirectVectorService
+    participant SE as StorageEngine
+    participant MS as MultiServer
+    
+    Note over Main: 🚀 Clean Initialization (No Circular Dependencies)
+    
+    Main->>Main: 1. Create MetricsCollector
+    
+    Main->>SS: 2. Create SharedServices FIRST
+    activate SS
+    SS->>CS: Create CollectionService
+    activate CS
+    CS-->>SS: CollectionService instance
+    deactivate CS
+    
+    SS->>DVS: Create DirectVectorService
+    activate DVS
+    DVS-->>SS: DirectVectorService instance
+    deactivate DVS
+    
+    SS-->>Main: Return (SharedServices, CollectionService)
+    deactivate SS
+    
+    Note over Main,SS: ✅ SharedServices owns all services
+    
+    Main->>SE: 3. Create StorageEngine
+    activate SE
+    Main->>SE: Inject CollectionService from SharedServices
+    SE-->>Main: StorageEngine instance
+    deactivate SE
+    
+    Note over Main,SE: ✅ No duplicate CollectionService creation
+    
+    Main->>Main: 4. ProximaDB::start()
+    
+    Main->>SE: Start StorageEngine
+    activate SE
+    SE->>SE: Recover collections from metadata snapshots
+    SE-->>Main: Collections recovered
+    deactivate SE
+    
+    Note over SE: 📦 Collections Recovery Complete
+    
+    Main->>SS: 5. Recover assignments (future)
+    activate SS
+    SS-->>Main: Assignments recovered
+    deactivate SS
+    
+    Note over SS: 🗺️ Assignment Recovery Complete
+    
+    Main->>SS: 6. Recover vectors from write buffer
+    activate SS
+    SS->>SE: Get recovered collections
+    SE-->>SS: Collection metadata
+    SS->>DVS: Load vectors into memtable
+    SS-->>Main: Vectors recovered
+    deactivate SS
+    
+    Note over SS,DVS: 🔄 Vector Recovery Complete
+    
+    Main->>MS: 7. Create MultiServer with SharedServices
+    Main->>MS: 8. Start servers
+    activate MS
+    MS->>MS: Start HTTP on port 5678
+    MS->>MS: Start gRPC on port 5679
+    MS-->>Main: Servers started
+    deactivate MS
+    
+    Note over Main,MS: 🎉 ProximaDB Ready!

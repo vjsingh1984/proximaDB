@@ -12,7 +12,8 @@ graph TB
         SQL["🧠 SQL Query Engine<br/>📝 SELECT FROM vectors<br/>🔍 WHERE similarity > 0.8"]
     end
 
-    subgraph "🎯 DirectVectorService"
+    subgraph "🌐 SharedServices Architecture"
+        SS["🤝 SharedServices<br/>🏛️ Business Logic Hub<br/>🔄 No Circular Deps<br/>📦 Service Ownership"]
         DVS["🚀 DirectVectorService<br/>⚡ 40-60% Faster<br/>🔄 Lock-Free<br/>🛡️ ACID Safe"]
         CS["📋 CollectionService<br/>🗂️ Multi-Tenant<br/>⚙️ Auto Config"]
         WB["💾 WriteBuffer<br/>🔒 Durable<br/>⚡ Optimized"]
@@ -45,13 +46,15 @@ graph TB
     Apps --> RestAPI
     Apps --> SQL
     
-    RestAPI --> DVS
-    GrpcAPI --> DVS
-    SQL --> DVS
+    RestAPI --> SS
+    GrpcAPI --> SS
+    SQL --> SS
+    
+    SS --> DVS
+    SS --> CS
     
     DVS --> SST
     DVS --> VIPER
-    DVS --> CS
     DVS --> WB
     
     SST --> UC
@@ -77,7 +80,7 @@ graph TB
     classDef enterprise fill:#f59e0b,stroke:#d97706,color:#fff,stroke-width:3px,font-weight:bold
 
     class Python,Apps marketing
-    class RestAPI,GrpcAPI,SQL,DVS,CS,WB performance
+    class RestAPI,GrpcAPI,SQL,SS,DVS,CS,WB performance
     class SST,VIPER,UC,UAC,AXIS,INDEXES smart
     class DC,QE,CLOUD enterprise
 

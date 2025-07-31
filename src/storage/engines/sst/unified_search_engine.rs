@@ -101,22 +101,22 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
     ) -> Result<SearchResultSet> {
         let start_time = std::time::Instant::now();
         
-        println!("🔍 LSM Search: collection={}, k={}", 
+        debug!("🔍 LSM Search: collection={}, k={}", 
               context.collection_id, 
               params.top_k.unwrap_or(10));
         
         // Debug: Print filter expression
         if let Some(filter) = &params.filter_expression {
-            println!("🔎 SST Search Engine: Filter expression = {:?}", filter);
+            debug!("🔎 SST Search Engine: Filter expression = {:?}", filter);
         } else {
-            println!("🔎 SST Search Engine: No filter expression");
+            debug!("🔎 SST Search Engine: No filter expression");
         }
         
         // 1. Use cached storage URL instead of querying assignment service
         let collection_storage_url = &self.storage_url;
         
         let sstable_files = self.discover_sstable_files(context, collection_storage_url).await?;
-        println!("📁 Found {} SSTable files", sstable_files.len());
+        debug!("📁 Found {} SSTable files", sstable_files.len());
         
         // 2. Apply optimization hints
         let optimized_files = self.apply_optimization_hints(
@@ -208,18 +208,18 @@ impl SstUnifiedSearchEngine {
         context: &UnifiedSearchContext,
         collection_storage_url: &str,
     ) -> Result<Vec<String>> {
-        println!("🔍 SST: Discovering SSTable files for collection {} by directory scan", context.collection_id);
+        debug!("🔍 SST: Discovering SSTable files for collection {} by directory scan", context.collection_id);
         
         let mut sstable_files = Vec::new();
         
-        println!("🔍 SST Search Engine: Using collection storage URL: {}", collection_storage_url);
+        debug!("🔍 SST Search Engine: Using collection storage URL: {}", collection_storage_url);
         
         // Use the search engine's filesystem instance with the provided URL
         let fs = self.filesystem.get_filesystem(collection_storage_url)?;
         
         // List all files in the collection directory
         let files = fs.list(collection_storage_url).await?;
-        println!("📁 Found {} total files in {}", files.len(), collection_storage_url);
+        debug!("📁 Found {} total files in {}", files.len(), collection_storage_url);
         
         // Filter for SSTable files matching our pattern: {collection}_level{N}_{timestamp}_{random}.sst
         for file_info in files {
@@ -233,7 +233,7 @@ impl SstUnifiedSearchEngine {
                         0
                     };
                     
-                    println!("  ✅ SSTable: {} (level={}, size={} bytes)", filename, level, file_info.metadata.size);
+                    debug!("  ✅ SSTable: {} (level={}, size={} bytes)", filename, level, file_info.metadata.size);
                     sstable_files.push(file_info.metadata.path.clone());
                 }
             }
@@ -242,11 +242,11 @@ impl SstUnifiedSearchEngine {
         // Sort by filename to ensure consistent ordering (older files first)
         sstable_files.sort();
         
-        println!("📊 SST: Found {} SSTable files for collection {}", sstable_files.len(), context.collection_id);
+        debug!("📊 SST: Found {} SSTable files for collection {}", sstable_files.len(), context.collection_id);
         
         // Debug: print all discovered files
         for (i, file) in sstable_files.iter().enumerate() {
-            println!("🔍 DEBUG SST File {}: {}", i, file);
+            debug!("🔍 DEBUG SST File {}: {}", i, file);
         }
         
         Ok(sstable_files)

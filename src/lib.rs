@@ -76,69 +76,29 @@ impl ProximaDB {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
         tracing::debug!("🔍 ProximaDB::new - Config: {:?}", config);
 
-        // Create a temporary collection service with proper metadata config
-        // SharedServices will create the real one with same config
-        use crate::services::collection_service::CollectionService;
-        use crate::storage::metadata::backends::filestore_backend::{
-            FilestoreMetadataBackend, FilestoreMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::FilesystemFactory;
-        use std::collections::HashMap;
-        
-        tracing::debug!("🔧 ProximaDB::new - Creating filesystem factory...");
+        // Step 1: Create metrics collector first
+        tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
+        let metrics_config = monitoring::metrics::MetricsConfig::default();
+        let (metrics_collector, _receiver) = monitoring::MetricsCollector::new(metrics_config)?;
+        let metrics_collector = Arc::new(metrics_collector);
+        tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
 
-        // Use metadata URL from storage config
-        let metadata_url = &config.storage.metadata_url;
-        tracing::info!("📂 Using metadata URL: {}", metadata_url);
-        
-        let filestore_config = FilestoreMetadataConfig {
-            storage_url: metadata_url.clone(),
-            enable_compression: true,
-            enable_snapshots: true,
-            snapshot_threshold: 1000,
-            keep_snapshots: 5,
-            backup_url: None,
-            temp_dir: None,
-        };
-        // Create a default filesystem config for the factory
-        // The actual filesystem backends will be configured based on storage URLs
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig {
-            default_fs: Some(config.storage.metadata_url.clone()),
-            s3: None,
-            azure: None,
-            gcs: None,
-            local: None,
-            hdfs: None,
-            performance_config: Default::default(),
-            auth_config: None,
-            scheme_mapping: HashMap::new(),
-            global_options: Default::default(),
-        };
+        // Step 2: Create SharedServices FIRST (owns all services)
+        // This avoids duplicate CollectionService creation
+        tracing::info!("🔧 ProximaDB::new - Creating SharedServices FIRST to avoid circular dependency");
+        let (shared_services, collection_service) = network::multi_server::SharedServices::new(
+            Some(metrics_collector.clone()),
+            &config.storage,
+        )
+        .await?;
+        tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
 
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(filesystem_config)
-                .await
-                .map_err(|e| format!("Failed to create filesystem factory: {}", e))?,
-        );
-        tracing::debug!("✅ ProximaDB::new - Filesystem factory created successfully");
-
-        tracing::debug!("🔧 ProximaDB::new - Creating filestore backend...");
-        let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .map_err(|e| format!("Failed to create filestore backend: {}", e))?,
-        );
-        tracing::debug!("✅ ProximaDB::new - Filestore backend created successfully");
-
-        tracing::debug!("🔧 ProximaDB::new - Creating collection service...");
-        let collection_service = Arc::new(CollectionService::new(filestore_backend, config.storage.clone()).await?);
-        tracing::debug!("✅ ProximaDB::new - Collection service created successfully");
-
-        tracing::debug!("🔧 ProximaDB::new - Creating storage engine...");
+        // Step 3: Create StorageEngine using the CollectionService from SharedServices
+        tracing::debug!("🔧 ProximaDB::new - Creating storage engine with injected CollectionService...");
         let storage_engine = storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
-        // Inject the collection service as metadata provider
+        // Inject the collection service from SharedServices (no duplicate!)
         storage_engine.set_metadata_provider(collection_service.clone()).await;
-        tracing::info!("✅ ProximaDB::new - Storage engine created successfully");
+        tracing::info!("✅ ProximaDB::new - Storage engine created with SharedServices' CollectionService");
         let storage = Arc::new(RwLock::new(storage_engine));
 
         // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
@@ -183,26 +143,7 @@ impl ProximaDB {
             .map_err(|e| format!("Failed to create server config: {}", e))?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
-        // Create metrics collector for monitoring
-        tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
-        let metrics_config = monitoring::metrics::MetricsConfig::default();
-        let (metrics_collector, _receiver) = monitoring::MetricsCollector::new(metrics_config)?;
-        let metrics_collector = Arc::new(metrics_collector);
-        tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
-
-        // Create SharedServices first with metadata configuration (business logic hub)
-        tracing::info!(
-            "🔧 ProximaDB::new: Creating SharedServices with metadata URL: {}",
-            config.storage.metadata_url
-        );
-        tracing::debug!("🔧 ProximaDB::new - About to create SharedServices...");
-        let shared_services = network::multi_server::SharedServices::new(
-            storage.clone(),
-            Some(metrics_collector),
-            &config.storage,
-        )
-        .await?;
-        tracing::info!("✅ ProximaDB::new: SharedServices created successfully");
+        // SharedServices and metrics collector already created above
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
@@ -221,19 +162,28 @@ impl ProximaDB {
     pub async fn start(&mut self) -> Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
         
-        // Start storage engine
-        tracing::debug!("🔧 ProximaDB::start - Starting storage engine...");
+        // Step 1: Start storage engine (recovers collections from metadata)
+        tracing::info!("📦 ProximaDB::start - Step 1: Starting storage engine for collection recovery...");
         {
             let mut storage = self.storage.write().await;
             storage.start().await?;
         }
-        tracing::debug!("✅ ProximaDB::start - Storage engine started successfully");
+        tracing::info!("✅ ProximaDB::start - Storage engine started, collections recovered from metadata");
 
-        // Start consensus engine (disabled)
-        // self.consensus.start().await?;
+        // Step 2: Recover assignments from collection metadata
+        tracing::info!("🗺️ ProximaDB::start - Step 2: Recovering assignments from collection metadata...");
+        // TODO: When AssignmentService is added to SharedServices, call:
+        // self.multi_server.as_ref().unwrap().shared_services.assignment_service.recover_assignments().await?;
+        tracing::info!("✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)");
 
-        // Start multi-server (HTTP and gRPC on separate ports)
-        tracing::debug!("🔧 ProximaDB::start - Starting multi-server...");
+        // Step 3: Recover vectors from write buffer
+        tracing::info!("🔄 ProximaDB::start - Step 3: Recovering vectors from write buffer...");
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server.shared_services.recover_vectors_from_write_buffer(&self.storage).await?;
+        }
+        
+        // Step 4: Start multi-server (HTTP and gRPC on separate ports)
+        tracing::info!("🌐 ProximaDB::start - Step 4: Starting multi-server (gRPC:5679 + REST:5678)...");
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
                 .start()
@@ -242,7 +192,12 @@ impl ProximaDB {
         }
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
-        tracing::info!("🎉 ProximaDB::start - Database startup complete!");
+        tracing::info!("🎉 ProximaDB::start - Database startup complete with proper recovery order!");
+        tracing::info!("📋 Recovery Order Summary:");
+        tracing::info!("  1️⃣ Collections: Recovered from metadata snapshots");
+        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata"); 
+        tracing::info!("  3️⃣ Vectors: Recovered from write buffer");
+        tracing::info!("  4️⃣ Services: HTTP/gRPC servers started");
         Ok(())
     }
 

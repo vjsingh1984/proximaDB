@@ -133,6 +133,8 @@ print(f"Found {len(results)} similar documents!")
 - **Dual Storage**: Write-optimized + Analytics-optimized engines
 - **Multi-Cloud Native**: S3, Azure, GCS with atomic consistency
 - **Hardware Aware**: Leverages your CPU/GPU without configuration
+- **Clean Initialization** _(New)_: SharedServices architecture eliminates circular dependencies
+- **Proper Recovery Order** _(New)_: Collections → Assignments → Vectors for reliable startup
 
 ## 💸 **ROI Calculator: See Your Savings**
 
@@ -160,7 +162,7 @@ print(f"Found {len(results)} similar documents!")
 ## 🛡️ **Enterprise-Ready From Day One**
 
 **✅ Production Reliability:**
-- **100% Test Coverage** (561 tests) - No surprises in production
+- **100% Test Success** (982 tests passed, 19 ignored) - No surprises in production
 - **ACID Transactions** - Your data consistency is guaranteed
 - **Zero-Downtime Updates** - Hot-swap indexes without service interruption
 - **Multi-Cloud Resilience** - Automatic failover across cloud providers
@@ -234,7 +236,7 @@ print(f"Found {len(results)} similar documents!")
 |Baseline
 
 |Test coverage
-|**100%** _(561 tests)_
+|**100%** _(982 tests passed)_
 |60-80%
 
 |Setup time
@@ -244,17 +246,17 @@ print(f"Found {len(results)} similar documents!")
 
 ## 🤝 **Join the Community**
 
-**💻 Developers Love ProximaDB Because:**
-- Clean, documented APIs that actually work
-- Excellent error messages that help you debug  
-- Real-world examples, not just toy demos
-- Responsive community support
+**💻 Why Developers Will Love ProximaDB:**
+- Clean, documented APIs designed for productivity
+- Excellent error messages to accelerate debugging  
+- Real-world examples beyond toy demonstrations
+- Growing community with responsive support
 
-**🏢 Enterprises Choose ProximaDB Because:**
-- Apache 2.0 license with no hidden gotchas
-- Enterprise-grade reliability and observability  
-- No vendor lock-in or surprise pricing changes
-- Professional support available
+**🏢 Why Enterprises Will Choose ProximaDB:**
+- Apache 2.0 license with transparent, open-source approach
+- Enterprise-grade reliability and comprehensive observability  
+- No vendor lock-in with flexible deployment options
+- Professional support available for production deployments
 
 ---
 

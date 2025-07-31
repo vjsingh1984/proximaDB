@@ -294,14 +294,14 @@ mod tests {
     /// Test hardware backend selection and performance
     #[tokio::test]
     async fn test_hardware_backend_selection() -> Result<()> {
-        println!("🚀 Testing hardware backend selection for search...");
+        debug!("🚀 Testing hardware backend selection for search...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         let available = distance_compute.available_backends();
         
-        println!("🎯 Selected backend: {}", backend);
-        println!("📋 Available backends: {:?}", available);
+        debug!("🎯 Selected backend: {}", backend);
+        debug!("📋 Available backends: {:?}", available);
         
         // Verify backend selection hierarchy
         let expected_preference = vec![
@@ -327,14 +327,14 @@ mod tests {
         // Verify the backend is actually available
         assert!(available.contains(&backend), "Selected backend should be available");
         
-        println!("✅ Hardware backend selection test passed");
+        debug!("✅ Hardware backend selection test passed");
         Ok(())
     }
 
     /// Test that distance computation is consistent across backends
     #[tokio::test]
     async fn test_distance_computation_consistency() -> Result<()> {
-        println!("🧪 Testing distance computation consistency...");
+        debug!("🧪 Testing distance computation consistency...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let test_vectors = create_test_vectors();
@@ -348,7 +348,7 @@ mod tests {
         ];
         
         for metric in metrics {
-            println!("📊 Testing {:?} distance metric", metric);
+            debug!("📊 Testing {:?} distance metric", metric);
             
             // Test with different hardware backends if available
             let mut raw_result = None;
@@ -364,7 +364,7 @@ mod tests {
                     mode,
                 );
                 
-                println!("  Mode {:?}: raw={:.4}, normalized={:.4}, rank={:.4}", 
+                debug!("  Mode {:?}: raw={:.4}, normalized={:.4}, rank={:.4}", 
                     mode, result.raw_value, result.normalized_score, result.rank_value);
                 
                 // Validate semantic properties
@@ -394,14 +394,14 @@ mod tests {
             }
         }
         
-        println!("✅ Distance computation consistency test passed");
+        debug!("✅ Distance computation consistency test passed");
         Ok(())
     }
 
     /// Comprehensive test for VIPER engine with all distance metrics and operators
     #[tokio::test]
     async fn test_viper_comprehensive_search() -> Result<()> {
-        println!("🔍 Testing VIPER engine comprehensive search...");
+        debug!("🔍 Testing VIPER engine comprehensive search...");
         
         let test_cases = create_test_cases();
         let test_vectors = create_test_vectors();
@@ -415,7 +415,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
         
         for test_case in test_cases.iter().take(6) { // Test subset due to mock limitations
-            println!("🧪 Testing VIPER case: {}", test_case.name);
+            debug!("🧪 Testing VIPER case: {}", test_case.name);
             let context = create_test_context("test_viper_collection", TestEngineType::Viper);
             
             let search_params = SearchParams {
@@ -435,7 +435,7 @@ mod tests {
             
             // Test hardware acceleration in distance computation
             let backend = distance_compute.preferred_backend();
-            println!("  🎯 Using hardware backend: {}", backend);
+            debug!("  🎯 Using hardware backend: {}", backend);
             
             // Verify distance computation works with the selected backend
             let sample_distance = distance_compute.calculate_distance(
@@ -448,17 +448,17 @@ mod tests {
             assert!(sample_distance.normalized_score >= 0.0 && sample_distance.normalized_score <= 1.0,
                 "Normalized score should be in [0, 1]");
             
-            println!("  ✅ Case {} passed with backend {}", test_case.name, backend);
+            debug!("  ✅ Case {} passed with backend {}", test_case.name, backend);
         }
         
-        println!("✅ VIPER comprehensive search test completed");
+        debug!("✅ VIPER comprehensive search test completed");
         Ok(())
     }
 
     /// Comprehensive test for LSM engine with all distance metrics and operators
     #[tokio::test]
     async fn test_lsm_comprehensive_search() -> Result<()> {
-        println!("🔍 Testing LSM engine comprehensive search...");
+        debug!("🔍 Testing LSM engine comprehensive search...");
         
         let test_cases = create_test_cases();
         let test_vectors = create_test_vectors();
@@ -472,7 +472,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
         
         for test_case in test_cases.iter().take(6) { // Test subset due to mock limitations
-            println!("🧪 Testing LSM case: {}", test_case.name);
+            debug!("🧪 Testing LSM case: {}", test_case.name);
             let context = create_test_context("test_lsm_collection", TestEngineType::Lsm);
             
             let search_params = SearchParams {
@@ -492,7 +492,7 @@ mod tests {
             
             // Test hardware acceleration in distance computation
             let backend = distance_compute.preferred_backend();
-            println!("  🎯 Using hardware backend: {}", backend);
+            debug!("  🎯 Using hardware backend: {}", backend);
             
             // Verify distance computation works with the selected backend
             let sample_distance = distance_compute.calculate_distance(
@@ -505,17 +505,17 @@ mod tests {
             assert!(sample_distance.normalized_score >= 0.0 && sample_distance.normalized_score <= 1.0,
                 "Normalized score should be in [0, 1]");
             
-            println!("  ✅ Case {} passed with backend {}", test_case.name, backend);
+            debug!("  ✅ Case {} passed with backend {}", test_case.name, backend);
         }
         
-        println!("✅ LSM comprehensive search test completed");
+        debug!("✅ LSM comprehensive search test completed");
         Ok(())
     }
 
     /// Test WAL integration with unflushed vectors and hardware acceleration
     #[tokio::test]
     async fn test_wal_unflushed_vector_search() -> Result<()> {
-        println!("📝 Testing WAL unflushed vector search with hardware acceleration...");
+        debug!("📝 Testing WAL unflushed vector search with hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let test_vectors = create_test_vectors();
@@ -524,7 +524,7 @@ mod tests {
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).collect();
         let flushed_vectors: Vec<_> = test_vectors.iter().filter(|v| !v.in_wal).collect();
         
-        println!("📊 WAL vectors: {}, Flushed vectors: {}", wal_vectors.len(), flushed_vectors.len());
+        debug!("📊 WAL vectors: {}, Flushed vectors: {}", wal_vectors.len(), flushed_vectors.len());
         
         // Test all distance metrics with WAL data
         let metrics = vec![
@@ -535,7 +535,7 @@ mod tests {
         ];
         
         for metric in metrics {
-            println!("🧪 Testing WAL search with {:?}", metric);
+            debug!("🧪 Testing WAL search with {:?}", metric);
             
             let query_vector = &test_vectors[0].vector;
             
@@ -553,7 +553,7 @@ mod tests {
                     "WAL normalized score should be in [0, 1]");
                 assert_eq!(distance_result.metric, metric, "Metric should match");
                 
-                println!("  WAL vector {}: distance={:.4}, normalized={:.4}", 
+                debug!("  WAL vector {}: distance={:.4}, normalized={:.4}", 
                     wal_vec.id, distance_result.raw_value, distance_result.normalized_score);
             }
             
@@ -579,31 +579,31 @@ mod tests {
             }
         }
         
-        println!("✅ WAL unflushed vector search test completed");
+        debug!("✅ WAL unflushed vector search test completed");
         Ok(())
     }
 
     /// Comprehensive test for WAL unflushed vectors with ALL operators and distance algorithms
     #[tokio::test]
     async fn test_wal_comprehensive_operators_and_metrics() -> Result<()> {
-        println!("🚀 Testing WAL unflushed vectors with ALL operators, metrics, and accelerated platforms...");
+        debug!("🚀 Testing WAL unflushed vectors with ALL operators, metrics, and accelerated platforms...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         let available_backends = distance_compute.available_backends();
         
-        println!("🎯 Primary backend: {}", backend);
-        println!("📋 Available backends: {:?}", available_backends);
+        debug!("🎯 Primary backend: {}", backend);
+        debug!("📋 Available backends: {:?}", available_backends);
         
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).collect();
         
         if wal_vectors.is_empty() {
-            println!("⚠️ No WAL vectors found, creating test set...");
+            debug!("⚠️ No WAL vectors found, creating test set...");
             return Ok(());
         }
         
-        println!("📊 Testing with {} WAL vectors", wal_vectors.len());
+        debug!("📊 Testing with {} WAL vectors", wal_vectors.len());
         
         // Test ALL distance metrics including advanced ones
         let all_metrics = vec![
@@ -630,7 +630,7 @@ mod tests {
         for metric in &all_metrics {
             for (op_name, operator) in &all_operators {
                 let test_name = format!("WAL_{:?}_{}", metric, op_name);
-                println!("🧪 Testing {}", test_name);
+                debug!("🧪 Testing {}", test_name);
                 
                 // Apply operator filtering to WAL vectors
                 let filtered_wal_vectors = match operator {
@@ -658,11 +658,11 @@ mod tests {
                 };
                 
                 if filtered_wal_vectors.is_empty() {
-                    println!("  ⚠️ No vectors after {} filtering, skipping", op_name);
+                    debug!("  ⚠️ No vectors after {} filtering, skipping", op_name);
                     continue;
                 }
                 
-                println!("  📊 Filtered to {} WAL vectors", filtered_wal_vectors.len());
+                debug!("  📊 Filtered to {} WAL vectors", filtered_wal_vectors.len());
                 
                 // Test individual distance computations with hardware acceleration
                 let mut individual_results = Vec::new();
@@ -715,7 +715,7 @@ mod tests {
                     }
                     
                     let vectors_per_sec = (batch_vectors.len() as f64) / batch_time.as_secs_f64();
-                    println!("    📈 Batch performance: {:.0} vectors/sec", vectors_per_sec);
+                    debug!("    📈 Batch performance: {:.0} vectors/sec", vectors_per_sec);
                     
                     // Performance should be reasonable with hardware acceleration
                     assert!(vectors_per_sec > 50.0, 
@@ -750,20 +750,20 @@ mod tests {
                 
                 test_results.push((test_name.clone(), individual_results.len(), avg_individual_time, avg_score));
                 
-                println!("  ✅ {} passed: {} vectors, avg_time={:.1}ns, avg_score={:.3}", 
+                debug!("  ✅ {} passed: {} vectors, avg_time={:.1}ns, avg_score={:.3}", 
                     test_name, individual_results.len(), avg_individual_time, avg_score);
             }
         }
         
         // Summary statistics
-        println!("\n📊 WAL Comprehensive Test Summary:");
-        println!("  🎯 Backend used: {}", backend);
-        println!("  📋 Total test combinations: {}", test_results.len());
-        println!("  📈 Performance summary:");
+        debug!("\n📊 WAL Comprehensive Test Summary:");
+        debug!("  🎯 Backend used: {}", backend);
+        debug!("  📋 Total test combinations: {}", test_results.len());
+        debug!("  📈 Performance summary:");
         
         for (test_name, vector_count, avg_time_ns, avg_score) in &test_results {
             let vectors_per_sec = 1_000_000_000.0 / avg_time_ns; // Convert ns to vectors/sec
-            println!("    {}: {} vectors, {:.0} vec/sec, score={:.3}", 
+            debug!("    {}: {} vectors, {:.0} vec/sec, score={:.3}", 
                 test_name, vector_count, vectors_per_sec, avg_score);
         }
         
@@ -773,21 +773,21 @@ mod tests {
             "Should test most metric/operator combinations (got {}, expected ~{})", 
             test_results.len(), expected_combinations);
         
-        println!("✅ WAL comprehensive operators and metrics test completed successfully");
+        debug!("✅ WAL comprehensive operators and metrics test completed successfully");
         Ok(())
     }
 
     /// Test WAL vectors with different hardware backend modes
     #[tokio::test]
     async fn test_wal_hardware_backend_consistency() -> Result<()> {
-        println!("🔧 Testing WAL vectors across different hardware backends...");
+        debug!("🔧 Testing WAL vectors across different hardware backends...");
         
         let mut distance_compute = UnifiedDistanceCompute::default();
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).take(3).collect();
         
         if wal_vectors.is_empty() {
-            println!("⚠️ No WAL vectors for backend testing");
+            debug!("⚠️ No WAL vectors for backend testing");
             return Ok(());
         }
         
@@ -803,11 +803,11 @@ mod tests {
         let mut results_by_mode = HashMap::new();
         
         for (mode_name, gpu_enabled) in gpu_modes {
-            println!("🧪 Testing {} mode", mode_name);
+            debug!("🧪 Testing {} mode", mode_name);
             
             distance_compute.set_gpu_enabled(gpu_enabled);
             let current_backend = distance_compute.preferred_backend();
-            println!("  🎯 Backend: {}", current_backend);
+            debug!("  🎯 Backend: {}", current_backend);
             
             let mut mode_results = Vec::new();
             
@@ -847,7 +847,7 @@ mod tests {
             let (gpu_results, gpu_batch, gpu_backend) = &results_by_mode["GPU_ENABLED"];
             let (cpu_results, cpu_batch, cpu_backend) = &results_by_mode["GPU_DISABLED"];
             
-            println!("🔍 Comparing results: {} vs {}", gpu_backend, cpu_backend);
+            debug!("🔍 Comparing results: {} vs {}", gpu_backend, cpu_backend);
             
             // Individual results should be similar (within reasonable tolerance)
             for ((gpu_id, gpu_result), (cpu_id, cpu_result)) in gpu_results.iter().zip(cpu_results.iter()) {
@@ -856,7 +856,7 @@ mod tests {
                 // Skip comparison if either result is infinity or NaN
                 if gpu_result.raw_value.is_infinite() || cpu_result.raw_value.is_infinite() ||
                    gpu_result.raw_value.is_nan() || cpu_result.raw_value.is_nan() {
-                    println!("  ⚠️ Vector {}: Skipping comparison due to infinity/NaN values", gpu_id);
+                    debug!("  ⚠️ Vector {}: Skipping comparison due to infinity/NaN values", gpu_id);
                     continue;
                 }
                 
@@ -871,7 +871,7 @@ mod tests {
                     "Score difference should be small: {} (GPU: {:.4}, CPU: {:.4})",
                     score_diff, gpu_result.normalized_score, cpu_result.normalized_score);
                 
-                println!("  ✅ Vector {}: distance_diff={:.6}, score_diff={:.6}", 
+                debug!("  ✅ Vector {}: distance_diff={:.6}, score_diff={:.6}", 
                     gpu_id, distance_diff, score_diff);
             }
             
@@ -880,7 +880,7 @@ mod tests {
                 // Skip comparison if either result is infinity or NaN
                 if gpu_result.raw_value.is_infinite() || cpu_result.raw_value.is_infinite() ||
                    gpu_result.raw_value.is_nan() || cpu_result.raw_value.is_nan() {
-                    println!("  ⚠️ Batch result {}: Skipping comparison due to infinity/NaN values", i);
+                    debug!("  ⚠️ Batch result {}: Skipping comparison due to infinity/NaN values", i);
                     continue;
                 }
                 
@@ -892,14 +892,14 @@ mod tests {
             }
         }
         
-        println!("✅ WAL hardware backend consistency test completed");
+        debug!("✅ WAL hardware backend consistency test completed");
         Ok(())
     }
 
     /// Test complex query operators (AND, OR, NOT) with hardware acceleration
     #[tokio::test]
     async fn test_complex_query_operators() -> Result<()> {
-        println!("🔧 Testing complex query operators with hardware acceleration...");
+        debug!("🔧 Testing complex query operators with hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let test_vectors = create_test_vectors();
@@ -920,7 +920,7 @@ mod tests {
         
         for (op_name, operator) in operator_tests {
             for metric in &distance_metrics {
-                println!("🧪 Testing {} operator with {:?}", op_name, metric);
+                debug!("🧪 Testing {} operator with {:?}", op_name, metric);
                 
                 // Filter vectors based on operator type
                 let filtered_vectors = match operator {
@@ -947,7 +947,7 @@ mod tests {
                     QueryOperator::Simple => test_vectors.iter().collect(),
                 };
                 
-                println!("  📊 Filtered to {} vectors", filtered_vectors.len());
+                debug!("  📊 Filtered to {} vectors", filtered_vectors.len());
                 
                 // Test distance computation with hardware acceleration on filtered set
                 let mut results = Vec::new();
@@ -969,9 +969,9 @@ mod tests {
                 // Sort by normalized score (higher = more similar)
                 results.sort_by(|a, b| b.1.normalized_score.partial_cmp(&a.1.normalized_score).unwrap());
                 
-                println!("  🏆 Top 3 results:");
+                debug!("  🏆 Top 3 results:");
                 for (i, (id, result)) in results.iter().take(3).enumerate() {
-                    println!("    {}: {} (score={:.4}, distance={:.4})", 
+                    debug!("    {}: {} (score={:.4}, distance={:.4})", 
                         i + 1, id, result.normalized_score, result.raw_value);
                 }
                 
@@ -1000,19 +1000,19 @@ mod tests {
             }
         }
         
-        println!("✅ Complex query operators test completed");
+        debug!("✅ Complex query operators test completed");
         Ok(())
     }
 
     /// Test performance scaling with hardware acceleration
     #[tokio::test]
     async fn test_performance_scaling() -> Result<()> {
-        println!("⚡ Testing performance scaling with hardware acceleration...");
+        debug!("⚡ Testing performance scaling with hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         
-        println!("🎯 Testing with backend: {}", backend);
+        debug!("🎯 Testing with backend: {}", backend);
         
         // Test different batch sizes to verify scaling
         let batch_sizes = vec![10, 50, 100, 200];
@@ -1021,7 +1021,7 @@ mod tests {
         
         for &dim in &vector_dimensions {
             for metric in &metrics {
-                println!("📊 Testing {}D vectors with {:?}", dim, metric);
+                debug!("📊 Testing {}D vectors with {:?}", dim, metric);
                 
                 let query = vec![0.5; dim];
                 
@@ -1047,7 +1047,7 @@ mod tests {
                     }
                     
                     let vectors_per_sec = (batch_size as f64) / duration.as_secs_f64();
-                    println!("    Batch {}: {:.0} vectors/sec ({:?})", 
+                    debug!("    Batch {}: {:.0} vectors/sec ({:?})", 
                         batch_size, vectors_per_sec, duration);
                     
                     // Performance should be reasonable
@@ -1056,20 +1056,20 @@ mod tests {
             }
         }
         
-        println!("✅ Performance scaling test completed");
+        debug!("✅ Performance scaling test completed");
         Ok(())
     }
 
     /// Integration test combining all engines, metrics, and operators
     #[tokio::test]
     async fn test_full_integration() -> Result<()> {
-        println!("🎯 Running full integration test...");
+        debug!("🎯 Running full integration test...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let test_vectors = create_test_vectors();
         let backend = distance_compute.preferred_backend();
         
-        println!("🚀 Integration test using backend: {}", backend);
+        debug!("🚀 Integration test using backend: {}", backend);
         
         // Test matrix: 2 engines × 4 metrics × 3 operators = 24 combinations
         let engines = vec![TestEngineType::Lsm, TestEngineType::Viper];
@@ -1094,7 +1094,7 @@ mod tests {
                     total_tests += 1;
                     let test_name = format!("{:?}_{:?}_{:?}", engine, metric, operator);
                     
-                    println!("🧪 Testing combination: {}", test_name);
+                    debug!("🧪 Testing combination: {}", test_name);
                     
                     // Create test scenario
                     let query_vector = &test_vectors[0].vector;
@@ -1117,7 +1117,7 @@ mod tests {
                     };
                     
                     if filtered_vectors.is_empty() {
-                        println!("  ⚠️ No vectors after filtering, skipping");
+                        debug!("  ⚠️ No vectors after filtering, skipping");
                         continue;
                     }
                     
@@ -1159,22 +1159,22 @@ mod tests {
                     
                     if computation_success {
                         passed_tests += 1;
-                        println!("  ✅ {} passed", test_name);
+                        debug!("  ✅ {} passed", test_name);
                     } else {
-                        println!("  ❌ {} failed", test_name);
+                        debug!("  ❌ {} failed", test_name);
                     }
                 }
             }
         }
         
         let success_rate = (passed_tests as f64) / (total_tests as f64) * 100.0;
-        println!("📊 Integration test results: {}/{} passed ({:.1}%)", 
+        debug!("📊 Integration test results: {}/{} passed ({:.1}%)", 
             passed_tests, total_tests, success_rate);
         
         // Require at least 90% success rate
         assert!(success_rate >= 90.0, "Integration test success rate should be at least 90%");
         
-        println!("✅ Full integration test completed successfully");
+        debug!("✅ Full integration test completed successfully");
         Ok(())
     }
 }
