@@ -1,0 +1,62 @@
+[report]
+# Configure tarpaulin to avoid segfaults
+# Generated configuration to handle tarpaulin-specific issues
+
+# Output formats
+out = ["Json", "Html", "Xml"]
+
+# Coverage settings
+follow-exec = true
+implicit-test-threads = false
+
+# Avoid instrumentation issues that cause segfaults
+avoid-cfg-tarpaulin = true
+
+# Exclude problematic modules that cause segfaults under tarpaulin
+exclude = [
+    # Exclude low-level distance computation that has instrumentation issues
+    "*/compute/distance.rs",
+    "*/compute/unified_distance.rs",
+    
+    # Exclude complex recursive index structures 
+    "*/index/axis/annoy_index.rs",
+    "*/index/axis/hnsw_integration.rs",
+    
+    # Exclude hardware-specific SIMD code that conflicts with instrumentation
+    "*/compute/hardware.rs",
+    
+    # Exclude tests that are known to cause segfaults under tarpaulin
+    "*test_storage_layout*",
+    "*storage_layout*"
+]
+
+# Skip tests that consistently cause segfaults
+skip-clean = true
+timeout = 600  # 10 minutes timeout
+workspace = true
+
+# Reduce instrumentation complexity
+release = false
+all-features = false
+default-features = true
+
+# Target only library code, not integration tests that may cause issues
+lib = true
+tests = false
+examples = false
+benches = false
+
+# Use engine that's more stable with complex codebases
+engine = "llvm"
+
+# Additional safety settings
+run-types = ["Tests"]
+target-dir = "target/tarpaulin"
+
+# Exclude workspace members that don't have Cargo.toml
+exclude-files = [
+    "clients/python/*"
+]
+
+# Only process the main Rust workspace
+root = "."
