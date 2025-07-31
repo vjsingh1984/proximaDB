@@ -891,7 +891,7 @@ impl DirectVectorService {
             info!("🔍 FLUSH_ENGINE: Collection {} will flush to {} engine", collection_id, storage_engine);
             
             // Get vectors from memtable for flushing
-            let vectors_to_flush = match global_memtable.get_unflushed_batches(collection_id).await {
+            let vectors_to_flush = match global_memtable.get_unflushed_batches(&collection_id).await {
                 Ok(batches) => {
                     let mut all_vectors = Vec::new();
                     for batch in batches {
