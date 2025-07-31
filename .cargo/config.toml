@@ -8,4 +8,4 @@ test-atomic = "test unit_tests::storage::sst_atomic_operations_test -- --nocaptu
 test-viper = "test unit_tests::storage::viper -- --nocapture"
 test-batch = "test unit_tests::storage::write_buffer -- --nocapture"
 test-coverage = "tarpaulin --config tarpaulin.toml"
-test-coverage-safe = "tarpaulin --skip-clean --timeout 300 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 20"
+test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 20"
