@@ -35,6 +35,9 @@ skip-clean = true
 timeout = 600  # 10 minutes timeout
 workspace = true
 
+# Performance configuration
+jobs = 20  # Run with 20 threads for better performance
+
 # Reduce instrumentation complexity
 release = false
 all-features = false
