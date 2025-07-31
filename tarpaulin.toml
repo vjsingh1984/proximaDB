@@ -42,8 +42,8 @@ workspace = true
 # Performance configuration
 jobs = 20  # Run with 20 threads for better performance
 
-# Reduce instrumentation complexity
-release = false
+# Use release builds for better stability under instrumentation
+release = true  # Release builds are more stable with tarpaulin
 all-features = false
 default-features = true
 
@@ -53,10 +53,8 @@ tests = true  # Enable tests but use exclude list to filter problematic ones
 examples = false
 benches = false
 
-# Exclude specific test binaries that cause segfaults
-exclude-binaries = [
-    "proximadb-dc474fa732c11952"  # Main lib test binary that consistently segfaults
-]
+# Note: Using release builds for better stability
+# Release builds have different binary hashes and are generally more stable
 
 # Use engine that's more stable with complex codebases
 engine = "llvm"
