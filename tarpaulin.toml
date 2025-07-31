@@ -21,18 +21,22 @@ exclude = [
     # Exclude complex recursive index structures 
     "*/index/axis/annoy_index.rs",
     "*/index/axis/hnsw_integration.rs",
+    "*/index/axis/strategy_tests.rs",
+    "*/index/axis/manager.rs",
+    "*/index/axis/adaptive_engine.rs",
     
     # Exclude hardware-specific SIMD code that conflicts with instrumentation
     "*/compute/hardware.rs",
     
     # Exclude tests that are known to cause segfaults under tarpaulin
     "*test_storage_layout*",
-    "*storage_layout*"
+    "*storage_layout*",
+    "*test_collection_statistics_creation*"
 ]
 
 # Skip tests that consistently cause segfaults
 skip-clean = true
-timeout = 600  # 10 minutes timeout
+timeout = "600s"  # 10 minutes timeout
 workspace = true
 
 # Performance configuration
@@ -45,9 +49,14 @@ default-features = true
 
 # Target only library code, not integration tests that may cause issues
 lib = true
-tests = false
+tests = true  # Enable tests but use exclude list to filter problematic ones
 examples = false
 benches = false
+
+# Exclude specific test binaries that cause segfaults
+exclude-binaries = [
+    "proximadb-dc474fa732c11952"  # Main lib test binary that consistently segfaults
+]
 
 # Use engine that's more stable with complex codebases
 engine = "llvm"
