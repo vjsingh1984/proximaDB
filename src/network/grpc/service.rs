@@ -774,19 +774,59 @@ impl ProximaDb for ProximaDbGrpcService {
             // Pass Cosine as fallback, but search_params will override if present
             let combined_search_params = search_params;
             
-            let search_results = self.direct_vector_service
-                .search_vectors(
-                    &req.collection_id,
-                    &req.queries[0].vector,
-                    req.top_k as usize,
-                    crate::compute::distance::DistanceMetric::Cosine, // Fallback, will be overridden
-                    combined_search_params.as_ref(),
-                    include_vectors,
-                    include_metadata,
-                )
+            // Use UnifiedHandlers for search to ensure collection resolution
+            let unified_handlers = crate::handlers::UnifiedHandlers::new(
+                self.collection_service.clone(),
+                self.direct_vector_service.clone(),
+            );
+            
+            // Build the VectorSearchRequest
+            let search_request = crate::proto::proximadb::VectorSearchRequest {
+                collection_id: req.collection_id.clone(),
+                queries: req.queries.clone(),
+                top_k: req.top_k,
+                include_fields: req.include_fields.clone(),
+                distance_metric_override: req.distance_metric_override,
+                search_params: req.search_params.clone(),
+                search_optimization: req.search_optimization.clone(),
+            };
+            
+            let search_response = unified_handlers.handle_vector_search(search_request)
                 .instrument(span!(Level::DEBUG, "grpc_enhanced_search"))
                 .await
                 .map_err(|e| Status::internal(format!("Enhanced search failed: {}", e)))?;
+            
+            // Extract search results from response
+            let search_results = if let Some(payload) = search_response.result_payload {
+                // Handle CompactResults from UnifiedHandlers
+                match payload {
+                    crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(compact) => {
+                        compact.results.into_iter().map(|r| crate::core::search::SearchResult {
+                            id: r.id.clone().unwrap_or_default(),
+                            vector_id: r.id.clone(),
+                            score: r.score,
+                            distance: None, // Not provided in compact format
+                            rank: r.rank,
+                            vector: if include_vectors && !r.vector.is_empty() { Some(r.vector) } else { None },
+                            metadata: if include_metadata && !r.metadata.is_empty() {
+                                crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
+                            } else {
+                                std::collections::HashMap::new()
+                            },
+                            debug_info: None,
+                            semantic_distance: None,
+                            quantization_info: None,
+                            engine_stats: None,
+                            index_path: None,
+                            collection_id: Some(req.collection_id.clone()),
+                            created_at: None,
+                        }).collect()
+                    },
+                    _ => vec![]
+                }
+            } else {
+                vec![]
+            };
             
             // OPTIMIZATION: Direct native-to-proto conversion for single queries
             const USE_DIRECT_CONVERSION: bool = true;

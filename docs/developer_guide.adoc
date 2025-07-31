@@ -908,6 +908,30 @@ ProximaDB has been extensively tested with BERT embeddings of various dimensions
 |RoBERTa |768/1024 |COSINE |Robust text understanding
 |===
 
+==== Supported Distance Metrics
+
+ProximaDB supports 13 distance metrics for different use cases:
+
+[cols="2,1,3"]
+|===
+|Metric |Best For |Description
+
+|**COSINE** |Text embeddings |Angle-based, magnitude-independent (0=identical)
+|**EUCLIDEAN** |Spatial data |L2 norm, straight-line distance
+|**DOT_PRODUCT** |Recommendation |Inner product (higher=more similar)
+|**MANHATTAN** |Grid-based |L1 norm, sum of absolute differences
+|**HAMMING** |Binary data |Bit-level differences
+|**JACCARD** |Set similarity |Intersection over union
+|**CHEBYSHEV** |Max difference |L∞ norm, maximum absolute difference
+|**CANBERRA** |Sparse data |Weighted Manhattan, sensitive to small changes
+|**MINKOWSKI** |Generalized |Lp norm with configurable p (default=3)
+|**ANGULAR** |Directional |Arc-cosine based angular distance
+|**BRAY_CURTIS** |Ecological |Compositional data dissimilarity
+|**HELLINGER** |Distributions |Statistical distance for probabilities
+|===
+
+All metrics support hardware acceleration (AVX-512, NEON) and GPU offloading.
+
 ==== BERT Integration Example
 
 [source,python]

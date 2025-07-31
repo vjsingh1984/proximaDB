@@ -38,6 +38,12 @@ enum DistanceMetric {
   MANHATTAN = 5;
   JACCARD = 6;
   CUSTOM = 7;
+  CHEBYSHEV = 8;
+  CANBERRA = 9;
+  MINKOWSKI = 10;
+  ANGULAR = 11;
+  BRAY_CURTIS = 12;
+  HELLINGER = 13;
 }
 
 enum StorageEngine {

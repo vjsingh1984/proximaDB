@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::core::VectorRecord;
+use proximadb::core::VectorRecord;
 use crate::services::direct_vector_service::{DirectVectorService, OptimizedFormat};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::sst::LsmTree;

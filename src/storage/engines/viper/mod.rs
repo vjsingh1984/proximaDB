@@ -16,6 +16,7 @@ pub mod readers;
 pub mod unified_search_engine; // NEW: Unified search engine implementation
 pub mod factory;
 pub mod pipeline;
+pub mod pipeline_tests; // Pipeline tests module
 pub mod quantization;
 pub mod utilities;
 

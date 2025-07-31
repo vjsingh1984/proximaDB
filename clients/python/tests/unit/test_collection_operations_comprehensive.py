@@ -251,7 +251,7 @@ class TestCollectionConfiguration:
         """Test storage engine options"""
         engines = [
             StorageEngine.VIPER,
-            StorageEngine.LSM,
+            StorageEngine.SST,
             StorageEngine.MMAP,
             StorageEngine.HYBRID
         ]

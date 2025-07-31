@@ -1,136 +1,180 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1a202c', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#2d3748', 'lineColor':'#4a5568', 'fontSize':'10px', 'fontFamily':'JetBrains Mono, monospace'}}}%%
 classDiagram
-    %% Main Database Class
-    class ProximaDB {
-        -storage: Arc~RwLock~StorageEngine~~
-        -multi_server: Option~MultiServer~
-        -_query_engine: QueryEngine
-        -_config: Config
-        +new(config: Config) ProximaDB
-        +start() Result
-        +stop() Result
-        +is_server_running() bool
-    }
+    %% Core Storage Engine Architecture
     
-    %% Central Storage Coordination
     class StorageEngine {
-        -config: StorageConfig
-        -sst_storages: Arc~DashMap~String, Arc~SstStorage~~~
-        -mmap_readers: Arc~DashMap~String, Arc~MmapReader~~~
-        -write_buffer_manager: Arc~WriteBufferManager~
-        -axis_index_manager: Arc~AxisManager~
-        -metadata_provider: Arc~RwLock~Option~Arc~dyn CollectionMetadataProvider~~~~
-        +ensure_sst_storage_initialized(collection_id: str) Arc~SstStorage~
-        +search_vectors(query: SearchQuery) Vec~SearchResult~
-        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
+        <<interface>>
+        📁 storage/engine.rs
+        +insert_vectors(collection_id: String, vectors: Vec~VectorRecord~) Result~()~
+        +search_vectors(query: SearchQuery) Result~Vec~SearchResult~~
+        +delete_vectors(collection_id: String, ids: Vec~String~) Result~()~
+        +flush_collection(collection_id: String) Result~FlushResult~
+        +get_engine_stats() EngineStatistics
+        ⚡ Unified Storage Interface
     }
     
-    %% DirectVectorService - Core Service
-    class DirectVectorService {
-        -global_memtable: Arc~WriteBufferBehaviorWrapper~
-        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
-        -compaction_coordinator: Arc~CompactionCoordinator~
-        -viper_engine: Arc~ViperEngine~
-        -sst_engine: Arc~SstStorage~
-        -write_buffer_config: WriteBufferConfig
-        -distance_compute: UnifiedDistanceCompute
-        +insert_vectors(collection_id: str, vectors: Vec~VectorRecord~) Result
-        +search_vectors(query: SearchQuery) Vec~SearchResult~
-    }
-    
-    %% Storage Engines
     class ViperEngine {
-        -collection_id: String
-        -config: ViperConfig
-        -ml_clustering: Option~KMeansCluster~
-        -quantization_engine: Arc~UnifiedQuantizationEngine~
-        +write_vectors(vectors: Vec~VectorRecord~) Result
-        +search_unified(query: SearchQuery) Vec~SearchResult~
-        +compact() Result
+        📁 storage/engines/viper/engine.rs
+        -parquet_writer: ParquetWriter
+        -quantization_engine: QuantizationEngine
+        -ml_optimizer: MLOptimizer
+        +insert_vectors() Result~()~
+        +search_vectors() Result~Vec~SearchResult~~
+        +optimize_for_ml() Result~()~
+        🏗️ Columnar ML-Optimized Engine
+        📊 Default for Analytics Workloads
+        🤖 ML/AI Feature Engineering
     }
     
-    class SstStorage {
-        -collection_id: String
-        -config: SstConfig
-        -filesystem: Arc~FilesystemFactory~
-        +write_vectors(vectors: Vec~VectorRecord~) Result
-        +search_unified(query: SearchQuery) Vec~SearchResult~
-        +compact() Result
+    class SstEngine {
+        📁 storage/engines/sst/mod.rs
+        -sstable_manager: SstableManager
+        -bloom_filters: BloomFilterManager
+        -compaction_scheduler: CompactionScheduler
+        +insert_vectors() Result~()~
+        +search_vectors() Result~Vec~SearchResult~~
+        +compact_sstables() Result~()~
+        🧱 Row-based LSM Engine
+        🔍 Optimized for Point Queries
+        📈 High Write Throughput
     }
     
-    %% Write Buffer System
-    class WriteBufferManager {
-        -config: WriteBufferConfig
-        -serialization_strategy: Box~dyn SerializationStrategy~
-        -flush_coordinator: Arc~WriteBufferFlushCoordinator~
-        +write_batch(collection_id: str, batch: WriteBufferVectorBatch) Result
-        +flush_collection(collection_id: str) Result
+    class UnifiedSearchEngine {
+        <<interface>>
+        📁 storage/engines/*/unified_search_engine.rs
+        +search_with_hints(hints: SearchHints) Result~Vec~SearchResult~~
+        +get_search_capabilities() SearchCapabilities
+        +supports_predicate_pushdown() bool
+        +estimate_search_cost(query: SearchQuery) SearchCost
+        🎯 Engine-Specific Search Optimization
+    }
+    
+    class ViperSearchEngine {
+        📁 storage/engines/viper/unified_search_engine.rs
+        -parquet_reader: UnifiedParquetReader
+        -column_pruning: ColumnPruner
+        -vectorized_ops: VectorizedOperations
+        +search_with_hints() Result~Vec~SearchResult~~
+        +columnar_scan() Result~()~
+        🏗️ Columnar Search Optimization
+        📊 Vectorized Processing
+        🔍 Column Pruning
+    }
+    
+    class SstSearchEngine {
+        📁 storage/engines/sst/unified_search_engine.rs
+        -sstable_reader: UnifiedSstableReader
+        -bloom_filter: BloomFilter
+        -range_scanner: RangeScanner
+        +search_with_hints() Result~Vec~SearchResult~~
+        +range_search() Result~()~
+        🧱 Row-based Search Optimization
+        🌸 Bloom Filter Acceleration
+        📊 Range Query Optimization
     }
     
     class WriteBufferBehaviorWrapper {
-        -inner: Arc~dyn Memtable~VectorRecord~~
-        -behavior: WriteBufferBehavior
-        +insert(key: String, value: VectorRecord) Result
-        +search(query: SearchQuery) Vec~SearchResult~
-        +should_flush() bool
+        📁 storage/memtable/specialized/write_buffer_behavior.rs
+        -inner_memtable: Box~dyn MemtableImplementation~
+        -write_buffer_manager: Arc~WriteBufferManager~
+        -serialization_strategy: SerializationStrategy
+        +insert() Result~()~
+        +flush_to_write_buffer() Result~()~
+        +sync_with_persistence() Result~()~
+        🔄 Memtable → WriteBuffer Bridge
+        💾 Persistence Coordination
     }
     
-    %% AXIS Indexing
+    class UnifiedAtomicCoordinator {
+        📁 storage/atomic.rs
+        -active_operations: DashMap~OperationId, AtomicOperation~
+        -storage_backends: Vec~Arc~dyn StorageBackend~~
+        -transaction_log: TransactionLog
+        +begin_atomic_operation(config: StagingConfig) Result~AtomicOperation~
+        +write_to_staging(op_id: OperationId, data: Vec~u8~) Result~()~
+        +finalize_atomic_operation(op_id: OperationId) Result~()~
+        +rollback_operation(op_id: OperationId) Result~()~
+        ⚛️ ACID Transaction Coordinator
+        🔒 Multi-Backend Consistency
+    }
+    
     class AxisManager {
-        -indexes: HashMap~String, Box~dyn VectorIndex~~
-        -config: AxisConfig
-        +insert(collection_id: str, vector: VectorRecord) Result
-        +search(collection_id: str, query: Vec~f32~, k: usize) Vec~SearchResult~
-        +build_index(collection_id: str, index_type: IndexType) Result
+        📁 index/axis/manager.rs
+        -index_factory: IndexFactory
+        -performance_monitor: PerformanceMonitor
+        -migration_engine: MigrationEngine
+        +create_index(config: IndexConfig) Result~Arc~dyn VectorIndex~~
+        +select_optimal_index(workload: WorkloadProfile) IndexType
+        +migrate_index(from: IndexType, to: IndexType) Result~()~
+        🎯 Adaptive Index Management
+        📊 Performance-based Selection
+        🔄 Zero-downtime Migration
     }
     
-    %% Storage Strategy Enum
-    class StorageEngineStrategy {
-        <<enumeration>>
-        Viper
-        Lsm
-        Hybrid
+    class VectorIndex {
+        <<interface>>
+        📁 index/axis/
+        +insert(vector: Vector, id: VectorId) Result~()~
+        +search(query: Vector, k: usize) Result~Vec~SearchResult~~
+        +delete(id: VectorId) Result~()~
+        +get_index_stats() IndexStatistics
+        🎯 Vector Index Interface
     }
     
-    %% Collection Service
-    class CollectionService {
-        -metadata_backend: Arc~dyn MetadataBackend~
-        -storage_config: StorageConfig
-        +create_collection(collection: Collection) Result
-        +get_collection(collection_id: str) Option~Collection~
-        +delete_collection(collection_id: str) Result
+    class HnswIndex {
+        📁 index/axis/hnsw_integration.rs
+        -graph: HnswGraph
+        -ef_construction: usize
+        -max_connections: usize
+        +insert() Result~()~
+        +search() Result~Vec~SearchResult~~
+        🔗 Hierarchical Navigable Small World
+        🎯 High Precision Search
+        📊 Graph-based Traversal
     }
     
-    %% Relationships
-    ProximaDB --> StorageEngine
-    StorageEngine --> DirectVectorService
-    StorageEngine --> ViperEngine
-    StorageEngine --> SstStorage
-    StorageEngine --> WriteBufferManager
-    StorageEngine --> AxisManager
-    StorageEngine --> CollectionService
+    class IvfIndex {
+        📁 index/axis/ivf_index.rs
+        -centroids: Vec~Vector~
+        -inverted_lists: Vec~Vec~VectorId~~
+        -quantizer: ProductQuantizer
+        +insert() Result~()~
+        +search() Result~Vec~SearchResult~~
+        🏗️ Inverted File Index
+        📊 Large-scale Clustering
+        🔍 Efficient Approximate Search
+    }
     
-    DirectVectorService --> WriteBufferBehaviorWrapper
-    DirectVectorService --> ViperEngine
-    DirectVectorService --> SstStorage
+    %% Core Relationships
+    StorageEngine <|-- ViperEngine : implements
+    StorageEngine <|-- SstEngine : implements
     
-    WriteBufferManager --> WriteBufferBehaviorWrapper
+    UnifiedSearchEngine <|-- ViperSearchEngine : implements
+    UnifiedSearchEngine <|-- SstSearchEngine : implements
     
-    StorageEngine ..> StorageEngineStrategy : uses
+    ViperEngine --> ViperSearchEngine : uses
+    SstEngine --> SstSearchEngine : uses
     
-    %% Interface Implementation
-    CollectionService ..|> CollectionMetadataProvider : implements
+    StorageEngine --> WriteBufferBehaviorWrapper : coordinates
+    WriteBufferBehaviorWrapper --> UnifiedAtomicCoordinator : persists via
     
-    %% Styling
-    classDef coreClass fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
-    classDef storageClass fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    classDef serviceClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    StorageEngine --> AxisManager : manages indexes
+    AxisManager --> VectorIndex : creates
+    VectorIndex <|-- HnswIndex : implements
+    VectorIndex <|-- IvfIndex : implements
     
-    class ProximaDB coreClass
-    class StorageEngine coreClass  
-    class DirectVectorService coreClass
-    class ViperEngine storageClass
-    class SstStorage storageClass
-    class WriteBufferManager storageClass
-    class WriteBufferBehaviorWrapper storageClass
-    class AxisManager serviceClass
-    class CollectionService serviceClass
+    %% Performance Annotations (Notes)
+    note for ViperEngine "🏗️ Columnar Performance\n• 35K insert/sec\n• ML-optimized format\n• Best for analytics"
+    
+    note for SstEngine "🧱 Row-based Performance\n• 49K insert/sec\n• High write throughput\n• Point query optimized"
+    
+    note for HnswIndex "🎯 HNSW Performance\n• 99.9% accuracy\n• Graph traversal\n• High precision search"
+    
+    note for IvfIndex "📊 IVF Performance\n• 1M+ vectors\n• Large scale clustering\n• Approximate search"
+    
+    %% Usage Patterns
+    note for ViperEngine "Best for:\n• Analytics workloads\n• ML feature engineering\n• Column-heavy queries"
+    
+    note for SstEngine "Best for:\n• High write throughput\n• Point queries\n• Traditional databases"
+    
+    note for UnifiedAtomicCoordinator "Provides:\n• ACID guarantees\n• Multi-cloud consistency\n• Crash recovery"

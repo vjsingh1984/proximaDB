@@ -15,6 +15,9 @@ pub mod streaming_search;
 pub mod comprehensive_search_tests;
 
 #[cfg(test)]
+mod direct_vector_service_tests;
+
+#[cfg(test)]
 pub mod tests {
     // Test modules will be added here as needed
 }

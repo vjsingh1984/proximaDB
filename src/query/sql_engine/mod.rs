@@ -33,11 +33,12 @@ pub use query_cache::{QueryCache, QueryCacheConfig, QueryCacheStats};
 
 use anyhow::Result;
 use std::sync::Arc;
-use crate::services::DirectVectorService;
+use crate::services::{DirectVectorService, CollectionService};
 
 /// SQL Engine for ProximaDB with query plan caching
 pub struct SqlEngine {
     vector_service: Arc<DirectVectorService>,
+    collection_service: Option<Arc<CollectionService>>,
     planner: QueryPlanner,
     executor: SqlExecutor,
     query_cache: QueryCache,
@@ -49,10 +50,38 @@ impl SqlEngine {
         Self::with_cache_config(vector_service, QueryCacheConfig::default())
     }
     
+    /// Create new SQL engine with collection service for name resolution
+    pub fn with_collection_service(
+        vector_service: Arc<DirectVectorService>,
+        collection_service: Arc<CollectionService>,
+    ) -> Self {
+        Self::with_collection_service_and_cache(
+            vector_service,
+            collection_service,
+            QueryCacheConfig::default(),
+        )
+    }
+    
     /// Create new SQL engine with custom cache configuration
     pub fn with_cache_config(vector_service: Arc<DirectVectorService>, cache_config: QueryCacheConfig) -> Self {
         Self {
             vector_service: vector_service.clone(),
+            collection_service: None,
+            planner: QueryPlanner::new(),
+            executor: SqlExecutor::new(vector_service),
+            query_cache: QueryCache::new(cache_config),
+        }
+    }
+    
+    /// Create new SQL engine with collection service and custom cache configuration
+    pub fn with_collection_service_and_cache(
+        vector_service: Arc<DirectVectorService>,
+        collection_service: Arc<CollectionService>,
+        cache_config: QueryCacheConfig,
+    ) -> Self {
+        Self {
+            vector_service: vector_service.clone(),
+            collection_service: Some(collection_service),
             planner: QueryPlanner::new(),
             executor: SqlExecutor::new(vector_service),
             query_cache: QueryCache::new(cache_config),
@@ -68,7 +97,7 @@ impl SqlEngine {
         }
         
         // Try to get cached parsed query
-        let parsed_query = if let Some(cached_parsed) = self.query_cache.get_parsed_query(sql).await {
+        let mut parsed_query = if let Some(cached_parsed) = self.query_cache.get_parsed_query(sql).await {
             tracing::debug!("🎯 Using cached parsed query for SQL: {}", sql);
             cached_parsed
         } else {
@@ -79,6 +108,33 @@ impl SqlEngine {
             tracing::debug!("📝 Cached new parsed query for SQL: {}", sql);
             parsed
         };
+        
+        // Resolve collection name to UUID if we have a collection service
+        if let Some(collection_service) = &self.collection_service {
+            if !parsed_query.from_collection.is_empty() {
+                // Try to resolve the collection identifier
+                match collection_service.resolve_collection_id(&parsed_query.from_collection).await {
+                    Ok(Some(resolved_id)) => {
+                        // Only update if we got a different ID (name was resolved)
+                        if resolved_id != parsed_query.from_collection {
+                            tracing::debug!("🔄 Resolved collection name '{}' to UUID '{}'", 
+                                parsed_query.from_collection, resolved_id);
+                            parsed_query.from_collection = resolved_id;
+                        }
+                    }
+                    Ok(None) => {
+                        // Collection not found - let it fail in executor with clear error
+                        tracing::debug!("⚠️ Collection '{}' not found during resolution", 
+                            parsed_query.from_collection);
+                    }
+                    Err(e) => {
+                        // Log error but continue - let executor handle it
+                        tracing::warn!("⚠️ Error resolving collection '{}': {}", 
+                            parsed_query.from_collection, e);
+                    }
+                }
+            }
+        }
         
         // Create execution plan and cache it
         let plan = self.planner.create_plan(parsed_query)?;
@@ -93,7 +149,34 @@ impl SqlEngine {
     pub async fn execute_uncached(&self, sql: &str) -> Result<SqlExecutionResult> {
         // Parse SQL
         let mut parser = SqlParser::new(sql);
-        let parsed_query = parser.parse()?;
+        let mut parsed_query = parser.parse()?;
+        
+        // Resolve collection name to UUID if we have a collection service
+        if let Some(collection_service) = &self.collection_service {
+            if !parsed_query.from_collection.is_empty() {
+                // Try to resolve the collection identifier
+                match collection_service.resolve_collection_id(&parsed_query.from_collection).await {
+                    Ok(Some(resolved_id)) => {
+                        // Only update if we got a different ID (name was resolved)
+                        if resolved_id != parsed_query.from_collection {
+                            tracing::debug!("🔄 Resolved collection name '{}' to UUID '{}'", 
+                                parsed_query.from_collection, resolved_id);
+                            parsed_query.from_collection = resolved_id;
+                        }
+                    }
+                    Ok(None) => {
+                        // Collection not found - let it fail in executor with clear error
+                        tracing::debug!("⚠️ Collection '{}' not found during resolution", 
+                            parsed_query.from_collection);
+                    }
+                    Err(e) => {
+                        // Log error but continue - let executor handle it
+                        tracing::warn!("⚠️ Error resolving collection '{}': {}", 
+                            parsed_query.from_collection, e);
+                    }
+                }
+            }
+        }
         
         // Create execution plan
         let plan = self.planner.create_plan(parsed_query)?;

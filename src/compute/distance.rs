@@ -349,8 +349,85 @@ impl DistanceCompute for GenericScalar {
                     (1.0 - (intersection / union)).clamp(0.0, 1.0)
                 }
             }
+            DistanceMetric::Chebyshev => {
+                // L∞ norm - maximum absolute difference
+                let mut max_diff = 0.0f32;
+                for i in 0..a.len() {
+                    let diff = (a[i] - b[i]).abs();
+                    max_diff = max_diff.max(diff);
+                }
+                max_diff
+            }
+            DistanceMetric::Canberra => {
+                // Weighted version of Manhattan distance
+                let mut sum = 0.0;
+                for i in 0..a.len() {
+                    let numerator = (a[i] - b[i]).abs();
+                    let denominator = a[i].abs() + b[i].abs();
+                    if denominator > 0.0 {
+                        sum += numerator / denominator;
+                    }
+                }
+                sum
+            }
+            DistanceMetric::Minkowski => {
+                // Default to p=3 for Minkowski distance
+                let p = 3.0;
+                let mut sum = 0.0;
+                for i in 0..a.len() {
+                    sum += (a[i] - b[i]).abs().powf(p);
+                }
+                sum.powf(1.0 / p)
+            }
+            DistanceMetric::Angular => {
+                // Angular distance = arccos(cosine_similarity) / π
+                let mut dot = 0.0;
+                let mut norm_a = 0.0;
+                let mut norm_b = 0.0;
+                for i in 0..a.len() {
+                    dot += a[i] * b[i];
+                    norm_a += a[i] * a[i];
+                    norm_b += b[i] * b[i];
+                }
+                let cosine_sim = dot / (norm_a.sqrt() * norm_b.sqrt());
+                // Clamp to [-1, 1] to handle numerical errors
+                let cosine_sim = cosine_sim.max(-1.0).min(1.0);
+                cosine_sim.acos() / std::f32::consts::PI
+            }
+            DistanceMetric::BrayCurtis => {
+                // Bray-Curtis dissimilarity for non-negative vectors
+                let mut numerator = 0.0;
+                let mut denominator = 0.0;
+                for i in 0..a.len() {
+                    numerator += (a[i] - b[i]).abs();
+                    denominator += a[i].abs() + b[i].abs();
+                }
+                if denominator == 0.0 {
+                    0.0
+                } else {
+                    numerator / denominator
+                }
+            }
+            DistanceMetric::Hellinger => {
+                // Hellinger distance for probability distributions
+                // First normalize vectors to probability distributions
+                let sum_a: f32 = a.iter().map(|x| x.abs()).sum();
+                let sum_b: f32 = b.iter().map(|x| x.abs()).sum();
+                
+                let mut sum = 0.0;
+                for i in 0..a.len() {
+                    let p = if sum_a > 0.0 { a[i].abs() / sum_a } else { 0.0 };
+                    let q = if sum_b > 0.0 { b[i].abs() / sum_b } else { 0.0 };
+                    sum += (p.sqrt() - q.sqrt()).powi(2);
+                }
+                (sum / 2.0).sqrt()
+            }
             DistanceMetric::Custom => {
                 // Custom metrics fall back to cosine distance
+                CosineScalar.distance(a, b)
+            }
+            DistanceMetric::Unspecified => {
+                // Unspecified metrics fall back to cosine distance as default
                 CosineScalar.distance(a, b)
             }
             _ => panic!("Metric {:?} not implemented in GenericScalar", self.metric),

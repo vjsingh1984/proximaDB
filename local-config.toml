@@ -1,37 +1,36 @@
-# ProximaDB Configuration for Local Development
+# ProximaDB Configuration for Local Testing
 
 [server]
-host = "0.0.0.0" 
+node_id = "proximadb-local"
+bind_address = "127.0.0.1"
 port = 5678
-
-[grpc]
-host = "0.0.0.0"
-port = 5679
+data_dir = "/tmp/proximadb/data"
 
 [storage]
 # Local metadata URL
 metadata_url = "file:///tmp/proximadb/metadata"
 
-# Storage locations 
+# Storage locations
 [[storage.storage_locations]]
 url = "file:///tmp/proximadb/data"
 weight = 1
-tags = ["local", "dev"]
+tags = ["local", "test"]
 
 # Assignment configuration
 [storage.assignment_config]
 strategy = "hash"
 affinity = true
 
-# Memory and performance settings
+# Memory and performance settings for local testing
 mmap_enabled = true
 cache_size_mb = 256
-bloom_filter_bits = 10
 
 [storage.sst_config]
 memtable_size_mb = 8
 memory_flush_size_bytes = 2097152  # 2MB
 compression = "snappy"
+write_buffer_directory = "/tmp/proximadb/sst_wal"
+data_directory = "/tmp/proximadb/sst_data"
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true
@@ -42,30 +41,13 @@ enable_local_atomic = true
 enable_object_store_atomic = false
 cleanup_temp_on_startup = true
 
-[logging]
-level = "info"
-file_path = "/tmp/proximadb/logs/proximadb.log"
-max_files = 5
-max_file_size_mb = 100
+[api]
+grpc_port = 5679
+rest_port = 5678
+max_request_size_mb = 64
+timeout_seconds = 30
 
-[metrics]
-enabled = true
-port = 9090
-path = "/metrics"
-
-[security]
-enable_tls = false
-
-[performance]
-# Optimized for dev workloads
-worker_threads = 4
-max_connections = 1000
-request_timeout_seconds = 30
-batch_size = 100
-
-[features]
-# Enable all features for dev
-quantization_enabled = true
-hnsw_indexing_enabled = true
-metadata_indexing_enabled = true
-distributed_mode = false
+[monitoring]
+metrics_enabled = true
+log_level = "info"
+EOF < /dev/null

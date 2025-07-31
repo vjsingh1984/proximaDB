@@ -18,10 +18,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
-use crate::core::VectorRecord;
-use crate::services::direct_vector_service::OptimizedFormat;
-use crate::storage::assignment_service::{AssignmentService, RoundRobinAssignmentService};
-use crate::storage::persistence::write_buffer::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
+use proximadb::core::VectorRecord;
+use proximadb::services::direct_vector_service::OptimizedFormat;
+use proximadb::storage::assignment_service::{AssignmentService, RoundRobinAssignmentService};
+use proximadb::storage::persistence::write_buffer::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
 
 /// Test helper to create sample vectors
 fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
@@ -45,9 +45,9 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 /// Test helper to create test WAL config
 fn create_test_write_buffer_config() -> WriteBufferConfig {
     WriteBufferConfig {
-        multi_disk: crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        multi_disk: proximadb::storage::persistence::write_buffer::config::MultiDiskConfig {
             data_directories: vec!["file:///tmp/test_wal".to_string()],
-            distribution_strategy: crate::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+            distribution_strategy: proximadb::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
             collection_affinity: true,
         },
         ..Default::default()
@@ -450,9 +450,9 @@ mod performance_benchmarks {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::services::direct_vector_service::DirectVectorService;
-    use crate::storage::engines::viper::ViperEngine;
-    use crate::storage::engines::sst::LsmTree;
+    use proximadb::services::direct_vector_service::DirectVectorService;
+    use proximadb::storage::engines::viper::ViperEngine;
+    use proximadb::storage::engines::sst::LsmTree;
 
     #[tokio::test]
     #[ignore] // Requires full system setup

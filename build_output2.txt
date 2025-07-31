@@ -1,0 +1,4149 @@
+warning: unused import: `crate::storage::StorageEngine as StorageEngineImpl`
+  --> src/network/grpc/service.rs:23:5
+   |
+23 | use crate::storage::StorageEngine as StorageEngineImpl;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `VectorInsertResponse as SchemaVectorInsertResponse`
+  --> src/network/grpc/service.rs:26:5
+   |
+26 |     VectorInsertResponse as SchemaVectorInsertResponse,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::json`
+  --> src/query/sql_engine/planner.rs:23:5
+   |
+23 | use serde_json::json;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AxisIndexCreationResult`, `AxisIvfConfig`, `AxisIvfIndex`, `AxisLshConfig`, and `AxisLshIndex`
+  --> src/query/vector_search/mod.rs:27:5
+   |
+27 |     AxisIndexCreationResult, AxisVectorIndex, IndexFactory,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+28 |     AxisIvfConfig, AxisIvfIndex,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+29 |     AxisLshConfig, AxisLshIndex,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `crate::core::search::SearchParams`
+  --> src/storage/engines/sst/mod.rs:32:5
+   |
+32 | use crate::core::search::SearchParams;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `error` and `warn`
+  --> src/storage/engines/sst/mod.rs:52:22
+   |
+52 | use tracing::{debug, error, info, warn};
+   |                      ^^^^^        ^^^^
+
+warning: unused import: `OptimizedFlushResult`
+  --> src/storage/persistence/write_buffer/flush_coordinator.rs:24:67
+   |
+24 | use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
+   |                                                                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `CompactionIndexStats`
+  --> src/storage/persistence/write_buffer/compaction_coordinator.rs:27:65
+   |
+27 | use super::compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::core::VectorRecord`
+  --> src/storage/unified_cache.rs:17:5
+   |
+17 | use crate::core::VectorRecord;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `search_params`
+   --> src/services/direct_vector_service.rs:413:9
+    |
+413 |         search_params: Option<crate::core::search::SearchParams>,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_search_params`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `include_vector`
+   --> src/services/direct_vector_service.rs:575:9
+    |
+575 |         include_vector: bool,
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_include_vector`
+
+warning: unused variable: `include_metadata`
+   --> src/services/direct_vector_service.rs:576:9
+    |
+576 |         include_metadata: bool,
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_include_metadata`
+
+warning: unused variable: `merged_vectors`
+    --> src/storage/engines/sst/mod.rs:2330:13
+     |
+2330 |         let merged_vectors = result.engine_metrics.get("merged_vectors_count")
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_merged_vectors`
+
+warning: unused variable: `compaction_result`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration.rs:44:9
+   |
+44 |         compaction_result: &CompactionResult,
+   |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_compaction_result`
+
+warning: unused variable: `deleted_set`
+   --> src/storage/persistence/write_buffer/compaction_axis_integration.rs:121:13
+    |
+121 |         let deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_deleted_set`
+
+warning: unused variable: `expr`
+    --> src/services/direct_vector_service.rs:1132:21
+     |
+1132 |         if let Some(expr) = filter_expression {
+     |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_expr`
+
+warning: unused variable: `expr`
+    --> src/services/direct_vector_service.rs:1176:21
+     |
+1176 |         if let Some(expr) = filter_expression {
+     |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_expr`
+
+warning: unused variable: `collection_id`
+   --> src/storage/engines/sst/readers/unified_sstable_reader.rs:250:9
+    |
+250 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `start`
+   --> src/storage/engines/sst/readers/predictive_prefetcher.rs:355:13
+    |
+355 |         let start = Instant::now();
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_start`
+
+warning: unused variable: `file_size`
+    --> src/storage/engines/sst/mod.rs:1885:17
+     |
+1885 |             let file_size = metadata.len();
+     |                 ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_file_size`
+
+warning: unused variable: `min_key`
+    --> src/storage/engines/sst/mod.rs:1896:17
+     |
+1896 |             let min_key = sstable_records.iter().map(|r| &r.id).min().cloned().unwrap_or_default();
+     |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_key`
+
+warning: unused variable: `max_key`
+    --> src/storage/engines/sst/mod.rs:1897:17
+     |
+1897 |             let max_key = sstable_records.iter().map(|r| &r.id).max().cloned().unwrap_or_default();
+     |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_key`
+
+warning: unused variable: `min_sequence`
+    --> src/storage/engines/sst/mod.rs:1898:17
+     |
+1898 |             let min_sequence = sstable_records.iter().map(|r| r.sequence_number).min().unwrap_or(0);
+     |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_sequence`
+
+warning: unused variable: `max_sequence`
+    --> src/storage/engines/sst/mod.rs:1899:17
+     |
+1899 |             let max_sequence = sstable_records.iter().map(|r| r.sequence_number).max().unwrap_or(0);
+     |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_sequence`
+
+warning: unused variable: `columns`
+   --> src/storage/engines/viper/readers/unified_parquet_reader.rs:566:13
+    |
+566 |         let columns = self.select_optimal_columns(params, context);
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_columns`
+
+warning: variable does not need to be mutable
+   --> src/storage/engines/viper/readers/unified_parquet_reader.rs:563:13
+    |
+563 |         let mut all_vectors = Vec::new();
+    |             ----^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `base_path`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:471:13
+    |
+471 |         let base_path = if assignment.write_buffer_url.starts_with("file://") {
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_base_path`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:492:9
+    |
+492 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `key`
+   --> src/storage/unified_cache.rs:544:44
+    |
+544 |     async fn is_cross_engine_access(&self, key: &CacheKey) -> bool {
+    |                                            ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `query_norm`
+   --> src/compute/unified_distance.rs:741:17
+    |
+741 |             let query_norm = self.calculate_norm(query);
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_query_norm`
+
+warning: unused variable: `i`
+   --> src/compute/unified_distance.rs:747:18
+    |
+747 |             for (i, vector) in vectors.iter().enumerate() {
+    |                  ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: variable does not need to be mutable
+  --> src/core/config_loader.rs:93:35
+   |
+93 |     fn merge_config_with_defaults(mut base_config: Config, user_toml: toml::Value) -> Result<Config, Box<dyn std::error::Error + Send + S...
+   |                                   ----^^^^^^^^^^^
+   |                                   |
+   |                                   help: remove this `mut`
+
+warning: unused variable: `k`
+   --> src/index/axis/annoy_index.rs:229:9
+    |
+229 |         k: usize,
+    |         ^ help: if this is intentional, prefix it with an underscore: `_k`
+
+warning: unused variable: `m`
+  --> src/index/axis/index_factory.rs:91:36
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                    ^ help: try ignoring the field: `m: _`
+
+warning: unused variable: `ef_construction`
+  --> src/index/axis/index_factory.rs:91:39
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                       ^^^^^^^^^^^^^^^ help: try ignoring the field: `ef_construction: _`
+
+warning: unused variable: `ef_search`
+  --> src/index/axis/index_factory.rs:91:56
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                                        ^^^^^^^^^ help: try ignoring the field: `ef_search: _`
+
+warning: unused variable: `max_elements`
+  --> src/index/axis/index_factory.rs:91:67
+   |
+91 |             IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+   |                                                                   ^^^^^^^^^^^^ help: try ignoring the field: `max_elements: _`
+
+warning: unused variable: `combined_search_params`
+   --> src/network/grpc/service.rs:775:17
+    |
+775 |             let combined_search_params = search_params;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_combined_search_params`
+
+warning: unused variable: `dimension`
+   --> src/query/vector_search/mod.rs:247:32
+    |
+247 |     pub fn optimize_lsh_config(dimension: usize, recall_target: f32) -> SearchAlgorithm {
+    |                                ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `algorithm_name`
+   --> src/services/collection_service.rs:260:13
+    |
+260 |         let algorithm_name = match _proto_config.algorithm {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_algorithm_name`
+
+warning: unused variable: `fs`
+   --> src/storage/assignment_service.rs:336:17
+    |
+336 |             let fs = filesystem.get_filesystem(&location.url)?;
+    |                 ^^ help: if this is intentional, prefix it with an underscore: `_fs`
+
+warning: variable does not need to be mutable
+   --> src/storage/assignment_service.rs:328:13
+    |
+328 |         let mut orphaned_data = Vec::new();
+    |             ----^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:140:13
+    |
+140 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:170:13
+    |
+170 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `component_type`
+   --> src/storage/traits.rs:198:13
+    |
+198 |         let component_type = match self.strategy() {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_component_type`
+
+warning: unused variable: `temp_space`
+   --> src/storage/validation.rs:316:19
+    |
+316 |         if let Ok(temp_space) = std::fs::metadata("/tmp") {
+    |                   ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_space`
+
+warning: unused variable: `distance_compute`
+  --> src/storage/engines/sst/unified_search_engine.rs:99:9
+   |
+99 |         distance_compute: &UnifiedDistanceCompute,
+   |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_compute`
+
+warning: unused variable: `quantization_engine`
+   --> src/storage/engines/sst/unified_search_engine.rs:100:9
+    |
+100 |         quantization_engine: Option<&UnifiedQuantizationEngine>,
+    |         ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `context`
+   --> src/storage/engines/sst/unified_search_engine.rs:166:32
+    |
+166 |     async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool {
+    |                                ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `params`
+   --> src/storage/engines/sst/unified_search_engine.rs:166:64
+    |
+166 |     async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool {
+    |                                                                ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `collection_dir`
+    --> src/storage/engines/sst/mod.rs:1276:13
+     |
+1276 |         let collection_dir = std::path::PathBuf::from(collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url));
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_dir`
+
+warning: unused variable: `batch_idx`
+   --> src/storage/engines/viper/readers/test_data_generator.rs:169:13
+    |
+169 |         for batch_idx in 0..(config.num_rows / batch_size) {
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_batch_idx`
+
+warning: unused variable: `quant_type`
+   --> src/storage/engines/viper/readers/test_data_generator.rs:395:13
+    |
+395 |         for quant_type in &config.quantization_types {
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quant_type`
+
+warning: unused variable: `metadata`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:252:9
+    |
+252 |         metadata: &ParquetMetaData,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:308:9
+    |
+308 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:341:9
+    |
+341 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `query`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:402:9
+    |
+402 |         query: &VectorQuery,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:499:36
+    |
+499 |     fn extract_string_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<String> {
+    |                                    ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:504:36
+    |
+504 |     fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+    |                                    ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `row_idx`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:504:61
+    |
+504 |     fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+    |                                                             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: unused variable: `column`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:509:38
+    |
+509 |     fn extract_metadata_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    |                                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_column`
+
+warning: unused variable: `row_idx`
+   --> src/storage/engines/viper/readers/parquet_reconstructor.rs:509:63
+    |
+509 |     fn extract_metadata_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    |                                                               ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: unused variable: `distance_compute`
+   --> src/storage/engines/viper/unified_search_engine.rs:105:9
+    |
+105 |         distance_compute: &UnifiedDistanceCompute,
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_compute`
+
+warning: unused variable: `quantization_engine`
+   --> src/storage/engines/viper/unified_search_engine.rs:106:9
+    |
+106 |         quantization_engine: Option<&UnifiedQuantizationEngine>,
+    |         ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `filter_expr`
+   --> src/storage/engines/viper/unified_search_engine.rs:111:21
+    |
+111 |         if let Some(filter_expr) = &params.filter_expression {
+    |                     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_filter_expr`
+
+warning: unused variable: `dimension`
+   --> src/storage/engines/viper/quantization.rs:780:13
+    |
+780 |         let dimension = vectors[0].len();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `dimension`
+   --> src/storage/engines/viper/quantization.rs:813:13
+    |
+813 |         let dimension = vectors[0].len();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dimension`
+
+warning: unused variable: `level`
+   --> src/storage/engines/viper/quantization.rs:936:9
+    |
+936 |         level: QuantizationLevel,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_level`
+
+warning: unused variable: `sample_size`
+    --> src/storage/engines/viper/quantization.rs:1087:13
+     |
+1087 |         let sample_size = original_vectors.len().min(100); // Sample for evaluation
+     |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_size`
+
+warning: unused variable: `entries_processed`
+   --> src/storage/engines/viper/engine.rs:719:13
+    |
+719 |         let entries_processed = if input_files.is_empty() {
+    |             ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_entries_processed`
+
+warning: unused variable: `options`
+   --> src/storage/persistence/filesystem/atomic_strategy.rs:176:9
+    |
+176 |         options: Option<FileOptions>,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_options`
+
+warning: unused variable: `filesystem`
+   --> src/storage/persistence/filesystem/atomic_strategy.rs:337:40
+    |
+337 |     async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
+    |                                        ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_filesystem`
+
+warning: unused variable: `container`
+   --> src/storage/persistence/filesystem/azure.rs:594:14
+    |
+594 |         let (container, prefix) = self.parse_azure_url(path)?;
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_container`
+
+warning: unused variable: `prefix`
+   --> src/storage/persistence/filesystem/azure.rs:594:25
+    |
+594 |         let (container, prefix) = self.parse_azure_url(path)?;
+    |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_prefix`
+
+warning: unused variable: `key_json`
+   --> src/storage/persistence/filesystem/gcs.rs:755:13
+    |
+755 |         let key_json: serde_json::Value = serde_json::from_str(&key_data).map_err(|e| {
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_key_json`
+
+warning: unused variable: `key_json`
+   --> src/storage/persistence/filesystem/gcs.rs:791:13
+    |
+791 |         let key_json: serde_json::Value = serde_json::from_str(&self.key_json).map_err(|e| {
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_key_json`
+
+warning: unused variable: `path_suffix`
+   --> src/storage/persistence/filesystem/hdfs.rs:555:13
+    |
+555 |         let path_suffix = file_status["pathSuffix"].as_str().unwrap_or("");
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_path_suffix`
+
+warning: unused variable: `access_time`
+   --> src/storage/persistence/filesystem/hdfs.rs:561:13
+    |
+561 |         let access_time = file_status["accessTime"]
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_access_time`
+
+warning: unused variable: `method`
+   --> src/storage/persistence/filesystem/s3.rs:441:9
+    |
+441 |         method: &str,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_method`
+
+warning: unused variable: `bucket`
+   --> src/storage/persistence/filesystem/s3.rs:442:9
+    |
+442 |         bucket: &str,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_bucket`
+
+warning: unused variable: `key`
+   --> src/storage/persistence/filesystem/s3.rs:443:9
+    |
+443 |         key: &str,
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `response_data`
+   --> src/storage/persistence/filesystem/s3.rs:503:13
+    |
+503 |         let response_data = self.client.get_object_range(&bucket, &key, &credentials, Some(&range_header)).await?;
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_response_data`
+
+warning: unused variable: `bucket`
+   --> src/storage/persistence/filesystem/s3.rs:656:14
+    |
+656 |         let (bucket, prefix) = self.parse_s3_url(path)?;
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_bucket`
+
+warning: unused variable: `prefix`
+   --> src/storage/persistence/filesystem/s3.rs:656:22
+    |
+656 |         let (bucket, prefix) = self.parse_s3_url(path)?;
+    |                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_prefix`
+
+warning: unused variable: `credentials`
+   --> src/storage/persistence/filesystem/s3.rs:657:13
+    |
+657 |         let credentials = self.credential_provider.get_credentials().await?;
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_credentials`
+
+warning: unused variable: `from_bucket`
+   --> src/storage/persistence/filesystem/s3.rs:675:14
+    |
+675 |         let (from_bucket, from_key) = self.parse_s3_url(from)?;
+    |              ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_bucket`
+
+warning: unused variable: `from_key`
+   --> src/storage/persistence/filesystem/s3.rs:675:27
+    |
+675 |         let (from_bucket, from_key) = self.parse_s3_url(from)?;
+    |                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_key`
+
+warning: unused variable: `to_bucket`
+   --> src/storage/persistence/filesystem/s3.rs:676:14
+    |
+676 |         let (to_bucket, to_key) = self.parse_s3_url(to)?;
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_to_bucket`
+
+warning: unused variable: `to_key`
+   --> src/storage/persistence/filesystem/s3.rs:676:25
+    |
+676 |         let (to_bucket, to_key) = self.parse_s3_url(to)?;
+    |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_to_key`
+
+warning: unused variable: `credentials`
+   --> src/storage/persistence/filesystem/s3.rs:677:13
+    |
+677 |         let credentials = self.credential_provider.get_credentials().await?;
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_credentials`
+
+warning: unused variable: `path`
+   --> src/storage/persistence/filesystem/mod.rs:325:31
+    |
+325 |     async fn sync_file(&self, path: &str) -> FsResult<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:144:17
+    |
+144 |             let collection_id = {
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `vectors`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:496:42
+    |
+496 |     fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    |                                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_vectors`
+
+warning: unused variable: `data`
+   --> src/storage/persistence/write_buffer/batch_strategy.rs:503:45
+    |
+503 |     fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+    |                                             ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: value assigned to `counter` is never read
+   --> src/storage/persistence/write_buffer/compact_batch_id.rs:104:17
+    |
+104 |         let mut counter = 0;
+    |                 ^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:219:9
+    |
+219 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `vector_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:220:9
+    |
+220 |         vector_id: &crate::core::VectorId,
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_vector_id`
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:237:9
+    |
+237 |         collection_id: &str,
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `query_vector`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:238:9
+    |
+238 |         query_vector: &[f32],
+    |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_query_vector`
+
+warning: unused variable: `k`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:239:9
+    |
+239 |         k: usize,
+    |         ^ help: if this is intentional, prefix it with an underscore: `_k`
+
+warning: unused variable: `distance_metric`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:240:9
+    |
+240 |         distance_metric: Option<crate::compute::distance::DistanceMetric>,
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distance_metric`
+
+warning: unused variable: `engine`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:244:21
+    |
+244 |         if let Some(engine) = engine.as_ref() {
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_engine`
+
+warning: variable `total_vectors` is assigned to, but never used
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:290:17
+    |
+290 |         let mut total_vectors = 0;
+    |                 ^^^^^^^^^^^^^
+    |
+    = note: consider using `_total_vectors` instead
+
+warning: variable `total_bytes` is assigned to, but never used
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:291:17
+    |
+291 |         let mut total_bytes = 0u64;
+    |                 ^^^^^^^^^^^
+    |
+    = note: consider using `_total_bytes` instead
+
+warning: unused variable: `collection_id`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:348:40
+    |
+348 |     async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
+    |                                        ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `engine`
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:351:21
+    |
+351 |         if let Some(engine) = engine.as_ref() {
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_engine`
+
+warning: variable does not need to be mutable
+   --> src/storage/metadata/backends/mod.rs:418:13
+    |
+418 |         let mut backends = vec![MetadataBackendType::Disk];
+    |             ----^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: type `TrendDirection` is more private than the item `PerformanceTrend::latency_trend`
+   --> src/index/axis/monitor.rs:229:5
+    |
+229 |     pub latency_trend: TrendDirection,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `PerformanceTrend::latency_trend` is reachable at visibility `pub`
+    |
+note: but type `TrendDirection` is only usable at visibility `pub(self)`
+   --> src/index/axis/monitor.rs:238:1
+    |
+238 | enum TrendDirection {
+    | ^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `TrendDirection` is more private than the item `PerformanceTrend::throughput_trend`
+   --> src/index/axis/monitor.rs:230:5
+    |
+230 |     pub throughput_trend: TrendDirection,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `PerformanceTrend::throughput_trend` is reachable at visibility `pub`
+    |
+note: but type `TrendDirection` is only usable at visibility `pub(self)`
+   --> src/index/axis/monitor.rs:238:1
+    |
+238 | enum TrendDirection {
+    | ^^^^^^^^^^^^^^^^^^^
+
+warning: type `TrendDirection` is more private than the item `PerformanceTrend::error_rate_trend`
+   --> src/index/axis/monitor.rs:231:5
+    |
+231 |     pub error_rate_trend: TrendDirection,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `PerformanceTrend::error_rate_trend` is reachable at visibility `pub`
+    |
+note: but type `TrendDirection` is only usable at visibility `pub(self)`
+   --> src/index/axis/monitor.rs:238:1
+    |
+238 | enum TrendDirection {
+    | ^^^^^^^^^^^^^^^^^^^
+
+warning: type `WalWriterMetrics` is more private than the item `OptimizedWriteBufferWriter::get_metrics`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:584:5
+    |
+584 |     pub async fn get_metrics(&self) -> WalWriterMetrics {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `OptimizedWriteBufferWriter::get_metrics` is reachable at visibility `pub`
+    |
+note: but type `WalWriterMetrics` is only usable at visibility `pub(self)`
+   --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:68:1
+    |
+68  | struct WalWriterMetrics {
+    | ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `ml` is never read
+   --> src/compute/algorithms.rs:116:5
+    |
+106 | pub struct HNSWIndex {
+    |            --------- field in this struct
+...
+116 |     ml: f32,
+    |     ^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: field `use_simd` is never read
+   --> src/compute/hardware.rs:192:5
+    |
+190 | pub struct CpuAccelerator {
+    |            -------------- field in this struct
+191 |     thread_count: usize,
+192 |     use_simd: bool,
+    |     ^^^^^^^^
+
+warning: fields `vector_search_schema`, `collection_response_schema`, `health_response_schema`, `metrics_response_schema`, and `operation_response_schema` are never read
+  --> src/core/avro_serialization.rs:14:5
+   |
+12 | pub struct AvroSerializer {
+   |            -------------- fields in this struct
+13 |     /// Cached schemas for different response types
+14 |     vector_search_schema: Schema,
+   |     ^^^^^^^^^^^^^^^^^^^^
+15 |     collection_response_schema: Schema,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+16 |     health_response_schema: Schema,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+17 |     metrics_response_schema: Schema,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+18 |     operation_response_schema: Schema,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `compare_values` is never used
+   --> src/core/metadata_query.rs:211:8
+    |
+79  | impl MetadataQueryEngine {
+    | ------------------------ method in this implementation
+...
+211 |     fn compare_values<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
+    |        ^^^^^^^^^^^^^^
+
+warning: method `handle_vector_batch_optimized` is never used
+   --> src/handlers/unified_handlers.rs:233:14
+    |
+43  | impl UnifiedHandlers {
+    | -------------------- method in this implementation
+...
+233 |     async fn handle_vector_batch_optimized(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `performance_predictor` is never read
+  --> src/index/axis/adaptive_engine.rs:29:5
+   |
+21 | pub struct AdaptiveIndexEngine {
+   |            ------------------- field in this struct
+...
+29 |     performance_predictor: Arc<PerformancePredictor>,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `models` is never read
+   --> src/index/axis/adaptive_engine.rs:181:5
+    |
+179 | pub struct PerformancePredictor {
+    |            -------------------- field in this struct
+180 |     /// Prediction models
+181 |     models: Arc<RwLock<PredictionModels>>,
+    |     ^^^^^^
+
+warning: field `temporal_detector` is never read
+  --> src/index/axis/analyzer.rs:36:5
+   |
+22 | pub struct CollectionAnalyzer {
+   |            ------------------ field in this struct
+...
+36 |     temporal_detector: Arc<TemporalPatternDetector>,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: fields `timestamp`, `metadata_filters_count`, and `result_count` are never read
+  --> src/index/axis/analyzer.rs:62:9
+   |
+60 | struct QueryEvent {
+   |        ---------- fields in this struct
+61 |     pub query_type: QueryType,
+62 |     pub timestamp: DateTime<Utc>,
+   |         ^^^^^^^^^
+...
+65 |     pub metadata_filters_count: usize,
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+66 |     pub result_count: usize,
+   |         ^^^^^^^^^^^^
+   |
+   = note: `QueryEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `p99_latency_ms` is never read
+  --> src/index/axis/analyzer.rs:89:9
+   |
+81 | struct QueryStatistics {
+   |        --------------- field in this struct
+...
+89 |     pub p99_latency_ms: f64,
+   |         ^^^^^^^^^^^^^^
+   |
+   = note: `QueryStatistics` has derived impls for the traits `Default`, `Clone`, and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `metrics` is never read
+   --> src/index/axis/analyzer.rs:107:9
+    |
+106 | struct TimestampedMetrics {
+    |        ------------------ field in this struct
+107 |     pub metrics: PerformanceMetrics,
+    |         ^^^^^^^
+    |
+    = note: `TimestampedMetrics` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `dimension` is never read
+   --> src/index/axis/analyzer.rs:121:9
+    |
+119 | struct VectorCharacteristics {
+    |        --------------------- field in this struct
+120 |     pub vector_count: u64,
+121 |     pub dimension: usize,
+    |         ^^^^^^^^^
+    |
+    = note: `VectorCharacteristics` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `access_patterns` is never read
+   --> src/index/axis/analyzer.rs:138:5
+    |
+136 | struct TemporalPatternDetector {
+    |        ----------------------- field in this struct
+137 |     /// Access patterns per collection
+138 |     access_patterns: Arc<RwLock<HashMap<String, AccessPattern>>>,
+    |     ^^^^^^^^^^^^^^^
+
+warning: fields `hourly_distribution`, `daily_distribution`, `recent_activity`, `temporal_pattern`, and `last_updated` are never read
+   --> src/index/axis/analyzer.rs:144:9
+    |
+143 | struct AccessPattern {
+    |        ------------- fields in this struct
+144 |     pub hourly_distribution: [f32; 24],
+    |         ^^^^^^^^^^^^^^^^^^^
+145 |     pub daily_distribution: [f32; 7],
+    |         ^^^^^^^^^^^^^^^^^^
+146 |     pub recent_activity: Vec<ActivityBurst>,
+    |         ^^^^^^^^^^^^^^^
+147 |     pub temporal_pattern: TemporalPattern,
+    |         ^^^^^^^^^^^^^^^^
+148 |     pub last_updated: DateTime<Utc>,
+    |         ^^^^^^^^^^^^
+    |
+    = note: `AccessPattern` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `start_time`, `duration`, `intensity`, and `query_count` are never read
+   --> src/index/axis/analyzer.rs:154:9
+    |
+153 | struct ActivityBurst {
+    |        ------------- fields in this struct
+154 |     pub start_time: DateTime<Utc>,
+    |         ^^^^^^^^^^
+155 |     pub duration: ChronoDuration,
+    |         ^^^^^^^^
+156 |     pub intensity: f32,
+    |         ^^^^^^^^^
+157 |     pub query_count: u64,
+    |         ^^^^^^^^^^^
+    |
+    = note: `ActivityBurst` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `detect_patterns` is never used
+   --> src/index/axis/analyzer.rs:623:14
+    |
+614 | impl TemporalPatternDetector {
+    | ---------------------------- method in this implementation
+...
+623 |     async fn detect_patterns(&self, collection_id: &str) -> TemporalPattern {
+    |              ^^^^^^^^^^^^^^^
+
+warning: field `query_engine` is never read
+  --> src/index/axis/hnsw_integration.rs:82:5
+   |
+68 | pub struct PartitionedHnswIndex {
+   |            -------------------- field in this struct
+...
+82 |     query_engine: MetadataQueryEngine,
+   |     ^^^^^^^^^^^^
+
+warning: field `is_loaded` is never read
+  --> src/index/axis/hnsw_integration.rs:91:9
+   |
+87 | struct PartitionMetadata {
+   |        ----------------- field in this struct
+...
+91 |     pub is_loaded: bool,
+   |         ^^^^^^^^^
+   |
+   = note: `PartitionMetadata` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `performance_monitor`, `clustering_engine`, and `config` are never read
+  --> src/index/axis/manager.rs:34:5
+   |
+23 | pub struct AxisManager {
+   |            ----------- fields in this struct
+...
+34 |     performance_monitor: Arc<PerformanceMonitor>,
+   |     ^^^^^^^^^^^^^^^^^^^
+35 |     clustering_engine: Arc<AxisClusteringEngine>,
+   |     ^^^^^^^^^^^^^^^^^
+...
+44 |     config: AxisConfig,
+   |     ^^^^^^
+
+warning: field `rollback_manager` is never read
+  --> src/index/axis/migration_engine.rs:26:5
+   |
+21 | pub struct IndexMigrationEngine {
+   |            -------------------- field in this struct
+...
+26 |     rollback_manager: Arc<RollbackManager>,
+   |     ^^^^^^^^^^^^^^^^
+
+warning: field `strategies` is never read
+   --> src/index/axis/migration_engine.rs:244:5
+    |
+242 | pub struct RollbackManager {
+    |            --------------- field in this struct
+243 |     /// Rollback strategies
+244 |     strategies: Vec<Box<dyn RollbackStrategy + Send + Sync>>,
+    |     ^^^^^^^^^^
+
+warning: field `alert_history` is never read
+  --> src/index/axis/monitor.rs:73:5
+   |
+65 | struct AlertManager {
+   |        ------------ field in this struct
+...
+73 |     alert_history: Arc<RwLock<Vec<AlertHistory>>>,
+   |     ^^^^^^^^^^^^^
+
+warning: fields `trends`, `baselines`, and `anomaly_detector` are never read
+  --> src/index/axis/monitor.rs:82:5
+   |
+80 | struct PerformanceTracker {
+   |        ------------------ fields in this struct
+81 |     /// Performance trends per collection
+82 |     trends: Arc<RwLock<HashMap<String, PerformanceTrend>>>,
+   |     ^^^^^^
+...
+85 |     baselines: Arc<RwLock<HashMap<String, BaselineMetrics>>>,
+   |     ^^^^^^^^^
+...
+88 |     anomaly_detector: Arc<AnomalyDetector>,
+   |     ^^^^^^^^^^^^^^^^
+
+warning: fields `component_health` and `check_interval` are never read
+  --> src/index/axis/monitor.rs:94:5
+   |
+92 | struct HealthChecker {
+   |        ------------- fields in this struct
+93 |     /// Component health status
+94 |     component_health: Arc<RwLock<HashMap<String, ComponentHealth>>>,
+   |     ^^^^^^^^^^^^^^^^
+...
+97 |     check_interval: Duration,
+   |     ^^^^^^^^^^^^^^
+
+warning: fields `collection_id`, `metric_type`, and `value` are never read
+   --> src/index/axis/monitor.rs:159:9
+    |
+157 | struct HistoricalMetric {
+    |        ---------------- fields in this struct
+158 |     pub timestamp: DateTime<Utc>,
+159 |     pub collection_id: Option<String>,
+    |         ^^^^^^^^^^^^^
+160 |     pub metric_type: MetricType,
+    |         ^^^^^^^^^^^
+161 |     pub value: f64,
+    |         ^^^^^
+    |
+    = note: `HistoricalMetric` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `alert`, `resolved_at`, and `resolution_time_ms` are never read
+   --> src/index/axis/monitor.rs:213:9
+    |
+212 | struct AlertHistory {
+    |        ------------ fields in this struct
+213 |     pub alert: Alert,
+    |         ^^^^^
+214 |     pub resolved_at: Option<DateTime<Utc>>,
+    |         ^^^^^^^^^^^
+215 |     pub resolution_time_ms: Option<u64>,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `AlertHistory` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Improving`, `Stable`, `Degrading`, and `Unknown` are never constructed
+   --> src/index/axis/monitor.rs:239:5
+    |
+238 | enum TrendDirection {
+    |      -------------- variants in this enum
+239 |     Improving,
+    |     ^^^^^^^^^
+240 |     Stable,
+    |     ^^^^^^
+241 |     Degrading,
+    |     ^^^^^^^^^
+242 |     Unknown,
+    |     ^^^^^^^
+    |
+    = note: `TrendDirection` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `collection_id`, `baseline_latency_ms`, `baseline_throughput_qps`, `baseline_error_rate`, `established_at`, and `sample_count` are never read
+   --> src/index/axis/monitor.rs:248:9
+    |
+247 | struct BaselineMetrics {
+    |        --------------- fields in this struct
+248 |     pub collection_id: String,
+    |         ^^^^^^^^^^^^^
+249 |     pub baseline_latency_ms: f64,
+    |         ^^^^^^^^^^^^^^^^^^^
+250 |     pub baseline_throughput_qps: f64,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^
+251 |     pub baseline_error_rate: f64,
+    |         ^^^^^^^^^^^^^^^^^^^
+252 |     pub established_at: DateTime<Utc>,
+    |         ^^^^^^^^^^^^^^
+253 |     pub sample_count: u64,
+    |         ^^^^^^^^^^^^
+    |
+    = note: `BaselineMetrics` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `models` is never read
+   --> src/index/axis/monitor.rs:259:5
+    |
+257 | struct AnomalyDetector {
+    |        --------------- field in this struct
+258 |     /// Anomaly detection models per collection
+259 |     models: Arc<RwLock<HashMap<String, AnomalyModel>>>,
+    |     ^^^^^^
+
+warning: fields `collection_id`, `model_type`, `sensitivity`, `training_data`, and `last_trained` are never read
+   --> src/index/axis/monitor.rs:265:9
+    |
+264 | struct AnomalyModel {
+    |        ------------ fields in this struct
+265 |     pub collection_id: String,
+    |         ^^^^^^^^^^^^^
+266 |     pub model_type: AnomalyModelType,
+    |         ^^^^^^^^^^
+267 |     pub sensitivity: f64,
+    |         ^^^^^^^^^^^
+268 |     pub training_data: Vec<f64>,
+    |         ^^^^^^^^^^^^^
+269 |     pub last_trained: DateTime<Utc>,
+    |         ^^^^^^^^^^^^
+    |
+    = note: `AnomalyModel` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `StatisticalThreshold`, `MovingAverage`, `SeasonalDecomposition`, and `MachineLearning` are never constructed
+   --> src/index/axis/monitor.rs:275:5
+    |
+274 | enum AnomalyModelType {
+    |      ---------------- variants in this enum
+275 |     StatisticalThreshold,
+    |     ^^^^^^^^^^^^^^^^^^^^
+276 |     MovingAverage,
+    |     ^^^^^^^^^^^^^
+277 |     SeasonalDecomposition,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+278 |     MachineLearning,
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `AnomalyModelType` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `component_name`, `status`, `last_check`, `error_message`, and `response_time_ms` are never read
+   --> src/index/axis/monitor.rs:284:9
+    |
+283 | struct ComponentHealth {
+    |        --------------- fields in this struct
+284 |     pub component_name: String,
+    |         ^^^^^^^^^^^^^^
+285 |     pub status: HealthStatus,
+    |         ^^^^^^
+286 |     pub last_check: DateTime<Utc>,
+    |         ^^^^^^^^^^
+287 |     pub error_message: Option<String>,
+    |         ^^^^^^^^^^^^^
+288 |     pub response_time_ms: f64,
+    |         ^^^^^^^^^^^^^^^^
+    |
+    = note: `ComponentHealth` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Healthy`, `Degraded`, `Unhealthy`, and `Unknown` are never constructed
+   --> src/index/axis/monitor.rs:294:5
+    |
+293 | enum HealthStatus {
+    |      ------------ variants in this enum
+294 |     Healthy,
+    |     ^^^^^^^
+295 |     Degraded,
+    |     ^^^^^^^^
+296 |     Unhealthy,
+    |     ^^^^^^^^^
+297 |     Unknown,
+    |     ^^^^^^^
+    |
+    = note: `HealthStatus` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `format_histogram` and `format_summary` are never used
+   --> src/monitoring/metrics/exporters.rs:74:8
+    |
+31  | impl PrometheusExporter {
+    | ----------------------- methods in this implementation
+...
+74  |     fn format_histogram(
+    |        ^^^^^^^^^^^^^^^^
+...
+131 |     fn format_summary(
+    |        ^^^^^^^^^^^^^^
+
+warning: fields `name`, `help`, and `labels` are never read
+  --> src/monitoring/metrics/registry.rs:41:5
+   |
+40 | pub struct Counter {
+   |            ------- fields in this struct
+41 |     name: String,
+   |     ^^^^
+42 |     help: String,
+   |     ^^^^
+43 |     value: Arc<RwLock<f64>>,
+44 |     labels: HashMap<String, String>,
+   |     ^^^^^^
+
+warning: fields `name`, `help`, and `labels` are never read
+  --> src/monitoring/metrics/registry.rs:49:5
+   |
+48 | pub struct Gauge {
+   |            ----- fields in this struct
+49 |     name: String,
+   |     ^^^^
+50 |     help: String,
+   |     ^^^^
+51 |     value: Arc<RwLock<f64>>,
+52 |     labels: HashMap<String, String>,
+   |     ^^^^^^
+
+warning: fields `name`, `help`, and `labels` are never read
+  --> src/monitoring/metrics/registry.rs:57:5
+   |
+56 | pub struct HistogramMetric {
+   |            --------------- fields in this struct
+57 |     name: String,
+   |     ^^^^
+58 |     help: String,
+   |     ^^^^
+...
+63 |     labels: HashMap<String, String>,
+   |     ^^^^^^
+
+warning: fields `name`, `help`, and `labels` are never read
+  --> src/monitoring/metrics/registry.rs:68:5
+   |
+67 | pub struct SummaryMetric {
+   |            ------------- fields in this struct
+68 |     name: String,
+   |     ^^^^
+69 |     help: String,
+   |     ^^^^
+...
+73 |     labels: HashMap<String, String>,
+   |     ^^^^^^
+
+warning: associated items `create_collection_service` and `convert_operation_metrics` are never used
+   --> src/network/grpc/service.rs:43:14
+    |
+40  | impl ProximaDbGrpcService {
+    | ------------------------- associated items in this implementation
+...
+43  |     async fn create_collection_service(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+165 |     fn convert_operation_metrics(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `state` is never read
+   --> src/network/middleware/rate_limit.rs:126:5
+    |
+125 | pub struct RateLimitLayer {
+    |            -------------- field in this struct
+126 |     state: Arc<RateLimitState>,
+    |     ^^^^^
+
+warning: function `convert_index_config_to_proto` is never used
+   --> src/network/rest/handlers.rs:948:4
+    |
+948 | fn convert_index_config_to_proto(config: IndexConfiguration) -> crate::proto::proximadb::IndexConfig {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `convert_quantization_config_to_proto` is never used
+    --> src/network/rest/handlers.rs:1035:4
+     |
+1035 | fn convert_quantization_config_to_proto(config: QuantizationConfig) -> crate::proto::proximadb::QuantizationConfig {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `convert_quantization_level_to_proto` is never used
+    --> src/network/rest/handlers.rs:1090:4
+     |
+1090 | fn convert_quantization_level_to_proto(level: QuantizationLevel) -> crate::proto::proximadb::QuantizationLevel {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `convert_to_proto_config` is never used
+    --> src/network/rest/handlers.rs:1131:4
+     |
+1131 | fn convert_to_proto_config(config: CollectionConfig) -> Result<crate::proto::proximadb::CollectionConfig, StatusCode> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `vector_service` is never read
+  --> src/query/sql_engine/mod.rs:40:5
+   |
+39 | pub struct SqlEngine {
+   |            --------- field in this struct
+40 |     vector_service: Arc<DirectVectorService>,
+   |     ^^^^^^^^^^^^^^
+
+warning: method `validate_collection_config` is never used
+   --> src/services/collection_service.rs:720:8
+    |
+52  | impl CollectionService {
+    | ---------------------- method in this implementation
+...
+720 |     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated functions `serialize_vectors_optimized`, `serialize_vectors_unified`, and `deserialize_vectors_unified` are never used
+    --> src/services/direct_vector_service.rs:1210:8
+     |
+136  | impl DirectVectorService {
+     | ------------------------ associated functions in this implementation
+...
+1210 |     fn serialize_vectors_optimized(vectors: &[VectorRecord], format: &OptimizedFormat) -> Result<Vec<u8>> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1257 |     fn serialize_vectors_unified(vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1262 |     fn deserialize_vectors_unified(data: &[u8]) -> Result<Vec<VectorRecord>> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `verify_recovery_integrity` is never used
+    --> src/services/direct_vector_service.rs:1559:14
+     |
+1548 | trait DirectWalRecovery {
+     |       ----------------- method in this trait
+...
+1559 |     async fn verify_recovery_integrity(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `total_skipped` is never read
+   --> src/storage/engines/sst/mod.rs:724:9
+    |
+722 | struct BatchExtractionStats {
+    |        -------------------- field in this struct
+723 |     pub total_extracted: usize,
+724 |     pub total_skipped: usize,
+    |         ^^^^^^^^^^^^^
+    |
+    = note: `BatchExtractionStats` has derived impls for the traits `Default` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: multiple methods are never used
+    --> src/storage/engines/sst/mod.rs:1774:14
+     |
+1469 | impl SstStorage {
+     | --------------- methods in this implementation
+...
+1774 |     async fn serialize_lsm_records_to_sstable(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1951 |     async fn serialize_records_to_sstable_row_format(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1987 |     async fn build_bloom_filter(&self, records: &[SstRecord]) -> Result<SstableBloomFilter> {
+     |              ^^^^^^^^^^^^^^^^^^
+...
+2146 |     fn hash_key(&self, key: &str, hash_num: u32) -> u32 {
+     |        ^^^^^^^^
+...
+2156 |     async fn organize_records_into_blocks(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2208 |     async fn build_optimized_index_and_compress_blocks(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2268 |     async fn compress_block_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+     |              ^^^^^^^^^^^^^^^^^^^
+
+warning: field `max_size` is never read
+  --> src/storage/engines/sst/readers/unified_sstable_reader.rs:38:5
+   |
+36 | pub struct BlockCache {
+   |            ---------- field in this struct
+37 |     cache: Arc<tokio::sync::RwLock<lru::LruCache<BlockCacheKey, Arc<DataBlock>>>>,
+38 |     max_size: usize,
+   |     ^^^^^^^^
+   |
+   = note: `BlockCache` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `max_memory_mb` is never read
+  --> src/storage/engines/sst/readers/unified_sstable_reader.rs:47:5
+   |
+44 | pub struct IndexCache {
+   |            ---------- field in this struct
+...
+47 |     max_memory_mb: usize,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `IndexCache` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `distance_compute` and `quantization_engine` are never read
+  --> src/storage/engines/sst/unified_search_engine.rs:43:5
+   |
+41 | pub struct SstUnifiedSearchEngine {
+   |            ---------------------- fields in this struct
+42 |     sstable_reader: Arc<UnifiedSstableReader>,
+43 |     distance_compute: Arc<UnifiedDistanceCompute>,
+   |     ^^^^^^^^^^^^^^^^
+44 |     quantization_engine: Arc<UnifiedQuantizationEngine>,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SstUnifiedSearchEngine` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `cache` is never read
+  --> src/storage/engines/viper/readers/unified_parquet_reader.rs:22:5
+   |
+19 | pub struct UnifiedParquetReader {
+   |            -------------------- field in this struct
+...
+22 |     cache: Arc<tokio::sync::RwLock<ReaderCache>>,
+   |     ^^^^^
+   |
+   = note: `UnifiedParquetReader` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `schema_mappings` and `file_metadata` are never read
+  --> src/storage/engines/viper/readers/unified_parquet_reader.rs:50:5
+   |
+49 | pub struct ReaderCache {
+   |            ----------- fields in this struct
+50 |     schema_mappings: HashMap<String, SchemaMapping>,
+   |     ^^^^^^^^^^^^^^^
+51 |     file_metadata: HashMap<String, FileMetadata>,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `ReaderCache` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `parse_filter_value` and `evaluate_filter` are never used
+    --> src/storage/engines/viper/readers/unified_parquet_reader.rs:1198:8
+     |
+206  | impl UnifiedParquetReader {
+     | ------------------------- methods in this implementation
+...
+1198 |     fn parse_filter_value(&self, filter_value: &serde_json::Value) -> FilterValue {
+     |        ^^^^^^^^^^^^^^^^^^
+...
+1269 |     fn evaluate_filter(&self, actual: Option<&serde_json::Value>, filter_op: &FilterValue) -> bool {
+     |        ^^^^^^^^^^^^^^^
+
+warning: method `generate_quantized_vectors_array` is never used
+   --> src/storage/engines/viper/readers/test_data_generator.rs:551:8
+    |
+79  | impl ParquetTestDataGenerator {
+    | ----------------------------- method in this implementation
+...
+551 |     fn generate_quantized_vectors_array(&mut self, num_vectors: usize, dim: usize, quant_type: &QuantizationType) -> FixedSizeListArray {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `config` is never read
+  --> src/storage/engines/viper/readers/parquet_reconstructor.rs:37:5
+   |
+36 | pub struct ParquetReconstructor {
+   |            -------------------- field in this struct
+37 |     config: ReconstructorConfig,
+   |     ^^^^^^
+
+warning: fields `distance_compute` and `quantization_engine` are never read
+  --> src/storage/engines/viper/unified_search_engine.rs:31:5
+   |
+27 | pub struct ViperUnifiedSearchEngine {
+   |            ------------------------ fields in this struct
+...
+31 |     distance_compute: Arc<UnifiedDistanceCompute>,
+   |     ^^^^^^^^^^^^^^^^
+32 |     /// Quantization engine for optimization
+33 |     quantization_engine: Arc<UnifiedQuantizationEngine>,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `ViperUnifiedSearchEngine` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `builder_cache` is never read
+  --> src/storage/engines/viper/factory.rs:43:5
+   |
+32 | pub struct ViperFactory {
+   |            ------------ field in this struct
+...
+43 |     builder_cache: HashMap<String, ViperConfigurationBuilder>,
+   |     ^^^^^^^^^^^^^
+
+warning: fields `collection_id`, `config`, and `time_precision` are never read
+   --> src/storage/engines/viper/factory.rs:335:5
+    |
+334 | pub struct TimeSeriesSchemaStrategy {
+    |            ------------------------ fields in this struct
+335 |     collection_id: String,
+    |     ^^^^^^^^^^^^^
+336 |     config: ViperSchemaConfig,
+    |     ^^^^^^
+337 |     time_precision: TimePrecision,
+    |     ^^^^^^^^^^^^^^
+
+warning: fields `config` and `time_window_seconds` are never read
+   --> src/storage/engines/viper/factory.rs:357:5
+    |
+356 | pub struct TimeSeriesVectorProcessor {
+    |            ------------------------- fields in this struct
+357 |     config: ViperProcessingConfig,
+    |     ^^^^^^
+358 |     time_window_seconds: u64,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: fields `config` and `cluster_threshold` are never read
+   --> src/storage/engines/viper/factory.rs:363:5
+    |
+362 | pub struct SimilarityVectorProcessor {
+    |            ------------------------- fields in this struct
+363 |     config: ViperProcessingConfig,
+    |     ^^^^^^
+364 |     cluster_threshold: f32,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: field `filesystem` is never read
+  --> src/storage/engines/viper/pipeline.rs:55:5
+   |
+38 | pub struct ViperPipeline {
+   |            ------------- field in this struct
+...
+55 |     filesystem: Arc<FilesystemFactory>,
+   |     ^^^^^^^^^^
+
+warning: fields `schema_cache` and `strategies` are never read
+   --> src/storage/engines/viper/pipeline.rs:276:5
+    |
+274 | pub struct SchemaAdapter {
+    |            ------------- fields in this struct
+275 |     /// Schema cache
+276 |     schema_cache: Arc<RwLock<HashMap<String, Arc<Schema>>>>,
+    |     ^^^^^^^^^^^^
+...
+279 |     strategies: HashMap<String, Box<dyn SchemaGenerationStrategy>>,
+    |     ^^^^^^^^^^
+
+warning: field `writer_pool` is never read
+   --> src/storage/engines/viper/pipeline.rs:308:5
+    |
+297 | pub struct ParquetFlusher {
+    |            -------------- field in this struct
+...
+308 |     writer_pool: Arc<WriterPool>,
+    |     ^^^^^^^^^^^
+
+warning: fields `writers`, `pool_size`, and `writer_factory` are never read
+   --> src/storage/engines/viper/pipeline.rs:324:5
+    |
+322 | pub struct WriterPool {
+    |            ---------- fields in this struct
+323 |     /// Available writers
+324 |     writers: Arc<Mutex<Vec<DefaultParquetWriter>>>,
+    |     ^^^^^^^
+...
+327 |     pool_size: usize,
+    |     ^^^^^^^^^
+...
+330 |     writer_factory: Arc<DefaultParquetWriterFactory>,
+    |     ^^^^^^^^^^^^^^
+
+warning: field `optimization_model` is never read
+   --> src/storage/engines/viper/pipeline.rs:376:5
+    |
+365 | pub struct CompactionEngine {
+    |            ---------------- field in this struct
+...
+376 |     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: methods `cluster_then_sort_records`, `simple_vector_clustering`, `apply_sorting_strategy`, and `collect_postprocessing_statistics` are never used
+    --> src/storage/engines/viper/pipeline.rs:857:14
+     |
+739  | impl VectorRecordProcessor {
+     | -------------------------- methods in this implementation
+...
+857  |     async fn cluster_then_sort_records(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+902  |     async fn simple_vector_clustering(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1278 |     async fn apply_sorting_strategy(
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+1692 |     async fn collect_postprocessing_statistics(&self, batch: &RecordBatch) -> Result<()> {
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `compression_potential` and `recommended_encoding` are never read
+    --> src/storage/engines/viper/pipeline.rs:1749:5
+     |
+1746 | struct ColumnOptimization {
+     |        ------------------ fields in this struct
+...
+1749 |     compression_potential: f32,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+1750 |     recommended_encoding: RecommendedEncoding,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `ColumnOptimization` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `train_binary_quantization`, `train_int8_quantization`, and `quantize_int8` are never used
+    --> src/storage/engines/viper/quantization.rs:758:8
+     |
+434  | impl VectorQuantizationEngine {
+     | ----------------------------- methods in this implementation
+...
+758  |     fn train_binary_quantization(&self, vectors: &[Vec<f32>]) -> Result<ModelData> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+812  |     fn train_int8_quantization(&self, vectors: &[Vec<f32>]) -> Result<ModelData> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^
+...
+1050 |     fn quantize_int8(
+     |        ^^^^^^^^^^^^^
+
+warning: fields `operation_metrics`, `collection_stats`, `global_stats`, and `config` are never read
+  --> src/storage/engines/viper/utilities.rs:84:5
+   |
+82 | pub struct PerformanceStatsCollector {
+   |            ------------------------- fields in this struct
+83 |     /// Operation metrics
+84 |     operation_metrics: Arc<RwLock<HashMap<String, OperationMetrics>>>,
+   |     ^^^^^^^^^^^^^^^^^
+...
+87 |     collection_stats: Arc<RwLock<HashMap<String, CollectionStats>>>,
+   |     ^^^^^^^^^^^^^^^^
+...
+90 |     global_stats: Arc<RwLock<GlobalViperStats>>,
+   |     ^^^^^^^^^^^^
+...
+93 |     config: StatsConfig,
+   |     ^^^^^^
+
+warning: fields `config`, `filesystem`, `partition_metadata`, `cleanup_task`, and `stats` are never read
+   --> src/storage/engines/viper/utilities.rs:172:5
+    |
+170 | pub struct TTLCleanupService {
+    |            ----------------- fields in this struct
+171 |     /// TTL configuration
+172 |     config: TTLConfig,
+    |     ^^^^^^
+...
+175 |     filesystem: Arc<FilesystemFactory>,
+    |     ^^^^^^^^^^
+...
+178 |     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
+    |     ^^^^^^^^^^^^^^^^^^
+...
+181 |     cleanup_task: Option<tokio::task::JoinHandle<()>>,
+    |     ^^^^^^^^^^^^
+...
+184 |     stats: Arc<RwLock<TTLStats>>,
+    |     ^^^^^
+
+warning: fields `filesystem`, `config`, `active_operations`, and `optimization_cache` are never read
+   --> src/storage/engines/viper/utilities.rs:240:5
+    |
+238 | pub struct StagingOperationsCoordinator {
+    |            ---------------------------- fields in this struct
+239 |     /// Filesystem interface
+240 |     filesystem: Arc<FilesystemFactory>,
+    |     ^^^^^^^^^^
+...
+243 |     config: StagingConfig,
+    |     ^^^^^^
+...
+246 |     active_operations: Arc<RwLock<HashMap<String, StagingOperation>>>,
+    |     ^^^^^^^^^^^^^^^^^
+...
+249 |     optimization_cache: Arc<RwLock<HashMap<String, ParquetOptimizationConfig>>>,
+    |     ^^^^^^^^^^^^^^^^^^
+
+warning: fields `config`, `partition_metadata`, and `stats` are never read
+   --> src/storage/engines/viper/utilities.rs:340:5
+    |
+338 | pub struct DataPartitioner {
+    |            --------------- fields in this struct
+339 |     /// Partitioning configuration
+340 |     config: PartitioningConfig,
+    |     ^^^^^^
+...
+346 |     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
+    |     ^^^^^^^^^^^^^^^^^^
+...
+349 |     stats: Arc<RwLock<PartitioningStats>>,
+    |     ^^^^^
+
+warning: fields `config`, `compression_models`, `stats`, and `algorithm_cache` are never read
+   --> src/storage/engines/viper/utilities.rs:432:5
+    |
+430 | pub struct CompressionOptimizer {
+    |            -------------------- fields in this struct
+431 |     /// Compression configuration
+432 |     config: CompressionConfig,
+    |     ^^^^^^
+...
+435 |     compression_models: Arc<RwLock<HashMap<String, CompressionModel>>>,
+    |     ^^^^^^^^^^^^^^^^^^
+...
+438 |     stats: Arc<RwLock<CompressionStats>>,
+    |     ^^^^^
+...
+441 |     algorithm_cache: Arc<RwLock<HashMap<String, AlgorithmPerformance>>>,
+    |     ^^^^^^^^^^^^^^^
+
+warning: method `convert_filterable_type_to_arrow` is never used
+   --> src/storage/engines/viper/schema.rs:275:8
+    |
+27  | impl SchemaManager {
+    | ------------------ method in this implementation
+...
+275 |     fn convert_filterable_type_to_arrow(&self, data_type: &FilterableDataType) -> Result<arrow_schema::DataType> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `id` is never read
+   --> src/storage/engines/viper/compaction.rs:273:13
+    |
+272 |         struct RecordData {
+    |                ---------- field in this struct
+273 |             id: Option<String>, // ID is optional
+    |             ^^
+    |
+    = note: `RecordData` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: constant `FILE_SIZE_THRESHOLD_MB` is never used
+   --> src/storage/engines/viper/flush.rs:657:15
+    |
+657 |         const FILE_SIZE_THRESHOLD_MB: u64 = 100;
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `chunk_size_mb` and `config` are never read
+   --> src/storage/persistence/filesystem/atomic_strategy.rs:353:5
+    |
+350 | pub struct CloudOptimizedExecutor {
+    |            ---------------------- fields in this struct
+...
+353 |     chunk_size_mb: usize,
+    |     ^^^^^^^^^^^^^
+354 |     config: AtomicWriteConfig,
+    |     ^^^^^^
+
+warning: fields `role_arn`, `external_id`, and `http_client` are never read
+   --> src/storage/persistence/filesystem/auth.rs:316:5
+    |
+315 | pub struct AssumeRoleProvider {
+    |            ------------------ fields in this struct
+316 |     role_arn: String,
+    |     ^^^^^^^^
+317 |     external_id: Option<String>,
+    |     ^^^^^^^^^^^
+318 |     http_client: reqwest::Client,
+    |     ^^^^^^^^^^^
+
+warning: field `profile_name` is never read
+   --> src/storage/persistence/filesystem/auth.rs:352:5
+    |
+351 | pub struct ProfileCredentialProvider {
+    |            ------------------------- field in this struct
+352 |     profile_name: String,
+    |     ^^^^^^^^^^^^
+
+warning: field `http_client` is never read
+   --> src/storage/persistence/filesystem/gcs.rs:729:5
+    |
+727 | pub struct ServiceAccountKeyFileProvider {
+    |            ----------------------------- field in this struct
+728 |     key_file_path: String,
+729 |     http_client: reqwest::Client,
+    |     ^^^^^^^^^^^
+
+warning: field `http_client` is never read
+   --> src/storage/persistence/filesystem/gcs.rs:774:5
+    |
+772 | pub struct ServiceAccountKeyJsonProvider {
+    |            ----------------------------- field in this struct
+773 |     key_json: String,
+774 |     http_client: reqwest::Client,
+    |     ^^^^^^^^^^^
+
+warning: struct `FilesystemKey` is never constructed
+  --> src/storage/persistence/filesystem/manager.rs:67:8
+   |
+67 | struct FilesystemKey {
+   |        ^^^^^^^^^^^^^
+
+warning: associated function `from_url` is never used
+  --> src/storage/persistence/filesystem/manager.rs:74:8
+   |
+73 | impl FilesystemKey {
+   | ------------------ associated function in this implementation
+74 |     fn from_url(url: &str) -> FsResult<Self> {
+   |        ^^^^^^^^
+
+warning: fields `filesystem`, `base_path`, and `retry_config` are never read
+   --> src/storage/persistence/filesystem/manager.rs:109:5
+    |
+108 | pub struct ManagedFilesystem {
+    |            ----------------- fields in this struct
+109 |     filesystem: Box<dyn FileSystem>,
+    |     ^^^^^^^^^^
+110 |     base_path: String,
+    |     ^^^^^^^^^
+111 |     retry_config: RetryConfig,
+    |     ^^^^^^^^^^^^
+
+warning: methods `execute_with_retry`, `is_auth_error`, and `resolve_path` are never used
+   --> src/storage/persistence/filesystem/manager.rs:116:14
+    |
+114 | impl ManagedFilesystem {
+    | ---------------------- methods in this implementation
+115 |     /// Execute operation with retry and auth refresh
+116 |     async fn execute_with_retry<F, T>(&self, operation: F) -> FsResult<T>
+    |              ^^^^^^^^^^^^^^^^^^
+...
+141 |     fn is_auth_error(&self, err: &FilesystemError) -> bool {
+    |        ^^^^^^^^^^^^^
+...
+163 |     fn resolve_path(&self, relative_path: &str) -> String {
+    |        ^^^^^^^^^^^^
+
+warning: field `shared_write_buffer_behavior` is never read
+   --> src/storage/persistence/write_buffer/mod.rs:247:5
+    |
+235 | pub struct WriteBufferManager {
+    |            ------------------ field in this struct
+...
+247 |     shared_write_buffer_behavior: &'static GlobalWriteBufferBehaviorSingleton,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `last_rebalance` is never read
+   --> src/storage/persistence/write_buffer/mod.rs:282:5
+    |
+274 | pub struct WriteBufferManagerPoolEntry {
+    |            --------------------------- field in this struct
+...
+282 |     last_rebalance: std::time::Instant,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `WriteBufferManagerPoolEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `ops_per_second`, `memory_usage_bytes`, and `avg_latency_ms` are never read
+   --> src/storage/persistence/write_buffer/mod.rs:291:5
+    |
+287 | pub struct WriteBufferManagerWorkload {
+    |            -------------------------- fields in this struct
+...
+291 |     ops_per_second: f64,
+    |     ^^^^^^^^^^^^^^
+292 |     /// Memory usage in bytes
+293 |     memory_usage_bytes: u64,
+    |     ^^^^^^^^^^^^^^^^^^
+294 |     /// Average operation latency in milliseconds
+295 |     avg_latency_ms: f64,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `WriteBufferManagerWorkload` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `extract_batch_for_sync` is never used
+    --> src/storage/persistence/write_buffer/mod.rs:1527:14
+     |
+844  | impl WriteBufferManager {
+     | ----------------------- method in this implementation
+...
+1527 |     async fn extract_batch_for_sync(
+     |              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MIN_VECTORS_FOR_CLUSTERING` is never used
+  --> src/storage/persistence/write_buffer/background_manager.rs:20:7
+   |
+20 | const MIN_VECTORS_FOR_CLUSTERING: usize = 1000; // Local constant since clustering moved to AXIS
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `CollectionConfiguration` is never constructed
+  --> src/storage/persistence/write_buffer/background_manager.rs:24:8
+   |
+24 | struct CollectionConfiguration {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `QuantizationSettings` is never constructed
+  --> src/storage/persistence/write_buffer/background_manager.rs:34:8
+   |
+34 | struct QuantizationSettings {
+   |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `QuantizationType` is never used
+  --> src/storage/persistence/write_buffer/background_manager.rs:43:6
+   |
+43 | enum QuantizationType {
+   |      ^^^^^^^^^^^^^^^^
+
+warning: struct `FilterableMetadataColumn` is never constructed
+  --> src/storage/persistence/write_buffer/background_manager.rs:51:8
+   |
+51 | struct FilterableMetadataColumn {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `FilterableColumnType` is never used
+  --> src/storage/persistence/write_buffer/background_manager.rs:59:6
+   |
+59 | enum FilterableColumnType {
+   |      ^^^^^^^^^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+   --> src/storage/persistence/write_buffer/background_manager.rs:179:14
+    |
+125 | impl BackgroundMaintenanceManager {
+    | --------------------------------- associated items in this implementation
+...
+179 |     async fn should_retrain_model(&self, collection_id: &str, _current_vectors: usize) -> bool {
+    |              ^^^^^^^^^^^^^^^^^^^^
+...
+505 |     async fn get_collection_configuration(collection_id: &str) -> Result<CollectionConfiguration> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+604 |     async fn generate_parquet_schema_for_collection(collection_id: &str) -> Result<Arc<arrow_schema::Schema>> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+717 |     async fn execute_compaction(
+    |              ^^^^^^^^^^^^^^^^^^
+...
+807 |     fn combine_record_batches(schema: Arc<arrow_schema::Schema>, batches: &[arrow_array::RecordBatch]) -> Result<arrow_array::RecordBatch> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+846 |     fn create_null_array_static(data_type: &arrow_schema::DataType, length: usize) -> Result<arrow_array::ArrayRef> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+875 |     fn concatenate_arrays_by_type_static(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `collection_id` and `requested_at` are never read
+  --> src/storage/persistence/write_buffer/batch_sync_coordinator.rs:39:5
+   |
+37 | struct PendingSyncRequest {
+   |        ------------------ fields in this struct
+38 |     /// Collection ID
+39 |     collection_id: String,
+   |     ^^^^^^^^^^^^^
+...
+45 |     requested_at: Instant,
+   |     ^^^^^^^^^^^^
+   |
+   = note: `PendingSyncRequest` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `flush_coordinator` is never read
+  --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:43:5
+   |
+26 | pub struct ProtoSerializationStrategy {
+   |            -------------------------- field in this struct
+...
+43 |     flush_coordinator: Arc<WriteBufferFlushCoordinator>,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: method `trigger_background_flush` is never used
+   --> src/storage/persistence/write_buffer/proto_serialization_strategy.rs:491:8
+    |
+478 | impl ProtoSerializationStrategy {
+    | ------------------------------- method in this implementation
+...
+491 |     fn trigger_background_flush(&self, collection_id: &str) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `flush_coordinator` is never read
+  --> src/storage/persistence/write_buffer/avro_serialization_strategy.rs:43:5
+   |
+26 | pub struct AvroSerializationStrategy {
+   |            ------------------------- field in this struct
+...
+43 |     flush_coordinator: Arc<WriteBufferFlushCoordinator>,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: method `recover_file` is never used
+   --> src/storage/persistence/write_buffer/recovery_manager.rs:362:14
+    |
+70  | impl RecoveryManager {
+    | -------------------- method in this implementation
+...
+362 |     async fn recover_file(&self, file_info: &WriteBufferFileInfo) -> Result<u64> {
+    |              ^^^^^^^^^^^^
+
+warning: field `collection_wal_dir` is never read
+  --> src/storage/persistence/write_buffer/optimized_write_buffer_writer.rs:54:5
+   |
+52 | struct CachedAssignment {
+   |        ---------------- field in this struct
+53 |     storage_url: String,
+54 |     collection_wal_dir: String,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `CachedAssignment` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: fields `deleted_vector_ids` and `merged_vectors` are never read
+   --> src/storage/persistence/write_buffer/compaction_coordinator.rs:640:9
+    |
+637 | struct EngineCompactionResult {
+    |        ---------------------- fields in this struct
+...
+640 |     pub deleted_vector_ids: Vec<String>,
+    |         ^^^^^^^^^^^^^^^^^^
+641 |     pub merged_vectors: Vec<VectorRecord>,
+    |         ^^^^^^^^^^^^^^
+    |
+    = note: `EngineCompactionResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `batch_size` is never read
+  --> src/storage/persistence/write_buffer/flush_result_optimization.rs:93:5
+   |
+91 | pub struct BatchFlushProcessor {
+   |            ------------------- field in this struct
+92 |     /// Batch size for processing
+93 |     batch_size: usize,
+   |     ^^^^^^^^^^
+
+warning: field `max_entries` is never read
+   --> src/storage/persistence/write_buffer/flush_result_optimization.rs:167:5
+    |
+162 | pub struct FlushResultCache {
+    |            ---------------- field in this struct
+...
+167 |     max_entries: u64,
+    |     ^^^^^^^^^^^
+
+warning: fields `wal_assignment_config` and `storage_assignment_config` are never read
+  --> src/storage/persistence/write_buffer/optimized_path_resolver.rs:20:5
+   |
+16 | pub struct OptimizedWalPathResolver {
+   |            ------------------------ fields in this struct
+...
+20 |     wal_assignment_config: StorageAssignmentConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+21 |     storage_assignment_config: StorageAssignmentConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `operation_id`, `collection_id`, and `batch_id` are never read
+  --> src/storage/persistence/write_buffer/atomic_write_buffer_sync.rs:59:5
+   |
+58 | struct SyncProgress {
+   |        ------------ fields in this struct
+59 |     operation_id: OperationId,
+   |     ^^^^^^^^^^^^
+60 |     collection_id: String,
+   |     ^^^^^^^^^^^^^
+61 |     batch_id: BatchId,
+   |     ^^^^^^^^
+   |
+   = note: `SyncProgress` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `0` is never read
+  --> src/storage/persistence/write_buffer/atomic_write_buffer_sync.rs:71:12
+   |
+71 |     Failed(String),
+   |     ------ ^^^^^^
+   |     |
+   |     field in this variant
+   |
+   = note: `SyncStatus` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+71 -     Failed(String),
+71 +     Failed(()),
+   |
+
+warning: variant `Finalizing` is never constructed
+  --> src/storage/persistence/write_buffer/atomic_write_buffer_sync.rs:69:5
+   |
+67 | enum SyncStatus {
+   |      ---------- variant in this enum
+68 |     Staging,
+69 |     Finalizing,
+   |     ^^^^^^^^^^
+   |
+   = note: `SyncStatus` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `transaction` is never read
+    --> src/storage/atomic.rs:1041:5
+     |
+1038 | pub struct TransactionHandle<'a> {
+     |            ----------------- field in this struct
+...
+1041 |     transaction: Arc<RwLock<ActiveTransaction>>,
+     |     ^^^^^^^^^^^
+
+warning: function `calculate_cosine_similarity` is never used
+  --> src/storage/engine.rs:20:4
+   |
+20 | fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `calculate_euclidean_distance` is never used
+  --> src/storage/engine.rs:37:4
+   |
+37 | fn calculate_euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `calculate_manhattan_distance` is never used
+  --> src/storage/engine.rs:48:4
+   |
+48 | fn calculate_manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `calculate_dot_product` is never used
+  --> src/storage/engine.rs:57:4
+   |
+57 | fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
+   |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `disk_manager` is never read
+  --> src/storage/engine.rs:69:5
+   |
+65 | pub struct StorageEngine {
+   |            ------------- field in this struct
+...
+69 |     disk_manager: Arc<DiskManager>,
+   |     ^^^^^^^^^^^^
+
+warning: field `last_flush_sequence` is never read
+  --> src/storage/memtable/implementations/global_partitioned.rs:38:5
+   |
+27 | struct CollectionPartition {
+   |        ------------------- field in this struct
+...
+38 |     last_flush_sequence: u64,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `CollectionPartition` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `config` is never read
+  --> src/storage/memtable/specialized/generic_wrappers.rs:21:5
+   |
+18 | pub struct MetricsWrapper<T> {
+   |            -------------- field in this struct
+...
+21 |     config: MemtableConfig,
+   |     ^^^^^^
+   |
+   = note: `MetricsWrapper` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `config` is never read
+   --> src/storage/memtable/specialized/generic_wrappers.rs:130:5
+    |
+125 | pub struct CachingWrapper<T> {
+    |            -------------- field in this struct
+...
+130 |     config: MemtableConfig,
+    |     ^^^^^^
+    |
+    = note: `CachingWrapper` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `inner` and `config` are never read
+   --> src/storage/memtable/specialized/generic_wrappers.rs:261:5
+    |
+260 | pub struct CompressionWrapper<T> {
+    |            ------------------ fields in this struct
+261 |     inner: T,
+    |     ^^^^^
+262 |     compression_stats: Arc<RwLock<CompressionStats>>,
+263 |     config: MemtableConfig,
+    |     ^^^^^^
+    |
+    = note: `CompressionWrapper` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `compress_value` and `decompress_value` are never used
+   --> src/storage/memtable/specialized/generic_wrappers.rs:280:8
+    |
+266 | impl<T> CompressionWrapper<T> {
+    | ----------------------------- methods in this implementation
+...
+280 |     fn compress_value<V: serde::Serialize>(&self, value: &V) -> Result<Vec<u8>> {
+    |        ^^^^^^^^^^^^^^
+...
+294 |     fn decompress_value<V: for<'de> serde::Deserialize<'de>>(
+    |        ^^^^^^^^^^^^^^^^
+
+warning: associated function `extract_key` is never used
+  --> src/storage/memtable/specialized/lsm_behavior.rs:85:8
+   |
+49 | impl<T> LsmBehaviorWrapper<T> {
+   | ----------------------------- associated function in this implementation
+...
+85 |     fn extract_key<K, V>(key: &K, _value: &V) -> String
+   |        ^^^^^^^^^^^
+
+warning: field `flush_state` is never read
+   --> src/storage/memtable/specialized/write_buffer_behavior.rs:154:5
+    |
+134 | pub struct WriteBufferBehaviorWrapper {
+    |            -------------------------- field in this struct
+...
+154 |     flush_state: Arc<RwLock<FlushState>>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `WriteBufferBehaviorWrapper` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `get_operation_type` and `serialize_operation` are never used
+   --> src/storage/memtable/specialized/write_buffer_behavior.rs:493:8
+    |
+330 | impl WriteBufferBehaviorWrapper {
+    | ------------------------------- methods in this implementation
+...
+493 |     fn get_operation_type(&self, operation: &WriteBufferOperation) -> u8 {
+    |        ^^^^^^^^^^^^^^^^^^
+...
+502 |     async fn serialize_operation(&self, operation: &WriteBufferOperation) -> Result<Vec<u8>> {
+    |              ^^^^^^^^^^^^^^^^^^^
+
+warning: fields `last_flush_sequence`, `flush_in_progress`, and `flush_start_time` are never read
+   --> src/storage/memtable/specialized/write_buffer_behavior.rs:825:5
+    |
+824 | struct FlushState {
+    |        ---------- fields in this struct
+825 |     last_flush_sequence: u64,
+    |     ^^^^^^^^^^^^^^^^^^^
+826 |     flush_in_progress: bool,
+    |     ^^^^^^^^^^^^^^^^^
+827 |     flush_start_time: Option<std::time::Instant>,
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `FlushState` has derived impls for the traits `Default`, `Clone`, and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `version`, `transaction_id`, `committed_at`, and `metadata` are never read
+   --> src/storage/metadata/atomic.rs:99:5
+    |
+98  | struct VersionInfo {
+    |        ----------- fields in this struct
+99  |     version: u64,
+    |     ^^^^^^^
+100 |     transaction_id: TransactionId,
+    |     ^^^^^^^^^^^^^^
+101 |     committed_at: DateTime<Utc>,
+    |     ^^^^^^^^^^^^
+102 |     metadata: VersionedCollectionMetadata,
+    |     ^^^^^^^^
+    |
+    = note: `VersionInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `acquired_at` is never read
+   --> src/storage/metadata/atomic.rs:110:5
+    |
+107 | struct LockInfo {
+    |        -------- field in this struct
+...
+110 |     acquired_at: DateTime<Utc>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `LockInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variant `Shared` is never constructed
+   --> src/storage/metadata/atomic.rs:115:5
+    |
+114 | enum LockType {
+    |      -------- variant in this enum
+115 |     Shared,
+    |     ^^^^^^
+    |
+    = note: `LockType` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `mvcc_reads` is never read
+   --> src/storage/metadata/atomic.rs:162:5
+    |
+156 | struct AtomicStoreStats {
+    |        ---------------- field in this struct
+...
+162 |     mvcc_reads: u64,
+    |     ^^^^^^^^^^
+    |
+    = note: `AtomicStoreStats` has derived impls for the traits `Default` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `execute_atomic_write`, `convert_proto_to_core`, and `serialize_record` are never used
+   --> src/storage/metadata/backends/filestore_backend.rs:619:14
+    |
+161 | impl FilestoreMetadataBackend {
+    | ----------------------------- methods in this implementation
+...
+619 |     async fn execute_atomic_write(&self, operation: &IncrementalOperation, prepared: &PreparedWrite) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^
+...
+855 |     fn convert_proto_to_core(&self, proto: &Collection) -> Collection {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+...
+964 |     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: fields `threshold` and `keep_count` are never read
+    --> src/storage/metadata/backends/filestore_backend.rs:1249:5
+     |
+1248 | struct SnapshotManager {
+     |        --------------- fields in this struct
+1249 |     threshold: u64,
+     |     ^^^^^^^^^
+1250 |     keep_count: usize,
+     |     ^^^^^^^^^^
+
+warning: fields `cache_dir` and `max_size_bytes` are never read
+  --> src/storage/unified_cache.rs:51:5
+   |
+49 | pub struct L2NvmeCache {
+   |            ----------- fields in this struct
+50 |     /// Cache directory on NVMe storage
+51 |     cache_dir: std::path::PathBuf,
+   |     ^^^^^^^^^
+...
+57 |     max_size_bytes: usize,
+   |     ^^^^^^^^^^^^^^
+
+warning: fields `config` and `client` are never read
+  --> src/storage/unified_cache.rs:63:5
+   |
+61 | pub struct L3NetworkCache {
+   |            -------------- fields in this struct
+62 |     /// Network cache configuration
+63 |     config: L3CacheConfig,
+   |     ^^^^^^
+64 |     /// Connection pool for network requests
+65 |     client: Arc<reqwest::Client>,
+   |     ^^^^^^
+
+warning: fields `sequential_patterns` and `access_windows` are never read
+   --> src/storage/unified_cache.rs:193:5
+    |
+189 | pub struct AccessPatternTracker {
+    |            -------------------- fields in this struct
+...
+193 |     sequential_patterns: HashMap<String, Vec<CacheKey>>,
+    |     ^^^^^^^^^^^^^^^^^^^
+194 |     /// Time-based access windows (stored as seconds since epoch)
+195 |     access_windows: HashMap<CacheKey, Vec<u64>>,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `AccessPatternTracker` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/monitoring/metrics/collector.rs:70:5
+   |
+70 |     async fn collect_metrics(&self) -> Result<HashMap<String, f64>>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+70 -     async fn collect_metrics(&self) -> Result<HashMap<String, f64>>;
+70 +     fn collect_metrics(&self) -> impl std::future::Future<Output = Result<HashMap<String, f64>>> + Send;
+   |
+
+warning: unused `std::result::Result` that must be used
+   --> src/monitoring/metrics/collector.rs:176:9
+    |
+176 |         self.process_alerts(alerts).await;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+176 |         let _ = self.process_alerts(alerts).await;
+    |         +++++++
+
+warning: `proximadb` (lib) generated 249 warnings (run `cargo fix --lib -p proximadb` to apply 13 suggestions)
+warning: unused import: `SearchResult`
+  --> tests/logical_operators_tests.rs:16:32
+   |
+16 |         MultiTierDeduplicator, SearchResult, StorageTier, DeduplicationStorageEngine,
+   |                                ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `level`
+  --> tests/quantization_integration_tests.rs:60:9
+   |
+60 |     let level = UnifiedQuantizationLevel {
+   |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_level`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `training_vectors`
+  --> tests/quantization_integration_tests.rs:74:9
+   |
+74 |     let training_vectors = generate_test_vectors(1000, 384); // BERT-like dimensions
+   |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_training_vectors`
+
+warning: unused variable: `i`
+   --> tests/quantization_integration_tests.rs:297:10
+    |
+297 |     for (i, qv) in quantized.iter().enumerate() {
+    |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused import: `std::sync::Arc`
+ --> tests/recovery_stress_test.rs:4:9
+  |
+4 |     use std::sync::Arc;
+  |         ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> tests/recovery_stress_test.rs:5:9
+  |
+5 |     use std::collections::HashMap;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Duration`
+ --> tests/recovery_stress_test.rs:8:21
+  |
+8 |     use std::time::{Duration, Instant};
+  |                     ^^^^^^^^
+
+warning: unused imports: `AssignmentConfig` and `FilesystemOptimizationConfig`
+  --> tests/recovery_stress_test.rs:14:9
+   |
+14 |         AssignmentConfig, FilesystemOptimizationConfig,
+   |         ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/rust/../integration/test_utils.rs:13:68
+   |
+13 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `proximadb::storage::traits::UnifiedStorageEngine`
+  --> tests/rust/../integration/test_utils.rs:17:5
+   |
+17 | use proximadb::storage::traits::UnifiedStorageEngine;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> tests/rust/../integration/isolated_storage_assignment_test.rs:8:5
+  |
+8 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `HashBasedAssignmentService`
+  --> tests/rust/../integration/isolated_storage_assignment_test.rs:12:46
+   |
+12 | use proximadb::storage::assignment_service::{HashBasedAssignmentService, AssignmentService};
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+ --> tests/rust/../integration/isolated_sst_engine_test.rs:7:24
+  |
+7 | use std::collections::{HashMap, HashSet};
+  |                        ^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:14:5
+   |
+14 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Instant`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:16:27
+   |
+16 | use std::time::{Duration, Instant};
+   |                           ^^^^^^^
+
+warning: unused import: `tokio::time::sleep`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:17:5
+   |
+17 | use tokio::time::sleep;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `debug`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:18:21
+   |
+18 | use tracing::{info, debug};
+   |                     ^^^^^
+
+warning: unused import: `proximadb::core::VectorRecord`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:20:5
+   |
+20 | use proximadb::core::VectorRecord;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `OptimizedFormat`
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:21:71
+   |
+21 | use proximadb::services::direct_vector_service::{DirectVectorService, OptimizedFormat};
+   |                                                                       ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> tests/rust/../integration/viper/metadata_filtering_test.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> tests/rust/../integration/viper/metadata_filtering_test.rs:7:5
+  |
+7 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tempfile::TempDir`
+ --> tests/rust/../integration/viper/metadata_filtering_test.rs:8:5
+  |
+8 | use tempfile::TempDir;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MetadataItem` and `VectorRecord`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:10:35
+   |
+10 | use proximadb::proto::proximadb::{VectorRecord, MetadataItem};
+   |                                   ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `proximadb::services::collection_service::CollectionService`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:11:5
+   |
+11 | use proximadb::services::collection_service::CollectionService;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::services::direct_vector_service::DirectVectorService`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:12:5
+   |
+12 | use proximadb::services::direct_vector_service::DirectVectorService;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::storage::engines::viper::ViperEngine`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:13:5
+   |
+13 | use proximadb::storage::engines::viper::ViperEngine;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::storage::persistence::filesystem::FilesystemFactory`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:14:5
+   |
+14 | use proximadb::storage::persistence::filesystem::FilesystemFactory;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:15:5
+   |
+15 | use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::compute::distance::DistanceMetric`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:16:5
+   |
+16 | use proximadb::compute::distance::DistanceMetric;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::core::search::SearchResult`
+  --> tests/rust/../integration/viper/metadata_filtering_test.rs:17:5
+   |
+17 | use proximadb::core::search::SearchResult;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/rust/../integration/sst_search_integration_test.rs:15:68
+   |
+15 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> tests/rust/../integration/sst_search_integration_test.rs:27:5
+   |
+27 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `CollectionServiceResponse`
+ --> tests/rust/../integration/sst_collection_test.rs:6:66
+  |
+6 | use proximadb::services::collection_service::{CollectionService, CollectionServiceResponse};
+  |                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `DistanceMetric`
+ --> tests/rust/../integration/sst_collection_test.rs:7:68
+  |
+7 | use proximadb::proto::proximadb::{CollectionConfig, StorageEngine, DistanceMetric, IndexingAlgorithm};
+  |                                                                    ^^^^^^^^^^^^^^
+
+warning: unused import: `FilesystemConfig`
+  --> tests/rust/../integration/sst_collection_test.rs:10:70
+   |
+10 | use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+   |                                                                      ^^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/rust/../integration/sst_collection_test.rs:11:68
+   |
+11 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::storage::traits::CollectionMetadataProvider`
+  --> tests/rust/../integration/sst_collection_test.rs:22:5
+   |
+22 | use proximadb::storage::traits::CollectionMetadataProvider;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proximadb::services::collection_service::CollectionService`
+  --> tests/rust/../unit/storage/metadata_backend_tests.rs:21:5
+   |
+21 | use proximadb::services::collection_service::CollectionService;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/rust/../unit/storage/sst_core_tests.rs:10:68
+   |
+10 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+ --> tests/rust/../unit/storage/sst_atomic_operations_test.rs:7:68
+  |
+7 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+  |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/rust/../unit/storage/sst_flush_test.rs:10:68
+   |
+10 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> tests/rust/../unit/storage/sst_flush_test.rs:19:5
+   |
+19 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StorageComponentType`
+  --> tests/rust/../unit/storage/storage_assignment_tests.rs:10:30
+   |
+10 |         AssignmentDiscovery, StorageComponentType,
+   |                              ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashSet`
+ --> tests/rust/../unit/storage/assignment_service_advanced_tests.rs:6:9
+  |
+6 |     use std::collections::HashSet;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `result`
+   --> tests/rust/../integration/semantic_distance_integration.rs:432:9
+    |
+432 |     let result = compute.calculate_distance(&empty_vec, &empty_vec, &DistanceMetric::Euclidean);
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_result`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `storage`
+  --> tests/rust/../unit/storage/metadata_backend_tests.rs:84:13
+   |
+84 |         let storage = storage_engine.read().await;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_storage`
+
+warning: unused variable: `viper_key`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:127:9
+    |
+127 |     let viper_key = CacheKey {
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_viper_key`
+
+warning: unused variable: `stats`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:137:9
+    |
+137 |     let stats = cache.stats().await;
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_stats`
+
+warning: unused variable: `cache_clone`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:366:13
+    |
+366 |         let cache_clone = cache.clone();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_clone`
+
+warning: unused variable: `key`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:369:21
+    |
+369 |                 let key = CacheKey {
+    |                     ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: variable `expected_hits` is assigned to, but never used
+   --> tests/rust/../unit/storage/unified_cache_test.rs:435:13
+    |
+435 |     let mut expected_hits = 0;
+    |             ^^^^^^^^^^^^^
+    |
+    = note: consider using `_expected_hits` instead
+
+warning: variable `expected_misses` is assigned to, but never used
+   --> tests/rust/../unit/storage/unified_cache_test.rs:436:13
+    |
+436 |     let mut expected_misses = 0;
+    |             ^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_expected_misses` instead
+
+warning: unused variable: `key`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:459:13
+    |
+459 |         let key = CacheKey {
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `key`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:473:13
+    |
+473 |         let key = CacheKey {
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `metrics`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:485:9
+    |
+485 |     let metrics = cache.stats().await;
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metrics`
+
+warning: unused variable: `cache_clone`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:540:13
+    |
+540 |         let cache_clone = cache.clone();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_clone`
+
+warning: unused variable: `key`
+   --> tests/rust/../unit/storage/unified_cache_test.rs:547:25
+    |
+547 |                     let key = CacheKey {
+    |                         ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `retrieved`
+   --> tests/rust/../unit/storage/storage_assignment_tests.rs:313:13
+    |
+313 |         let retrieved = get_assignment_service();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_retrieved`
+
+warning: fields `num_batches`, `dimension`, and `collection_prefix` are never read
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:35:5
+   |
+31 | struct WalOptimizationTestConfig {
+   |        ------------------------- fields in this struct
+...
+35 |     num_batches: usize,
+   |     ^^^^^^^^^^^
+36 |     /// Vector dimension
+37 |     dimension: usize,
+   |     ^^^^^^^^^
+38 |     /// Collection name prefix
+39 |     collection_prefix: String,
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `WalOptimizationTestConfig` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: struct `WalPerformanceTestResult` is never constructed
+  --> tests/rust/../integration/write_buffer_optimization_integration_test.rs:64:8
+   |
+64 | struct WalPerformanceTestResult {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `update_assignment` are never used
+   --> tests/rust/../integration/../common/test_assignments.rs:47:12
+    |
+45  | impl PersistentTestAssignments {
+    | ------------------------------ associated items in this implementation
+46  |     /// Create a new persistent assignment manager
+47  |     pub fn new() -> Self {
+    |            ^^^
+...
+139 |     pub async fn update_assignment(&self, collection_id: &str, assignment: TestAssignmentData) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^
+
+warning: static `TEST_ASSIGNMENTS` is never used
+   --> tests/rust/../integration/../common/test_assignments.rs:264:8
+    |
+264 | static TEST_ASSIGNMENTS: std::sync::OnceLock<PersistentTestAssignments> = std::sync::OnceLock::new();
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_test_assignments` is never used
+   --> tests/rust/../integration/../common/test_assignments.rs:267:8
+    |
+267 | pub fn get_test_assignments() -> &'static PersistentTestAssignments {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `setup_persistent_test_assignment` is never used
+   --> tests/rust/../integration/../common/test_assignments.rs:273:14
+    |
+273 | pub async fn setup_persistent_test_assignment(collection_id: &str) -> Result<TestAssignmentData> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_test_assignment` is never used
+   --> tests/rust/../integration/../common/test_assignments.rs:321:14
+    |
+321 | pub async fn cleanup_test_assignment(collection_id: &str) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_all_test_assignments` is never used
+   --> tests/rust/../integration/../common/test_assignments.rs:335:14
+    |
+335 | pub async fn cleanup_all_test_assignments() -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `update_assignment` are never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:47:12
+    |
+45  | impl PersistentTestAssignments {
+    | ------------------------------ associated items in this implementation
+46  |     /// Create a new persistent assignment manager
+47  |     pub fn new() -> Self {
+    |            ^^^
+...
+139 |     pub async fn update_assignment(&self, collection_id: &str, assignment: TestAssignmentData) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^
+
+warning: static `TEST_ASSIGNMENTS` is never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:264:8
+    |
+264 | static TEST_ASSIGNMENTS: std::sync::OnceLock<PersistentTestAssignments> = std::sync::OnceLock::new();
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_test_assignments` is never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:267:8
+    |
+267 | pub fn get_test_assignments() -> &'static PersistentTestAssignments {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `setup_persistent_test_assignment` is never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:273:14
+    |
+273 | pub async fn setup_persistent_test_assignment(collection_id: &str) -> Result<TestAssignmentData> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_test_assignment` is never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:321:14
+    |
+321 | pub async fn cleanup_test_assignment(collection_id: &str) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_all_test_assignments` is never used
+   --> tests/rust/../unit/storage/../../common/test_assignments.rs:335:14
+    |
+335 | pub async fn cleanup_all_test_assignments() -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+   --> tests/rust/../unit/storage/storage_assignment_tests.rs:311:9
+    |
+311 |         set_assignment_service(custom_service.clone());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+311 |         let _ = set_assignment_service(custom_service.clone());
+    |         +++++++
+
+warning: unused variable: `collection_id`
+  --> tests/axis_integration.rs:14:56
+   |
+14 | fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> Vec<VectorRecord> {
+   |                                                        ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: method `start_all` is never used
+   --> tests/cloud_emulator_integration_test.rs:177:14
+    |
+71  | impl EmulatorManager {
+    | -------------------- method in this implementation
+...
+177 |     async fn start_all(&mut self) -> Result<()> {
+    |              ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: unused import: `proximadb::services::collection_service::CollectionService`
+  --> tests/unit/storage/metadata_backend_tests.rs:21:5
+   |
+21 | use proximadb::services::collection_service::CollectionService;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `HardwareBackend`
+  --> tests/unit/storage/sst_core_tests.rs:10:68
+   |
+10 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+ --> tests/unit/storage/sst_atomic_operations_test.rs:7:68
+  |
+7 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+  |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> tests/unit/storage/sst_flush_test.rs:10:68
+   |
+10 | use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> tests/unit/storage/sst_flush_test.rs:19:5
+   |
+19 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StorageComponentType`
+  --> tests/unit/storage/storage_assignment_tests.rs:10:30
+   |
+10 |         AssignmentDiscovery, StorageComponentType,
+   |                              ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashSet`
+ --> tests/unit/storage/assignment_service_advanced_tests.rs:6:9
+  |
+6 |     use std::collections::HashSet;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `a`
+   --> tests/unit/compute/distance_tests.rs:111:9
+    |
+111 |     let a = vec![1.0, 2.0, 3.0];
+    |         ^ help: if this is intentional, prefix it with an underscore: `_a`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `b`
+   --> tests/unit/compute/distance_tests.rs:112:9
+    |
+112 |     let b = vec![4.0, 5.0, 6.0];
+    |         ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `cosine_calc`
+   --> tests/unit/compute/distance_tests.rs:172:9
+    |
+172 |     let cosine_calc = create_distance_calculator(DistanceMetric::Cosine);
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cosine_calc`
+
+warning: unused variable: `capability`
+  --> tests/unit/compute/distance_avx512_tests.rs:59:13
+   |
+59 |         let capability = detect_platform_capability();
+   |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_capability`
+
+warning: unreachable pattern
+   --> tests/unit/compute/distance_avx512_tests.rs:316:13
+    |
+316 |             _ => println!("Using unknown platform optimization"),
+    |             ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> tests/unit/compute/distance_avx512_tests.rs:316:13
+    |
+306 |             PlatformCapability::X86Avx512 => println!("Using AVX-512 optimizations"),
+    |             ----------------------------- matches some of the same values
+307 |             #[cfg(target_arch = "x86_64")]
+308 |             PlatformCapability::X86Avx2 => println!("Using AVX2 optimizations"),
+    |             --------------------------- matches some of the same values
+309 |             #[cfg(target_arch = "x86_64")]
+310 |             PlatformCapability::X86Avx => println!("Using AVX optimizations"),
+    |             -------------------------- matches some of the same values
+311 |             #[cfg(target_arch = "x86_64")]
+312 |             PlatformCapability::X86Sse2 => println!("Using SSE2 optimizations"),
+    |             --------------------------- matches some of the same values
+...
+316 |             _ => println!("Using unknown platform optimization"),
+    |             ^ ...and 1 other patterns collectively make this unreachable
+    = note: `#[warn(unreachable_patterns)]` on by default
+
+warning: unused variable: `storage`
+  --> tests/unit/storage/metadata_backend_tests.rs:84:13
+   |
+84 |         let storage = storage_engine.read().await;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_storage`
+
+warning: unused variable: `viper_key`
+   --> tests/unit/storage/unified_cache_test.rs:127:9
+    |
+127 |     let viper_key = CacheKey {
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_viper_key`
+
+warning: unused variable: `stats`
+   --> tests/unit/storage/unified_cache_test.rs:137:9
+    |
+137 |     let stats = cache.stats().await;
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_stats`
+
+warning: unused variable: `cache_clone`
+   --> tests/unit/storage/unified_cache_test.rs:366:13
+    |
+366 |         let cache_clone = cache.clone();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_clone`
+
+warning: unused variable: `key`
+   --> tests/unit/storage/unified_cache_test.rs:369:21
+    |
+369 |                 let key = CacheKey {
+    |                     ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: variable `expected_hits` is assigned to, but never used
+   --> tests/unit/storage/unified_cache_test.rs:435:13
+    |
+435 |     let mut expected_hits = 0;
+    |             ^^^^^^^^^^^^^
+    |
+    = note: consider using `_expected_hits` instead
+
+warning: variable `expected_misses` is assigned to, but never used
+   --> tests/unit/storage/unified_cache_test.rs:436:13
+    |
+436 |     let mut expected_misses = 0;
+    |             ^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_expected_misses` instead
+
+warning: unused variable: `key`
+   --> tests/unit/storage/unified_cache_test.rs:459:13
+    |
+459 |         let key = CacheKey {
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `key`
+   --> tests/unit/storage/unified_cache_test.rs:473:13
+    |
+473 |         let key = CacheKey {
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `metrics`
+   --> tests/unit/storage/unified_cache_test.rs:485:9
+    |
+485 |     let metrics = cache.stats().await;
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metrics`
+
+warning: unused variable: `cache_clone`
+   --> tests/unit/storage/unified_cache_test.rs:540:13
+    |
+540 |         let cache_clone = cache.clone();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_clone`
+
+warning: unused variable: `key`
+   --> tests/unit/storage/unified_cache_test.rs:547:25
+    |
+547 |                     let key = CacheKey {
+    |                         ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `retrieved`
+   --> tests/unit/storage/storage_assignment_tests.rs:313:13
+    |
+313 |         let retrieved = get_assignment_service();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_retrieved`
+
+warning: unused variable: `builder`
+  --> tests/unit/server/server_builder_tests.rs:23:9
+   |
+23 |     let builder = ServerBuilder::new();
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_builder`
+
+warning: method `clear_all_assignments` is never used
+   --> tests/unit/storage/sst_test_config.rs:154:18
+    |
+35  | impl PersistentTestAssignments {
+    | ------------------------------ method in this implementation
+...
+154 |     pub async fn clear_all_assignments(&self) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `cleanup_test_directories` is never used
+   --> tests/unit/storage/sst_test_config.rs:336:14
+    |
+336 | pub async fn cleanup_test_directories(base_path: &Path) -> anyhow::Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_all_assignments` is never used
+   --> tests/unit/storage/sst_test_config.rs:386:14
+    |
+386 | pub async fn cleanup_all_assignments() -> anyhow::Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new` and `update_assignment` are never used
+   --> tests/unit/storage/../../common/test_assignments.rs:47:12
+    |
+45  | impl PersistentTestAssignments {
+    | ------------------------------ associated items in this implementation
+46  |     /// Create a new persistent assignment manager
+47  |     pub fn new() -> Self {
+    |            ^^^
+...
+139 |     pub async fn update_assignment(&self, collection_id: &str, assignment: TestAssignmentData) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^
+
+warning: static `TEST_ASSIGNMENTS` is never used
+   --> tests/unit/storage/../../common/test_assignments.rs:264:8
+    |
+264 | static TEST_ASSIGNMENTS: std::sync::OnceLock<PersistentTestAssignments> = std::sync::OnceLock::new();
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_test_assignments` is never used
+   --> tests/unit/storage/../../common/test_assignments.rs:267:8
+    |
+267 | pub fn get_test_assignments() -> &'static PersistentTestAssignments {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `setup_persistent_test_assignment` is never used
+   --> tests/unit/storage/../../common/test_assignments.rs:273:14
+    |
+273 | pub async fn setup_persistent_test_assignment(collection_id: &str) -> Result<TestAssignmentData> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_test_assignment` is never used
+   --> tests/unit/storage/../../common/test_assignments.rs:321:14
+    |
+321 | pub async fn cleanup_test_assignment(collection_id: &str) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_all_test_assignments` is never used
+   --> tests/unit/storage/../../common/test_assignments.rs:335:14
+    |
+335 | pub async fn cleanup_all_test_assignments() -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+   --> tests/unit/storage/storage_assignment_tests.rs:311:9
+    |
+311 |         set_assignment_service(custom_service.clone());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+311 |         let _ = set_assignment_service(custom_service.clone());
+    |         +++++++
+
+warning: unused variable: `level`
+  --> tests/quantization_basic_tests.rs:63:13
+   |
+63 |         let level = UnifiedQuantizationLevel {
+   |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_level`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `training_vectors`
+  --> tests/quantization_basic_tests.rs:77:13
+   |
+77 |         let training_vectors = generate_test_vectors(100, 64); // 64 dimensions, divisible by 8
+   |             ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_training_vectors`
+
+warning: unused variable: `quantized_query`
+   --> tests/quantization_basic_tests.rs:101:13
+    |
+101 |         let quantized_query = engine.quantize(query, &scalar_level).await.unwrap();
+    |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantized_query`
+
+warning: unused import: `Path`
+  --> src/bin/server.rs:22:17
+   |
+22 | use std::path::{Path, PathBuf};
+   |                 ^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `AssignmentConfig` and `FilesystemOptimizationConfig`
+  --> tests/write_buffer_corruption_recovery_test.rs:12:9
+   |
+12 |         AssignmentConfig, FilesystemOptimizationConfig,
+   |         ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+    Checking proximadb v0.1.0 (/home/vsingh/code/proximaDB)
+warning: `proximadb` (test "logical_operators_tests") generated 1 warning (run `cargo fix --test "logical_operators_tests"` to apply 1 suggestion)
+warning: `proximadb` (test "quantization_integration_tests") generated 3 warnings
+warning: `proximadb` (test "recovery_stress_test") generated 4 warnings (run `cargo fix --test "recovery_stress_test"` to apply 4 suggestions)
+warning: `proximadb` (test "integration") generated 83 warnings (18 duplicates) (run `cargo fix --test "integration"` to apply 36 suggestions)
+warning: `proximadb` (test "axis_integration") generated 1 warning
+warning: `proximadb` (test "cloud_emulator_integration_test") generated 1 warning
+warning: `proximadb` (test "test_unified_modules") generated 48 warnings (12 duplicates) (run `cargo fix --test "test_unified_modules"` to apply 7 suggestions)
+warning: `proximadb` (test "quantization_basic_tests") generated 3 warnings
+warning: `proximadb` (bin "proximadb-server" test) generated 1 warning (run `cargo fix --bin "proximadb-server" --tests` to apply 1 suggestion)
+warning: `proximadb` (test "write_buffer_corruption_recovery_test") generated 1 warning (run `cargo fix --test "write_buffer_corruption_recovery_test"` to apply 1 suggestion)
+warning: unused import: `super::*`
+ --> src/core/config_loader_tests.rs:3:9
+  |
+3 |     use super::*;
+  |         ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `NamedTempFile`
+ --> src/core/config_loader_tests.rs:7:29
+  |
+7 |     use tempfile::{TempDir, NamedTempFile};
+  |                             ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Write`
+ --> src/core/config_loader_tests.rs:8:9
+  |
+8 |     use std::io::Write;
+  |         ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::StorageEngine as StorageEngineImpl`
+  --> src/network/grpc/service.rs:23:5
+   |
+23 | use crate::storage::StorageEngine as StorageEngineImpl;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:24:9
+   |
+24 |     use std::sync::Arc;
+   |         ^^^^^^^^^^^^^^
+
+warning: unused import: `HardwareBackend`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:28:68
+   |
+28 |     use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+   |                                                                    ^^^^^^^^^^^^^^^
+
+warning: unused imports: `ExecutionPlan`, `ParsedQuery`, `SqlEngine`, `SqlExecutionResult`, and `SqlExecutor`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:30:9
+   |
+30 |         SqlEngine, SqlParser, ParsedQuery, SqlExecutor, SqlExecutionResult,
+   |         ^^^^^^^^^             ^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+31 |         QueryPlanner, ExecutionPlan,
+   |                       ^^^^^^^^^^^^^
+
+warning: unused imports: `ComparisonOp`, `OrderByClause`, `Value as SqlValue`, and `WhereClause`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:34:20
+   |
+34 |         OrderType, OrderByClause, SortDirection, WhereClause, 
+   |                    ^^^^^^^^^^^^^                 ^^^^^^^^^^^
+35 |         Condition, ComparisonOp, Value as SqlValue,
+   |                    ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MetadataFilter` and `VectorSearchParams`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:38:9
+   |
+38 |         MetadataFilter, VectorSearchParams,
+   |         ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::services::direct_vector_service::DirectVectorService`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:40:9
+   |
+40 |     use crate::services::direct_vector_service::DirectVectorService;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MetadataItem` and `VectorRecord`
+  --> src/query/sql_engine/comprehensive_sql_tests.rs:41:35
+   |
+41 |     use crate::proto::proximadb::{VectorRecord, MetadataItem};
+   |                                   ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused imports: `Duration` and `timeout`
+  --> src/services/comprehensive_search_tests.rs:24:23
+   |
+24 |     use tokio::time::{timeout, Duration};
+   |                       ^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `SearchResultSet`, `SearchResult`, and `UnifiedSearchEngine`
+  --> src/services/comprehensive_search_tests.rs:29:23
+   |
+29 |         SearchParams, SearchResultSet, UnifiedSearchContext, UnifiedSearchEngine,
+   |                       ^^^^^^^^^^^^^^^                        ^^^^^^^^^^^^^^^^^^^
+30 |         FilterExpression, SearchResult, FilterableColumn, ComparisonOperator,
+   |                           ^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::engines::viper::FilterValue`
+  --> src/services/comprehensive_search_tests.rs:33:9
+   |
+33 |     use crate::storage::engines::viper::FilterValue;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MetadataItem` and `VectorRecord`
+  --> src/services/comprehensive_search_tests.rs:34:35
+   |
+34 |     use crate::proto::proximadb::{VectorRecord, MetadataItem};
+   |                                   ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `crate::services::direct_vector_service::DirectVectorService`
+  --> src/services/comprehensive_search_tests.rs:35:9
+   |
+35 |     use crate::services::direct_vector_service::DirectVectorService;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ViperSearchConfig` and `ViperUnifiedSearchEngine`
+  --> src/services/comprehensive_search_tests.rs:36:65
+   |
+36 |     use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig};
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `SstSearchConfig` and `SstUnifiedSearchEngine`
+  --> src/services/comprehensive_search_tests.rs:37:63
+   |
+37 |     use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
+   |                                                               ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader`
+  --> src/services/comprehensive_search_tests.rs:38:9
+   |
+38 |     use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader`
+  --> src/services/comprehensive_search_tests.rs:39:9
+   |
+39 |     use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::atomic::UnifiedAtomicCoordinator`
+  --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:14:9
+   |
+14 |     use crate::storage::atomic::UnifiedAtomicCoordinator;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:16:9
+   |
+16 |     use std::sync::Arc;
+   |         ^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::PathBuf`
+  --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:17:9
+   |
+17 |     use std::path::PathBuf;
+   |         ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `SstableWriter`
+  --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:10:51
+   |
+10 |     use crate::storage::engines::sst::{SstRecord, SstableWriter};
+   |                                                   ^^^^^^^^^^^^^
+
+warning: unused import: `tempfile::TempDir`
+  --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:22:9
+   |
+22 |     use tempfile::TempDir;
+   |         ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::engines::sst::readers::UnifiedSstableReader`
+ --> src/storage/engines/sst/readers/tests/test_metadata_filtering_fixed.rs:7:5
+  |
+7 | use crate::storage::engines::sst::readers::UnifiedSstableReader;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::core::search::SearchParams`
+ --> src/storage/engines/sst/readers/tests/test_metadata_filtering_fixed.rs:9:5
+  |
+9 | use crate::core::search::SearchParams;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::compute::distance::DistanceMetric`
+  --> src/storage/engines/sst/readers/tests/test_metadata_filtering_fixed.rs:10:5
+   |
+10 | use crate::compute::distance::DistanceMetric;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::compute::unified_distance::SimilarityResult`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:12:9
+   |
+12 |     use crate::compute::unified_distance::SimilarityResult;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Float32Array`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:20:68
+   |
+20 |     use arrow_array::{Array, RecordBatch, StringArray, Int64Array, Float32Array};
+   |                                                                    ^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+  --> src/storage/engines/viper/tests/compaction_tests.rs:11:5
+   |
+11 | use anyhow::Result;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused imports: `azure::AzureFileSystem`, `gcs::GcsFileSystem`, and `s3::S3FileSystem`
+   --> src/storage/persistence/filesystem/tests/fsync_tests.rs:180:51
+    |
+180 |     use crate::storage::persistence::filesystem::{s3::S3FileSystem, azure::AzureFileSystem, gcs::GcsFileSystem};
+    |                                                   ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::core::VectorRecord`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration_tests.rs:13:9
+   |
+13 |     use crate::core::VectorRecord;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AxisVectorIndex`, `IndexAlgorithm`, and `IndexStats`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration_tests.rs:14:30
+   |
+14 |     use crate::index::axis::{AxisVectorIndex, IndexAlgorithm, IndexStats};
+   |                              ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration_tests.rs:18:9
+   |
+18 |     use std::sync::Arc;
+   |         ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::RwLock`
+  --> src/storage/persistence/write_buffer/compaction_axis_integration_tests.rs:19:9
+   |
+19 |     use tokio::sync::RwLock;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+  --> src/storage/persistence/write_buffer/tests/bincode_serialization_tests.rs:10:5
+   |
+10 | use anyhow::Result;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+  --> src/storage/persistence/write_buffer/tests/proto_serialization_tests.rs:10:5
+   |
+10 | use anyhow::Result;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::compute::distance::DistanceMetric`
+  --> src/storage/persistence/write_buffer/tests/proto_serialization_tests.rs:18:5
+   |
+18 | use crate::compute::distance::DistanceMetric;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tempfile::TempDir`
+  --> src/storage/tests/atomic_coordinator_tests.rs:11:5
+   |
+11 | use tempfile::TempDir;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::storage::assignment_service::UnifiedAssignment`
+  --> src/storage/tests/atomic_write_tests.rs:20:5
+   |
+20 | use crate::storage::assignment_service::UnifiedAssignment;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `VectorId`
+  --> src/storage/tests/atomic_write_tests.rs:23:19
+   |
+23 | use crate::core::{VectorId, VectorRecord};
+   |                   ^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> src/services/direct_vector_service_tests.rs:75:35
+    |
+75  |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new());
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `filesystem::FilesystemConfig` is missing
+    |
+note: associated function defined here
+   --> src/storage/persistence/filesystem/mod.rs:585:18
+    |
+585 |     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+    |                  ^^^ ------------------------
+help: provide the argument
+    |
+75  |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(/* filesystem::FilesystemConfig */));
+    |                                                                          ++++++++++++++++++++++++++++++++++
+
+error[E0609]: no field `viper_config` on type `core::config::StorageConfig`
+  --> src/services/direct_vector_service_tests.rs:78:69
+   |
+78 | ...   let viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to creat...
+   |                                                                   ^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `storage_locations`, `metadata_url`, `assignment_config`, `mmap_enabled`, `sst_config` ... and 3 others
+
+error[E0308]: mismatched types
+  --> src/services/direct_vector_service_tests.rs:78:91
+   |
+78 | ... viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to create VIPE...
+   |                             ----------------                                      ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+   |                             |
+   |                             arguments to this function are incorrect
+   |
+   = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+              found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+  --> src/storage/engines/viper/engine.rs:77:18
+   |
+77 |     pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+   |                  ^^^                      ----------------------------------
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:79:117
+    |
+79  | ...e = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).a...
+    |                 --------------- arguments to this function are incorrect                          ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/sst/mod.rs:755:18
+    |
+755 |     pub async fn new(
+    |                  ^^^
+...
+758 |         filesystem: Arc<FilesystemFactory>,
+    |         ----------------------------------
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> src/services/direct_vector_service_tests.rs:104:35
+    |
+104 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new());
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `filesystem::FilesystemConfig` is missing
+    |
+note: associated function defined here
+   --> src/storage/persistence/filesystem/mod.rs:585:18
+    |
+585 |     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+    |                  ^^^ ------------------------
+help: provide the argument
+    |
+104 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(/* filesystem::FilesystemConfig */));
+    |                                                                          ++++++++++++++++++++++++++++++++++
+
+error[E0609]: no field `viper_config` on type `core::config::StorageConfig`
+   --> src/services/direct_vector_service_tests.rs:107:69
+    |
+107 | ...   let viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to creat...
+    |                                                                   ^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `storage_locations`, `metadata_url`, `assignment_config`, `mmap_enabled`, `sst_config` ... and 3 others
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:107:91
+    |
+107 | ... viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to create VIPE...
+    |                             ----------------                                      ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |                             |
+    |                             arguments to this function are incorrect
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/viper/engine.rs:77:18
+    |
+77  |     pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    |                  ^^^                      ----------------------------------
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:108:117
+    |
+108 | ...e = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).a...
+    |                 --------------- arguments to this function are incorrect                          ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/sst/mod.rs:755:18
+    |
+755 |     pub async fn new(
+    |                  ^^^
+...
+758 |         filesystem: Arc<FilesystemFactory>,
+    |         ----------------------------------
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> src/services/direct_vector_service_tests.rs:171:35
+    |
+171 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new());
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `filesystem::FilesystemConfig` is missing
+    |
+note: associated function defined here
+   --> src/storage/persistence/filesystem/mod.rs:585:18
+    |
+585 |     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+    |                  ^^^ ------------------------
+help: provide the argument
+    |
+171 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(/* filesystem::FilesystemConfig */));
+    |                                                                          ++++++++++++++++++++++++++++++++++
+
+error[E0609]: no field `viper_config` on type `core::config::StorageConfig`
+   --> src/services/direct_vector_service_tests.rs:174:69
+    |
+174 | ...   let viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to creat...
+    |                                                                   ^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `storage_locations`, `metadata_url`, `assignment_config`, `mmap_enabled`, `sst_config` ... and 3 others
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:174:91
+    |
+174 | ... viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to create VIPE...
+    |                             ----------------                                      ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |                             |
+    |                             arguments to this function are incorrect
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/viper/engine.rs:77:18
+    |
+77  |     pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    |                  ^^^                      ----------------------------------
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:175:117
+    |
+175 | ...e = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).a...
+    |                 --------------- arguments to this function are incorrect                          ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/sst/mod.rs:755:18
+    |
+755 |     pub async fn new(
+    |                  ^^^
+...
+758 |         filesystem: Arc<FilesystemFactory>,
+    |         ----------------------------------
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> src/services/direct_vector_service_tests.rs:232:35
+    |
+232 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new());
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `filesystem::FilesystemConfig` is missing
+    |
+note: associated function defined here
+   --> src/storage/persistence/filesystem/mod.rs:585:18
+    |
+585 |     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+    |                  ^^^ ------------------------
+help: provide the argument
+    |
+232 |         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(/* filesystem::FilesystemConfig */));
+    |                                                                          ++++++++++++++++++++++++++++++++++
+
+error[E0609]: no field `viper_config` on type `core::config::StorageConfig`
+   --> src/services/direct_vector_service_tests.rs:235:69
+    |
+235 | ...   let viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to creat...
+    |                                                                   ^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `storage_locations`, `metadata_url`, `assignment_config`, `mmap_enabled`, `sst_config` ... and 3 others
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:235:91
+    |
+235 | ... viper_engine = Arc::new(ViperEngine::new(config.storage.viper_config.clone(), filesystem.clone()).await.expect("Failed to create VIPE...
+    |                             ----------------                                      ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |                             |
+    |                             arguments to this function are incorrect
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/viper/engine.rs:77:18
+    |
+77  |     pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    |                  ^^^                      ----------------------------------
+
+error[E0308]: mismatched types
+   --> src/services/direct_vector_service_tests.rs:236:117
+    |
+236 | ...e = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).a...
+    |                 --------------- arguments to this function are incorrect                          ^^^^^^^^^^^^^^^^^^ expected `Arc<FilesystemFactory>`, found `Arc<impl Future<Output = ...>>`
+    |
+    = note: expected struct `std::sync::Arc<filesystem::FilesystemFactory>`
+               found struct `std::sync::Arc<impl futures::Future<Output = std::result::Result<filesystem::FilesystemFactory, FilesystemError>>>`
+note: associated function defined here
+   --> src/storage/engines/sst/mod.rs:755:18
+    |
+755 |     pub async fn new(
+    |                  ^^^
+...
+758 |         filesystem: Arc<FilesystemFactory>,
+    |         ----------------------------------
+
+warning: unused import: `MetadataBloomFilter`
+  --> src/storage/engines/sst/readers/tests/unified_sstable_reader_tests.rs:11:9
+   |
+11 |         MetadataBloomFilter,
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::super`
+ --> src/storage/engines/sst/bloom_filter_tests.rs:5:9
+  |
+5 |     use super::super::*;
+  |         ^^^^^^^^^^^^
+
+warning: unused import: `Array`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:20:23
+   |
+20 |     use arrow_array::{Array, RecordBatch, StringArray, Int64Array, Float32Array};
+   |                       ^^^^^
+
+warning: unused variable: `memory_before`
+   --> src/compute/tests/algorithms_tests.rs:190:13
+    |
+190 |         let memory_before = index.memory_usage();
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_memory_before`
+
+warning: unused variable: `query`
+   --> src/core/metadata_query.rs:513:13
+    |
+513 |         let query = MetadataQuery::Field(FieldQuery {
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `modified_query`
+   --> src/core/metadata_query.rs:519:13
+    |
+519 |         let modified_query = MetadataQuery::Field(FieldQuery {
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_modified_query`
+
+warning: unreachable pattern
+   --> src/query/sql_engine/comprehensive_sql_tests.rs:655:21
+    |
+655 |                     _ => "Unknown",
+    |                     ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> src/query/sql_engine/comprehensive_sql_tests.rs:655:21
+    |
+645 |                     PlatformCapability::X86Avx512 => "AVX512",
+    |                     ----------------------------- matches some of the same values
+646 |                     #[cfg(target_arch = "x86_64")]
+647 |                     PlatformCapability::X86Avx2 => "AVX2",
+    |                     --------------------------- matches some of the same values
+648 |                     #[cfg(target_arch = "x86_64")]
+649 |                     PlatformCapability::X86Avx => "AVX",
+    |                     -------------------------- matches some of the same values
+650 |                     #[cfg(target_arch = "x86_64")]
+651 |                     PlatformCapability::X86Sse2 => "SSE2",
+    |                     --------------------------- matches some of the same values
+...
+655 |                     _ => "Unknown",
+    |                     ^ ...and 1 other patterns collectively make this unreachable
+    = note: `#[warn(unreachable_patterns)]` on by default
+
+warning: unused variable: `engine_type`
+   --> src/query/sql_engine/comprehensive_sql_tests.rs:606:27
+    |
+606 |         for (engine_name, engine_type) in test_engines {
+    |                           ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_engine_type`
+
+warning: unused variable: `execution_plan`
+   --> src/query/sql_engine/comprehensive_sql_tests.rs:747:17
+    |
+747 |             let execution_plan = planner.create_plan(parsed_query)?;
+    |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_execution_plan`
+
+warning: value assigned to `test_success` is never read
+   --> src/query/sql_engine/comprehensive_sql_tests.rs:860:29
+    |
+860 | ...                   test_success = false;
+    |                       ^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: variable `raw_result` is assigned to, but never used
+   --> src/services/comprehensive_search_tests.rs:354:21
+    |
+354 |             let mut raw_result = None;
+    |                     ^^^^^^^^^^
+    |
+    = note: consider using `_raw_result` instead
+
+warning: variable `normalized_result` is assigned to, but never used
+   --> src/services/comprehensive_search_tests.rs:355:21
+    |
+355 |             let mut normalized_result = None;
+    |                     ^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_normalized_result` instead
+
+warning: variable `rank_result` is assigned to, but never used
+   --> src/services/comprehensive_search_tests.rs:356:21
+    |
+356 |             let mut rank_result = None;
+    |                     ^^^^^^^^^^^
+    |
+    = note: consider using `_rank_result` instead
+
+warning: value assigned to `raw_result` is never read
+   --> src/services/comprehensive_search_tests.rs:377:42
+    |
+377 |                     DistanceMode::Raw => raw_result = Some(result),
+    |                                          ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `normalized_result` is never read
+   --> src/services/comprehensive_search_tests.rs:378:49
+    |
+378 |                     DistanceMode::Normalized => normalized_result = Some(result),
+    |                                                 ^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `rank_result` is never read
+   --> src/services/comprehensive_search_tests.rs:379:52
+    |
+379 |                     DistanceMode::RankOptimized => rank_result = Some(result),
+    |                                                    ^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `quantization_engine`
+   --> src/services/comprehensive_search_tests.rs:415:13
+    |
+415 |         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
+    |             ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `context`
+   --> src/services/comprehensive_search_tests.rs:419:17
+    |
+419 |             let context = create_test_context("test_viper_collection", TestEngineType::Viper);
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `search_params`
+   --> src/services/comprehensive_search_tests.rs:421:17
+    |
+421 |             let search_params = SearchParams {
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_search_params`
+
+warning: unused variable: `quantization_engine`
+   --> src/services/comprehensive_search_tests.rs:472:13
+    |
+472 |         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
+    |             ^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quantization_engine`
+
+warning: unused variable: `context`
+   --> src/services/comprehensive_search_tests.rs:476:17
+    |
+476 |             let context = create_test_context("test_lsm_collection", TestEngineType::Lsm);
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `search_params`
+   --> src/services/comprehensive_search_tests.rs:478:17
+    |
+478 |             let search_params = SearchParams {
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_search_params`
+
+warning: unused variable: `service`
+   --> src/services/direct_vector_service_tests.rs:420:14
+    |
+420 |         let (service, _temp_dir) = create_test_service().await;
+    |              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_service`
+
+warning: unused variable: `vector_record`
+   --> src/services/direct_vector_service_tests.rs:422:13
+    |
+422 |         let vector_record = create_test_vector_record(
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_vector_record`
+
+warning: unused variable: `config`
+  --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:68:13
+   |
+68 |         let config = create_test_config();
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `task`
+  --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:71:13
+   |
+71 |         let task = CompactionTask {
+   |             ^^^^ help: if this is intentional, prefix it with an underscore: `_task`
+
+warning: unused variable: `temp_dir`
+   --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:255:13
+    |
+255 |         let temp_dir = TempDir::new().unwrap();
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_dir`
+
+warning: unused variable: `params`
+   --> src/storage/engines/sst/compaction_vector_tracking_tests.rs:261:13
+    |
+261 |         let params = crate::storage::traits::CompactionParameters {
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/sst/readers/tests/unified_sstable_reader_tests.rs:53:13
+   |
+53 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:79:13
+   |
+79 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:105:13
+    |
+105 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `context`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:106:13
+    |
+106 |         let context = create_test_context("test", vec!["test.sst".to_string()]);
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:140:13
+    |
+140 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:203:13
+    |
+203 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:254:13
+    |
+254 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:311:13
+    |
+311 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:368:13
+    |
+368 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:429:13
+    |
+429 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:477:13
+    |
+477 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:541:13
+    |
+541 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:590:13
+    |
+590 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:694:13
+    |
+694 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:801:13
+    |
+801 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:891:13
+    |
+891 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:933:13
+    |
+933 |         let reader = create_test_reader().await;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `min_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:984:26
+    |
+984 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_val`
+
+warning: unused variable: `max_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:984:35
+    |
+984 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_val`
+
+warning: unused variable: `null_cnt`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:984:44
+    |
+984 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                            ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_null_cnt`
+
+warning: unused variable: `min_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:988:26
+    |
+988 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_val`
+
+warning: unused variable: `max_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:988:35
+    |
+988 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_val`
+
+warning: unused variable: `null_cnt`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:988:44
+    |
+988 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                            ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_null_cnt`
+
+warning: unused variable: `min_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:992:26
+    |
+992 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_min_val`
+
+warning: unused variable: `max_val`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:992:35
+    |
+992 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_val`
+
+warning: unused variable: `null_cnt`
+   --> src/storage/engines/sst/readers/tests/unified_sstable_reader_edge_tests.rs:992:44
+    |
+992 |                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
+    |                                            ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_null_cnt`
+
+warning: unused variable: `temp_path`
+  --> src/storage/engines/sst/readers/tests/test_metadata_filtering_fixed.rs:23:9
+   |
+23 |     let temp_path = temp_dir.path();
+   |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_path`
+
+warning: unused variable: `filesystem`
+  --> src/storage/engines/sst/readers/tests/test_metadata_filtering_fixed.rs:25:9
+   |
+25 |     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+   |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_filesystem`
+
+warning: unused variable: `temp_file`
+   --> src/storage/engines/sst/sstable_writer.rs:369:13
+    |
+369 |         let temp_file = NamedTempFile::new().unwrap();
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_file`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:47:13
+   |
+47 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:54:13
+   |
+54 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `context`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:55:13
+   |
+55 |         let context = create_test_context();
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:71:13
+   |
+71 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `context`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:72:13
+   |
+72 |         let context = create_test_context();
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `reader`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:92:13
+   |
+92 |         let reader = create_test_reader().await;
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_reader`
+
+warning: unused variable: `params`
+  --> src/storage/engines/viper/readers/tests/unified_parquet_reader_tests.rs:96:13
+   |
+96 |         let params = SearchParams {
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `i`
+   --> src/storage/engines/viper/tests/test_data_generator.rs:308:47
+    |
+308 |             (0..self.config.num_vectors).map(|i| {
+    |                                               ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `pq8_codes`
+   --> src/storage/engines/viper/tests/test_data_generator.rs:554:13
+    |
+554 |         let pq8_codes = generator.generate_pq_codes(&vectors, 8);
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_pq8_codes`
+
+warning: unused variable: `idx`
+   --> src/storage/engines/viper/tests/test_data_generator.rs:589:14
+    |
+589 |         for (idx, binary_vector) in binary_codes.iter().enumerate() {
+    |              ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: unused variable: `binary_sparse`
+   --> src/storage/engines/viper/tests/test_data_generator.rs:632:17
+    |
+632 |             let binary_sparse = generator.generate_binary_codes(&sparse_vectors);
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_binary_sparse`
+
+warning: unused variable: `gzip_path`
+   --> src/storage/engines/viper/tests/test_data_generator.rs:937:13
+    |
+937 |         let gzip_path = temp_dir.path().join("sparse_gzip.parquet");
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_gzip_path`
+
+warning: unused variable: `custom_vectors`
+    --> src/storage/engines/viper/tests/test_data_generator.rs:1010:17
+     |
+1010 |             let custom_vectors: Vec<Vec<f32>> = (0..500)
+     |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_custom_vectors`
+
+warning: variable does not need to be mutable
+   --> src/storage/engines/viper/tests/engine_tests.rs:620:36
+    |
+620 | ...                   Ok(mut reader) => {
+    |                          ----^^^^^^
+    |                          |
+    |                          help: remove this `mut`
+
+warning: value assigned to `counter` is never read
+   --> src/storage/persistence/write_buffer/compact_batch_id.rs:104:17
+    |
+104 |         let mut counter = 0;
+    |                 ^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `flush_coordinator`
+   --> src/storage/persistence/write_buffer/recovery_manager.rs:705:28
+    |
+705 |         let (disk_manager, flush_coordinator, mut recovery_manager, temp_dir) = create_test_managers().await;
+    |                            ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_flush_coordinator`
+
+warning: variable does not need to be mutable
+   --> src/storage/persistence/write_buffer/recovery_manager.rs:705:47
+    |
+705 |         let (disk_manager, flush_coordinator, mut recovery_manager, temp_dir) = create_test_managers().await;
+    |                                               ----^^^^^^^^^^^^^^^^
+    |                                               |
+    |                                               help: remove this `mut`
+
+warning: unused variable: `result2`
+   --> src/storage/persistence/write_buffer/flush_result_optimization.rs:403:13
+    |
+403 |         let result2 = coordinator
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_result2`
+
+warning: unused variable: `collection_id`
+  --> src/storage/persistence/write_buffer/tests/batch_strategy_tests.rs:92:30
+   |
+92 |     fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
+   |                              ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `sequences`
+   --> src/storage/persistence/write_buffer/tests/batch_strategy_tests.rs:479:13
+    |
+479 |         let sequences = strategy.write_native_batch(batch, collection_id)
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sequences`
+
+warning: variable does not need to be mutable
+   --> src/storage/persistence/write_buffer/tests/bincode_serialization_tests.rs:195:9
+    |
+195 |     let mut exact_vec = create_test_vector("exact_match", 128, 1.0);
+    |         ----^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `recommendation`
+   --> src/storage/memtable/implementations/dashmap.rs:506:13
+    |
+506 |         let recommendation = memtable.tune_for_workload(WorkloadPattern::ReadHeavy).await;
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_recommendation`
+
+warning: unused variable: `collection_id`
+   --> src/storage/memtable/implementations/tests/global_partitioned_tests.rs:350:33
+    |
+350 | fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> VectorRecord {
+    |                                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `end_sequence`
+  --> src/storage/memtable/implementations/tests/three_layer_mvcc_tests.rs:43:9
+   |
+43 |     let end_sequence = if vector_count > 0 {
+   |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_end_sequence`
+
+warning: unused variable: `collection_id`
+  --> src/storage/memtable/implementations/tests/three_layer_mvcc_tests.rs:38:5
+   |
+38 |     collection_id: &str,
+   |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_collection_id`
+
+warning: unused variable: `should_compact`
+   --> src/storage/memtable/specialized/lsm_behavior.rs:661:13
+    |
+661 |         let should_compact = lsm_wrapper.should_compact().await;
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_should_compact`
+
+warning: unused variable: `not_present`
+   --> src/storage/memtable/specialized/lsm_behavior.rs:692:13
+    |
+692 |         let not_present = bloom.contains("nonexistent_key");
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_not_present`
+
+warning: unused variable: `final_path`
+  --> src/storage/tests/atomic_write_tests.rs:77:9
+   |
+77 |     let final_path = format!("{}/test_data.bin", storage_url);
+   |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_final_path`
+

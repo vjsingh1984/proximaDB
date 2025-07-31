@@ -164,9 +164,10 @@ impl PersistentTestAssignments {
         // Load assignments from disk
         let mut assignments = self.load_assignments_from_disk().await?;
 
-        // Remove from disk storage
-        assignments.remove(collection_id);
-        self.save_assignments_to_disk(&assignments).await?;
+        // Remove from disk storage (only save if the entry existed)
+        if assignments.remove(collection_id).is_some() {
+            self.save_assignments_to_disk(&assignments).await?;
+        }
 
         // Remove from cache
         {
@@ -232,12 +233,24 @@ impl PersistentTestAssignments {
     async fn save_assignments_to_disk(&self, assignments: &HashMap<String, TestAssignmentData>) -> Result<()> {
         let content = serde_json::to_string_pretty(assignments)?;
         
+        // Ensure the parent directory exists
+        if let Some(parent) = self.assignment_file.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        
         // Write to a temporary file first, then atomically move it
         let temp_file = format!("{}.tmp", self.assignment_file.display());
-        fs::write(&temp_file, &content).await?;
         
-        // Ensure content is synced to disk
-        let file = fs::OpenOptions::new().write(true).open(&temp_file).await?;
+        // Write and sync in a single operation
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temp_file)
+            .await?;
+        
+        use tokio::io::AsyncWriteExt;
+        file.write_all(content.as_bytes()).await?;
         file.sync_all().await?;
         drop(file);
         
@@ -332,7 +345,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_persistent_assignments() {
-        let assignments = PersistentTestAssignments::new();
+        // Create a unique test instance with a unique file name to avoid conflicts
+        let test_id = std::thread::current().id();
+        let assignment_file = std::env::temp_dir().join(format!("proximadb_test_assignments_{:?}.json", test_id));
+        
+        let assignments = PersistentTestAssignments {
+            assignment_file,
+            file_semaphore: Arc::new(Semaphore::new(10)),
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        // Clean up any existing state first
+        let _ = assignments.clear_all_assignments().await;
 
         // Test creating assignment
         let assignment1 = assignments.get_or_create_assignment("test_collection_1").await.unwrap();
@@ -347,8 +371,19 @@ mod tests {
         let assignment3 = assignments.get_or_create_assignment("test_collection_2").await.unwrap();
         assert_ne!(assignment1.data_url, assignment3.data_url);
 
-        // Clean up
-        assignments.remove_assignment("test_collection_1").await.unwrap();
-        assignments.remove_assignment("test_collection_2").await.unwrap();
+        // Clean up assignments and directories
+        let _ = assignments.remove_assignment("test_collection_1").await;
+        let _ = assignments.remove_assignment("test_collection_2").await;
+        
+        // Clean up the actual directories if they exist
+        for collection in &["test_collection_1", "test_collection_2"] {
+            let dir_path = format!("/tmp/proximadb_test_{}", collection);
+            if std::path::Path::new(&dir_path).exists() {
+                let _ = tokio::fs::remove_dir_all(&dir_path).await;
+            }
+        }
+        
+        // Clean up the test assignment file
+        let _ = assignments.clear_all_assignments().await;
     }
 }

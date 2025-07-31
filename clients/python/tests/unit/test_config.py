@@ -23,7 +23,6 @@ class TestProtocolEnum:
     def test_protocol_values(self):
         """Test protocol enum values"""
         assert Protocol.AUTO.value == "auto"
-        assert Protocol.AVRO.value == "avro"
         assert Protocol.GRPC.value == "grpc"
         assert Protocol.REST.value == "rest"
 

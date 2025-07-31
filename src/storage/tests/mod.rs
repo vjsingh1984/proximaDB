@@ -11,3 +11,6 @@ pub mod storage_engine_concurrency_tests;
 
 #[cfg(test)]
 pub mod atomic_write_tests;
+
+#[cfg(test)]
+pub mod storage_engine_simple_tests;

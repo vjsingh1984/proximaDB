@@ -256,7 +256,7 @@ class ProximaDBClient:
         """Convert proto StorageEngine to Pydantic StorageEngine"""
         mapping = {
             1: StorageEngine.VIPER,
-            2: StorageEngine.LSM,
+            2: StorageEngine.SST,
             3: StorageEngine.MMAP,
             4: StorageEngine.HYBRID,
         }
@@ -315,7 +315,7 @@ class ProximaDBClient:
         """Convert Pydantic StorageEngine to proto StorageEngine"""
         mapping = {
             StorageEngine.VIPER: pb2.StorageEngine.VIPER,
-            StorageEngine.LSM: pb2.StorageEngine.LSM,
+            StorageEngine.SST: pb2.StorageEngine.SST,
             StorageEngine.MMAP: pb2.StorageEngine.MMAP,
             StorageEngine.HYBRID: pb2.StorageEngine.HYBRID,
         }

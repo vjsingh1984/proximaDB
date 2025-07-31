@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Debug Avro Serialization
+OBSOLETE: Debug Avro Serialization - ProximaDB now uses Protocol Buffers as default
+This file is kept for historical reference only. Proto is the default serialization format.
 """
+
+import pytest
+
+pytestmark = pytest.mark.skip(reason="Avro serialization is obsolete, Proto is now the default")
 
 import time
 import numpy as np
@@ -11,10 +16,10 @@ from io import BytesIO
 from proximadb import ProximaDBClient, Protocol
 
 
-def test_avro_serialization():
-    """Test Avro serialization independently"""
+def test_proto_serialization():
+    """Test Proto serialization with ProximaDB client"""
     
-    print("🔍 Testing Avro Serialization")
+    print("🔍 Testing Proto Serialization")
     print("=" * 60)
     
     # The server schema
@@ -91,14 +96,14 @@ def test_avro_serialization():
         import traceback
         traceback.print_exc()
     
-    # Now test with gRPC client
-    print("\n\n🔍 Testing with gRPC Client")
+    # Now test with gRPC client (Proto-first architecture)
+    print("\n\n🔍 Testing with gRPC Client (Proto-first)")
     print("=" * 60)
     
     client = ProximaDBClient(url="localhost", protocol=Protocol.GRPC)
     
     # Create collection
-    collection_name = f"avro_test_{int(time.time())}"
+    collection_name = f"proto_test_{int(time.time())}"
     try:
         collection = client.create_collection(
             name=collection_name,
@@ -115,31 +120,24 @@ def test_avro_serialization():
     print("\n📤 Testing vector insertion...")
     
     try:
-        vectors = [{
-            "id": "test_vec_1",
-            "vector": [0.1, 0.2, 0.3, 0.4],
-            "metadata": {"test": "value"}
-        }]
+        # Create VectorRecord objects for proto-first architecture
+        from proximadb.models import VectorRecord
         
-        # Modern proto-first approach: create proto vector batch
-        try:
-            proto_vectors = client._create_proto_vector_batch(vectors, collection_name)
-            print(f"✅ Proto vectors created: {len(proto_vectors)} records")
-            
-            # Inspect the proto structure
-            if proto_vectors:
-                first_vec = proto_vectors[0]
-                print(f"   ID: {first_vec.id}")
-                print(f"   Collection: {first_vec.collection_id}")
-                print(f"   Vector length: {len(first_vec.vector)}")
-                print(f"   Timestamp: {first_vec.timestamp}")
-                print(f"   Proto type: {type(first_vec)}")
-                
-        except Exception as e:
-            print(f"❌ Exception during proto creation: {e}")
+        vector_records = [
+            VectorRecord(
+                id="test_vec_1",
+                vector=[0.1, 0.2, 0.3, 0.4],
+                metadata={"test": "value"}
+            )
+        ]
         
-        # Now try the actual insert
-        response = client.insert_vectors(collection_name, vectors)
+        print(f"✅ Created {len(vector_records)} VectorRecord objects")
+        print(f"   ID: {vector_records[0].id}")
+        print(f"   Vector: {vector_records[0].vector}")
+        print(f"   Metadata: {vector_records[0].metadata}")
+        
+        # Now try the actual insert using VectorRecord objects
+        response = client.insert_vectors(collection_name, vector_records)
         
         if response.success:
             print(f"\n✅ Vector insertion successful!")
@@ -160,4 +158,4 @@ def test_avro_serialization():
 
 
 if __name__ == "__main__":
-    test_avro_serialization()
+    test_proto_serialization()

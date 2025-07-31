@@ -14,6 +14,8 @@ pub mod unified_search_engine;
 // Test modules
 #[cfg(test)]
 pub mod bloom_filter_tests;
+#[cfg(test)]
+pub mod compaction_coverage_tests;
 
 // Re-export main types
 pub use bloom_filter::{

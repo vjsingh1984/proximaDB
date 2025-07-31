@@ -1,112 +1,132 @@
-%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#fff', 'primaryBorderColor':'#333', 'fontFamily':'Arial', 'fontSize':'14px'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#2d3748', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#4a5568', 'lineColor':'#718096', 'fontSize':'10px', 'fontFamily':'JetBrains Mono, monospace'}}}%%
 classDiagram
-    class WalManager {
-        <<orchestrator>>
-        -serializers: HashMap~String, WalSerializationStrategy~
-        -memtable_manager: WalMemtableManager
-        -disk_manager: WalDiskManager
-        -recovery_manager: WalRecoveryManager
+    %% Strategy Pattern Implementation for Write Buffer Serialization
+    
+    class WriteBufferManager {
+        📁 storage/persistence/write_buffer/mod.rs
+        -strategy: Box~dyn SerializationStrategy~
+        -batch_coordinator: BatchSyncCoordinator
         -flush_coordinator: FlushCoordinator
-        +write_vectors(collection_id, vectors, format)
-        +search_vectors(query)
-        +recover_all()
+        +new(strategy: SerializationStrategy) WriteBufferManager
+        +write_batch(vectors: Vec~VectorRecord~) Result~()~
+        +flush_to_storage() Result~FlushResult~
+        +set_strategy(strategy: SerializationStrategy)
+        🎯 Strategy Pattern Coordinator
     }
     
-    class WalSerializationStrategy {
+    class SerializationStrategy {
         <<interface>>
-        +serialize(vectors) Vec~u8~
-        +deserialize(data) Vec~VectorRecord~
-        +format_name() str
+        📁 storage/persistence/write_buffer/
+        +serialize(data: &VectorBatch) Result~Vec~u8~~
+        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +get_format_name() &str
+        +supports_schema_evolution() bool
+        ⚡ Pluggable Serialization Interface
     }
     
-    class ProtoWalSerializer {
-        +serialize(vectors)
-        +deserialize(data)
-        +format_name() "proto"
-    }
-    note for ProtoWalSerializer "Native protobuf format"
-    
-    class AvroWalSerializer {
-        +serialize(vectors)
-        +deserialize(data)
-        +format_name() "avro"
-    }
-    note for AvroWalSerializer "Schema evolution support"
-    
-    class BincodeWalSerializer {
-        +serialize(vectors)
-        +deserialize(data)
-        +format_name() "bincode"
-    }
-    note for BincodeWalSerializer "High-performance binary"
-    
-    class WalMemtableManager {
-        <<memory operations>>
-        -memtable: GlobalPartitionedMemtable
-        +add_vectors(collection_id, vectors)
-        +search_vectors(query)
-        +should_flush(collection_id)
-        +clear_flushed(collection_id, sequences)
+    class ProtoSerializationStrategy {
+        📁 proto_serialization_strategy.rs
+        -schema_registry: ProtoSchemaRegistry
+        +serialize(data: &VectorBatch) Result~Vec~u8~~
+        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +get_format_name() "protobuf"
+        +supports_schema_evolution() true
+        🔧 Protocol Buffers - Production Default
+        📊 Zero-copy deserialization
+        🔄 Schema evolution support
     }
     
-    class WalDiskManager {
-        <<disk operations>>
-        -filesystem: FilesystemFactory
-        -assignment_service: AssignmentService
-        +write_wal_file(collection_id, data)
-        +read_wal_files(collection_id)
-        +delete_wal_file(path)
-        +list_wal_files()
+    class AvroSerializationStrategy {
+        📁 avro_serialization_strategy.rs
+        -schema: Schema
+        -writer_cache: LruCache~String, Writer~
+        +serialize(data: &VectorBatch) Result~Vec~u8~~
+        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +get_format_name() "avro"
+        +supports_schema_evolution() true
+        🏗️ Apache Avro - Schema Evolution
+        📋 Rich metadata support
+        🔄 Forward/backward compatibility
     }
     
-    class WalRecoveryManager {
-        <<recovery operations>>
-        -disk_manager: WalDiskManager
-        -serializers: HashMap~String, WalSerializationStrategy~
-        -storage_engines: HashMap~String, UnifiedStorageEngine~
-        +recover_all()
-        +recover_collection(collection_id)
-        +get_recovery_stats()
+    class BincodeSerializationStrategy {
+        📁 bincode_serialization_strategy.rs
+        -config: BincodeConfig
+        +serialize(data: &VectorBatch) Result~Vec~u8~~
+        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +get_format_name() "bincode"
+        +supports_schema_evolution() false
+        ⚡ Bincode - High Performance
+        📦 Compact binary format
+        🚀 Fastest serialization
     }
     
-    class DirectVectorService {
-        <<entry point>>
-        -wal_manager: WalManager
-        -collection_service: CollectionService
-        +insert_vectors(collection_id, vectors)
-        +search_vectors(query)
+    class BatchSyncCoordinator {
+        📁 batch_sync_coordinator.rs
+        -active_batches: DashMap~BatchId, BatchMetadata~
+        -serialization_strategy: Arc~dyn SerializationStrategy~
+        +coordinate_batch_write(batch: VectorBatch) Result~BatchId~
+        +sync_batch_to_disk(batch_id: BatchId) Result~()~
+        +get_batch_status(batch_id: BatchId) BatchStatus
+        🔄 Coordinates batched writes
+        ⚛️ ACID transaction support
     }
     
-    class OptimizedWalWriter {
-        <<performance layer>>
-        -write_queue: Channel
-        -assignment_cache: Cache
-        -directory_cache: Cache
-        +write_vectors(collection_id, vectors)
-        +get_metrics()
+    class FlushCoordinator {
+        📁 flush_coordinator.rs
+        -flush_strategy: FlushStrategy
+        -atomic_coordinator: Arc~UnifiedAtomicCoordinator~
+        +schedule_flush(trigger: FlushTrigger) Result~()~
+        +execute_flush() Result~FlushResult~
+        +get_flush_stats() FlushStatistics
+        💾 Manages write buffer flushes
+        📊 Performance monitoring
     }
-    note for OptimizedWalWriter "14,939 vectors/second"
     
-    %% Inheritance relationships
-    ProtoWalSerializer --|> WalSerializationStrategy : implements
-    AvroWalSerializer --|> WalSerializationStrategy : implements
-    BincodeWalSerializer --|> WalSerializationStrategy : implements
+    class VectorBatch {
+        📁 storage/persistence/write_buffer/
+        +collection_id: String
+        +vectors: Vec~VectorRecord~
+        +metadata: BatchMetadata
+        +timestamp: SystemTime
+        +batch_id: BatchId
+        📦 Batch data container
+        🎯 Optimized for bulk operations
+    }
     
-    %% Composition relationships
-    DirectVectorService --> OptimizedWalWriter : uses
-    DirectVectorService --> WalManager : delegates to
-    WalManager *-- WalSerializationStrategy : contains multiple
-    WalManager *-- WalMemtableManager : orchestrates
-    WalManager *-- WalDiskManager : orchestrates
-    WalManager *-- WalRecoveryManager : orchestrates
-    WalRecoveryManager --> WalDiskManager : uses
-    WalRecoveryManager --> WalSerializationStrategy : uses
+    class BatchMetadata {
+        +batch_size: usize
+        +compression_type: CompressionType
+        +checksum: u64
+        +schema_version: u32
+        📋 Batch processing metadata
+        🔍 Integrity verification
+    }
     
-    %% Clean separation of concerns shown in notes
+    %% Strategy Pattern Relationships
+    WriteBufferManager --> SerializationStrategy : uses
+    SerializationStrategy <|-- ProtoSerializationStrategy : implements
+    SerializationStrategy <|-- AvroSerializationStrategy : implements  
+    SerializationStrategy <|-- BincodeSerializationStrategy : implements
     
-    %% Architecture notes
-    note for WalManager "Clean Separation of Concerns:\n\n• WalManager: Orchestration only\n• Serializers: Format conversion only\n• MemtableManager: Memory operations only\n• DiskManager: I/O operations only\n• RecoveryManager: Recovery logic only\n\nEach component has a single,\nwell-defined responsibility"
+    %% Composition Relationships
+    WriteBufferManager --> BatchSyncCoordinator : coordinates
+    WriteBufferManager --> FlushCoordinator : manages
+    BatchSyncCoordinator --> VectorBatch : processes
+    VectorBatch --> BatchMetadata : contains
     
-    note for OptimizedWalWriter "Performance Achievements:\n\n• Write: 14,939 vectors/second\n• Latency: 0.07ms per vector\n• Memory: 40% reduction\n• Recovery: 10x faster\n\nAchieved through:\n• OptimizedWalWriter batching\n• Clean component boundaries\n• Parallel recovery\n• Direct-to-storage recovery"
+    %% Strategy Selection Logic
+    WriteBufferManager : +select_strategy_by_workload()
+    WriteBufferManager : +get_optimal_strategy(requirements)
     
-    note for WalSerializationStrategy "Serialization Formats:\n\nProto (Default):\n• Native protobuf\n• Zero overhead\n• Cross-language support\n\nAvro:\n• Schema evolution\n• Compression built-in\n• Legacy compatibility\n\nBincode:\n• Rust-native performance\n• Smallest size\n• Fastest serialization"
+    %% Performance Annotations
+    ProtoSerializationStrategy : ⚡ 15MB/s throughput
+    AvroSerializationStrategy : 📊 12MB/s + rich metadata  
+    BincodeSerializationStrategy : 🚀 25MB/s fastest
+    
+    %% Usage Patterns
+    note for ProtoSerializationStrategy "Production Default\n• Schema evolution\n• Cross-language support\n• Compact binary format"
+    
+    note for AvroSerializationStrategy "Analytics Workloads\n• Rich schema metadata\n• Schema registry integration\n• Forward/backward compatibility"
+    
+    note for BincodeSerializationStrategy "High-Performance Scenarios\n• Maximum throughput\n• Rust-native serialization\n• No schema evolution"

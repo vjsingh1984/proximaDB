@@ -4,6 +4,7 @@ Tests for SQL API functionality via REST
 
 import pytest
 import numpy as np
+import json
 from proximadb import connect_rest, ProximaDBError
 from proximadb.models import CollectionConfig, StorageEngine, VectorRecord
 
@@ -15,6 +16,12 @@ class TestSqlApi:
     def client(self, rest_client):
         """Use the shared REST client for testing"""
         return rest_client
+    
+    def _unwrap_result(self, result):
+        """Unwrap SQL result if it's wrapped in a response object"""
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
     
     @pytest.fixture
     def test_collection(self, client):
@@ -28,10 +35,10 @@ class TestSqlApi:
             pass
         
         # Create collection
-        client.create_collection(
+        collection = client.create_collection(
             name=collection_name,
             dimension=128,
-            storage_engine=StorageEngine.LSM
+            storage_engine=StorageEngine.SST
         )
         
         # Insert test vectors with metadata
@@ -51,6 +58,7 @@ class TestSqlApi:
         
         client.insert_vectors(collection_name, vectors)
         
+        # Return the collection name for SQL queries (server now resolves to UUID)
         yield collection_name
         
         # Cleanup
@@ -62,7 +70,7 @@ class TestSqlApi:
     def test_basic_vector_similarity_query(self, client, test_collection):
         """Test basic vector similarity SQL query"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata
@@ -72,14 +80,15 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
-        assert "rows" in result
-        assert "row_count" in result
-        assert result["row_count"] == 5
-        assert len(result["rows"]) == 5
+        assert "rows" in actual_result
+        assert "row_count" in actual_result
+        assert actual_result["row_count"] == 5
+        assert len(actual_result["rows"]) == 5
         
         # Check each row has expected fields
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             assert "id" in row
             assert "metadata" in row
             assert row["id"].startswith("vec_")
@@ -87,7 +96,7 @@ class TestSqlApi:
     def test_vector_similarity_with_metadata_filter(self, client, test_collection):
         """Test vector similarity query with metadata filtering"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata.category, metadata.price
@@ -98,18 +107,19 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
-        assert result["row_count"] <= 3
+        assert actual_result["row_count"] <= 3
         
         # Verify all results have electronics category
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             assert row.get("metadata.category") == "electronics" or \
                    (isinstance(row.get("metadata"), dict) and row["metadata"].get("category") == "electronics")
     
     def test_different_distance_metrics(self, client, test_collection):
         """Test different distance metrics in vector similarity"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         # Test cosine similarity
         sql_cosine = f"""
@@ -118,7 +128,8 @@ class TestSqlApi:
         LIMIT 3
         """
         result_cosine = client.execute_sql(sql_cosine)
-        assert result_cosine["row_count"] == 3
+        actual_cosine = self._unwrap_result(result_cosine)
+        assert actual_cosine["row_count"] == 3
         
         # Test euclidean distance
         sql_euclidean = f"""
@@ -127,11 +138,12 @@ class TestSqlApi:
         LIMIT 3
         """
         result_euclidean = client.execute_sql(sql_euclidean)
-        assert result_euclidean["row_count"] == 3
+        actual_euclidean = self._unwrap_result(result_euclidean)
+        assert actual_euclidean["row_count"] == 3
         
         # Results might be different due to different metrics
-        ids_cosine = [row["id"] for row in result_cosine["rows"]]
-        ids_euclidean = [row["id"] for row in result_euclidean["rows"]]
+        ids_cosine = [row["id"] for row in actual_cosine["rows"]]
+        ids_euclidean = [row["id"] for row in actual_euclidean["rows"]]
         # Can't guarantee order is different, but both should return valid results
         assert all(id.startswith("vec_") for id in ids_cosine)
         assert all(id.startswith("vec_") for id in ids_euclidean)
@@ -139,7 +151,7 @@ class TestSqlApi:
     def test_complex_metadata_conditions(self, client, test_collection):
         """Test complex metadata filtering conditions"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata.price, metadata.in_stock
@@ -150,9 +162,10 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
         # Verify conditions are met
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             if isinstance(row.get("metadata"), dict):
                 assert row["metadata"]["price"] > 80
                 assert row["metadata"]["in_stock"] is True
@@ -164,7 +177,7 @@ class TestSqlApi:
     def test_select_specific_fields(self, client, test_collection):
         """Test selecting specific fields including vector"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, vector, metadata.name
@@ -174,10 +187,11 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
-        assert result["row_count"] == 2
+        assert actual_result["row_count"] == 2
         
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             assert "id" in row
             assert "vector" in row
             assert isinstance(row["vector"], list)
@@ -188,7 +202,7 @@ class TestSqlApi:
     def test_offset_and_limit(self, client, test_collection):
         """Test OFFSET and LIMIT clauses"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         # First query without offset
         sql1 = f"""
@@ -198,7 +212,8 @@ class TestSqlApi:
         LIMIT 5
         """
         result1 = client.execute_sql(sql1)
-        ids1 = [row["id"] for row in result1["rows"]]
+        actual1 = self._unwrap_result(result1)
+        ids1 = [row["id"] for row in actual1["rows"]]
         
         # Second query with offset
         sql2 = f"""
@@ -208,7 +223,8 @@ class TestSqlApi:
         LIMIT 5 OFFSET 3
         """
         result2 = client.execute_sql(sql2)
-        ids2 = [row["id"] for row in result2["rows"]]
+        actual2 = self._unwrap_result(result2)
+        ids2 = [row["id"] for row in actual2["rows"]]
         
         # Check that offset worked correctly
         assert ids1[3] == ids2[0]  # 4th item from first query should be 1st in second
@@ -217,7 +233,7 @@ class TestSqlApi:
     def test_collection_hint_parameter(self, client, test_collection):
         """Test using collection parameter hint"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         # Query without FROM clause, using collection parameter
         sql = f"""
@@ -227,9 +243,10 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql, collection=test_collection)
+        actual_result = self._unwrap_result(result)
         
-        assert result["row_count"] == 3
-        assert len(result["rows"]) == 3
+        assert actual_result["row_count"] == 3
+        assert len(actual_result["rows"]) == 3
     
     def test_invalid_query_syntax(self, client, test_collection):
         """Test error handling for invalid SQL syntax"""
@@ -242,7 +259,7 @@ class TestSqlApi:
     def test_nonexistent_collection(self, client):
         """Test querying non-existent collection"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id
@@ -251,15 +268,27 @@ class TestSqlApi:
         LIMIT 5
         """
         
-        with pytest.raises(Exception) as exc_info:
-            client.execute_sql(sql)
-        
-        assert "not found" in str(exc_info.value).lower() or "collection" in str(exc_info.value).lower()
+        # Try executing the SQL - it might return an error response instead of raising
+        try:
+            result = client.execute_sql(sql)
+            # If it doesn't raise, check if it returns an error response
+            if isinstance(result, dict):
+                if "error" in result or "error_message" in result:
+                    error_msg = result.get("error") or result.get("error_message", "")
+                    assert "not found" in str(error_msg).lower() or "collection" in str(error_msg).lower()
+                else:
+                    # If no error in response, the test should fail
+                    pytest.fail("Expected error for non-existent collection, but query succeeded")
+            else:
+                pytest.fail("Expected error for non-existent collection, but query succeeded")
+        except Exception as e:
+            # If it does raise an exception, that's also fine
+            assert "not found" in str(e).lower() or "collection" in str(e).lower()
     
     def test_empty_result_set(self, client, test_collection):
         """Test query that returns no results"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         # Query with impossible condition
         sql = f"""
@@ -271,14 +300,15 @@ class TestSqlApi:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
-        assert result["row_count"] == 0
-        assert len(result["rows"]) == 0
+        assert actual_result["row_count"] == 0
+        assert len(actual_result["rows"]) == 0
     
     def test_all_distance_metrics(self, client, test_collection):
         """Test all supported distance metrics"""
         query_vector = np.random.rand(128).tolist()
-        query_vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
+        query_vector_str = json.dumps(query_vector)
         
         metrics = ['cosine', 'euclidean', 'manhattan', 'dot']
         
@@ -291,8 +321,9 @@ class TestSqlApi:
             """
             
             result = client.execute_sql(sql)
-            assert result["row_count"] == 2, f"Failed for metric: {metric}"
-            assert len(result["rows"]) == 2, f"Failed for metric: {metric}"
+            actual_result = self._unwrap_result(result)
+            assert actual_result["row_count"] == 2, f"Failed for metric: {metric}"
+            assert len(actual_result["rows"]) == 2, f"Failed for metric: {metric}"
     
     def test_metadata_only_query(self, client, test_collection):
         """Test metadata-only query without vector search"""
@@ -306,9 +337,10 @@ class TestSqlApi:
         
         try:
             result = client.execute_sql(sql)
+            actual_result = self._unwrap_result(result)
             # If supported, verify results
-            if result["row_count"] > 0:
-                for row in result["rows"]:
+            if actual_result["row_count"] > 0:
+                for row in actual_result["rows"]:
                     metadata = row.get("metadata", {})
                     if isinstance(metadata, dict):
                         assert metadata.get("category") == "books"

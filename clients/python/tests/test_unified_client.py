@@ -119,7 +119,7 @@ def test_type_conversion_helpers():
     
     # Test storage engine conversion
     assert client._proto_to_pydantic_storage_engine(1) == StorageEngine.VIPER
-    assert client._proto_to_pydantic_storage_engine(2) == StorageEngine.LSM
+    assert client._proto_to_pydantic_storage_engine(2) == StorageEngine.SST
     assert client._proto_to_pydantic_storage_engine(3) == StorageEngine.MMAP
     
     # Test indexing algorithm conversion

@@ -802,8 +802,11 @@ impl UnifiedHandlers {
             debug!("Collection hint provided: {}", coll);
         }
         
-        // Create SQL engine instance
-        let sql_engine = SqlEngine::new(self.direct_vector_service.clone());
+        // Create SQL engine instance with collection service for name resolution
+        let sql_engine = SqlEngine::with_collection_service(
+            self.direct_vector_service.clone(),
+            self.collection_service.clone(),
+        );
         
         // Execute the query
         let result = sql_engine.execute(&query).await

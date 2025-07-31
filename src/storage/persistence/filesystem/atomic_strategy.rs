@@ -177,7 +177,12 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
     ) -> FsResult<()> {
         // Create parent directories if needed
         if let Some(parent) = Path::new(final_path).parent() {
-            filesystem.create_dir_all(&parent.to_string_lossy()).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
+                return Err(FilesystemError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create parent directory {}: {}", parent.display(), e)
+                )));
+            }
         }
 
         // Direct write - fastest but not atomic
@@ -294,7 +299,10 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         };
         
         if let Some(parent) = temp_parent {
-            filesystem.create_dir_all(&parent).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent).await {
+                tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
+                // Try to continue, as the directory might already exist
+            }
         }
         
         let final_parent = if final_path.contains("://") {
@@ -309,7 +317,12 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         };
         
         if let Some(parent) = final_parent {
-            filesystem.create_dir_all(&parent).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent).await {
+                return Err(FilesystemError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create parent directory {}: {}", parent, e)
+                )));
+            }
         }
 
         // Write to temp file

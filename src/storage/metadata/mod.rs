@@ -22,6 +22,9 @@ pub mod store;
 pub mod unified_index;
 pub mod write_buffer;
 
+#[cfg(test)]
+mod atomic_tests;
+
 
 use crate::storage::strategy::CollectionStrategyConfig;
 use anyhow::Result;

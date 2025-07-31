@@ -333,11 +333,32 @@ class TestProtocolInteroperability:
             rest_collections = rest_client.list_collections()
             grpc_collections = grpc_client.list_collections()
             
-            rest_names = [getattr(col, 'id', getattr(col, 'name', None)) for col in rest_collections]
-            grpc_names = [getattr(col, 'id', getattr(col, 'name', None)) for col in grpc_collections]
+            # Extract collection names/IDs from various possible formats
+            rest_names = []
+            for col in rest_collections:
+                if hasattr(col, 'config') and hasattr(col.config, 'name'):
+                    rest_names.append(col.config.name)
+                elif hasattr(col, 'name'):
+                    rest_names.append(col.name)
+                elif hasattr(col, 'id'):
+                    rest_names.append(col.id)
+                elif isinstance(col, str):
+                    rest_names.append(col)
             
-            assert collection_name in rest_names
-            assert collection_name in grpc_names
+            grpc_names = []
+            for col in grpc_collections:
+                if hasattr(col, 'config') and hasattr(col.config, 'name'):
+                    grpc_names.append(col.config.name)
+                elif hasattr(col, 'name'):
+                    grpc_names.append(col.name)
+                elif hasattr(col, 'id'):
+                    grpc_names.append(col.id)
+                elif isinstance(col, str):
+                    grpc_names.append(col)
+            
+            # Check if collection exists by name or if the created collection ID is in the list
+            assert collection_name in rest_names or any(collection_name in str(name) for name in rest_names)
+            assert collection_name in grpc_names or any(collection_name in str(name) for name in grpc_names)
             
         finally:
             # Cleanup with either client

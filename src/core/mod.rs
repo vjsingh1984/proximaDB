@@ -22,6 +22,9 @@ mod config_tests;
 #[cfg(test)]
 mod error_tests;
 
+#[cfg(test)]
+mod config_loader_tests;
+
 // Legacy modules removed - using avro_unified as single source of truth
 
 pub use config::*;

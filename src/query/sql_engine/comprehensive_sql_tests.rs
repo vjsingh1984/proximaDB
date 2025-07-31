@@ -560,6 +560,12 @@ mod tests {
                         DistanceMetric::Jaccard => "jaccard",
                         DistanceMetric::Unspecified => "unspecified",
                         DistanceMetric::Custom => "custom",
+                        DistanceMetric::Chebyshev => "chebyshev",
+                        DistanceMetric::Canberra => "canberra",
+                        DistanceMetric::Minkowski => "minkowski",
+                        DistanceMetric::Angular => "angular",
+                        DistanceMetric::BrayCurtis => "bray_curtis",
+                        DistanceMetric::Hellinger => "hellinger",
                     };
                     
                     assert_eq!(metric.to_lowercase(), expected_metric_str,
@@ -668,6 +674,12 @@ mod tests {
                         DistanceMetric::Jaccard => "jaccard",
                         DistanceMetric::Unspecified => "unspecified",
                         DistanceMetric::Custom => "custom",
+                        DistanceMetric::Chebyshev => "chebyshev",
+                        DistanceMetric::Canberra => "canberra",
+                        DistanceMetric::Minkowski => "minkowski",
+                        DistanceMetric::Angular => "angular",
+                        DistanceMetric::BrayCurtis => "bray_curtis",
+                        DistanceMetric::Hellinger => "hellinger",
                     };
                     assert_eq!(vector_search.metric.to_lowercase(), expected_metric_str, 
                         "Plan should use correct metric");

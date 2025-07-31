@@ -1,72 +1,25 @@
+exclude = []
+
 [report]
-# Configure tarpaulin to avoid segfaults
-# Generated configuration to handle tarpaulin-specific issues
-
-# Output formats
-out = ["Json", "Html", "Xml"]
-
-# Coverage settings
+out = [ "Json", "Html", "Xml",]
 follow-exec = true
 implicit-test-threads = false
-
-# Avoid instrumentation issues that cause segfaults
 avoid-cfg-tarpaulin = true
-
-# Exclude problematic modules that cause segfaults under tarpaulin
-exclude = [
-    # Exclude low-level distance computation that has instrumentation issues
-    "*/compute/distance.rs",
-    "*/compute/unified_distance.rs",
-    
-    # Exclude complex recursive index structures 
-    "*/index/axis/annoy_index.rs",
-    "*/index/axis/hnsw_integration.rs",
-    "*/index/axis/strategy_tests.rs",
-    "*/index/axis/manager.rs",
-    "*/index/axis/adaptive_engine.rs",
-    
-    # Exclude hardware-specific SIMD code that conflicts with instrumentation
-    "*/compute/hardware.rs",
-    
-    # Exclude tests that are known to cause segfaults under tarpaulin
-    "*test_storage_layout*",
-    "*storage_layout*",
-    "*test_collection_statistics_creation*"
-]
-
-# Skip tests that consistently cause segfaults
+exclude = []
 skip-clean = true
-timeout = "600s"  # 10 minutes timeout
+timeout = "600s"
 workspace = true
-
-# Performance configuration
-jobs = 20  # Run with 20 threads for better performance
-
-# Use release builds for better stability under instrumentation
-release = true  # Release builds are more stable with tarpaulin
+jobs = 20
+release = true
 all-features = false
 default-features = true
 
-# Target only library code, not integration tests that may cause issues
-lib = true
-tests = true  # Enable tests but use exclude list to filter problematic ones
-examples = false
-benches = false
-
-# Note: Using release builds for better stability
-# Release builds have different binary hashes and are generally more stable
-
-# Use engine that's more stable with complex codebases
-engine = "llvm"
-
-# Additional safety settings
-run-types = ["Tests"]
+[profile.release]
+panic = "unwind"
+debug = 2
+all-targets = true
+engine = "Llvm"
+run-types = [ "Lib", "Tests",]
 target-dir = "target/tarpaulin"
-
-# Exclude workspace members that don't have Cargo.toml
-exclude-files = [
-    "clients/python/*"
-]
-
-# Only process the main Rust workspace
+exclude-files = [ "clients/python/*",]
 root = "."

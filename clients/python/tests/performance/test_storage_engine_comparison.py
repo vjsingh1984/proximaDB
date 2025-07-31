@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Storage Engine Performance Comparison Test
-Tests LSM vs VIPER with 1K, 5K, and 25K vectors
+Tests SST vs VIPER with 1K, 5K, and 25K vectors
 Includes both insert and search performance
 """
 
@@ -34,7 +34,7 @@ def calculate_optimal_batch_size(dimension: int, safety_margin: float = 0.8) -> 
 
 
 class StorageEngineComparisonTest:
-    """Compare LSM and VIPER storage engines"""
+    """Compare SST and VIPER storage engines"""
     
     def __init__(self):
         self.base_url = "http://localhost:5678"
@@ -47,14 +47,14 @@ class StorageEngineComparisonTest:
             {"size": 25000, "name": "25K"}
         ]
         
-        self.engines = ["LSM", "VIPER"]
+        self.engines = ["SST", "VIPER"]
         self.results = []
     
     def run_test(self):
         """Run the comparison test"""
         print("🚀 Storage Engine Performance Comparison")
         print("=" * 80)
-        print(f"Testing LSM vs VIPER with {[c['name'] for c in self.test_configs]} vectors")
+        print(f"Testing SST vs VIPER with {[c['name'] for c in self.test_configs]} vectors")
         print(f"Dimension: {self.dimension}")
         print(f"Optimal batch size: {calculate_optimal_batch_size(self.dimension):,} vectors")
         print()
@@ -337,16 +337,16 @@ class StorageEngineComparisonTest:
                 }
         
         if len(engine_stats) == 2:
-            lsm_rate = engine_stats.get("LSM", {}).get("avg_insert_rate", 0)
+            sst_rate = engine_stats.get("SST", {}).get("avg_insert_rate", 0)
             viper_rate = engine_stats.get("VIPER", {}).get("avg_insert_rate", 0)
             
             print(f"\n  Insert Performance:")
-            print(f"  - LSM average: {lsm_rate:.0f} vectors/second")
+            print(f"  - SST average: {sst_rate:.0f} vectors/second")
             print(f"  - VIPER average: {viper_rate:.0f} vectors/second")
             
             if viper_rate > 0:
-                ratio = lsm_rate / viper_rate
-                print(f"  - LSM is {ratio:.1f}x vs VIPER for inserts")
+                ratio = sst_rate / viper_rate
+                print(f"  - SST is {ratio:.1f}x vs VIPER for inserts")
             
             print(f"\n  Search Performance:")
             print(f"  - Both engines achieve sub-100ms latency")
@@ -373,7 +373,7 @@ def main():
     if success:
         print("\n✅ Test completed successfully!")
         print("\nKey Findings:")
-        print("  • Both LSM and VIPER tested with 1K, 5K, 25K vectors")
+        print("  • Both SST and VIPER tested with 1K, 5K, 25K vectors")
         print("  • Insert and search performance measured")
         print("  • Results show storage engine performance characteristics")
         return 0

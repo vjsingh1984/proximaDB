@@ -1,55 +1,117 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1a365d', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#2c5282', 'lineColor':'#4299e1', 'fontSize':'11px', 'fontFamily':'Inter, sans-serif'}}}%%
 graph TB
-    subgraph "Unified Quantization Engine"
-        UQE[UnifiedQuantizationEngine<br/>Single Entry Point]
+    %% Vector Input Processing
+    subgraph VectorInput["📥 High-Dimensional Vector Input"]
+        OriginalVectors["Original Vectors<br/>🔢 128-4096 Dimensions<br/>💾 Float32 Precision<br/>📊 Large Memory Footprint"]
         
-        subgraph "Quantization Types"
-            BINARY[Binary Quantization<br/>1-bit compression]
-            SCALAR[Scalar Quantization<br/>INT8/INT16]
-            PQ[Product Quantization<br/>PQ4/PQ8]
-        end
+        VectorAnalysis["Vector Analysis<br/>📊 Dimensionality Analysis<br/>📈 Distribution Profiling<br/>🎯 Quantization Strategy Selection"]
+    end
+    
+    %% Quantization Methods
+    subgraph QuantMethods["🗜️ Quantization Methods"]
+        ScalarQuant["Scalar Quantization<br/>📁 compute/unified_quantization.rs<br/>🔢 Float32 → Int8/Int16<br/>📉 4-8x Size Reduction<br/>⚡ Hardware SIMD Support"]
         
-        subgraph "Hardware Acceleration"
-            SIMD[SIMD Detection<br/>AVX/SSE/NEON]
-            GPU[GPU Support<br/>CUDA/ROCm/MPS]
-            CACHE[CPU Cache<br/>L1/L2/L3 Detection]
-        end
+        ProductQuant["Product Quantization (PQ)<br/>📊 Vector Subspace Clustering<br/>🏗️ Codebook-based Compression<br/>📉 16-64x Size Reduction<br/>🎯 Learned Representations"]
+        
+        BinaryQuant["Binary Quantization<br/>🔑 Float32 → Binary<br/>📉 32x Size Reduction<br/>⚡ Ultra-fast Hamming Distance<br/>🎯 Extreme Compression"]
     end
     
-    subgraph "Storage Integration"
-        VIPER_Q[VIPER Quantization<br/>Column Projection]
-        SST_Q[SST Quantization<br/>Row-based Storage]
-        WriteBuffer_Q[WriteBuffer Quantization<br/>In-memory Cache]
+    %% Adaptive Selection Engine
+    subgraph AdaptiveEngine["🤖 Adaptive Selection Engine"]
+        WorkloadProfiler["Workload Profiler<br/>📊 Query Pattern Analysis<br/>⏱️ Latency vs Accuracy Trade-offs<br/>📈 Performance Monitoring"]
+        
+        StrategySelector["Strategy Selector<br/>🎯 Optimal Method Selection<br/>🔄 Dynamic Switching<br/>📊 Multi-objective Optimization"]
+        
+        AccuracyMonitor["Accuracy Monitor<br/>🎯 Precision Tracking<br/>📊 Quality Metrics<br/>⚠️ Degradation Detection"]
     end
     
-    subgraph "Search Optimization"
-        TWO_STAGE[Two-Stage Search<br/>Candidate Selection]
-        REFINE[Refinement<br/>FP32 Accuracy]
-        MULTIPLIER[Candidate Multiplier<br/>Default: 3x]
+    %% Hardware Acceleration
+    subgraph HardwareAccel["🚀 Hardware Acceleration"]
+        SIMDOps["SIMD Operations<br/>📁 compute/distance/avx512.rs<br/>⚡ AVX-512/NEON Instructions<br/>🔢 Vectorized Quantization<br/>📈 8-16x Throughput"]
+        
+        GPUAccel["GPU Acceleration<br/>🖥️ CUDA/ROCm Support<br/>⚡ Parallel Quantization<br/>📊 Batch Processing<br/>🚀 100x Speedup"]
+        
+        CacheOptim["Cache Optimization<br/>💾 Memory Layout Optimization<br/>📊 Cache-friendly Access Patterns<br/>⚡ Reduced Memory Bandwidth"]
     end
     
-    UQE --> BINARY
-    UQE --> SCALAR
-    UQE --> PQ
+    %% Storage Integration
+    subgraph StorageIntegration["🗄️ Storage Integration"]
+        ViperIntegration["VIPER Integration<br/>📁 engines/viper/quantization.rs<br/>🏗️ Columnar Quantization<br/>📦 Parquet Compression<br/>📊 ML-optimized Format"]
+        
+        SSTIntegration["SST Integration<br/>📁 engines/sst/mod.rs<br/>🧱 Row-based Quantization<br/>🔍 Index Acceleration<br/>📈 Query Performance"]
+        
+        IndexIntegration["Index Integration<br/>📁 index/axis/quantization/<br/>🎯 Quantized Indexes<br/>🔍 Approximate Search<br/>⚡ Memory Efficient"]
+    end
     
-    UQE --> SIMD
-    UQE --> GPU
-    UQE --> CACHE
+    %% Performance Metrics
+    subgraph Performance["📊 Performance & Quality Metrics"]
+        CompressionRatio["Compression Ratio<br/>📉 Scalar: 4-8x<br/>📉 PQ: 16-64x<br/>📉 Binary: 32x<br/>🎯 Configurable Trade-offs"]
+        
+        SearchAccuracy["Search Accuracy<br/>🎯 Scalar: 99.5%+<br/>🎯 PQ: 95-99%<br/>🎯 Binary: 85-95%<br/>📊 Application-dependent"]
+        
+        QuerySpeed["Query Speed<br/>⚡ 2-10x Faster Search<br/>🚀 Reduced Memory Bandwidth<br/>💾 Better Cache Utilization<br/>📈 Linear Scaling"]
+    end
     
-    BINARY --> VIPER_Q
-    SCALAR --> VIPER_Q
-    PQ --> VIPER_Q
+    %% Usage Patterns
+    subgraph UsagePatterns["🎯 Usage Pattern Optimization"]
+        AnalyticsWorkload["Analytics Workload<br/>📊 Product Quantization<br/>🏗️ High Compression<br/>📈 Batch Processing<br/>🎯 Accuracy Focus"]
+        
+        RealtimeWorkload["Real-time Workload<br/>⚡ Scalar Quantization<br/>🚀 Low Latency<br/>⚡ Hardware Acceleration<br/>🎯 Speed Focus"]
+        
+        ArchiveWorkload["Archive Workload<br/>🗜️ Binary Quantization<br/>💰 Storage Cost Optimization<br/>📦 Maximum Compression<br/>🎯 Cost Focus"]
+    end
     
-    BINARY --> SST_Q
-    SCALAR --> SST_Q
-    PQ --> SST_Q
+    %% Data Flow
+    OriginalVectors --> VectorAnalysis
+    VectorAnalysis --> WorkloadProfiler
     
-    VIPER_Q --> TWO_STAGE
-    SST_Q --> TWO_STAGE
-    WriteBuffer_Q --> TWO_STAGE
+    WorkloadProfiler --> StrategySelector
+    StrategySelector --> ScalarQuant
+    StrategySelector --> ProductQuant
+    StrategySelector --> BinaryQuant
     
-    TWO_STAGE --> REFINE
-    TWO_STAGE --> MULTIPLIER
+    ScalarQuant --> SIMDOps
+    ProductQuant --> GPUAccel
+    BinaryQuant --> CacheOptim
     
-    style UQE fill:#f9f,stroke:#333,stroke-width:2px
-    style TWO_STAGE fill:#bbf,stroke:#333,stroke-width:2px
-    style SIMD fill:#bfb,stroke:#333,stroke-width:2px
+    SIMDOps --> ViperIntegration
+    GPUAccel --> SSTIntegration
+    CacheOptim --> IndexIntegration
+    
+    %% Performance Monitoring
+    ViperIntegration --> AccuracyMonitor
+    SSTIntegration --> AccuracyMonitor
+    IndexIntegration --> AccuracyMonitor
+    
+    AccuracyMonitor --> CompressionRatio
+    AccuracyMonitor --> SearchAccuracy
+    AccuracyMonitor --> QuerySpeed
+    
+    %% Usage Pattern Flows
+    CompressionRatio --> AnalyticsWorkload
+    SearchAccuracy --> RealtimeWorkload
+    QuerySpeed --> ArchiveWorkload
+    
+    %% Performance Annotations
+    ScalarQuant -.->|"4-8x Compression"| CompressionRatio
+    ProductQuant -.->|"16-64x Compression"| CompressionRatio
+    BinaryQuant -.->|"32x Compression"| CompressionRatio
+    SIMDOps -.->|"8-16x Throughput"| QuerySpeed
+    GPUAccel -.->|"100x Speedup"| QuerySpeed
+    
+    %% Styling
+    classDef inputStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff
+    classDef quantStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
+    classDef adaptiveStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
+    classDef hardwareStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
+    classDef storageStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
+    classDef perfStyle fill:#38b2ac,stroke:#319795,stroke-width:2px,color:#ffffff
+    classDef usageStyle fill:#ed8936,stroke:#dd6b20,stroke-width:2px,color:#ffffff
+    
+    class OriginalVectors,VectorAnalysis inputStyle
+    class ScalarQuant,ProductQuant,BinaryQuant quantStyle
+    class WorkloadProfiler,StrategySelector,AccuracyMonitor adaptiveStyle
+    class SIMDOps,GPUAccel,CacheOptim hardwareStyle
+    class ViperIntegration,SSTIntegration,IndexIntegration storageStyle
+    class CompressionRatio,SearchAccuracy,QuerySpeed perfStyle
+    class AnalyticsWorkload,RealtimeWorkload,ArchiveWorkload usageStyle

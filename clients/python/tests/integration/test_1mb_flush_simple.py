@@ -36,7 +36,15 @@ def main():
             "distance_metric": "cosine",
             "storage_layout": "viper"
         }
-        response = requests.post(f"{base_url}/collections", json=create_payload, timeout=30)
+        # Use the correct REST API endpoint for collection creation
+        response = requests.post(
+            f"{base_url}/api/v1/collection",
+            json={
+                "operation": "create",
+                "config": create_payload
+            },
+            timeout=30
+        )
         if response.status_code == 200:
             print(f"✅ Collection created")
         else:
@@ -58,9 +66,14 @@ def main():
                 "metadata": {"index": i}
             }
             
+            # Use the correct REST API endpoint for vector insertion
             response = requests.post(
-                f"{base_url}/collections/{collection_name}/vectors", 
-                json=insert_payload,
+                f"{base_url}/api/v1/vector/batch", 
+                json={
+                    "operation": "insert",
+                    "collection_id": collection_name,
+                    "vectors": [insert_payload]
+                },
                 timeout=10
             )
             

@@ -72,8 +72,9 @@ def verify_collection_persistence(collection_name):
         print(f"\n📁 Checking collection persistence at: {collections_path}")
         
         if os.path.exists(collections_path):
-            # Check for collection metadata files
-            metadata_files = glob.glob(os.path.join(collections_path, "**/*.avro"), recursive=True)
+            # Check for collection metadata files (now using protobuf)
+            metadata_files = glob.glob(os.path.join(collections_path, "**/*.pb"), recursive=True) + \
+                           glob.glob(os.path.join(collections_path, "**/*.proto"), recursive=True)
             if metadata_files:
                 print(f"✅ Found {len(metadata_files)} metadata files")
                 for metadata_file in metadata_files[:3]:  # Show first 3

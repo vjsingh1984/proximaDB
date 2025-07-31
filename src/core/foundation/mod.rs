@@ -11,3 +11,6 @@ pub mod conversion;
 pub use base_traits::*;
 pub use generic_types::*;
 pub use conversion::*;
+
+#[cfg(test)]
+include!("../foundation_tests.rs");

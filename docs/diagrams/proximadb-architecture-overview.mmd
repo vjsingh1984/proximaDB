@@ -1,119 +1,100 @@
-%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#fff', 'primaryBorderColor':'#333', 'fontFamily':'Arial', 'fontSize':'14px'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#2d3748', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#4a5568', 'lineColor':'#718096', 'fontSize':'12px', 'fontFamily':'SF Pro Display, -apple-system, sans-serif'}}}%%
+%%{init: {"elk": {"algorithm": "layered", "spacing": {"nodeNode": 80}}}}%%
 graph TB
-    %% Network Layer
-    subgraph "Network Layer"
-        subgraph "Unified Handlers"
-            UnifiedHandlers["UnifiedHandlers<br/>- collection_service: Arc&lt;CollectionService&gt;<br/>- vector_service: Arc&lt;VectorService&gt;<br/>+ handle_collection_operation(proto_request): proto::CollectionResponse<br/>+ handle_vector_batch(proto_batch): proto::VectorOperationResponse<br/>+ handle_vector_search(proto_query): proto::SearchResponse<br/><br/>&lt;&lt;Proto-First Design&gt;&gt;<br/>Zero double serialization<br/>85% code reduction vs legacy"]
-            
-            RestAdapter["RestAdapter<br/>- unified_handlers: Arc&lt;UnifiedHandlers&gt;<br/>+ collection_endpoint(json): JsonResponse<br/>+ vector_endpoint(json): JsonResponse<br/><br/>JSON ↔ Proto conversion only"]
-            
-            GrpcAdapter["GrpcAdapter<br/>- unified_handlers: Arc&lt;UnifiedHandlers&gt;<br/>+ CreateCollection(request): CreateCollectionResponse<br/>+ InsertVectors(request): InsertVectorsResponse<br/>+ SearchVectors(request): SearchVectorsResponse<br/><br/>Direct proto passthrough"]
+    %% Client Layer
+    RestClient["🌐 REST Client<br/>Port :5678<br/>📊 10-20K ops/sec"] 
+    GrpcClient["⚡ gRPC Client<br/>Port :5679<br/>🚀 49K ops/sec"]
+    
+    %% API Gateway Layer
+    subgraph Gateway["🔄 API Gateway Layer"]
+        RestHandler["REST Handler<br/>📁 handlers/unified_handlers.rs<br/>🔧 JSON ↔ Proto"]
+        GrpcHandler["gRPC Handler<br/>📁 network/grpc/service.rs<br/>⚡ Direct Proto"]
+        UnifiedAPI["Unified API<br/>📁 proto/proximadb.proto<br/>🎯 Single Schema"]
+    end
+    
+    %% Core Services Layer  
+    subgraph CoreServices["⚡ Core Services"]
+        DirectVector["DirectVectorService<br/>📁 services/direct_vector_service.rs<br/>🎯 40-60% Latency Reduction<br/>🔧 Direct Memtable Access"]
+        Collection["CollectionService<br/>📁 services/collection_service.rs<br/>🗃️ Metadata Management"]
+        SQLEngine["SQL Query Engine<br/>📁 query/sql_engine/mod.rs<br/>🔍 Vector Similarity Queries"]
+    end
+    
+    %% Performance Layer
+    subgraph Performance["🚀 Performance Layer"]
+        MemoryPool["Vector Memory Pool<br/>📈 30-50% Allocation Reduction"]
+        QueryCache["Query Plan Cache<br/>⚡ LRU + TTL Caching"]
+        Hardware["Hardware Acceleration<br/>🔧 SIMD + GPU Support"]
+    end
+    
+    %% Storage Engine Layer
+    subgraph StorageLayer["🗄️ Dual Storage Strategy"]
+        StorageCoord["Storage Coordinator<br/>📁 storage/engine.rs<br/>🎯 Engine Selection"]
+        
+        subgraph EngineTypes["Storage Engines"]
+            VIPER["VIPER Engine<br/>📁 storage/engines/viper/<br/>🏗️ Columnar + ML<br/>⭐ Default Choice"]
+            SST["SST Engine<br/>📁 storage/engines/sst/<br/>🧱 Row-based SSTables<br/>🔧 Alternative Option"]
         end
         
-        subgraph "Proto Schema"
-            ProtoTypes["ProtoTypes &lt;&lt;Generated&gt;&gt;<br/>+ proto::proximadb::Collection<br/>+ proto::proximadb::CollectionConfig<br/>+ proto::proximadb::VectorRecord<br/>+ proto::proximadb::SearchQuery<br/>+ proto::proximadb::MetadataItem<br/><br/>Single source of truth<br/>64MB message support"]
+        subgraph IndexSys["🎯 AXIS Indexing"]
+            IndexMgr["Index Manager<br/>📁 index/axis/manager.rs<br/>🤖 Adaptive Selection"]
+            IndexTypes["HNSW • IVF • LSH • Annoy<br/>📊 Multi-Algorithm Support"]
         end
     end
     
-    %% Service Layer
-    subgraph "Service Layer"
-        DirectVectorService["DirectVectorService<br/>- storage_engines: HashMap&lt;String, Arc&lt;dyn StorageEngine&gt;&gt;<br/>- wal_manager: Arc&lt;WalManager&gt;<br/>- axis_manager: Arc&lt;AxisManager&gt;<br/>- collection_service: Arc&lt;CollectionService&gt;<br/>+ insert_vectors(collection_id: &str, vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;()&gt;<br/>+ search_vectors(query: proto::SearchQuery): Result&lt;Vec&lt;proto::SearchResult&gt;&gt;<br/>+ route_to_engine(collection_id: &str): Result&lt;Arc&lt;dyn StorageEngine&gt;&gt;<br/><br/>&lt;&lt;Direct Memtable Access&gt;&gt;<br/>40-60% latency reduction<br/>Engine-specific routing<br/>Collection-aware operations<br/>No unnecessary indirection"]
-        
-        CollectionService["CollectionService<br/>- metadata_backend: Arc&lt;FilestoreMetadataBackend&gt;<br/>- assignment_service: Arc&lt;dyn AssignmentService&gt;<br/>- index_config_cache: Arc&lt;RwLock&lt;HashMap&lt;String, IndexConfig&gt;&gt;&gt;<br/>+ create_collection(config: proto::CollectionConfig): Result&lt;proto::Collection&gt;<br/>+ get_collection(id: String): Result&lt;Option&lt;proto::Collection&gt;&gt;<br/>+ update_collection_stats(id: String, stats: proto::CollectionStats): Result&lt;()&gt;<br/>+ create_storage_directories(assignment: &StorageAssignment): Result&lt;()&gt;<br/><br/>&lt;&lt;Proto-First Collections&gt;&gt;<br/>Direct proto serialization<br/>Unified atomic coordinator<br/>.proto file extensions"]
-        
-        AssignmentService["AssignmentService<br/>- strategy: AssignmentStrategy<br/>- storage_layout: StorageLayoutConfig<br/>- filesystem: Arc&lt;dyn FileSystem&gt;<br/>+ assign_collection_storage(collection_id: &str): StorageAssignment<br/>+ get_assignment(collection_id: &str): Option&lt;StorageAssignment&gt;<br/>+ create_storage_paths(assignment: &StorageAssignment): Result&lt;()&gt;<br/><br/>Multi-disk coordination<br/>Sequential I/O optimization"]
+    %% Persistence Layer
+    subgraph Persistence["💾 Persistence Layer"]
+        WriteBuffer["Write Buffer<br/>📁 storage/persistence/write_buffer/<br/>🔄 Proto/Avro/Bincode"]
+        AtomicCoord["Atomic Coordinator<br/>📁 storage/atomic.rs<br/>⚛️ ACID Transactions"]
     end
     
-    %% Storage Layer
-    subgraph "Storage Layer"
-        subgraph "Storage-Aware Search"
-            StorageSearchEngine["StorageSearchEngine &lt;&lt;interface&gt;&gt;<br/>+ search_vectors(hints: &SearchHints): Result&lt;Vec&lt;SearchResult&gt;&gt;<br/>+ search_capabilities(): SearchCapabilities<br/>+ supports_predicate_pushdown(): bool<br/>+ supports_clustering(): bool"]
-        end
-        
-        ViperEngine["ViperEngine<br/>- parquet_writer: ParquetWriter<br/>- ml_clustering_engine: MLClusteringEngine<br/>- collection_service: Option&lt;Arc&lt;CollectionService&gt;&gt;<br/>- quantization_engine: UnifiedQuantizationEngine<br/>- unified_bloom_filter: Arc&lt;dyn BloomFilterStrategy&gt;<br/>- atomic_coordinator: Arc&lt;UnifiedAtomicCoordinator&gt;<br/>+ generate_dynamic_schema(collection_config: &proto::CollectionConfig): Schema<br/>+ write_vectors_to_parquet(vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;()&gt;<br/>+ predicate_pushdown_search(filters: &HashMap&lt;String, Value&gt;): Result&lt;Vec&lt;SearchResult&gt;&gt;<br/><br/>&lt;&lt;Columnar Storage&gt;&gt;<br/>Parquet predicate pushdown<br/>ML clustering optimization<br/>Vector quantization support<br/>Unified bloom filter design"]
-        
-        LsmEngine["LsmEngine<br/>- memtable: Arc&lt;dyn UnifiedMemtable&gt;<br/>- compaction_manager: CompactionManager<br/>- unified_bloom_filter: Arc&lt;dyn BloomFilterStrategy&gt;<br/>- sst_levels: Vec&lt;LsmLevel&gt;<br/>- manifest: Arc&lt;LsmManifest&gt;<br/>- atomic_coordinator: Arc&lt;UnifiedAtomicCoordinator&gt;<br/>+ write_to_sst(records: Vec&lt;proto::VectorRecord&gt;): Result&lt;()&gt;<br/>+ atomic_compaction(levels: &[LsmLevel]): Result&lt;()&gt;<br/>+ metadata_filter_search(filters: &HashMap&lt;String, Value&gt;): Result&lt;Vec&lt;SearchResult&gt;&gt;<br/><br/>&lt;&lt;Row-based Storage&gt;&gt;<br/>Atomic compaction operations<br/>Unified polymorphic bloom filters<br/>Metadata block-level filtering<br/>Manifest-based SSTable tracking<br/>2.6x query performance"]
-        
-        subgraph "Unified Memtable"
-            UnifiedMemtable["UnifiedMemtable &lt;&lt;interface&gt;&gt;<br/>+ insert(key: String, value: proto::VectorRecord): Result&lt;()&gt;<br/>+ get(key: &str): Option&lt;proto::VectorRecord&gt;<br/>+ scan_range(start: &str, end: &str): Iterator&lt;proto::VectorRecord&gt;<br/>+ flush(): Result&lt;Vec&lt;proto::VectorRecord&gt;&gt;"]
-            
-            GlobalPartitionedMemtable["GlobalPartitionedMemtable<br/>- btree_backend: Arc&lt;BTreeMemtable&gt;<br/>- skiplist_backend: Arc&lt;SkipListMemtable&gt;<br/>- hashmap_backend: Arc&lt;HashMapMemtable&gt;<br/>- dashmap_backend: Arc&lt;DashMapMemtable&gt;<br/><br/>&lt;&lt;40% Code Reduction&gt;&gt;<br/>Polymorphic backend selection<br/>Specialized WriteBuffer/SST wrappers"]
-        end
+    %% Cloud Storage
+    subgraph CloudStorage["☁️ Multi-Cloud Storage"]
+        S3["🔶 Amazon S3"]
+        Azure["🔷 Azure Blob"]
+        GCS["🔴 Google Cloud"]
+        Local["💻 Local Filesystem"]
     end
     
-    %% WriteBuffer & Persistence
-    subgraph "WriteBuffer & Persistence"
-        WalManager["WalManager<br/>- serializers: HashMap&lt;String, WalSerializationStrategy&gt;<br/>- memtable_manager: WalMemtableManager<br/>- disk_manager: WalDiskManager<br/>- recovery_manager: WalRecoveryManager<br/>- flush_coordinator: FlushCoordinator<br/>+ write_vectors(collection_id: &str, vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;Vec&lt;u64&gt;&gt;<br/>+ search_vectors(query: &SearchQuery): Result&lt;Vec&lt;SearchResult&gt;&gt;<br/>+ recover_all(): Result&lt;()&gt;<br/><br/>&lt;&lt;Clean Separation&gt;&gt;<br/>14,939 vectors/second<br/>0.07ms per vector latency<br/>Direct-to-storage recovery"]
-        
-        WalBatchStrategy["WalBatchStrategy &lt;&lt;interface&gt;&gt;<br/>+ serialize_batch(vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;Vec&lt;u8&gt;&gt;<br/>+ deserialize_batch(data: &[u8]): Result&lt;Vec&lt;proto::VectorRecord&gt;&gt;<br/>+ get_format_name(): &str<br/>+ supports_compression(): bool"]
-        
-        ProtoWalBatchStrategy["ProtoWalBatchStrategy<br/>- compression_enabled: bool<br/>+ serialize_batch(vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;Vec&lt;u8&gt;&gt;<br/>+ deserialize_batch(data: &[u8]): Result&lt;Vec&lt;proto::VectorRecord&gt;&gt;<br/><br/>&lt;&lt;Default Strategy&gt;&gt;<br/>Native proto serialization<br/>Zero conversion overhead<br/>Fastest performance"]
-        
-        AvroWalBatchStrategy["AvroWalBatchStrategy<br/>- avro_schema: Schema<br/>+ serialize_batch(vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;Vec&lt;u8&gt;&gt;<br/>+ deserialize_batch(data: &[u8]): Result&lt;Vec&lt;proto::VectorRecord&gt;&gt;<br/><br/>&lt;&lt;Legacy Support&gt;&gt;<br/>Proto → Avro conversion<br/>Backward compatibility"]
-        
-        BincodeWalBatchStrategy["BincodeWalBatchStrategy<br/>- rust_optimized: bool<br/>+ serialize_batch(vectors: Vec&lt;proto::VectorRecord&gt;): Result&lt;Vec&lt;u8&gt;&gt;<br/>+ deserialize_batch(data: &[u8]): Result&lt;Vec&lt;proto::VectorRecord&gt;&gt;<br/><br/>&lt;&lt;Rust Optimization&gt;&gt;<br/>Proto → Bincode conversion<br/>Type-safe serialization"]
-    end
+    %% Connections - Simplified for clarity
+    RestClient --> RestHandler
+    GrpcClient --> GrpcHandler
     
-    %% Metadata Layer
-    subgraph "Metadata Layer"
-        MetadataBackend["MetadataBackend &lt;&lt;interface&gt;&gt;<br/>+ create_collection(config: proto::CollectionConfig): Result&lt;proto::Collection&gt;<br/>+ get_collection(id: &str): Result&lt;Option&lt;proto::Collection&gt;&gt;<br/>+ list_collections(): Result&lt;Vec&lt;proto::Collection&gt;&gt;<br/>+ update_collection_stats(id: &str, stats: proto::CollectionStats): Result&lt;()&gt;<br/>+ delete_collection(id: &str): Result&lt;()&gt;"]
-        
-        FilestoreMetadataBackend["FilestoreMetadataBackend<br/>- filesystem: Arc&lt;dyn FileSystem&gt;<br/>- collections_index: HashMap&lt;String, proto::Collection&gt;<br/>- operation_log: Vec&lt;MetadataOperation&gt;<br/>- proto_serializer: ProtoSerializer<br/>+ save_collection_proto(collection: &proto::Collection): Result&lt;()&gt;<br/>+ load_collection_proto(id: &str): Result&lt;Option&lt;proto::Collection&gt;&gt;<br/>+ snapshot_to_disk(): Result&lt;()&gt;<br/>+ recover_from_disk(): Result&lt;()&gt;<br/><br/>&lt;&lt;Proto-First Metadata&gt;&gt;<br/>.proto file extensions<br/>Direct proto serialization<br/>Unified atomic coordinator"]
-        
-        RocksDbMetadataBackend["RocksDbMetadataBackend<br/>- db: Arc&lt;rocksdb::DB&gt;<br/>- proto_serializer: ProtoSerializer<br/>+ put_collection_proto(key: &str, collection: &proto::Collection): Result&lt;()&gt;<br/>+ get_collection_proto(key: &str): Result&lt;Option&lt;proto::Collection&gt;&gt;<br/><br/>Proto binary storage<br/>ACID transactions"]
-    end
+    RestHandler --> UnifiedAPI
+    GrpcHandler --> UnifiedAPI
     
-    %% Hardware Optimization
-    subgraph "Hardware Optimization"
-        UnifiedQuantizationEngine["UnifiedQuantizationEngine<br/>- hardware_capabilities: HardwareCapabilities<br/>- simd_level: SimdLevel<br/>+ quantize_vectors(vectors: &[Vec&lt;f32&gt;], level: QuantizationLevel): Result&lt;QuantizedVectors&gt;<br/>+ dequantize_vectors(quantized: &QuantizedVectors): Result&lt;Vec&lt;Vec&lt;f32&gt;&gt;&gt;<br/>+ hardware_accelerated_distance(a: &[f32], b: &[f32]): f32<br/><br/>&lt;&lt;Hardware Detection&gt;&gt;<br/>SIMD optimization<br/>GPU acceleration support"]
-    end
+    UnifiedAPI --> DirectVector
+    UnifiedAPI --> Collection
+    UnifiedAPI --> SQLEngine
     
-    %% Relationships
-    RestAdapter --> UnifiedHandlers
-    GrpcAdapter --> UnifiedHandlers
-    UnifiedHandlers --> DirectVectorService
-    UnifiedHandlers --> CollectionService
-    DirectVectorService --> StorageSearchEngine
-    DirectVectorService --> WalManager
-    DirectVectorService --> UnifiedQuantizationEngine
-    DirectVectorService --> CollectionService
-    CollectionService --> MetadataBackend
-    CollectionService --> AssignmentService
-    WalManager --> WalBatchStrategy
-    WalManager --> StorageSearchEngine
-    ViperEngine -.->|implements| StorageSearchEngine
-    LsmEngine -.->|implements| StorageSearchEngine
-    ViperEngine --> CollectionService
-    ViperEngine --> UnifiedQuantizationEngine
-    LsmEngine --> UnifiedMemtable
-    GlobalPartitionedMemtable -.->|implements| UnifiedMemtable
-    ProtoWalBatchStrategy -.->|implements| WalBatchStrategy
-    AvroWalBatchStrategy -.->|implements| WalBatchStrategy
-    BincodeWalBatchStrategy -.->|implements| WalBatchStrategy
-    FilestoreMetadataBackend -.->|implements| MetadataBackend
-    RocksDbMetadataBackend -.->|implements| MetadataBackend
-    ProtoTypes --> DirectVectorService
-    ProtoTypes --> CollectionService
-    ProtoTypes --> WalManager
+    DirectVector --> MemoryPool
+    DirectVector --> StorageCoord
+    SQLEngine --> QueryCache
+    Collection --> StorageCoord
     
-    %% Notes
-    note1["PROTO-FIRST BENEFITS:<br/>✅ 85% code reduction (handler consolidation)<br/>✅ Zero double serialization<br/>✅ Single business logic implementation<br/>✅ Protocol-agnostic operations"]
-    note2["ARCHITECTURE COMPLETE:<br/>✅ WriteBuffer clean separation: 14,939 vectors/sec<br/>✅ Unified bloom filters: Zero duplication<br/>✅ SST atomic operations: ACID guarantees<br/>✅ Metadata filtering: 2.6x query performance<br/>✅ Collection config: 30% latency reduction"]
-    note3["STORAGE-AWARE SEARCH:<br/>✅ Optimized performance improvement<br/>✅ Automatic engine selection<br/>✅ Three-layer search coordination<br/>✅ Engine-specific optimizations<br/>✅ Direct vector service routing"]
+    StorageCoord --> VIPER
+    StorageCoord --> SST
+    StorageCoord --> IndexMgr
     
-    UnifiedHandlers -.-> note1
-    ProtoWalBatchStrategy -.-> note2
-    StorageSearchEngine -.-> note3
+    IndexMgr --> IndexTypes
+    
+    VIPER --> WriteBuffer
+    SST --> WriteBuffer
+    WriteBuffer --> AtomicCoord
+    
+    AtomicCoord --> S3
+    AtomicCoord --> Azure  
+    AtomicCoord --> GCS
+    AtomicCoord --> Local
     
     %% Styling
-    classDef interface fill:#f9f9f9,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
-    classDef proto fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef service fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    classDef storage fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef note fill:#fffde7,stroke:#f57f17,stroke-width:1px
+    classDef clientStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
+    classDef serviceStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff  
+    classDef storageStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
+    classDef cloudStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
+    classDef perfStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
     
-    class StorageSearchEngine,UnifiedMemtable,WalBatchStrategy,MetadataBackend interface
-    class ProtoTypes,ProtoWalBatchStrategy proto
-    class DirectVectorService,CollectionService,AssignmentService service
-    class ViperEngine,LsmEngine,GlobalPartitionedMemtable storage
-    class note1,note2,note3 note
+    class RestClient,GrpcClient clientStyle
+    class DirectVector,Collection,SQLEngine serviceStyle
+    class StorageCoord,VIPER,SST,IndexMgr,WriteBuffer,AtomicCoord storageStyle
+    class S3,Azure,GCS,Local cloudStyle
+    class MemoryPool,QueryCache,Hardware perfStyle

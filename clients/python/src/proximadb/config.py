@@ -27,8 +27,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 class Protocol(str, Enum):
     """Supported communication protocols"""
     AUTO = "auto"      # Auto-select best available
-    AVRO = "avro"      # AvroRPC (highest performance)
-    GRPC = "grpc"      # gRPC (proven performance)
+    GRPC = "grpc"      # gRPC (high performance, binary protocol)
     REST = "rest"      # REST (web compatibility)
 
 

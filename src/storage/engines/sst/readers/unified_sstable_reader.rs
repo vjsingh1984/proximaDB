@@ -402,12 +402,28 @@ impl UnifiedSstableReader {
     // Placeholder implementations for other strategies
     async fn index_range_scan_strategy(
         &self,
-        _context: &CollectionContext,
-        _start: usize,
-        _end: usize,
-        _use_bloom: bool,
+        context: &CollectionContext,
+        start_block: usize,
+        end_block: usize,
+        use_bloom: bool,
     ) -> Result<Vec<DataBlock>> {
-        Ok(Vec::new())
+        println!("🔍 Index range scan strategy for {} files (blocks {}-{}, bloom={})", 
+                 context.sstable_files.len(), start_block, end_block, use_bloom);
+        
+        let mut all_blocks = Vec::new();
+        
+        // For now, just read all files like full scan
+        // TODO: Implement proper block-level indexing
+        for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            println!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            let blocks = self.read_file_direct(file_path).await?;
+            println!("  📦 Loaded {} blocks from this file", blocks.len());
+            
+            all_blocks.extend(blocks);
+        }
+        
+        println!("📦 Total blocks loaded: {}", all_blocks.len());
+        Ok(all_blocks)
     }
     
     async fn metadata_filtered_strategy(

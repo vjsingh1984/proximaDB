@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gRPC Performance Test for LSM vs VIPER
+gRPC Performance Test for SST vs VIPER
 Simple and direct test using connect_grpc
 """
 
@@ -22,10 +22,10 @@ from proximadb.models import (
 
 
 def test_grpc_performance():
-    """Test LSM vs VIPER performance using gRPC"""
+    """Test SST vs VIPER performance using gRPC"""
     
     # Connect to gRPC
-    print("🚀 gRPC Performance Test: LSM vs VIPER")
+    print("🚀 gRPC Performance Test: SST vs VIPER")
     print("=" * 80)
     
     client = connect_grpc("grpc://localhost:5679")
@@ -33,13 +33,15 @@ def test_grpc_performance():
     
     dimension = 384
     test_sizes = [1000, 5000, 25000]
-    results = {"LSM": {}, "VIPER": {}}
+    results = {"SST": {}, "VIPER": {}}
     
     # Test each engine
-    for engine in [StorageEngine.LSM, StorageEngine.VIPER]:
+    for engine in [StorageEngine.SST, StorageEngine.VIPER]:
         engine_name = engine.value if hasattr(engine, 'value') else str(engine)
         if isinstance(engine_name, list):
             engine_name = engine_name[0] if engine_name else "unknown"
+        # Ensure engine_name is a string
+        engine_name = str(engine_name).upper()
         print(f"\n{'=' * 80}")
         print(f"📦 Testing {engine_name} Storage Engine")
         print(f"{'=' * 80}")
@@ -146,7 +148,7 @@ def test_grpc_performance():
     print(f"{'Engine':<10} {'Size':<10} {'Insert Rate':<15} {'Search k=10':<12} {'Search k=100'}")
     print("-" * 70)
     
-    for engine in ["LSM", "VIPER"]:
+    for engine in ["SST", "VIPER"]:
         for size in ["1K", "5K", "25K"]:
             if size in results[engine]:
                 data = results[engine][size]
@@ -156,14 +158,14 @@ def test_grpc_performance():
     # Calculate averages
     print("\n🎯 Analysis:")
     
-    lsm_rates = [results["LSM"][s]["insert_rate"] for s in ["1K", "5K", "25K"] if s in results["LSM"]]
+    sst_rates = [results["SST"][s]["insert_rate"] for s in ["1K", "5K", "25K"] if s in results["SST"]]
     viper_rates = [results["VIPER"][s]["insert_rate"] for s in ["1K", "5K", "25K"] if s in results["VIPER"]]
     
-    if lsm_rates and viper_rates:
+    if sst_rates and viper_rates:
         print(f"\n  Insert Performance:")
-        print(f"  - LSM average: {np.mean(lsm_rates):,.0f} vectors/second")
+        print(f"  - SST average: {np.mean(sst_rates):,.0f} vectors/second")
         print(f"  - VIPER average: {np.mean(viper_rates):,.0f} vectors/second")
-        print(f"  - Ratio: LSM is {np.mean(lsm_rates)/np.mean(viper_rates):.2f}x VIPER speed")
+        print(f"  - Ratio: SST is {np.mean(sst_rates)/np.mean(viper_rates):.2f}x VIPER speed")
     
     print(f"\n  Key Insights:")
     print(f"  - Both engines use same WAL & global memtable")
@@ -175,7 +177,7 @@ def test_grpc_performance():
     filename = f"grpc_performance_{timestamp}.json"
     
     report = {
-        "test": "gRPC LSM vs VIPER",
+        "test": "gRPC SST vs VIPER",
         "timestamp": timestamp,
         "datetime": datetime.now().isoformat(),
         "results": results

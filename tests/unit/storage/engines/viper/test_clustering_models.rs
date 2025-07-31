@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::test;
 
-use crate::storage::engines::viper::clustering_models::{
+use proximadb::storage::engines::viper::clustering_models::{
     ClusteringModelManager, ClusteringStats, EfficientClusteringModel,
     MIN_VECTORS_FOR_CLUSTERING, TrainingPriority
 };

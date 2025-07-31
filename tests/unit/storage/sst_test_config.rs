@@ -343,6 +343,31 @@ pub async fn cleanup_test_directories(base_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Cleanup SSTable files for a collection
+pub async fn cleanup_sstable_files(collection_id: &str) -> anyhow::Result<()> {
+    let test_assignments = get_test_assignments();
+    
+    // Get the assignment to find the data directory
+    if let Ok(assignment) = test_assignments.get_or_create_assignment(collection_id).await {
+        let data_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
+        let data_dir = PathBuf::from(data_path);
+        
+        if data_dir.exists() {
+            // Remove all .sst files in the directory
+            let mut entries = fs::read_dir(&data_dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "sst") {
+                    println!("Cleaning up SSTable file: {}", path.display());
+                    let _ = fs::remove_file(&path).await; // Ignore errors for missing files
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 /// Cleanup assignment for a collection (removes from both persistent and global service)
 pub async fn cleanup_assignment(collection_id: &str) -> anyhow::Result<()> {
     let assignment_service = proximadb::storage::assignment_service::get_assignment_service();

@@ -15,7 +15,7 @@ def test_collection_creation():
     print("=" * 60)
     
     # Initialize client
-    client = ProximaDBClient("localhost:5679", enable_debug_logging=True)
+    client = ProximaDBClient(url="grpc://localhost:5679", protocol=Protocol.GRPC)
     print("✅ Client initialized with debug logging")
     
     # Try to create collection with minimal config

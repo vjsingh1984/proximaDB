@@ -77,19 +77,26 @@ class ProximaDBClient:
         
         # Import proto modules dynamically
         try:
-            from .. import proximadb_pb2 as pb2_local
-            from .. import proximadb_pb2_grpc as pb2_grpc_local
+            # Try absolute imports first
+            import proximadb.proximadb_pb2 as pb2_local
+            import proximadb.proximadb_pb2_grpc as pb2_grpc_local
+        except ImportError:
+            try:
+                # Fall back to relative imports
+                from .. import proximadb_pb2 as pb2_local
+                from .. import proximadb_pb2_grpc as pb2_grpc_local
+            except ImportError as e:
+                logger.error(f"Failed to import proto modules: {e}")
+                raise ProximaDBError(f"Failed to import proto modules: {e}")
+        
+        # Check if imports actually contain the expected classes
+        if not hasattr(pb2_grpc_local, 'ProximaDBStub'):
+            raise ProximaDBError(f"pb2_grpc_local is missing ProximaDBStub: {pb2_grpc_local}")
+        # Note: DistanceMetric is an enum constant, not a class attribute, so we can't check it this way
+        # if not hasattr(pb2_local, 'DistanceMetric'):
+        #     raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
             
-            # Check if imports actually contain the expected classes
-            if not hasattr(pb2_grpc_local, 'ProximaDBStub'):
-                raise ProximaDBError(f"pb2_grpc_local is missing ProximaDBStub: {pb2_grpc_local}")
-            if not hasattr(pb2_local, 'DistanceMetric'):
-                raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
-                
-            logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
-        except ImportError as e:
-            logger.error(f"Failed to import proto modules: {e}")
-            raise ProximaDBError(f"Failed to import proto modules: {e}")
+        logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
         
         try:
             # Configure message size limits for bulk vector operations (64MB)
@@ -656,7 +663,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector search: {e}")
             raise ProximaDBError(f"Vector search failed: {str(e)}")
     
-    def _value_to_metadata_value(self, value: Any) -> pb2.MetadataValue:
+    def _value_to_metadata_value(self, value: Any) -> "pb2.MetadataValue":
         """Convert Python value to protobuf MetadataValue"""
         metadata_value = pb2.MetadataValue()
         
@@ -809,28 +816,17 @@ class ProximaDBClient:
             metadata = {}
             if include_metadata and result_data.metadata:
                 for item in result_data.metadata:
-                    # Parse metadata values properly
-                    value = item.value
-                    try:
-                        # Strip quotes if present
-                        if value.startswith('"') and value.endswith('"'):
-                            value = value[1:-1]
-                        
-                        # Try to parse as int/float/bool
-                        if value.lower() == 'true':
-                            value = True
-                        elif value.lower() == 'false':  
-                            value = False
-                        elif value.isdigit():
-                            value = int(value)
-                        elif '.' in value:
-                            try:
-                                value = float(value)
-                            except:
-                                pass  # Keep as string
-                    except:
-                        pass  # Keep as string
-                    metadata[item.key] = value
+                    # Handle protobuf oneof value
+                    value = None
+                    if item.HasField('string_value'):
+                        value = item.string_value
+                    elif item.HasField('number_value'):
+                        value = item.number_value
+                    elif item.HasField('bool_value'):
+                        value = item.bool_value
+                    
+                    if value is not None:
+                        metadata[item.key] = value
             
             return {
                 'id': result_data.id,

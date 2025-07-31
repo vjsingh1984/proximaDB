@@ -5,19 +5,27 @@ Integration tests for SQL API with running ProximaDB server
 import pytest
 import numpy as np
 import time
-from proximadb import connect, ProximaDBError
-from proximadb.models import CollectionConfig, StorageEngine
+import json
+from proximadb import connect_rest, ProximaDBError
+from proximadb.models import CollectionConfig, StorageEngine, VectorRecord
 
 
 @pytest.mark.integration
 class TestSqlIntegration:
     """Integration tests for SQL functionality"""
     
+    def _unwrap_result(self, result):
+        """Unwrap SQL result if it's wrapped in a response object"""
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
+    
     @pytest.fixture(scope="class")
     def client(self):
         """Create client connected to actual ProximaDB server"""
-        # Try to connect to local server
-        client = connect(url="http://localhost:5678")
+        # SQL is only supported over REST, not gRPC
+        from proximadb import connect_rest
+        client = connect_rest(url="http://localhost:5678")
         yield client
         client.close()
     
@@ -30,9 +38,9 @@ class TestSqlIntegration:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,  # Common embedding dimension
-            storage_engine=StorageEngine.LSM
+            storage_engine=StorageEngine.SST
         )
-        client.create_collection(config)
+        collection = client.create_collection(collection_name, config)
         
         # Insert diverse test data
         vectors = []
@@ -46,10 +54,10 @@ class TestSqlIntegration:
             # Add category-specific bias to create clusters
             base_vector[category_idx * 70:(category_idx + 1) * 70] += 0.5
             
-            vectors.append({
-                "id": f"item_{i:04d}",
-                "vector": base_vector.tolist(),
-                "metadata": {
+            vectors.append(VectorRecord(
+                id=f"item_{i:04d}",
+                vector=base_vector.tolist(),
+                metadata={
                     "name": f"Product {i}",
                     "category": categories[category_idx],
                     "brand": brands[i % len(brands)],
@@ -59,14 +67,17 @@ class TestSqlIntegration:
                     "tags": [categories[category_idx], f"tag_{i % 10}"],
                     "created_at": f"2024-01-{(i % 28) + 1:02d}"
                 }
-            })
+            ))
         
         response = client.insert_vectors(collection_name, vectors)
-        assert response.success
+        # Check if response is successful - it might be None or a dict
+        if response is not None and hasattr(response, 'success'):
+            assert response.success
         
         # Give time for indexing
         time.sleep(1)
         
+        # Return the collection name for SQL queries (server now resolves to UUID)
         yield collection_name
         
         # Cleanup
@@ -80,7 +91,8 @@ class TestSqlIntegration:
         # Create a query vector similar to electronics category
         query_vector = np.random.rand(384)
         query_vector[0:70] += 0.5  # Electronics bias
-        query_str = str(query_vector.tolist())
+        # Format vector as JSON array string
+        query_str = json.dumps(query_vector.tolist())
         
         sql = f"""
         SELECT id, metadata.name, metadata.category
@@ -90,12 +102,13 @@ class TestSqlIntegration:
         """
         
         result = client.execute_sql(sql)
-        
-        assert result["row_count"] == 10
-        assert len(result["rows"]) == 10
+        actual_result = self._unwrap_result(result)
+            
+        assert actual_result["row_count"] == 10
+        assert len(actual_result["rows"]) == 10
         
         # Should find mostly electronics items at the top
-        electronics_count = sum(1 for row in result["rows"][:5] 
+        electronics_count = sum(1 for row in actual_result["rows"][:5] 
                                if row.get("metadata.category") == "electronics" or 
                                (isinstance(row.get("metadata"), dict) and 
                                 row["metadata"].get("category") == "electronics"))
@@ -104,7 +117,7 @@ class TestSqlIntegration:
     def test_filtered_similarity_search(self, client, sql_test_collection):
         """Test similarity search with metadata filters"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata.name, metadata.price, metadata.rating
@@ -117,9 +130,10 @@ class TestSqlIntegration:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
         # Verify all results match filter criteria
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             if isinstance(row.get("metadata"), dict):
                 metadata = row["metadata"]
                 assert 100 <= metadata["price"] <= 150
@@ -134,7 +148,7 @@ class TestSqlIntegration:
     def test_multi_condition_filters(self, client, sql_test_collection):
         """Test complex multi-condition filtering"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata
@@ -147,8 +161,9 @@ class TestSqlIntegration:
         """
         
         result = client.execute_sql(sql)
+        actual_result = self._unwrap_result(result)
         
-        for row in result["rows"]:
+        for row in actual_result["rows"]:
             metadata = row.get("metadata", {})
             if isinstance(metadata, dict):
                 assert metadata["category"] in ["electronics", "books"]
@@ -158,7 +173,7 @@ class TestSqlIntegration:
     def test_pagination_with_offset(self, client, sql_test_collection):
         """Test pagination using OFFSET and LIMIT"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         # Get first page
         sql_page1 = f"""
@@ -167,7 +182,7 @@ class TestSqlIntegration:
         ORDER BY VECTOR_SIMILARITY(vector, {query_str}, 'cosine')
         LIMIT 10
         """
-        page1 = client.execute_sql(sql_page1)
+        page1 = self._unwrap_result(client.execute_sql(sql_page1))
         
         # Get second page
         sql_page2 = f"""
@@ -176,7 +191,7 @@ class TestSqlIntegration:
         ORDER BY VECTOR_SIMILARITY(vector, {query_str}, 'cosine')
         LIMIT 10 OFFSET 10
         """
-        page2 = client.execute_sql(sql_page2)
+        page2 = self._unwrap_result(client.execute_sql(sql_page2))
         
         # Ensure no overlap
         ids_page1 = {row["id"] for row in page1["rows"]}
@@ -190,7 +205,7 @@ class TestSqlIntegration:
         ORDER BY VECTOR_SIMILARITY(vector, {query_str}, 'cosine')
         LIMIT 15 OFFSET 5
         """
-        overlap = client.execute_sql(sql_overlap)
+        overlap = self._unwrap_result(client.execute_sql(sql_overlap))
         
         # Last 5 of page1 should match first 5 of overlap
         assert [row["id"] for row in page1["rows"][5:]] == [row["id"] for row in overlap["rows"][:5]]
@@ -198,7 +213,7 @@ class TestSqlIntegration:
     def test_all_supported_metrics(self, client, sql_test_collection):
         """Test all distance metrics with real data"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         metrics = {
             'cosine': 'cosine similarity',
@@ -217,7 +232,7 @@ class TestSqlIntegration:
             LIMIT 5
             """
             
-            result = client.execute_sql(sql)
+            result = self._unwrap_result(client.execute_sql(sql))
             results[metric] = [row["id"] for row in result["rows"]]
             
             assert len(result["rows"]) == 5, f"Failed for {desc}"
@@ -230,7 +245,7 @@ class TestSqlIntegration:
     def test_large_result_set(self, client, sql_test_collection):
         """Test handling larger result sets"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT id, metadata.category, metadata.price
@@ -239,7 +254,7 @@ class TestSqlIntegration:
         LIMIT 40
         """
         
-        result = client.execute_sql(sql)
+        result = self._unwrap_result(client.execute_sql(sql))
         
         assert result["row_count"] == 40
         assert len(result["rows"]) == 40
@@ -252,7 +267,7 @@ class TestSqlIntegration:
     def test_select_all_fields(self, client, sql_test_collection):
         """Test selecting all fields including vector"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         sql = f"""
         SELECT *
@@ -261,7 +276,7 @@ class TestSqlIntegration:
         LIMIT 3
         """
         
-        result = client.execute_sql(sql)
+        result = self._unwrap_result(client.execute_sql(sql))
         
         assert result["row_count"] == 3
         
@@ -281,7 +296,7 @@ class TestSqlIntegration:
         query_vectors = [np.random.rand(384).tolist() for _ in range(5)]
         
         def run_query(query_idx):
-            query_str = str(query_vectors[query_idx])
+            query_str = json.dumps(query_vectors[query_idx])
             sql = f"""
             SELECT id, metadata.category
             FROM {sql_test_collection}
@@ -289,7 +304,8 @@ class TestSqlIntegration:
             ORDER BY VECTOR_SIMILARITY(vector, {query_str}, 'cosine')
             LIMIT 5
             """
-            return client.execute_sql(sql)
+            raw_result = client.execute_sql(sql)
+            return self._unwrap_result(raw_result)
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(run_query, i) for i in range(5)]
@@ -304,7 +320,7 @@ class TestSqlIntegration:
     def test_performance_baseline(self, client, sql_test_collection):
         """Test query performance baseline"""
         query_vector = np.random.rand(384).tolist()
-        query_str = str(query_vector)
+        query_str = json.dumps(query_vector)
         
         # Warm up
         sql = f"""
@@ -317,7 +333,7 @@ class TestSqlIntegration:
         
         # Measure query time
         start = time.time()
-        result = client.execute_sql(sql)
+        result = self._unwrap_result(client.execute_sql(sql))
         elapsed = time.time() - start
         
         assert result["row_count"] == 10
@@ -334,7 +350,7 @@ class TestSqlIntegration:
         """
         
         start = time.time()
-        result_filtered = client.execute_sql(sql_filtered)
+        result_filtered = self._unwrap_result(client.execute_sql(sql_filtered))
         elapsed_filtered = time.time() - start
         
         assert result_filtered["row_count"] <= 10

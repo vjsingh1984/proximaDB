@@ -44,7 +44,7 @@ async fn test_lsm_basic_operations() {
     );
     
     // Setup storage assignment BEFORE creating SST storage
-    let collection_id = unique_collection_id("test_collection");
+    let collection_id = unique_collection_id("sst_core_test");
     println!("DEBUG: Using collection_id: {}", collection_id);
     
     // Clean up any existing assignment and directory first to prevent data contamination

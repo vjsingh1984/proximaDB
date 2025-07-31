@@ -161,3 +161,281 @@ fn test_zero_vectors() {
     assert!(euclidean_calc.distance(&zero_a, &non_zero) > 0.0);
     assert!(manhattan_calc.distance(&zero_a, &non_zero) > 0.0);
 }
+
+#[test]
+fn test_edge_cases() {
+    // Test with single element vectors
+    let a = vec![5.0];
+    let b = vec![3.0];
+    
+    let euclidean_calc = create_distance_calculator(DistanceMetric::Euclidean);
+    let cosine_calc = create_distance_calculator(DistanceMetric::Cosine);
+    let manhattan_calc = create_distance_calculator(DistanceMetric::Manhattan);
+    
+    // Single element euclidean distance
+    assert_eq!(euclidean_calc.distance(&a, &b), 2.0);
+    assert_eq!(manhattan_calc.distance(&a, &b), 2.0);
+    
+    // Test with very small values
+    let tiny_a = vec![1e-10, 1e-10];
+    let tiny_b = vec![2e-10, 2e-10];
+    
+    let dist = euclidean_calc.distance(&tiny_a, &tiny_b);
+    assert!(dist > 0.0 && dist < 1e-5);
+    
+    // Test with very large values
+    let large_a = vec![1e6, 1e6];
+    let large_b = vec![1e6 + 1.0, 1e6 + 1.0];
+    
+    let dist = euclidean_calc.distance(&large_a, &large_b);
+    assert!((dist - std::f32::consts::SQRT_2).abs() < 0.01); // sqrt(2) with relaxed precision for large numbers
+}
+
+#[test]
+fn test_jaccard_distance() {
+    let jaccard_calc = create_distance_calculator(DistanceMetric::Jaccard);
+    
+    // Test identical sets (binary vectors)
+    let a = vec![1.0, 1.0, 0.0, 0.0];
+    let b = vec![1.0, 1.0, 0.0, 0.0];
+    assert_eq!(jaccard_calc.distance(&a, &b), 0.0);
+    
+    // Test completely different sets
+    let c = vec![1.0, 1.0, 0.0, 0.0];
+    let d = vec![0.0, 0.0, 1.0, 1.0];
+    assert_eq!(jaccard_calc.distance(&c, &d), 1.0);
+    
+    // Test partial overlap
+    let e = vec![1.0, 1.0, 0.0, 0.0];
+    let f = vec![1.0, 0.0, 1.0, 0.0];
+    let dist = jaccard_calc.distance(&e, &f);
+    assert!(dist > 0.0 && dist < 1.0);
+}
+
+#[test]
+fn test_hamming_distance() {
+    let hamming_calc = create_distance_calculator(DistanceMetric::Hamming);
+    
+    // Test identical vectors
+    let a = vec![1.0, 0.0, 1.0, 0.0];
+    let b = vec![1.0, 0.0, 1.0, 0.0];
+    assert_eq!(hamming_calc.distance(&a, &b), 0.0);
+    
+    // Test completely different vectors
+    let c = vec![1.0, 1.0, 1.0, 1.0];
+    let d = vec![0.0, 0.0, 0.0, 0.0];
+    assert_eq!(hamming_calc.distance(&c, &d), 4.0);
+    
+    // Test partial difference
+    let e = vec![1.0, 0.0, 1.0, 0.0];
+    let f = vec![1.0, 1.0, 0.0, 0.0];
+    assert_eq!(hamming_calc.distance(&e, &f), 2.0);
+}
+
+#[test]
+fn test_chebyshev_distance() {
+    let chebyshev_calc = create_distance_calculator(DistanceMetric::Chebyshev);
+    
+    // Test identical vectors
+    let a = vec![1.0, 2.0, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+    assert_eq!(chebyshev_calc.distance(&a, &b), 0.0);
+    
+    // Test different vectors
+    let c = vec![1.0, 2.0, 3.0];
+    let d = vec![4.0, 2.0, 1.0];
+    assert_eq!(chebyshev_calc.distance(&c, &d), 3.0); // max(|1-4|, |2-2|, |3-1|) = 3.0
+    
+    // Test with negative values
+    let e = vec![-1.0, -2.0, -3.0];
+    let f = vec![1.0, 2.0, 3.0];
+    assert_eq!(chebyshev_calc.distance(&e, &f), 6.0); // max(2, 4, 6) = 6
+}
+
+#[test]
+fn test_canberra_distance() {
+    let canberra_calc = create_distance_calculator(DistanceMetric::Canberra);
+    
+    // Test identical vectors
+    let a = vec![1.0, 2.0, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+    assert_eq!(canberra_calc.distance(&a, &b), 0.0);
+    
+    // Test different vectors
+    let c = vec![1.0, 2.0, 3.0];
+    let d = vec![2.0, 3.0, 5.0];
+    let dist = canberra_calc.distance(&c, &d);
+    // |1-2|/(|1|+|2|) + |2-3|/(|2|+|3|) + |3-5|/(|3|+|5|) = 1/3 + 1/5 + 2/8 = 0.783...
+    assert!((dist - 0.783).abs() < 0.01);
+    
+    // Test with zero values
+    let e = vec![0.0, 1.0, 2.0];
+    let f = vec![1.0, 0.0, 3.0];
+    let dist2 = canberra_calc.distance(&e, &f);
+    assert!(dist2 > 0.0);
+}
+
+#[test]
+fn test_minkowski_distance() {
+    let minkowski_calc = create_distance_calculator(DistanceMetric::Minkowski);
+    
+    // Test identical vectors
+    let a = vec![1.0, 2.0, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+    assert_eq!(minkowski_calc.distance(&a, &b), 0.0);
+    
+    // Test different vectors (with p=3 default)
+    let c = vec![1.0, 0.0];
+    let d = vec![0.0, 1.0];
+    let dist = minkowski_calc.distance(&c, &d);
+    // (|1-0|^3 + |0-1|^3)^(1/3) = (1 + 1)^(1/3) = 2^(1/3) ≈ 1.26
+    assert!((dist - 1.26).abs() < 0.01);
+}
+
+#[test]
+fn test_angular_distance() {
+    let angular_calc = create_distance_calculator(DistanceMetric::Angular);
+    
+    // Test identical vectors (angle = 0)
+    let a = vec![1.0, 0.0];
+    let b = vec![1.0, 0.0];
+    assert!((angular_calc.distance(&a, &b) - 0.0).abs() < 1e-6);
+    
+    // Test orthogonal vectors (angle = π/2)
+    let c = vec![1.0, 0.0];
+    let d = vec![0.0, 1.0];
+    assert!((angular_calc.distance(&c, &d) - 0.5).abs() < 0.01); // π/2 / π = 0.5
+    
+    // Test opposite vectors (angle = π)
+    let e = vec![1.0, 0.0];
+    let f = vec![-1.0, 0.0];
+    assert!((angular_calc.distance(&e, &f) - 1.0).abs() < 0.01); // π / π = 1.0
+}
+
+#[test]
+fn test_bray_curtis_distance() {
+    let bray_curtis_calc = create_distance_calculator(DistanceMetric::BrayCurtis);
+    
+    // Test identical vectors
+    let a = vec![1.0, 2.0, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+    assert_eq!(bray_curtis_calc.distance(&a, &b), 0.0);
+    
+    // Test different vectors
+    let c = vec![1.0, 2.0, 3.0];
+    let d = vec![2.0, 3.0, 4.0];
+    let dist = bray_curtis_calc.distance(&c, &d);
+    // |1-2| + |2-3| + |3-4| / (1+2+2+3+3+4) = 3/15 = 0.2
+    assert!((dist - 0.2).abs() < 0.01);
+    
+    // Test with zero vectors
+    let e = vec![0.0, 0.0, 0.0];
+    let f = vec![0.0, 0.0, 0.0];
+    assert_eq!(bray_curtis_calc.distance(&e, &f), 0.0);
+}
+
+#[test]
+fn test_hellinger_distance() {
+    let hellinger_calc = create_distance_calculator(DistanceMetric::Hellinger);
+    
+    // Test identical distributions
+    let a = vec![0.25, 0.25, 0.25, 0.25];
+    let b = vec![0.25, 0.25, 0.25, 0.25];
+    assert!((hellinger_calc.distance(&a, &b) - 0.0).abs() < 1e-6);
+    
+    // Test different distributions
+    let c = vec![1.0, 0.0];
+    let d = vec![0.0, 1.0];
+    let dist = hellinger_calc.distance(&c, &d);
+    // sqrt(0.5 * ((1-0)^2 + (0-1)^2)) = sqrt(0.5 * 2) = 1.0
+    assert!((dist - 1.0).abs() < 0.01);
+    
+    // Test with non-normalized vectors (should normalize internally)
+    let e = vec![2.0, 2.0];
+    let f = vec![1.0, 3.0];
+    let dist2 = hellinger_calc.distance(&e, &f);
+    assert!(dist2 > 0.0 && dist2 < 1.0);
+}
+
+#[test]
+fn test_batch_consistency() {
+    let query = vec![1.0, 2.0, 3.0, 4.0];
+    let vectors = vec![
+        vec![1.0, 2.0, 3.0, 4.0], // Same as query
+        vec![2.0, 3.0, 4.0, 5.0],
+        vec![0.0, 1.0, 2.0, 3.0],
+    ];
+    let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+    
+    // Test all distance metrics
+    let metrics = vec![
+        DistanceMetric::Cosine,
+        DistanceMetric::Euclidean,
+        DistanceMetric::DotProduct,
+        DistanceMetric::Manhattan,
+        DistanceMetric::Jaccard,
+        DistanceMetric::Hamming,
+        DistanceMetric::Chebyshev,
+        DistanceMetric::Canberra,
+        DistanceMetric::Minkowski,
+        DistanceMetric::Angular,
+        DistanceMetric::BrayCurtis,
+        DistanceMetric::Hellinger,
+    ];
+    
+    for metric in metrics {
+        let calc = create_distance_calculator(metric);
+        let batch_results = calc.distance_batch(&query, &vector_refs);
+        
+        // Verify batch results match individual calculations
+        for (i, vec_ref) in vector_refs.iter().enumerate() {
+            let individual_result = calc.distance(&query, vec_ref);
+            assert!(
+                (batch_results[i] - individual_result).abs() < 1e-6,
+                "Batch and individual results don't match for {:?}",
+                metric
+            );
+        }
+    }
+}
+
+#[test]
+fn test_large_vector_dimensions() {
+    // Test with high-dimensional vectors
+    let dim = 1024;
+    let a: Vec<f32> = (0..dim).map(|i| i as f32 * 0.001).collect();
+    let b: Vec<f32> = (0..dim).map(|i| (i as f32 + 1.0) * 0.001).collect();
+    
+    let euclidean_calc = create_distance_calculator(DistanceMetric::Euclidean);
+    let cosine_calc = create_distance_calculator(DistanceMetric::Cosine);
+    
+    // Just verify no panic and reasonable results
+    let euclidean_dist = euclidean_calc.distance(&a, &b);
+    let cosine_dist = cosine_calc.distance(&a, &b);
+    
+    assert!(euclidean_dist > 0.0);
+    assert!(cosine_dist >= 0.0 && cosine_dist <= 2.0);
+}
+
+#[test]
+fn test_nan_and_infinity_handling() {
+    use std::f32::{NAN, INFINITY, NEG_INFINITY};
+    
+    let normal = vec![1.0, 2.0, 3.0];
+    let with_nan = vec![1.0, NAN, 3.0];
+    let with_inf = vec![1.0, INFINITY, 3.0];
+    let with_neg_inf = vec![1.0, NEG_INFINITY, 3.0];
+    
+    let euclidean_calc = create_distance_calculator(DistanceMetric::Euclidean);
+    
+    // Test NaN propagation
+    let dist_nan = euclidean_calc.distance(&normal, &with_nan);
+    assert!(dist_nan.is_nan());
+    
+    // Test infinity handling
+    let dist_inf = euclidean_calc.distance(&normal, &with_inf);
+    assert!(dist_inf.is_infinite());
+    
+    let dist_neg_inf = euclidean_calc.distance(&normal, &with_neg_inf);
+    assert!(dist_neg_inf.is_infinite());
+}

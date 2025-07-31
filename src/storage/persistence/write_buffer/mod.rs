@@ -60,6 +60,9 @@ pub mod parallel_recovery;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod batch_strategy_tests;
+
 // Re-exports
 pub use background_manager::{
     BackgroundMaintenanceManager, BackgroundMaintenanceStats, BackgroundTaskStatus,

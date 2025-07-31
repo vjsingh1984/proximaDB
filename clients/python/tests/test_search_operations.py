@@ -185,14 +185,15 @@ class TestSearchOperations:
                 assert "metadata" in result
                 assert "text" in result["metadata"]
         
-        # Test non-existent ID - should return None instead of raising exception
-        result = grpc_client.get_vector(
-            collection_id=search_collection.id,
-            vector_id="non_existent_id",
-            include_vector=False,
-            include_metadata=True
-        )
-        assert result is None, "Non-existent vector should return None"
+        # Test non-existent ID - should raise exception
+        with pytest.raises(Exception) as exc_info:
+            grpc_client.get_vector(
+                collection_id=search_collection.id,
+                vector_id="non_existent_id",
+                include_vector=False,
+                include_metadata=True
+            )
+        assert "not found" in str(exc_info.value).lower() or "vector not found" in str(exc_info.value).lower()
     
     def test_search_by_metadata_filtering(self, grpc_client, search_collection, bert_model):
         """Test metadata field search functionality"""

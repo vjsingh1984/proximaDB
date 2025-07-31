@@ -23,7 +23,8 @@ use super::sst_test_config::{
     create_test_filesystem_config,
     setup_test_directories,
     setup_storage_assignment,
-    cleanup_assignment
+    cleanup_assignment,
+    cleanup_sstable_files
 };
 
 #[tokio::test]
@@ -46,13 +47,16 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
     // Create SST engine
-    let collection_id = &unique_collection_id("test_collection");
+    let collection_id = &unique_collection_id("sst_flush_test");
     
     // Clear any existing assignment first
     cleanup_assignment(collection_id).await.unwrap();
     
     // Setup storage assignment BEFORE creating SST storage
     setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    
+    // Clean up any existing SSTable files from previous test runs
+    cleanup_sstable_files(collection_id).await.unwrap();
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_engine = SstStorage::new(

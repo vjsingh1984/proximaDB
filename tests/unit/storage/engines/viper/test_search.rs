@@ -6,7 +6,7 @@
 //! - Cluster-based search optimization
 //! - Direct and hybrid search strategies
 
-use crate::storage::engines::viper::search::{
+use proximadb::storage::engines::viper::search::{
     ViperSearchConfig, SearchHints, QuantizationLevel, SearchStrategy
 };
 

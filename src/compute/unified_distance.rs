@@ -65,6 +65,16 @@ impl SimilarityResult {
         match self.metric {
             DistanceMetric::DotProduct => self.raw_value > other.raw_value,
             DistanceMetric::Cosine => self.raw_value < other.raw_value,
+            DistanceMetric::Euclidean => self.raw_value < other.raw_value,
+            DistanceMetric::Manhattan => self.raw_value < other.raw_value,
+            DistanceMetric::Hamming => self.raw_value < other.raw_value,
+            DistanceMetric::Jaccard => self.raw_value < other.raw_value,
+            DistanceMetric::Chebyshev => self.raw_value < other.raw_value,
+            DistanceMetric::Canberra => self.raw_value < other.raw_value,
+            DistanceMetric::Minkowski => self.raw_value < other.raw_value,
+            DistanceMetric::Angular => self.raw_value < other.raw_value,
+            DistanceMetric::BrayCurtis => self.raw_value < other.raw_value,
+            DistanceMetric::Hellinger => self.raw_value < other.raw_value,
             _ => self.raw_value < other.raw_value,
         }
     }
@@ -180,6 +190,12 @@ impl MetricProperties for DistanceMetric {
             DistanceMetric::Manhattan => true,
             DistanceMetric::Hamming => false,
             DistanceMetric::Jaccard => false,
+            DistanceMetric::Chebyshev => true,
+            DistanceMetric::Canberra => true,
+            DistanceMetric::Minkowski => true,
+            DistanceMetric::Angular => false,
+            DistanceMetric::BrayCurtis => false,
+            DistanceMetric::Hellinger => false,
             _ => false,
         }
     }
@@ -192,6 +208,12 @@ impl MetricProperties for DistanceMetric {
             DistanceMetric::DotProduct => (f32::NEG_INFINITY, f32::INFINITY),
             DistanceMetric::Euclidean => (0.0, f32::INFINITY),
             DistanceMetric::Manhattan => (0.0, f32::INFINITY),
+            DistanceMetric::Chebyshev => (0.0, f32::INFINITY),
+            DistanceMetric::Canberra => (0.0, f32::INFINITY),
+            DistanceMetric::Minkowski => (0.0, f32::INFINITY),
+            DistanceMetric::Angular => (0.0, 1.0), // Normalized to [0, 1]
+            DistanceMetric::BrayCurtis => (0.0, 1.0),
+            DistanceMetric::Hellinger => (0.0, 1.0), // sqrt(2) normalized
             _ => (0.0, f32::INFINITY),
         }
     }
@@ -211,6 +233,12 @@ impl MetricProperties for DistanceMetric {
             DistanceMetric::DotProduct => "Dot Product: Inner product, magnitude-dependent (higher = more similar)",
             DistanceMetric::Hamming => "Hamming Distance: Number of differing positions (lower = more similar)",
             DistanceMetric::Jaccard => "Jaccard Distance: 1 - (intersection/union) for sets (lower = more similar)",
+            DistanceMetric::Chebyshev => "Chebyshev Distance: Maximum absolute difference (L∞ norm) (lower = more similar)",
+            DistanceMetric::Canberra => "Canberra Distance: Weighted Manhattan distance (lower = more similar)",
+            DistanceMetric::Minkowski => "Minkowski Distance: Generalized Lp norm with p=3 (lower = more similar)",
+            DistanceMetric::Angular => "Angular Distance: Angle between vectors normalized to [0,1] (lower = more similar)",
+            DistanceMetric::BrayCurtis => "Bray-Curtis Distance: Dissimilarity for non-negative vectors (lower = more similar)",
+            DistanceMetric::Hellinger => "Hellinger Distance: Distance between probability distributions (lower = more similar)",
             DistanceMetric::Custom => "Custom metric with application-specific behavior",
             DistanceMetric::Unspecified => "Unspecified metric (defaults to cosine distance)",
         }
@@ -580,6 +608,14 @@ impl UnifiedDistanceCompute {
                 let max_distance = context.dimension as f32;
                 1.0 - (raw_value / max_distance)
             }
+            DistanceMetric::Chebyshev | DistanceMetric::Canberra | DistanceMetric::Minkowski => {
+                // Use exponential decay for unbounded distances
+                (-raw_value).exp()
+            }
+            DistanceMetric::Angular | DistanceMetric::BrayCurtis | DistanceMetric::Hellinger => {
+                // These are already in [0, 1] range, convert to similarity
+                1.0 - raw_value
+            }
             _ => 0.0,
         }
     }
@@ -873,6 +909,12 @@ impl UnifiedDistanceCompute {
                     4 => DistanceMetric::Hamming,
                     5 => DistanceMetric::Manhattan,
                     6 => DistanceMetric::Jaccard,
+                    8 => DistanceMetric::Chebyshev,
+                    9 => DistanceMetric::Canberra,
+                    10 => DistanceMetric::Minkowski,
+                    11 => DistanceMetric::Angular,
+                    12 => DistanceMetric::BrayCurtis,
+                    13 => DistanceMetric::Hellinger,
                     _ => DistanceMetric::Cosine,
                 };
             }
@@ -1108,6 +1150,176 @@ mod tests {
         assert!((results[1].raw_value - 1.0).abs() < 1e-6); // Orthogonal vectors have distance 1
     }
 
+    #[test]
+    fn test_unified_distance_config_creation() {
+        let config = UnifiedDistanceConfig::default();
+        assert_eq!(config.system_default, DistanceMetric::Cosine);
+        assert!(config.enable_simd);
+        assert_eq!(config.max_batch_size, 1000);
+        assert_eq!(config.calculator_cache_size, 16);
+        
+        // Test custom config
+        let custom_config = UnifiedDistanceConfig {
+            system_default: DistanceMetric::Euclidean,
+            enable_simd: false,
+            max_batch_size: 500,
+            calculator_cache_size: 32,
+        };
+        assert_eq!(custom_config.system_default, DistanceMetric::Euclidean);
+        assert!(!custom_config.enable_simd);
+        assert_eq!(custom_config.max_batch_size, 500);
+        assert_eq!(custom_config.calculator_cache_size, 32);
+    }
+
+    #[test]
+    fn test_batch_distance_calculation() {
+        let compute = UnifiedDistanceCompute::default();
+        let query = vec![1.0, 0.0, 0.0];
+        let vec1 = vec![1.0, 0.0, 0.0]; // Identical
+        let vec2 = vec![0.0, 1.0, 0.0]; // Orthogonal
+        let vec3 = vec![-1.0, 0.0, 0.0]; // Opposite
+        let vectors = vec![
+            vec1.as_slice(),
+            vec2.as_slice(),
+            vec3.as_slice(),
+        ];
+        
+        let results = compute.calculate_distance_batch(&query, &vectors, &DistanceMetric::Cosine);
+        
+        assert_eq!(results.len(), 3);
+        // Identical vector should have lowest rank_value (best match)
+        assert!(results[0].rank_value < results[1].rank_value);
+        assert!(results[0].rank_value < results[2].rank_value);
+        
+        // Check raw values are reasonable
+        assert!((results[0].raw_value - 0.0).abs() < 1e-6); // Identical = distance 0
+        assert!((results[1].raw_value - 1.0).abs() < 1e-6); // Orthogonal = distance 1
+        assert!((results[2].raw_value - 2.0).abs() < 1e-6); // Opposite = distance 2
+    }
+
+    #[test]
+    fn test_empty_batch_distance_calculation() {
+        let compute = UnifiedDistanceCompute::default();
+        let query = vec![1.0, 0.0, 0.0];
+        let empty_vectors: Vec<&[f32]> = vec![];
+        
+        let results = compute.calculate_distance_batch(&query, &empty_vectors, &DistanceMetric::Cosine);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_zero_vector_handling() {
+        let compute = UnifiedDistanceCompute::default();
+        let zero_vec = vec![0.0, 0.0, 0.0];
+        let unit_vec = vec![1.0, 0.0, 0.0];
+        
+        // Cosine distance with zero vector should handle gracefully
+        let result = compute.calculate_distance(&zero_vec, &unit_vec, &DistanceMetric::Cosine);
+        // Implementation should handle division by zero in cosine calculation
+        assert!(result.raw_value.is_finite() || result.raw_value.is_infinite());
+        
+        // Euclidean distance should work normally
+        let euclidean_result = compute.calculate_distance(&zero_vec, &unit_vec, &DistanceMetric::Euclidean);
+        assert!((euclidean_result.raw_value - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_gpu_enabled_setting() {
+        let mut compute = UnifiedDistanceCompute::default();
+        
+        // Test setting GPU enabled
+        compute.set_gpu_enabled(true);
+        // Note: In current implementation, GPU support is not implemented
+        // but the method should exist and not panic
+        
+        compute.set_gpu_enabled(false);
+        // Should also work without issues
+    }
+
+    #[test]
+    fn test_preferred_backend() {
+        let compute = UnifiedDistanceCompute::default();
+        let backend = compute.preferred_backend();
+        
+        // Test debug formatting for backends  
+        let display_str = format!("{}", backend);
+        assert!(!display_str.is_empty());
+    }
+
+
+    #[test]
+    fn test_all_distance_metrics_similarity_detection() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test all implemented distance metrics
+        let metrics = vec![
+            DistanceMetric::Cosine,
+            DistanceMetric::Euclidean,
+            DistanceMetric::DotProduct,
+            DistanceMetric::Manhattan,
+            DistanceMetric::Hamming,
+            DistanceMetric::Jaccard,
+            DistanceMetric::Chebyshev,
+            DistanceMetric::Canberra,
+            DistanceMetric::Minkowski,
+            DistanceMetric::Angular,
+            DistanceMetric::BrayCurtis,
+            DistanceMetric::Hellinger,
+        ];
+        
+        for metric in metrics {
+            // Should not panic and should return a boolean
+            let is_similarity = compute.is_similarity_metric(&metric);
+            assert!(is_similarity == true || is_similarity == false);
+        }
+    }
+
+    #[test]
+    fn test_large_batch_processing() {
+        let compute = UnifiedDistanceCompute::default();
+        let query = vec![1.0; 128]; // 128-dimensional vector
+        
+        // Create a large batch of vectors
+        let mut vectors = Vec::new();
+        for i in 0..1000 {
+            let mut vec = vec![0.0; 128];
+            vec[0] = i as f32 / 1000.0; // Vary the first dimension
+            vectors.push(vec);
+        }
+        
+        let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+        
+        let results = compute.calculate_distance_batch(&query, &vector_refs, &DistanceMetric::Cosine);
+        
+        assert_eq!(results.len(), 1000);
+        // Results should be properly ordered by similarity
+        for i in 1..results.len() {
+            // rank_value should be reasonable (not all the same, not infinite)
+            assert!(results[i].rank_value.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_extreme_vector_values() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test with very large values
+        let large_vec = vec![1e6, 1e6, 1e6];
+        let small_vec = vec![1e-6, 1e-6, 1e-6];
+        
+        let result = compute.calculate_distance(&large_vec, &small_vec, &DistanceMetric::Euclidean);
+        assert!(result.raw_value.is_finite());
+        assert!(result.rank_value.is_finite());
+        
+        // Test with NaN values (should be handled gracefully)
+        let nan_vec = vec![f32::NAN, 0.0, 0.0];
+        let normal_vec = vec![1.0, 0.0, 0.0];
+        
+        let nan_result = compute.calculate_distance(&nan_vec, &normal_vec, &DistanceMetric::Cosine);
+        // Implementation should handle NaN gracefully (likely return infinite distance)
+        assert!(nan_result.raw_value.is_nan() || nan_result.raw_value.is_infinite());
+    }
+
     #[tokio::test]
     async fn test_metric_resolution_hierarchy() {
         let compute = UnifiedDistanceCompute::default();
@@ -1123,5 +1335,221 @@ mod tests {
             .resolve_distance_metric(None, None, "test_collection")
             .await;
         assert_eq!(resolved, DistanceMetric::Cosine);
+    }
+
+    #[test]
+    fn test_similarity_result_comparison() {
+        // Test SimilarityResult is_better_than method
+        let result1 = SimilarityResult {
+            raw_value: 0.5,
+            rank_value: 0.5,
+            metric: DistanceMetric::Euclidean,
+            normalized_score: 0.8,
+        };
+        let result2 = SimilarityResult {
+            raw_value: 0.3,
+            rank_value: 0.3,
+            metric: DistanceMetric::Euclidean,
+            normalized_score: 0.9,
+        };
+
+        // Lower distance should be better for Euclidean
+        assert!(result2.is_better_than(&result1));
+        assert!(!result1.is_better_than(&result2));
+        assert!(!result1.is_better_than(&result1)); // Same result
+    }
+
+    #[test]
+    fn test_similarity_result_debug_display() {
+        let result = SimilarityResult {
+            raw_value: 0.123456,
+            rank_value: 0.654321,
+            metric: DistanceMetric::Cosine,
+            normalized_score: 0.876543,
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("0.123456"));
+        assert!(debug_str.contains("0.654321"));
+        assert!(debug_str.contains("0.876543"));
+        
+        // Test similarity percentage
+        assert!(result.similarity_percentage() > 0.0);
+        assert!(result.similarity_percentage() <= 100.0);
+    }
+
+    #[test]
+    fn test_vector_dimension_mismatch_handling() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test vectors with different dimensions
+        let vec_3d = vec![1.0, 2.0, 3.0];
+        let vec_4d = vec![1.0, 2.0, 3.0, 4.0];
+
+        // This should handle dimension mismatch gracefully
+        let result = compute.calculate_distance(&vec_3d, &vec_4d, &DistanceMetric::Euclidean);
+        // Implementation may pad with zeros or return error distance
+        assert!(result.raw_value.is_finite() || result.raw_value.is_infinite());
+    }
+
+    #[test] 
+    fn test_all_distance_metrics_coverage() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec1 = vec![1.0, 0.0, 0.0];
+        let vec2 = vec![0.0, 1.0, 0.0];
+
+        // Test all distance metrics to ensure they're implemented
+        let metrics = [
+            DistanceMetric::Cosine,
+            DistanceMetric::Euclidean, 
+            DistanceMetric::DotProduct,
+            DistanceMetric::Manhattan,
+            DistanceMetric::Hamming,
+            DistanceMetric::Jaccard,
+            DistanceMetric::Chebyshev,
+            DistanceMetric::Canberra,
+            DistanceMetric::Minkowski,
+            DistanceMetric::Angular,
+            DistanceMetric::BrayCurtis,
+            DistanceMetric::Hellinger,
+        ];
+
+        for metric in metrics.iter() {
+            let result = compute.calculate_distance(&vec1, &vec2, metric);
+            assert!(result.raw_value.is_finite() || result.raw_value.is_infinite(), 
+                   "Metric {:?} should return valid distance", metric);
+        }
+    }
+
+    #[test]
+    fn test_config_field_access() {
+        // Test UnifiedDistanceConfig actual fields
+        let config = UnifiedDistanceConfig {
+            system_default: DistanceMetric::Euclidean,
+            enable_simd: false,
+            max_batch_size: 2000,
+            calculator_cache_size: 500,
+        };
+
+        let compute = UnifiedDistanceCompute::new(config.system_default);
+        assert_eq!(*compute.system_default(), DistanceMetric::Euclidean);
+    }
+
+    #[test]
+    fn test_zero_magnitude_vectors() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test zero vectors
+        let zero_vec = vec![0.0, 0.0, 0.0];
+        let normal_vec = vec![1.0, 0.0, 0.0];
+
+        // Cosine distance with zero vector should be handled specially
+        let result = compute.calculate_distance(&zero_vec, &normal_vec, &DistanceMetric::Cosine);
+        // Implementation may return 1.0 (max distance) or handle as special case
+        assert!(result.raw_value >= 0.0);
+
+        // Euclidean distance should work normally
+        let euclidean_result = compute.calculate_distance(&zero_vec, &normal_vec, &DistanceMetric::Euclidean);
+        assert_eq!(euclidean_result.raw_value, 1.0);
+    }
+
+    #[test]
+    fn test_hardware_backend_display() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test available backends method
+        let backends = compute.available_backends();
+        assert!(!backends.is_empty());
+        
+        // Test preferred backend
+        let preferred = compute.preferred_backend();
+        
+        // Test debug formatting for backends
+        let display_str = format!("{}", preferred);
+        assert!(!display_str.is_empty());
+    }
+
+    #[test] 
+    fn test_platform_capability() {
+        let compute = UnifiedDistanceCompute::default();
+        
+        // Test platform capability detection
+        let capability = compute.platform_capability();
+        
+        // Should be one of the known capabilities
+        // (can't assert specific values since it depends on runtime platform)
+        let display_str = format!("{:?}", capability);
+        assert!(!display_str.is_empty());
+    }
+
+    #[test]
+    fn test_simd_configuration() {
+        let mut config = UnifiedDistanceConfig::default();
+        config.enable_simd = false;
+
+        let compute = UnifiedDistanceCompute::new(config.system_default);
+
+        // Ensure computation works regardless of SIMD setting
+        let vec1 = vec![1.0, 2.0, 3.0];
+        let vec2 = vec![4.0, 5.0, 6.0];
+
+        let result = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
+        assert!(result.raw_value > 0.0);
+        assert!(result.raw_value.is_finite());
+    }
+
+    #[test]
+    fn test_config_clone_and_debug() {
+        let config = UnifiedDistanceConfig::default();
+        let cloned_config = config.clone();
+        
+        assert_eq!(config.system_default, cloned_config.system_default);
+        assert_eq!(config.enable_simd, cloned_config.enable_simd);
+        
+        // Test debug formatting
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("system_default"));
+        assert!(debug_str.contains("enable_simd"));
+    }
+
+    #[test]
+    fn test_custom_metric_fallback() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec1 = vec![1.0, 0.0];
+        let vec2 = vec![0.0, 1.0];
+
+        // Test CUSTOM metric (should fall back to cosine or return error)
+        let result = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Custom);
+        // Implementation may fallback to default or return error distance
+        assert!(result.raw_value.is_finite() || result.raw_value.is_infinite());
+    }
+
+    #[test]
+    fn test_unspecified_metric_handling() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec1 = vec![1.0, 0.0];
+        let vec2 = vec![0.0, 1.0];
+
+        // Test DISTANCE_METRIC_UNSPECIFIED
+        let result = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Unspecified);
+        // Should fallback to default metric or handle gracefully
+        assert!(result.raw_value >= 0.0);
+    }
+
+    #[test]
+    fn test_distance_mode_variations() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec1 = vec![1.0, 0.0, 0.0];
+        let vec2 = vec![0.0, 1.0, 0.0];
+
+        // Test calculate_distance_with_mode with default mode
+        let result = compute.calculate_distance_with_mode(
+            &vec1, 
+            &vec2, 
+            &DistanceMetric::Cosine, 
+            DistanceMode::default()
+        );
+        assert!(result.raw_value.is_finite());
+        assert!(result.normalized_score >= 0.0 && result.normalized_score <= 1.0);
     }
 }

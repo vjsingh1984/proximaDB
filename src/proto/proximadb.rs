@@ -1142,6 +1142,12 @@ pub enum DistanceMetric {
     Manhattan = 5,
     Jaccard = 6,
     Custom = 7,
+    Chebyshev = 8,
+    Canberra = 9,
+    Minkowski = 10,
+    Angular = 11,
+    BrayCurtis = 12,
+    Hellinger = 13,
 }
 impl DistanceMetric {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1158,6 +1164,12 @@ impl DistanceMetric {
             DistanceMetric::Manhattan => "MANHATTAN",
             DistanceMetric::Jaccard => "JACCARD",
             DistanceMetric::Custom => "CUSTOM",
+            DistanceMetric::Chebyshev => "CHEBYSHEV",
+            DistanceMetric::Canberra => "CANBERRA",
+            DistanceMetric::Minkowski => "MINKOWSKI",
+            DistanceMetric::Angular => "ANGULAR",
+            DistanceMetric::BrayCurtis => "BRAY_CURTIS",
+            DistanceMetric::Hellinger => "HELLINGER",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1171,6 +1183,12 @@ impl DistanceMetric {
             "MANHATTAN" => Some(Self::Manhattan),
             "JACCARD" => Some(Self::Jaccard),
             "CUSTOM" => Some(Self::Custom),
+            "CHEBYSHEV" => Some(Self::Chebyshev),
+            "CANBERRA" => Some(Self::Canberra),
+            "MINKOWSKI" => Some(Self::Minkowski),
+            "ANGULAR" => Some(Self::Angular),
+            "BRAY_CURTIS" => Some(Self::BrayCurtis),
+            "HELLINGER" => Some(Self::Hellinger),
             _ => None,
         }
     }

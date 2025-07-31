@@ -1,43 +1,87 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#2b6cb0', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#3182ce', 'lineColor':'#4299e1', 'fontSize':'11px', 'fontFamily':'Inter, sans-serif'}}}%%
 flowchart TD
-    Start([Start]) --> Receive[Receive search request]
+    %% Input Stage
+    Start([🔍 Vector Search Request<br/>📊 Query Vector + Filters<br/>🎯 Top-K Results])
     
-    Receive --> Note1[/"Query vector<br/>k = 10<br/>candidate_multiplier = 3.0"/]
+    %% Query Processing
+    QueryParse{🔍 Parse Search Query<br/>📋 Extract Components}
+    VectorQuery[Vector Component<br/>🔢 128-4096 dimensions<br/>📏 Distance Metric]
+    MetadataFilter[Metadata Filters<br/>🏷️ WHERE conditions<br/>🗃️ Collection scope]
     
-    Note1 --> Stage1{{"Stage 1: Quantized Filtering"}}
+    %% Stage 1: Coarse Search
+    Stage1{🎯 Stage 1: Coarse Search<br/>📊 Approximate Filtering}
     
-    subgraph Stage1_Details["Stage 1: Quantized Filtering"]
-        Load[Load quantized vectors] --> LoadNote[/"Reduced memory bandwidth<br/>(1/8 to 1/32 of original)"/]
-        LoadNote --> Compute[Compute approximate distances]
-        Compute --> ComputeNote[/"Using SIMD operations<br/>on quantized data"/]
-        ComputeNote --> Select[Select k × multiplier candidates]
-        Select --> SelectNote[/"10 × 3.0 = 30 candidates"/]
-        SelectNote --> MetaCheck{Metadata filters?}
-        MetaCheck -->|Yes| Apply[Apply metadata filtering]
-        MetaCheck -->|No| Skip1[Continue]
-        Apply --> Skip1
-    end
+    %% Index Selection
+    IndexSelect{🤖 AXIS Index Selection<br/>📈 Performance Optimization}
+    HNSW[🔗 HNSW Index<br/>🎯 High Precision<br/>⚡ Graph Traversal]
+    IVF[🏗️ IVF Index<br/>📊 Large Scale<br/>🔍 Clustering-based]
+    LSH[🔑 LSH Index<br/>🎲 Binary/Hamming<br/>⚡ Hash-based]
+    Annoy[🌳 Annoy Index<br/>🚀 Fast Approximate<br/>🌲 Tree-based]
     
-    Stage1 --> Stage1_Details
-    Stage1_Details --> Stage2{{"Stage 2: Full Precision Verification"}}
+    %% Coarse Results
+    CoarseResults[📊 Coarse Candidates<br/>🔢 10-100x Target K<br/>⚡ Fast Retrieval]
     
-    subgraph Stage2_Details["Stage 2: Full Precision Verification"]
-        LoadFP32[Load FP32 vectors for candidates] --> LoadFP32Note[/"Only 30 vectors loaded<br/>instead of entire dataset"/]
-        LoadFP32Note --> ComputeExact[Compute exact distances]
-        ComputeExact --> ComputeExactNote[/"High precision calculation<br/>for final accuracy"/]
-        ComputeExactNote --> Rerank[Rerank candidates]
-        Rerank --> SelectFinal[Select final top-k results]
-    end
+    %% Stage 2: Fine Search  
+    Stage2{🎯 Stage 2: Fine Search<br/>📏 Exact Distance Calculation}
     
-    Stage2 --> Stage2_Details
-    Stage2_Details --> Return[Return results]
-    Return --> ReturnNote[/"10 results with<br/>100% accuracy"/]
-    ReturnNote --> End([End])
+    %% Distance Computation
+    DistanceCalc[📏 Distance Calculation<br/>📁 compute/unified_distance.rs<br/>🔧 SIMD Optimized<br/>🖥️ Hardware Accelerated]
     
-    %% Styling
-    classDef stage fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
-    classDef note fill:#FFF9C4,stroke:#F57F17,stroke-width:1px
-    classDef process fill:#E8F5E9,stroke:#388E3C,stroke-width:1px
+    %% Metadata Application
+    MetadataApply{🏷️ Apply Metadata Filters<br/>🔍 WHERE clause processing}
+    FilteredResults[✅ Filtered Results<br/>🎯 Exact Matches<br/>📊 Score + Metadata]
     
-    class Stage1,Stage2 stage
-    class Note1,LoadNote,ComputeNote,SelectNote,LoadFP32Note,ComputeExactNote,ReturnNote note
-    class Load,Compute,Select,Apply,LoadFP32,ComputeExact,Rerank,SelectFinal,Return process
+    %% Final Processing
+    RankingSort[📊 Ranking & Sorting<br/>🏆 Score Normalization<br/>📈 Top-K Selection]
+    
+    %% Output
+    FinalResults([🎯 Final Results<br/>📊 Top-K Vectors<br/>⏱️ <10ms p95<br/>🎯 99.9% Accuracy])
+    
+    %% Flow Connections
+    Start --> QueryParse
+    QueryParse --> VectorQuery
+    QueryParse --> MetadataFilter
+    
+    VectorQuery --> Stage1
+    MetadataFilter --> Stage1
+    
+    Stage1 --> IndexSelect
+    
+    %% Index Selection Branches
+    IndexSelect -->|High Precision| HNSW
+    IndexSelect -->|Large Scale| IVF  
+    IndexSelect -->|Binary/Hamming| LSH
+    IndexSelect -->|Fast Approximate| Annoy
+    
+    HNSW --> CoarseResults
+    IVF --> CoarseResults
+    LSH --> CoarseResults
+    Annoy --> CoarseResults
+    
+    CoarseResults --> Stage2
+    Stage2 --> DistanceCalc
+    DistanceCalc --> MetadataApply
+    
+    MetadataApply -->|Filters Match| FilteredResults
+    MetadataApply -->|Filters Fail| DistanceCalc
+    
+    FilteredResults --> RankingSort
+    RankingSort --> FinalResults
+    
+    %% Performance Annotations
+    Stage1 -.->|"10-100x Candidates"| CoarseResults
+    DistanceCalc -.->|"SIMD Accelerated"| FilteredResults
+    RankingSort -.->|"Top-K Selection"| FinalResults
+    
+    %% Decision Styling
+    classDef startStyle fill:#38a169,stroke:#2f855a,stroke-width:3px,color:#ffffff
+    classDef processStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
+    classDef decisionStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
+    classDef indexStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
+    classDef resultStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
+    classDef endStyle fill:#38b2ac,stroke:#319795,stroke-width:3px,color:#ffffff
+    
+    class Start,FinalResults startStyle
+    class VectorQuery,MetadataFilter,CoarseResults,DistanceCalc,FilteredResults,RankingSort processStyle
+    class QueryParse,Stage1,Stage2,IndexSelect,MetadataApply decisionStyle
+    class HNSW,IVF,LSH,Annoy indexStyle

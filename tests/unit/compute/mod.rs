@@ -17,6 +17,7 @@
 //! Compute module unit tests
 
 pub mod distance_tests;
+pub mod distance_avx512_tests;
 pub mod algorithms_tests;
 pub mod test_unified_modules_coverage;
 pub mod unified_quantization_tests;

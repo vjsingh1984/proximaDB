@@ -49,7 +49,7 @@ class DistanceMetric(str, Enum):
 class StorageEngine(str, Enum):
     """Storage engines for REST API"""
     VIPER = "viper"
-    LSM = "lsm"
+    SST = "sst"
     MMAP = "mmap"
     HYBRID = "hybrid"
 

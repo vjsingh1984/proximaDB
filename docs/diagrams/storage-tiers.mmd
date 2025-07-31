@@ -1,36 +1,90 @@
-graph TB
-    subgraph "Storage Tiers"
-        A[Hot Storage<br/>NVMe SSD] 
-        B[Warm Storage<br/>SSD]
-        C[Cold Storage<br/>HDD]
-        D[Archive Storage<br/>Cloud Object Store]
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#2d3748', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#4a5568', 'lineColor':'#718096', 'fontSize':'12px', 'fontFamily':'Inter, sans-serif'}}}%%
+graph LR
+    %% Data Input
+    DataInput["📥 Vector Data Input<br/>🔢 Multi-dimensional Vectors<br/>🏷️ Rich Metadata"]
+    
+    %% Storage Tier Classification
+    subgraph TierLogic["🎯 Intelligent Tiering Logic"]
+        AccessPattern["Access Pattern Analysis<br/>📊 Read/Write Frequency<br/>⏱️ Temporal Locality<br/>🔄 Update Patterns"]
+        
+        TierDecision{Tier Classification<br/>🤖 Automated Decision}
     end
     
-    subgraph "Access Patterns"
-        E[High Frequency<br/>< 1 day]
-        F[Medium Frequency<br/>1-7 days]
-        G[Low Frequency<br/>7-30 days]
-        H[Rare Access<br/>> 30 days]
+    %% Hot Tier - Memory + NVMe
+    subgraph HotTier["🔥 Hot Tier - Ultra Performance"]
+        MemoryLayer["Memory Layer (L1)<br/>💾 RAM-based Storage<br/>⚡ Sub-microsecond Access<br/>📊 95% Cache Hit Rate<br/>💰 Cost: High, Performance: Maximum"]
+        
+        NVMeLayer["NVMe SSD Layer (L2)<br/>💽 High-speed NVMe<br/>⚡ ~100μs Access Time<br/>📊 80% Cache Hit Rate<br/>💰 Cost: Medium-High, Performance: High"]
     end
     
-    subgraph "Storage URLs"
-        I["file:///mnt/nvme/"]
-        J["file:///mnt/ssd/"]
-        K["file:///mnt/hdd/"]
-        L["s3://bucket/archive"]
+    %% Warm Tier - SSD
+    subgraph WarmTier["🔸 Warm Tier - Balanced Performance"]
+        SSDLayer["SSD Storage<br/>💿 SATA/SAS SSD<br/>⚡ ~1ms Access Time<br/>📊 Good Sequential Read<br/>💰 Cost: Medium, Performance: Good"]
+        
+        CompressedSSD["Compressed SSD<br/>🗜️ LZ4/Snappy Compression<br/>📉 3:1 Compression Ratio<br/>🔄 Background Decompression<br/>💰 Cost: Medium-Low, Performance: Fair"]
     end
     
-    E --> A
-    F --> B
-    G --> C
-    H --> D
+    %% Cold Tier - Cloud Storage
+    subgraph ColdTier["❄️ Cold Tier - Cost Optimized"]
+        S3Storage["Amazon S3<br/>☁️ Object Storage<br/>⏱️ ~10-100ms Access<br/>📦 Intelligent Tiering<br/>💰 Cost: Low, Performance: Archive"]
+        
+        AzureStorage["Azure Blob Storage<br/>☁️ Cool/Archive Tiers<br/>⏱️ ~10ms-12hrs Access<br/>🔄 Lifecycle Management<br/>💰 Cost: Very Low, Performance: Archive"]
+        
+        GCSStorage["Google Cloud Storage<br/>☁️ Nearline/Coldline<br/>⏱️ ~10ms-12hrs Access<br/>📊 Predictive Prefetching<br/>💰 Cost: Very Low, Performance: Archive"]
+    end
     
-    A --> I
-    B --> J
-    C --> K
-    D --> L
+    %% Storage-Aware Search Integration
+    subgraph SearchOpt["🔍 Storage-Aware Search Optimization"]
+        SearchHints["Search Hints Engine<br/>📍 Tier-aware Query Planning<br/>🎯 Optimal Access Patterns<br/>⚡ Latency Minimization"]
+        
+        DataLocalizing["Data Locality Optimization<br/>📍 Co-locate Related Vectors<br/>🔄 Predictive Prefetching<br/>📊 Access Pattern Learning"]
+        
+        CachingStrategy["Multi-tier Caching<br/>🔄 Hot Data Promotion<br/>❄️ Cold Data Demotion<br/>⚡ Adaptive Algorithms"]
+    end
     
-    style A fill:#ff9999
-    style B fill:#ffcc99
-    style C fill:#99ccff
-    style D fill:#cccccc
+    %% Performance & Cost Metrics
+    subgraph Metrics["📊 Performance & Cost Analysis"]
+        PerfMetrics["Performance Metrics<br/>⚡ Hot: <1ms p95<br/>🔸 Warm: <10ms p95<br/>❄️ Cold: <100ms p95<br/>🎯 99.9% Availability"]
+        
+        CostMetrics["Cost Optimization<br/>💰 80% Cost Reduction<br/>📉 Auto-scaling Storage<br/>🔄 Lifecycle Automation<br/>📊 Usage-based Pricing"]
+    end
+    
+    %% Data Flow
+    DataInput --> AccessPattern
+    AccessPattern --> TierDecision
+    
+    TierDecision -->|"Frequent Access<br/>Low Latency"| MemoryLayer
+    TierDecision -->|"Regular Access<br/>High Performance"| NVMeLayer
+    TierDecision -->|"Moderate Access<br/>Balanced Cost"| SSDLayer
+    TierDecision -->|"Infrequent Access<br/>Cost Sensitive"| CompressedSSD
+    TierDecision -->|"Archive/Backup<br/>Long-term Storage"| S3Storage
+    
+    %% Tier Interactions
+    MemoryLayer -.->|"Cache Miss"| NVMeLayer
+    NVMeLayer -.->|"Cache Miss"| SSDLayer
+    SSDLayer -.->|"Archive"| S3Storage
+    SSDLayer -.->|"Archive"| AzureStorage
+    SSDLayer -.->|"Archive"| GCSStorage
+    
+    %% Search Integration
+    SearchHints --> MemoryLayer
+    SearchHints --> NVMeLayer
+    SearchHints --> SSDLayer
+    DataLocalizing --> CachingStrategy
+    CachingStrategy --> PerfMetrics
+    CachingStrategy --> CostMetrics
+    
+    %% Styling by Performance Tier
+    classDef hotStyle fill:#e53e3e,stroke:#c53030,stroke-width:3px,color:#ffffff
+    classDef warmStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
+    classDef coldStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
+    classDef logicStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
+    classDef searchStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff
+    classDef metricsStyle fill:#38b2ac,stroke:#319795,stroke-width:2px,color:#ffffff
+    
+    class MemoryLayer,NVMeLayer hotStyle
+    class SSDLayer,CompressedSSD warmStyle
+    class S3Storage,AzureStorage,GCSStorage coldStyle
+    class AccessPattern,TierDecision logicStyle
+    class SearchHints,DataLocalizing,CachingStrategy searchStyle
+    class PerfMetrics,CostMetrics metricsStyle

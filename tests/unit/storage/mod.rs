@@ -39,3 +39,9 @@ pub mod unified_cache_test;
 // Coverage improvement tests
 pub mod storage_assignment_tests;
 pub mod assignment_service_advanced_tests;
+
+// Threshold trigger tests
+pub mod test_threshold_triggers;
+
+// SST mmap tests
+// pub mod sst_mmap_tests;

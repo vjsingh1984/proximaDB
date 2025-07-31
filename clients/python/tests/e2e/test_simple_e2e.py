@@ -37,8 +37,11 @@ def test_create_collection():
     }
     
     response = requests.post(
-        f"{SERVER_URL}/collections",
-        json=collection_data,
+        f"{SERVER_URL}/api/v1/collection",
+        json={
+            "operation": "create",
+            "config": collection_data
+        },
         headers={"Content-Type": "application/json"}
     )
     
@@ -58,7 +61,8 @@ def test_list_collections():
     """Test listing collections"""
     print("📋 Testing collection listing...")
     
-    response = requests.get(f"{SERVER_URL}/collections")
+    # Use GET request to /collections (plural) endpoint
+    response = requests.get(f"{SERVER_URL}/api/v1/collections")
     
     print(f"   Response status: {response.status_code}")
     if response.status_code == 200:

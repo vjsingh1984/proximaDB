@@ -1,57 +1,89 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1a202c', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#2d3748', 'lineColor':'#4a5568', 'fontSize':'11px'}}}%%
 sequenceDiagram
-    participant Client
-    participant MultiServer
-    participant UnifiedHandlers
-    participant DirectVectorService
-    participant StorageEngine
-    participant ViperEngine
-    participant WriteBuffer
-    participant CloudStorage
+    participant Client as 📱 Client
+    participant REST as 🌐 REST API
+    participant gRPC as ⚡ gRPC API  
+    participant Handler as 🔧 UnifiedHandlers
+    participant DVS as ⚡ DirectVectorService
+    participant CS as 🗃️ CollectionService
+    participant Engine as 🗄️ StorageEngine
+    participant VIPER as 🏗️ VIPER Engine
+    participant SST as 🧱 SST Engine
+    participant Atomic as ⚛️ AtomicCoordinator
+    participant Cloud as ☁️ Cloud Storage
     
     %% Vector Insert Flow
-    Note over Client,CloudStorage: Vector Insert Operation
-    Client->>MultiServer: POST /vectors (REST) or InsertVectors (gRPC)
-    MultiServer->>UnifiedHandlers: Route request to unified logic
-    UnifiedHandlers->>DirectVectorService: insert_vectors(collection_id, vectors)
+    Note over Client,Cloud: Vector Insert Operation (49K ops/sec)
     
-    DirectVectorService->>DirectVectorService: Generate IDs if missing
-    DirectVectorService->>StorageEngine: Route to storage strategy
+    Client->>+REST: POST /vectors<br/>📦 JSON Batch (500 vectors)
+    REST->>+Handler: handle_vector_batch()<br/>🔄 JSON → Proto
+    Handler->>+DVS: insert_vectors()<br/>⚡ Direct Access
+    DVS->>+Engine: route_to_engine()<br/>🎯 Collection-based Routing
     
-    alt VIPER Engine (Default)
-        StorageEngine->>ViperEngine: write_vectors(vectors)
-        ViperEngine->>WriteBuffer: Buffer for persistence
-    else SST Engine (Alternative)
-        StorageEngine->>SstEngine: write_vectors(vectors)
-        SstEngine->>WriteBuffer: Buffer for persistence
+    alt VIPER Engine Selected
+        Engine->>+VIPER: insert_batch()<br/>🏗️ Columnar Storage
+        VIPER->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
+        Atomic->>+Cloud: write_to_staging()<br/>💾 Staged Write
+        Cloud-->>-Atomic: ✅ Write Confirmed
+        Atomic-->>-VIPER: ✅ Transaction ID
+        VIPER-->>-Engine: ✅ Insert Complete
+    else SST Engine Selected  
+        Engine->>+SST: insert_batch()<br/>🧱 Row-based Storage
+        SST->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
+        Atomic->>+Cloud: write_sstables()<br/>💾 SSTable Write
+        Cloud-->>-Atomic: ✅ Write Confirmed
+        Atomic-->>-SST: ✅ Transaction ID
+        SST-->>-Engine: ✅ Insert Complete
     end
     
-    WriteBuffer->>CloudStorage: Atomic write with staging
-    CloudStorage-->>WriteBuffer: Write confirmation
-    WriteBuffer-->>DirectVectorService: Success response
-    DirectVectorService-->>UnifiedHandlers: VectorOperationResponse
-    UnifiedHandlers-->>MultiServer: Proto response
-    MultiServer-->>Client: HTTP 200 or gRPC Success
+    Engine-->>-DVS: ✅ Batch Inserted
+    DVS-->>-Handler: ✅ Operation Result
+    Handler-->>-REST: ✅ Proto → JSON Response
+    REST-->>-Client: 📊 Insert Stats<br/>⏱️ <5ms Response Time
     
     %% Vector Search Flow
-    Note over Client,CloudStorage: Vector Search Operation
-    Client->>MultiServer: GET /search (REST) or SearchVectors (gRPC)
-    MultiServer->>UnifiedHandlers: Route search request
-    UnifiedHandlers->>DirectVectorService: search_vectors(collection_id, query)
+    Note over Client,Cloud: Vector Search Operation (48 QPS)
     
-    DirectVectorService->>DirectVectorService: Search unflushed WriteBuffer
-    DirectVectorService->>StorageEngine: Search persisted data
+    Client->>+gRPC: SearchVectors()<br/>⚡ Binary Proto Query
+    gRPC->>+Handler: handle_vector_search()<br/>🔄 Direct Proto
+    Handler->>+DVS: search_vectors()<br/>🎯 Query Optimization
+    DVS->>+Engine: multi_engine_search()<br/>🔍 Parallel Search
     
-    alt VIPER Engine
-        StorageEngine->>ViperEngine: search_unified(query)
-        ViperEngine->>ViperEngine: Parquet predicate pushdown + ML clustering
-    else SST Engine
-        StorageEngine->>SstEngine: search_unified(query)
-        SstEngine->>SstEngine: SSTable search + bloom filters
+    par VIPER Search
+        Engine->>+VIPER: vector_search()<br/>🏗️ Columnar Scan
+        VIPER-->>-Engine: 📊 VIPER Results
+    and SST Search
+        Engine->>+SST: range_search()<br/>🧱 Row-based Scan  
+        SST-->>-Engine: 📊 SST Results
     end
     
-    StorageEngine-->>DirectVectorService: Storage results
-    DirectVectorService->>DirectVectorService: Merge WriteBuffer + Storage results
-    DirectVectorService->>DirectVectorService: Deduplicate with MVCC ordering
-    DirectVectorService-->>UnifiedHandlers: SearchResults with scores
-    UnifiedHandlers-->>MultiServer: Proto response
-    MultiServer-->>Client: HTTP 200 or gRPC Success
+    Engine->>Engine: merge_and_rank()<br/>📊 Score Normalization
+    Engine-->>-DVS: 🎯 Top-K Results
+    DVS-->>-Handler: ✅ Search Complete
+    Handler-->>-gRPC: ⚡ Direct Proto Response
+    gRPC-->>-Client: 🔍 Search Results<br/>⏱️ <10ms p95
+    
+    %% Collection Management Flow
+    Note over Client,Cloud: Collection Operations
+    
+    Client->>+REST: POST /collections<br/>🗃️ Collection Config
+    REST->>+Handler: handle_collection_operation()<br/>🔄 JSON → Proto
+    Handler->>+CS: create_collection()<br/>🏗️ Metadata Setup
+    CS->>+Engine: initialize_storage()<br/>📁 Directory Creation
+    Engine->>+Atomic: setup_collection_storage()<br/>⚛️ Atomic Setup
+    Atomic->>+Cloud: create_collection_dirs()<br/>📁 Cloud Directories
+    Cloud-->>-Atomic: ✅ Directories Created
+    Atomic-->>-Engine: ✅ Storage Ready
+    Engine-->>-CS: ✅ Collection Initialized
+    CS-->>-Handler: ✅ Collection Created
+    Handler-->>-REST: ✅ Proto → JSON Response
+    REST-->>-Client: 🗃️ Collection Details
+    
+    %% Error Handling Flow
+    Note over Client,Cloud: Error Handling & Recovery
+    
+    Client->>+gRPC: InsertVectors()<br/>❌ Invalid Data Format
+    gRPC->>+Handler: handle_vector_batch()
+    Handler->>Handler: validate_proto()<br/>🔍 Schema Validation
+    Handler-->>-gRPC: ❌ ValidationError<br/>📋 Detailed Error Info
+    gRPC-->>-Client: ❌ Error Response<br/>🔧 Actionable Message

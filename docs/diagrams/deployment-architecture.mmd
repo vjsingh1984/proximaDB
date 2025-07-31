@@ -1,92 +1,140 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1a365d', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#2c5282', 'lineColor':'#4299e1', 'fontSize':'11px', 'fontFamily':'SF Pro Display, sans-serif'}}}%%
 graph TB
-    subgraph "Client Applications"
-        APP1[AI Applications<br/>LangChain/LlamaIndex]
-        APP2[Data Pipeline<br/>ETL/Streaming]
-        APP3[Analytics<br/>Dashboards]
+    %% Load Balancer & CDN
+    subgraph Edge["🌐 Edge & Load Balancing"]
+        CDN["Content Delivery Network<br/>⚡ Global Edge Locations<br/>📊 Static Asset Caching"]
+        LB["Load Balancer<br/>🔄 HAProxy/NGINX<br/>⚖️ Traffic Distribution<br/>🛡️ SSL Termination"]
     end
     
-    subgraph "Load Balancer"
-        LB[HAProxy/Nginx<br/>Health Checks<br/>SSL Termination]
-    end
-    
-    subgraph "ProximaDB Cluster"
-        subgraph "Node 1"
-            REST1[REST API<br/>:5678]
-            GRPC1[gRPC API<br/>:5679]
-            DVS1[DirectVectorService<br/>40-60% faster]
+    %% Application Tier - Multi-Instance
+    subgraph AppTier["🚀 Application Tier (Auto-Scaling)"]
+        subgraph Instance1["ProximaDB Instance 1"]
+            App1REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
+            App1GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
         end
         
-        subgraph "Node 2"
-            REST2[REST API<br/>:5678]
-            GRPC2[gRPC API<br/>:5679]
-            DVS2[DirectVectorService<br/>40-60% faster]
+        subgraph Instance2["ProximaDB Instance 2"]
+            App2REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
+            App2GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
         end
         
-        subgraph "Node 3"
-            REST3[REST API<br/>:5678]
-            GRPC3[gRPC API<br/>:5679]
-            DVS3[DirectVectorService<br/>40-60% faster]
+        subgraph InstanceN["ProximaDB Instance N"]
+            AppNREST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
+            AppNGRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
         end
     end
     
-    subgraph "Storage Tiers"
-        subgraph "Hot Tier - NVMe"
-            WriteBuffer[WriteBuffer Logs<br/>2MB flush]
-            MEM[Active Memtables<br/>Recent vectors]
+    %% Multi-Disk Storage Configuration
+    subgraph Storage["🗄️ Multi-Disk Storage Configuration"]
+        subgraph HighPerf["⚡ High-Performance Tier"]
+            NVMe1["NVMe SSD 1<br/>💾 Hot Data Storage<br/>⚡ <100μs Latency<br/>📊 Memory-Mapped Files"]
+            NVMe2["NVMe SSD 2<br/>💾 Index Storage<br/>🎯 AXIS Indexes<br/>🔍 Search Optimization"]
         end
         
-        subgraph "Warm Tier - SSD"
-            VIPER[VIPER Parquet<br/>ML clustering]
-            SST[SST SSTables<br/>Bloom filters]
+        subgraph Standard["💿 Standard Tier"]
+            SSD1["SATA SSD 1<br/>💿 Warm Data Storage<br/>⏱️ ~1ms Latency<br/>🗜️ Compressed Data"]
+            SSD2["SATA SSD 2<br/>💿 Write Buffers<br/>📝 WAL + Memtables<br/>🔄 Batch Processing"]
         end
         
-        subgraph "Cold Tier - HDD"
-            COMPACT[Compacted Data<br/>Historical vectors]
-        end
-        
-        subgraph "Cloud Tier"
-            S3[S3/Azure/GCS<br/>Backup & Archive]
+        subgraph Archive["📦 Archive Tier"]
+            HDD1["SATA HDD 1<br/>📦 Cold Data Archive<br/>⏱️ ~10ms Latency<br/>💰 Cost Optimized"]
+            HDD2["SATA HDD 2<br/>📦 Backup Storage<br/>🔄 Snapshot Storage<br/>🛡️ Disaster Recovery"]
         end
     end
     
-    subgraph "Monitoring"
-        PROM[Prometheus<br/>Metrics]
-        GRAF[Grafana<br/>Dashboards]
-        LOG[ELK Stack<br/>Logs]
+    %% Database & Metadata
+    subgraph DataLayer["🗃️ Data & Metadata Layer"]
+        MetadataDB["Metadata Database<br/>🗃️ PostgreSQL/FileStore<br/>📋 Collection Metadata<br/>🔍 Query Planning"]
+        
+        ConfigStore["Configuration Store<br/>⚙️ Configuration Management<br/>🔧 Runtime Settings<br/>📊 Performance Tuning"]
     end
     
-    APP1 --> LB
-    APP2 --> LB
-    APP3 --> LB
+    %% Cloud Storage Integration
+    subgraph CloudTier["☁️ Multi-Cloud Storage"]
+        subgraph AWS["🔶 Amazon Web Services"]
+            S3["S3 Storage<br/>📦 Object Storage<br/>🔄 Intelligent Tiering<br/>💰 Cost Optimization"]
+            EBS["EBS Volumes<br/>💾 Block Storage<br/>⚡ High IOPS<br/>📊 Provisioned Performance"]
+        end
+        
+        subgraph Azure["🔷 Microsoft Azure"]
+            BlobStorage["Blob Storage<br/>📦 Cool/Archive Tiers<br/>🔄 Lifecycle Management<br/>💰 Cost Optimization"]
+            PremiumSSD["Premium SSD<br/>💾 High-Performance Disks<br/>⚡ Ultra Low Latency<br/>📊 Consistent Performance"]
+        end
+        
+        subgraph GCP["🔴 Google Cloud Platform"]
+            CloudStorage["Cloud Storage<br/>📦 Nearline/Coldline<br/>🤖 Auto-class Management<br/>💰 Predictive Cost Control"]
+            PersistentDisk["Persistent Disk<br/>💾 SSD/HDD Options<br/>⚡ Regional Persistence<br/>🔄 Automatic Snapshots"]
+        end
+    end
     
-    LB --> REST1
-    LB --> REST2
-    LB --> REST3
-    LB --> GRPC1
-    LB --> GRPC2
-    LB --> GRPC3
+    %% Monitoring & Operations
+    subgraph Monitoring["📊 Monitoring & Operations"]
+        Prometheus["Prometheus<br/>📊 Metrics Collection<br/>⏰ Time-series Data<br/>🔔 Alerting Rules"]
+        
+        Grafana["Grafana<br/>📈 Visualization<br/>📊 Performance Dashboards<br/>🎯 Real-time Monitoring"]
+        
+        Logging["Centralized Logging<br/>📝 ELK Stack/Splunk<br/>🔍 Log Aggregation<br/>🐛 Troubleshooting"]
+    end
     
-    DVS1 --> WriteBuffer
-    DVS2 --> WriteBuffer
-    DVS3 --> WriteBuffer
+    %% Network Flow
+    CDN --> LB
+    LB --> App1REST
+    LB --> App1GRPC
+    LB --> App2REST
+    LB --> App2GRPC
+    LB --> AppNREST
+    LB --> AppNGRPC
     
-    WriteBuffer --> VIPER
-    WriteBuffer --> SST
+    %% Storage Access Patterns
+    App1REST --> NVMe1
+    App1REST --> SSD1
+    App1GRPC --> NVMe2
+    App1GRPC --> SSD2
     
-    VIPER --> COMPACT
-    SST --> COMPACT
+    App2REST --> NVMe1
+    App2REST --> SSD1
+    App2GRPC --> NVMe2
+    App2GRPC --> SSD2
     
-    COMPACT --> S3
+    %% Archive & Cold Storage
+    SSD1 -.->|"Archive Policy"| HDD1
+    SSD2 -.->|"Backup Policy"| HDD2
     
-    DVS1 --> PROM
-    DVS2 --> PROM
-    DVS3 --> PROM
+    %% Cloud Integration
+    NVMe1 -.->|"Hybrid Cloud"| EBS
+    NVMe2 -.->|"Hybrid Cloud"| PremiumSSD
+    SSD1 -.->|"Cloud Sync"| S3
+    SSD2 -.->|"Cloud Sync"| BlobStorage
+    HDD1 -.->|"Cold Archive"| CloudStorage
+    HDD2 -.->|"Disaster Recovery"| PersistentDisk
     
-    PROM --> GRAF
+    %% Metadata & Configuration
+    App1REST --> MetadataDB
+    App2REST --> MetadataDB
+    AppNREST --> ConfigStore
     
-    style DVS1 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style DVS2 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style DVS3 fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style WriteBuffer fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    style VIPER fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
-    style SST fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    %% Monitoring Integration
+    App1REST --> Prometheus
+    App2GRPC --> Prometheus
+    Prometheus --> Grafana
+    App1GRPC --> Logging
+    App2REST --> Logging
+    
+    %% Styling by Function
+    classDef edgeStyle fill:#38a169,stroke:#2f855a,stroke-width:2px,color:#ffffff
+    classDef appStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
+    classDef fastStorage fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
+    classDef mediumStorage fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
+    classDef slowStorage fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
+    classDef cloudStyle fill:#4299e1,stroke:#3182ce,stroke-width:2px,color:#ffffff
+    classDef dataStyle fill:#38b2ac,stroke:#319795,stroke-width:2px,color:#ffffff
+    classDef monitorStyle fill:#ed8936,stroke:#dd6b20,stroke-width:2px,color:#ffffff
+    
+    class CDN,LB edgeStyle
+    class App1REST,App1GRPC,App2REST,App2GRPC,AppNREST,AppNGRPC appStyle
+    class NVMe1,NVMe2 fastStorage
+    class SSD1,SSD2 mediumStorage
+    class HDD1,HDD2 slowStorage
+    class S3,EBS,BlobStorage,PremiumSSD,CloudStorage,PersistentDisk cloudStyle
+    class MetadataDB,ConfigStore dataStyle
+    class Prometheus,Grafana,Logging monitorStyle
