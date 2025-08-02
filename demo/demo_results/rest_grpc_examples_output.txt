@@ -1,0 +1,70 @@
+🚀 ProximaDB REST and gRPC Examples
+============================================================
+
+🔷 gRPC Example - Metadata Filtering
+============================================================
+📁 Using existing collection
+✅ Inserted 5 products
+
+1️⃣ Simple Filter: category = 'laptop'
+Found 3 laptops
+
+2️⃣ Brand Filter: brand = 'Apple'
+Found 2 Apple products
+
+🔶 REST API Example - Metadata Filtering
+============================================================
+📁 Using existing collection
+✅ Inserted 2 products via REST
+
+1️⃣ REST Search with Filter
+
+📚 Multi-Vector Text Search Example
+============================================================
+📁 Using existing collection
+
+📄 Document split into 4 chunks
+✅ Inserted 4 text chunks
+
+🔍 Searching for: 'deep learning and neural networks'
+
+Top 3 relevant chunks:
+  - Chunk 2.0: Deep learning, 
+    a subset of machine learning, uses neura...
+    Score: 0.8772
+  - Chunk 0.0: Artificial Intelligence has revolutionized numerous industri...
+    Score: 0.8731
+  - Chunk 3.0: Recent advances in transformer 
+    architectures have led t...
+    Score: 0.8719
+
+📋 Summary and Best Practices
+============================================================
+
+✅ **Working Features:**
+- Basic equality filters (field = value)
+- Single field filtering
+- Multi-vector storage for documents
+
+⚠️  **Current Limitations:**
+- Complex AND/OR operators may not work as expected
+- Comparison operators (>, <, >=, <=) limited support
+- IN operator syntax varies
+
+💡 **Multi-Vector Text Search Strategy:**
+1. Split large text into chunks (sentences, paragraphs, or fixed size)
+2. Create embeddings for each chunk
+3. Store with doc_id metadata to group chunks
+4. Search and aggregate results by document
+5. Use chunk_idx to maintain order
+
+🔧 **Implementation Tips:**
+- Use real embedding models (sentence-transformers, OpenAI, etc.)
+- Overlap chunks for better context (e.g., 10-20% overlap)
+- Store chunk metadata for result presentation
+- Consider hybrid retrieval: initial vector search + reranking
+
+✅ Demo complete! Collections created:
+  - grpc_filter_example
+  - rest_filter_example
+  - text_search_example

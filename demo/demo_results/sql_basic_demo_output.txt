@@ -1,0 +1,77 @@
+🚀 ProximaDB Basic SQL Demo - Currently Supported Features
+============================================================
+
+📡 Connecting via REST API for SQL queries...
+📡 Connecting via gRPC for data operations...
+
+📦 Creating collection 'sql_basic_demo'...
+📁 Using existing collection
+
+📝 Inserting test data...
+✅ Inserted 500 vectors
+
+⏳ Waiting for indexing...
+
+📊 1. Basic Vector Search (No Filter)
+----------------------------------------
+Query time: 35.02ms
+Found 5 results:
+  - vec_0297: Product 297 (clothing)
+  - vec_0379: Product 379 (sports)
+  - vec_0066: Product 66 (books)
+  - vec_0299: Product 299 (sports)
+  - vec_0323: Product 323 (home)
+
+📊 2. Equality Filter (metadata->>'field' = 'value')
+----------------------------------------
+Query time: 2.89ms
+Found 0 electronics items:
+
+📊 3. IN Operator for Multiple Values
+----------------------------------------
+Query time: 1.74ms
+Found 0 items from BrandA or BrandC:
+
+📊 4. Different Distance Metrics
+----------------------------------------
+
+COSINE distance (1.93ms):
+
+EUCLIDEAN distance (1.80ms):
+
+DOT distance (1.82ms):
+
+📊 5. Query Caching Performance
+----------------------------------------
+First run: 1.84ms
+Subsequent runs: ['1.69ms', '1.70ms', '1.71ms', '1.65ms']
+Average cached: 1.69ms
+Cache speedup: 1.1x
+
+❌ Currently Unsupported Operations
+----------------------------------------
+✅ AND operator: Unexpectedly worked!
+✅ OR operator: Unexpectedly worked!
+❌ LIKE operator: SQL execution failed (HTTP 400): {"error":"SQL execution failed: LIKE operator not yet implemented","error_code":"SQL_EXECUTION_ERROR"}
+✅ Comparison operators: Unexpectedly worked!
+
+📊 Summary of SQL Support
+============================================================
+✅ Currently Working:
+  - Basic SELECT with field selection
+  - WHERE with simple equality (=)
+  - IN operator for value lists
+  - metadata->>'field' JSON extraction
+  - ORDER BY VECTOR_SIMILARITY()
+  - LIMIT and OFFSET
+  - Query plan caching (2-5x speedup)
+
+❌ Not Yet Implemented:
+  - AND, OR, NOT logical operators
+  - Comparison operators (!=, <, >, <=, >=)
+  - LIKE pattern matching
+  - IS NULL, IS NOT NULL
+  - Subqueries, UNION, JOIN
+  - Aggregations (COUNT, AVG, etc.)
+
+✅ Demo complete! Collection 'sql_basic_demo' retained for testing.

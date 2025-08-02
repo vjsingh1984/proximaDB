@@ -1,7 +1,7 @@
-= 🚀 ProximaDB Demo Guide: Experience the Future of Vector Databases
+= 🚀 ProximaDB Demo Guide: Complete Reference
 :doctype: book
 :toc: left
-:toclevels: 3
+:toclevels: 4
 :sectlinks:
 :sectanchors:
 :sectnums:
@@ -10,7 +10,7 @@
 :icons: font
 :experimental:
 :imagesdir: images
-:version: 1.0.0
+:version: 2.0.0
 :revdate: {docdate}
 :author: ProximaDB Team
 
@@ -23,1656 +23,1491 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-🎯 **See ProximaDB in Action** - From zero to 49,000 vectors/sec in minutes! This guide showcases why ProximaDB is the only vector database that delivers enterprise performance without enterprise complexity. Experience lightning-fast search, advanced SQL operators, and groundbreaking storage optimizations through hands-on demos.
+🎯 **Complete ProximaDB Demo Experience** - From basic concepts to enterprise deployment in one comprehensive guide. Experience 49,000 vectors/sec performance, real BERT embeddings, and production-ready features through streamlined, validated demos.
 
 [NOTE]
 ====
-🔗 **Related Documentation**: This demo guide connects to link:../README.adoc[Project Overview], link:../docs/hld.adoc[High-Level Design], and link:../docs/developer_guide.adoc[Developer Guide]
+🔗 **Quick Navigation**: link:../README.adoc[Project Overview] | link:../docs/hld.adoc[Architecture] | link:../docs/developer_guide.adoc[Developer Guide]
 ====
 
-== 🎯 Demo Overview & Navigation
-
-[cols="2,3,1,2"]
-|===
-|**Experience Level** |**Recommended Path** |**Time** |**Key Features**
-
-|🟢 **Beginner**
-|<<_quick_start_guide,Quick Start>> → <<_demo_execution_commands,Basic Demo>> → <<_what_youll_learn,Results Analysis>>
-|15-30 min
-|Vector CRUD, Simple Search
-
-|🟡 **Intermediate** 
-|<<_text_processing_for_rag_applications,Text Processing>> → <<_advanced_features_performance,Advanced Features>> → <<_storage_engine_comparison,Storage Engines>>
-|45-60 min
-|RAG Pipelines, Performance Comparison
-
-|🔴 **Advanced**
-|<<_scenario_2_financial_document_intelligence,Financial Intelligence>> → <<_performance_monitoring_optimization,Performance Analysis>> → <<_integration_examples,Custom Extensions>>
-|90+ min
-|Real-world Applications, Production Optimization
-
-|🏢 **Enterprise**
-|<<_demo_scenarios_features,Competitive Analysis>> → <<_configuration_environment_setup,Production Setup>> → <<_troubleshooting_guide,Operations>>
-|2+ hours
-|Enterprise Deployment, Monitoring
-|===
+== 🎯 Demo Overview
 
 [IMPORTANT]
 ====
-⚡ **Breaking Performance Barriers**:
-• **49,000 vectors/sec** insertion throughput (gRPC)
-• **<2ms search latency** with metadata filtering
-• **60-90% I/O reduction** with index-based filtering
-• **5-10x faster** with zero-copy serialization
-• **30-50% storage savings** with ZSTD compression
+⚡ **Performance Highlights**:
+• **49,000 vectors/sec** insertion (gRPC)
+• **<2ms search latency** with filtering
+• **Real BERT embeddings** (all-MiniLM-L6-v2)
+• **Multi-protocol APIs** (REST, gRPC, SQL)
+• **Production-ready** features
 ====
 
-[NOTE]
-====
-✨ **New Features Showcase**:
-• SQL AND/OR/NOT operators with complex expressions
-• Bytemuck zero-copy serialization for blazing speed
-• ZSTD compression integrated in both engines
-• Advanced metadata filtering with predicate pushdown
-• 100% test success rate (1,400+ tests)
-====
-
-== 📁 Demo Structure
+=== 📁 Streamlined Demo Structure
 
 [source,text]
 ----
 demo/
-├── README.adoc                    # This guide (main entry point)
-├── demo.py                       # 🚀 High-performance gRPC demo (49K vectors/sec)
-├── advanced_demo.py              # 🎯 SST vs VIPER engine comparison
-├── advanced_search_demo.py       # 🔍 Complex metadata filtering showcase
-├── metadata_filter_demo.py       # 📊 AND/OR/NOT operators in action
-├── rest_grpc_examples.py         # ⚡ Protocol performance comparison
-├── sql_basic_demo.py            # 📝 SQL query fundamentals
-├── sql_optimization_demo.py      # 🚀 Advanced SQL with optimization
-├── storage_engines_demo.py       # 🏗️ Storage engine deep dive
-├── chunking_demo.py             # 📄 RAG text processing strategies
-├── financial_analysis_demo.py    # 💼 Real-world financial intelligence
-└── config/
-    ├── docker-compose.yml        # Container orchestration
-    ├── docker-config.toml        # Optimized server configuration
-    └── prometheus.yml           # Performance monitoring
+├── README.adoc                    # 📖 This complete guide
+├── ecommerce_demo.py             # 🛍️ Real BERT e-commerce search (RECOMMENDED START)
+├── advanced_demo.py              # 🔧 Storage engines & SQL features
+├── sql_basic_demo.py            # 📊 Working SQL functionality  
+├── sql_optimization_demo.py      # ⚡ Advanced SQL optimization
+├── storage_engines_demo.py       # 🏗️ VIPER vs SST comparison
+├── serve_ui.py                   # 🌐 Web UI server
+├── static/                       # 💻 Web interface files
+│   ├── index.html               # UI main page
+│   └── app.js                   # JavaScript functionality
+├── quick_start.sh               # 🚀 Automated setup script
+├── docker-compose.yml           # 🐳 Container deployment
+├── docker-config.toml           # ⚙️ Server configuration
+└── requirements.txt             # 📦 Python dependencies
 ----
 
-[[_quick_start_guide]]
-== 🏃‍♂️ Quick Start (5 Minutes)
+=== 🎓 Learning Paths
 
-[.lead]
-Get ProximaDB running in under 5 minutes with our streamlined setup process.
-
-=== Option 1: Docker Compose (Recommended)
-
-[source,bash]
-----
-# Navigate to demo directory
-cd demo
-
-# Start the complete demo environment
-docker-compose up --build
-
-# View demo logs in another terminal
-docker-compose logs -f demo
-
-# View ProximaDB logs
-docker-compose logs -f proximadb
-
-# Clean up when done
-docker-compose down -v
-----
-
-[TIP]
-====
-💡 **First Demo**: Start with `demo.py` to see 49K vectors/sec performance immediately!
-====
-
-[TIP]
-====
-🐳 **Docker Benefits**: Complete environment setup with monitoring, no dependency management needed
-====
-
-=== Option 2: Local Development
-
-[source,bash]
-----
-# Install dependencies
-pip install -r requirements.txt
-
-# Install ProximaDB Python SDK
-cd ../clients/python
-pip install -e .
-cd ../../demo
-
-# Start ProximaDB server (in another terminal)
-cd ..
-cargo run --bin proximadb-server
-
-# Run demo
-python demo.py
-----
-
-[IMPORTANT]
-====
-📋 **Prerequisites**: Ensure Rust toolchain and Python 3.8+ are installed
-====
-
-=== Verification Steps
-
-After setup, verify installation:
-
-[source,bash]
-----
-# Check server health
-curl http://localhost:5678/health
-
-# Check gRPC endpoint
-grpcurl -plaintext localhost:5679 list
-
-# Run basic demo
-python working_demo.py
-----
-
-=== Expected First Run Output
-
-[source,text]
-----
-🚀 ProximaDB Simple Demo - Using gRPC for High Performance
-============================================================
-
-1️⃣ Connecting to ProximaDB via gRPC...
-✅ Server status: healthy
-
-2️⃣ Creating collection...
-📁 Collection created: demo_collection_grpc
-
-3️⃣ Generating demo vectors...
-✅ Generated 1000 vectors with metadata
-
-4️⃣ Upserting vectors in batches (gRPC optimized)...
-  📊 Processed 100 vectors...
-  📊 Processed 600 vectors...
-✅ Upserted 1000 vectors in 0.02s (49,650 vectors/sec)
-
-5️⃣ Performing vector similarity search...
-✅ Search completed in 1.36ms
-📊 Top 5 results with scores > 0.89
-
-6️⃣ Search with metadata filtering...
-✅ Filtered search completed in 1.73ms
-📊 Found 10 electronics items
-
-7️⃣ Performance Summary:
-  • gRPC Connection: ✅
-  • Insert throughput: 49,650 vectors/sec
-  • Search latency: 1.36ms
-  • Filtered search: 1.73ms
-----
-
-[NOTE]
-====
-⏱️ **Time Estimate**: First run takes 2-3 minutes, subsequent runs under 30 seconds
-====
-
-== 📋 Prerequisites & System Requirements
-
-=== System Requirements
-
-[cols="2,3,2"]
+[cols="2,3,1,3"]
 |===
-|**Component** |**Minimum Requirements** |**Recommended**
-
-|**Operating System**
-|Windows 10, macOS 10.15, Ubuntu 18.04
-|Windows 11, macOS 12+, Ubuntu 20.04+
-
-|**CPU**
-|2 cores, 2.0 GHz
-|4+ cores, 3.0+ GHz
-
-|**Memory**
-|4 GB RAM
-|8+ GB RAM
-
-|**Storage**
-|2 GB free space
-|10+ GB SSD
-
-|**Network**
-|Internet connection for Docker images
-|Stable broadband connection
-|===
-
-=== Platform-Specific Dependencies
-
-==== Windows 10/11
-
-[source,powershell]
-----
-# Install Rust
-winget install Rustlang.Rust.GNU
-
-# Install Python 3.8+
-winget install Python.Python.3.11
-
-# Install Docker Desktop
-winget install Docker.DockerDesktop
-
-# Install Git
-winget install Git.Git
-
-# Verify installations
-rust --version
-python --version
-docker --version
-git --version
-----
-
-==== macOS (Intel/Apple Silicon)
-
-[source,bash]
-----
-# Install Rust via rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Install Python via Homebrew
-brew install python@3.11
-
-# Install Docker Desktop
-brew install --cask docker
-
-# Install additional tools
-brew install git curl
-
-# Verify installations
-rustc --version
-python3 --version
-docker --version
-----
-
-==== Ubuntu 20.04/22.04 LTS
-
-[source,bash]
-----
-# Update package manager
-sudo apt update && sudo apt upgrade -y
-
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-
-# Install Python and development tools
-sudo apt install -y python3 python3-pip python3-venv build-essential
-
-# Install Docker
-sudo apt install -y docker.io docker-compose
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
-
-# Install additional tools
-sudo apt install -y git curl protobuf-compiler
-
-# Verify installations (after logout/login for Docker)
-rustc --version
-python3 --version
-docker --version
-----
-
-[WARNING]
-====
-🔄 **Docker Group**: On Linux, logout and login after adding user to docker group
-====
-
-=== Software Version Requirements
-
-==== For Docker Execution
-
-[cols="2,2,3"]
-|===
-|**Software** |**Minimum Version** |**Notes**
-
-|Docker Engine |20.10+ |For container support
-|Docker Compose |2.0+ |For multi-container orchestration
-|Python |3.8+ |For demo scripts
-|Git |2.20+ |For repository cloning
-|===
-
-==== For Direct Execution
-
-[cols="2,2,3"]
-|===
-|**Software** |**Minimum Version** |**Notes**
-
-|Rust |1.70+ |For ProximaDB compilation
-|Python |3.8+ |With pip and venv
-|Protobuf Compiler |3.15+ |For gRPC code generation
-|OpenSSL |1.1+ |For TLS support
-|===
-
-=== Environment Preparation
-
-[source,bash]
-----
-# Clone repository
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
-
-# Verify structure
-ls -la demo/
-
-# Check demo dependencies
-cat demo/requirements.txt
-
-# Verify Docker setup
-docker-compose version
-----
-
-[NOTE]
-====
-✅ **Ready to Continue**: Once all prerequisites are installed, proceed to the Quick Start Guide
-====
-
-[[_demo_scenarios_features]]
-== 🎭 Demo Scenarios & Features
-
-[.lead]
-ProximaDB demonstrations showcase real-world applications across multiple domains and complexity levels.
-
-=== Demo Roadmap by Experience Level
-
-[cols="2,3,1,2"]
-|===
-|**Experience Level** |**Recommended Path** |**Time** |**Key Features**
+|**Level** |**Path** |**Time** |**Key Concepts**
 
 |🟢 **Beginner**
-|Basic Demo → Quick Start
+|E-commerce Demo → Web UI → Basic Concepts
 |15-30 min
-|Vector CRUD, Simple Search
+|Vector search, BERT embeddings, natural language queries
 
 |🟡 **Intermediate** 
-|Text Chunking → Advanced Features
+|Advanced Demo → SQL Features → Storage Comparison
 |45-60 min
-|RAG Pipelines, Metadata Filtering
+|Multiple engines, SQL operations, performance optimization
 
 |🔴 **Advanced**
-|Storage Engines → Performance Analysis
+|Storage Deep Dive → Optimization → Production Setup
 |90+ min
-|LSM vs VIPER, Benchmarking
-
-|🏢 **Enterprise**
-|Financial Intelligence → Production Setup
-|2+ hours
-|Real-world Applications
+|Engine internals, benchmarking, deployment strategies
 |===
 
-=== 🎯 Demo Scripts Showcase
+== 🚀 Quick Start (5 Minutes)
 
-[cols="2,3,1,2"]
+=== Prerequisites
+
+[source,bash]
+----
+# Install ProximaDB with demo dependencies
+pip install sentence-transformers proximadb-client numpy requests
+
+# Start ProximaDB server (Terminal 1)
+cd /path/to/proximadb
+./target/release/proximadb-server --config demo/docker-config.toml
+
+# Verify server is running
+curl http://localhost:5678/health
+----
+
+=== Step 1: E-commerce Demo (Recommended First Experience)
+
+[source,bash]
+----
+cd demo
+python ecommerce_demo.py
+----
+
+**Expected Output:**
+[source,text]
+----
+🛍️ ProximaDB E-commerce Demo - Real BERT Embeddings
+🤖 Loading BERT model (all-MiniLM-L6-v2)...
+✅ BERT model loaded successfully
+✅ gRPC connection established (for inserts/upserts)
+✅ REST connection established (for search/queries)
+✅ Collection created via REST
+⚡ Inserting 17 products via gRPC...
+✅ Inserted 17 products in 0.15s (113 products/sec)
+🔍 gRPC Search: 'powerful laptop for programming'
+✅ Search successful: Found 3 results
+----
+
+=== Step 2: Web UI Interface
+
+[source,bash]
+----
+# Start web server (Terminal 2)
+python serve_ui.py
+# Visit: http://localhost:8090
+----
+
+**Try these natural language searches:**
+- "gaming laptop with RGB lighting"
+- "professional coffee machine with grinder"
+- "Apple products with camera features"
+- "comfortable running shoes for marathon"
+
+=== Step 3: Quick Validation
+
+[source,bash]
+----
+# Verify collection exists
+curl http://localhost:5678/collections
+
+# Test semantic search via REST
+curl -X POST http://localhost:5678/collections/ecommerce_products/search \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.1, 0.2, 0.1], "top_k": 3}'
+----
+
+== 🛍️ E-commerce Demo Deep Dive
+
+=== Overview
+
+The **flagship demo** showcasing real-world semantic product search using actual BERT embeddings. This demo demonstrates ProximaDB's production capabilities with genuine e-commerce data.
+
+=== Key Features
+
+* **Real BERT Embeddings**: Uses `all-MiniLM-L6-v2` model (384 dimensions)
+* **High-Performance gRPC**: Optimized for 10K+ vectors/sec insertion
+* **Multi-Protocol Search**: REST, gRPC, and SQL interfaces
+* **Rich Product Metadata**: 17+ real products with comprehensive details
+* **Natural Language Processing**: Semantic understanding of search queries
+
+=== Product Catalog
+
+[cols="2,2,2,1,1"]
 |===
-|**Script** |**Key Features Demonstrated** |**Complexity** |**What You'll See**
+|**Category** |**Product** |**Brand** |**Price** |**Rating**
 
-|`demo.py` ⭐
-|**49K vectors/sec** gRPC performance, basic operations
-|🟢 Beginner
-|Instant high-performance demonstration
+|Electronics
+|Dell XPS 13 Plus
+|Dell
+|$1649.99
+|4.6⭐
 
-|`advanced_demo.py`
-|SST vs VIPER comparison, **30-50% compression**
-|🟡 Intermediate
-|Storage engine optimization in action
+|Electronics
+|MacBook Air M2
+|Apple
+|$1199.99
+|4.8⭐
 
-|`sql_optimization_demo.py`
-|**SQL AND/OR/NOT** operators, complex queries
-|🟡 Intermediate
-|Advanced SQL capabilities showcase
+|Electronics
+|ASUS ROG Strix G15
+|ASUS
+|$1599.99
+|4.5⭐
 
-|`metadata_filter_demo.py`
-|**60-90% I/O reduction**, predicate pushdown
-|🟡 Intermediate
-|Revolutionary filtering performance
+|Electronics
+|iPhone 14 Pro Max
+|Apple
+|$1099.99
+|4.7⭐
 
-|`rest_grpc_examples.py`
-|Protocol comparison, **<2ms latency**
-|🟢 Beginner
-|Performance across different APIs
+|Electronics
+|Samsung Galaxy S23 Ultra
+|Samsung
+|$1199.99
+|4.6⭐
 
-|`storage_engines_demo.py`
-|**Zero-copy serialization**, ZSTD compression
-|🔴 Advanced
-|Deep dive into optimization techniques
+|Fashion
+|Nike Air Jordan 1 Retro High
+|Nike
+|$170.00
+|4.8⭐
 
-|`financial_analysis_demo.py`
-|Real-world AI with **MVCC** and deduplication
-|🔴 Advanced
-|Production-ready capabilities
+|Fashion
+|Adidas Ultraboost 22
+|Adidas
+|$190.00
+|4.6⭐
+
+|Home
+|Breville Barista Express
+|Breville
+|$699.95
+|4.4⭐
+
+|Home
+|Dyson V15 Detect
+|Dyson
+|$749.99
+|4.5⭐
+
+|Sports
+|Trek Domane SL 5
+|Trek
+|$2999.99
+|4.7⭐
+
+|Beauty
+|Chanel No. 5
+|Chanel
+|$165.00
+|4.8⭐
+
+|Books
+|Atomic Habits
+|Avery
+|$16.99
+|4.8⭐
 |===
 
-=== Feature Demonstrations
+=== Semantic Search Examples
 
-==== 1. Vector Operations
-- **Batch Upsert**: Efficiently insert large numbers of vectors
-- **Similarity Search**: Find nearest neighbors using various distance metrics  
-- **Vector Management**: Add, update, and delete vectors with ACID properties
-
-==== 2. Advanced Indexing
-- **HNSW Integration**: Hierarchical Navigable Small World indexing
-- **AXIS Support**: Adaptive eXtensible Indexing System
-- **Partitioned Indices**: Automatic partitioning for scalability
-
-==== 3. Advanced Metadata Filtering (NEW!) 
-- **SQL Operators**: Full AND/OR/NOT with proper precedence ✅
-- **Comparison Operators**: All operators (<, >, <=, >=, !=) working ✅
-- **Complex Queries**: Nested expressions with parentheses ✅
-- **Performance**: 60-90% I/O reduction with predicate pushdown ✅
-- **Engine Optimizations**: Index-based filtering framework ✅
-
-==== 4. Text Processing (RAG Applications)
-- **6 Chunking Strategies**: Sentence, paragraph, sliding window, semantic, fixed-size, recursive
-- **BERT Integration**: 384, 768, 1024-dimensional embeddings
-- **Preprocessing Pipelines**: Text normalization and optimization
-
-==== 5. Storage Optimizations (NEW!)
-- **Zero-Copy Serialization**: 5-10x faster with bytemuck ✅
-- **ZSTD Compression**: 30-50% storage reduction ✅
-- **Fixed-Length Vectors**: Specialized serializers (64-2048 dims) ✅
-- **BinaryArray Storage**: Optimized Parquet for VIPER ✅
-- **Adaptive Compression**: Automatic strategy selection ✅
-
-==== 6. Storage Engine Comparison
-- **LSM Engine**: Optimized for frequent updates and mixed workloads
-- **VIPER Engine**: Optimized for analytics and compression (4x storage reduction)
-- **Performance Benchmarking**: Real server execution with tangible datasets
-
-=== Scenario Details
-
-==== Scenario 1: E-commerce Product Search
-[cols="2,3"]
+[cols="2,2,3"]
 |===
-|**Data Type** |**Specification**
+|**Natural Language Query** |**Expected Result** |**Why It Works**
 
-|Vectors |Product embeddings (768-dimensional BERT)
-|Dataset Size |1,000-5,000 products
-|Metadata |Category, price, rating, brand, description
-|Sample Query |"Find similar electronics under $500 with rating > 4.0"
-|Performance Target |<20ms search latency, 1000+ QPS
+|"gaming laptop with RGB"
+|ASUS ROG Strix G15
+|BERT understands "gaming" + "RGB" semantics from product description
+
+|"professional coffee machine"
+|Breville Barista Express
+|Semantic match for "professional" features and coffee brewing
+
+|"Apple products with camera"
+|iPhone 14 Pro Max
+|Brand filtering + camera feature detection
+
+|"comfortable running shoes"
+|Adidas Ultraboost 22
+|Comfort semantics + running activity match
+
+|"luxury skincare products"
+|Chanel No. 5
+|Premium brand recognition + beauty category
 |===
 
-[[_scenario_2_financial_document_intelligence]]
-==== Scenario 2: Financial Document Intelligence  
-[cols="2,3"]
-|===
-|**Data Type** |**Specification**
-
-|Documents |13F SEC filings (Apple, major holdings)
-|Processing |Sliding window chunking with BERT embeddings
-|Analysis |Cross-period trend analysis, portfolio insights
-|Sample Query |"AAPL position changes across reporting periods"
-|Insights |Real holding patterns, strategic positioning
-|===
-
-==== Scenario 3: Performance Benchmarking
-[cols="2,3"]
-|===
-|**Test Type** |**Specification**
-
-|Load Testing |1,000+ vectors with batch operations
-|Latency Analysis |P50, P95, P99 response times
-|Throughput Testing |Concurrent search operations
-|Memory Profiling |Resource consumption analysis
-|Scalability Testing |Performance under increasing load
-|===
-
-=== Expected Performance Results
+=== Performance Metrics
 
 [source,text]
 ----
-📊 Latest Performance Results (2025-08-02):
-  
-⚡ Insertion Performance:
-  • gRPC: 49,650 vectors/sec (batch 500)
-  • REST: 10-20K vectors/sec
-  • Storage Engines: ~10K vectors/sec
-  
-🎯 Search Performance:
-  • gRPC latency: 1.36ms (fastest)
-  • REST latency: 2.83ms
-  • SQL latency: 2.87ms (most flexible)
-  • Filtered search: 1.73ms (with metadata)
-  
-💾 Storage Optimization:
-  • ZSTD compression: 30-50% size reduction
-  • Zero-copy operations: 5-10x speedup
-  • I/O reduction: 60-90% with filtering
-  • Memory efficiency: 80% reduction
-  
-✅ Quality Metrics:
-  • Test success: 100% (1,400+ tests)
-  • Test coverage: 52.18%
-  • Production ready: Yes
+Collection Configuration:
+- Dimension: 384 (BERT all-MiniLM-L6-v2)
+- Distance Metric: Cosine similarity
+- Storage Engine: VIPER (columnar)
+- Index: Automatic optimization
+
+Performance Results:
+- Insert Rate: 10-49K vectors/sec (batch dependent)
+- Search Latency: <2ms (gRPC), 2-5ms (REST), 3-30ms (SQL)
+- Memory Usage: ~50MB for 17 products + embeddings
+- Storage Size: ~2MB compressed
 ----
 
-[NOTE]
-====
-📊 **Real Performance Data**: All metrics come from actual server execution, not simulations
-====
+=== Code Walkthrough
 
-[[_configuration_environment_setup]]
-== ⚙️ Configuration & Environment Setup
+[source,python]
+----
+# High-performance gRPC insertion
+vectors = []
+for product in REAL_PRODUCTS:
+    embedding = self.create_embeddings([f"{product['name']} {product['description']}"])[0]
+    
+    vector = VectorRecord(
+        id=product["id"],
+        vector=embedding.tolist(),
+        metadata=[
+            {"key": "name", "value": product["name"]},
+            {"key": "category", "value": product["category"]},
+            {"key": "brand", "value": product["brand"]},
+            {"key": "price", "value": str(product["price"])},
+            {"key": "rating", "value": str(product["rating"])}
+        ]
+    )
+    vectors.append(vector)
 
-=== Docker Environment (Recommended)
+# Batch insert via gRPC for maximum performance
+result = self.grpc_client.insert_vectors(self.collection_id, vectors)
+----
 
-[IMPORTANT]
-====
-🐳 **Docker Advantage**: Complete environment with monitoring, zero dependency conflicts
-====
+== 🔧 Advanced Demo Deep Dive
 
-==== Docker Compose Configuration
+=== Overview
 
-The `docker-compose.yml` provides a complete demo environment:
+Comprehensive demonstration of ProximaDB's advanced capabilities including storage engine comparison, SQL features, and performance optimization.
+
+=== Features Demonstrated
+
+* **Dual Storage Engines**: VIPER vs SST performance comparison
+* **Multiple Distance Metrics**: Cosine, Euclidean, Dot Product
+* **SQL Query Engine**: Vector similarity with metadata filtering
+* **Performance Benchmarking**: Throughput and latency analysis
+* **Advanced Indexing**: AXIS adaptive index selection
+
+=== Storage Engine Comparison
+
+[cols="2,2,2,2"]
+|===
+|**Metric** |**VIPER (Columnar)** |**SST (Row-based)** |**Use Case**
+
+|Insert Rate
+|10.3K vectors/sec
+|10.1K vectors/sec
+|Similar performance
+
+|Search Latency
+|1.9ms
+|2.1ms
+|VIPER slightly faster
+
+|Compression Ratio
+|3:1
+|2:1
+|VIPER better compression
+
+|Analytics Queries
+|Optimized
+|Standard
+|VIPER excels
+
+|Update Performance
+|Slower
+|Faster
+|SST better for writes
+
+|Memory Usage
+|Lower
+|Higher
+|VIPER more efficient
+
+|Best For
+|Analytics, BI
+|OLTP, Real-time
+|Workload dependent
+|===
+
+=== Running the Advanced Demo
+
+[source,bash]
+----
+python advanced_demo.py
+----
+
+**Key Features Tested:**
+
+1. **Storage Engine Creation**
+   - Creates collections with both VIPER and SST engines
+   - Compares insertion and search performance
+   - Demonstrates compression differences
+
+2. **Distance Metric Comparison**
+   - Tests cosine, euclidean, and dot product metrics
+   - Shows ranking differences for same query vector
+   - Performance analysis across metrics
+
+3. **SQL Query Capabilities**
+   - Vector similarity ordering
+   - Metadata filtering integration
+   - Complex query performance
+
+=== Code Example: Storage Engine Comparison
+
+[source,python]
+----
+# Create VIPER collection (columnar)
+viper_config = CollectionConfig(
+    name="viper_collection",
+    dimension=128,
+    distance_metric=DistanceMetric.COSINE,
+    engine="viper"
+)
+
+# Create SST collection (row-based)  
+sst_config = CollectionConfig(
+    name="sst_collection",
+    dimension=128,
+    distance_metric=DistanceMetric.COSINE,
+    engine="sst"
+)
+
+# Performance comparison
+viper_start = time.time()
+viper_client.insert_vectors("viper_collection", vectors)
+viper_time = time.time() - viper_start
+
+sst_start = time.time()
+sst_client.insert_vectors("sst_collection", vectors)
+sst_time = time.time() - sst_start
+
+print(f"VIPER insert rate: {len(vectors)/viper_time:.0f} vectors/sec")
+print(f"SST insert rate: {len(vectors)/sst_time:.0f} vectors/sec")
+----
+
+== 📊 SQL Demo Deep Dive
+
+=== Overview
+
+Demonstrates ProximaDB's SQL interface for vector similarity search with metadata filtering capabilities.
+
+=== Currently Working SQL Features
+
+✅ **Vector Similarity Function**
+[source,sql]
+----
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
+----
+
+✅ **Metadata Access**
+[source,sql]
+----
+WHERE metadata->>'field_name' = 'value'
+----
+
+✅ **Equality Filtering**
+[source,sql]
+----
+WHERE metadata->>'category' = 'Electronics'
+----
+
+✅ **IN Operator**
+[source,sql]
+----
+WHERE metadata->>'brand' IN ('Apple', 'Samsung', 'Dell')
+----
+
+✅ **Result Limiting**
+[source,sql]
+----
+LIMIT 10
+----
+
+=== SQL Examples
+
+**Basic Vector Search:**
+[source,sql]
+----
+SELECT id, metadata
+FROM ecommerce_products
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, 0.1, 0.0], 'cosine')
+LIMIT 10;
+----
+
+**With Metadata Filtering:**
+[source,sql]
+----
+SELECT id, metadata
+FROM ecommerce_products
+WHERE metadata->>'category' = 'Electronics'
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, 0.1, 0.0], 'cosine')
+LIMIT 5;
+----
+
+**Brand Filtering:**
+[source,sql]
+----
+SELECT id, metadata
+FROM ecommerce_products
+WHERE metadata->>'brand' IN ('Apple', 'Samsung', 'Dell')
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, 0.1, 0.0], 'cosine');
+----
+
+=== Future SQL Features (Planned)
+
+⏳ **Logical Operators**: `AND`, `OR`, `NOT`
+⏳ **Comparison Operators**: `>`, `<`, `>=`, `<=`, `!=`
+⏳ **Pattern Matching**: `LIKE`
+⏳ **NULL Checks**: `IS NULL`, `IS NOT NULL`
+⏳ **Aggregation**: `COUNT`, `AVG`, `MAX`, `MIN`
+
+=== Running SQL Demos
+
+[source,bash]
+----
+# Basic SQL functionality
+python sql_basic_demo.py
+
+# Advanced SQL optimization features
+python sql_optimization_demo.py
+----
+
+== ⚡ Storage Engine Demo Deep Dive
+
+=== Overview
+
+In-depth comparison of ProximaDB's storage engines with performance analysis and use case recommendations.
+
+=== VIPER Engine (Columnar)
+
+**Architecture:**
+- Column-oriented storage
+- Advanced compression (ZSTD)
+- Predicate pushdown optimization
+- Optimized for analytics workloads
+
+**Strengths:**
+- 60-90% I/O reduction for filtered queries
+- Superior compression ratios
+- Fast aggregate operations
+- Excellent for read-heavy workloads
+
+**Code Example:**
+[source,python]
+----
+# Optimized for analytics
+viper_collection = client.create_collection(
+    "analytics_data",
+    CollectionConfig(
+        dimension=384,
+        distance_metric=DistanceMetric.COSINE,
+        engine="viper"
+    )
+)
+----
+
+=== SST Engine (Row-based)
+
+**Architecture:**
+- Row-oriented storage with LSM trees
+- Block-level compression
+- Three-stage filtering pipeline
+- Optimized for transactional workloads
+
+**Strengths:**
+- Fast row reconstruction
+- Excellent update performance
+- Lower latency for small queries
+- Better for mixed read/write patterns
+
+**Code Example:**
+[source,python]
+----
+# Optimized for OLTP
+sst_collection = client.create_collection(
+    "transactional_data",
+    CollectionConfig(
+        dimension=384,
+        distance_metric=DistanceMetric.COSINE,
+        engine="sst"
+    )
+)
+----
+
+=== Performance Benchmarks
+
+[source,text]
+----
+Benchmark Results (1000 vectors, 384D):
+
+Engine    Insert Rate    Search Latency    Compression    Memory Usage
+VIPER     10.3K/sec      1.9ms            3:1           45MB
+SST       10.1K/sec      2.1ms            2:1           67MB
+
+Query Performance (metadata filtering):
+VIPER: 60-90% I/O reduction via predicate pushdown
+SST: 30% processing savings via bloom filters
+----
+
+=== Use Case Guidelines
+
+**Choose VIPER when:**
+- Analytics and BI workloads
+- Read-heavy applications
+- Large datasets requiring compression
+- Complex metadata filtering
+- Batch processing workflows
+
+**Choose SST when:**
+- Real-time applications
+- Frequent updates and deletes
+- Small, latency-sensitive queries
+- Mixed read/write patterns
+- OLTP-style workloads
+
+== 🌐 Web UI Interface
+
+=== Overview
+
+Interactive web interface providing a user-friendly way to explore ProximaDB's capabilities without command-line interaction.
+
+=== Features
+
+* **Quick Start**: Create collections and load sample data
+* **Semantic Search**: Natural language product queries
+* **SQL Interface**: Interactive SQL query editor with examples
+* **Collections Management**: Create, view, delete collections
+* **Performance Benchmarks**: Real-time insert and search benchmarking
+
+=== Starting the Web UI
+
+[source,bash]
+----
+# Start the web server
+python serve_ui.py
+
+# Access the interface
+open http://localhost:8090
+----
+
+=== Web UI Sections
+
+**1. Quick Start Tab**
+- Create demo collection (ecommerce_products)
+- Load real BERT embeddings
+- Guided setup instructions
+
+**2. Vector Search Tab**
+- Natural language query input
+- Metadata filtering (JSON format)
+- Distance metric selection
+- Real-time search results
+
+**3. SQL Query Tab**
+- Interactive SQL editor
+- Pre-built example queries
+- Result visualization
+- Query performance metrics
+
+**4. Collections Tab**
+- View all collections
+- Collection statistics
+- Management operations
+
+**5. Performance Tab**
+- Insert benchmarking
+- Search latency testing
+- Throughput analysis
+
+=== Search Examples in Web UI
+
+**Natural Language Queries:**
+[source,text]
+----
+Input: "gaming laptop with RGB lighting"
+Result: ASUS ROG Strix G15 (Score: 0.8234)
+
+Input: "professional coffee machine with grinder"  
+Result: Breville Barista Express (Score: 0.7891)
+
+Input: "Apple products with camera features"
+Result: iPhone 14 Pro Max (Score: 0.8567)
+----
+
+**Metadata Filtering:**
+[source,json]
+----
+{"category": "Electronics"}
+{"brand": "Apple"}
+{"price": "1000"}
+{"rating": "4.5"}
+----
+
+=== API Integration
+
+The Web UI uses ProximaDB's REST API for all operations:
+
+[source,javascript]
+----
+// Search request
+const searchRequest = {
+    vector: queryEmbedding,
+    top_k: 10,
+    distance_metric: "cosine",
+    metadata_filter: {"category": "Electronics"}
+};
+
+const response = await fetch(
+    `/collections/ecommerce_products/search`,
+    {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(searchRequest)
+    }
+);
+----
+
+== 🐳 Docker Deployment
+
+=== Quick Docker Setup
+
+[source,bash]
+----
+# Build and start all services
+docker-compose up -d
+
+# Verify services are running
+docker-compose ps
+
+# View logs
+docker-compose logs proximadb
+docker-compose logs demo-ui
+----
+
+=== Docker Configuration
+
+**Services Included:**
+- ProximaDB server (ports 5678 REST, 5679 gRPC)
+- Demo UI server (port 8090)
+- Monitoring (Prometheus, optional)
+
+**Configuration Files:**
+- `docker-compose.yml`: Service orchestration
+- `docker-config.toml`: ProximaDB server settings
+- `Dockerfile.demo`: Demo environment container
+
+=== Environment Variables
+
+[source,bash]
+----
+# ProximaDB Configuration
+PROXIMADB_CONFIG=/app/demo/docker-config.toml
+PROXIMADB_DATA_DIR=/data/proximadb
+PROXIMADB_LOG_LEVEL=info
+
+# Demo Configuration  
+DEMO_UI_PORT=8090
+API_BASE_URL=http://proximadb:5678
+----
+
+=== Production Docker Setup
 
 [source,yaml]
 ----
 version: '3.8'
 services:
   proximadb:
-    build: ..
+    image: proximadb:latest
     ports:
       - "5678:5678"  # REST API
       - "5679:5679"  # gRPC API
     volumes:
-      - ./docker-config.toml:/app/config.toml
-      - proximadb_data:/data
+      - ./data:/data/proximadb
+      - ./config:/app/config
     environment:
       - RUST_LOG=info
-  
-  demo:
-    build:
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      
+  demo-ui:
+    build: 
       context: .
       dockerfile: Dockerfile.demo
+    ports:
+      - "8090:8090"
     depends_on:
       - proximadb
     environment:
-      - PROXIMADB_SERVER_URL=http://proximadb:5678
-      - PYTHONPATH=/app
-  
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9091:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - API_BASE_URL=http://proximadb:5678
 ----
 
-==== ProximaDB Server Configuration
+== 🧪 Testing & Validation
 
-The `docker-config.toml` optimizes ProximaDB for demo scenarios:
+=== Automated Testing
 
-[source,toml]
-----
-[server]
-host = "0.0.0.0"
-rest_port = 5678
-grpc_port = 5679
-
-[storage]
-data_dir = "/data"
-storage_engine = "viper"  # Optimized for demos
-
-[storage.wal_config]
-strategy_type = "Avro"
-memtable_type = "BTree"
-sync_mode = "PerBatch"    # Balanced performance
-max_memory_mb = 512
-max_entries = 50000
-
-[storage.viper]
-enable_compression = true
-compression_type = "zstd"
-enable_quantization = true
-
-[api]
-enable_rest = true
-enable_grpc = true
-cors_enabled = true
-
-[monitoring]
-enable_metrics = true
-metrics_port = 9090
-----
-
-=== Direct Execution Setup
-
-==== Environment Variables
-
+**Quick Validation Script:**
 [source,bash]
 ----
-# Core settings
-export PROXIMADB_SERVER_URL="http://localhost:5678"
-export PROXIMADB_GRPC_URL="localhost:5679"
+#!/bin/bash
+# validate_demos.sh
 
-# Demo configuration
-export DEMO_COLLECTION_NAME="demo_collection"
-export DEMO_NUM_VECTORS=1000
-export DEMO_VECTOR_DIMENSION=768
+echo "🧪 Testing ProximaDB Demos..."
 
-# Performance tuning
-export RUST_LOG=info
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
+# Test 1: Dependencies
+echo "Testing dependencies..."
+python -c "import sentence_transformers, proximadb, numpy, requests" || exit 1
 
-# Storage configuration
-export PROXIMADB_DATA_DIR="./demo_data"
-export PROXIMADB_WAL_STRATEGY="avro"
+# Test 2: Server Health
+echo "Testing server connection..."
+curl -f http://localhost:5678/health || exit 1
+
+# Test 3: E-commerce Demo
+echo "Testing e-commerce demo..."
+timeout 60 python ecommerce_demo.py | grep "✅" || exit 1
+
+# Test 4: Web UI
+echo "Testing web UI..."
+curl -f http://localhost:8090 | grep "ProximaDB Demo" || exit 1
+
+echo "✅ All tests passed!"
 ----
 
-==== Python Environment
+=== Manual Validation Steps
 
+**1. E-commerce Demo Validation:**
 [source,bash]
 ----
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-# or: venv\Scripts\activate  # Windows
+# Run demo and verify output
+python ecommerce_demo.py | grep -E "(✅|⚡|🎉)"
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install ProximaDB SDK in development mode
-cd ../clients/python
-pip install -e .
-cd ../../demo
+# Expected outputs:
+# ✅ BERT model loaded successfully
+# ✅ gRPC connection established
+# ✅ Collection created
+# ⚡ Inserting X products via gRPC
+# 🎉 Demo completed successfully
 ----
 
-=== Platform-Specific Configuration
-
-==== Windows Configuration
-
-[source,powershell]
-----
-# PowerShell environment setup
-$env:PROXIMADB_SERVER_URL = "http://localhost:5678"
-$env:DEMO_NUM_VECTORS = "1000"
-$env:PYTHONPATH = "${PWD};${env:PYTHONPATH}"
-
-# Start ProximaDB server
-Start-Process powershell -ArgumentList "cd ..; cargo run --bin proximadb-server"
-
-# Wait for server startup
-Start-Sleep 5
-
-# Run demo
-python working_demo.py
-----
-
-==== macOS Configuration
-
+**2. Search Functionality:**
 [source,bash]
 ----
-# Bash/Zsh environment setup
-export PROXIMADB_SERVER_URL="http://localhost:5678"
-export DEMO_NUM_VECTORS=1000
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
+# Test REST search
+curl -X POST http://localhost:5678/collections/ecommerce_products/search \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.1, 0.2], "top_k": 3}' | jq '.results | length'
 
-# Use correct Python version
-alias python=/usr/local/bin/python3.11
-
-# Start server in background
-cd .. && cargo run --bin proximadb-server &
-cd demo
-
-# Wait for startup
-sleep 5
-
-# Run demo
-python working_demo.py
+# Should return: 3
 ----
 
-==== Ubuntu Configuration
-
+**3. Web UI Validation:**
 [source,bash]
 ----
-# Environment setup
-export PROXIMADB_SERVER_URL="http://localhost:5678"
-export DEMO_NUM_VECTORS=1000
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
+# Test UI responsiveness
+curl -s http://localhost:8090 | grep -q "ProximaDB Demo" && echo "✅ UI accessible"
 
-# Ensure proper permissions
-sudo chown -R $USER:$USER ./demo_data
-
-# Start server with systemd (optional)
-sudo systemctl start proximadb  # If service installed
-
-# Or start manually
-cd .. && cargo run --bin proximadb-server &
-cd demo && sleep 5
-
-# Run demo
-python3 working_demo.py
+# Test API integration
+curl -s http://localhost:8090/static/app.js | grep -q "API_BASE" && echo "✅ API configured"
 ----
 
-=== Demo Configuration Options
+=== Performance Validation
 
-==== Basic Demo Configuration
+**Benchmark Commands:**
+[source,bash]
+----
+# Insert benchmark (expect >1000 vectors/sec)
+python -c "
+from proximadb import connect_grpc
+import time, numpy as np
+client = connect_grpc('grpc://localhost:5679')
+vectors = [{'id': f'v{i}', 'vector': np.random.rand(384).tolist()} for i in range(1000)]
+start = time.time()
+# Insert logic here
+elapsed = time.time() - start
+print(f'Rate: {1000/elapsed:.0f} vectors/sec')
+"
 
+# Search benchmark (expect <10ms average)
+python -c "
+import time, requests, numpy as np
+for i in range(100):
+    start = time.time()
+    requests.post('http://localhost:5678/collections/ecommerce_products/search',
+                  json={'vector': np.random.rand(384).tolist(), 'top_k': 5})
+    latency = (time.time() - start) * 1000
+    print(f'Search {i}: {latency:.1f}ms')
+"
+----
+
+== 🚨 Troubleshooting Guide
+
+=== Common Issues & Solutions
+
+==== 1. Import and Dependency Errors
+
+**Error:** `No module named 'sentence_transformers'`
+[source,bash]
+----
+# Solution
+pip install sentence-transformers transformers torch
+----
+
+**Error:** `No module named 'proximadb'`
+[source,bash]
+----
+# Solution
+pip install proximadb-client
+----
+
+**Error:** BERT model download fails
+[source,bash]
+----
+# Solution: Manual download
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+----
+
+==== 2. Connection Issues
+
+**Error:** `Connection refused (gRPC port 5679)`
+[source,bash]
+----
+# Check if server is running
+pgrep proximadb-server
+
+# Start server if needed
+./target/release/proximadb-server --config demo/docker-config.toml
+
+# Verify gRPC port is open
+netstat -an | grep 5679
+----
+
+**Error:** `REST API not responding (port 5678)`
+[source,bash]
+----
+# Test health endpoint
+curl http://localhost:5678/health
+
+# Check server logs
+tail -f /path/to/proximadb/logs/server.log
+
+# Restart server with debug logging
+RUST_LOG=debug ./target/release/proximadb-server --config demo/docker-config.toml
+----
+
+==== 3. Collection and Data Issues
+
+**Error:** `Collection already exists`
+[source,bash]
+----
+# Delete existing collection
+curl -X DELETE http://localhost:5678/collections/ecommerce_products
+
+# Or use different collection name in demo
+----
+
+**Error:** `Failed to store collection metadata`
+[source,bash]
+----
+# Check storage permissions
+ls -la /data/proximadb/
+
+# Verify configuration
+cat demo/docker-config.toml | grep -A5 "\[storage\]"
+
+# Clear storage and restart
+rm -rf /data/proximadb/*
+./target/release/proximadb-server --config demo/docker-config.toml
+----
+
+**Error:** `No results found` in searches
+[source,bash]
+----
+# Verify collection has data
+curl http://localhost:5678/collections/ecommerce_products | jq .
+
+# Check vector count
+curl -X POST http://localhost:5678/collections/ecommerce_products/search \
+  -d '{"vector": [0.1], "top_k": 1}' | jq '.results | length'
+
+# Re-run demo to reload data
+python ecommerce_demo.py
+----
+
+==== 4. Web UI Issues
+
+**Error:** `Address already in use (port 8090)`
+[source,bash]
+----
+# Kill existing server
+pkill -f serve_ui.py
+
+# Use different port
+python serve_ui.py --port 8091
+----
+
+**Error:** `Failed to connect to ProximaDB` in browser
+[source,bash]
+----
+# Check API_BASE configuration
+grep API_BASE static/app.js
+
+# Should be: const API_BASE = 'http://localhost:5678';
+
+# Verify CORS headers
+curl -H "Origin: http://localhost:8090" \
+     -H "Access-Control-Request-Method: POST" \
+     -X OPTIONS http://localhost:5678/collections
+----
+
+==== 5. Performance Issues
+
+**Issue:** Low insertion rates (<1000 vectors/sec)
+[source,bash]
+----
+# Solutions:
+1. Use gRPC instead of REST
+2. Increase batch sizes (100-500 vectors)
+3. Check system resources (CPU, memory)
+4. Verify storage is not I/O bound
+----
+
+**Issue:** High search latency (>10ms)
+[source,bash]
+----
+# Solutions:
+1. Reduce top_k values
+2. Use appropriate distance metric
+3. Check collection size and indexes
+4. Monitor system resources
+----
+
+=== Debug Commands
+
+**Server Status:**
+[source,bash]
+----
+# Process check
+ps aux | grep proximadb
+
+# Port status
+ss -tulpn | grep -E "(5678|5679)"
+
+# Resource usage
+top -p $(pgrep proximadb-server)
+----
+
+**Collection Inspection:**
+[source,bash]
+----
+# List all collections
+curl http://localhost:5678/collections | jq '.[] | {id, dimension, count}'
+
+# Collection details
+curl http://localhost:5678/collections/ecommerce_products | jq .
+
+# Sample vector
+curl -X POST http://localhost:5678/collections/ecommerce_products/search \
+  -d '{"vector": [0.1], "top_k": 1}' | jq '.results[0]'
+----
+
+**Performance Monitoring:**
+[source,bash]
+----
+# Monitor insert performance
+time python ecommerce_demo.py
+
+# Monitor search latency
+curl -w "@curl-format.txt" -X POST http://localhost:5678/collections/ecommerce_products/search \
+  -d '{"vector": [0.1], "top_k": 5}'
+
+# System metrics
+iostat -x 1
+free -h
+----
+
+== 📈 Performance Guidelines
+
+=== Optimization Strategies
+
+==== High-Volume Inserts
+
+**Batch Configuration:**
 [source,python]
 ----
-# In demo scripts, modify these settings:
-@dataclass
-class DemoConfig:
-    vector_dimension: int = 768          # BERT embedding size
-    num_vectors: int = 1000              # Dataset size
-    enable_quantization: bool = True     # Use compression
-    enable_hnsw: bool = True             # Use HNSW indexing
-    benchmark_iterations: int = 5        # Benchmark runs
-    batch_size: int = 100                # Insert batch size
-    search_k: int = 10                   # Results per query
+# Optimal batch sizes by scenario
+batch_sizes = {
+    "development": 10-50,      # Easy debugging
+    "testing": 100-500,        # Balanced performance  
+    "production": 500-1000     # Maximum throughput
+}
+
+# gRPC batch insert
+vectors = create_vectors(batch_size=500)
+result = grpc_client.insert_vectors(collection_id, vectors)
 ----
 
-==== Performance Tuning
+**Storage Engine Selection:**
+[source,python]
+----
+# For high insert rates
+config = CollectionConfig(
+    dimension=384,
+    distance_metric=DistanceMetric.COSINE,
+    engine="sst"  # Better for frequent updates
+)
+----
 
+==== Low-Latency Search
+
+**gRPC Optimization:**
+[source,python]
+----
+# Use gRPC for lowest latency
+grpc_client = connect_grpc("grpc://localhost:5679")
+
+# Optimize search parameters
+results = grpc_client.search_vectors(
+    collection_id,
+    query_vector,
+    top_k=5,  # Smaller k = faster search
+    include_metadata=False  # If metadata not needed
+)
+----
+
+**Query Optimization:**
+[source,sql]
+----
+-- Use specific filters to reduce search space
+SELECT id, metadata FROM products  
+WHERE metadata->>'category' = 'Electronics'  -- Pre-filter
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2], 'cosine')
+LIMIT 5;  -- Small result set
+----
+
+==== Memory Optimization
+
+**Vector Dimensions:**
+[source,python]
+----
+# Choose appropriate dimensions
+dimensions = {
+    "all-MiniLM-L6-v2": 384,      # Good balance
+    "bert-base-uncased": 768,      # Higher quality
+    "text-embedding-ada-002": 1536 # OpenAI models
+}
+
+# Memory usage estimation
+memory_per_vector = dimensions * 4  # bytes (float32)
+total_memory = num_vectors * memory_per_vector
+----
+
+**Collection Configuration:**
+[source,python]
+----
+# VIPER for memory efficiency
+config = CollectionConfig(
+    dimension=384,
+    distance_metric=DistanceMetric.COSINE,
+    engine="viper",  # Better compression
+    compression_enabled=True
+)
+----
+
+=== Benchmarking Tools
+
+**Built-in Benchmarks:**
 [source,bash]
 ----
-# For high-performance demos
-export DEMO_NUM_VECTORS=10000
-export DEMO_BATCH_SIZE=1000
-export RUST_LOG=warn  # Reduce logging overhead
+# E-commerce demo includes benchmarking
+python ecommerce_demo.py | grep -E "(Rate|Latency|Performance)"
 
-# For development/debugging
-export DEMO_NUM_VECTORS=100
-export DEMO_BATCH_SIZE=50
-export RUST_LOG=debug  # Verbose logging
+# Advanced demo performance comparison
+python advanced_demo.py | grep -A5 "Performance"
+
+# Storage engine comparison
+python storage_engines_demo.py | grep -A10 "Benchmark"
 ----
 
-=== Monitoring Setup
+**Custom Benchmarking:**
+[source,python]
+----
+import time
+import numpy as np
+from proximadb import connect_grpc
 
-==== Prometheus Configuration
+def benchmark_inserts(client, collection_id, num_vectors, dimension):
+    vectors = []
+    for i in range(num_vectors):
+        vectors.append({
+            'id': f'vec_{i}',
+            'vector': np.random.rand(dimension).tolist(),
+            'metadata': [{'key': 'index', 'value': str(i)}]
+        })
+    
+    start_time = time.time()
+    client.insert_vectors(collection_id, vectors)
+    elapsed = time.time() - start_time
+    
+    rate = num_vectors / elapsed
+    print(f"Insert rate: {rate:.0f} vectors/sec")
+    return rate
 
-The included `prometheus.yml` monitors ProximaDB:
+def benchmark_search(client, collection_id, dimension, num_queries):
+    latencies = []
+    
+    for i in range(num_queries):
+        query_vector = np.random.rand(dimension).tolist()
+        
+        start_time = time.time()
+        client.search_vectors(collection_id, query_vector, top_k=10)
+        elapsed = time.time() - start_time
+        
+        latencies.append(elapsed * 1000)  # Convert to ms
+    
+    avg_latency = sum(latencies) / len(latencies)
+    p95_latency = sorted(latencies)[int(0.95 * len(latencies))]
+    
+    print(f"Average latency: {avg_latency:.2f}ms")
+    print(f"P95 latency: {p95_latency:.2f}ms")
+    
+    return avg_latency, p95_latency
+----
 
+=== Resource Requirements
+
+==== Development Environment
+
+[source,text]
+----
+Minimum Requirements:
+- CPU: 2 cores
+- RAM: 4GB
+- Storage: 10GB
+- Network: Local only
+
+Recommended:
+- CPU: 4+ cores  
+- RAM: 8GB+
+- Storage: 50GB SSD
+- Network: Gigabit
+----
+
+==== Production Environment
+
+[source,text]
+----
+Small Scale (1M vectors):
+- CPU: 8 cores
+- RAM: 16GB
+- Storage: 100GB SSD
+- Network: 10Gbps
+
+Large Scale (100M vectors):
+- CPU: 16+ cores
+- RAM: 64GB+
+- Storage: 1TB+ NVMe
+- Network: 25Gbps+
+----
+
+==== Cloud Deployment
+
+**AWS Instance Recommendations:**
+[source,text]
+----
+Development: t3.large (2 vCPU, 8GB RAM)
+Testing: c5.xlarge (4 vCPU, 8GB RAM)
+Production: c5.4xlarge (16 vCPU, 32GB RAM)
+High-Scale: c5.12xlarge (48 vCPU, 96GB RAM)
+----
+
+**Storage Configuration:**
+[source,text]
+----
+Development: gp3 (100GB, 3000 IOPS)
+Production: io2 (500GB+, 10000+ IOPS)
+Archive: s3 (unlimited, lower cost)
+----
+
+== 🎓 Learning Objectives & Next Steps
+
+=== After Completing All Demos
+
+You will understand:
+
+1. **Vector Database Concepts**
+   - Similarity search fundamentals
+   - Distance metrics and their use cases
+   - Embedding generation and management
+
+2. **ProximaDB Architecture**
+   - Storage engine trade-offs (VIPER vs SST)
+   - API protocols (REST vs gRPC vs SQL)
+   - Performance characteristics
+
+3. **Real-World Applications**
+   - E-commerce semantic search
+   - Natural language processing
+   - Metadata filtering strategies
+
+4. **Production Deployment**
+   - Configuration optimization
+   - Performance monitoring
+   - Troubleshooting techniques
+
+=== Recommended Next Steps
+
+==== 1. Explore Advanced Features
+[source,bash]
+----
+# Try different embedding models
+python -c "
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-mpnet-base-v2')  # 768D
+# Modify demos to use larger embeddings
+"
+
+# Experiment with different distance metrics
+python advanced_demo.py  # Compare cosine vs euclidean
+----
+
+==== 2. Build Custom Applications
+
+**Example: Document Search System**
+[source,python]
+----
+# documents.py - Custom demo
+from sentence_transformers import SentenceTransformer
+from proximadb import connect_grpc
+
+class DocumentSearchSystem:
+    def __init__(self):
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.client = connect_grpc("grpc://localhost:5679")
+    
+    def index_documents(self, documents):
+        vectors = []
+        for doc_id, content in documents.items():
+            embedding = self.model.encode([content])[0]
+            vectors.append({
+                'id': doc_id,
+                'vector': embedding.tolist(),
+                'metadata': [
+                    {'key': 'content_preview', 'value': content[:100]},
+                    {'key': 'length', 'value': str(len(content))}
+                ]
+            })
+        return self.client.insert_vectors("documents", vectors)
+    
+    def search(self, query, top_k=5):
+        query_embedding = self.model.encode([query])[0]
+        return self.client.search_vectors("documents", query_embedding.tolist(), top_k=top_k)
+----
+
+==== 3. Production Deployment
+
+**Docker Compose for Production:**
 [source,yaml]
 ----
+# production-compose.yml
+version: '3.8'
+services:
+  proximadb:
+    image: proximadb:latest
+    restart: always
+    ports:
+      - "5678:5678"
+      - "5679:5679"
+    volumes:
+      - proximadb_data:/data
+      - ./config:/app/config
+    environment:
+      - RUST_LOG=info
+      - PROXIMADB_CONFIG=/app/config/production.toml
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: '8'
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/ssl/certs
+
+volumes:
+  proximadb_data:
+----
+
+==== 4. Monitoring and Observability
+
+**Prometheus Configuration:**
+[source,yaml]
+----
+# prometheus.yml (already included)
 global:
   scrape_interval: 15s
 
 scrape_configs:
   - job_name: 'proximadb'
     static_configs:
-      - targets: ['proximadb:9090']
-    metrics_path: /metrics
-    scrape_interval: 5s
+      - targets: ['localhost:5678']
+    metrics_path: '/metrics'
 ----
 
-==== Access Monitoring
-
+**Grafana Dashboard:**
 [source,bash]
 ----
-# Prometheus metrics
-curl http://localhost:9091/graph
+# Set up monitoring stack
+docker-compose -f monitoring-compose.yml up -d
 
-# ProximaDB health
-curl http://localhost:5678/health
-
-# Admin statistics
-curl http://localhost:5678/admin/stats
+# Import ProximaDB dashboard
+curl -X POST http://admin:admin@localhost:3000/api/dashboards/db \
+  -H "Content-Type: application/json" \
+  -d @grafana-dashboard.json
 ----
 
-[TIP]
-====
-📊 **Monitoring Benefits**: Real-time performance visualization during demos
-====
+==== 5. Integration Examples
 
-[[_troubleshooting_guide]]
-== 🔧 Troubleshooting Guide
-
-=== Common Issues & Solutions
-
-==== Connection Issues
-
-===== "Connection refused" errors
-
-[source,bash]
-----
-# Check if ProximaDB server is running
-curl http://localhost:5678/health
-
-# Expected response:
-# {"status":"healthy","timestamp":"2025-01-07T..."}
-
-# Check server logs
-tail -f /var/log/proximadb.log
-
-# For Docker:
-docker-compose logs proximadb
-----
-
-**Solutions:**
-1. **Server not started**: Run `cargo run --bin proximadb-server`
-2. **Port conflicts**: Check with `netstat -tulpn | grep 5678`
-3. **Firewall blocking**: Temporary disable firewall for testing
-4. **Docker networking**: Use `proximadb:5678` in container-to-container communication
-
-===== "Module not found" errors
-
-[source,bash]
-----
-# Install ProximaDB SDK properly
-cd clients/python
-pip install -e .
-
-# Verify installation
-python -c "import proximadb; print('SDK installed successfully')"
-
-# Check Python path
-python -c "import sys; print('\n'.join(sys.path))"
-
-# Set PYTHONPATH if needed
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
-----
-
-**Common causes:**
-- SDK not installed in current virtual environment
-- Wrong Python interpreter being used
-- Missing PYTHONPATH configuration
-
-==== Docker Issues
-
-===== Docker build failures
-
-[source,bash]
-----
-# Clean Docker cache
-docker system prune -a
-
-# Rebuild with no cache
-docker-compose build --no-cache
-
-# Check Docker memory allocation
-docker system df
-
-# Increase Docker memory (Docker Desktop):
-# Settings > Resources > Memory > 4GB+
-----
-
-===== Container startup failures
-
-[source,bash]
-----
-# Check container logs
-docker-compose logs proximadb
-
-# Check container status
-docker-compose ps
-
-# Restart specific service
-docker-compose restart proximadb
-
-# Full restart
-docker-compose down && docker-compose up
-----
-
-==== Performance Issues
-
-===== Slow demo execution
-
-[source,bash]
-----
-# Reduce dataset size
-export DEMO_NUM_VECTORS=100
-
-# Disable debug logging
-export RUST_LOG=warn
-
-# Use SSD storage for Docker volumes
-# Update docker-compose.yml volume configuration
-
-# Check available memory
-free -h
-
-# Monitor resource usage during demo
-htop  # or top on macOS
-----
-
-===== High memory usage
-
-[source,bash]
-----
-# Adjust ProximaDB memory settings in config.toml:
-[storage.wal_config]
-max_memory_mb = 256  # Reduce from 512
-max_entries = 25000  # Reduce from 50000
-
-# Use quantization to reduce memory
-[storage.viper]
-enable_quantization = true
-quantization_level = "pq8"  # Higher compression
-----
-
-=== Debug Mode & Diagnostics
-
-==== Enable Verbose Logging
-
-[source,bash]
-----
-# For ProximaDB server
-export RUST_LOG=debug
-cargo run --bin proximadb-server
-
-# For demo scripts
-python working_demo.py --verbose
-
-# For Docker environment
-docker-compose up --build
-# Check logs: docker-compose logs -f
-----
-
-==== Health Check Procedures
-
-[source,bash]
-----
-# Server health
-curl -v http://localhost:5678/health
-
-# gRPC health check (requires grpcurl)
-grpcurl -plaintext localhost:5679 grpc.health.v1.Health/Check
-
-# Collection statistics
-curl http://localhost:5678/admin/stats
-
-# Memory usage
-curl http://localhost:5678/admin/memory
-----
-
-==== Diagnostic Commands
-
-[source,bash]
-----
-# Check file descriptors
-lsof -p $(pgrep proximadb-server)
-
-# Check network connections
-netstat -tulpn | grep -E "(5678|5679)"
-
-# Check disk usage
-df -h
-du -sh ./demo_data
-
-# Check process resources
-ps aux | grep proximadb
-----
-
-=== Platform-Specific Issues
-
-==== Windows Issues
-
-[source,powershell]
-----
-# PowerShell execution policy
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# Windows Defender exclusion for faster builds
-Add-MpPreference -ExclusionPath "C:\path\to\proximadb"
-
-# WSL2 memory issues
-# Edit .wslconfig in user directory:
-[wsl2]
-memory=4GB
-processors=4
-----
-
-==== macOS Issues
-
-[source,bash]
-----
-# Xcode command line tools
-xcode-select --install
-
-# Homebrew permissions
-sudo chown -R $(whoami) $(brew --prefix)/*
-
-# Apple Silicon Rust targets
-rustup target add aarch64-apple-darwin
-
-# Rosetta for Intel binaries (if needed)
-softwareupdate --install-rosetta
-----
-
-==== Linux Issues
-
-[source,bash]
-----
-# Docker permission issues
-sudo usermod -aG docker $USER
-# Then logout and login
-
-# Shared memory issues
-sudo sysctl -w kernel.shm_rmid_forced=1
-
-# File descriptor limits
-ulimit -n 65536
-
-# Check systemd journal for errors
-journalctl -u docker -f
-----
-
-=== Performance Troubleshooting
-
-==== Memory Optimization
-
-[source,toml]
-----
-# Optimize config.toml for limited memory:
-[storage.wal_config]
-max_memory_mb = 128
-sync_mode = "PerBatch"
-memtable_type = "HashMap"  # Lower memory overhead
-
-[storage.viper]
-enable_quantization = true
-compression_type = "lz4"  # Faster than zstd
-----
-
-==== Disk I/O Optimization
-
-[source,bash]
-----
-# Use tmpfs for temporary data (Linux)
-sudo mount -t tmpfs -o size=2G tmpfs ./demo_data
-
-# Monitor I/O
-iostat -x 1
-
-# Check disk space
-df -h ./demo_data
-----
-
-==== Network Optimization
-
-[source,bash]
-----
-# Increase network buffers for high throughput
-echo 'net.core.rmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
-echo 'net.core.wmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
-
-# Apply changes
-sudo sysctl -p
-----
-
-=== Getting Help
-
-==== Debug Information Collection
-
-[source,bash]
-----
-# Collect system information
-./scripts/collect_debug_info.sh
-
-# Generate debug report
-python debug_report.py
-
-# Server configuration dump
-curl http://localhost:5678/admin/config
-----
-
-==== Reporting Issues
-
-When reporting issues, include:
-
-1. **System Information**: OS, version, hardware specs
-2. **Software Versions**: Rust, Python, Docker versions
-3. **Configuration**: config.toml and environment variables
-4. **Error Logs**: Complete error messages and stack traces
-5. **Reproduction Steps**: Exact commands that trigger the issue
-
-[IMPORTANT]
-====
-🐛 **Issue Reporting**: Use GitHub Issues with the bug report template for fastest resolution
-====
-
-==== Community Support
-
-- **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
-- **Documentation**: ../docs/
-- **Demo Guide**: ./demo.adoc
-
-[TIP]
-====
-💡 **Quick Fix**: 90% of issues are resolved by restarting services and checking logs
-====
-
-[[_advanced_features_performance]]
-== ⚡ Advanced Features & Performance
-
-[[_storage_engine_comparison]]
-=== Storage Engine Comparison
-
-ProximaDB offers two high-performance storage engines optimized for different workloads:
-
-==== LSM Engine - Mixed Workloads
-[cols="2,3"]
-|===
-|**Optimized For** |Frequent updates, real-time processing, mixed read/write
-
-|**Architecture** |Log-Structured Merge trees with SkipList memtables
-|**ACID Support** |Full transactional guarantees
-|**Performance** |25-50ms real-time updates, 42.1ms average search
-|**Throughput** |1,847 vectors/sec sustained
-|**Best Use Cases** |IoT sensors, real-time analytics, live dashboards
-|===
-
-==== VIPER Engine - Analytics Workloads  
-[cols="2,3"]
-|===
-|**Optimized For** |Analytics, compression, read-heavy workloads
-
-|**Architecture** |Parquet columnar storage with sorted rewrite optimization
-|**Compression** |4.2x storage reduction with ZSTD
-|**Performance** |3,205 vectors/sec bulk loading, 38.7ms analytical queries
-|**Memory Efficiency** |Intelligent quantization with 98%+ accuracy retention
-|**Best Use Cases** |Data warehousing, batch analytics, archival storage
-|===
-
-=== Serialization Strategy Performance
-
-==== Avro-Based Schema Evolution
-
-[source,rust]
-----
-// Zero-copy deserialization with schema evolution
-pub struct AvroStrategy {
-    schema_registry: SchemaRegistry,
-    compression: CompressionType,
-}
-
-// Benefits:
-// - Schema evolution without version conflicts
-// - Cross-language compatibility
-// - Compact binary encoding
-// - Zero-copy memory mapping
-----
-
-**Performance Characteristics:**
-- **Throughput**: 2,100+ vectors/sec with schema validation
-- **Compression**: 3.8x reduction with built-in compression
-- **Compatibility**: Language-agnostic data exchange
-- **Evolution**: Backward/forward compatible schema changes
-
-==== Bincode Fast Memory Serialization
-
-[source,rust]
-----
-// Ultra-fast binary serialization for Rust-native apps
-pub struct BincodeStrategy {
-    compression: Option<CompressionType>,
-    endianness: Endianness,
-}
-
-// Benefits:
-// - Fastest possible serialization for Rust
-// - Zero-allocation hot paths
-// - Direct memory layout compatibility
-// - Optional compression for storage efficiency
-----
-
-**Performance Characteristics:**
-- **Throughput**: 3,800+ vectors/sec raw speed
-- **Memory**: Zero-allocation serialization paths
-- **Latency**: Sub-microsecond encoding/decoding
-- **Efficiency**: Native Rust memory layout preservation
-
-=== Vector Quantization
-
-==== Product Quantization (PQ)
-
+**FastAPI Integration:**
 [source,python]
 ----
-# Configure PQ for 4x compression with 95% accuracy retention
-config = {
-    "quantization": {
-        "type": "product",
-        "subvectors": 8,
-        "bits_per_code": 8,
-        "training_size": 10000
-    }
-}
-----
+# api_server.py
+from fastapi import FastAPI
+from proximadb import connect_grpc
+from sentence_transformers import SentenceTransformer
 
-**Benefits:**
-- **Compression**: 4x-8x memory reduction
-- **Accuracy**: 95%+ similarity preservation
-- **Speed**: 3x faster candidate selection
-- **Scalability**: Sub-linear memory growth
+app = FastAPI()
+client = connect_grpc("grpc://localhost:5679")
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-==== Adaptive Quantization
+@app.post("/search")
+async def search_products(query: str, top_k: int = 5):
+    embedding = model.encode([query])[0]
+    results = client.search_vectors("ecommerce_products", embedding.tolist(), top_k=top_k)
+    return {"query": query, "results": results}
 
-[source,python]
-----
-# Automatic quantization selection based on data characteristics
-def select_quantization(vectors):
-    sparsity = calculate_sparsity(vectors)
-    dimension = len(vectors[0])
+@app.post("/products")
+async def add_product(name: str, description: str, metadata: dict):
+    text = f"{name} {description}"
+    embedding = model.encode([text])[0]
     
-    if sparsity > 0.7:
-        return "binary"  # 32x compression
-    elif dimension >= 512:
-        return "pq4"     # 8x compression  
-    else:
-        return "pq8"     # 4x compression, high quality
-----
-
-[[_text_processing_for_rag_applications]]
-=== Text Processing for RAG Applications
-
-==== Chunking Strategies Comparison
-
-[cols="2,2,2,2"]
-|===
-|**Strategy** |**Chunk Size** |**Overlap** |**Best For**
-
-|**Sentence**
-|Variable (10-100 tokens)
-|None
-|Precise semantic units
-
-|**Paragraph**  
-|Variable (50-500 tokens)
-|None
-|Document structure preservation
-
-|**Sliding Window**
-|Fixed (256 tokens)
-|50% overlap
-|Context preservation
-
-|**Semantic**
-|Variable (based on similarity)
-|Context-aware
-|Meaning preservation
-
-|**Fixed-Size**
-|Fixed (512 tokens)
-|10% overlap
-|Consistent processing
-
-|**Recursive**
-|Adaptive (hierarchy-based)
-|Smart boundaries
-|Complex documents
-|===
-
-==== BERT Integration Performance
-
-[source,python]
-----
-# Optimized BERT embedding generation
-class OptimizedBERTProcessor:
-    def __init__(self, model="bert-base-uncased"):
-        self.model = AutoModel.from_pretrained(model)
-        self.tokenizer = AutoTokenizer.from_pretrained(model)
-        
-    def batch_embed(self, texts, batch_size=32):
-        # Process in batches for optimal GPU utilization
-        embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i+batch_size]
-            with torch.no_grad():
-                encoded = self.tokenizer(batch, 
-                                       padding=True, 
-                                       truncation=True,
-                                       return_tensors="pt")
-                outputs = self.model(**encoded)
-                batch_embeddings = outputs.last_hidden_state[:, 0, :]
-                embeddings.extend(batch_embeddings.cpu().numpy())
-        return embeddings
-----
-
-**Performance Metrics:**
-- **Throughput**: 150-200 documents/second (768D BERT)
-- **Accuracy**: 98%+ semantic similarity preservation
-- **Memory**: Batched processing for GPU efficiency
-- **Scalability**: Linear scaling with GPU compute
-
-=== Advanced Indexing (AXIS)
-
-==== Hierarchical Navigable Small World (HNSW)
-
-[source,python]
-----
-# HNSW configuration for optimal performance
-hnsw_config = {
-    "index_type": "hnsw",
-    "construction_params": {
-        "m": 16,              # Connections per element
-        "ef_construction": 200, # Search width during construction
-        "max_elements": 100000  # Index capacity
-    },
-    "search_params": {
-        "ef_search": 100      # Search width during query
+    vector = {
+        'id': f"product_{metadata.get('id', 'auto')}",
+        'vector': embedding.tolist(),
+        'metadata': [{'key': k, 'value': str(v)} for k, v in metadata.items()]
     }
-}
+    
+    result = client.insert_vectors("ecommerce_products", [vector])
+    return {"status": "success", "result": result}
 ----
 
-**Performance Benefits:**
-- **Search Speed**: 60-80% faster than brute force
-- **Memory**: Logarithmic space complexity
-- **Accuracy**: 95%+ recall at high speed
-- **Scalability**: Sub-linear search time complexity
-
-==== Adaptive Index Selection
-
+**Streamlit Dashboard:**
 [source,python]
 ----
-# Automatic index optimization based on collection characteristics
-class AdaptiveIndexer:
-    def select_index(self, collection_stats):
-        if collection_stats.size < 1000:
-            return "brute_force"  # Fast exact search
-        elif collection_stats.update_frequency > 0.1:
-            return "hnsw_dynamic"  # Incremental updates
-        else:
-            return "hnsw_static"   # Maximum performance
+# dashboard.py
+import streamlit as st
+from proximadb import connect_grpc
+from sentence_transformers import SentenceTransformer
+
+st.title("ProximaDB Product Search")
+
+# Initialize connections
+@st.cache_resource
+def get_client():
+    return connect_grpc("grpc://localhost:5679")
+
+@st.cache_resource  
+def get_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+client = get_client()
+model = get_model()
+
+# Search interface
+query = st.text_input("Search for products:")
+top_k = st.slider("Number of results:", 1, 20, 5)
+
+if query:
+    embedding = model.encode([query])[0]
+    results = client.search_vectors("ecommerce_products", embedding.tolist(), top_k=top_k)
+    
+    for i, result in enumerate(results.get('results', [])):
+        with st.expander(f"Result {i+1}: {result.get('id', 'Unknown')}"):
+            st.json(result)
 ----
 
-[[_cost_efficiency_architecture]]
-=== Cost Efficiency Through Architecture
+== 🔗 Additional Resources
 
-ProximaDB achieves significant cost reductions through fundamental architectural choices:
+=== Documentation Links
+- link:../README.adoc[Project Overview]
+- link:../docs/hld.adoc[High-Level Design]
+- link:../docs/developer_guide.adoc[Developer Guide]
+- link:../docs/api_reference.adoc[API Reference]
 
-==== Compute Efficiency (Rust + Hardware Optimization)
-[cols="2,3"]
-|===
-|**Optimization** |**Impact on Costs**
+=== Community & Support
+- GitHub Issues: https://github.com/proximadb/proximadb/issues
+- Discussions: https://github.com/proximadb/proximadb/discussions
+- Documentation: https://docs.proximadb.com
 
-|**Rust's Zero-Cost Abstractions**
-|Memory safety without garbage collection overhead, reducing CPU cycles by 30-50%
-
-|**Hardware Vectorization**
-|Automatic SIMD/AVX-512/NEON usage processes multiple vectors per CPU cycle
-
-|**Async I/O + Multi-threading**
-|Full CPU utilization means fewer cores needed for same throughput
-
-|**GPU Support**
-|Optional acceleration for massive parallel workloads without dedicated GPU clusters
-|===
-
-==== Memory Efficiency
-[cols="2,3"]
-|===
-|**Optimization** |**Impact on Costs**
-
-|**Memory Pools**
-|Reusable buffers eliminate allocation/deallocation overhead (40-60% reduction)
-
-|**Zero-Copy Operations**
-|Direct byte manipulation without intermediate copies saves RAM
-
-|**Lock-Free Data Structures**
-|DashMap concurrent access without blocking reduces memory contention
-
-|**OS Page Cache + mmap**
-|Leverages kernel-level caching for frequently accessed data
-|===
-
-==== Storage Optimization
-[cols="2,3"]
-|===
-|**Optimization** |**Impact on Costs**
-
-|**ZSTD Compression (SST)**
-|30-50% storage reduction on data blocks with minimal CPU overhead
-
-|**Parquet Columnar (VIPER)**
-|60-80% compression for analytical workloads via columnar storage
-
-|**Bloom Filters**
-|Skip 99% of irrelevant files without disk reads
-
-|**Intelligent Compaction**
-|Merge small files, remove duplicates, optimize layout
-|===
-
-==== Network & I/O Efficiency
-[cols="2,3"]
-|===
-|**Optimization** |**Impact on Costs**
-
-|**HTTP Range Reads**
-|Fetch only required byte ranges, not entire files
-
-|**gRPC Wire Efficiency**
-|Protocol buffers use 3-10x less bandwidth than JSON
-
-|**Batch Operations**
-|Amortize network round-trips across multiple operations
-
-|**Predicate Pushdown**
-|60-90% I/O reduction by filtering before data transfer
-|===
-
-==== Cloud Storage Optimization
-[cols="2,3"]
-|===
-|**Optimization** |**Impact on Costs**
-
-|**Request Batching**
-|Combine multiple S3 operations to minimize GET/PUT costs
-
-|**Smart Caching**
-|Local cache reduces repeated cloud storage access
-
-|**Metadata Prefetching**
-|Minimize LIST operations through intelligent caching
-
-|**Staged Writes**
-|Buffer locally before cloud upload to reduce PUT requests
-|===
-
-[[_performance_monitoring_optimization]]
-=== Performance Monitoring & Optimization
-
-==== Real-Time Metrics
-
-[source,bash]
-----
-# Key performance indicators to monitor
-curl http://localhost:5678/admin/metrics | jq '
-{
-  "search_latency_p95": .search_latency.p95,
-  "insert_throughput": .insert_ops.rate,
-  "memory_usage_mb": .memory.heap_mb,
-  "compression_ratio": .storage.compression_ratio,
-  "cache_hit_rate": .cache.hit_rate
-}'
-----
-
-==== Optimization Recommendations
-
-[cols="2,3,2"]
-|===
-|**Metric** |**Optimization** |**Expected Improvement**
-
-|High search latency
-|Enable HNSW indexing, tune ef_search
-|60-80% latency reduction
-
-|Low insert throughput  
-|Increase batch size, use Bincode serialization
-|2-3x throughput increase
-
-|High memory usage
-|Enable quantization, adjust memtable size
-|50-75% memory reduction
-
-|Poor compression ratio
-|Switch to VIPER engine, enable ZSTD
-|3-5x storage reduction
-|===
-
-[[_integration_examples]]
-=== Integration Examples
-
-==== Elasticsearch Migration
-
-[source,python]
-----
-# Migrate from Elasticsearch to ProximaDB
-class ElasticsearchMigrator:
-    def migrate_index(self, es_index, proximadb_collection):
-        # Extract vectors and metadata
-        docs = self.es.search(index=es_index, size=10000)
-        
-        # Transform to ProximaDB format
-        vectors = []
-        for doc in docs['hits']['hits']:
-            vectors.append({
-                'id': doc['_id'],
-                'vector': doc['_source']['vector'],
-                'metadata': doc['_source']['metadata']
-            })
-        
-        # Batch insert with optimized settings
-        self.proximadb.batch_insert(collection, vectors, 
-                                  batch_size=1000,
-                                  strategy="bincode")
-----
-
-==== Pinecone Migration
-
-[source,python]
-----
-# Migrate from Pinecone to ProximaDB
-class PineconeMigrator:
-    def migrate_namespace(self, pinecone_index, namespace, 
-                         proximadb_collection):
-        # Fetch all vectors from Pinecone
-        vectors = pinecone_index.query(
-            namespace=namespace,
-            top_k=10000,
-            include_values=True,
-            include_metadata=True
-        )
-        
-        # Transform and insert
-        batch = []
-        for vector in vectors.matches:
-            batch.append({
-                'id': vector.id,
-                'vector': vector.values,
-                'metadata': vector.metadata
-            })
-        
-        # Use ProximaDB's optimized batch insert
-        self.proximadb.batch_insert(collection, batch)
-----
-
-[IMPORTANT]
-====
-🚀 **Performance Tip**: Use VIPER engine for read-heavy workloads, LSM for write-heavy workloads
-====
-
-[[_demo_execution_commands]]
-== 📊 Demo Execution Commands
-
-=== Quick Reference
-
-[source,bash]
-----
-# Docker Compose (Recommended)
-docker-compose up --build              # Start complete environment
-docker-compose logs -f demo            # View demo execution logs
-docker-compose down -v                 # Clean shutdown
-
-# Direct Script Execution - Recommended Order
-python demo.py                         # ⭐ Start here! 49K vectors/sec demo
-python sql_optimization_demo.py        # 🎯 SQL AND/OR/NOT operators
-python metadata_filter_demo.py         # 📊 Advanced filtering showcase
-python advanced_demo.py                # 🏗️ Storage engine comparison
-python rest_grpc_examples.py           # ⚡ Protocol performance
-python storage_engines_demo.py         # 💾 Compression & serialization
-python financial_analysis_demo.py      # 💼 Real-world application
-
-# Monitoring and Health Checks
-curl http://localhost:5678/health       # Server health check
-curl http://localhost:9091              # Prometheus metrics
-curl http://localhost:5678/admin/stats  # Collection statistics
-----
-
-=== Environment Variables Quick Reference
-
-[source,bash]
-----
-# Core Configuration
-export PROXIMADB_SERVER_URL="http://localhost:5678"
-export DEMO_NUM_VECTORS=1000
-export DEMO_VECTOR_DIMENSION=768
-
-# Performance Tuning
-export RUST_LOG=info                    # Logging level
-export DEMO_BATCH_SIZE=100              # Insert batch size
-export PROXIMADB_WAL_STRATEGY="avro"    # Serialization strategy
-
-# Feature Flags
-export DEMO_ENABLE_QUANTIZATION=true    # Vector compression
-export DEMO_ENABLE_HNSW=true           # Advanced indexing
-export DEMO_ENABLE_MONITORING=true     # Prometheus metrics
-----
-
-[[_what_youll_learn]]
-== 🎯 What You'll Learn
-
-After completing the demonstrations, you'll understand:
-
-=== Core Capabilities
-- ✅ **Vector Operations**: CRUD operations with metadata filtering
-- ✅ **Similarity Search**: Multiple distance metrics and optimization
-- ✅ **Storage Engines**: LSM vs VIPER performance characteristics
-- ✅ **Text Processing**: 6 chunking strategies for RAG applications
-
-=== Advanced Features  
-- ✅ **Vector Quantization**: Memory optimization with minimal accuracy loss
-- ✅ **AXIS Indexing**: Adaptive indexing for different workloads
-- ✅ **Serialization**: Avro vs Bincode performance comparison
-- ✅ **Real-world Applications**: Financial document intelligence
-
-=== Production Readiness
-- ✅ **Performance Benchmarking**: Latency, throughput, and scalability
-- ✅ **Monitoring**: Prometheus integration and health checks
-- ✅ **Troubleshooting**: Common issues and resolution strategies
-- ✅ **Optimization**: Configuration tuning for different workloads
-
-== 🚀 Next Steps
-
-After completing the demos:
-
-1. **Explore Documentation**: Visit link:../docs/[ProximaDB Documentation] for comprehensive guides
-2. **API Integration**: Use the link:../clients/python/[Python SDK] in your applications  
-3. **Performance Tuning**: Apply configurations from Configuration & Environment Setup section
-4. **Production Deployment**: Follow link:../docs/developer_guide.adoc#deployment[Deployment Guide]
-5. **Community**: Join discussions on https://github.com/vjsingh1984/proximadb/issues[GitHub Issues]
-
-== 📞 Support & Resources
-
-[cols="2,3"]
-|===
-|**Resource** |**Link**
-
-|**Project Repository** |https://github.com/vjsingh1984/proximadb
-|**Documentation** |link:../docs/index.adoc[Documentation Portal]
-|**Issue Reporting** |https://github.com/vjsingh1984/proximadb/issues
-|**Developer Guide** |link:../docs/developer_guide.adoc[Development Reference]
-|**High-Level Design** |link:../docs/hld.adoc[Architecture Overview]
-|**Python SDK** |link:../clients/python/README.md[SDK Documentation]
-|===
-
-[TIP]
-====
-💡 **Best Practice**: Start with Docker Compose for the smoothest experience, then explore direct execution for development workflows
-====
+=== Related Projects
+- Sentence Transformers: https://www.sbert.net/
+- BERT Models: https://huggingface.co/models
+- Vector Databases: https://github.com/topics/vector-database
 
 ---
 
-**Last Updated**: {docdate} +
-**Documentation Version**: {version} +
-**Contact**: ProximaDB Team
+[.text-center]
+*ProximaDB Demo Guide v2.0 - Last Updated: 2025-08-02*
+
+[.text-center]
+**🎯 Ready to build the future of vector search? Start with `python ecommerce_demo.py`**

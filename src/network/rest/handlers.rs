@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use crate::handlers::{UnifiedHandlers, conversions};
 use crate::core::search::SearchResult;
+use crate::proto::proximadb;
 
 /// Shared application state for REST handlers
 #[derive(Clone)]

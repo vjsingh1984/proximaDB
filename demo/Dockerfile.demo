@@ -8,35 +8,36 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
-COPY requirements.txt .
+COPY demo/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download any required models or data for text processing
+# Download required NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
 
-# Copy Python SDK
-COPY ../clients/python /app/proximadb-sdk
+# Copy Python SDK (build context is parent directory)
+COPY clients/python /app/proximadb-sdk
 RUN cd /app/proximadb-sdk && pip install -e .
 
-# Copy demo scripts
-COPY demo.py .
-COPY run_demo.sh .
+# Copy all demo scripts
+COPY demo/*.py ./
+COPY demo/run_all_demos.sh ./
 
 # Create results directory
 RUN mkdir -p /app/results
 
-# Make script executable
-RUN chmod +x run_demo.sh
+# Make scripts executable
+RUN chmod +x run_all_demos.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PROXIMADB_SERVER_URL=http://proximadb:5678
 ENV PROXIMADB_GRPC_URL=proximadb:5679
 
-# Run demo
-CMD ["./run_demo.sh"]
+# Default command runs all demos
+CMD ["./run_all_demos.sh"]

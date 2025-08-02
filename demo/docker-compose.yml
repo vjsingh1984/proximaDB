@@ -1,19 +1,20 @@
+# Docker Compose configuration for ProximaDB demos
+
 services:
   proximadb:
     build:
       context: ..
-      dockerfile: demo/Dockerfile.root-legacy
+      dockerfile: Dockerfile
     ports:
       - "5678:5678"  # REST API
       - "5679:5679"  # gRPC
       - "9090:9090"  # Prometheus metrics
     volumes:
-      - proximadb_data:/app/data
-      - proximadb_wal:/app/wal
-      - proximadb_logs:/app/logs
+      - proximadb_data:/data
+      - ./docker-config.toml:/opt/proximadb/config/docker-config.toml:ro
     environment:
       - RUST_LOG=info
-      - PROXIMADB_CONFIG_PATH=/app/config/docker-config.toml
+      - PROXIMADB_CONFIG_PATH=/opt/proximadb/config/docker-config.toml
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/health"]
       interval: 30s
@@ -25,8 +26,26 @@ services:
 
   demo:
     build:
-      context: .
-      dockerfile: Dockerfile.demo
+      context: ..
+      dockerfile: demo/Dockerfile.demo
+    depends_on:
+      proximadb:
+        condition: service_healthy
+    environment:
+      - PROXIMADB_SERVER_URL=http://proximadb:5678
+      - PROXIMADB_GRPC_URL=proximadb:5679
+      - PYTHONUNBUFFERED=1
+      - KEEP_RUNNING=false  # Set to true to keep container running
+    networks:
+      - proximadb-network
+    volumes:
+      - ./demo_results:/app/results
+
+  # Optional: Run specific demo
+  demo-interactive:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.demo
     depends_on:
       proximadb:
         condition: service_healthy
@@ -38,13 +57,17 @@ services:
       - proximadb-network
     volumes:
       - ./demo_results:/app/results
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    profiles: ["interactive"]
 
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9091:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -61,17 +84,17 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
       - ./grafana/datasources:/etc/grafana/provisioning/datasources
     networks:
       - proximadb-network
+    profiles: ["monitoring"]
 
 volumes:
   proximadb_data:
-  proximadb_wal:
-  proximadb_logs:
   prometheus_data:
   grafana_data:
 

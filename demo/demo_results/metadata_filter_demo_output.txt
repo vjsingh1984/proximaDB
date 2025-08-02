@@ -1,0 +1,106 @@
+🚀 ProximaDB Metadata Filter Demo - AND/OR Support Test
+============================================================
+
+📡 Connecting to ProximaDB...
+
+📦 Creating collection 'metadata_filter_demo'...
+📁 Using existing collection
+
+📝 Inserting test data...
+✅ Inserted 500 vectors
+
+⏳ Waiting for indexing...
+
+🔍 Testing Metadata Filters via gRPC
+============================================================
+
+📌 1. Simple Equality Filter
+----------------------------------------
+✅ Filter: category = 'electronics'
+   Time: 3.22ms
+   Found: 5 results
+   - vec_0265: Product 265 (BrandA)
+   - vec_0450: Product 450 (BrandA)
+   - vec_0100: Product 100 (BrandA)
+
+📌 2. AND Operator Test
+----------------------------------------
+
+   Trying format 1: {'operator': 'AND', 'conditions': [{'field': 'category', 'value': 'electronics'}, {'field': 'status', 'value': 'active'}]}
+   ✅ Success! Time: 1.57ms, Found: 0 results
+
+📌 3. OR Operator Test
+----------------------------------------
+
+   Trying format 1: {'$or': [{'category': 'electronics'}, {'category': 'books'}]}
+   ✅ Success! Time: 1.09ms, Found: 0 results
+      Categories found: set()
+
+📌 4. IN Operator Test
+----------------------------------------
+
+   Trying format 1: {'brand': ['BrandA', 'BrandC']}
+   ✅ Success! Time: 0.94ms, Found: 0 results
+      Brands found: set()
+
+📌 5. Comparison Operators Test
+----------------------------------------
+
+   Trying format 1: {'item_id': {'$gt': 'item_0250'}}
+   ✅ Success! Time: 0.94ms, Found: 0 results
+
+🔍 Testing Metadata Filters via REST
+============================================================
+
+📌 1. Simple Equality Filter
+----------------------------------------
+✅ Filter: category = 'electronics'
+   Time: 3.63ms
+   Found: 5 results
+   - vec_0465: Product 465 (BrandA)
+   - vec_0289: Product 289 (BrandE)
+   - vec_0178: Product 178 (BrandD)
+
+📌 2. AND Operator Test
+----------------------------------------
+
+   Trying format 1: {'operator': 'AND', 'conditions': [{'field': 'category', 'value': 'electronics'}, {'field': 'status', 'value': 'active'}]}
+   ✅ Success! Time: 1.62ms, Found: 5 results
+      - vec_0465: {'category': 'electronics', 'brand': 'BrandA', 'name': 'Product 465', 'price': 279.0, 'item_id': 'item_0465', 'status': 'active'}
+      - vec_0289: {'price': 922.0, 'name': 'Product 289', 'brand': 'BrandE', 'category': 'sports', 'item_id': 'item_0289', 'status': 'inactive'}
+
+📌 3. OR Operator Test
+----------------------------------------
+
+   Trying format 1: {'$or': [{'category': 'electronics'}, {'category': 'books'}]}
+   ✅ Success! Time: 1.50ms, Found: 5 results
+      Categories found: {'electronics', 'books', 'sports', 'home'}
+
+📌 4. IN Operator Test
+----------------------------------------
+
+   Trying format 1: {'brand': ['BrandA', 'BrandC']}
+   ✅ Success! Time: 1.48ms, Found: 5 results
+      Brands found: {'BrandB', 'BrandA', 'BrandD', 'BrandE'}
+
+📌 5. Comparison Operators Test
+----------------------------------------
+
+   Trying format 1: {'item_id': {'$gt': 'item_0250'}}
+   ✅ Success! Time: 1.52ms, Found: 5 results
+      - vec_0465: item_id=item_0465
+      - vec_0289: item_id=item_0289
+      - vec_0178: item_id=item_0178
+
+📊 Summary
+============================================================
+Based on the proto definition, ProximaDB should support:
+✅ AND, OR, NOT operators for combining conditions
+✅ EQUALS, NOT_EQUALS, GT, LT, GTE, LTE comparison operators
+✅ IN, NOT_IN for set membership
+✅ CONTAINS, STARTS_WITH, ENDS_WITH for string matching
+
+However, the actual implementation may vary.
+Check the test results above to see what's currently working.
+
+✅ Demo complete! Collection 'metadata_filter_demo' retained for testing.
