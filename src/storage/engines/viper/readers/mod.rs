@@ -20,7 +20,7 @@ pub mod tests;
 pub use unified_parquet_reader::{
     UnifiedParquetReader, ReadingStrategy, ReaderConfig, MetadataFilter, FilterValue,
     QuantizationMethod, SeekRange, VectorPosition, Stage2Strategy,
-    CollectionContext, FilterableColumnSpec, SearchType, RowGroupAccessPattern,
+    CollectionContext, SearchType, RowGroupAccessPattern,
 };
 
 // Supporting types

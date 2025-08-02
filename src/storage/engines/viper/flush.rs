@@ -71,6 +71,7 @@ impl FlushManager {
         batch_ids: &[String],
         force: bool,
         synchronous: bool,
+        viper_config: &crate::core::config::ViperConfig,
     ) -> Result<crate::storage::traits::FlushResult> {
         info!("🔄 VIPER: Starting flush operation with staging pattern");
         info!(
@@ -186,7 +187,7 @@ impl FlushManager {
             sorted_records.len()
         );
         let parquet_data = match self
-            .serialize_records_to_parquet(&sorted_records, collection_id, &collection_config, vector_dimensions)
+            .serialize_records_to_parquet(&sorted_records, collection_id, &collection_config, vector_dimensions, viper_config)
             .await
         {
             Ok(data) => {
@@ -275,6 +276,7 @@ impl FlushManager {
         collection_id: &str,
         collection_config: &Option<crate::proto::proximadb::Collection>,
         vector_dimensions: usize,
+        viper_config: &crate::core::config::ViperConfig,
     ) -> Result<Vec<u8>> {
         if records.is_empty() {
             return Ok(Vec::new());
@@ -407,11 +409,11 @@ impl FlushManager {
             if record.id.is_none() {
                 versions.push(None);
             } else {
-                versions.push(Some(record.version as i8));
+                versions.push(record.version.map(|v| v as i8));
             }
             // Use timestamp as updated_at (represents either creation or last update time)
-            updated_at_values.push(record.timestamp);
-            expires_at_values.push(record.expires_at.unwrap_or(0));
+            updated_at_values.push(record.timestamp as i64);
+            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
         }
 
         // Create Arrow arrays with proper List<Float32> for vectors
@@ -563,10 +565,27 @@ impl FlushManager {
                    records.len(), batch.num_rows());
         }
 
-        // Write to Parquet
+        // Write to Parquet with configuration-based compression
         let mut buffer = Vec::new();
+        
+        // Create compression based on config
+        let compression = if viper_config.compression_enabled {
+            match viper_config.compression.as_str() {
+                "zstd" => parquet::basic::Compression::ZSTD(
+                    parquet::basic::ZstdLevel::try_new(viper_config.compression_level)?
+                ),
+                "snappy" => parquet::basic::Compression::SNAPPY,
+                "lz4" => parquet::basic::Compression::LZ4,
+                "gzip" => parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default()),
+                _ => parquet::basic::Compression::UNCOMPRESSED,
+            }
+        } else {
+            parquet::basic::Compression::UNCOMPRESSED
+        };
+        
         let props = WriterProperties::builder()
-            .set_compression(parquet::basic::Compression::UNCOMPRESSED)
+            .set_compression(compression)
+            .set_max_row_group_size(viper_config.row_group_size)
             .build();
         
         let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
@@ -604,6 +623,7 @@ impl FlushManager {
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
+            ..Default::default()  // This will pick up skip_uuid_subdir: false
         };
         
         let atomic_op = self.atomic_coordinator

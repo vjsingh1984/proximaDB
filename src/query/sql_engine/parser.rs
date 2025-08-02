@@ -20,10 +20,18 @@
 //! ```sql
 //! SELECT id, vector, metadata 
 //! FROM collection_name
-//! WHERE metadata.category = 'electronics'
+//! WHERE metadata.category = 'electronics' 
+//!   AND metadata.price BETWEEN 100 AND 1000
 //! ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
 //! LIMIT 10
 //! ```
+//!
+//! Supported operators:
+//! - Comparison: =, !=, <>, <, <=, >, >=
+//! - Range: BETWEEN (converted to >= AND <=)
+//! - Set: IN
+//! - Pattern: LIKE
+//! - Logical: AND, OR
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -303,6 +311,13 @@ impl SqlParser {
     fn parse_condition(&mut self) -> Result<Condition> {
         // Parse field which may include JSON path operators
         let field = self.parse_field_with_json_path()?;
+        
+        // Check for BETWEEN operator before calling parse_comparison_op
+        self.skip_whitespace();
+        if self.check_keyword("BETWEEN") {
+            return self.parse_between_condition(field);
+        }
+        
         let operator = self.parse_comparison_op()?;
         
         // Special handling for IN operator - expect a list
@@ -317,6 +332,44 @@ impl SqlParser {
             operator,
             value,
         })
+    }
+    
+    /// Parse BETWEEN condition and convert to AND of >= and <= conditions
+    fn parse_between_condition(&mut self, field: String) -> Result<Condition> {
+        self.consume_keyword("BETWEEN");
+        self.skip_whitespace();
+        
+        // Parse lower bound
+        let lower_value = self.parse_value()?;
+        
+        // Expect AND keyword
+        self.skip_whitespace();
+        if !self.check_keyword("AND") {
+            return Err(anyhow!("Expected 'AND' after BETWEEN lower bound at position {}", self.position));
+        }
+        self.consume_keyword("AND");
+        self.skip_whitespace();
+        
+        // Parse upper bound
+        let upper_value = self.parse_value()?;
+        
+        // Create equivalent AND condition: field >= lower_value AND field <= upper_value
+        let lower_condition = Condition::Comparison {
+            field: field.clone(),
+            operator: ComparisonOp::Ge,
+            value: lower_value,
+        };
+        
+        let upper_condition = Condition::Comparison {
+            field,
+            operator: ComparisonOp::Le,
+            value: upper_value,
+        };
+        
+        Ok(Condition::And(
+            Box::new(lower_condition),
+            Box::new(upper_condition)
+        ))
     }
     
     /// Parse field that may include JSON path operators like ->>'key'

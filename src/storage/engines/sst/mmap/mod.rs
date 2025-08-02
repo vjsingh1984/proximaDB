@@ -22,7 +22,6 @@ struct MmapSstFile {
 
 #[derive(Debug)]
 pub struct MmapReader {
-    collection_id: String,
     data_dir: PathBuf,
     sst_files: Arc<RwLock<Vec<MmapSstFile>>>,
 }
@@ -30,7 +29,6 @@ pub struct MmapReader {
 impl MmapReader {
     pub fn new(collection_id: String, data_dir: PathBuf) -> Result<Self> {
         Ok(Self {
-            collection_id: collection_id.clone(),
             data_dir,
             sst_files: Arc::new(RwLock::new(Vec::new())),
         })
@@ -69,7 +67,8 @@ impl MmapReader {
     }
 
     async fn load_sst_files(&self) -> Result<()> {
-        let collection_dir = self.data_dir.join(&self.collection_id);
+        // data_dir already contains the collection-specific path
+        let collection_dir = &self.data_dir;
 
         if !collection_dir.exists() {
             return Ok(());

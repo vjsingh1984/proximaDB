@@ -37,7 +37,6 @@ use tracing::{debug, error, info, warn};
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
 pub struct CompactionTask {
-    pub collection_id: String,
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -96,6 +95,28 @@ pub struct CompactionManager {
 }
 
 impl CompactionManager {
+    /// Extract collection ID from file paths
+    fn extract_collection_id_from_paths(&self, paths: &[PathBuf]) -> Result<String> {
+        if paths.is_empty() {
+            return Ok("unknown".to_string());
+        }
+        
+        // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
+        if let Some(path) = paths.first() {
+            if let Some(parent) = path.parent() {
+                if let Some(parent_parent) = parent.parent() {
+                    if let Some(parent_parent_parent) = parent_parent.parent() {
+                        if let Some(collection_id) = parent_parent_parent.file_name() {
+                            return Ok(collection_id.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok("unknown".to_string())
+    }
+
     /// Create a new compaction manager
     pub fn new(config: SstConfig) -> Self {
         Self::with_atomic_coordinator(config, None)
@@ -127,30 +148,7 @@ impl CompactionManager {
             let stats = Arc::clone(&self.stats);
             let active_compactions = Arc::clone(&self.active_compactions);
             let atomic_coordinator = self.atomic_coordinator.clone();
-            let config = SstConfig {
-                memtable_size_mb: self.config.memtable_size_mb,
-                level_count: self.config.level_count,
-                compaction_threshold: self.config.compaction_threshold,
-                block_size_kb: self.config.block_size_kb,
-                memory_flush_size_bytes: self.config.memory_flush_size_bytes,
-                memtable_type: self.config.memtable_type.clone(),
-                compaction_strategy: self.config.compaction_strategy.clone(),
-                compression: self.config.compression.clone(),
-                bloom_filter_config: self.config.bloom_filter_config.clone(),
-                cache_size_mb: self.config.cache_size_mb,
-                write_buffer_size_mb: self.config.write_buffer_size_mb,
-                max_files_per_level: self.config.max_files_per_level,
-                level_size_multiplier: self.config.level_size_multiplier,
-                max_levels: self.config.max_levels,
-                background_thread_count: self.config.background_thread_count,
-                sync_mode: self.config.sync_mode.clone(),
-                enable_write_buffer: self.config.enable_write_buffer,
-                write_buffer_directory: self.config.write_buffer_directory.clone(),
-                data_directory: self.config.data_directory.clone(),
-                mmap_enabled: self.config.mmap_enabled,
-                prefetch_enabled: self.config.prefetch_enabled,
-                prefetch_size_kb: self.config.prefetch_size_kb,
-            };
+            let config = self.config.clone();
 
             let handle = tokio::spawn(async move {
                 Self::worker_loop(
@@ -204,17 +202,21 @@ impl CompactionManager {
     /// Schedule a compaction task
     pub async fn schedule_compaction(&self, task: CompactionTask) -> Result<()> {
         debug!(
-            "Scheduling compaction for collection {} level {}",
-            task.collection_id, task.level
+            "Scheduling compaction for level {} with {} input files",
+            task.level, task.input_files.len()
         );
 
-        // Check if there's already an active compaction for this collection
+        // Use the output file path as a unique key for active compactions
+        // This prevents multiple compactions writing to the same output file
+        let compaction_key = task.output_file.to_string_lossy().to_string();
+        
+        // Check if there's already an active compaction for this output file
         {
             let active = self.active_compactions.read().await;
-            if active.contains_key(&task.collection_id) {
+            if active.contains_key(&compaction_key) {
                 debug!(
-                    "Skipping compaction - already active for collection {}",
-                    task.collection_id
+                    "Skipping compaction - already active for output file {}",
+                    compaction_key
                 );
                 return Ok(());
             }
@@ -242,10 +244,12 @@ impl CompactionManager {
     /// Check if compaction is needed for the given collection and level
     pub async fn check_compaction_needed(
         &self,
-        collection_dir: &Path,
         collection_id: &str,
+        collection_dir: &Path,
     ) -> Result<Option<CompactionTask>> {
         let sst_files = self.get_sst_files_by_level(collection_dir).await?;
+        
+        // Use the provided collection_id instead of extracting from directory name
 
         for level in 0..self.config.level_count {
             let files_at_level = sst_files.get(&level).map(|v| v.len()).unwrap_or(0);
@@ -267,7 +271,6 @@ impl CompactionManager {
                 };
 
                 return Ok(Some(CompactionTask {
-                    collection_id: collection_id.to_string(),
                     level,
                     input_files,
                     output_file,
@@ -309,14 +312,15 @@ impl CompactionManager {
 
             if let Some(task) = task {
                 debug!(
-                    "Worker {} processing compaction for collection {} level {}",
-                    worker_id, task.collection_id, task.level
+                    "Worker {} processing compaction for level {} with {} files -> {}",
+                    worker_id, task.level, task.input_files.len(), task.output_file.display()
                 );
 
-                // Mark as active
+                // Mark as active using output file as key
+                let compaction_key = task.output_file.to_string_lossy().to_string();
                 {
                     let mut active = active_compactions.write().await;
-                    active.insert(task.collection_id.clone(), task.clone());
+                    active.insert(compaction_key.clone(), task.clone());
                 }
 
                 let start_time = std::time::Instant::now();
@@ -326,10 +330,11 @@ impl CompactionManager {
                 match temp_manager.perform_compaction(&task, &config, atomic_coordinator.clone()).await {
                     Ok(compaction_stats) => {
                         info!(
-                            "Compaction completed for collection {} level {} in {}ms",
-                            task.collection_id,
+                            "Compaction completed for level {} in {}ms: {} files merged -> {}",
                             task.level,
-                            start_time.elapsed().as_millis()
+                            start_time.elapsed().as_millis(),
+                            compaction_stats.files_merged,
+                            task.output_file.display()
                         );
 
                         // Update statistics
@@ -353,8 +358,8 @@ impl CompactionManager {
                     }
                     Err(e) => {
                         error!(
-                            "Compaction failed for collection {} level {}: {}",
-                            task.collection_id, task.level, e
+                            "Compaction failed for level {} -> {}: {}",
+                            task.level, task.output_file.display(), e
                         );
                     }
                 }
@@ -362,7 +367,7 @@ impl CompactionManager {
                 // Remove from active compactions
                 {
                     let mut active = active_compactions.write().await;
-                    active.remove(&task.collection_id);
+                    active.remove(&compaction_key);
                 }
             } else {
                 // No tasks available, wait a bit
@@ -392,7 +397,8 @@ impl CompactionManager {
         atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
     ) -> Result<EnhancedCompactionStats> {
         let start_time = std::time::Instant::now();
-        let mut merged_data = BTreeMap::<VectorId, SstRecord>::new();
+        // Use Vec instead of BTreeMap for merge-sort approach
+        let mut all_records: Vec<(String, SstRecord)> = Vec::new();
         let mut bytes_read = 0u64;
 
         debug!(
@@ -426,24 +432,21 @@ impl CompactionManager {
                 continue;
             }
 
+            // DEBUG: Check first few bytes of the file
+            let hex_preview = file_data.iter().take(20).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+            info!("🔍 COMPACTION DEBUG: File hex preview: {}", hex_preview);
+
             // Smart SSTable parsing: Skip header/bloom/index, read data blocks directly
             // This is optimal for compaction since we need ALL records anyway
             match self.read_data_blocks_from_sstable(&file_data, &input_path).await {
                 Ok(records) => {
                     info!("🔍 COMPACTION: Extracted {} records from {}", records.len(), input_path);
+                    if records.is_empty() {
+                        warn!("🔍 COMPACTION: No records extracted from {} - this could be the problem!", input_path);
+                    }
+                    // Just collect all records - we'll merge-sort later
                     for (id, record) in records {
-                        let vector_id = VectorId::from(id);
-                        // Handle merge logic for LSM records
-                        match merged_data.get(&vector_id) {
-                            Some(existing_record) => {
-                                if should_replace_record(existing_record, &record) {
-                                    merged_data.insert(vector_id, record);
-                                }
-                            }
-                            None => {
-                                merged_data.insert(vector_id, record);
-                            }
-                        }
+                        all_records.push((id, record));
                     }
                 }
                 Err(e) => {
@@ -453,7 +456,55 @@ impl CompactionManager {
             }
         }
 
-        debug!("Merged {} unique records", merged_data.len());
+        info!("🔍 COMPACTION: Collected {} total records from input files", all_records.len());
+        
+        // Sort all records by (id, version, sequence_number) for merge deduplication
+        all_records.sort_by(|a, b| {
+            // First sort by ID
+            match a.0.cmp(&b.0) {
+                std::cmp::Ordering::Equal => {
+                    // For same ID, sort by version (newer versions first)
+                    match b.1.version.cmp(&a.1.version) {
+                        std::cmp::Ordering::Equal => {
+                            // For same version, sort by sequence number (higher sequence first)
+                            b.1.sequence_number.cmp(&a.1.sequence_number)
+                        }
+                        other => other
+                    }
+                }
+                other => other
+            }
+        });
+        
+        // Merge-deduplicate: Keep only the latest version of each ID
+        let mut merged_records: Vec<(String, SstRecord)> = Vec::new();
+        let mut last_id = String::new();
+        
+        for (id, record) in all_records {
+            // For append-only vectors (empty IDs), keep all records
+            if id.is_empty() || id.starts_with("__append_only_") {
+                merged_records.push((id, record));
+            } else if id != last_id {
+                // New ID, add it
+                last_id = id.clone();
+                merged_records.push((id, record));
+            } else {
+                // Same ID, skip (we already have the latest version due to sorting)
+                debug!("Skipping duplicate record for ID: {}", id);
+            }
+        }
+        
+        info!("🔍 COMPACTION: Merged to {} unique records after deduplication", merged_records.len());
+        
+        // Convert to BTreeMap for version validation (temporary, for compatibility)
+        let mut merged_data = BTreeMap::new();
+        for (id, record) in merged_records {
+            merged_data.insert(VectorId::from(id), record);
+        }
+        
+        // Apply MVCC version continuity validation
+        let validated_data = self.validate_version_continuity(merged_data)?;
+        info!("🔍 COMPACTION: Version continuity validation: {} records after validation", validated_data.len());
 
         // Convert merged data to vectors for sorting
         let mut vector_records = Vec::new();
@@ -465,10 +516,10 @@ impl CompactionManager {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
         
-        for (id, lsm_record) in merged_data.iter() {
+        for (id, sst_record) in validated_data.iter() {
             // Check if record is expired (TTL-based expiry)
-            let is_expired = if let Some(expires_at) = lsm_record.expires_at {
-                expires_at < current_time
+            let is_expired = if let Some(expires_at) = sst_record.expires_at {
+                (expires_at as i64) < (current_time / 1000) // Convert milliseconds to seconds for comparison
             } else {
                 false
             };
@@ -477,17 +528,17 @@ impl CompactionManager {
             if is_expired {
                 expired_records_count += 1;
                 debug!("⏰ LSM COMPACTION: Physically deleting expired record {} (expired at {})", 
-                      id, lsm_record.expires_at.unwrap());
+                      id, sst_record.expires_at.unwrap());
                 // Track deleted vector for AXIS
                 deleted_vector_ids.push(id.to_string());
                 continue;
             }
             
             // Handle tombstone cleanup
-            let should_keep = if lsm_record.is_tombstone {
+            let should_keep = if sst_record.is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = current_time - lsm_record.timestamp;
-                let keep_tombstone = age < (60 * 60 * 1000); // 1 hour in milliseconds
+                let age = (current_time / 1000) - (sst_record.timestamp as i64); // Both in seconds
+                let keep_tombstone = age < (60 * 60); // 1 hour in seconds
                 
                 if !keep_tombstone {
                     tombstones_removed_count += 1;
@@ -504,10 +555,10 @@ impl CompactionManager {
 
             if should_keep {
                 // Convert SstRecord to VectorRecord for sorting
-                let vector_record: VectorRecord = lsm_record.clone().into();
+                let vector_record: VectorRecord = sst_record.clone().into();
                 
                 // Track merged vectors for AXIS (non-tombstone records)
-                if !lsm_record.is_tombstone {
+                if !sst_record.is_tombstone {
                     merged_vectors.push(vector_record.clone());
                 }
                 
@@ -527,14 +578,41 @@ impl CompactionManager {
         info!("✅ LSM COMPACTION: Sorted records (estimated compression improvement: {:.1}%)", 
               sort_stats.compression_estimate * 100.0);
 
-        // Convert back to SstRecord format with preserved metadata sorting
-        let mut sorted_lsm_records: BTreeMap<String, SstRecord> = BTreeMap::new();
+        // Convert back to Vec<(String, SstRecord)> for SSTable writing
+        // We'll write records in sorted order without using BTreeMap
+        let mut sorted_sst_records: Vec<(String, SstRecord)> = Vec::new();
         for (seq, vector) in sorted_vectors.into_iter().enumerate() {
             let vector_id = vector.id.as_deref().unwrap_or("").to_string();
-            let mut lsm_record = SstRecord::from_vector_record(vector, &task.collection_id);
-            lsm_record.sequence_number = seq as u64; // Update sequence for compacted order
-            lsm_record.level = task.level + 1; // Increment level after compaction
-            sorted_lsm_records.insert(vector_id, lsm_record);
+            
+            // Handle append-only vectors (empty/null IDs) specially
+            let key = if vector_id.is_empty() {
+                // For append-only vectors, use sequence number as unique key
+                let append_only_key = format!("__append_only_seq_{}", seq);
+                info!("🔍 COMPACTION: Append-only vector at sequence {}, using key='{}'", seq, append_only_key);
+                append_only_key
+            } else {
+                info!("🔍 DEBUG COMPACTION: Processing vector {} with id='{}'", seq, vector_id.clone());
+                vector_id
+            };
+            
+            let mut sst_record = SstRecord::from_vector_record(vector);
+            sst_record.sequence_number = seq as u64; // Update sequence for compacted order
+            sst_record.level = task.level + 1; // Increment level after compaction
+            sorted_sst_records.push((key, sst_record));
+        }
+        
+        info!("🔍 COMPACTION: Converted {} sorted vectors to {} LSM records", 
+              sort_stats.records_sorted, sorted_sst_records.len());
+              
+        // DEBUG: Final record count check
+        if sorted_sst_records.is_empty() {
+            error!("🔍 DEBUG COMPACTION: No records! This will cause SSTable write to fail.");
+        }
+        
+        // Convert to BTreeMap for SSTable writer (temporary, until we update writer)
+        let mut btree_records = BTreeMap::new();
+        for (key, record) in sorted_sst_records {
+            btree_records.insert(key, record);
         }
 
         // Use optimized SSTable writer for compacted output with atomic writes
@@ -560,6 +638,7 @@ impl CompactionManager {
                     .to_string(),
                 collection_id: None,  // Don't add /collections/{id} structure
                 operation_type: StagingOperationType::Compaction,
+                skip_uuid_subdir: true,  // Use simple __compact directory without UUID subdirectory
                 ..Default::default()
             };
             
@@ -585,7 +664,7 @@ impl CompactionManager {
             let staging_file_path = PathBuf::from(format!("{}/{}", staging_path, staging_filename));
             debug!("Writing SSTable to staging path: {}", staging_file_path.display());
             let writer = SstableWriter::new(&staging_file_path, block_size, filesystem_factory.clone());
-            writer.write_records(sorted_lsm_records).await
+            writer.write_records(btree_records).await
                 .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
             
             // Get file size for stats
@@ -606,7 +685,7 @@ impl CompactionManager {
             // Fallback to direct write (non-atomic)
             debug!("Writing SSTable directly to: {}", task.output_file.display());
             let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
-            writer.write_records(sorted_lsm_records).await
+            writer.write_records(btree_records).await
                 .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
 
             let output_path = task.output_file.to_string_lossy();
@@ -700,7 +779,7 @@ impl CompactionManager {
 
         debug!(
             "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged, {} expired deleted, {} tombstones removed",
-            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, merged_data.len(), expired_records_count, tombstones_removed_count
+            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, validated_data.len(), expired_records_count, tombstones_removed_count
         );
 
         Ok(EnhancedCompactionStats {
@@ -748,18 +827,9 @@ impl CompactionManager {
         for entry in entries {
             if !entry.metadata.is_directory {
                 if let Some(filename) = std::path::Path::new(&entry.name).file_name().and_then(|f| f.to_str()) {
-                    if filename.ends_with(".sst") && filename.contains("_level") {
-                        // Parse level from filename format: {collection_id}_level{level}_{timestamp}_{random}.sst
-                        let level = if let Some(level_start) = filename.find("_level") {
-                            let level_str = &filename[level_start + 6..]; // Skip "_level"
-                            if let Some(level_end) = level_str.find('_') {
-                                level_str[..level_end].parse::<u8>().unwrap_or(0)
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        };
+                    if super::SstFilenameGenerator::is_sst_file(filename) {
+                        // Parse level from filename using centralized utility
+                        let level = super::SstFilenameGenerator::parse_level_from_filename(filename).unwrap_or(0);
                         
                         
                         let path = PathBuf::from(&entry.url);
@@ -824,6 +894,11 @@ impl CompactionManager {
         // Now we're at the data blocks section
         let data_blocks_bytes = &file_data[offset..];
         info!("🔍 COMPACTION: Reading {} bytes of data blocks", data_blocks_bytes.len());
+        
+        if data_blocks_bytes.is_empty() {
+            warn!("🔍 COMPACTION: No data blocks found after skipping headers!");
+            return Ok(BTreeMap::new());
+        }
         debug!("Reading {} bytes of data blocks from file {}", data_blocks_bytes.len(), file_path);
         
         // OPTIMIZED: Fast bulk record extraction for compaction
@@ -858,18 +933,19 @@ impl CompactionManager {
             
             let block_data = &data_blocks_bytes[block_offset..block_offset + block_size];
             
-            // FAST PATH: Parse data block with streaming deserialization
-            debug!("About to parse block {} with {} bytes", blocks_processed, block_data.len());
-            match self.fast_parse_data_block(block_data, blocks_processed) {
-                Ok(block_records) => {
-                    let record_count = block_records.len();
+            // Use standard DataBlock deserialization (bincode-based)
+            debug!("About to parse block {} with {} bytes using bincode", blocks_processed, block_data.len());
+            match super::DataBlock::deserialize(block_data) {
+                Ok(data_block) => {
+                    let record_count = data_block.records.len();
                     total_records += record_count;
                     
                     debug!("Block {} parsed successfully - {} records", blocks_processed, record_count);
                     
-                    // Bulk insert with iterator efficiency
-                    for (id, record) in block_records {
-                        all_records.insert(id, record);
+                    // DataBlock already contains SstRecord, no conversion needed
+                    for sst_record in data_block.records {
+                        let vector_id = sst_record.id.clone();
+                        all_records.insert(vector_id, sst_record);
                     }
                     
                     if blocks_processed % 10 == 0 || record_count > 0 {
@@ -879,7 +955,7 @@ impl CompactionManager {
                 }
                 Err(e) => {
                     warn!("Failed to parse block {} at offset {}: {}", blocks_processed, block_offset, e);
-                    warn!("🔍 COMPACTION: Failed to parse block {} at offset {}: {}", 
+                    warn!("🔍 COMPACTION: Failed to deserialize block {} with bincode at offset {}: {}", 
                           blocks_processed, block_offset, e);
                 }
             }
@@ -973,13 +1049,10 @@ impl CompactionManager {
     }
 
     /// Generate output file path for compacted SST
-    /// Uses the same naming pattern as flush: {collection_id}_level{level}_{timestamp}_{random}.sst
+    /// Uses centralized filename generator to ensure consistency
     fn generate_output_file_path(&self, collection_id: &str, collection_dir: &Path, level: u8) -> PathBuf {
-        let timestamp = Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let random_id: u32 = rand::thread_rng().gen();
-        
-        // Use the same naming pattern as flush to ensure consistency
-        let filename = format!("{}_level{}_{}_{}.sst", collection_id, level, timestamp, random_id);
+        // Use centralized filename generator for consistency across codebase
+        let filename = super::SstFilenameGenerator::generate_compaction_filename(collection_id, level);
         collection_dir.join(filename)
     }
 
@@ -1008,16 +1081,106 @@ impl CompactionManager {
         
         Ok((sorted_records, sort_stats))
     }
+    
+    /// Validate version continuity for MVCC consistency
+    /// This ensures versions are sequential (1,2,3...) with no gaps
+    fn validate_version_continuity(
+        &self,
+        merged_data: BTreeMap<VectorId, SstRecord>,
+    ) -> Result<BTreeMap<VectorId, SstRecord>> {
+        let mut validated = BTreeMap::new();
+        
+        // Group by actual ID (not VectorId which might be different)
+        let mut id_groups: HashMap<String, Vec<(VectorId, SstRecord)>> = HashMap::new();
+        let mut records_without_id = Vec::new();
+        
+        for (vector_id, record) in merged_data {
+            if record.id.is_empty() {
+                // Append-only records (no ID) - keep all
+                records_without_id.push((vector_id, record));
+            } else {
+                id_groups.entry(record.id.clone())
+                    .or_insert_with(Vec::new)
+                    .push((vector_id, record));
+            }
+        }
+        
+        // Process each ID group
+        for (id, mut versions) in id_groups {
+            // Sort by version, then timestamp
+            versions.sort_by(|a, b| {
+                a.1.version.cmp(&b.1.version)
+                    .then_with(|| a.1.timestamp.cmp(&b.1.timestamp))
+            });
+            
+            // Validate version continuity
+            let mut expected_version = 1;
+            let mut last_valid: Option<(VectorId, SstRecord)> = None;
+            
+            for (vector_id, record) in versions {
+                let version = record.version.unwrap_or(1);
+                
+                if version == expected_version {
+                    // Check for duplicate version - keep earliest timestamp
+                    if let Some((_, ref existing)) = last_valid {
+                        if existing.version.unwrap_or(1) == record.version.unwrap_or(1) {
+                            if record.timestamp < existing.timestamp {
+                                last_valid = Some((vector_id, record));
+                            }
+                            continue;
+                        }
+                    }
+                    last_valid = Some((vector_id, record));
+                    expected_version += 1;
+                } else if version > expected_version {
+                    // Version gap detected - stop processing this ID
+                    debug!("Version gap detected for {}: expected {}, found {}", id, expected_version, version);
+                    break;
+                }
+                // Skip older versions
+            }
+            
+            if let Some((vector_id, record)) = last_valid {
+                validated.insert(vector_id, record);
+            }
+        }
+        
+        // Add back records without IDs
+        for (vector_id, record) in records_without_id {
+            validated.insert(vector_id, record);
+        }
+        
+        Ok(validated)
+    }
 }
 
 /// Determine if a new record should replace an existing record during compaction
+/// This implements MVCC version resolution consistent with VIPER engine
 fn should_replace_record(existing: &SstRecord, new: &SstRecord) -> bool {
-    // LSM compaction rule: newer records (higher sequence number) replace older ones
-    // For records with same sequence number, prefer by timestamp
-    if new.sequence_number != existing.sequence_number {
-        new.sequence_number > existing.sequence_number
+    // If either record lacks an ID (append-only), use sequence number logic
+    if existing.id.is_empty() || new.id.is_empty() {
+        return if new.sequence_number != existing.sequence_number {
+            new.sequence_number > existing.sequence_number
+        } else {
+            new.timestamp > existing.timestamp
+        };
+    }
+    
+    // For records with IDs, apply MVCC version resolution
+    // Treat None/null as version 1 (consistent with search MVCC)
+    let existing_ver = existing.version.unwrap_or(1);
+    let new_ver = new.version.unwrap_or(1);
+    
+    if new_ver > existing_ver {
+        true
+    } else if new_ver == existing_ver {
+        // Same version - earliest timestamp wins (consistent with VIPER)
+        // SstRecord uses timestamp field (u32)
+        let existing_ts = existing.timestamp;
+        let new_ts = new.timestamp;
+        new_ts < existing_ts
     } else {
-        new.timestamp > existing.timestamp
+        false // Keep existing if new has lower version
     }
 }
 
@@ -1045,7 +1208,6 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_basic() {
         let mut config = SstConfig::default();
-        config.memtable_size_mb = 1;
         config.level_count = 3;
         config.compaction_threshold = 2;
         config.block_size_kb = 4;
@@ -1058,7 +1220,6 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_task_scheduling() {
         let mut config = SstConfig::default();
-        config.memtable_size_mb = 1;
         config.level_count = 3;
         config.compaction_threshold = 2;
         config.block_size_kb = 4;
@@ -1066,7 +1227,6 @@ mod tests {
         let manager = CompactionManager::new(config);
 
         let task = CompactionTask {
-            collection_id: "test_collection".to_string(),
             level: 0,
             input_files: vec![],
             output_file: PathBuf::from("/tmp/output.db"),

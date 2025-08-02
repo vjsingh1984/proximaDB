@@ -93,6 +93,9 @@ pub struct StagingConfig {
 
     /// Maximum age for cleanup of orphaned operations (hours)
     pub max_orphaned_age_hours: u64,
+
+    /// Skip UUID subdirectory in staging path (useful for compaction to avoid cleanup issues)
+    pub skip_uuid_subdir: bool,
 }
 
 impl Default for StagingConfig {
@@ -104,6 +107,7 @@ impl Default for StagingConfig {
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
+            skip_uuid_subdir: false,
         }
     }
 }
@@ -950,6 +954,7 @@ impl UnifiedAtomicCoordinator {
         info!("    operation_type: {:?}", config.operation_type);
         info!("    custom_staging_dir: {:?}", config.custom_staging_dir);
         info!("    collection_id: {:?}", config.collection_id);
+        info!("    skip_uuid_subdir: {}", config.skip_uuid_subdir);
 
         // Build collection-specific path if provided
         let collection_path = if let Some(ref collection_id) = config.collection_id {
@@ -1008,9 +1013,18 @@ impl UnifiedAtomicCoordinator {
             (staging_url, final_url)
         } else {
             info!("    Using non-metadata staging");
-            let staging_url = format!("{}{}/{}/{}", base_url, collection_path, staging_dir, operation_id);
-            let final_url = format!("{}{}", base_url, collection_path);
-            (staging_url, final_url)
+            // Check if UUID subdirectory should be skipped (useful for compaction to avoid cleanup issues)
+            if config.skip_uuid_subdir {
+                info!("    Skipping UUID subdirectory as requested");
+                let staging_url = format!("{}{}/{}", base_url, collection_path, staging_dir);
+                let final_url = format!("{}{}", base_url, collection_path);
+                (staging_url, final_url)
+            } else {
+                // Standard behavior: use UUID subdirectory for operation isolation
+                let staging_url = format!("{}{}/{}/{}", base_url, collection_path, staging_dir, operation_id);
+                let final_url = format!("{}{}", base_url, collection_path);
+                (staging_url, final_url)
+            }
         };
 
         info!("🔍 build_operation_urls COMPLETE");

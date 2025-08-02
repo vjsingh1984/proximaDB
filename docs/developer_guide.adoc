@@ -39,7 +39,7 @@ Complete development guide for the proto-first ProximaDB architecture, including
 - **85% code reduction**: Handler consolidation eliminates duplication  
 - **87% SDK reduction**: 6,467 → 800 lines in Python client
 - **Optimized search**: Storage-aware polymorphic search improvement
-- **520+ tests passing**: Comprehensive coverage with production scenarios
+- **1,092 tests passing**: Comprehensive coverage with production scenarios
 
 === Current Development Status
 
@@ -49,7 +49,7 @@ Complete development guide for the proto-first ProximaDB architecture, including
 
 |🏗️ **Proto-First Architecture**
 |✅ Complete 
-|520+ tests passing
+|1,092 tests passing
 |Zero serialization overhead
 
 |🔄 **Handler Consolidation**
@@ -1026,43 +1026,93 @@ VECTOR_SIMILARITY(vector_column, query_vector, distance_metric)
 
 **Parameters:**
 - `vector_column`: The vector field to search (usually 'vector')
-- `query_vector`: Array of floats representing the query vector
-- `distance_metric`: One of 'cosine', 'euclidean', 'dot_product', 'hamming'
+- `query_vector`: Array of floats in format `[0.1, 0.2, ...]` (note: square brackets, not ARRAY)
+- `distance_metric`: One of 'cosine', 'euclidean', 'dot_product', 'manhattan', 'hamming', 'jaccard'
+
+===== Currently Supported SQL Features
+
+**Actually Working:**
+- Basic `SELECT` with field selection
+- `WHERE` clause with simple equality (`=`)
+- `IN` operator for simple value lists
+- `metadata->>'field'` for JSON field extraction
+- `ORDER BY VECTOR_SIMILARITY()`
+- `LIMIT` and `OFFSET`
+
+**Metadata Access:**
+- `metadata->>'field'` - Extract JSON field as text (only operator currently working)
+
+===== Current Limitations
+
+**Planned but Not Yet Implemented:**
+- `AND`, `OR`, `NOT` operators (returns "Complex conditions not supported yet")
+- Comparison operators other than `=` (no `!=`, `<`, `>`, `<=`, `>=`)
+- `LIKE` operator (returns "Operator Like not supported")
+- `IS NULL`, `IS NOT NULL`
+- Parentheses for grouping conditions
+- `metadata->'field'` (without double arrow)
+
+**Not Supported:**
+- `CAST` operations
+- `BETWEEN` operator
+- Subqueries or CTEs
+- `UNION`, `INTERSECT`, `EXCEPT`
+- Multiple `VECTOR_SIMILARITY` calls in one query
+- `JOIN` operations
+- Window functions
+- Aggregations (`COUNT`, `AVG`, etc.)
+
+**Performance Tips:**
+- Apply metadata filters before vector search for better performance
+- Use indexed fields in `filterable_metadata_fields` for faster queries
+- Query plan caching provides 2-8x speedup for repeated query structures
+- Batch size affects insert performance dramatically (up to 30x difference)
 
 ===== Basic Vector Search
 [source,sql]
 ----
-SELECT id, metadata,
-       VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, 0.3, ...], 'cosine') as similarity
+SELECT id, metadata
 FROM my_collection
-ORDER BY similarity DESC
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, 0.3, ...], 'cosine')
 LIMIT 10
 ----
 
-===== Filtered Vector Search with Metadata
+===== Filtered Vector Search (Simple Equality)
 [source,sql]
 ----
-SELECT id, metadata, 
-       VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine') as similarity
+SELECT id, metadata
 FROM my_collection
 WHERE metadata->>'category' = 'electronics'
-  AND CAST(metadata->>'price' AS FLOAT) < 100.0
-  AND metadata->>'status' IN ('active', 'featured')
-ORDER BY similarity DESC
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
 LIMIT 10
 ----
 
-===== Aggregation with Vector Search
+===== Using IN Operator
 [source,sql]
 ----
-SELECT metadata->>'category' as category,
-       COUNT(*) as count,
-       AVG(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as avg_similarity,
-       MAX(VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine')) as max_similarity
-FROM my_collection
-WHERE VECTOR_SIMILARITY(vector, ARRAY[0.1, 0.2, ...], 'cosine') > 0.7
-GROUP BY metadata->>'category'
-ORDER BY avg_similarity DESC
+SELECT id, metadata
+FROM products
+WHERE metadata->>'brand' IN ('TechCorp', 'SmartBrand', 'ProDevice')
+ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
+LIMIT 10
+----
+
+===== What Doesn't Work Yet
+[source,sql]
+----
+-- These queries will fail with current implementation:
+
+-- AND/OR operators not supported
+WHERE metadata->>'category' = 'electronics' AND metadata->>'in_stock' = 'true'
+-- Error: "Complex conditions not supported yet"
+
+-- LIKE operator not supported  
+WHERE metadata->>'name' LIKE '%Pro%'
+-- Error: "Operator Like not supported"
+
+-- Comparison operators other than = not supported
+WHERE metadata->>'price' < '100'
+-- Error: "Expected comparison operator"
 ----
 
 ===== Complex Joins (Planned)

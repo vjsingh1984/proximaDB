@@ -25,7 +25,8 @@ use crate::storage::memtable::specialized::write_buffer_behavior::{WriteBufferBe
 use crate::storage::persistence::write_buffer::{WriteBufferConfig, WriteBufferFlushCoordinator, CompactionCoordinator, BatchId};
 use crate::storage::persistence::write_buffer::optimized_write_buffer_writer::OptimizedWriteBufferWriter;
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
-use crate::storage::traits::{UnifiedStorageEngine, CollectionMetadataProvider};
+use crate::storage::traits::UnifiedStorageEngine;
+use crate::services::collection_service::CollectionService;
 
 /// Optimized Vector Service with direct memtable access
 /// 
@@ -54,6 +55,15 @@ pub struct DirectVectorService {
     /// WAL configuration
     write_buffer_config: WriteBufferConfig,
     
+    /// Memory flush threshold in bytes (cached for performance)
+    memory_flush_size_bytes: usize,
+    
+    /// Vector count threshold per collection (cached for performance)
+    vector_count_threshold: usize,
+    
+    /// Global vector count threshold for entire memtable
+    global_vector_count_threshold: usize,
+    
     /// Optimized serialization format (proto default for zero-copy writes)
     optimized_format: OptimizedFormat,
     
@@ -69,7 +79,7 @@ pub struct DirectVectorService {
     optimized_write_buffer_writer: Arc<OptimizedWriteBufferWriter>,
     
     /// Collection service for metadata and engine routing (optional)
-    collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
+    collection_service: Option<Arc<CollectionService>>,
 }
 
 /// Optimized serialization format with intelligent defaults
@@ -148,7 +158,7 @@ impl DirectVectorService {
         write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
         sst_engine: Arc<SstStorage>,
-        collection_service: Arc<dyn CollectionMetadataProvider>,
+        collection_service: Arc<CollectionService>,
     ) -> Result<Self> {
         Self::with_collection_service_and_format(
             write_buffer_config,
@@ -174,7 +184,7 @@ impl DirectVectorService {
         write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
         sst_engine: Arc<SstStorage>,
-        collection_service: Arc<dyn CollectionMetadataProvider>,
+        collection_service: Arc<CollectionService>,
         format: OptimizedFormat,
     ) -> Result<Self> {
         Self::with_collection_service_and_workload_hint(
@@ -210,7 +220,7 @@ impl DirectVectorService {
         write_buffer_config: WriteBufferConfig,
         viper_engine: Arc<ViperEngine>,
         sst_engine: Arc<SstStorage>,
-        collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
+        collection_service: Option<Arc<CollectionService>>,
         workload: WorkloadType,
         format_override: Option<OptimizedFormat>,
     ) -> Result<Self> {
@@ -231,9 +241,14 @@ impl DirectVectorService {
         
         // Create global memtable with WAL behavior
         debug!("🔧 DirectVectorService::with_workload_hint - Creating global memtable...");
+        info!(
+            "📊 DirectVectorService: Using flush threshold {} bytes ({}MB) from config",
+            write_buffer_config.performance.memory_flush_size_bytes,
+            write_buffer_config.performance.memory_flush_size_bytes / (1024 * 1024)
+        );
         let memtable_config = crate::storage::memtable::core::MemtableConfig {
             max_size_bytes: write_buffer_config.memtable.global_memory_limit,
-            flush_threshold_bytes: write_buffer_config.performance.memory_flush_size_bytes, // Use collection-level flush size (2MB) for faster recovery
+            flush_threshold_bytes: write_buffer_config.performance.memory_flush_size_bytes, // Use collection-level flush size from config
             enable_mvcc: write_buffer_config.enable_mvcc,
             mvcc_cleanup_interval_secs: write_buffer_config.performance.mvcc_cleanup_interval_secs,
             max_versions_per_key: write_buffer_config.memtable.mvcc_versions_retained,
@@ -288,6 +303,17 @@ impl DirectVectorService {
         debug!("✅ DirectVectorService::with_workload_hint - Optimized WAL writer created");
         
         debug!("🔧 DirectVectorService::with_workload_hint - Creating service instance...");
+        let memory_flush_size_bytes = write_buffer_config.performance.memory_flush_size_bytes;
+        let vector_count_threshold = write_buffer_config.performance.batch_threshold;
+        let global_vector_count_threshold = 1_000_000; // 1M vectors for global memtable
+        
+        info!(
+            "📊 DirectVectorService: Using thresholds - size: {}MB per collection, count: {} per collection, global count: {}",
+            memory_flush_size_bytes / (1024 * 1024),
+            vector_count_threshold,
+            global_vector_count_threshold
+        );
+        
         let service = Self {
             global_memtable,
             flush_coordinator,
@@ -295,6 +321,9 @@ impl DirectVectorService {
             viper_engine,
             sst_engine,
             write_buffer_config,
+            memory_flush_size_bytes,
+            vector_count_threshold,
+            global_vector_count_threshold,
             optimized_format: selected_format,
             distance_compute: UnifiedDistanceCompute::default(),
             total_operations: Arc::new(AtomicU64::new(0)),
@@ -366,6 +395,29 @@ impl DirectVectorService {
             .context("Failed to initialize collection for compaction tracking")
     }
     
+    /// Check and trigger compaction if needed (useful for startup or manual triggers)
+    pub async fn check_and_compact_collection(&self, collection_id: &str) -> Result<()> {
+        info!("🔍 Checking compaction status for collection: {}", collection_id);
+        
+        match self.compaction_coordinator.check_and_compact(collection_id).await {
+            Ok(Some(result)) => {
+                info!(
+                    "✅ Compaction completed for {}: {} files compacted, {} bytes reclaimed",
+                    collection_id, result.files_compacted, result.bytes_reclaimed
+                );
+                Ok(())
+            }
+            Ok(None) => {
+                debug!("📊 No compaction needed for collection {}", collection_id);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to check/compact collection {}: {}", collection_id, e);
+                Err(e)
+            }
+        }
+    }
+    
     /// Get WAL behavior wrapper for direct memtable access (used by streaming search)
     pub fn get_write_buffer_behavior_wrapper(&self) -> Option<&WriteBufferBehaviorWrapper> {
         Some(&self.global_memtable)
@@ -375,7 +427,7 @@ impl DirectVectorService {
     async fn get_collection_storage_engine(&self, collection_id: &str) -> Result<&'static str> {
         if let Some(collection_service) = &self.collection_service {
             // Get collection metadata to determine the configured storage engine
-            if let Some(collection) = collection_service.get_collection_metadata(collection_id).await? {
+            if let Some(collection) = collection_service.get_proto_collection(collection_id).await? {
                 if let Some(config) = collection.config {
                     // Map storage engine enum value to engine name
                     let engine_name = match config.storage_engine {
@@ -470,9 +522,41 @@ impl DirectVectorService {
             .await
             .context("Failed to add vectors to global memtable")?;
         
-        // Step 3: Automatic threshold-based flushing (non-blocking background)
-        if self.global_memtable.should_flush().await {
+        // Step 3: Check flush thresholds (per-collection and global)
+        let (collection_vectors, collection_size) = self.global_memtable.inner().get_collection_stats(&collection_id.to_string()).await;
+        let global_vectors = self.global_memtable.inner().len().await;
+        let global_size = self.global_memtable.inner().size_bytes().await;
+        
+        // Check per-collection thresholds
+        let collection_size_exceeds = collection_size >= self.memory_flush_size_bytes;
+        let collection_count_exceeds = collection_vectors >= self.vector_count_threshold;
+        let collection_should_flush = collection_size_exceeds || collection_count_exceeds;
+        
+        // Check global thresholds
+        let global_size_exceeds = global_size >= self.write_buffer_config.memtable.global_memory_limit;
+        let global_count_exceeds = global_vectors >= self.global_vector_count_threshold;
+        let global_should_flush = global_size_exceeds || global_count_exceeds;
+        
+        if collection_should_flush {
+            info!(
+                "🚨 FLUSH_TRIGGER: Collection {} exceeds threshold - vectors: {}/{}, size: {}MB/{}MB",
+                collection_id,
+                collection_vectors,
+                self.vector_count_threshold,
+                collection_size / (1024 * 1024),
+                self.memory_flush_size_bytes / (1024 * 1024)
+            );
             self.trigger_background_flush(collection_id).await;
+        } else if global_should_flush {
+            info!(
+                "🚨 FLUSH_TRIGGER: Global memtable exceeds threshold - vectors: {}/{}, size: {}MB/{}MB",
+                global_vectors,
+                self.global_vector_count_threshold,
+                global_size / (1024 * 1024),
+                self.write_buffer_config.memtable.global_memory_limit / (1024 * 1024)
+            );
+            // Trigger intelligent flush to select best collections to flush
+            self.trigger_intelligent_global_flush().await;
         }
         
         // Step 4: Disk persistence for durability (using optimized writer)
@@ -508,7 +592,7 @@ impl DirectVectorService {
             sequences,
             entries_written: vectors.len(),
             duration_micros: duration.as_micros() as u64,
-            flush_triggered: self.global_memtable.should_flush().await,
+            flush_triggered: collection_should_flush || global_should_flush,
         })
     }
     
@@ -615,6 +699,8 @@ impl DirectVectorService {
                 } else { 
                     std::collections::HashMap::new() 
                 },
+                version: record.version,
+                timestamp: Some(record.timestamp),
                 rank: Some(1),
                 debug_info: Some(SearchDebugInfo {
                     algorithm: "DirectMemtableLookup".to_string(),
@@ -625,7 +711,6 @@ impl DirectVectorService {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: Some(collection_id.to_string()),
                 created_at: None,
             }));
         }
@@ -663,6 +748,8 @@ impl DirectVectorService {
                     } else { 
                         std::collections::HashMap::new() 
                     },
+                    version: record.version,
+                    timestamp: Some(record.timestamp),
                     rank: Some(1),
                     debug_info: Some(SearchDebugInfo {
                         algorithm: format!("Direct{}Lookup", storage_engine),
@@ -673,7 +760,6 @@ impl DirectVectorService {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    collection_id: Some(collection_id.to_string()),
                     created_at: None,
                 }))
             }
@@ -748,7 +834,7 @@ impl DirectVectorService {
                     }
                     // Apply filter expression if specified
                     if let Some(filter_expr) = search_params.and_then(|p| p.filter_expression.as_ref()) {
-                        if !self.apply_filter_expression(vector_record, filter_expr) {
+                        if !self.apply_filter_expression(collection_id, vector_record, filter_expr).await {
                             continue; // Skip vectors that don't match filter
                         }
                     }
@@ -773,6 +859,8 @@ impl DirectVectorService {
                         metadata: if include_metadata {
                             crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
                         } else { std::collections::HashMap::new() },
+                        version: vector_record.version,
+                        timestamp: Some(vector_record.timestamp),
                         debug_info: Some(SearchDebugInfo {
                             algorithm: format!("UnifiedDistance::{:?}", effective_distance_metric),
                             candidates_evaluated: 0,
@@ -782,8 +870,7 @@ impl DirectVectorService {
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
-                        collection_id: Some(collection_id.to_string()),
-                        created_at: Some(chrono::DateTime::from_timestamp_micros(vector_record.created_at).unwrap_or_else(chrono::Utc::now)),
+                        created_at: Some(chrono::DateTime::from_timestamp(vector_record.timestamp as i64, 0).unwrap_or_else(chrono::Utc::now)),
                     };
                     
                     all_results.push(search_result);
@@ -812,46 +899,34 @@ impl DirectVectorService {
             all_results.extend(lsm_results);
         }
         
-        // Step 3: Sort by unified score (descending) and deduplicate by ID
-        all_results.sort_by(|a, b| {
+        // Step 3: Apply MVCC-based deduplication (handles version continuity)
+        let deduped_results = self.apply_mvcc_deduplication(all_results);
+        
+        // Step 4: Sort by score and take top k
+        let mut final_results = deduped_results;
+        final_results.sort_by(|a, b| {
             b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
-        // Deduplicate by vector ID (keep highest scoring)
-        // OPTIMIZATION: Use HashSet with &str to avoid cloning IDs during deduplication
-        let mut deduped_results = Vec::with_capacity(k);
-        let mut seen_ids = std::collections::HashSet::with_capacity(k);
-        
-        for result in all_results {
-            // Use the main ID field for deduplication
-            let should_include = if result.id.is_empty() {
-                true // Include results without IDs
-            } else {
-                seen_ids.insert(result.id.clone())
-            };
-            
-            if should_include {
-                deduped_results.push(result);
-                if deduped_results.len() >= k {
-                    break;
-                }
-            }
+        // Limit to requested k results
+        if final_results.len() > k {
+            final_results.truncate(k);
         }
         
         // Set rankings
-        for (idx, result) in deduped_results.iter_mut().enumerate() {
-            result.rank = Some(idx as i32 + 1);
+        for (idx, result) in final_results.iter_mut().enumerate() {
+            result.rank = Some(idx as u16 + 1);
         }
         
         let processing_time_us = start_time.elapsed().as_micros() as i64;
         
         info!(
-            "✅ UNIFIED_SEARCH: {} results in {}μs (WAL + Storage with metadata filtering)",
-            deduped_results.len(),
+            "✅ UNIFIED_SEARCH: {} results in {}μs (WAL + Storage with MVCC deduplication)",
+            final_results.len(),
             processing_time_us
         );
         
-        Ok(deduped_results)
+        Ok(final_results)
     }
     
     /// ✅ ENHANCED SEARCH: Full-featured search with metadata filtering, distance metrics, and unified scoring
@@ -871,7 +946,7 @@ impl DirectVectorService {
         tokio::spawn(async move {
             // Determine the storage engine for this collection
             let storage_engine = if let Some(service) = &collection_service {
-                if let Ok(Some(collection)) = service.get_collection_metadata(&collection_id).await {
+                if let Ok(Some(collection)) = service.get_proto_collection(&collection_id).await {
                     if let Some(config) = collection.config {
                         match config.storage_engine {
                             x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
@@ -956,6 +1031,131 @@ impl DirectVectorService {
                     warn!("⚠️ BACKGROUND_FLUSH: Failed for collection {}: {}", collection_id, e);
                 }
             }
+        });
+    }
+    
+    /// Trigger intelligent global flush when global thresholds are exceeded
+    async fn trigger_intelligent_global_flush(&self) {
+        info!("🌍 GLOBAL_FLUSH: Global memtable thresholds exceeded, selecting collections to flush");
+        
+        let flush_coordinator = self.flush_coordinator.clone();
+        let compaction_coordinator = self.compaction_coordinator.clone();
+        let global_memtable = self.global_memtable.clone();
+        let collection_service = self.collection_service.clone();
+        let global_threshold = self.write_buffer_config.memtable.global_memory_limit;
+        
+        // Spawn background task to avoid blocking insert
+        tokio::spawn(async move {
+            // Get intelligent flush recommendations
+            let collections_to_flush = match global_memtable.inner()
+                .get_intelligent_flush_collections(global_threshold, 0.4, Some(5))
+                .await
+            {
+                Ok(candidates) => candidates,
+                Err(e) => {
+                    warn!("⚠️ GLOBAL_FLUSH: Failed to get flush candidates: {}", e);
+                    return;
+                }
+            };
+            
+            if collections_to_flush.is_empty() {
+                info!("📋 GLOBAL_FLUSH: No collections selected for flush");
+                return;
+            }
+            
+            info!(
+                "🎯 GLOBAL_FLUSH: Selected {} collections for flush to reduce memory pressure",
+                collections_to_flush.len()
+            );
+            
+            // Flush each selected collection
+            for collection_info in collections_to_flush {
+                let collection_id = &collection_info.collection_id;
+                
+                // Determine storage engine for this collection
+                let storage_engine = if let Some(service) = &collection_service {
+                    if let Ok(Some(collection)) = service.get_proto_collection(collection_id).await {
+                        if let Some(config) = collection.config {
+                            match config.storage_engine {
+                                x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
+                                x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
+                                _ => "VIPER",
+                            }
+                        } else {
+                            "VIPER"
+                        }
+                    } else {
+                        "VIPER"
+                    }
+                } else {
+                    "VIPER"
+                };
+                
+                info!(
+                    "💾 GLOBAL_FLUSH: Flushing collection {} ({} vectors, {}MB) to {} engine",
+                    collection_id,
+                    collection_info.vector_count,
+                    collection_info.total_size / (1024 * 1024),
+                    storage_engine
+                );
+                
+                // Get vectors to flush
+                let vectors_to_flush = match global_memtable.get_collection_vectors(collection_id).await {
+                    Ok(vectors) => vectors,
+                    Err(e) => {
+                        warn!("⚠️ GLOBAL_FLUSH: Failed to get vectors for {}: {}", collection_id, e);
+                        continue;
+                    }
+                };
+                
+                if vectors_to_flush.is_empty() {
+                    continue;
+                }
+                
+                let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors_to_flush);
+                
+                match flush_coordinator
+                    .execute_coordinated_flush(collection_id, flush_data, Some(storage_engine), None)
+                    .await
+                {
+                    Ok(flush_result) => {
+                        info!(
+                            "✅ GLOBAL_FLUSH: Collection {} flushed - {} entries, {} bytes",
+                            collection_id,
+                            flush_result.base.entries_flushed,
+                            flush_result.base.bytes_written
+                        );
+                        
+                        // Clean up flushed batches
+                        if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
+                            for batch_id in &flush_result.base.flushed_batch_ids {
+                                if let Err(e) = global_memtable.mark_batch_flushed(collection_id, &batch_id.to_base62()).await {
+                                    warn!("⚠️ Failed to mark batch {} as flushed: {}", batch_id.to_base62(), e);
+                                }
+                            }
+                            
+                            match global_memtable.clear_flushed_batches(collection_id).await {
+                                Ok(cleared) => {
+                                    info!("🧹 Cleared {} flushed batches from {}", cleared, collection_id);
+                                }
+                                Err(e) => {
+                                    warn!("⚠️ Failed to clear flushed batches: {}", e);
+                                }
+                            }
+                        }
+                        
+                        // Trigger compaction
+                        if let Err(e) = compaction_coordinator.handle_flush_completion(&flush_result.base).await {
+                            debug!("Compaction trigger failed: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("⚠️ GLOBAL_FLUSH: Failed to flush collection {}: {}", collection_id, e);
+                    }
+                }
+            }
+            
+            info!("✅ GLOBAL_FLUSH: Completed intelligent flush operation");
         });
     }
     
@@ -1514,19 +1714,35 @@ impl DirectVectorService {
         Ok(())
     }
     
-    /// Apply filter expression to vector record
-    fn apply_filter_expression(
+    /// Apply filter expression to vector record with type-safe filtering
+    async fn apply_filter_expression(
         &self,
+        collection_id: &str,
         vector_record: &crate::proto::proximadb::VectorRecord,
         filter_expr: &crate::core::search::FilterExpression,
     ) -> bool {
-        // Convert proto metadata to JSON format
+        // Try to get collection metadata for type-safe filtering
+        if let Some(collection_service) = &self.collection_service {
+            if let Ok(Some(collection)) = collection_service.get_proto_collection(collection_id).await {
+                if let Some(config) = collection.config {
+                    if !config.filterable_columns.is_empty() {
+                        // Use type-safe filtering with collection metadata
+                        let evaluator = crate::core::search::typesafe_filter::TypeSafeFilterEvaluator::new(
+                            &config.filterable_columns
+                        );
+                        return evaluator.evaluate(filter_expr, &vector_record.metadata);
+                    }
+                }
+            }
+        }
+        
+        // Fallback to JSON-based filtering for backward compatibility
         let mut metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
         
         // Special handling for ID field
         if let Some(ref record_id) = vector_record.id {
-            metadata_map.insert("__id".to_string(), serde_json::Value::String(record_id.clone()));
-            metadata_map.insert("id".to_string(), serde_json::Value::String(record_id.clone()));
+            metadata_map.insert("__id".to_string(), serde_json::Value::String(record_id.to_string()));
+            metadata_map.insert("id".to_string(), serde_json::Value::String(record_id.to_string()));
         }
         
         // Use centralized filter evaluation
@@ -1759,7 +1975,7 @@ impl DirectWalRecovery for DirectVectorService {
                         flushed_batch_ids: vec![],
                     })
             } else {
-                self.sst_engine.flush_vectors_direct(collection_id, vectors).await
+                self.sst_engine.flush_vectors_direct(vectors).await
                     .map(|_| crate::storage::traits::FlushResult {
                         success: true,
                         collections_affected: vec![collection_id.to_string()],
@@ -1953,6 +2169,88 @@ impl DirectWalRecovery for DirectVectorService {
     }
 }
 
+impl DirectVectorService {
+    /// Apply MVCC-based deduplication to search results
+    /// This ensures consistency with compaction behavior
+    fn apply_mvcc_deduplication(&self, results: Vec<SearchResult>) -> Vec<SearchResult> {
+        use std::collections::BTreeMap;
+        
+        // Pre-allocate capacity for efficiency
+        let estimated_unique_ids = results.len() / 2; // Conservative estimate
+        
+        // Group results by ID - using BTreeMap for better cache locality and sorted access
+        let mut id_groups: BTreeMap<String, Vec<SearchResult>> = BTreeMap::new();
+        let mut results_without_id = Vec::with_capacity(results.len() / 4); // Estimate 25% without IDs
+        
+        for result in results {
+            if result.id.is_empty() {
+                // Vectors without IDs are append-only, no deduplication
+                results_without_id.push(result);
+            } else {
+                // Avoid cloning the ID by using entry API more efficiently
+                id_groups.entry(result.id.clone()).or_insert_with(Vec::new).push(result);
+            }
+        }
+        
+        // Process each ID group - pre-allocate with estimated capacity
+        let mut deduplicated = Vec::with_capacity(estimated_unique_ids + results_without_id.len());
+        
+        for (id, mut versions) in id_groups {
+            // Sort by version, then timestamp (earliest first for same version)
+            // Use unstable sort for better performance since we don't need stability
+            versions.sort_unstable_by(|a, b| {
+                let version_a = a.version.unwrap_or(1);
+                let version_b = b.version.unwrap_or(1);
+                
+                version_a.cmp(&version_b)
+                    .then_with(|| {
+                        // For same version, earliest timestamp wins
+                        let ts_a = a.timestamp.unwrap_or(u32::MAX);
+                        let ts_b = b.timestamp.unwrap_or(u32::MAX);
+                        ts_a.cmp(&ts_b)
+                    })
+            });
+            
+            // Validate version continuity and find the latest valid version
+            let mut expected_version = 1;
+            let mut last_valid: Option<SearchResult> = None;
+            
+            for result in versions {
+                let version = result.version.unwrap_or(1);
+                
+                if version == expected_version {
+                    // Check for duplicate version - keep earliest timestamp
+                    if let Some(ref existing) = last_valid {
+                        if existing.version == result.version {
+                            let existing_ts = existing.timestamp.unwrap_or(u32::MAX);
+                            let current_ts = result.timestamp.unwrap_or(u32::MAX);
+                            if current_ts < existing_ts {
+                                last_valid = Some(result);
+                            }
+                            continue;
+                        }
+                    }
+                    last_valid = Some(result);
+                    expected_version += 1;
+                } else if version > expected_version {
+                    // Version gap detected - stop processing this ID
+                    debug!("Version gap detected for {}: expected {}, found {}", id, expected_version, version);
+                    break;
+                }
+                // Skip older versions
+            }
+            
+            if let Some(result) = last_valid {
+                deduplicated.push(result);
+            }
+        }
+        
+        // Add back results without IDs (no deduplication for append-only vectors)
+        deduplicated.extend(results_without_id);
+        
+        deduplicated
+    }
+}
 
 /// Optimized insert result
 #[derive(Debug, Clone)]

@@ -89,6 +89,7 @@ pub enum ParquetCompression {
     None,
     Snappy,
     Gzip,
+    Lz4,
     Zstd,
 }
 
@@ -100,9 +101,10 @@ pub struct ProcessedVectorRecord {
     pub extra_meta: HashMap<String, serde_json::Value>,
 }
 
-/// Configuration for VIPER core engine
+/// Internal engine configuration for VIPER runtime state
+/// This is created from the user-facing core::config::ViperConfig
 #[derive(Debug, Clone)]
-pub struct ViperConfig {
+pub struct ViperEngineConfig {
     /// Enable ML-driven clustering for optimal data organization
     pub enable_ml_clustering: bool,
 
@@ -317,7 +319,32 @@ pub struct EngineStats {
     pub active_partitions: usize,
 }
 
-impl Default for ViperConfig {
+impl ViperEngineConfig {
+    /// Create from the user-facing core config
+    pub fn from_core_config(config: &crate::core::config::ViperConfig) -> Self {
+        Self {
+            enable_ml_clustering: false,  // Disabled by default
+            initial_cluster_count: 16,
+            enable_quantization: false,    // Disabled by default
+            parquet_compression: match config.compression.as_str() {
+                "zstd" if config.compression_enabled => ParquetCompression::Zstd,
+                "snappy" if config.compression_enabled => ParquetCompression::Snappy,
+                "gzip" if config.compression_enabled => ParquetCompression::Gzip,
+                "lz4" if config.compression_enabled => ParquetCompression::Lz4,
+                _ => ParquetCompression::None,
+            },
+            row_group_size: config.row_group_size,
+            enable_background_compaction: true,
+            flush_size_bytes: None,
+            quantization_config: None,
+            cluster_quantization_map: HashMap::new(),
+            vector_quality_metrics: VectorQualityMetrics::default(),
+            search_performance_stats: SearchPerformanceStats::default(),
+        }
+    }
+}
+
+impl Default for ViperEngineConfig {
     fn default() -> Self {
         Self {
             enable_ml_clustering: true,

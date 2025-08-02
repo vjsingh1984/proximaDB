@@ -85,7 +85,7 @@ impl CollectionPartition {
         }
         
         let current_time = chrono::Utc::now().timestamp_micros();
-        let mut latest_record: Option<(VectorRecord, u64, i64)> = None; // (record, sequence, version)
+        let mut latest_record: Option<(VectorRecord, u64, Option<u32>)> = None; // (record, sequence, version)
         
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
@@ -98,9 +98,12 @@ impl CollectionPartition {
                     let is_newer = match &latest_record {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
-                            version > *existing_version || 
-                            // Fallback: If same version, compare by sequence/timestamp
-                            (version == *existing_version && sequence > *existing_seq)
+                            match (version, existing_version) {
+                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(_), None) => true, // Some version beats None
+                                (None, Some(_)) => false, // None loses to Some version
+                                (None, None) => sequence > *existing_seq, // Both None, use sequence
+                            }
                         }
                         None => true, // First occurrence
                     };
@@ -114,9 +117,10 @@ impl CollectionPartition {
         
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
-            // Check if it's expired (logical delete)
+            // Check if it's expired (logical delete) - convert current_time to seconds
+            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
             let is_expired = record.expires_at
-                .map(|expires| expires < current_time)
+                .map(|expires| expires < current_time_secs)
                 .unwrap_or(false);
             
             if is_expired {
@@ -173,7 +177,7 @@ impl CollectionPartition {
     fn get_all_vectors(&self) -> Vec<VectorRecord> {
         use std::collections::HashMap;
         
-        let mut id_to_latest: HashMap<String, (VectorRecord, u64, i64)> = HashMap::new(); // (record, sequence, version)
+        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<u32>)> = HashMap::new(); // (record, sequence, version)
         let mut vectors_without_id = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
         
@@ -188,9 +192,12 @@ impl CollectionPartition {
                     let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
-                            version > *existing_version || 
-                            // Fallback: If same version, compare by sequence/timestamp
-                            (version == *existing_version && sequence > *existing_seq)
+                            match (version, existing_version) {
+                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(_), None) => true, // Some version beats None
+                                (None, Some(_)) => false, // None loses to Some version
+                                (None, None) => sequence > *existing_seq, // Both None, use sequence
+                            }
                         }
                         None => true,
                     };
@@ -203,8 +210,9 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly if not expired
+                    let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
                     let is_expired = vector_record.expires_at
-                        .map(|expires| expires < current_time)
+                        .map(|expires| expires < current_time_secs)
                         .unwrap_or(false);
                     
                     if !is_expired {
@@ -218,8 +226,9 @@ impl CollectionPartition {
         let mut vectors = Vec::new();
         
         for (_, (record, _, _)) in id_to_latest {
+            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
             let is_expired = record.expires_at
-                .map(|expires| expires < current_time)
+                .map(|expires| expires < current_time_secs)
                 .unwrap_or(false);
             
             if !is_expired {
@@ -240,7 +249,7 @@ impl CollectionPartition {
     ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
         
-        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, i64)> = HashMap::new(); // (score, record, sequence, version)
+        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> = HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
 
@@ -257,9 +266,12 @@ impl CollectionPartition {
                     let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
                         Some((_, _, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
-                            version > *existing_version || 
-                            // Fallback: If same version, compare by sequence/timestamp
-                            (version == *existing_version && sequence > *existing_seq)
+                            match (version, existing_version) {
+                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(_), None) => true, // Some version beats None
+                                (None, Some(_)) => false, // None loses to Some version
+                                (None, None) => sequence > *existing_seq, // Both None, use sequence
+                            }
                         }
                         None => true,
                     };
@@ -271,13 +283,14 @@ impl CollectionPartition {
                             (score, vector_record.clone(), sequence, version)
                         );
                         
-                        tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={}", 
+                        tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={:?}", 
                                        vector_record.id.as_deref().unwrap_or(""), sequence, version);
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
+                    let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
                     let is_expired = vector_record.expires_at
-                        .map(|expires| expires < current_time)
+                        .map(|expires| expires < current_time_secs)
                         .unwrap_or(false);
                     
                     if !is_expired {
@@ -294,8 +307,9 @@ impl CollectionPartition {
         let latest_versions_count = id_to_latest.len();
         
         for (id, (score, vector_record, _, _)) in id_to_latest {
+            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
             let is_expired = vector_record.expires_at
-                .map(|expires| expires < current_time)
+                .map(|expires| expires < current_time_secs)
                 .unwrap_or(false);
             
             if is_expired {

@@ -147,9 +147,7 @@ pub struct ClusteringModel {
     /// Total vectors clustered
     pub total_vectors: usize,
     /// Model version
-    pub version: u64,
-    /// When model was created
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub version: Option<u32>,
     /// Model quality metrics
     pub metrics: ClusteringMetrics,
 }
@@ -466,8 +464,7 @@ impl AxisClusteringEngine {
             centroids,
             cluster_sizes,
             total_vectors: vectors.len(),
-            version: 1,
-            created_at: chrono::Utc::now(),
+            version: Some(1),
             metrics,
         })
     }
@@ -694,10 +691,9 @@ mod tests {
                 vector: vec![1.0, 0.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -707,10 +703,9 @@ mod tests {
                 vector: vec![0.0, 1.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -720,10 +715,9 @@ mod tests {
                 vector: vec![-1.0, 0.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,

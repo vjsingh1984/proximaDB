@@ -26,25 +26,29 @@ mmap_enabled = true
 cache_size_mb = 512
 bloom_filter_bits = 10
 
-[storage.lsm_config]
-memtable_size_mb = 8
-level_count = 7
-compaction_threshold = 4
-block_size_kb = 32
-memory_flush_size_bytes = 2097152  # 2MB
+[storage.write_buffer_config]
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per collection (aggregate of all unflushed batches)
+vector_count_threshold = 20000  # 20k vectors per collection
 memtable_type = "BTree"
+sync_mode = "perbatch"
+write_buffer_directory = "./test_data/write_buffer"
+enable_wal = true
+
+[storage.sst_config]
+level_count = 7
+compaction_threshold = 5  # Minimum 5 files before compaction
+block_size_kb = 4096  # 4MB blocks for optimal ZSTD compression
 compaction_strategy = "leveled"
-compression = "snappy"
+compression = "zstd"  # ZSTD for better compression ratio
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
 cache_size_mb = 128
-write_buffer_size_mb = 32
 max_files_per_level = 10
 level_size_multiplier = 10.0
 max_levels = 7
 background_thread_count = 4
-sync_mode = "perbatch"
-enable_wal = true
-write_buffer_directory = "./test_data/lsm_wal"
-data_directory = "./test_data/lsm_data"
+data_directory = "./test_data/sst_data"
 mmap_enabled = true
 prefetch_enabled = true
 prefetch_size_kb = 64
@@ -52,6 +56,15 @@ prefetch_size_kb = 64
 [storage.bloom_filter_config]
 bits_per_key = 10
 enabled = true
+
+[storage.viper_config]
+row_group_size = 100000
+compression = "zstd"  # ZSTD for columnar data
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
+enable_statistics = true
+data_directory = "./test_data/viper_data"
+cache_size_mb = 512
 
 # WAL configuration - URLs now derived from storage_locations
 # WAL settings moved to appropriate sections

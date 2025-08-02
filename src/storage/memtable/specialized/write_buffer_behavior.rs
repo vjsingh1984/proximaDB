@@ -401,40 +401,8 @@ impl WriteBufferBehaviorWrapper {
 
     // REMOVED: insert_with_sequence() - Use add_vector_batch() for unified API with custom sequence
 
-    /// Check if flush is needed based on Write Buffer-specific thresholds
-    pub async fn should_flush(&self) -> bool {
-        let size = self.size_bytes().await; // Use our actual size calculation
-        let count = self.inner.len().await;
-        let size_threshold = self.config.flush_threshold_bytes;
-        let count_threshold = 10000;
-
-        let size_exceeds = size >= size_threshold;
-        let count_exceeds = count >= count_threshold;
-        let should_flush = size_exceeds || count_exceeds;
-
-        tracing::info!(
-            "🔍 FLUSH_CHECK: size={}B ({}MB), threshold={}B ({}MB), size_exceeds={}",
-            size,
-            size / 1024 / 1024,
-            size_threshold,
-            size_threshold / 1024 / 1024,
-            size_exceeds
-        );
-        tracing::info!(
-            "🔍 FLUSH_CHECK: count={}, threshold={}, count_exceeds={}",
-            count,
-            count_threshold,
-            count_exceeds
-        );
-        tracing::info!(
-            "🔍 FLUSH_CHECK: Final result - should_flush={} (size_exceeds={} OR count_exceeds={})",
-            should_flush,
-            size_exceeds,
-            count_exceeds
-        );
-
-        should_flush
-    }
+    // REMOVED: should_flush() - Flush decisions are made by DirectVectorService based on GlobalPartitionedMemtable stats
+    // WriteBufferBehaviorWrapper only provides WAL serialization/deserialization behavior
 
     /// Get unflushed batches for collection (MODERN - for direct storage engine flush)
     pub async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WriteBufferVectorBatch>> {
@@ -843,11 +811,10 @@ mod tests {
             id: Some("test_vector_1".to_string()),
             vector: vec![0.1, 0.2, 0.3],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -857,11 +824,10 @@ mod tests {
             id: Some("test_vector_2".to_string()),
             vector: vec![0.4, 0.5, 0.6],
             metadata: vec![],
-            timestamp: now + 1,
-            created_at: now + 1,
-            updated_at: now + 1,
+            timestamp: (now + 1) as u32,
+            updated_at: Some((now + 1) as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -908,8 +874,7 @@ mod tests {
         let entries = wal_wrapper.get_all_vectors(None).await.unwrap();
         assert_eq!(entries.len(), 2);
 
-        // Test flush threshold
-        assert!(!wal_wrapper.should_flush().await); // Small entries shouldn't trigger flush
+        // Flush threshold checking is done by DirectVectorService, not here
 
         // Test flush operation
         let flushed = wal_wrapper.flush_all_vectors().await.unwrap();
@@ -943,11 +908,10 @@ mod tests {
                         value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
                     }
                 ],
-                timestamp: now + i as i64,
-                created_at: now + i as i64,
-                updated_at: now + i as i64,
+                timestamp: (now + i as i64) as u32,
+                updated_at: Some((now + i as i64) as u32),
                 expires_at: None,
-                version: (i + 1) as i64,
+                version: Some((i + 1) as u32),
                 rank: None,
                 score: None,
                 distance: None,

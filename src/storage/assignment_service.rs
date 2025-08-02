@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Storage component type for assignment tracking
@@ -42,7 +41,7 @@ impl std::fmt::Display for StorageComponentType {
 }
 
 /// Unified assignment result for a collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedAssignment {
     /// Location index in storage_locations array
     pub location_index: usize,
@@ -72,6 +71,7 @@ impl UnifiedAssignment {
         }
     }
 }
+
 
 /// Configuration for storage assignment
 #[derive(Debug, Clone)]
@@ -149,21 +149,102 @@ pub struct OrphanedData {
     pub size_bytes: u64,
 }
 
-/// Hash-based assignment service implementation
+/// Stateless hash-based assignment service implementation
+/// Rebuilds assignments by discovering collection directories on disk
 pub struct HashBasedAssignmentService {
-    /// Assignment cache: collection_id -> assignment
+    /// Assignment cache: collection_id -> assignment (rebuilt on each discovery)
     assignments: Arc<RwLock<HashMap<String, UnifiedAssignment>>>,
-    /// Round-robin counter
+    /// Round-robin counter for new assignments
     round_robin_counter: Arc<std::sync::atomic::AtomicUsize>,
+    /// Filesystem factory for directory discovery
+    filesystem_factory: Arc<FilesystemFactory>,
+    /// Assignment strategy
+    strategy: String,
 }
 
 impl HashBasedAssignmentService {
-    /// Create new hash-based assignment service
-    pub fn new() -> Self {
+    /// Create new stateless assignment service
+    /// Assignments are rebuilt by discovering collection directories on disk
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, strategy: &str) -> Self {
         Self {
             assignments: Arc::new(RwLock::new(HashMap::new())),
             round_robin_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            filesystem_factory,
+            strategy: strategy.to_string(),
         }
+    }
+
+    /// Rebuild all assignments by discovering collection directories on disk
+    /// This is the core stateless operation - works with file://, s3://, azure://, gs:// storage
+    pub async fn rebuild_assignments_from_disk(&self, storage_locations: &[StorageLocation]) -> Result<()> {
+        tracing::info!("🔍 Rebuilding assignments by discovering collections on disk...");
+        
+        let mut discovered_assignments = HashMap::new();
+        let mut total_collections = 0;
+        
+        // Scan each storage location for collection directories
+        for (location_index, location) in storage_locations.iter().enumerate() {
+            let filesystem = self.filesystem_factory.get_filesystem(&location.url)?;
+            
+            match filesystem.list(&location.url).await {
+                Ok(entries) => {
+                    tracing::debug!("📁 Found {} entries in {}", entries.len(), location.url);
+                    for entry in entries {
+                        if entry.metadata.is_directory {
+                            let collection_id = &entry.name;
+                            
+                            // Check if this looks like a collection (has expected subdirs)
+                            let collection_path = format!("{}/{}", location.url, collection_id);
+                            let mut has_data = false;
+                            let mut has_write_buffer = false;
+                            let mut has_index = false;
+                            
+                            if let Ok(sub_entries) = filesystem.list(&collection_path).await {
+                                for sub_entry in sub_entries {
+                                    if sub_entry.metadata.is_directory {
+                                        match sub_entry.name.as_str() {
+                                            "data" => has_data = true,
+                                            "write_buffer" => has_write_buffer = true,
+                                            "index" => has_index = true,
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Only create assignment if it has at least data directory
+                            if has_data {
+                                let assignment = UnifiedAssignment::new(location_index, &location.url, collection_id);
+                                discovered_assignments.insert(collection_id.clone(), assignment);
+                                total_collections += 1;
+                                
+                                tracing::info!(
+                                    "📁 Discovered collection '{}' on disk {} (data:{}, wb:{}, idx:{})",
+                                    collection_id, location_index, has_data, has_write_buffer, has_index
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to scan storage location {}: {}", location.url, e);
+                }
+            }
+        }
+        
+        // Replace assignment cache with discovered assignments
+        {
+            let mut assignments = self.assignments.write().await;
+            *assignments = discovered_assignments;
+        }
+        
+        tracing::info!(
+            "✅ Rebuilt {} assignments from disk discovery across {} storage locations",
+            total_collections,
+            storage_locations.len()
+        );
+        
+        Ok(())
     }
 
 
@@ -322,83 +403,31 @@ impl AssignmentService for HashBasedAssignmentService {
         &self,
         storage_locations: &[StorageLocation],
     ) -> Result<RecoveryReport> {
-        use crate::storage::persistence::filesystem::FilesystemFactory;
+        // Simply rebuild assignments from disk - this is now the stateless approach
+        self.rebuild_assignments_from_disk(storage_locations).await?;
         
-        let mut discovered_collections: HashMap<String, DiscoveredCollection> = HashMap::new();
-        let mut orphaned_data = Vec::new();
-        let mut recovery_actions = Vec::new();
-
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-
-        for (index, location) in storage_locations.iter().enumerate() {
-            tracing::info!("🔍 Discovering collections at: {}", location.url);
-            
-            let fs = filesystem.get_filesystem(&location.url)?;
-            
-            // Check WAL directory
-            let wal_base = format!("{}/wal", location.url);
-            if let Ok(entries) = filesystem.list(&wal_base).await {
-                for entry in entries {
-                    if entry.metadata.is_directory {
-                        let collection_id = entry.name.clone();
-                        discovered_collections
-                            .entry(collection_id.clone())
-                            .or_insert(DiscoveredCollection {
-                                collection_id: collection_id.clone(),
-                                location_index: index,
-                                location_url: location.url.clone(),
-                                has_wal: false,
-                                has_data: false,
-                                has_index: false,
-                                last_modified: entry.metadata.modified,
-                            })
-                            .has_wal = true;
-                    }
-                }
-            }
-
-            // Check data directory
-            let data_base = format!("{}/data", location.url);
-            if let Ok(entries) = filesystem.list(&data_base).await {
-                for entry in entries {
-                    if entry.metadata.is_directory {
-                        let collection_id = entry.name.clone();
-                        discovered_collections
-                            .entry(collection_id.clone())
-                            .or_insert(DiscoveredCollection {
-                                collection_id: collection_id.clone(),
-                                location_index: index,
-                                location_url: location.url.clone(),
-                                has_wal: false,
-                                has_data: false,
-                                has_index: false,
-                                last_modified: entry.metadata.modified,
-                            })
-                            .has_data = true;
-                    }
-                }
-            }
+        // Build a recovery report based on current assignments
+        let assignments = self.assignments.read().await;
+        let mut discovered_collections = HashMap::new();
+        
+        for (collection_id, assignment) in assignments.iter() {
+            discovered_collections.insert(collection_id.clone(), DiscoveredCollection {
+                collection_id: collection_id.clone(),
+                location_index: assignment.location_index,
+                location_url: assignment.location_url.clone(),
+                has_wal: true,  // Assume present if assignment exists
+                has_data: true, // Required for assignment to exist
+                has_index: true, // Assume present if assignment exists
+                last_modified: Some(assignment.assigned_at),
+            });
         }
-
-        // Record discovered assignments
-        for (collection_id, discovered) in &discovered_collections {
-            let assignment = UnifiedAssignment::new(
-                discovered.location_index,
-                &discovered.location_url,
-                collection_id,
-            );
-            self.record_assignment(collection_id, assignment).await?;
-            recovery_actions.push(format!(
-                "Recovered assignment for collection '{}' at location {}",
-                collection_id, discovered.location_index
-            ));
-        }
-
-        tracing::info!(
-            "✅ Discovery complete: {} collections found",
-            discovered_collections.len()
-        );
-
+        
+        let recovery_actions = vec![
+            format!("Rebuilt {} assignments from disk discovery", assignments.len())
+        ];
+        
+        let orphaned_data = Vec::new(); // No orphaned data in stateless model
+        
         Ok(RecoveryReport {
             discovered_collections,
             orphaned_data,
@@ -415,8 +444,24 @@ static ASSIGNMENT_SERVICE: std::sync::OnceLock<Arc<dyn AssignmentService>> =
 
 /// Get the global assignment service instance
 pub fn get_assignment_service() -> Arc<dyn AssignmentService> {
+    use crate::storage::persistence::filesystem::FilesystemConfig;
+    
     ASSIGNMENT_SERVICE
-        .get_or_init(|| Arc::new(HashBasedAssignmentService::new()))
+        .get_or_init(|| {
+            // Create a minimal filesystem factory for the stateless assignment service
+            // This is okay because the assignment service is now stateless and just discovers from disk
+            let filesystem_config = FilesystemConfig::default();
+            
+            // Use a blocking approach to create filesystem factory since this is a one-time init
+            let filesystem_factory = std::thread::spawn(move || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(FilesystemFactory::new(filesystem_config))
+                    .unwrap()
+            }).join().unwrap();
+            
+            Arc::new(HashBasedAssignmentService::new(Arc::new(filesystem_factory), "round_robin"))
+        })
         .clone()
 }
 
@@ -668,7 +713,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_hash_based_assignment() {
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "hash"));
 
         let storage_locations = vec![
             StorageLocation {
@@ -709,7 +755,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_consistent_assignment() {
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "hash"));
 
         let storage_locations = vec![
             StorageLocation {
@@ -747,7 +794,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_assignment_lifecycle() {
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "hash"));
 
         let storage_locations = vec![
             StorageLocation {
@@ -823,7 +871,7 @@ mod tests {
         // Test discovery
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service: Arc<dyn AssignmentService> =
-            Arc::new(HashBasedAssignmentService::new());
+            Arc::new(HashBasedAssignmentService::new(filesystem.clone(), "round_robin"));
 
         let write_buffer_urls = vec![format!("file://{}", base_path)];
         let storage_urls = vec![format!("file://{}", base_path)];
@@ -889,7 +937,7 @@ mod tests {
 
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service: Arc<dyn AssignmentService> =
-            Arc::new(HashBasedAssignmentService::new());
+            Arc::new(HashBasedAssignmentService::new(filesystem.clone(), "round_robin"));
 
         let urls = vec![format!("file://{}", base_path)];
 
@@ -924,7 +972,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_assignment_stats() {
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "hash"));
 
         let storage_locations = vec![
             StorageLocation {

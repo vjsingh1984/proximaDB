@@ -45,11 +45,10 @@ mod tests {
             id: Some(id.to_string()),
             vector: (0..dimension).map(|i| i as f32 * 0.1).collect(),
             metadata: vec![],
-            timestamp: Utc::now().timestamp_millis(),
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -113,7 +112,7 @@ mod tests {
         
         assert_eq!(record.id.unwrap(), "test_id");
         assert_eq!(record.vector.len(), 128);
-        assert_eq!(record.version, 1);
+        assert_eq!(record.version, Some(1));
         assert!(record.timestamp > 0);
         assert!(record.metadata.is_empty());
     }
@@ -253,10 +252,9 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
             timestamp: 1234567890,
-            created_at: 1234567890,
-            updated_at: 1234567890,
+            updated_at: Some(1234567890),
             expires_at: Some(1234567999),
-            version: 2,
+            version: Some(2),
             rank: Some(1),
             score: Some(0.95),
             distance: Some(0.1),
@@ -265,10 +263,10 @@ mod tests {
         assert_eq!(record.id.unwrap(), "test_id");
         assert_eq!(record.vector.len(), 3);
         assert_eq!(record.timestamp, 1234567890);
-        assert_eq!(record.created_at, 1234567890);
-        assert_eq!(record.updated_at, 1234567890);
+        // Note: created_at is now timestamp in proto VectorRecord
+        assert_eq!(record.updated_at, Some(1234567890));
         assert_eq!(record.expires_at.unwrap(), 1234567999);
-        assert_eq!(record.version, 2);
+        assert_eq!(record.version, Some(2));
         assert_eq!(record.rank.unwrap(), 1);
         assert_eq!(record.score.unwrap(), 0.95);
         assert_eq!(record.distance.unwrap(), 0.1);
@@ -440,11 +438,10 @@ mod tests {
             id: Some("edge_case_vector".to_string()),
             vector: edge_vector.clone(),
             metadata: vec![],
-            timestamp: Utc::now().timestamp_millis(),
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

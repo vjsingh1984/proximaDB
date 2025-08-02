@@ -20,11 +20,10 @@ pub mod viper_pipeline_tests {
                 key: k,
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v)),
             }).collect(),
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -183,7 +182,7 @@ pub mod viper_pipeline_tests {
         assert_eq!(record.id, Some("test_vector_1".to_string()));
         assert_eq!(record.vector, vector);
         assert_eq!(record.metadata.len(), 2);
-        assert_eq!(record.version, 1);
+        assert_eq!(record.version, Some(1));
         assert!(record.rank.is_none());
         assert!(record.score.is_none());
         assert!(record.distance.is_none());

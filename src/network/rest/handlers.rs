@@ -732,7 +732,7 @@ pub async fn vector_search(
                         vector_id: r.id,
                         score: r.score,
                         distance: None,
-                        rank: r.rank,
+                        rank: r.rank.map(|v| v as u16),
                         vector: if r.vector.is_empty() { None } else { Some(r.vector) },
                         metadata: if r.metadata.is_empty() { 
                             std::collections::HashMap::new() 
@@ -742,9 +742,10 @@ pub async fn vector_search(
                         debug_info: None,
                         semantic_distance: None,
                         quantization_info: None,
+                        version: None,
+                        timestamp: None,
                         engine_stats: None,
                         index_path: None,
-                        collection_id: None,
                         created_at: None,
                     })
                     .collect()
@@ -814,7 +815,7 @@ pub async fn get_vector(
                                 Some(crate::core::proto_metadata_helper::proto_metadata_to_hashmap(&result.metadata))
                             } else { None },
                             score: Some(result.score),
-                            rank: result.rank,
+                            rank: result.rank.map(|r| r as i32),
                         };
                         Ok(Json(vector_response))
                     } else {
@@ -1745,11 +1746,10 @@ pub async fn delete_vectors(
             id: Some(id),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
-            timestamp: current_time,
-            created_at: current_time,
-            updated_at: current_time,
-            expires_at: Some(current_time), // Mark for deletion
-            version: 1,
+            timestamp: (current_time / 1000) as u32,
+            updated_at: Some((current_time / 1000) as u32),
+            expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
+            version: Some(1),
             distance: Some(0.0),
             rank: Some(0),
             score: Some(0.0),

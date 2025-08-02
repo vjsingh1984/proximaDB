@@ -38,7 +38,7 @@ enable_ml_clustering = false
 enable_simd_processing = true
 
 [lsm]
-memtable_size_mb = 64
+memtable_size_mb = 1024  # 1GB to reduce small file creation
 block_size_kb = 4
 bloom_filter_bits_per_key = 10
 

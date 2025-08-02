@@ -105,7 +105,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     None => Value::Union(0, Box::new(Value::Null)),
                 }));
                 
-                fields.push(("version".to_string(), Value::Int(v.version as i32)));
+                fields.push(("version".to_string(), Value::Int(v.version.unwrap_or(0) as i32)));
                 
                 Value::Record(fields)
             }).collect()
@@ -262,16 +262,15 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 id,
                                 vector,
                                 metadata,
-                                timestamp: timestamp_micros,
-                                created_at: timestamp_micros,
-                                updated_at: timestamp_micros,
+                                timestamp: (timestamp_micros / 1_000_000) as u32,
+                                updated_at: Some((timestamp_micros / 1_000_000) as u32),
                                 expires_at: vector_record
                                     .iter()
                                     .find(|(key, _)| key == "expires_at")
                                     .and_then(|(_, v)| match v {
                                         Value::Union(idx, inner) if *idx == 1 => {
                                             if let Value::Int(exp) = inner.as_ref() {
-                                                Some((*exp as i64) * 1_000_000)
+                                                Some(*exp as u32)
                                             } else {
                                                 None
                                             }
@@ -282,10 +281,9 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                     .iter()
                                     .find(|(key, _)| key == "version")
                                     .and_then(|(_, v)| match v {
-                                        Value::Int(ver) => Some(*ver as i64),
+                                        Value::Int(ver) => Some(*ver as u32),
                                         _ => None,
-                                    })
-                                    .unwrap_or(1),
+                                    }),
                                 rank: None,
                                 score: None,
                                 distance: None,
@@ -321,10 +319,9 @@ mod tests {
                 },
             ],
             timestamp: 1234567890,
-            created_at: 1234567890,
-            updated_at: 1234567890,
+            updated_at: Some(1234567890),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

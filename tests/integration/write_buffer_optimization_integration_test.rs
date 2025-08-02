@@ -21,7 +21,7 @@ use proximadb::core::VectorRecord;
 use proximadb::services::direct_vector_service::{DirectVectorService, OptimizedFormat};
 use proximadb::storage::persistence::write_buffer::config::{WriteBufferConfig, PerformanceConfig, SyncMode};
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::viper::types::ViperConfig;
+// ViperConfig moved to core::config
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::core::SstConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -133,23 +133,23 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
     let filesystem_factory: Arc<FilesystemFactory> = Arc::new(FilesystemFactory::new(Default::default()).await?);
     
     // Create test VIPER engine
-    let viper_config = ViperConfig::default();
-    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem_factory.clone()).await?);
+    let viper_engine = Arc::new(ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem_factory.clone()
+    ).await?);
     
     // Create test LSM engine  
     let lsm_config = SstConfig {
         data_directory: temp_path.to_string(),
         block_size_kb: 4,
         cache_size_mb: 64,
-        write_buffer_size_mb: 16,
         max_levels: 7,
-        memtable_size_mb: 64,
         level_count: 7,
         compaction_threshold: 4,
-        memory_flush_size_bytes: 2 * 1024 * 1024,
-        memtable_type: "BTree".to_string(),
         compaction_strategy: "leveled".to_string(),
         compression: "snappy".to_string(),
+        compression_enabled: true,
+        compression_level: 3,
         bloom_filter_config: Some(proximadb::core::config::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
@@ -158,9 +158,6 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         max_files_per_level: 10,
         level_size_multiplier: 10.0,
         background_thread_count: 2,
-        sync_mode: "batch".to_string(),
-        enable_write_buffer: true,
-        write_buffer_directory: format!("{}/wal", temp_path),
         mmap_enabled: false,
         prefetch_enabled: false,
         prefetch_size_kb: 64,

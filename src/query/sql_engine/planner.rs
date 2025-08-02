@@ -20,8 +20,6 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::HashMap;
 
 use super::parser::{ParsedQuery, SelectField, WhereClause, Condition, ComparisonOp, Value, OrderType};
 
@@ -45,9 +43,8 @@ pub struct ExecutionPlan {
 /// Metadata filter representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataFilter {
-    /// Filter conditions as key-value pairs
-    /// For now, we support simple equality filters
-    pub conditions: HashMap<String, serde_json::Value>,
+    /// Complex filter expression supporting AND/OR/NOT operations
+    pub expression: crate::core::search::FilterExpression,
 }
 
 /// Vector search parameters
@@ -143,63 +140,119 @@ impl QueryPlanner {
     
     /// Convert WHERE clause to metadata filter
     fn convert_where_clause(&self, where_clause: &WhereClause) -> Result<MetadataFilter> {
-        let mut conditions = HashMap::new();
-        
-        // For now, only support simple equality and IN conditions
-        match &where_clause.condition {
+        let expression = self.convert_condition(&where_clause.condition)?;
+        Ok(MetadataFilter { expression })
+    }
+    
+    /// Convert SQL condition to FilterExpression
+    fn convert_condition(&self, condition: &Condition) -> Result<crate::core::search::FilterExpression> {
+        match condition {
             Condition::Comparison { field, operator, value } => {
-                match operator {
-                    ComparisonOp::Eq => {
-                        let json_value = match value {
-                            Value::String(s) => serde_json::Value::String(s.clone()),
-                            Value::Number(n) => serde_json::Value::Number(
-                                serde_json::Number::from_f64(*n)
-                                    .ok_or_else(|| anyhow!("Invalid number"))?
-                            ),
-                            Value::Bool(b) => serde_json::Value::Bool(*b),
-                            Value::Null => serde_json::Value::Null,
-                            Value::Vector(_) => return Err(anyhow!("Vector values not supported in WHERE")),
-                            Value::List(_) => return Err(anyhow!("List values not supported with = operator")),
-                        };
-                        
-                        conditions.insert(field.clone(), json_value);
+                let comparison_op = match operator {
+                    ComparisonOp::Eq => crate::core::search::ComparisonOperator::Equals,
+                    ComparisonOp::Ne => crate::core::search::ComparisonOperator::NotEquals,
+                    ComparisonOp::Lt => crate::core::search::ComparisonOperator::LessThan,
+                    ComparisonOp::Le => crate::core::search::ComparisonOperator::LessThanOrEqual,
+                    ComparisonOp::Gt => crate::core::search::ComparisonOperator::GreaterThan,
+                    ComparisonOp::Ge => crate::core::search::ComparisonOperator::GreaterThanOrEqual,
+                    ComparisonOp::Like => {
+                        return Err(anyhow!("LIKE operator not yet implemented"));
                     }
                     ComparisonOp::In => {
-                        // For IN operator, we store the list as a special JSON structure
-                        // that the search implementation can interpret
-                        if let Value::List(values) = value {
-                            let json_values: Result<Vec<serde_json::Value>> = values.iter().map(|v| {
-                                match v {
-                                    Value::String(s) => Ok(serde_json::Value::String(s.clone())),
-                                    Value::Number(n) => Ok(serde_json::Value::Number(
-                                        serde_json::Number::from_f64(*n)
-                                            .ok_or_else(|| anyhow!("Invalid number"))?
-                                    )),
-                                    Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-                                    Value::Null => Ok(serde_json::Value::Null),
-                                    _ => Err(anyhow!("Complex values not supported in IN clause")),
-                                }
-                            }).collect();
-                            
-                            let json_values = json_values?;
-                            
-                            // Store as a special object that indicates IN operation
-                            let in_obj = serde_json::json!({
-                                "$in": json_values
-                            });
-                            
-                            conditions.insert(field.clone(), in_obj);
-                        } else {
-                            return Err(anyhow!("IN operator requires a list of values"));
-                        }
+                        // Handle IN operator specially
+                        return self.convert_in_condition(field, value);
                     }
-                    _ => return Err(anyhow!("Operator {:?} not supported for metadata filters yet", operator)),
-                }
+                };
+                
+                let json_value = self.convert_sql_value(value)?;
+                
+                Ok(crate::core::search::FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: comparison_op,
+                    value: json_value,
+                })
             }
-            _ => return Err(anyhow!("Complex conditions not supported yet")),
+            Condition::And(left, right) => {
+                let left_expr = self.convert_condition(left)?;
+                let right_expr = self.convert_condition(right)?;
+                Ok(crate::core::search::FilterExpression::And(vec![left_expr, right_expr]))
+            }
+            Condition::Or(left, right) => {
+                let left_expr = self.convert_condition(left)?;
+                let right_expr = self.convert_condition(right)?;
+                Ok(crate::core::search::FilterExpression::Or(vec![left_expr, right_expr]))
+            }
+            Condition::Not(inner) => {
+                let inner_expr = self.convert_condition(inner)?;
+                Ok(crate::core::search::FilterExpression::Not(Box::new(inner_expr)))
+            }
+            Condition::In { field, values } => {
+                self.convert_in_condition(field, &Value::List(values.clone()))
+            }
+            Condition::Between { field, low, high } => {
+                // Convert BETWEEN to AND of two comparisons: field >= low AND field <= high
+                let low_json = self.convert_sql_value(low)?;
+                let high_json = self.convert_sql_value(high)?;
+                
+                let left_expr = crate::core::search::FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: crate::core::search::ComparisonOperator::GreaterThanOrEqual,
+                    value: low_json,
+                };
+                
+                let right_expr = crate::core::search::FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: crate::core::search::ComparisonOperator::LessThanOrEqual,
+                    value: high_json,
+                };
+                
+                Ok(crate::core::search::FilterExpression::And(vec![left_expr, right_expr]))
+            }
         }
-        
-        Ok(MetadataFilter { conditions })
+    }
+    
+    /// Convert IN condition to OR of equality comparisons
+    fn convert_in_condition(&self, field: &str, value: &Value) -> Result<crate::core::search::FilterExpression> {
+        if let Value::List(values) = value {
+            if values.is_empty() {
+                return Err(anyhow!("IN clause cannot be empty"));
+            }
+            
+            let mut comparisons = Vec::new();
+            for val in values {
+                let json_value = self.convert_sql_value(val)?;
+                comparisons.push(crate::core::search::FilterExpression::Comparison {
+                    field: field.to_string(),
+                    operator: crate::core::search::ComparisonOperator::Equals,
+                    value: json_value,
+                });
+            }
+            
+            // If only one value, return single comparison
+            if comparisons.len() == 1 {
+                Ok(comparisons.into_iter().next().unwrap())
+            } else {
+                // Otherwise, return OR of all comparisons
+                Ok(crate::core::search::FilterExpression::Or(comparisons))
+            }
+        } else {
+            Err(anyhow!("IN operator requires a list of values"))
+        }
+    }
+    
+    /// Convert SQL value to JSON value
+    fn convert_sql_value(&self, value: &Value) -> Result<serde_json::Value> {
+        match value {
+            Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+            Value::Number(n) => Ok(serde_json::Value::Number(
+                serde_json::Number::from_f64(*n)
+                    .ok_or_else(|| anyhow!("Invalid number"))?
+            )),
+            Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+            Value::Null => Ok(serde_json::Value::Null),
+            Value::Vector(_) => Err(anyhow!("Vector values not supported in WHERE clause")),
+            Value::List(_) => Err(anyhow!("List values not supported in this context")),
+        }
     }
 }
 

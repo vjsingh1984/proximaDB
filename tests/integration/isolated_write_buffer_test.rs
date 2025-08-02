@@ -161,7 +161,7 @@ async fn test_isolated_write_buffer_batch_operations() -> Result<()> {
                         value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(batch.to_string())),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
             }
         }).collect::<Vec<_>>();
@@ -238,7 +238,7 @@ async fn test_isolated_write_buffer_concurrent_writes() -> Result<()> {
                             value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(writer_id.to_string())),
                         },
                     ],
-                    timestamp: chrono::Utc::now().timestamp(),
+                    timestamp: chrono::Utc::now().timestamp() as u32,
                     ..Default::default()
                 }
             }).collect::<Vec<_>>();
@@ -366,7 +366,7 @@ async fn test_isolated_write_buffer_compression() -> Result<()> {
                     value: format!("This is a test vector with repeated data for compression testing - vector number {}", i),
                 },
             ],
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
             ..Default::default()
         }
     }).collect::<Vec<_>>();

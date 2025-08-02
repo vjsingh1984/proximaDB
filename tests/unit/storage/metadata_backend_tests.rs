@@ -71,8 +71,7 @@ async fn test_single_metadata_backend_instance() {
     };
     
     // Create SharedServices which creates the single metadata backend
-    let shared_services = SharedServices::new(
-        storage_engine.clone(),
+    let (shared_services, collection_service) = SharedServices::new(
         None,
         &storage_config,
     )
@@ -105,8 +104,7 @@ async fn test_single_metadata_backend_instance() {
         owner: Some("test_user".to_string()),
     };
     
-    let result = shared_services
-        .collection_service
+    let result = collection_service
         .create_collection(&collection_config)
         .await
         .unwrap();

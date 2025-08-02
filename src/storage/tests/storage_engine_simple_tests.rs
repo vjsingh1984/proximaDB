@@ -22,11 +22,10 @@ fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
                 value: Some(metadata_item::Value::StringValue("test_value".to_string())),
             }
         ],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
+        timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -231,7 +230,7 @@ async fn test_create_test_vector_function() {
     assert_eq!(vector.id, Some("test_id".to_string()));
     assert_eq!(vector.vector, vec![1.0, 2.0, 3.0]);
     assert_eq!(vector.metadata.len(), 1);
-    assert_eq!(vector.version, 1);
+    assert_eq!(vector.version, Some(1));
 }
 
 #[tokio::test]

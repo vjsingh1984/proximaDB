@@ -55,11 +55,10 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> Pr
         id: if avro_record.id.is_empty() { None } else { Some(avro_record.id.clone()) },
         vector: avro_record.vector.clone(),
         metadata,
-        timestamp: avro_record.timestamp,
-        created_at: avro_record.timestamp,
-        updated_at: avro_record.timestamp,
-        expires_at: avro_record.expires_at,
-        version: avro_record.version,
+        timestamp: (avro_record.timestamp / 1_000_000) as u32, // Convert microseconds to seconds
+        updated_at: avro_record.updated_at.map(|v| (v / 1_000_000) as u32),
+        expires_at: avro_record.expires_at.map(|v| (v / 1_000_000) as u32),
+        version: avro_record.version.map(|v| v as u32),
         rank: None,
         score: None,
         distance: None,
@@ -76,11 +75,10 @@ pub fn proto_to_avro(proto_record: &ProtoVectorRecord, collection_id: &str) -> A
         collection_id: collection_id.to_string(),
         vector: proto_record.vector.clone(),
         metadata,
-        timestamp: proto_record.timestamp,
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
-        expires_at: proto_record.expires_at,
-        version: proto_record.version,
+        timestamp: (proto_record.timestamp as i64) * 1_000_000, // Convert seconds to microseconds
+        updated_at: Some(proto_record.updated_at.map(|v| (v as i64) * 1_000_000).unwrap_or_else(|| chrono::Utc::now().timestamp_micros())),
+        expires_at: proto_record.expires_at.map(|v| (v as i64) * 1_000_000),
+        version: Some(proto_record.version.map(|v| v as i64).unwrap_or(1)),
         rank: None,
         score: None,
         distance: None,
@@ -115,10 +113,9 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata,
             timestamp: 1640995200000000, // 2022-01-01 00:00:00 UTC in microseconds
-            created_at: 1640995200000,   // 2022-01-01 00:00:00 UTC in milliseconds
-            updated_at: 1640995200000,
+            updated_at: Some(1640995200000000),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -128,8 +125,8 @@ mod tests {
 
         assert_eq!(proto_record.id, Some("test-vector-1".to_string()));
         assert_eq!(proto_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(proto_record.timestamp, 1640995200000000);
-        assert_eq!(proto_record.version, 1);
+        assert_eq!(proto_record.timestamp, 1640995200); // Converted from microseconds to seconds
+        assert_eq!(proto_record.version, Some(1));
         assert_eq!(proto_record.metadata.len(), 3);
         
         // Check metadata items
@@ -161,11 +158,10 @@ mod tests {
             id: Some("test-vector-1".to_string()),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata,
-            timestamp: 1640995200000000,
-            created_at: 1640995200000,
-            updated_at: 1640995200000,
+            timestamp: 1640995200, // Converted from microseconds to seconds
+            updated_at: Some(1640995200),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -177,7 +173,7 @@ mod tests {
         assert_eq!(avro_record.collection_id, "test-collection");
         assert_eq!(avro_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
         assert_eq!(avro_record.timestamp, 1640995200000000);
-        assert_eq!(avro_record.version, 1);
+        assert_eq!(avro_record.version, Some(1));
         assert_eq!(avro_record.metadata.len(), 2);
         assert!(avro_record.metadata.contains_key("category"));
         assert!(avro_record.metadata.contains_key("score"));

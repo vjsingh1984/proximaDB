@@ -174,7 +174,7 @@ impl UnifiedSearchOrchestrator {
                 Some(&self.quantization_engine),
             ).await?;
             
-            all_results.extend(engine_results.results);
+            all_results.extend(engine_results.results.iter().cloned());
             total_processing_time += engine_results.processing_time_us;
         }
         
@@ -184,7 +184,7 @@ impl UnifiedSearchOrchestrator {
         // 5. Return unified result set
         let total_count = all_results.len() as u64;
         Ok(SearchResultSet {
-            results: all_results,
+            results: all_results.into(),
             total_count,
             query_id: params.custom_hints.as_ref()
                 .and_then(|h| h.get("query_id"))
@@ -307,7 +307,7 @@ impl UnifiedSearchOrchestrator {
         
         // Assign final ranks
         for (i, result) in results.iter_mut().enumerate() {
-            result.rank = Some((i + 1) as i32);
+            result.rank = Some((i + 1) as u16);
         }
         
         Ok(())

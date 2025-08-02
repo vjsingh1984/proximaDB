@@ -143,7 +143,6 @@ pub struct CacheStats {
 
 /// Collection context for search
 pub struct CollectionContext {
-    pub collection_id: String,
     pub file_path: String,
     pub sstable_files: Vec<String>,
     pub total_vectors: usize,
@@ -171,7 +170,7 @@ impl UnifiedSstableReader {
         params: &SearchParams,
         collection_context: &CollectionContext,
     ) -> Result<Vec<SearchResult>> {
-        debug!("🔍 LSM Unified Search: {} files, k={}", 
+        println!("🔍 SSTABLE READER: Starting search with {} files, k={}", 
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
         
@@ -191,7 +190,7 @@ impl UnifiedSstableReader {
         
         // 2. Apply strategy to read relevant blocks
         let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
-        debug!("📦 Loaded {} data blocks total from all files", relevant_blocks.len());
+        println!("📦 SSTABLE READER: Loaded {} data blocks total from all files", relevant_blocks.len());
         
         // Debug: print some sample records from blocks
         for (i, block) in relevant_blocks.iter().take(2).enumerate() {
@@ -202,7 +201,7 @@ impl UnifiedSstableReader {
         }
         
         // 3. Perform vector search on loaded data
-        let results = self.search_in_blocks(params, &relevant_blocks, &collection_context.collection_id).await?;
+        let results = self.search_in_blocks(params, &relevant_blocks).await?;
         debug!("🎯 Found {} search results after filtering and scoring", results.len());
         
         // Debug: print sample results
@@ -247,7 +246,6 @@ impl UnifiedSstableReader {
         &self,
         params: &SearchParams,
         blocks: &[DataBlock],
-        collection_id: &str,
     ) -> Result<Vec<SearchResult>> {
         let query_vector = params.first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
@@ -282,14 +280,16 @@ impl UnifiedSstableReader {
                 // Apply metadata filters
                 if let Some(filter_expr) = &params.filter_expression {
                     debug!("  🔍 Checking filter for record: id={}, metadata={:?}", record.id, record.metadata);
-                    if !self.evaluate_filter(filter_expr, &record.metadata) {
+                    // Convert MetadataItem to JSON for filter evaluation (needed for expressions)
+                    let metadata_json = self.metadata_items_to_json(&record.metadata);
+                    if !self.evaluate_filter(filter_expr, &metadata_json) {
                         filtered_out += 1;
                         // Debug first few filtered records
                         if filtered_out <= 5 {
                             debug!("  ❌ Filtered out record: id={}, metadata={:?}", record.id, record.metadata);
                             // Debug the filter evaluation
                             if let FilterExpression::Comparison { field, operator: _, value } = filter_expr {
-                                if let Some(field_val) = record.metadata.get(field) {
+                                if let Some(field_val) = metadata_json.get(field) {
                                     debug!("    📊 Filter comparison: field_val={:?} vs filter_value={:?} (equal={})", 
                                              field_val, value, field_val == value);
                                     // Try numeric comparison
@@ -317,15 +317,16 @@ impl UnifiedSstableReader {
                     distance: Some(similarity.raw_value),
                     rank: None,
                     vector: Some(record.vector.clone()),
-                    vector_id: None,
-                    metadata: record.metadata.clone(),
+                    vector_id: Some(record.id.clone()),
+                    metadata: self.metadata_items_to_json(&record.metadata),
                     debug_info: None,
                     semantic_distance: Some(similarity),
-                    collection_id: None,
                     created_at: None,
                     engine_stats: None,
                     quantization_info: None,
                     index_path: None,
+                    version: record.version,
+                    timestamp: Some(record.updated_at.unwrap_or(record.timestamp)),
                 });
             }
             
@@ -338,26 +339,32 @@ impl UnifiedSstableReader {
               total_records, tombstones, filtered_out, scored_results.len());
         
         // Apply diversity-aware selection: group by ID, take best from each group, then sort
-        let mut id_groups: std::collections::HashMap<String, Vec<SearchResult>> = 
-            std::collections::HashMap::new();
+        // Use BTreeMap for better cache locality and pre-allocate capacity
+        let mut id_groups: std::collections::BTreeMap<String, Vec<SearchResult>> = 
+            std::collections::BTreeMap::new();
         
         // Group results by ID
         for result in scored_results {
-            id_groups.entry(result.id.clone()).or_default().push(result);
+            id_groups.entry(result.id.clone()).or_insert_with(Vec::new).push(result);
         }
         
-        // Select best representative from each ID group
-        let mut diverse_results = Vec::new();
+        // Select best representative from each ID group - pre-allocate capacity
+        let mut diverse_results = Vec::with_capacity(id_groups.len());
         for (_id, mut group) in id_groups {
-            // Sort group by score and take the best one
-            group.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            if let Some(best) = group.into_iter().next() {
-                diverse_results.push(best);
+            if group.len() == 1 {
+                // Optimization: if only one result, skip sorting
+                diverse_results.push(group.into_iter().next().unwrap());
+            } else {
+                // Sort group by score and take the best one
+                group.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+                if let Some(best) = group.into_iter().next() {
+                    diverse_results.push(best);
+                }
             }
         }
         
-        // Sort diverse results by score and take top k
-        diverse_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Sort diverse results by score and take top k - use unstable sort for performance
+        diverse_results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         diverse_results.truncate(k);
         
         debug!("🔍 Diversity-aware selection: {} unique IDs from {} candidates", 
@@ -529,7 +536,6 @@ impl UnifiedSstableReader {
                 debug!("    📄 Loading block {} from file {}", block_idx, file_path);
                 // Create a temporary context for this specific file
                 let file_context = CollectionContext {
-                    collection_id: context.collection_id.clone(),
                     file_path: file_path.clone(),
                     sstable_files: vec![file_path.clone()],
                     total_vectors: context.total_vectors,
@@ -834,7 +840,6 @@ impl UnifiedSstableReader {
 
         // Create minimal context for the operation
         let context = CollectionContext {
-            collection_id: "temp".to_string(),
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
             total_vectors: 0,
@@ -857,17 +862,17 @@ impl UnifiedSstableReader {
             for record in block.records {
                 if record.id == vector_id {
                     // Convert HashMap metadata to Vec<MetadataItem>
-                    let metadata_items = crate::core::proto_metadata_helper::json_metadata_to_proto(&record.metadata);
+                    // Already have metadata items, just clone them
+                    let metadata_items = record.metadata.clone();
                     
                     return Ok(Some(VectorRecord {
                         id: Some(record.id),
                         vector: record.vector,
                         metadata: metadata_items,
                         timestamp: record.timestamp,
-                        created_at: record.created_at,
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
-                        version: record.version,
+                        version: record.version.map(|v| v as u32),
                         distance: None,
                         score: None,
                         rank: None,
@@ -1024,7 +1029,6 @@ impl UnifiedSstableReader {
         // Load all blocks using cache
         let mut blocks = Vec::new();
         let context = CollectionContext {
-            collection_id: "temp".to_string(),
             file_path: path.to_string(),
             sstable_files: vec![path.to_string()],
             total_vectors: 0,
@@ -1087,10 +1091,19 @@ impl UnifiedSstableReader {
         let mut blocks = Vec::new();
         debug!("Starting to read data blocks at offset {}", offset);
         debug!("Total file size: {}, remaining data: {}", data.len(), data.len() - offset);
-        debug!("Index said {} entries, header said {} blocks", index.entries.len(), 
-            if let Ok(header) = bincode::deserialize::<SstableHeader>(&data[4..4+header_len]) {
-                header.block_count
-            } else { 0 });
+        
+        // Decode header to get block count
+        let header: SstableHeader = bincode::deserialize(&data[4..4+header_len])
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize header for block count: {}", e))?;
+        debug!("Header info: {} blocks expected, {} index entries", header.block_count, index.entries.len());
+        
+        // Verify we have data blocks section
+        if offset >= data.len() {
+            warn!("No data blocks section found! File ends at index section.");
+            warn!("File structure: header_len={}, bloom_len={}, index_len={}, total_size={}", 
+                  header_len, bloom_len, index_len, data.len());
+            return Ok(blocks); // Return empty blocks
+        }
         
         while offset + 4 <= data.len() {
             let block_len = u32::from_le_bytes([
@@ -1107,13 +1120,45 @@ impl UnifiedSstableReader {
             }
             
             let block_data = &data[offset..offset + block_len];
+            
+            // Debug: Check if block data starts with expected magic header
+            if block_data.len() >= 4 {
+                let magic = &block_data[0..4];
+                debug!("Block magic header: {:?} (expecting b\"BLK1\")", 
+                       std::str::from_utf8(magic).unwrap_or("invalid"));
+            }
+            
             match DataBlock::deserialize(block_data) {
                 Ok(block) => {
                     debug!("Successfully deserialized block with {} records", block.records.len());
+                    // Debug: Print sample record info
+                    for (i, record) in block.records.iter().take(2).enumerate() {
+                        debug!("  Sample record {}: id={}, vector_len={}, metadata_keys={:?}", 
+                               i, record.id, record.vector.len(), 
+                               record.metadata.iter().map(|item| &item.key).collect::<Vec<_>>());
+                    }
                     blocks.push(block);
                 }
                 Err(e) => {
-                    warn!("Failed to deserialize block: {:?}", e);
+                    warn!("Failed to deserialize block at offset {}: {:?}", offset - 4, e);
+                    // Debug: Print first few bytes of the problematic block
+                    let preview_len = std::cmp::min(block_data.len(), 32);
+                    warn!("Block data preview (first {} bytes): {:?}", preview_len, &block_data[..preview_len]);
+                    
+                    // Try to understand what's in the block
+                    if block_data.len() >= 4 {
+                        let magic = &block_data[0..4];
+                        warn!("Found magic: {:?}, expected: {:?}", magic, b"BLK1");
+                        
+                        
+                        // Check if it might be bincode or JSON
+                        if let Ok(s) = std::str::from_utf8(&block_data[..std::cmp::min(block_data.len(), 100)]) {
+                            warn!("Block as string (first 100 chars): {}", s);
+                        }
+                    }
+                    
+                    // Continue processing other blocks even if one fails
+                    warn!("Skipping corrupted block at offset {}", offset - 4);
                 }
             }
             offset += block_len;
@@ -1138,6 +1183,26 @@ impl UnifiedSstableReader {
     fn evaluate_filter(&self, expr: &FilterExpression, metadata: &HashMap<String, serde_json::Value>) -> bool {
         // Use centralized filter evaluation from search module
         crate::core::search::json_comparison::evaluate_filter(expr, metadata)
+    }
+    
+    /// Convert MetadataItem vector to JSON HashMap for filter evaluation
+    fn metadata_items_to_json(&self, items: &[crate::proto::proximadb::MetadataItem]) -> HashMap<String, serde_json::Value> {
+        let mut map = HashMap::new();
+        for item in items {
+            let value = match &item.value {
+                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                    serde_json::Value::String(s.clone()),
+                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                    serde_json::Number::from_f64(*n)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
+                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                    serde_json::Value::Bool(*b),
+                None => serde_json::Value::Null,
+            };
+            map.insert(item.key.clone(), value);
+        }
+        map
     }
     
     /// Compare metadata values for ordering

@@ -1,0 +1,51 @@
+# ProximaDB Configuration for Local Testing
+
+[server]
+host = "0.0.0.0"
+port = 5678
+data_dir = "./data"
+
+[grpc]
+host = "0.0.0.0"
+port = 5679
+
+[storage]
+# Single metadata URL
+metadata_url = "file://./metadata"
+
+# Storage locations for local testing
+[[storage.storage_locations]]
+url = "file://./data"
+weight = 1
+tags = ["local", "test"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+# Memory and performance settings
+mmap_enabled = true
+cache_size_mb = 256
+bloom_filter_bits = 10
+
+[storage.sst_config]
+memtable_size_mb = 1024  # 1GB to reduce small file creation
+memory_flush_size_bytes = 16777216  # 16MB to reduce small file creation
+compression = "snappy"
+compaction_threshold = 5  # Minimum 5 files before compaction
+write_buffer_size_mb = 8192  # 8GB for global write buffer
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = false
+cleanup_temp_on_startup = true
+
+[logging]
+level = "info"
+file_path = "./logs/proximadb.log"
+max_files = 5

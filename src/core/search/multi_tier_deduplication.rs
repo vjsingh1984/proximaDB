@@ -229,14 +229,14 @@ impl MultiTierDeduplicator {
                         tracing::debug!(
                             "🔄 Dedup: Replacing vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}) with {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis(),
-                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
+                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version.unwrap_or(0), existing.timestamp.timestamp_millis(),
+                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis()
                         );
                     } else {
                         tracing::debug!(
                             "✅ Dedup: Adding new vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis()
+                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis()
                         );
                     }
                     self.id_to_latest.insert(vector_id.clone(), result);
@@ -245,8 +245,8 @@ impl MultiTierDeduplicator {
                         tracing::debug!(
                             "🚫 Dedup: Skipping older vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}), keeping {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            result.tier, result.engine, result.sequence, result.vector_record.version, result.timestamp.timestamp_millis(),
-                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version, existing.timestamp.timestamp_millis()
+                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis(),
+                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version.unwrap_or(0), existing.timestamp.timestamp_millis()
                         );
                     }
                 }
@@ -325,11 +325,10 @@ mod tests {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],
-                timestamp: now.timestamp_millis(),
-                created_at: now.timestamp_millis(),
-                updated_at: now.timestamp_millis(),
+                timestamp: now.timestamp() as u32,
+                updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -348,11 +347,10 @@ mod tests {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],
                 metadata: vec![],
-                timestamp: now.timestamp_millis(),
-                created_at: now.timestamp_millis(),
-                updated_at: now.timestamp_millis(),
+                timestamp: now.timestamp() as u32,
+                updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
-                version: 2,
+                version: Some(2),
                 rank: None,
                 score: None,
                 distance: None,
@@ -371,11 +369,10 @@ mod tests {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.2, 2.2, 3.2],
                 metadata: vec![],
-                timestamp: now.timestamp_millis(),
-                created_at: now.timestamp_millis(),
-                updated_at: now.timestamp_millis(),
+                timestamp: now.timestamp() as u32,
+                updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
-                version: 3,
+                version: Some(3),
                 rank: None,
                 score: None,
                 distance: None,
@@ -396,7 +393,7 @@ mod tests {
         
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].tier, StorageTier::Unflushed);
-        assert_eq!(final_results[0].vector_record.version, 3);
+        assert_eq!(final_results[0].vector_record.version, Some(3));
         assert_eq!(final_results[0].score, 0.3);
     }
 
@@ -411,11 +408,10 @@ mod tests {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],
-                timestamp: now.timestamp_millis(),
-                created_at: now.timestamp_millis(),
-                updated_at: now.timestamp_millis(),
+                timestamp: now.timestamp() as u32,
+                updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -433,11 +429,10 @@ mod tests {
                 id: Some("vector_1".to_string()),
                 vector: vec![1.1, 2.1, 3.1],
                 metadata: vec![],
-                timestamp: now.timestamp_millis(),
-                created_at: now.timestamp_millis(),
-                updated_at: now.timestamp_millis(),
+                timestamp: now.timestamp() as u32,
+                updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
-                version: 2, // Higher version
+                version: Some(2), // Higher version
                 rank: None,
                 score: None,
                 distance: None,
@@ -457,7 +452,7 @@ mod tests {
         let final_results = deduplicator.get_final_results(10);
         
         assert_eq!(final_results.len(), 1);
-        assert_eq!(final_results[0].vector_record.version, 2); // v2 should win
+        assert_eq!(final_results[0].vector_record.version, Some(2)); // v2 should win
         assert_eq!(final_results[0].score, 0.4);
     }
 }

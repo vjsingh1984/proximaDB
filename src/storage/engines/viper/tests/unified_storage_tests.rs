@@ -12,7 +12,7 @@ use tokio;
 
 use crate::core::VectorRecord;
 use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
-use crate::storage::engines::viper::{ViperEngine, types::ViperConfig};
+use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
 
@@ -27,8 +27,7 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     };
 
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let config = ViperConfig::default();
-    let viper_engine = ViperEngine::new(config, filesystem).await?;
+    let viper_engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem).await?;
 
     Ok((viper_engine, temp_dir))
 }
@@ -51,11 +50,10 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                         value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
                     },
                 ],
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                timestamp: now as u32,
+                updated_at: Some(now as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: Some(1.0 - (i as f32 * 0.1)),
                 distance: Some(i as f32 * 0.1),

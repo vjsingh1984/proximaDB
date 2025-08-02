@@ -13,55 +13,68 @@ sequenceDiagram
     participant Cloud as ☁️ Cloud Storage
     
     %% Vector Insert Flow
-    Note over Client,Cloud: Vector Insert Operation (49K ops/sec)
+    Note over Client,Cloud: Vector Insert Operation (Test Status: 1,372 passed, 0 failed, 35 ignored)
     
-    Client->>+REST: POST /vectors<br/>📦 JSON Batch (500 vectors)
-    REST->>+Handler: handle_vector_batch()<br/>🔄 JSON → Proto
-    Handler->>+DVS: insert_vectors()<br/>⚡ Direct Access
-    DVS->>+Engine: route_to_engine()<br/>🎯 Collection-based Routing
+    Client->>+REST: POST /collections/{id}/vectors<br/>📦 JSON Batch (500 vectors)
+    REST->>+Handler: insert_vectors_unified()<br/>🔄 JSON → Proto
+    Handler->>+DVS: insert_vectors_direct()<br/>⚡ Direct Memtable Access
     
-    alt VIPER Engine Selected
-        Engine->>+VIPER: insert_batch()<br/>🏗️ Columnar Storage
+    Note over DVS: 🔧 Engine Routing Decision<br/>Collection Service Available?
+    
+    alt Collection Service Configured
+        DVS->>+CS: get_collection_storage_engine(collection_id)
+        CS-->>-DVS: "SST" | "VIPER" | Error
+    else No Collection Service (Current Issue)
+        Note over DVS: ⚠️ Defaults to VIPER<br/>(Known routing limitation)
+    end
+    
+    alt VIPER Engine (Default)
+        DVS->>+VIPER: do_flush()<br/>🏗️ Columnar Storage
         VIPER->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
-        Atomic->>+Cloud: write_to_staging()<br/>💾 Staged Write
+        Atomic->>+Cloud: write_to_staging()<br/>💾 Creates .parquet files
         Cloud-->>-Atomic: ✅ Write Confirmed
         Atomic-->>-VIPER: ✅ Transaction ID
-        VIPER-->>-Engine: ✅ Insert Complete
-    else SST Engine Selected  
-        Engine->>+SST: insert_batch()<br/>🧱 Row-based Storage
+        VIPER-->>-DVS: ✅ Insert Complete
+    else SST Engine (If Configured)  
+        DVS->>+SST: do_flush()<br/>🧱 Row-based Storage
         SST->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
-        Atomic->>+Cloud: write_sstables()<br/>💾 SSTable Write
+        Atomic->>+Cloud: write_sstables()<br/>💾 Creates .sst files
         Cloud-->>-Atomic: ✅ Write Confirmed
         Atomic-->>-SST: ✅ Transaction ID
-        SST-->>-Engine: ✅ Insert Complete
+        SST-->>-DVS: ✅ Insert Complete
     end
     
-    Engine-->>-DVS: ✅ Batch Inserted
-    DVS-->>-Handler: ✅ Operation Result
+    DVS-->>-Handler: ✅ Batch Inserted
     Handler-->>-REST: ✅ Proto → JSON Response
-    REST-->>-Client: 📊 Insert Stats<br/>⏱️ <5ms Response Time
+    REST-->>-Client: 📊 Insert Stats<br/>⏱️ 10-49K vectors/sec
     
     %% Vector Search Flow
-    Note over Client,Cloud: Vector Search Operation (48 QPS)
+    Note over Client,Cloud: Vector Search with Metadata Filtering (Known Issues)
     
-    Client->>+gRPC: SearchVectors()<br/>⚡ Binary Proto Query
-    gRPC->>+Handler: handle_vector_search()<br/>🔄 Direct Proto
-    Handler->>+DVS: search_vectors()<br/>🎯 Query Optimization
-    DVS->>+Engine: multi_engine_search()<br/>🔍 Parallel Search
+    Client->>+gRPC: SearchVectors()<br/>⚡ Query + metadata filter
+    gRPC->>+Handler: search_vectors_unified()<br/>🔄 Direct Proto
+    Handler->>+DVS: search_vectors()<br/>🎯 Dual Engine Search
+    
+    Note over DVS: 🔍 Parallel Search Strategy<br/>Both engines searched simultaneously
     
     par VIPER Search
-        Engine->>+VIPER: vector_search()<br/>🏗️ Columnar Scan
-        VIPER-->>-Engine: 📊 VIPER Results
+        DVS->>+VIPER: search_vectors_unified()<br/>🏗️ Reads .parquet files
+        VIPER->>VIPER: ❌ Metadata filter bug<br/>(Returns 0 results)
+        VIPER-->>-DVS: 📊 Empty Results (Issue)
     and SST Search
-        Engine->>+SST: range_search()<br/>🧱 Row-based Scan  
-        SST-->>-Engine: 📊 SST Results
+        DVS->>+SST: search_vectors_unified()<br/>🧱 Looks for .sst files
+        SST->>SST: ❌ File pattern mismatch<br/>(No .sst files found)
+        SST-->>-DVS: 📊 Empty Results (Issue)
     end
     
-    Engine->>Engine: merge_and_rank()<br/>📊 Score Normalization
-    Engine-->>-DVS: 🎯 Top-K Results
-    DVS-->>-Handler: ✅ Search Complete
+    DVS->>DVS: merge_and_deduplicate()<br/>📊 MVCC Resolution
+    DVS-->>-Handler: ❌ Empty Results (0 matches)
     Handler-->>-gRPC: ⚡ Direct Proto Response
-    gRPC-->>-Client: 🔍 Search Results<br/>⏱️ <10ms p95
+    gRPC-->>-Client: 🔍 No Results<br/>⚠️ Expected matches but got 0
+    
+    rect rgb(255, 230, 230)
+        Note over VIPER, SST: ❌ Critical Issues<br/>• VIPER metadata filters return 0 results<br/>• SST engine expects .sst but gets .parquet<br/>• SQL AND/OR operators not implemented<br/>• Collection service routing broken
+    end
     
     %% Collection Management Flow
     Note over Client,Cloud: Collection Operations

@@ -12,14 +12,14 @@ use tempfile::TempDir;
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
-use crate::storage::engines::viper::{ViperEngine, ViperConfig};
+use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use crate::compute::distance::DistanceMetric;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Create test configuration
-fn create_test_config(_base_path: &str) -> ViperConfig {
-    let mut config = ViperConfig::default();
+fn create_test_config(_base_path: &str) -> ViperEngineConfig {
+    let mut config = ViperEngineConfig::default();
     config.enable_ml_clustering = false;
     config.flush_size_bytes = Some(1024 * 1024); // 1MB flush size
     config
@@ -66,11 +66,10 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(chrono::Utc::now().timestamp().to_string())),
             },
         ],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
+        timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: Some(value),
         distance: None,
@@ -83,7 +82,7 @@ async fn test_viper_engine_creation() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     
-    let engine = ViperEngine::new(config.clone(), filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create VIPER engine");
     
     assert_eq!(engine.engine_name(), "VIPER");
@@ -95,7 +94,7 @@ async fn test_single_vector_operations() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "test_collection";
@@ -155,7 +154,7 @@ async fn test_batch_insertion_and_flush() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "batch_test";
@@ -197,7 +196,7 @@ async fn test_similarity_search() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "search_test";
@@ -259,7 +258,7 @@ async fn test_collection_operations() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "ops_test";
@@ -298,7 +297,7 @@ async fn test_compaction() {
     // Compaction threshold is handled internally
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "compaction_test";
@@ -358,7 +357,7 @@ async fn test_multi_collection_isolation() {
     let config = create_test_config(base_path);
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collections = vec!["col_a", "col_b", "col_c"];
@@ -434,7 +433,7 @@ async fn test_persistence_across_restarts() {
     // First engine instance - insert and flush data
     {
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let engine = ViperEngine::new(config.clone(), filesystem_factory).await.unwrap();
+        let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await.unwrap();
         
         // VIPER is columnar storage - vectors go directly to flush
         
@@ -464,7 +463,7 @@ async fn test_persistence_across_restarts() {
     // Second engine instance - verify data persisted
     {
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let engine = ViperEngine::new(config, filesystem_factory).await.unwrap();
+        let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await.unwrap();
         
         // Search for persisted vectors
         let results = engine.search_vectors(
@@ -482,7 +481,7 @@ async fn test_search_vectors_unified() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "unified_search_test";
@@ -768,7 +767,7 @@ async fn test_concurrent_operations() {
     let engine = Arc::new(
         {
             let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-            ViperEngine::new(config, filesystem_factory).await
+            ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         }
             .expect("Failed to create engine")
     );

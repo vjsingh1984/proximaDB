@@ -11,9 +11,9 @@ use proximadb::storage::engines::sst::SstRecord;
 #[tokio::test]
 async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     // Create test data with controlled timestamps
-    let current_time = Utc::now().timestamp_millis();
-    let expired_time = current_time - (5 * 60 * 60 * 1000); // 5 hours ago
-    let future_time = current_time + (5 * 60 * 60 * 1000); // 5 hours from now
+    let current_time = Utc::now().timestamp() as u32;
+    let expired_time = current_time - (5 * 60 * 60); // 5 hours ago
+    let future_time = current_time + (5 * 60 * 60); // 5 hours from now
     
     let test_records = vec![
         // Active record (no expiry)
@@ -21,12 +21,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: current_time,
-            created_at: current_time,
-            updated_at: current_time,
+            updated_at: Some(current_time),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 1,
             level: 0,
@@ -36,12 +35,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: expired_time,
-            created_at: expired_time,
-            updated_at: expired_time,
+            updated_at: Some(expired_time),
             expires_at: Some(expired_time),
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 2,
             level: 0,
@@ -51,12 +49,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             id: "future_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: current_time,
-            created_at: current_time,
-            updated_at: current_time,
+            updated_at: Some(current_time),
             expires_at: Some(future_time),
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 3,
             level: 0,
@@ -66,12 +63,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
             id: "old_tombstone".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: expired_time,
-            created_at: expired_time,
-            updated_at: expired_time,
+            updated_at: Some(expired_time),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: true,
             sequence_number: 4,
             level: 0,
@@ -168,9 +164,9 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
 #[tokio::test]
 async fn test_viper_expired_record_logic_unit() -> Result<()> {
     // This test mocks the VIPER expiry logic from compact_parquet_files
-    let current_time = Utc::now().timestamp_millis();
-    let expired_time = current_time - (2 * 60 * 60 * 1000); // 2 hours ago
-    let future_time = current_time + (2 * 60 * 60 * 1000); // 2 hours from now
+    let current_time = Utc::now().timestamp() as u32;
+    let expired_time = current_time - (2 * 60 * 60); // 2 hours ago
+    let future_time = current_time + (2 * 60 * 60); // 2 hours from now
     
     // Mock record data (simulating what would be in Parquet files)
     let mock_records = vec![

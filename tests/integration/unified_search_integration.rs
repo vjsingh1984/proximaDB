@@ -46,11 +46,10 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             id: Some(format!("vec_{}", i)),
             vector,
             metadata,
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             distance: None,
             rank: None,
             score: None,
@@ -237,9 +236,8 @@ async fn test_vector_record_structure() {
         assert_eq!(vector.vector.len(), 64);
         assert_eq!(vector.metadata.len(), 3);
         assert!(vector.timestamp > 0);
-        assert!(vector.created_at > 0);
-        assert!(vector.updated_at > 0);
-        assert_eq!(vector.version, 1);
+        assert!(vector.updated_at.unwrap_or(0) > 0);
+        assert_eq!(vector.version, Some(1));
         
         // Test metadata content - metadata is now Vec<MetadataItem>
         let category_item = vector.metadata.iter().find(|item| item.key == "category").unwrap();
@@ -293,8 +291,9 @@ async fn test_search_result_structure() {
         quantization_info: None,
         engine_stats: None,
         index_path: Some("test_index".to_string()),
-        collection_id: Some("test_collection".to_string()),
         created_at: Some(chrono::Utc::now()),
+        version: Some(1),
+        timestamp: Some(chrono::Utc::now().timestamp() as u32),
     };
     
     // Test all fields
@@ -305,7 +304,6 @@ async fn test_search_result_structure() {
     assert_eq!(search_result.rank, Some(1));
     assert_eq!(search_result.vector.as_ref().unwrap().len(), 3);
     assert_eq!(search_result.metadata.len(), 2);
-    assert_eq!(search_result.collection_id, Some("test_collection".to_string()));
     assert!(search_result.created_at.is_some());
     assert_eq!(search_result.index_path, Some("test_index".to_string()));
     

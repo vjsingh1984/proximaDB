@@ -56,10 +56,9 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
             },
         ],
         timestamp: 1234567890,
-        created_at: 1234567890,
-        updated_at: 1234567890,
+        updated_at: Some(1234567890),
         expires_at: Some(1234567890 + 86400), // 24 hours later
-        version: 1,
+        version: Some(1),
         rank: Some(1),
         score: Some(0.95),
         distance: None,

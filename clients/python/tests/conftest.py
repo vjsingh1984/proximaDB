@@ -89,7 +89,7 @@ def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
-    timestamp = int(time.time() * 1000)  # Millisecond precision
+    timestamp = int(time.time())  # Seconds (proto expects seconds, not milliseconds)
     test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
@@ -147,7 +147,7 @@ class TestCollectionManager:
                 dimension=128,
                 distance_metric=DistanceMetric.COSINE)
         
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time())  # Seconds (proto expects seconds)
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
         
         collection = self.client.create_collection(collection_name, config)

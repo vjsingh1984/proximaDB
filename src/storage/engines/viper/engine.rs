@@ -48,8 +48,11 @@ use super::types::CollectionMetadata;
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
 #[derive(Debug)]
 pub struct ViperEngine {
-    /// Configuration
-    config: ViperConfig,
+    /// Configuration (internal engine config)
+    config: ViperEngineConfig,
+    
+    /// User-facing core config (for passing to flush operations)
+    core_config: crate::core::config::ViperConfig,
     
     /// Collection service for metadata access
     collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
@@ -73,8 +76,14 @@ pub struct ViperEngine {
 }
 
 impl ViperEngine {
-    /// Create a new VIPER engine with the specified configuration
-    pub async fn new(config: ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    /// Create a new VIPER engine from user-facing core config
+    pub async fn from_core_config(core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+        let config = ViperEngineConfig::from_core_config(&core_config);
+        Self::new_internal(config, core_config, filesystem).await
+    }
+    
+    /// Internal constructor with both configs
+    async fn new_internal(config: ViperEngineConfig, core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
         
         // ML clustering moved to AXIS
@@ -92,6 +101,7 @@ impl ViperEngine {
         
         Ok(Self {
             config,
+            core_config,
             collection_service: collection_service.clone(),
             filesystem: filesystem.clone(),
             schema_manager: SchemaManager::new(),
@@ -144,7 +154,7 @@ impl ViperEngine {
         );
         
         // Delegate to the flush manager
-        self.flush_manager.flush_vectors(collection_id, vector_records, batch_ids, force, synchronous).await
+        self.flush_manager.flush_vectors(collection_id, vector_records, batch_ids, force, synchronous, &self.core_config).await
     }
     
     /// Direct flush vectors to storage during WAL recovery (bypasses normal flush pipeline)
@@ -379,11 +389,10 @@ impl ViperEngine {
                             id: Some(vector_id.to_string()),
                             vector,
                             metadata,
-                            timestamp,
-                            created_at,
-                            updated_at,
-                            expires_at,
-                            version,
+                            timestamp: timestamp as u32,
+                            updated_at: Some(updated_at as u32),
+                            expires_at: expires_at.map(|v| v as u32),
+                            version: Some(version as u32),
                             rank: None,
                             score: None,
                             distance: None,
@@ -453,8 +462,8 @@ impl ViperEngine {
     }
     
     /// Get engine configuration
-    pub fn get_config(&self) -> &ViperConfig {
-        &self.config
+    pub fn get_config(&self) -> &crate::core::config::ViperConfig {
+        &self.core_config
     }
     
     
@@ -622,7 +631,7 @@ impl Default for ViperEngine {
                         crate::storage::persistence::filesystem::FilesystemConfig::default()
                     ).await.unwrap()
                 );
-                Self::new(ViperConfig::default(), filesystem).await
+                Self::from_core_config(crate::core::config::ViperConfig::default(), filesystem).await
             })
             .unwrap()
     }
@@ -666,6 +675,7 @@ impl UnifiedStorageEngine for ViperEngine {
             &batch_id_strings,
             params.force,
             params.synchronous,
+            &self.core_config,
         ).await?;
         
         // Update engine statistics
@@ -870,7 +880,7 @@ impl UnifiedStorageEngine for ViperEngine {
         }
         
         // Apply include flags and return native search results
-        let mut results = result_set.results;
+        let mut results: Vec<crate::core::search::SearchResult> = result_set.results.iter().cloned().collect();
         
         if !include_vectors {
             for result in &mut results {

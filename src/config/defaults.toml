@@ -16,41 +16,35 @@ cache_size_mb = 512
 bloom_filter_bits = 10
 
 [storage.write_buffer_config]
-write_buffer_urls = ["file://./data/write_buffer"]
-distribution_strategy = "RoundRobin"
-collection_affinity = false
-memory_flush_size_bytes = 10485760  # 10MB
-global_flush_threshold = 1073741824  # 1GB
-global_shrink_factor = 0.5
-strategy_type = "Bincode"
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per collection (aggregate of all unflushed batches)
 memtable_type = "BTree"
 sync_mode = "PerBatch"
-batch_threshold = 100
-write_buffer_size_mb = 8
-concurrent_flushes = 2
+write_buffer_directory = "./data/write_buffer"
+enable_wal = true
 
 [storage.sst_config]
-memtable_size_mb = 32
-memory_flush_size_bytes = 33554432  # 32MB
-memtable_type = "BTree"
 level_count = 7
-compaction_threshold = 4
+compaction_threshold = 5  # Minimum 5 files before compaction
 compaction_strategy = "leveled"
 compression = "snappy"
 block_size_kb = 1024  # SSTable block size (KB). 1MB optimized for EC2 GP2/GP3. Range: 4KB-16MB. Backward compatible.
 cache_size_mb = 128
-write_buffer_size_mb = 32
 max_files_per_level = 10
 level_size_multiplier = 10.0
 max_levels = 7
 background_thread_count = 4
-sync_mode = "perbatch"
-enable_write_buffer = true
-write_buffer_directory = "./data/sst_write_buffer"
 data_directory = "./data/sst_data"
 mmap_enabled = true
 prefetch_enabled = true
 prefetch_size_kb = 64
+
+[storage.viper_config]
+row_group_size = 100000
+compression = "snappy"
+enable_statistics = true
+data_directory = "./data/viper_data"
+cache_size_mb = 512
 
 [storage.bloom_filter_config]
 bits_per_key = 10

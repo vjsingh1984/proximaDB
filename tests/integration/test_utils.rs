@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord};
+use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord, WriteBufferUserConfig};
 use proximadb::core::config::StorageLocation;
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
@@ -33,7 +33,8 @@ impl IsolatedTestEnvironment {
         let temp_dir = TempDir::new()?;
         
         // Create isolated assignment service (no global singleton)
-        let assignment_service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         // Create isolated filesystem
         let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -140,7 +141,7 @@ impl IsolatedTestEnvironment {
                         )),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
             }
         }).collect()
@@ -164,12 +165,6 @@ impl IsolatedTestEnvironment {
     /// Create test SST configuration optimized for testing
     fn create_test_sst_config() -> SstConfig {
         SstConfig {
-            // Memory settings - smaller for faster tests
-            memtable_size_mb: 8,
-            memory_flush_size_bytes: 512 * 1024, // 512KB
-            write_buffer_size_mb: 2,
-            cache_size_mb: 16,
-            
             // Level configuration - fewer levels for faster tests
             level_count: 3,
             max_levels: 3,
@@ -181,9 +176,10 @@ impl IsolatedTestEnvironment {
             block_size_kb: 8,
             
             // Storage type
-            memtable_type: "skiplist".to_string(),
             compaction_strategy: "leveled".to_string(),
             compression: "none".to_string(), // No compression for faster tests
+            compression_enabled: false,
+            compression_level: 0,
             
             // Bloom filter - enabled with conservative settings
             bloom_filter_config: Some(BloomFilterConfig {
@@ -192,21 +188,32 @@ impl IsolatedTestEnvironment {
                 ..Default::default()
             }),
             
+            // Cache
+            cache_size_mb: 16,
+            
             // Background operations
             background_thread_count: 1, // Single thread for deterministic testing
             
-            // Sync and persistence - immediate for testing
-            sync_mode: "immediate".to_string(),
-            enable_write_buffer: true,
-            
             // Directories - will be set by assignment service
-            write_buffer_directory: "/tmp/test_wb".to_string(), // Placeholder
             data_directory: "/tmp/test_data".to_string(), // Placeholder
             
             // Memory mapping - disabled for testing
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 0,
+        }
+    }
+    
+    /// Create test WriteBuffer configuration
+    fn create_test_write_buffer_config() -> WriteBufferUserConfig {
+        WriteBufferUserConfig {
+            write_buffer_size_mb: 2,
+            memory_flush_size_bytes: 512 * 1024, // 512KB
+            memtable_type: "BTree".to_string(),
+            sync_mode: "perbatch".to_string(),
+            write_buffer_directory: "/tmp/test_wb".to_string(), // Placeholder
+            enable_wal: true,
+            vector_count_threshold: 50,  // Small threshold for tests
         }
     }
 }

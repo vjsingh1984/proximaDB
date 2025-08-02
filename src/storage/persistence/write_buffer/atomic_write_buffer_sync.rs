@@ -211,6 +211,7 @@ impl AtomicWalSync {
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 1, // Cleanup WAL staging files quickly
+            ..Default::default()  // This will pick up skip_uuid_subdir: false
         };
 
         // Generate final WAL batch file name

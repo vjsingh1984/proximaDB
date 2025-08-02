@@ -291,8 +291,8 @@ mod tests {
         let mut ids = Vec::new();
         let mut collection_ids = Vec::new();
         let mut versions = Vec::new();
-        let mut updated_at_values = Vec::new();
-        let mut expires_at_values = Vec::new();
+        let mut updated_at_values: Vec<Option<i64>> = Vec::new();
+        let mut expires_at_values: Vec<i64> = Vec::new();
         
         // Build vector list array
         let mut vector_builder = ListBuilder::with_capacity(
@@ -315,9 +315,9 @@ mod tests {
         for record in &vectors {
             ids.push(record.id.clone().unwrap_or_default());
             collection_ids.push("test_collection".to_string());
-            versions.push(Some(record.version as i8));
-            updated_at_values.push(record.updated_at);
-            expires_at_values.push(record.expires_at.unwrap_or(0));
+            versions.push(record.version.map(|v| v as i8));
+            updated_at_values.push(record.updated_at.map(|v| v as i64));
+            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
             
             // Add vector data
             let values = vector_builder.values();
@@ -401,11 +401,10 @@ mod tests {
                         value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i as f32 * 0.5).to_string())),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: Some(i as f32),
                 distance: None,
@@ -599,11 +598,10 @@ mod tests {
             id: Some("debug_vec".to_string()),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

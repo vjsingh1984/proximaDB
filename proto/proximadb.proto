@@ -107,11 +107,10 @@ message VectorRecord {
   optional string id = 1;                    // Auto-generated if null
   repeated float vector = 2;                 // REQUIRED for inserts
   repeated MetadataItem metadata = 3;        // Efficient key-value metadata (no JSON parsing)
-  int64 timestamp = 4;                       // Milliseconds since epoch
-  int64 created_at = 5;                      // Creation timestamp (milliseconds)
-  int64 updated_at = 6;                      // Last update timestamp (milliseconds)
-  optional int64 expires_at = 7;             // TTL support
-  int64 version = 8;                         // For optimistic concurrency
+  uint32 timestamp = 4;                      // Record timestamp - seconds since epoch (compact, unsigned)
+  optional uint32 updated_at = 5;            // Only set if different from timestamp (saves bytes when not updated)
+  optional uint32 expires_at = 6;            // TTL support (seconds since epoch)
+  optional uint32 version = 7;               // For optimistic concurrency (optional to save bytes)
   
   // Search result fields (only populated in search responses)
   optional int32 rank = 9;                   // Search result rank (1-based)

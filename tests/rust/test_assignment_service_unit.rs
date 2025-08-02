@@ -6,14 +6,15 @@ mod assignment_service_tests {
     use tokio::fs;
     
     use crate::storage::assignment_service::{
-        RoundRobinAssignmentService, AssignmentService, StorageAssignmentConfig, 
+        HashBasedAssignmentService, AssignmentService, StorageAssignmentConfig, 
         StorageComponentType, AssignmentDiscovery
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
     
     #[tokio::test]
-    async fn test_round_robin_assignment() {
-        let service = Arc::new(RoundRobinAssignmentService::new());
+    async fn test_hash_based_assignment() {
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let config = StorageAssignmentConfig {
             storage_urls: vec![
@@ -25,7 +26,7 @@ mod assignment_service_tests {
             collection_affinity: false,
         };
         
-        // Test round-robin distribution
+        // Test hash-based distribution
         let collections = vec!["coll1", "coll2", "coll3", "coll4", "coll5"];
         let mut assignments = Vec::new();
         
@@ -43,7 +44,8 @@ mod assignment_service_tests {
     
     #[tokio::test]
     async fn test_collection_affinity_assignment() {
-        let service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let config = StorageAssignmentConfig {
             storage_urls: vec![
@@ -68,7 +70,8 @@ mod assignment_service_tests {
     
     #[tokio::test]
     async fn test_assignment_lifecycle() {
-        let service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let config = StorageAssignmentConfig {
             storage_urls: vec!["file:///tmp/test".to_string()],
@@ -117,7 +120,7 @@ mod assignment_service_tests {
         
         // Test discovery
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem.clone(), "round_robin"));
         
         let write_buffer_urls = vec![format!("file://{}", base_path)];
         let storage_urls = vec![format!("file://{}", base_path)];
@@ -177,7 +180,7 @@ mod assignment_service_tests {
         }
         
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem.clone(), "round_robin"));
         
         let urls = vec![format!("file://{}", base_path)];
         
@@ -207,7 +210,8 @@ mod assignment_service_tests {
     
     #[tokio::test]
     async fn test_assignment_stats() {
-        let service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let config = StorageAssignmentConfig {
             storage_urls: vec![

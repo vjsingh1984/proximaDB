@@ -19,7 +19,7 @@ use crate::core::search::{
 };
 use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext, FilterableColumnSpec};
+use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext};
 
 
 /// VIPER Unified Search Engine - implements search logic using UnifiedParquetReader for data access
@@ -134,17 +134,18 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         
         info!("✅ VIPER Search completed: {} results in {}μs", search_results.len(), processing_time);
         
-        Ok(SearchResultSet {
-            results: search_results.clone(),
-            total_count: search_results.len() as u64,
-            query_id: params.custom_hints.as_ref()
+        let result_count = search_results.len() as u64;
+        Ok(SearchResultSet::from_vec(
+            search_results,
+            result_count,
+            params.custom_hints.as_ref()
                 .and_then(|h| h.get("query_id"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            processing_time_us: processing_time,
-            algorithm: "VIPER-Direct".to_string(),
-            metadata: HashMap::new(),
-        })
+            processing_time,
+            "VIPER-Direct".to_string(),
+            HashMap::new(),
+        ))
     }
     
     async fn can_handle(&self, context: &UnifiedSearchContext, _params: &SearchParams) -> bool {
@@ -303,11 +304,30 @@ impl ViperUnifiedSearchEngine {
         file_paths: &[String],
     ) -> CollectionContext {
         let filterable_columns = context.filterable_columns.iter().map(|col| {
-            FilterableColumnSpec {
+            crate::proto::proximadb::FilterableColumnSpec {
                 name: col.name.clone(),
-                data_type: format!("{:?}", col.data_type),
-                is_indexed: col.is_indexed,
-                estimated_cardinality: col.estimated_cardinality,
+                data_type: match col.data_type {
+                    crate::core::search::unified_interface::ColumnDataType::String => 
+                        crate::proto::proximadb::FilterableDataType::FilterableString as i32,
+                    crate::core::search::unified_interface::ColumnDataType::Integer => 
+                        crate::proto::proximadb::FilterableDataType::FilterableInteger as i32,
+                    crate::core::search::unified_interface::ColumnDataType::Float => 
+                        crate::proto::proximadb::FilterableDataType::FilterableFloat as i32,
+                    crate::core::search::unified_interface::ColumnDataType::Boolean => 
+                        crate::proto::proximadb::FilterableDataType::FilterableBoolean as i32,
+                    crate::core::search::unified_interface::ColumnDataType::DateTime => 
+                        crate::proto::proximadb::FilterableDataType::FilterableDatetime as i32,
+                    crate::core::search::unified_interface::ColumnDataType::Json => 
+                        crate::proto::proximadb::FilterableDataType::FilterableString as i32, // Fallback
+                },
+                indexed: col.is_indexed,
+                supports_range: matches!(
+                    col.data_type,
+                    crate::core::search::unified_interface::ColumnDataType::Integer |
+                    crate::core::search::unified_interface::ColumnDataType::Float |
+                    crate::core::search::unified_interface::ColumnDataType::DateTime
+                ),
+                estimated_cardinality: col.estimated_cardinality.map(|c| c as i32),
             }
         }).collect();
         

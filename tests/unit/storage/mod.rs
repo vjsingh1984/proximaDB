@@ -45,3 +45,9 @@ pub mod test_threshold_triggers;
 
 // SST mmap tests
 // pub mod sst_mmap_tests;
+
+// MVCC resolution tests
+pub mod mvcc_resolution_tests;
+
+// Assignment service recovery tests
+pub mod assignment_service_recovery_test;

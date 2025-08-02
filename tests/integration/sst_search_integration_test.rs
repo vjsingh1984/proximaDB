@@ -16,7 +16,7 @@ use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBacke
 use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
 use proximadb::services::direct_vector_service::DirectVectorService;
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::viper::types::ViperConfig;
+// ViperConfig no longer needed - using core config
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::UnifiedStorageEngine;
@@ -47,12 +47,8 @@ fn create_test_write_buffer_config(base_path: &str) -> WriteBufferConfig {
 /// Helper to create test LSM configuration
 fn create_test_lsm_config(base_path: &str) -> SstConfig {
     SstConfig {
-        memtable_size_mb: 1,
-        memory_flush_size_bytes: 512 * 1024,  // 512KB flush threshold
         compaction_threshold: 2,              // Compact after 2 files
         data_directory: format!("{}/lsm", base_path),
-        write_buffer_directory: format!("{}/wal", base_path),
-        enable_write_buffer: true,
         bloom_filter_config: Some(proximadb::core::config::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
@@ -102,8 +98,10 @@ async fn test_lsm_search_with_flush() {
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
     // Create storage engines
-    let viper_config = ViperConfig::default();
-    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem.clone()).await.unwrap());
+    let viper_engine = Arc::new(ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem.clone()
+    ).await.unwrap());
     
     let lsm_config = create_test_lsm_config(base_path);
     
@@ -349,8 +347,10 @@ async fn test_lsm_compaction_and_search() {
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
-    let viper_config = ViperConfig::default();
-    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem.clone()).await.unwrap());
+    let viper_engine = Arc::new(ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem.clone()
+    ).await.unwrap());
     
     let lsm_config = create_test_lsm_config(base_path);
     
@@ -528,8 +528,10 @@ async fn test_lsm_bloom_filter_efficiency() {
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
-    let viper_config = ViperConfig::default();
-    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem.clone()).await.unwrap());
+    let viper_engine = Arc::new(ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem.clone()
+    ).await.unwrap());
     
     let lsm_config = create_test_lsm_config(base_path);
     // Reuse the same collection_id that was assigned storage

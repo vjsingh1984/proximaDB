@@ -25,14 +25,12 @@ async fn test_sstable_write_read_format() {
     let mut records = BTreeMap::new();
     let record = SstRecord {
         id: "test_vec".to_string(),
-        collection_id: "test_collection".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: 123456789,
-        created_at: 123456789,
-        updated_at: 123456789,
+        updated_at: Some(123456789),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         is_tombstone: false,
         sequence_number: 1,
         level: 0,
@@ -81,19 +79,21 @@ async fn test_sstable_format_inspection() {
     // Create records with metadata for bloom filter
     let mut records = BTreeMap::new();
     for i in 0..5 {
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), serde_json::Value::String(format!("cat_{}", i % 2)));
+        let metadata = vec![
+            proximadb::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 2))),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32; 3],
             metadata,
             timestamp: 123456789,
-            created_at: 123456789,
-            updated_at: 123456789,
+            updated_at: Some(123456789),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,

@@ -509,5 +509,183 @@ impl CircuitBreaker {
 }
 ----
 
+== Planned Optimizations and Features
+
+=== Storage Engine Optimizations (From OPTIMIZATION_PLAN.md)
+
+==== Status: Mostly Implemented
+
+[cols="3,2,2,3"]
+|===
+| Feature | Status | Impact | Notes
+
+| **Bytemuck Dependencies**
+| ✅ Completed
+| Foundation
+| Dependencies added to Cargo.toml
+
+| **Zero-Copy Serialization**
+| ✅ Implemented
+| 5-10x speedup
+| Full implementation in `/src/core/serialization/`
+
+| **ZSTD Compression**
+| ✅ Implemented
+| 30-50% size reduction
+| Working in both SST and VIPER engines
+
+| **Memory Pool Infrastructure**
+| 🚧 Planned
+| 40-60% allocation reduction
+| Design complete, awaiting implementation
+|===
+
+==== Completed Implementation Details
+
+**SST Engine Integration** ✅
+- Location: `/src/storage/engines/sst/mod.rs`
+- SstRecord now uses `serialize_with_config()` for optimized vector serialization
+- Bytemuck zero-copy serialization implemented for vectors
+- ZSTD compression integrated in DataBlock serialization
+- Adaptive compression based on vector sparsity analysis
+
+**VIPER Engine Integration** ✅
+- Location: `/src/storage/engines/viper/optimized_vector_writer.rs`
+- Full OptimizedVectorWriter implementation with BinaryArray support
+- ZSTD compression at Parquet level with configurable levels
+- Zero-copy vector extraction using bytemuck
+- Compression ratio tracking and optimization stats
+
+**Core Serialization Module** ✅
+- Location: `/src/core/serialization/mod.rs`
+- VectorSerializationConfig with adaptive compression
+- Support for multiple compression algorithms (ZSTD, LZ4)
+- Fixed-length vector optimizations in `fixed_length.rs`
+- Comprehensive test coverage for all serialization paths
+
+=== SQL Query Engine Enhancements (From P0_IMPLEMENTATION_PLAN.md)
+
+==== Implementation Status Update
+
+[cols="3,2,2,3"]
+|===
+| Feature | Priority | Status | Impact
+
+| **SQL AND/OR Operators**
+| P0
+| ✅ Implemented
+| Complex queries now work
+
+| **Comparison Operators (<, >, <=, >=, !=)**
+| P0
+| ✅ Implemented
+| All comparison operators functional
+
+| **NOT Operator**
+| P0
+| ✅ Implemented
+| Negation queries supported
+
+| **BETWEEN Operator**
+| P1
+| ✅ Implemented
+| Range queries work
+
+| **IN Operator**
+| P1
+| ✅ Implemented
+| Set membership queries work
+
+| **LIKE Operator**
+| P1
+| ❌ Not Implemented
+| No pattern matching yet
+
+| **NULL Handling (IS NULL/IS NOT NULL)**
+| P2
+| ❌ Not Implemented
+| Cannot filter nulls yet
+|===
+
+==== Implementation Plan
+
+**Task 1: Extend SQL Planner**
+[source,rust]
+----
+// Location: /src/query/sql_engine/planner.rs
+fn convert_condition_to_filter(&self, condition: &Condition) -> Result<FilterExpression> {
+    match condition {
+        Condition::And(left, right) => {
+            Ok(FilterExpression::And(vec![
+                self.convert_condition_to_filter(left)?,
+                self.convert_condition_to_filter(right)?,
+            ]))
+        }
+        Condition::Or(left, right) => {
+            Ok(FilterExpression::Or(vec![
+                self.convert_condition_to_filter(left)?,
+                self.convert_condition_to_filter(right)?,
+            ]))
+        }
+        // Add support for other operators
+    }
+}
+----
+
+**Task 2: Add Comparison Operators**
+[source,rust]
+----
+// Add to parse_where_condition
+match operator {
+    BinaryOperator::Lt => FilterOperation::LessThan,
+    BinaryOperator::Gt => FilterOperation::GreaterThan,
+    BinaryOperator::LtEq => FilterOperation::LessThanOrEqual,
+    BinaryOperator::GtEq => FilterOperation::GreaterThanOrEqual,
+    BinaryOperator::NotEq => FilterOperation::NotEquals,
+    BinaryOperator::Like => FilterOperation::Contains, // Pattern matching
+}
+----
+
+=== Performance Optimizations (Planned)
+
+==== Memory Pool System
+- **Status**: Design complete, not implemented
+- **Target**: 40-60% reduction in allocations
+- **Components**:
+  - Serialization buffer pool
+  - Vector buffer pool
+  - Compression buffer pool
+
+==== Adaptive Compression
+- **Status**: Algorithm designed, not implemented
+- **Features**:
+  - Dimension-based threshold selection
+  - Sparsity analysis for compression choice
+  - Workload-aware strategy selection
+
+==== Query Plan Caching Enhancement
+- **Current**: Basic caching implemented
+- **Issue**: Minimal speedup (1.0x instead of 2-8x)
+- **Fix Needed**: Normalize queries before caching
+
+=== Testing Infrastructure (From test_error_fixes_summary.md)
+
+==== Completed Fixes
+- ✅ ViperConfig import errors fixed
+- ✅ SstConfig compression fields added
+- ✅ Proto Value enum variants corrected
+- ✅ Serialization module imports fixed
+- ✅ Timestamp type mismatches resolved
+- ✅ FilesystemFactory argument added
+
+==== Test Coverage Goals
+- Current: 52.18% overall coverage
+- Target: 60% coverage
+- Focus Areas:
+  - SQL query engine (currently low coverage)
+  - Metadata filtering logic
+  - MVCC implementation
+  - Storage engine optimizations
+
 ---
 _This appendix provides implementation patterns and code examples. For performance metrics and benchmarks, see link:appendix_performance_metrics.adoc[Appendix B: Performance Metrics]._

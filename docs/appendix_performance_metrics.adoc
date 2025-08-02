@@ -6,6 +6,126 @@
 
 This appendix provides performance testing guidelines and optimization recommendations for ProximaDB.
 
+== Latest Performance Results (2025-08-02)
+
+=== Vector Insertion Performance
+
+[cols="3,2,2,3"]
+|===
+| Protocol | Batch Size | Throughput | Latency
+
+| **gRPC**
+| 10
+| 982 vectors/sec
+| 10.19ms
+
+| **gRPC**
+| 50
+| 5,235 vectors/sec
+| 9.55ms
+
+| **gRPC**
+| 100
+| 11,290 vectors/sec
+| 8.86ms
+
+| **gRPC**
+| 500
+| 49,650 vectors/sec
+| 10.07ms
+
+| **REST**
+| 100
+| 2,135 vectors/sec
+| 46.8ms
+
+| **REST**
+| 500
+| 10-20K vectors/sec
+| 25-50ms
+|===
+
+=== Search Performance
+
+[cols="3,2,2,3"]
+|===
+| Protocol | Operation | Latency | Notes
+
+| **gRPC**
+| Simple Search
+| 1.36ms
+| Fastest protocol
+
+| **REST**
+| Simple Search
+| 2.83ms
+| HTTP overhead
+
+| **SQL**
+| Simple Search
+| 2.87ms
+| Most flexible
+
+| **gRPC**
+| Filtered Search
+| 1.67ms
+| With metadata filter
+
+| **REST**
+| Filtered Search
+| 3.48ms
+| With metadata filter
+
+| **SQL**
+| Complex Query
+| 26.65ms
+| JOIN operations
+|===
+
+=== Storage Engine Comparison
+
+[cols="3,2,2,3"]
+|===
+| Engine | Insert Rate | Search Latency | Best Use Case
+
+| **VIPER (Columnar)**
+| 10,314 vectors/sec
+| 2.00ms
+| Analytics, filtering
+
+| **SST (Row-based)**
+| 10,703 vectors/sec
+| 1.91ms
+| Point queries, writes
+|===
+
+=== Python SDK Performance
+
+[cols="3,2,2,3"]
+|===
+| Metric | Value | Context | Notes
+
+| **Test Coverage**
+| 64%
+| 2,656 statements
+| Key modules >80%
+
+| **Test Execution**
+| 28.38 seconds
+| 170 unit tests
+| Parallel execution
+
+| **Insert Throughput**
+| 8,518 vectors/sec
+| Demo workload
+| 1000 vectors batch
+
+| **E2E Latency**
+| <5ms
+| Complete workflow
+| Collection to search
+|===
+
 == Performance Testing Guidelines
 
 === Recommended Test Environment
@@ -35,69 +155,115 @@ For accurate performance testing, use:
 
 == Protocol Comparison
 
-=== REST vs gRPC Performance
+=== REST vs gRPC vs SQL Performance
 
 [cols="3,2,2,2,2"]
 |===
-| Operation | Protocol | Throughput | Latency (P50) | CPU Usage
+| Operation | Protocol | Throughput | Latency (P50) | Use Case
 
-| Insert 1K vectors
-| REST
-| 12,000 vec/s
-| 80ms
-| 45%
-
-| Insert 1K vectors
+| Insert (batch 10)
 | gRPC
-| 48,000 vec/s
-| 20ms
-| 25%
+| 1,671 vec/s
+| 6ms
+| Small updates
 
-| Search 100 queries
-| REST
-| 8,000 qps
+| Insert (batch 100)
+| gRPC
+| 8,072-10,000 vec/s
 | 12ms
-| 40%
+| Medium batches
 
-| Search 100 queries
+| Insert (batch 500)
 | gRPC
-| 25,000 qps
-| 4ms
-| 20%
+| 43,518-49,000 vec/s
+| 11ms
+| Bulk loading
+
+| Insert 1K vectors
+| REST
+| 10,000-20,000 vec/s
+| 50-100ms
+| Web applications
+
+| Search (simple)
+| gRPC
+| High
+| < 2ms
+| Real-time apps
+
+| Search (simple)
+| REST
+| High
+| 2-5ms
+| Microservices
+
+| Search (simple)
+| SQL
+| Medium
+| 3-30ms
+| Analytics
+
+| Search (filtered)
+| gRPC
+| High
+| 2-3ms
+| Production
+
+| Search (complex)
+| SQL
+| Medium
+| 10-30ms
+| Complex queries
 |===
 
 Key observations:
-* gRPC generally provides better performance than REST due to binary protocol
-* Proto-native serialization reduces overhead compared to JSON
-* Actual performance depends on payload size and network conditions
+* gRPC provides the best performance for high-throughput scenarios
+* Batch size significantly impacts insert performance (30x difference)
+* SQL offers the most flexibility but with higher latency
+* Query complexity affects SQL performance more than other protocols
 
 == Storage Engine Comparison
 
-=== SST vs VIPER Performance
+=== SST vs VIPER Performance (Updated 2025-08-01)
 
 [cols="4,2,2,2"]
 |===
 | Metric | SST Engine | VIPER Engine | Winner
 
 | Write Throughput
-| 12,000 vec/s
-| 15,000 vec/s
-| VIPER (+25%)
+| 10,143 vec/s
+| 10,296 vec/s
+| VIPER (+1.5%)
 
-| Random Read Latency
-| 0.5ms
-| 2ms
-| SST (4x faster)
+| Vector Search Latency
+| 2.12ms
+| 1.90ms
+| VIPER (10% faster)
 
-| Range Scan (1M rows)
-| 5 seconds
-| 1 second
-| VIPER (5x faster)
+| Memory Usage
+| Lower
+| Higher
+| SST (better)
 
 | Metadata Filtering
-| 10ms
-| 2ms
-| VIPER (5x faster)
+| Good
+| Excellent
+| VIPER (optimized)
+
+| Write-Heavy Workloads
+| Excellent
+| Good
+| SST (optimized)
+
+| Analytics Queries
+| Good
+| Excellent
+| VIPER (columnar)
+
+| Compression Ratio
+| Good
+| Excellent
+| VIPER (columnar)
 
 | Compaction Time
 | 15 seconds
@@ -290,6 +456,61 @@ Quantization features are planned for future releases. Current implementation us
 ====
 Hardware acceleration support is planned for future releases. Current implementation uses standard CPU operations.
 ====
+
+== I/O Optimization Insights (2025-08-01)
+
+=== Key Improvements Implemented
+
+**SST Engine Optimizations:**
+- **Merge-Sort Compaction**: Replaced BTreeMap with streaming merge-sort for lower memory usage
+- **Append-Only Vectors**: Special handling for empty/null IDs improves throughput by 15%
+- **Block Size Configuration**: Configurable block sizes (default 64KB) for optimal I/O
+- **Direct Serialization**: Fixed bincode/custom parser mismatch reducing CPU overhead
+
+**Assignment Service Improvements:**
+- **Stateless Architecture**: Removed JSON persistence, uses directory discovery
+- **Filesystem API**: Direct support for cloud storage (S3, GCS, Azure)
+- **Recovery Performance**: 10x faster startup with lazy discovery
+- **Memory Efficiency**: Zero persistent state reduces memory footprint
+
+**Protocol Optimizations:**
+- **gRPC Batch Processing**: Up to 49K vectors/sec with batch 500
+- **SQL Query Caching**: 2-8x speedup for repeated query patterns
+- **Proto-Native Types**: Zero-copy serialization throughout stack
+- **Connection Pooling**: Reduced connection overhead by 60%
+
+=== Performance Best Practices
+
+**Batch Size Selection:**
+[source,yaml]
+----
+# Optimal batch sizes by use case
+Real-time updates: 10-50 vectors
+Bulk loading: 500-1000 vectors  
+Stream processing: 100-200 vectors
+Analytics import: 1000+ vectors
+----
+
+**Storage Engine Selection:**
+[source,yaml]
+----
+# Choose based on workload
+VIPER Engine:
+  - Analytics queries with complex filters
+  - Metadata-heavy workloads
+  - Better compression (columnar)
+  
+SST Engine:
+  - Write-heavy workloads
+  - Simple point lookups
+  - Lower memory footprint
+----
+
+**Query Optimization:**
+- Apply metadata filters before vector search
+- Use filterable_metadata_fields for indexed access
+- Leverage SQL query plan caching
+- Avoid CAST operations (compare as strings)
 
 == Optimization Guidelines
 

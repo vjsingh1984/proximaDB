@@ -19,11 +19,10 @@ async fn test_global_partitioned_batch_operations() {
         id: Some("test_vector_1".to_string()),
         vector: vec![0.1, 0.2, 0.3],
         metadata: vec![],
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
+        timestamp: now as u32,
+        updated_at: Some(now as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -33,11 +32,10 @@ async fn test_global_partitioned_batch_operations() {
         id: Some("test_vector_2".to_string()),
         vector: vec![0.4, 0.5, 0.6],
         metadata: vec![],
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
+        timestamp: now as u32,
+        updated_at: Some(now as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -89,11 +87,10 @@ async fn test_global_partitioned_multi_collection() {
             id: Some("vec_a1".to_string()),
             vector: vec![1.0, 0.0, 0.0],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -110,11 +107,10 @@ async fn test_global_partitioned_multi_collection() {
             id: Some("vec_b1".to_string()),
             vector: vec![0.0, 1.0, 0.0],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -156,7 +152,7 @@ async fn test_global_partitioned_multi_collection() {
 #[tokio::test]
 async fn test_mvcc_and_logical_deletes() {
     let memtable = GlobalPartitionedMemtable::new();
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = chrono::Utc::now().timestamp() as u32; // Current time in seconds
 
     // Version 1: Insert initial vector
     let vector_v1 = VectorRecord {
@@ -164,10 +160,9 @@ async fn test_mvcc_and_logical_deletes() {
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![],
         timestamp: now,
-        created_at: now,
-        updated_at: now,
+        updated_at: Some(now),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -179,10 +174,9 @@ async fn test_mvcc_and_logical_deletes() {
         vector: vec![0.0, 1.0, 0.0],
         metadata: vec![],
         timestamp: now,
-        created_at: now,
-        updated_at: now,
+        updated_at: Some(now),
         expires_at: None,
-        version: 2, // Higher version
+        version: Some(2), // Higher version
         rank: None,
         score: None,
         distance: None,
@@ -194,10 +188,9 @@ async fn test_mvcc_and_logical_deletes() {
         vector: vec![0.0, 0.0, 1.0], // Doesn't matter for deletes
         metadata: vec![],
         timestamp: now,
-        created_at: now,
-        updated_at: now,
-        expires_at: Some(now - 1000), // Expired 1 second ago
-        version: 3, // Highest version (delete)
+        updated_at: Some(now),
+        expires_at: Some(now - 1), // Expired 1 second ago
+        version: Some(3), // Highest version (delete)
         rank: None,
         score: None,
         distance: None,
@@ -255,19 +248,17 @@ async fn test_mvcc_and_logical_deletes() {
 #[tokio::test]
 async fn test_global_partitioned_deletion_via_expiry() {
     let memtable = GlobalPartitionedMemtable::new();
-    let now_millis = chrono::Utc::now().timestamp_millis();
-    let now_micros = chrono::Utc::now().timestamp_micros();
+    let now = chrono::Utc::now().timestamp() as u32; // Current time in seconds
 
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {
         id: Some("expired_vec".to_string()),
         vector: vec![1.0, 2.0, 3.0],
         metadata: vec![],
-        timestamp: now_millis,
-        created_at: now_millis,
-        updated_at: now_millis,
-        expires_at: Some(now_micros - 1000), // Expired 1ms ago (in microseconds)
-        version: 1,
+        timestamp: now,
+        updated_at: Some(now),
+        expires_at: Some(now - 1), // Expired 1 second ago
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -278,11 +269,10 @@ async fn test_global_partitioned_deletion_via_expiry() {
         id: Some("valid_vec".to_string()),
         vector: vec![4.0, 5.0, 6.0],
         metadata: vec![],
-        timestamp: now_millis,
-        created_at: now_millis,
-        updated_at: now_millis,
-        expires_at: Some(now_micros + 3600000000), // Expires in 1 hour (in microseconds)
-        version: 1,
+        timestamp: now,
+        updated_at: Some(now),
+        expires_at: Some(now + 3600), // Expires in 1 hour (in seconds)
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -353,11 +343,10 @@ fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> Vector
         id: Some(id.to_string()),
         vector,
         metadata: vec![],
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
+        timestamp: now as u32,
+        updated_at: Some(now as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,

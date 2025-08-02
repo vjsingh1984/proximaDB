@@ -6,9 +6,10 @@ pub mod results;
 // pub mod storage_aware; // Obsolete - replaced by unified search
 pub mod unified_interface;
 // pub mod viper_search; // Obsolete - uses old storage_aware interface
+pub mod typesafe_filter;
+pub mod index_based_filter;
 
 use std::collections::HashMap;
-use tracing::{debug, info, warn, error};
 use serde::{Deserialize, Serialize};
 
 /// Unified search parameters for all storage engines
@@ -430,6 +431,9 @@ pub mod json_comparison {
         }
     }
 }
+
+/// JSON value serialization for index statistics
+pub mod json_value_serde;
 
 /// Centralized metadata filter extraction utilities
 pub mod filter_extraction {

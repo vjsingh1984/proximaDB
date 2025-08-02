@@ -34,14 +34,12 @@ async fn test_simple_sstable_write_read() {
     let mut records = BTreeMap::new();
     let test_record = SstRecord {
         id: "test_id".to_string(),
-        collection_id: "test_collection".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: std::collections::HashMap::new(),
+        metadata: vec![],
         timestamp: 123456789,
-        created_at: 123456789,
-        updated_at: 123456789,
+        updated_at: Some(123456789),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         is_tombstone: false,
         sequence_number: 1,
         level: 0,

@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -336,7 +336,7 @@ impl MetadataStore {
                 if let Ok(stats) = write_buffer_manager.get_stats().await {
                     let mut sys_meta = system_metadata.write().await;
                     sys_meta.total_collections = stats.total_collections;
-                    sys_meta.updated_at = Utc::now();
+                    sys_meta.updated_at = Some(Utc::now().timestamp() as u32);
                 }
             }
         });
@@ -454,9 +454,8 @@ impl MetadataStoreInterface for MetadataStore {
                 dimension: metadata.dimension,
                 distance_metric: metadata.distance_metric,
                 indexing_algorithm: metadata.indexing_algorithm,
-                created_at: metadata.created_at,
-                updated_at: Utc::now(),
-                version: 1,
+                timestamp: Utc::now().timestamp() as u32,
+                version: Some(1),
                 vector_count: metadata.vector_count,
                 total_size_bytes: metadata.total_size_bytes,
                 config: metadata.config,
@@ -486,8 +485,8 @@ impl MetadataStoreInterface for MetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    created_at: versioned.created_at,
-                    updated_at: versioned.updated_at,
+                    created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
@@ -524,9 +523,8 @@ impl MetadataStoreInterface for MetadataStore {
                 dimension: metadata.dimension,
                 distance_metric: metadata.distance_metric,
                 indexing_algorithm: metadata.indexing_algorithm,
-                created_at: metadata.created_at,
-                updated_at: Utc::now(),
-                version: 1,
+                timestamp: Utc::now().timestamp() as u32,
+                version: Some(1),
                 vector_count: metadata.vector_count,
                 total_size_bytes: metadata.total_size_bytes,
                 config: metadata.config,
@@ -567,8 +565,8 @@ impl MetadataStoreInterface for MetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    created_at: versioned.created_at,
-                    updated_at: versioned.updated_at,
+                    created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,

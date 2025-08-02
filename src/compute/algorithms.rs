@@ -418,8 +418,9 @@ impl VectorSearchAlgorithm for HNSWIndex {
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
-                        collection_id: None,
-                        created_at: None,
+                                created_at: None,
+                        version: None,
+                        timestamp: None,
                     });
                 }
             }
@@ -621,8 +622,9 @@ impl VectorSearchAlgorithm for BruteForceIndex {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: None,
                 created_at: None,
+                version: None,
+                timestamp: None,
             });
         }
 
@@ -669,8 +671,9 @@ impl VectorSearchAlgorithm for BruteForceIndex {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: None,
                 created_at: None,
+                version: None,
+                timestamp: None,
             });
         }
 

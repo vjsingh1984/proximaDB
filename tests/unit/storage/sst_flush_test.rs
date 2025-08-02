@@ -67,8 +67,8 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     ).await.unwrap();
     
     // Create test vectors with metadata
-    let now = chrono::Utc::now().timestamp();
-    let test_id = format!("test_{}", chrono::Utc::now().timestamp_millis());
+    let now = chrono::Utc::now().timestamp() as u32;
+    let test_id = format!("test_{}", chrono::Utc::now().timestamp());
     eprintln!("TEST: Creating test with ID: {}", test_id);
     let vectors = vec![
         VectorRecord {
@@ -84,7 +84,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("primary".to_string())),
                 },
             ],
-            timestamp: now,
+            timestamp: now as u32,
             ..Default::default()
         },
         VectorRecord {
@@ -100,7 +100,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("secondary".to_string())),
                 },
             ],
-            timestamp: now,
+            timestamp: now as u32,
             ..Default::default()
         },
         VectorRecord {
@@ -116,7 +116,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("primary".to_string())),
                 },
             ],
-            timestamp: now,
+            timestamp: now as u32,
             ..Default::default()
         },
     ];

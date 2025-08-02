@@ -100,9 +100,8 @@ pub struct VersionedCollectionMetadata {
     pub dimension: usize,
     pub distance_metric: String,
     pub indexing_algorithm: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub version: u64,
+    pub timestamp: u32,  // Seconds since epoch (when last modified)
+    pub version: Option<u32>,
     pub vector_count: u64,
     pub total_size_bytes: u64,
     pub config: HashMap<String, serde_json::Value>,
@@ -483,15 +482,15 @@ impl MetadataWriteBufferManager {
             let vector_id = format!("metadata_{}", collection_id);
             let current_time = chrono::Utc::now().timestamp_micros();
             
+            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
             let delete_record = crate::core::VectorRecord {
                 id: Some(vector_id),
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: Vec::new(),
-                timestamp: current_time,
-                created_at: current_time,
-                updated_at: current_time,
-                expires_at: Some(current_time - 1000), // Mark as expired (logical delete)
-                version: 1,
+                timestamp: current_time_secs,
+                updated_at: Some(current_time_secs),
+                expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -565,8 +564,8 @@ impl MetadataWriteBufferManager {
                     .saturating_sub((-size_delta) as u64);
             }
 
-            metadata.updated_at = Utc::now();
-            metadata.version += 1;
+            metadata.timestamp = Utc::now().timestamp() as u32;
+            metadata.version = Some(metadata.version.unwrap_or(0) + 1);
 
             // Save updated metadata
             self.upsert_collection(metadata).await?;
@@ -599,16 +598,15 @@ impl MetadataWriteBufferManager {
         let json = serde_json::to_vec(metadata)?;
         let vector = json.iter().map(|&b| b as f32).collect();
 
-        let timestamp = metadata.updated_at.timestamp_millis();
+        let timestamp_secs = metadata.timestamp; // Already in seconds
         Ok(crate::core::VectorRecord {
             id: Some(format!("metadata_{}", metadata.id)),
             vector,
             metadata: vec![],
-            timestamp,
-            created_at: timestamp,
-            updated_at: timestamp,
+            timestamp: timestamp_secs,
+            updated_at: Some(timestamp_secs),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -635,8 +633,8 @@ pub struct SystemMetadata {
     pub version: String,
     pub node_id: String,
     pub cluster_name: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: u32,  // Seconds since epoch
+    pub updated_at: Option<u32>,  // Seconds since epoch
     pub total_collections: u64,
     pub total_vectors: u64,
     pub total_size_bytes: u64,
@@ -645,13 +643,12 @@ pub struct SystemMetadata {
 
 impl Default for SystemMetadata {
     fn default() -> Self {
-        let now = Utc::now();
         Self {
             version: "0.1.0".to_string(),
             node_id: uuid::Uuid::new_v4().to_string(),
             cluster_name: "default".to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Utc::now().timestamp() as u32,
+            updated_at: None,
             total_collections: 0,
             total_vectors: 0,
             total_size_bytes: 0,
@@ -667,8 +664,8 @@ impl SystemMetadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             node_id,
             cluster_name: "proximadb-cluster".to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             total_collections: 0,
             total_vectors: 0,
             total_size_bytes: 0,

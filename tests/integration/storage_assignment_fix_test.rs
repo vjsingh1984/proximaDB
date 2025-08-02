@@ -9,6 +9,7 @@ use proximadb::core::config::{StorageConfig, StorageLocation, AssignmentConfig};
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::filestore_backend::FilestoreMetadataBackend;
 use proximadb::storage::assignment_service::{get_assignment_service, HashBasedAssignmentService, set_assignment_service};
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::proto::proximadb::CollectionConfig;
 
 #[tokio::test]
@@ -33,7 +34,8 @@ async fn test_assignment_stored_with_uuid_not_name() -> Result<()> {
     };
     
     // Initialize assignment service
-    let assignment_service = Arc::new(HashBasedAssignmentService::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
     set_assignment_service(assignment_service.clone())?;
     
     // Create metadata backend
@@ -141,7 +143,8 @@ async fn test_assignment_recovery_with_uuid() -> Result<()> {
     
     // Phase 1: Create collection and assignment
     {
-        let assignment_service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         set_assignment_service(assignment_service.clone())?;
         
         let metadata_backend = Arc::new(
@@ -182,7 +185,8 @@ async fn test_assignment_recovery_with_uuid() -> Result<()> {
     
     // Phase 2: Simulate restart - new assignment service instance
     {
-        let new_assignment_service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let new_assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         set_assignment_service(new_assignment_service.clone())?;
         
         // Assignment should not exist in new instance (until discovery)
@@ -243,7 +247,8 @@ async fn test_multiple_collections_assignment_uniqueness() -> Result<()> {
     };
     
     // Initialize services
-    let assignment_service = Arc::new(HashBasedAssignmentService::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
     set_assignment_service(assignment_service.clone())?;
     
     let metadata_backend = Arc::new(

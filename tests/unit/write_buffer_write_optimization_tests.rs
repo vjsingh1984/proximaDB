@@ -20,7 +20,8 @@ use tokio::sync::oneshot;
 
 use proximadb::core::VectorRecord;
 use proximadb::services::direct_vector_service::OptimizedFormat;
-use proximadb::storage::assignment_service::{AssignmentService, RoundRobinAssignmentService};
+use proximadb::storage::assignment_service::{AssignmentService, HashBasedAssignmentService};
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::persistence::write_buffer::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
 
 /// Test helper to create sample vectors
@@ -69,7 +70,8 @@ mod batching_tests {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
@@ -116,7 +118,8 @@ mod batching_tests {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
@@ -154,7 +157,8 @@ mod batching_tests {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
@@ -193,7 +197,8 @@ mod caching_tests {
     async fn test_assignment_caching() -> Result<()> {
         let config = OptimizedWriteBufferWriterConfig::default();
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
@@ -244,7 +249,8 @@ mod caching_tests {
             "file:///tmp/test_wal3".to_string(),
         ];
         
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
         // Write to multiple collections to use different filesystems
@@ -277,7 +283,8 @@ mod error_handling_tests {
         // Use invalid directory to trigger errors
         write_buffer_config.multi_disk.data_directories = vec!["file:///dev/null/invalid".to_string()];
         
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
         let vectors = create_test_vectors(1, 128);
@@ -305,7 +312,8 @@ mod error_handling_tests {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
         // Submit writes but don't wait
@@ -361,7 +369,8 @@ mod performance_benchmarks {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
         let start_batched = Instant::now();
@@ -410,7 +419,8 @@ mod performance_benchmarks {
         };
         
         let write_buffer_config = create_test_write_buffer_config();
-        let assignment_service = Arc::new(RoundRobinAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
         
         const NUM_COLLECTIONS: usize = 10;

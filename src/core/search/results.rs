@@ -2,11 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::compute::unified_distance::SimilarityResult;
 use crate::compute::unified_quantization::UnifiedQuantizationLevel;
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SearchResult {
     /// Vector/document identifier
     pub id: String,
@@ -16,14 +17,18 @@ pub struct SearchResult {
     pub score: f32,
     /// Distance value (lower = more similar, if different from score)  
     pub distance: Option<f32>,
-    /// Result rank (1-based)
-    pub rank: Option<i32>,
+    /// Result rank (1-based) - use u16 since ranks are typically small
+    pub rank: Option<u16>,
     /// Original vector data (optional for bandwidth optimization)
     pub vector: Option<Vec<f32>>,
     /// Associated metadata
     pub metadata: HashMap<String, serde_json::Value>,
     /// Debug information for result
     pub debug_info: Option<SearchDebugInfo>,
+    /// Version for MVCC (multi-version concurrency control) - use u32 to match proto VectorRecord  
+    pub version: Option<u32>,
+    /// Record timestamp for version resolution (earliest wins for same version) - use u32 for seconds since epoch (unsigned)
+    pub timestamp: Option<u32>,
     
     // Unified search pipeline integration
     /// Semantic distance information with metric awareness (replaces multiple adapters)
@@ -36,8 +41,6 @@ pub struct SearchResult {
     // Additional fields for compatibility with existing code
     /// Index path for result tracking
     pub index_path: Option<String>,
-    /// Collection identifier
-    pub collection_id: Option<String>,
     /// Creation timestamp
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -96,11 +99,12 @@ impl SearchResult {
             vector: None,
             metadata: HashMap::new(),
             debug_info: None,
+            version: None,
+            timestamp: None,
             semantic_distance: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            collection_id: None,
             created_at: None,
         }
     }
@@ -120,11 +124,12 @@ impl SearchResult {
             vector: None,
             metadata,
             debug_info: None,
+            version: None,
+            timestamp: None,
             semantic_distance: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            collection_id: None,
             created_at: None,
         }
     }
@@ -179,21 +184,45 @@ impl SearchResult {
             vector,
             metadata,
             debug_info: None,
+            version: None,
+            timestamp: None,
             semantic_distance: Some(semantic_distance),
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            collection_id: None,
+            created_at: None,
+        }
+    }
+    
+    /// Create a simple search result with just ID, score and defaults for other fields
+    pub fn simple(id: String, score: f32) -> Self {
+        Self {
+            id,
+            vector_id: None,
+            score,
+            distance: None,
+            rank: None,
+            vector: None,
+            metadata: HashMap::new(),
+            debug_info: None,
+            version: None,
+            timestamp: None,
+            semantic_distance: None,
+            quantization_info: None,
+            engine_stats: None,
+            index_path: None,
             created_at: None,
         }
     }
 }
 
 /// Collection of search results with metadata
+/// Using Arc<[SearchResult]> for immutable, zero-copy sharing of results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultSet {
-    /// Individual search results
-    pub results: Vec<SearchResult>,
+    /// Individual search results - immutable for performance
+    #[serde(with = "arc_slice_serde")]
+    pub results: Arc<[SearchResult]>,
     /// Total number of matching documents (before pagination)
     pub total_count: u64,
     /// Query that generated these results
@@ -204,6 +233,61 @@ pub struct SearchResultSet {
     pub algorithm: String,
     /// Additional query metadata
     pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl SearchResultSet {
+    /// Create a SearchResultSet from a Vec<SearchResult>
+    pub fn from_vec(
+        results: Vec<SearchResult>,
+        total_count: u64,
+        query_id: Option<String>,
+        processing_time_us: u64,
+        algorithm: String,
+        metadata: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            results: Arc::from(results.into_boxed_slice()),
+            total_count,
+            query_id,
+            processing_time_us,
+            algorithm,
+            metadata,
+        }
+    }
+
+    /// Create an empty SearchResultSet
+    pub fn empty(algorithm: String) -> Self {
+        Self {
+            results: Arc::from(Vec::new().into_boxed_slice()),
+            total_count: 0,
+            query_id: None,
+            processing_time_us: 0,
+            algorithm,
+            metadata: HashMap::new(),
+        }
+    }
+}
+
+/// Helper module for serializing Arc<[T]>
+mod arc_slice_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+    use super::SearchResult;
+
+    pub fn serialize<S>(results: &Arc<[SearchResult]>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        results.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[SearchResult]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec = Vec::<SearchResult>::deserialize(deserializer)?;
+        Ok(Arc::from(vec.into_boxed_slice()))
+    }
 }
 
 // Manual trait implementations for ordering (HashMap doesn't implement Ord)

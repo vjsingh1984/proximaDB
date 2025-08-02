@@ -19,24 +19,19 @@ mod tests {
 
     fn create_test_config() -> SstConfig {
         SstConfig {
-            memtable_size_mb: 1,
             level_count: 3,
             compaction_threshold: 2,
             block_size_kb: 4,
-            memory_flush_size_bytes: 1024 * 1024,
-            memtable_type: "standard".to_string(),
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
+            compression_enabled: true,
+            compression_level: 3,
             bloom_filter_config: None,
             cache_size_mb: 1,
-            write_buffer_size_mb: 1,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
             background_thread_count: 2,
-            sync_mode: "async".to_string(),
-            enable_write_buffer: false,
-            write_buffer_directory: "/tmp".to_string(),
             data_directory: "/tmp".to_string(),
             mmap_enabled: false,
             prefetch_enabled: false,
@@ -44,18 +39,16 @@ mod tests {
         }
     }
 
-    fn create_test_lsm_record(id: &str, is_tombstone: bool, expires_at: Option<i64>) -> SstRecord {
-        let now = chrono::Utc::now().timestamp_millis();
+    fn create_test_sst_record(id: &str, is_tombstone: bool, expires_at: Option<u32>) -> SstRecord {
+        let now = chrono::Utc::now().timestamp() as u32;
         SstRecord {
             id: id.to_string(),
-            collection_id: "test_collection".to_string(),
             vector: if is_tombstone { vec![] } else { vec![1.0; 128] },
-            metadata: HashMap::new(),
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            metadata: vec![],
+            timestamp: now as u32,
+            updated_at: Some(now),
             expires_at,
-            version: 1,
+            version: Some(1),
             is_tombstone,
             sequence_number: 0,
             level: 0,
@@ -69,7 +62,6 @@ mod tests {
         
         // Create a compaction task with test files
         let task = CompactionTask {
-            collection_id: "test_collection".to_string(),
             level: 0,
             input_files: vec![
                 temp_dir.path().join("input1.sst"),
@@ -80,28 +72,28 @@ mod tests {
         };
         
         // Create test data with expired and tombstoned records
-        let current_time = chrono::Utc::now().timestamp_millis();
+        let current_time = chrono::Utc::now().timestamp() as u32;
         let mut merged_data = BTreeMap::new();
         
         // Regular vector
         merged_data.insert(
             VectorId::from("vec_1".to_string()),
-            create_test_lsm_record("vec_1", false, None),
+            create_test_sst_record("vec_1", false, None),
         );
         
         // Expired vector
         merged_data.insert(
             VectorId::from("vec_2".to_string()),
-            create_test_lsm_record("vec_2", false, Some(current_time - 1000)),
+            create_test_sst_record("vec_2", false, Some(current_time - 1)),
         );
         
         // Tombstone (old enough to be removed)
-        let mut tombstone = create_test_lsm_record("vec_3", true, None);
-        tombstone.timestamp = current_time - (2 * 60 * 60 * 1000); // 2 hours old
+        let mut tombstone = create_test_sst_record("vec_3", true, None);
+        tombstone.timestamp = current_time - (2 * 60 * 60); // 2 hours old
         merged_data.insert(VectorId::from("vec_3".to_string()), tombstone);
         
         // Recent tombstone (should be kept)
-        let recent_tombstone = create_test_lsm_record("vec_4", true, None);
+        let recent_tombstone = create_test_sst_record("vec_4", true, None);
         merged_data.insert(VectorId::from("vec_4".to_string()), recent_tombstone);
         
         // For testing, we'll mock the perform_compaction_enhanced function behavior
@@ -118,7 +110,7 @@ mod tests {
                 }
             } else if record.is_tombstone {
                 let age = current_time - record.timestamp;
-                if age >= (60 * 60 * 1000) { // 1 hour
+                if age >= (60 * 60) { // 1 hour in seconds
                     deleted_vector_ids.push(id.to_string());
                 }
             } else {
@@ -159,11 +151,10 @@ mod tests {
                     id: Some("vec_4".to_string()),
                     vector: vec![1.0; 128],
                     metadata: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    updated_at: chrono::Utc::now().timestamp_millis(),
+                    timestamp: chrono::Utc::now().timestamp() as u32,
+                    updated_at: Some(chrono::Utc::now().timestamp() as u32),
                     expires_at: None,
-                    version: 0,
+                    version: Some(1),
                     rank: None,
                     score: None,
                     distance: None,
@@ -172,11 +163,10 @@ mod tests {
                     id: Some("vec_5".to_string()),
                     vector: vec![2.0; 128],
                     metadata: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    updated_at: chrono::Utc::now().timestamp_millis(),
+                    timestamp: chrono::Utc::now().timestamp() as u32,
+                    updated_at: Some(chrono::Utc::now().timestamp() as u32),
                     expires_at: None,
-                    version: 0,
+                    version: Some(1),
                     rank: None,
                     score: None,
                     distance: None,
@@ -197,17 +187,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_sorting_during_compaction() {
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = chrono::Utc::now().timestamp() as u32;
         let mut vector_records = vec![
             VectorRecord {
                 id: Some("vec_c".to_string()),
                 vector: vec![3.0; 128],
                 metadata: vec![],
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                timestamp: now as u32,
+                updated_at: Some(now),
                 expires_at: None,
-                version: 0,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -216,11 +205,10 @@ mod tests {
                 id: Some("vec_a".to_string()),
                 vector: vec![1.0; 128],
                 metadata: vec![],
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                timestamp: now as u32,
+                updated_at: Some(now),
                 expires_at: None,
-                version: 0,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -229,11 +217,10 @@ mod tests {
                 id: Some("vec_b".to_string()),
                 vector: vec![2.0; 128],
                 metadata: vec![],
-                timestamp: now,
-                created_at: now,
-                updated_at: now,
+                timestamp: now as u32,
+                updated_at: Some(now),
                 expires_at: None,
-                version: 0,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,

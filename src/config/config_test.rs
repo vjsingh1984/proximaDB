@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Config, ServerConfig, StorageConfig, SstConfig, WriteBufferConfig, ApiConfig, MonitoringConfig, ConsensusConfig};
+    use crate::config::{Config, ServerConfig, StorageConfig, SstConfig, WriteBufferUserConfig, ApiConfig, MonitoringConfig, ConsensusConfig};
     use crate::storage::persistence::filesystem::atomic_strategy::AtomicConfig;
     use crate::storage::metadata::backends::filestore_backend::FilestoreConfig;
     use std::collections::HashMap;

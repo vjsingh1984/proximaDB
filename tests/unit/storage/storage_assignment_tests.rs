@@ -10,8 +10,8 @@ mod storage_assignment_tests {
         AssignmentDiscovery, StorageComponentType,
         get_assignment_service, set_assignment_service,
     };
-    use proximadb::core::config::StorageLocation;
     use proximadb::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb::core::config::StorageLocation;
     
     #[tokio::test]
     async fn test_unified_assignment_urls() {
@@ -44,7 +44,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_round_robin_distribution() -> Result<()> {
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         
         let locations = vec![
             StorageLocation {
@@ -83,7 +84,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_weighted_distribution() -> Result<()> {
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         
         let locations = vec![
             StorageLocation {
@@ -118,7 +120,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_persistent_assignment() -> Result<()> {
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         
         let locations = vec![
             StorageLocation {
@@ -161,7 +164,8 @@ mod storage_assignment_tests {
     #[tokio::test]
     async fn test_assignment_discovery() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         let filesystem = FilesystemFactory::new(Default::default()).await?;
         
         let locations = vec![
@@ -233,7 +237,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_concurrent_assignments() -> Result<()> {
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let locations = vec![
             StorageLocation {
@@ -307,7 +312,8 @@ mod storage_assignment_tests {
         assert!(Arc::ptr_eq(&service1, &service2));
         
         // Test setting a custom service
-        let custom_service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let custom_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         set_assignment_service(custom_service.clone());
         
         let retrieved = get_assignment_service();
@@ -319,7 +325,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_assignment_with_empty_locations() -> Result<()> {
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         
         let locations = vec![];
         
@@ -338,7 +345,8 @@ mod storage_assignment_tests {
     
     #[tokio::test]
     async fn test_assignment_url_formats() -> Result<()> {
-        let service = HashBasedAssignmentService::new();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = HashBasedAssignmentService::new(filesystem_factory, "round_robin");
         
         // Test various URL formats
         let test_cases = vec![

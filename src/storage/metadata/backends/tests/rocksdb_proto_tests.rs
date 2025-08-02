@@ -119,7 +119,7 @@ mod tests {
             metadata: Some(CollectionMetadata {
                 created_at: chrono::Utc::now().timestamp(),
                 updated_at: chrono::Utc::now().timestamp(),
-                version: 1,
+                version: Some(1),
                 description: Some("Test collection with RocksDB backend".to_string()),
                 tags: vec!["test".to_string(), "rocksdb".to_string(), "proto".to_string()],
                 owner: Some("test_user".to_string()),

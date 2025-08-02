@@ -9,9 +9,7 @@ use tempfile::TempDir;
 
 use chrono::Utc;
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::viper::{
-    ViperConfig, ViperEngine,
-};
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 
@@ -21,23 +19,11 @@ async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperEngine> {
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
-    // Create VIPER config
-    let viper_config = ViperConfig {
-        enable_ml_clustering: true,
-        enable_background_compaction: true,
-        parquet_compression: proximadb::storage::engines::viper::ParquetCompression::Snappy,
-        row_group_size: 1024,
-        initial_cluster_count: 8,
-        enable_quantization: false,
-        flush_size_bytes: None,
-        quantization_config: None,
-        cluster_quantization_map: std::collections::HashMap::new(),
-        vector_quality_metrics: proximadb::storage::engines::viper::VectorQualityMetrics::default(),
-        search_performance_stats: proximadb::storage::engines::viper::SearchPerformanceStats::default(),
-    };
-
-    // Create VIPER storage engine
-    let viper_engine = ViperEngine::new(viper_config, filesystem).await?;
+    // Create VIPER storage engine using core config
+    let viper_engine = ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem
+    ).await?;
 
     Ok(viper_engine)
 }
@@ -51,16 +37,15 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
     // Create 10 test records that would normally come from WAL memtable
     let mut test_records = Vec::new();
     for i in 0..10 {
-        let now = Utc::now().timestamp_millis();
+        let now = Utc::now().timestamp() as u32;
         let vector_record = VectorRecord {
             id: Some(format!("viper_vector_{}", i)),
             vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -124,7 +109,7 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
     // Create 10 test records for compaction simulation
     let mut test_records = Vec::new();
     for i in 0..10 {
-        let now = Utc::now().timestamp_millis();
+        let now = Utc::now().timestamp() as u32;
         let vector_record = VectorRecord {
             id: Some(format!("compact_vector_{}", i)),
             vector: vec![
@@ -134,11 +119,10 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
                 (i + 3) as f32 + 20.0,
             ],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

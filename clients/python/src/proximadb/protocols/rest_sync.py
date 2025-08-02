@@ -447,9 +447,7 @@ class ProximaDBClient:
             "collection_id": collection_id,
             "vector": vector,
             "metadata": metadata_items,
-            "timestamp": int(time.time() * 1000),
-            "created_at": int(time.time() * 1000),
-            "updated_at": int(time.time() * 1000),
+            "timestamp": int(time.time()),  # Seconds (proto expects seconds)
             "version": 1
         }
         

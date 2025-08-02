@@ -8,6 +8,7 @@ mod assignment_service_advanced_tests {
     use proximadb::storage::assignment_service::{
         get_assignment_service, AssignmentService, HashBasedAssignmentService,
     };
+    use proximadb::storage::persistence::filesystem::FilesystemFactory;
     use proximadb::core::config::StorageLocation;
     
     #[tokio::test]
@@ -60,7 +61,8 @@ mod assignment_service_advanced_tests {
     #[tokio::test]
     async fn test_assignment_distribution_fairness() -> Result<()> {
         // Create a new instance for this test to avoid global state issues
-        let service = Arc::new(proximadb::storage::assignment_service::HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(proximadb::storage::assignment_service::HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let locations = vec![
             StorageLocation {
@@ -199,7 +201,8 @@ mod assignment_service_advanced_tests {
     #[tokio::test]
     async fn test_concurrent_assignment_safety() -> Result<()> {
         // Use a fresh service instance to avoid global state pollution
-        let service = Arc::new(HashBasedAssignmentService::new());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         let locations = vec![
             StorageLocation {

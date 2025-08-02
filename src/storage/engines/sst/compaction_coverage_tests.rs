@@ -13,12 +13,9 @@ mod tests {
     /// Helper to create test SST config
     fn create_test_sst_config() -> SstConfig {
         let mut config = SstConfig::default();
-        config.memtable_size_mb = 2;
         config.level_count = 4;
         config.compaction_threshold = 3;
         config.block_size_kb = 8;
-        config.memory_flush_size_bytes = 2 * 1024 * 1024;
-        config.memtable_type = "standard".to_string();
         config.compaction_strategy = "tiered".to_string();
         config.compression = "lz4".to_string();
         config
@@ -30,11 +27,10 @@ mod tests {
             id: Some(id.to_string()),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: vec![],
-            timestamp,
-            created_at: timestamp,
-            updated_at: timestamp,
+            timestamp: timestamp as u32,
+            updated_at: Some(timestamp as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -103,7 +99,6 @@ mod tests {
         let output_file = PathBuf::from("/tmp/output.sst");
         
         let task = CompactionTask {
-            collection_id: "test_collection".to_string(),
             level: 2,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
@@ -111,7 +106,6 @@ mod tests {
         };
         
         // Test field access
-        assert_eq!(task.collection_id, "test_collection");
         assert_eq!(task.level, 2);
         assert_eq!(task.input_files.len(), 2);
         assert_eq!(task.output_file, output_file);
@@ -119,7 +113,6 @@ mod tests {
         
         // Test clone
         let cloned_task = task.clone();
-        assert_eq!(cloned_task.collection_id, task.collection_id);
         assert_eq!(cloned_task.level, task.level);
         assert_eq!(cloned_task.input_files.len(), task.input_files.len());
         assert_eq!(cloned_task.priority, task.priority);
@@ -201,7 +194,6 @@ mod tests {
         
         // Test scheduling task with empty input files
         let task = CompactionTask {
-            collection_id: "empty_input_collection".to_string(),
             level: 1,
             input_files: vec![], // Empty input files
             output_file: PathBuf::from("/tmp/empty_output.sst"),
@@ -222,7 +214,6 @@ mod tests {
             .collect();
         
         let task = CompactionTask {
-            collection_id: "multi_input_collection".to_string(),
             level: 2,
             input_files: many_files,
             output_file: PathBuf::from("/tmp/multi_output.sst"),
@@ -321,7 +312,6 @@ mod tests {
     /// Helper function to create test compaction tasks
     fn create_test_compaction_task(collection_id: &str, level: u8, priority: CompactionPriority) -> CompactionTask {
         CompactionTask {
-            collection_id: collection_id.to_string(),
             level,
             input_files: vec![
                 PathBuf::from(format!("/tmp/{}_input1.sst", collection_id)),

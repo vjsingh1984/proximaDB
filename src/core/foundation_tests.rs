@@ -849,7 +849,7 @@ mod generic_types_tests {
         
         assert!(!result.is_success());
         assert_eq!(result.error().unwrap(), "Chain error");
-        assert_eq!(result.error_code.unwrap(), "ERR_CHAIN");
+        assert_eq!(result.error_code.as_ref().unwrap(), "ERR_CHAIN");
         assert_eq!(result.processing_time_us().unwrap(), 100);
     }
 }

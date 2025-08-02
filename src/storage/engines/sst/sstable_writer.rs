@@ -57,6 +57,10 @@ impl SstableWriter {
     pub async fn write_records(&self, records: BTreeMap<String, SstRecord>) -> Result<()> {
         info!("🔄 Building SSTable in memory for atomic write: {} records", records.len());
         
+        if records.is_empty() {
+            return Err(anyhow::anyhow!("Cannot write SSTable with 0 records"));
+        }
+        
         // Get filesystem and atomic writer
         // Extract the scheme from the path to get the correct filesystem
         let path_str = self.path.to_string_lossy();
@@ -90,10 +94,9 @@ impl SstableWriter {
             key_bloom_filter.insert(key.as_bytes());
             
             // Extract metadata values for each column
-            for (column, value) in &record.metadata {
-                // Convert JSON value to MetadataItem for bloom filter
-                let metadata_item = crate::core::bloom::json_to_metadata_item(column, value);
-                metadata_builder.add_metadata_item(column.clone(), metadata_item);
+            for metadata_item in &record.metadata {
+                // Already have MetadataItem - no conversion needed!
+                metadata_builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
                 metadata_value_count += 1;
             }
         }
@@ -131,6 +134,11 @@ impl SstableWriter {
         let mut current_block_size = 0;
         let mut block_id = 0u32;
         let records_count = records.len();
+        
+        if records_count == 0 {
+            debug!("⚠️ No records to write to SSTable");
+            // Still need to write a valid SSTable file with headers
+        }
         
         for (_key, record) in records {
             let record_size = record.serialize().map(|v| v.len()).unwrap_or(0);
@@ -280,11 +288,7 @@ impl SstableWriter {
         block_id: u32,
         current_block_size: usize,
     ) -> Result<()> {
-        let data_block = DataBlock {
-            block_id,
-            records: current_block.to_vec(),
-            uncompressed_size: current_block_size as u32,
-        };
+        let data_block = DataBlock::new(block_id, current_block.to_vec());
         
         let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
         
@@ -294,19 +298,34 @@ impl SstableWriter {
         let mut metadata_null_counts = HashMap::new();
         
         for record in current_block {
-            for (column, value) in &record.metadata {
+            for metadata_item in &record.metadata {
+                let column = &metadata_item.key;
+                
+                // Convert MetadataItem to JSON for statistics (needed for filter expressions)
+                let value = match &metadata_item.value {
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                        serde_json::Value::String(s.clone()),
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                        serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                        serde_json::Value::Bool(*b),
+                    None => serde_json::Value::Null,
+                };
+                
                 // Track null counts
                 if value.is_null() {
                     *metadata_null_counts.entry(column.clone()).or_insert(0) += 1;
                 } else {
                     // Track min/max values
                     let entry_min = metadata_min_values.entry(column.clone()).or_insert_with(|| value.clone());
-                    if Self::compare_json_values(value, entry_min) == std::cmp::Ordering::Less {
+                    if Self::compare_json_values(&value, entry_min) == std::cmp::Ordering::Less {
                         *entry_min = value.clone();
                     }
                     
                     let entry_max = metadata_max_values.entry(column.clone()).or_insert_with(|| value.clone());
-                    if Self::compare_json_values(value, entry_max) == std::cmp::Ordering::Greater {
+                    if Self::compare_json_values(&value, entry_max) == std::cmp::Ordering::Greater {
                         *entry_max = value.clone();
                     }
                 }
@@ -373,14 +392,12 @@ mod tests {
         for i in 0..10 {
             let record = SstRecord {
                 id: format!("key{:03}", i),
-                collection_id: "test".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp(),
-                created_at: chrono::Utc::now().timestamp(),
-                updated_at: chrono::Utc::now().timestamp(),
+                metadata: vec![],
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 is_tombstone: false,
                 sequence_number: i as u64,
                 level: 0,

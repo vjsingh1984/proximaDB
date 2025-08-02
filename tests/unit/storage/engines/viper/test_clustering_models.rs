@@ -362,7 +362,7 @@ fn test_clustering_stats_serialization() {
         convergence_iterations: 12,
         search_speedup_factor: 6.1,
         accuracy_retention: 0.98,
-        model_version: 1,
+        model_version: Some(1),
         last_trained: chrono::Utc::now(),
         last_updated: chrono::Utc::now(),
         cluster_sizes: vec![380, 420, 410, 390, 400],

@@ -9,18 +9,18 @@ graph TB
     %% Application Tier - Multi-Instance
     subgraph AppTier["🚀 Application Tier (Auto-Scaling)"]
         subgraph Instance1["ProximaDB Instance 1"]
-            App1REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
-            App1GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
+            App1REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>📊 Test Status: 1,372 passed"]
+            App1GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🚀 10-49K vectors/sec"]
         end
         
         subgraph Instance2["ProximaDB Instance 2"]
-            App2REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
-            App2GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
+            App2REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>⚠️ SQL metadata filtering issues"]
+            App2GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🔄 Dual Engine Support"]
         end
         
         subgraph InstanceN["ProximaDB Instance N"]
-            AppNREST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API"]
-            AppNGRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto"]
+            AppNREST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>✅ 100% test pass rate"]
+            AppNGRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🎯 DirectVectorService"]
         end
     end
     

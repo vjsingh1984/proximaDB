@@ -14,9 +14,13 @@ url = "file:///home/vsingh/code/proximaDB/test_data_minimal"
 weight = 1
 tags = ["local", "test"]
 
+[storage.write_buffer_config]
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per batch
+vector_count_threshold = 20000  # 20k vectors per collection
+
 [storage.sst_config]
-memtable_size_mb = 8
-memory_flush_size_bytes = 2097152  # 2MB
+compaction_threshold = 5  # Minimum 5 files before compaction
 compression = "snappy"
 
 [api]

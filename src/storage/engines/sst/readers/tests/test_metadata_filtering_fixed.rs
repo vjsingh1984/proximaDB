@@ -14,6 +14,26 @@ use tempfile::TempDir;
 use serde_json::json;
 use tracing::info;
 
+// Helper function to get string value from metadata
+fn get_metadata_string(metadata: &[crate::proto::proximadb::MetadataItem], key: &str) -> Option<String> {
+    metadata.iter()
+        .find(|item| item.key == key)
+        .and_then(|item| match &item.value {
+            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => Some(s.clone()),
+            _ => None,
+        })
+}
+
+// Helper function to get number value from metadata
+fn get_metadata_number(metadata: &[crate::proto::proximadb::MetadataItem], key: &str) -> Option<f64> {
+    metadata.iter()
+        .find(|item| item.key == key)
+        .and_then(|item| match &item.value {
+            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => Some(*n),
+            _ => None,
+        })
+}
+
 #[tokio::test]
 async fn test_metadata_filtering_with_sstable_reader() {
     let _ = tracing_subscriber::fmt::try_init();
@@ -32,21 +52,29 @@ async fn test_metadata_filtering_with_sstable_reader() {
     
     // Category A records
     for i in 0..5 {
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!("A"));
-        metadata.insert("score".to_string(), json!(i * 10));
-        metadata.insert("type".to_string(), json!("document"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "score".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10) as f64)),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "type".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("document".to_string())),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_a_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32; 3],
-            metadata: metadata.clone(),
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            metadata,
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -56,21 +84,29 @@ async fn test_metadata_filtering_with_sstable_reader() {
     
     // Category B records
     for i in 0..5 {
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!("B"));
-        metadata.insert("score".to_string(), json!(i * 10 + 5));
-        metadata.insert("type".to_string(), json!("image"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "score".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10 + 5) as f64)),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "type".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("image".to_string())),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_b_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![(i + 10) as f32; 3],
-            metadata: metadata.clone(),
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            metadata,
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: (i + 5) as u64,
             level: 0,
@@ -84,8 +120,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 1: Filter by category = A");
     let category_a_records: Vec<_> = test_records.iter()
         .filter(|r| {
-            r.metadata.get("category")
-                .and_then(|v| v.as_str())
+            get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "A")
                 .unwrap_or(false)
         })
@@ -100,8 +135,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 2: Filter by type = image");
     let image_records: Vec<_> = test_records.iter()
         .filter(|r| {
-            r.metadata.get("type")
-                .and_then(|v| v.as_str())
+            get_metadata_string(&r.metadata, "type")
                 .map(|s| s == "image")
                 .unwrap_or(false)
         })
@@ -116,9 +150,8 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 3: Numeric filter - score = 30");
     let score_30_records: Vec<_> = test_records.iter()
         .filter(|r| {
-            r.metadata.get("score")
-                .and_then(|v| v.as_i64())
-                .map(|n| n == 30)
+            get_metadata_number(&r.metadata, "score")
+                .map(|n| n as i64 == 30)
                 .unwrap_or(false)
         })
         .collect();
@@ -130,12 +163,10 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 4: Multiple filters - category=B AND type=image");
     let multi_filter_records: Vec<_> = test_records.iter()
         .filter(|r| {
-            let category_match = r.metadata.get("category")
-                .and_then(|v| v.as_str())
+            let category_match = get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "B")
                 .unwrap_or(false);
-            let type_match = r.metadata.get("type")
-                .and_then(|v| v.as_str())
+            let type_match = get_metadata_string(&r.metadata, "type")
                 .map(|s| s == "image")
                 .unwrap_or(false);
             category_match && type_match
@@ -144,18 +175,17 @@ async fn test_metadata_filtering_with_sstable_reader() {
     
     assert_eq!(multi_filter_records.len(), 5, "Should find 5 records matching both filters");
     for record in &multi_filter_records {
-        let category = record.metadata.get("category").unwrap();
-        let type_val = record.metadata.get("type").unwrap();
-        assert_eq!(category, &json!("B"), "Category should be B");
-        assert_eq!(type_val, &json!("image"), "Type should be image");
+        let category = get_metadata_string(&record.metadata, "category").unwrap();
+        let type_val = get_metadata_string(&record.metadata, "type").unwrap();
+        assert_eq!(category, "B", "Category should be B");
+        assert_eq!(type_val, "image", "Type should be image");
     }
     
     // Test 5: No results filter
     info!("\nTest 5: Filter that matches no records");
     let no_match_records: Vec<_> = test_records.iter()
         .filter(|r| {
-            r.metadata.get("category")
-                .and_then(|v| v.as_str())
+            get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "Z")
                 .unwrap_or(false)
         })

@@ -273,7 +273,9 @@ impl FilestoreMetadataBackend {
             let final_sequence = self.sequence.load(Ordering::SeqCst);
             
             // Check if we should create a checkpoint after recovery
-            self.maybe_checkpoint_at_restart().await?;
+            // TODO: Temporarily disabled to debug startup hang
+            // self.maybe_checkpoint_at_restart().await?;
+            info!("⏭️ Skipping checkpoint at restart to debug startup issue");
             
             return Ok(final_sequence);
         }
@@ -283,7 +285,9 @@ impl FilestoreMetadataBackend {
         let max_sequence = self.recover_from_operations().await?;
         
         // Check if we should create a checkpoint after recovery
-        self.maybe_checkpoint_at_restart().await?;
+        // TODO: Temporarily disabled to debug startup hang
+        // self.maybe_checkpoint_at_restart().await?;
+        info!("⏭️ Skipping checkpoint at restart to debug startup issue");
         
         Ok(max_sequence)
     }
@@ -491,6 +495,7 @@ impl FilestoreMetadataBackend {
             custom_staging_dir: Some("../__staging".to_string()), // Use the parent-level staging directory
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
+            ..Default::default()  // This will pick up skip_uuid_subdir: false
         };
         
         info!("📁 Staging config:");
@@ -772,10 +777,16 @@ impl FilestoreMetadataBackend {
         }
         
         // Clean up old archives - delegate to SnapshotManager's method
+        debug!("🔍 Checking for old archives to clean up...");
         if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
+            debug!("🔍 Calling cleanup_old_archives...");
             manager.cleanup_old_archives(fs).await?;
+            debug!("✅ Old archives cleanup completed");
+        } else {
+            debug!("⏭️ No snapshot manager available, skipping archive cleanup");
         }
         
+        debug!("✅ cleanup_operation_files completed successfully");
         Ok(())
     }
     
@@ -795,7 +806,7 @@ impl FilestoreMetadataBackend {
         // Create operation
         let operation = IncrementalOperation {
             sequence: self.next_sequence(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp(),
             operation_type: OperationType::Delete,
             collection_id: collection_id.to_string(),
             collection_data: None,
@@ -818,7 +829,7 @@ impl FilestoreMetadataBackend {
         // Create operation
         let operation = IncrementalOperation {
             sequence: self.next_sequence(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp(),
             operation_type: OperationType::Update,
             collection_id: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
             collection_data: Some(record.clone()),
@@ -841,7 +852,7 @@ impl FilestoreMetadataBackend {
         // Create IncrementalOperation for consistency with other methods
         let operation = IncrementalOperation {
             sequence: self.next_sequence(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp(),
             operation_type: OperationType::Update,
             collection_id: config.name.clone(),
             collection_data: Some(proto_collection.clone()),
@@ -1009,6 +1020,7 @@ impl FilestoreMetadataBackend {
             custom_staging_dir: Some("__metadata".to_string()),
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
+            ..Default::default()  // This will pick up skip_uuid_subdir: false
         };
         
         // Begin atomic operation

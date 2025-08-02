@@ -359,19 +359,21 @@ impl SharedServices {
 
         let filestore_backend =
             Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
+        debug!("✅ SharedServices: Filestore metadata backend created successfully");
 
         let collection_service = Arc::new(
             CollectionService::new(filestore_backend, storage_config.clone()).await?
         );
+        debug!("✅ SharedServices: CollectionService created successfully");
         
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
 
         // 🚀 Create DirectVectorService directly for 40-60% performance improvement
-        // Create WAL config with optimized defaults
-        debug!("🔧 SharedServices::new - Creating WAL config...");
-        let write_buffer_config = crate::storage::persistence::write_buffer::config::WriteBufferConfig::default();
-        debug!("✅ SharedServices::new - WAL config created successfully");
+        // Use WAL config from TOML configuration
+        debug!("🔧 SharedServices::new - Converting WAL config from TOML...");
+        let write_buffer_config = Self::convert_toml_to_write_buffer_config(&storage_config.write_buffer_config);
+        debug!("✅ SharedServices::new - WAL config converted successfully from TOML");
         
         // Create filesystem factory for engines
         debug!("🔧 SharedServices::new - Creating filesystem factory for engines...");
@@ -382,10 +384,10 @@ impl SharedServices {
         
         // Create VIPER engine
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
-        let viper_config = crate::storage::engines::viper::types::ViperConfig::default();
+        let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
         let viper_engine = Arc::new(
-            crate::storage::engines::viper::ViperEngine::new(viper_config, filesystem_factory.clone()).await?
+            crate::storage::engines::viper::ViperEngine::from_core_config(viper_config, filesystem_factory.clone()).await?
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
         
@@ -532,6 +534,66 @@ impl SharedServices {
         
         info!("✅ SharedServices: Vector recovery completed");
         Ok(())
+    }
+    
+    /// Convert TOML WriteBufferConfig to internal WriteBufferConfig
+    fn convert_toml_to_write_buffer_config(
+        toml_config: &crate::core::config::WriteBufferUserConfig
+    ) -> crate::storage::persistence::write_buffer::config::WriteBufferConfig {
+        use crate::storage::persistence::write_buffer::config::{
+            WriteBufferConfig, PerformanceConfig, MemTableConfig, MemTableType, SyncMode
+        };
+        
+        // Create performance config with values from TOML
+        info!(
+            "📋 Converting WriteBufferConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
+            toml_config.memory_flush_size_bytes,
+            toml_config.memory_flush_size_bytes / (1024 * 1024),
+            toml_config.vector_count_threshold,
+            toml_config.write_buffer_size_mb
+        );
+        
+        let performance = PerformanceConfig {
+            memory_flush_size_bytes: toml_config.memory_flush_size_bytes,
+            global_flush_threshold: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
+            batch_threshold: toml_config.vector_count_threshold,
+            sync_mode: match toml_config.sync_mode.to_lowercase().as_str() {
+                "perbatch" => SyncMode::PerBatch,
+                "periodic" => SyncMode::Periodic,
+                "none" => SyncMode::Never,
+                _ => SyncMode::PerBatch,
+            },
+            ..Default::default()
+        };
+        
+        // Create memtable config
+        let memtable = MemTableConfig {
+            global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
+            memtable_type: match toml_config.memtable_type.to_lowercase().as_str() {
+                "btree" => MemTableType::BTree,
+                "skiplist" => MemTableType::SkipList,
+                _ => MemTableType::BTree,
+            },
+            ..Default::default()
+        };
+        
+        // Create multi-disk config with WAL directory
+        let multi_disk = crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+            data_directories: vec![toml_config.write_buffer_directory.clone()],
+            distribution_strategy: crate::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+            collection_affinity: true,
+        };
+        
+        WriteBufferConfig {
+            performance,
+            memtable,
+            multi_disk,
+            enable_mvcc: true, // Enable MVCC for consistency
+            enable_ttl: true,  // Enable TTL support
+            enable_background_compaction: true, // Enable background compaction
+            enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
+            ..Default::default()
+        }
     }
 }
 

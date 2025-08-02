@@ -277,7 +277,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             // Check Write Buffer data (unflushed)
             if let Some(wal_record) = wal_behavior.get_vector_by_id(collection_id, vector_id).await? {
                 // Check if not expired
-                let current_time = chrono::Utc::now().timestamp_micros();
+                let current_time = chrono::Utc::now().timestamp() as u32;
                 let is_expired = wal_record.expires_at
                     .map(|expires| expires < current_time)
                     .unwrap_or(false);
@@ -721,11 +721,10 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             id: Some(vector_id.clone()),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp_micros(),
-            created_at: chrono::Utc::now().timestamp_micros(),
-            updated_at: chrono::Utc::now().timestamp_micros(),
-            expires_at: Some(chrono::Utc::now().timestamp_micros() + (30 * 24 * 60 * 60 * 1_000_000)), // 30 days
-            version: -1, // Negative version indicates deletion
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            expires_at: Some((chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)) as u32), // 30 days
+            version: None, // None for tombstone
             rank: None,
             score: None,
             distance: None,

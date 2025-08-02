@@ -938,7 +938,14 @@ class ProximaDBClient:
                 json=payload,
                 headers=headers
             )
-            response.raise_for_status()
+            if not response.ok:
+                # Try to get error details from response
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('message', response.text)
+                except:
+                    error_msg = response.text
+                raise Exception(f"SQL execution failed (HTTP {response.status_code}): {error_msg}")
             return response.json()
     
     def close(self):

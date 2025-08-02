@@ -49,8 +49,8 @@ async fn test_global_flush_threshold_configuration() -> Result<()> {
 async fn test_compaction_threshold_configuration() -> Result<()> {
     let mut config = SstConfig::default();
     
-    // Default should be 4 SSTables
-    assert_eq!(config.compaction_threshold, 4);
+    // Default should be 5 SSTables (as per SstConfig::default())
+    assert_eq!(config.compaction_threshold, 5);
     
     // Test setting custom threshold
     config.compaction_threshold = 2; // Trigger compaction when level has 2+ SSTables

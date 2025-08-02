@@ -104,7 +104,7 @@ mod wal_search_tests {
                 record,
                 metadata: HashMap::new(),
             },
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
             collection_id: Some(test_collection.to_string()),
             sequence_number: 1,
         };
@@ -157,7 +157,7 @@ mod wal_search_tests {
                     record,
                     metadata: HashMap::new(),
                 },
-                timestamp: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 collection_id: Some(test_collection.to_string()),
                 sequence_number: i as u64 + 1,
             };

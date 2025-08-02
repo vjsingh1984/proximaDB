@@ -41,21 +41,18 @@ pub struct VectorRecord {
     /// Efficient key-value metadata (no JSON parsing)
     #[prost(message, repeated, tag = "3")]
     pub metadata: ::prost::alloc::vec::Vec<MetadataItem>,
-    /// Milliseconds since epoch
-    #[prost(int64, tag = "4")]
-    pub timestamp: i64,
-    /// Creation timestamp (milliseconds)
-    #[prost(int64, tag = "5")]
-    pub created_at: i64,
-    /// Last update timestamp (milliseconds)
-    #[prost(int64, tag = "6")]
-    pub updated_at: i64,
-    /// TTL support
-    #[prost(int64, optional, tag = "7")]
-    pub expires_at: ::core::option::Option<i64>,
-    /// For optimistic concurrency
-    #[prost(int64, tag = "8")]
-    pub version: i64,
+    /// Record timestamp - seconds since epoch (compact, unsigned)
+    #[prost(uint32, tag = "4")]
+    pub timestamp: u32,
+    /// Only set if different from timestamp (saves bytes when not updated)
+    #[prost(uint32, optional, tag = "5")]
+    pub updated_at: ::core::option::Option<u32>,
+    /// TTL support (seconds since epoch)
+    #[prost(uint32, optional, tag = "6")]
+    pub expires_at: ::core::option::Option<u32>,
+    /// For optimistic concurrency (optional to save bytes)
+    #[prost(uint32, optional, tag = "7")]
+    pub version: ::core::option::Option<u32>,
     /// Search result fields (only populated in search responses)
     ///
     /// Search result rank (1-based)

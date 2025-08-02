@@ -31,7 +31,7 @@ impl From<NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank,
+            rank: native.rank.map(|r| r as i32),
         }
     }
 }
@@ -63,7 +63,7 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank,
+            rank: native.rank.map(|r| r as i32),
         }
     }
 }

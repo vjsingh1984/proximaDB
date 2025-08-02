@@ -50,21 +50,29 @@ async fn test_metadata_filtering_basic() {
     
     // Category A records
     for i in 0..5 {
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!("A"));
-        metadata.insert("score".to_string(), json!(i * 10));
-        metadata.insert("type".to_string(), json!("document"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "score".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10) as f64)),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "type".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("document".to_string())),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_a_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -74,21 +82,29 @@ async fn test_metadata_filtering_basic() {
     
     // Category B records
     for i in 0..5 {
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!("B"));
-        metadata.insert("score".to_string(), json!(i * 10 + 5));
-        metadata.insert("type".to_string(), json!("image"));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "score".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10 + 5) as f64)),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "type".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("image".to_string())),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_b_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![(i + 10) as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: (i + 5) as u64,
             level: 0,
@@ -107,7 +123,6 @@ async fn test_metadata_filtering_basic() {
     
     // Create collection context
     let context = CollectionContext {
-        collection_id: "test_collection".to_string(),
         file_path: file_url.clone(),
         sstable_files: vec![file_url.clone()],
         total_vectors: 10,
@@ -241,20 +256,29 @@ async fn test_metadata_bloom_filter_optimization() {
     // Create records
     let mut records = BTreeMap::new();
     for i in 0..20 {
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!(if i % 2 == 0 { "even" } else { "odd" }));
-        metadata.insert("status".to_string(), json!(if i < 10 { "active" } else { "inactive" }));
+        let metadata = vec![
+            crate::proto::proximadb::MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    if i % 2 == 0 { "even" } else { "odd" }.to_string()
+                )),
+            },
+            crate::proto::proximadb::MetadataItem {
+                key: "status".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    if i < 10 { "active" } else { "inactive" }.to_string()
+                )),
+            },
+        ];
         
         let record = SstRecord {
             id: format!("vec_{}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -275,7 +299,6 @@ async fn test_metadata_bloom_filter_optimization() {
     
     // Create collection context
     let context = CollectionContext {
-        collection_id: "test_collection".to_string(),
         file_path: file_url.clone(),
         sstable_files: vec![file_url.clone()],
         total_vectors: 20,

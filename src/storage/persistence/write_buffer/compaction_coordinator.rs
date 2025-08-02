@@ -115,10 +115,10 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            max_files_before_compaction: 10,
+            max_files_before_compaction: 5,  // Reduced from 10 to be more aggressive
             max_size_before_compaction: 100 * 1024 * 1024, // 100MB
             max_flushes_before_compaction: 5,
-            min_compaction_interval_secs: 300, // 5 minutes
+            min_compaction_interval_secs: 60, // 1 minute (reduced from 5 minutes)
             enable_background_compaction: true,
             max_concurrent_compactions: 2,
         }
@@ -225,11 +225,24 @@ impl CompactionCoordinator {
         if !states.contains_key(collection_id) {
             let mut state = CollectionCompactionState::default();
             state.preferred_engine = preferred_engine.to_string();
+            
+            // Discover existing files to initialize proper state
+            let existing_files = self.discover_existing_files_for_collection(collection_id, preferred_engine).await?;
+            if !existing_files.is_empty() {
+                state.files_needing_compaction = existing_files.len();
+                state.uncompacted_size_bytes = existing_files.len() as u64 * 5 * 1024 * 1024; // Estimate 5MB per file
+                
+                info!(
+                    "🔍 CompactionCoordinator: Found {} existing files for collection {} during initialization",
+                    existing_files.len(), collection_id
+                );
+            }
+            
             states.insert(collection_id.to_string(), state);
             
             info!(
-                "🔧 CompactionCoordinator: Initialized collection {} with preferred engine {}",
-                collection_id, preferred_engine
+                "🔧 CompactionCoordinator: Initialized collection {} with preferred engine {} ({} existing files)",
+                collection_id, preferred_engine, existing_files.len()
             );
         }
         Ok(())
@@ -325,19 +338,40 @@ impl CompactionCoordinator {
             return Ok(false);
         }
         
+        // Also check actual file count in storage (not just tracked state)
+        let actual_file_count = match self.discover_existing_files_for_collection(
+            collection_id, 
+            &state.preferred_engine
+        ).await {
+            Ok(files) => files.len(),
+            Err(e) => {
+                warn!("⚠️ CompactionCoordinator: Failed to discover files for {}: {}", collection_id, e);
+                0
+            }
+        };
+        
+        // Use the maximum of tracked state and actual file count
+        let effective_file_count = state.files_needing_compaction.max(actual_file_count);
+        
         // Check thresholds
         let should_compact = 
-            state.files_needing_compaction >= self.config.max_files_before_compaction ||
+            effective_file_count >= self.config.max_files_before_compaction ||
             state.uncompacted_size_bytes >= self.config.max_size_before_compaction ||
             state.flushes_since_compaction >= self.config.max_flushes_before_compaction;
         
         if should_compact {
             info!(
-                "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{}, size={}MB/{}MB, flushes={}/{}",
+                "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
                 state.files_needing_compaction, self.config.max_files_before_compaction,
+                actual_file_count,
                 state.uncompacted_size_bytes / (1024 * 1024), self.config.max_size_before_compaction / (1024 * 1024),
                 state.flushes_since_compaction, self.config.max_flushes_before_compaction
+            );
+        } else if actual_file_count > 5 {
+            debug!(
+                "📊 CompactionCoordinator: Collection {} has {} files but doesn't meet thresholds yet",
+                collection_id, actual_file_count
             );
         }
         
@@ -630,6 +664,41 @@ impl CompactionCoordinator {
         
         self.trigger_background_compaction(collection_id).await
     }
+    
+    /// Check collection compaction status and trigger if needed
+    pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<CompactionResult>> {
+        // Initialize collection state if not exists
+        if self.get_collection_state(collection_id).await.is_none() {
+            self.initialize_collection(collection_id, "VIPER").await?;
+        }
+        
+        // Check if compaction is needed
+        if self.should_trigger_compaction(collection_id).await? {
+            info!(
+                "🔧 CompactionCoordinator: Auto-triggering compaction for collection {} based on file count",
+                collection_id
+            );
+            self.trigger_background_compaction(collection_id).await.map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Discover existing files for a collection
+    async fn discover_existing_files_for_collection(&self, collection_id: &str, engine_type: &str) -> Result<Vec<String>> {
+        match engine_type {
+            "VIPER" => {
+                // Use VIPER engine's file discovery
+                self.viper_engine.get_parquet_files_for_collection(collection_id).await
+            }
+            "LSM" | "SST" => {
+                // For SST engine, we'd need to implement similar discovery
+                // For now, return empty as SST handles its own compaction differently
+                Ok(vec![])
+            }
+            _ => Ok(vec![])
+        }
+    }
 }
 
 /// Engine-specific compaction result (internal)
@@ -667,7 +736,7 @@ mod tests {
     #[test]
     fn test_compaction_config() {
         let config = CompactionConfig::default();
-        assert_eq!(config.max_files_before_compaction, 10);
+        assert_eq!(config.max_files_before_compaction, 5); // Changed from 10 to 5 to match actual default
         assert_eq!(config.max_size_before_compaction, 100 * 1024 * 1024);
         assert_eq!(config.max_flushes_before_compaction, 5);
         assert!(config.enable_background_compaction);

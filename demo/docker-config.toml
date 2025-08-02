@@ -29,9 +29,23 @@ cache_size_mb = 256
 bloom_filter_bits = 10
 
 [storage.sst_config]
-memtable_size_mb = 8
-memory_flush_size_bytes = 2097152  # 2MB
-compression = "snappy"
+memtable_size_mb = 1024  # 1GB to reduce small file creation
+memory_flush_size_bytes = 16777216  # 16MB to reduce small file creation
+compression = "zstd"  # ZSTD for better compression ratio
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
+compaction_threshold = 5  # Minimum 5 files before compaction
+write_buffer_size_mb = 8192  # 8GB for global write buffer
+block_size_kb = 4096  # 4MB blocks for optimal ZSTD compression
+
+[storage.viper_config]
+row_group_size = 50000  # Smaller for demo workloads
+compression = "zstd"  # ZSTD for columnar data
+compression_enabled = true  # Enable compression by default  
+compression_level = 3  # Balanced speed/compression
+enable_statistics = true
+data_directory = "/app/viper_data"
+cache_size_mb = 256
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true

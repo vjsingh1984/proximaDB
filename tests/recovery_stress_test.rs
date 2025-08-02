@@ -56,6 +56,8 @@ mod recovery_stress_tests {
                 assignment_config: Default::default(),
                 mmap_enabled: true,
                 sst_config: Default::default(),
+                viper_config: Default::default(),
+                write_buffer_config: Default::default(),
                 cache_size_mb: 256,
                 bloom_filter_config: None,
                 filesystem_config: Default::default(),

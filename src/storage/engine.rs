@@ -525,6 +525,15 @@ impl StorageEngine {
         // Populate assignment service for each collection
         let assignment_service = crate::storage::assignment_service::get_assignment_service();
         
+        // Rebuild assignments from disk - stateless discovery
+        // This is critical for handling collections that exist on disk but have no assignments
+        tracing::info!("🔍 Rebuilding assignments from disk discovery...");
+        if let Err(e) = assignment_service.discover_and_recover(&self.config.storage_locations).await {
+            tracing::warn!("⚠️ Failed to rebuild assignments from disk: {}", e);
+        } else {
+            tracing::info!("✅ Assignment service rebuilt from disk discovery");
+        }
+        
         for collection in &collections {
             let collection_id = &collection.id;
             let collection_name = collection.config.as_ref()
@@ -1009,8 +1018,9 @@ impl StorageEngine {
                             quantization_info: None,
                             engine_stats: None,
                             index_path: None,
-                            collection_id: Some(collection_id.to_string()),
                             created_at: None, // TODO: Populate from vector store
+                            version: None,
+                            timestamp: None,
                         }
                     })
                     .collect();
@@ -1112,8 +1122,9 @@ impl StorageEngine {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    collection_id: Some(collection_id.to_string()),
-                    created_at: Some(chrono::DateTime::from_timestamp_micros(record.created_at).unwrap_or_else(chrono::Utc::now)),
+                    created_at: Some(chrono::DateTime::from_timestamp(record.timestamp as i64, 0).unwrap_or_else(chrono::Utc::now)),
+                    version: record.version,
+                    timestamp: Some(record.timestamp),
                 });
         }
 
@@ -1183,8 +1194,9 @@ impl StorageEngine {
                             quantization_info: None,
                             engine_stats: None,
                             index_path: None,
-                            collection_id: Some(collection_id.to_string()),
                             created_at: None, // TODO: Populate from vector store
+                            version: None,
+                            timestamp: None,
                         }
                     })
                     .collect()

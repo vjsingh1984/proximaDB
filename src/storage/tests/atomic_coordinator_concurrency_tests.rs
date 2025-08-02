@@ -55,6 +55,7 @@ mod tests {
                     custom_staging_dir: None,
                     auto_cleanup: true,
                     max_orphaned_age_hours: 24,
+                    ..Default::default()
                 };
                 
                 coord.begin_atomic_operation(&config).await
@@ -148,6 +149,7 @@ mod tests {
                         custom_staging_dir: None,
                         auto_cleanup: true,
                         max_orphaned_age_hours: 24,
+                        ..Default::default()
                     };
                     
                     let _op = coord.begin_atomic_operation(&config).await?;
@@ -200,6 +202,7 @@ mod tests {
                     custom_staging_dir: None,
                     auto_cleanup: true,
                     max_orphaned_age_hours: 24,
+                    ..Default::default()
                 };
                 
                 let op = coord.begin_atomic_operation(&config).await?;
@@ -254,6 +257,7 @@ mod tests {
                 custom_staging_dir: None,
                 auto_cleanup: false, // Disable auto cleanup for this test
                 max_orphaned_age_hours: 24,
+                ..Default::default()
             };
             
             let op = coordinator.begin_atomic_operation(&config).await.unwrap();

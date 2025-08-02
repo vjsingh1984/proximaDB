@@ -27,16 +27,16 @@ cache_size_mb = 512
 bloom_filter_bits = 10
 
 [storage.lsm_config]
-memtable_size_mb = 32
+memtable_size_mb = 1024  # 1GB to reduce small file creation
 level_count = 7
-compaction_threshold = 4
+compaction_threshold = 5  # Minimum 5 files before compaction
 block_size_kb = 32
-memory_flush_size_bytes = 10485760  # 10MB
+memory_flush_size_bytes = 16777216  # 16MB to reduce small file creation
 memtable_type = "BTree"
 compaction_strategy = "leveled"
 compression = "snappy"
 cache_size_mb = 128
-write_buffer_size_mb = 32
+write_buffer_size_mb = 8192  # 8GB for global write buffer
 max_files_per_level = 10
 level_size_multiplier = 10.0
 max_levels = 7

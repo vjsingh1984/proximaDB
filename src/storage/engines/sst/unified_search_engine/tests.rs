@@ -35,7 +35,6 @@ async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
 /// Create test search context
 fn create_test_search_context() -> UnifiedSearchContext {
     UnifiedSearchContext {
-        collection_id: "test_collection".to_string(),
         storage_info: crate::core::search::StorageInfo {
             storage_type: "LSM".to_string(),
             file_count: 5,
@@ -95,7 +94,7 @@ fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchRe
             vector_id: Some(format!("vector_{}", i)),
             score: 1.0 - (i as f32 * 0.1),
             distance: Some(i as f32 * 0.1),
-            rank: Some(i as i32 + 1),
+            rank: Some(i as u16 + 1),
             vector: Some((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect()),
             metadata: {
                 let mut map = HashMap::new();
@@ -108,7 +107,6 @@ fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchRe
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            collection_id: Some("test_collection".to_string()),
             created_at: Some(Utc::now()),
         }
     }).collect()
@@ -409,7 +407,7 @@ mod search_tests {
                     vector_id: Some(format!("vector_{}", i)),
                     score: 1.0 - (i as f32 * 0.1),
                     distance: Some(i as f32 * 0.1),
-                    rank: Some(i as i32 + 1),
+                    rank: Some(i as u16 + 1),
                     vector: Some((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect()),
                     metadata: {
                         let mut map = HashMap::new();
@@ -422,8 +420,7 @@ mod search_tests {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    collection_id: Some("test_collection".to_string()),
-                    created_at: Some(Utc::now()),
+                            created_at: Some(Utc::now()),
                 };
                 mock_results.push(result);
             }
@@ -587,7 +584,6 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: Some("test".to_string()),
                 created_at: Some(Utc::now()),
             },
             crate::core::search::SearchResult {
@@ -607,7 +603,6 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: Some("test".to_string()),
                 created_at: Some(Utc::now()),
             },
             crate::core::search::SearchResult {
@@ -627,7 +622,6 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: Some("test".to_string()),
                 created_at: Some(Utc::now()),
             },
         ];
@@ -709,13 +703,12 @@ mod edge_case_tests {
                 distance: Some(0.1),
                 rank: Some(1),
                 vector: None,
-                metadata: HashMap::new(), // No version metadata
+                metadata: vec![], // No version metadata
                 debug_info: None,
                 semantic_distance: None,
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                collection_id: Some("test".to_string()),
                 created_at: Some(Utc::now()),
             }
         ];

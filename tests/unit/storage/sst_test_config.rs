@@ -1,6 +1,6 @@
 //! Consistent configuration for SST tests
 
-use proximadb::core::{SstConfig, BloomFilterConfig};
+use proximadb::core::{SstConfig, BloomFilterConfig, WriteBufferUserConfig};
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use std::path::Path;
 
@@ -205,12 +205,6 @@ pub fn get_test_assignments() -> &'static PersistentTestAssignments {
 /// Create a consistent test configuration for SST
 pub fn create_test_sst_config(base_path: &str) -> SstConfig {
     SstConfig {
-        // Memory settings
-        memtable_size_mb: 16,  // Smaller for tests
-        memory_flush_size_bytes: 1024 * 1024, // 1MB flush threshold
-        write_buffer_size_mb: 4,
-        cache_size_mb: 32,
-        
         // Level configuration
         level_count: 4,  // Fewer levels for tests
         max_levels: 4,
@@ -222,9 +216,10 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         block_size_kb: 16,  // Smaller blocks for tests
         
         // Storage type
-        memtable_type: "skiplist".to_string(),
         compaction_strategy: "leveled".to_string(),
         compression: "none".to_string(),  // No compression for tests
+        compression_enabled: false,
+        compression_level: 0,
         
         // Bloom filter - use consistent settings
         bloom_filter_config: Some(BloomFilterConfig {
@@ -233,23 +228,34 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
             ..Default::default()
         }),
         
+        // Cache
+        cache_size_mb: 32,
+        
         // Background operations
         background_thread_count: 2,
-        
-        // Sync and persistence
-        sync_mode: "immediate".to_string(),  // Immediate sync for tests
-        enable_write_buffer: true,  // Enable write buffer for tests
         
         // Directories - use assignment service compatible paths
         // The assignment service will create {base_path}/{collection_id}/data
         // So we set the base path here and let assignment service handle collection paths
-        write_buffer_directory: format!("{}/write_buffer", base_path),
         data_directory: format!("{}/data", base_path),
         
         // Memory mapping
         mmap_enabled: false,
         prefetch_enabled: false,
         prefetch_size_kb: 0,
+    }
+}
+
+/// Create a consistent test configuration for WriteBuffer
+pub fn create_test_write_buffer_config(base_path: &str) -> WriteBufferUserConfig {
+    WriteBufferUserConfig {
+        write_buffer_size_mb: 4,  // Small for tests
+        memory_flush_size_bytes: 1024 * 1024,  // 1MB flush threshold
+        memtable_type: "BTree".to_string(),
+        sync_mode: "perbatch".to_string(),
+        write_buffer_directory: format!("{}/write_buffer", base_path),
+        enable_wal: true,
+        vector_count_threshold: 100,  // Small threshold for tests
     }
 }
 

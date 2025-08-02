@@ -16,8 +16,6 @@ impl StorageEngine {
             StorageEngine::Sst,
             StorageEngine::Mmap,
             StorageEngine::Hybrid,
-            StorageEngine::Memory,
-            StorageEngine::ObjectStore,
         ]
     }
     
@@ -25,7 +23,7 @@ impl StorageEngine {
     pub fn supports_compression(&self) -> bool {
         matches!(
             self, 
-            StorageEngine::Viper | StorageEngine::Sst | StorageEngine::ObjectStore
+            StorageEngine::Viper | StorageEngine::Sst
         )
     }
     
@@ -36,6 +34,7 @@ impl StorageEngine {
     
     /// Check if engine is persistent
     pub fn is_persistent(&self) -> bool {
-        !matches!(self, StorageEngine::Memory)
+        // All current engines are persistent
+        true
     }
 }

@@ -1102,11 +1102,11 @@ impl WriteBufferManager {
         // For modern batch strategies, version management is handled internally
         // Just increment version if not already set
         // Proto-first: direct field access
-        let current_version = record.version;
+        let current_version = record.version.unwrap_or(0);
         let new_version = if current_version <= 0 { 1 } else { current_version + 1 };
         
         // Update version directly
-        record.version = new_version;
+        record.version = Some(new_version);
 
         // Redirect to insert (which is now upsert)
         self.insert(collection_id, vector_id, &record).await

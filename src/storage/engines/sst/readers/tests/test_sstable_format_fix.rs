@@ -38,14 +38,12 @@ async fn test_sstable_format_with_bloom_filter() {
     for i in 0..10 {
         let record = SstRecord {
             id: format!("vec_{:03}", i),
-            collection_id: "test_collection".to_string(),
             vector: vec![i as f32; 3],
-            metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            metadata: vec![],
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,

@@ -38,7 +38,6 @@ mod edge_tests {
     // Helper to create test collection context
     fn create_test_context(collection_id: &str, file_paths: Vec<String>) -> CollectionContext {
         CollectionContext {
-            collection_id: collection_id.to_string(),
             file_path: file_paths.first().cloned().unwrap_or_default(),
             sstable_files: file_paths,
             total_vectors: 1000,
@@ -53,7 +52,6 @@ mod edge_tests {
     async fn test_empty_collection_search() {
         let reader = create_test_reader().await;
         let context = CollectionContext {
-            collection_id: "empty_collection".to_string(),
             file_path: "".to_string(),
             sstable_files: vec![], // No files
             total_vectors: 0,
@@ -484,14 +482,12 @@ mod edge_tests {
         for version in 1..=10 {
             records.push(SstRecord {
                 id: vector_id.to_string(),
-                collection_id: "test_collection".to_string(),
                 vector: vec![0.1 * version as f32; 128],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: version,
-                created_at: version,
-                updated_at: version,
+                updated_at: Some(version),
                 expires_at: None,
-                version: version,
+                version: Some(version),
                 is_tombstone: false,
                 sequence_number: version as u64,
                 level: 0,
@@ -501,14 +497,12 @@ mod edge_tests {
         // Add a tombstone (deletion marker)
         records.push(SstRecord {
             id: vector_id.to_string(),
-            collection_id: "test_collection".to_string(),
             vector: vec![],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: 11,
-            created_at: 11,
-            updated_at: 11,
+            updated_at: Some(11),
             expires_at: None,
-            version: 11,
+            version: Some(11),
             is_tombstone: true,
             sequence_number: 11,
             level: 0,
@@ -517,14 +511,12 @@ mod edge_tests {
         // Add another version after deletion
         records.push(SstRecord {
             id: vector_id.to_string(),
-            collection_id: "test_collection".to_string(),
             vector: vec![0.99; 128],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: 12,
-            created_at: 12,
-            updated_at: 12,
+            updated_at: Some(12),
             expires_at: None,
-            version: 12,
+            version: Some(12),
             is_tombstone: false,
             sequence_number: 12,
             level: 0,
@@ -620,14 +612,12 @@ mod edge_tests {
         for i in 0..10 {
             let record = crate::storage::engines::sst::SstRecord {
                 id: format!("vec_{}", i),
-                collection_id: "concurrent_test".to_string(),
                 vector: vec![i as f32; 128],
-                metadata: HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp(),
-                created_at: chrono::Utc::now().timestamp(),
-                updated_at: chrono::Utc::now().timestamp(),
+                metadata: vec![],
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 is_tombstone: false,
                 sequence_number: i as u64,
                 level: 0,
@@ -641,7 +631,6 @@ mod edge_tests {
         reader.load_metadata(&file_url).await.unwrap();
         
         let context = Arc::new(CollectionContext {
-            collection_id: "concurrent_test".to_string(),
             file_path: file_url.clone(),
             sstable_files: vec![file_url.clone()],
             total_vectors: 10,
@@ -805,14 +794,12 @@ mod edge_tests {
             // Regular tombstone
             SstRecord {
                 id: "deleted_1".to_string(),
-                collection_id: "test".to_string(),
                 vector: vec![],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: 100,
-                created_at: 100,
-                updated_at: 100,
+                updated_at: Some(100),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 is_tombstone: true,
                 sequence_number: 100,
                 level: 0,
@@ -820,18 +807,17 @@ mod edge_tests {
             // Tombstone with metadata (unusual but valid)
             SstRecord {
                 id: "deleted_2".to_string(),
-                collection_id: "test".to_string(),
                 vector: vec![],
-                metadata: {
-                    let mut m = HashMap::new();
-                    m.insert("deletion_reason".to_string(), json!("user_requested"));
-                    m
-                },
+                metadata: vec![
+                    crate::proto::proximadb::MetadataItem {
+                        key: "deletion_reason".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("user_requested".to_string())),
+                    },
+                ],
                 timestamp: 101,
-                created_at: 101,
-                updated_at: 101,
+                updated_at: Some(101),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 is_tombstone: true,
                 sequence_number: 101,
                 level: 0,
@@ -839,14 +825,12 @@ mod edge_tests {
             // Tombstone with expiration (double deletion)
             SstRecord {
                 id: "deleted_3".to_string(),
-                collection_id: "test".to_string(),
                 vector: vec![],
-                metadata: HashMap::new(),
+                metadata: vec![],
                 timestamp: 102,
-                created_at: 102,
-                updated_at: 102,
+                updated_at: Some(102),
                 expires_at: Some(103),
-                version: 1,
+                version: Some(1),
                 is_tombstone: true,
                 sequence_number: 102,
                 level: 0,
@@ -913,7 +897,6 @@ mod edge_tests {
         
         for path in edge_paths {
             let context = CollectionContext {
-                collection_id: "test".to_string(),
                 file_path: path.to_string(),
                 sstable_files: vec![path.to_string()],
                 total_vectors: 0,
@@ -939,14 +922,12 @@ mod edge_tests {
         for i in 0..1000 {
             let record = SstRecord {
                 id: format!("vec_{}", i),
-                collection_id: "test".to_string(),
                 vector: vec![0.1; 1024], // Large vector
-                metadata: HashMap::new(),
-                timestamp: i as i64,
-                created_at: i as i64,
-                updated_at: i as i64,
+                metadata: vec![],
+                timestamp: i as u32,
+                updated_at: Some(i as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 is_tombstone: false,
                 sequence_number: i as u64,
                 level: 0,

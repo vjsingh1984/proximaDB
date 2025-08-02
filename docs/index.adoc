@@ -114,6 +114,10 @@ endif::[]
 |link:../CLAUDE.md[Development Instructions]
 |AI assistant instructions and development guidelines
 |Contributors
+
+|link:../CHANGELOG.adoc[Changelog]
+|Complete list of features, fixes, and improvements
+|All Users
 |===
 
 == 🧭 Navigation by Use Case

@@ -27,11 +27,10 @@ fn create_test_vector(id: &str) -> VectorRecord {
             key: "atomic_test".to_string(),
             value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("true".to_string())),
         }],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
+        timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -85,6 +84,7 @@ async fn test_begin_atomic_operation() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await
@@ -122,6 +122,7 @@ async fn test_write_to_staging() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
@@ -167,6 +168,7 @@ async fn test_finalize_atomic_operation() {
         custom_staging_dir: Some("final".to_string()),
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
@@ -215,6 +217,7 @@ async fn test_abort_atomic_operation() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
@@ -366,6 +369,7 @@ async fn test_concurrent_operations() {
                 custom_staging_dir: None,
                 auto_cleanup: true,
                 max_orphaned_age_hours: 24,
+                ..Default::default()
             };
             
             let operation = coord_clone.begin_atomic_operation(&config).await
@@ -425,6 +429,7 @@ async fn test_cleanup_orphaned_operations() {
             custom_staging_dir: None,
             auto_cleanup: false, // Disable auto cleanup for testing
             max_orphaned_age_hours: 0,
+            ..Default::default()
         };
         
         let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
@@ -539,6 +544,7 @@ async fn test_staging_config_with_custom_staging_dir() {
         custom_staging_dir: Some("__custom_dir".to_string()),
         auto_cleanup: false,
         max_orphaned_age_hours: 48,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await
@@ -570,6 +576,7 @@ async fn test_operation_without_collection_id() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await
@@ -637,6 +644,7 @@ async fn test_double_finalize_operation() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await.unwrap();
@@ -676,6 +684,7 @@ async fn test_write_after_finalize() {
         custom_staging_dir: None,
         auto_cleanup: true,
         max_orphaned_age_hours: 24,
+        ..Default::default()
     };
     
     let operation = coordinator.begin_atomic_operation(&config).await.unwrap();

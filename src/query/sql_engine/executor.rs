@@ -118,16 +118,11 @@ impl SqlExecutor {
             _ => DistanceMetric::Cosine, // Default
         };
         
-        // Build metadata filter
-        let metadata_filter = if let Some(filter) = &plan.metadata_filter {
-            Some(filter.conditions.clone())
-        } else {
-            None
-        };
-        
-        // Convert metadata filter to SearchParams
-        let search_params_obj = if let Some(filter) = metadata_filter {
-            Some(crate::core::search::SearchParams::default().with_simple_filters(filter))
+        // Build metadata filter using FilterExpression
+        let search_params_obj = if let Some(filter) = &plan.metadata_filter {
+            let mut params = crate::core::search::SearchParams::default();
+            params.filter_expression = Some(filter.expression.clone());
+            Some(params)
         } else {
             None
         };

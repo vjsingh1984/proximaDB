@@ -40,9 +40,14 @@ pub struct StorageConfig {
     #[serde(default)]
     pub assignment_config: AssignmentConfig,
 
-    /// Storage engine configuration
+    /// Write buffer configuration (global memtable settings)
+    #[serde(default)]
+    pub write_buffer_config: WriteBufferUserConfig,
+
+    /// Storage engine configurations
     pub mmap_enabled: bool,
     pub sst_config: SstConfig,
+    pub viper_config: Option<ViperConfig>,
     pub cache_size_mb: u64,
     // bloom_filter_bits removed - use bloom_filter_config instead
     pub bloom_filter_config: Option<BloomFilterConfig>,
@@ -263,8 +268,10 @@ impl Default for StorageConfig {
             ],
             metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
+            write_buffer_config: WriteBufferUserConfig::default(),
             mmap_enabled: true,
             sst_config: SstConfig::default(),
+            viper_config: Some(ViperConfig::default()),
             cache_size_mb: 2048,
             // Use unified bloom filter config
             bloom_filter_config: Some(BloomFilterConfig::default()),
@@ -273,10 +280,74 @@ impl Default for StorageConfig {
     }
 }
 
+/// User-facing write buffer configuration (from TOML files)
+/// This is the simple configuration that users specify in their config files.
+/// It gets converted to the internal WriteBufferConfig for the engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteBufferUserConfig {
+    /// Total write buffer size across all collections in MB
+    pub write_buffer_size_mb: u64,
+    /// Threshold in bytes to trigger flush when a collection's total unflushed data exceeds this
+    pub memory_flush_size_bytes: usize,
+    /// Threshold in vector count to trigger flush when a collection's vector count exceeds this
+    pub vector_count_threshold: usize,
+    /// Memtable implementation type (BTree, SkipList)
+    pub memtable_type: String,
+    /// Sync mode for durability (PerBatch, Periodic, None)
+    pub sync_mode: String,
+    /// Directory for write-ahead log files
+    pub write_buffer_directory: String,
+    /// Enable write-ahead logging
+    pub enable_wal: bool,
+}
+
+impl Default for WriteBufferUserConfig {
+    fn default() -> Self {
+        Self {
+            write_buffer_size_mb: 8192,  // 8GB total across all collections
+            memory_flush_size_bytes: 16 * 1024 * 1024,  // 16MB per collection (aggregate)
+            vector_count_threshold: 100_000,  // 100k vectors per collection
+            memtable_type: "BTree".to_string(),
+            sync_mode: "PerBatch".to_string(),
+            write_buffer_directory: "./data/write_buffer".to_string(),
+            enable_wal: true,
+        }
+    }
+}
+
+impl WriteBufferUserConfig {
+    /// Convert user configuration to internal engine configuration
+    pub fn to_engine_config(&self) -> crate::storage::persistence::write_buffer::WriteBufferConfig {
+        use crate::storage::persistence::write_buffer::{
+            WriteBufferConfig, WriteBufferStrategyType, 
+            config::{MemTableConfig, MultiDiskConfig, CompressionConfig, PerformanceConfig}
+        };
+        
+        WriteBufferConfig {
+            strategy_type: WriteBufferStrategyType::default(),
+            memtable: MemTableConfig::default(),
+            multi_disk: MultiDiskConfig::default(),
+            compression: CompressionConfig::default(),
+            performance: PerformanceConfig::default(),
+            enable_mvcc: true,
+            enable_ttl: true,
+            enable_background_compaction: true,
+            collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
+        }
+    }
+}
+
+/// SST (Sorted String Table) engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstConfig {
-    pub memtable_size_mb: u64,
+    /// Number of levels in the LSM tree
     pub level_count: u8,
+    /// Minimum files before compaction triggers
     pub compaction_threshold: u32,
     /// SSTable block size in KB. Configurable from TOML, defaults to 1MB.
     /// 
@@ -290,24 +361,79 @@ pub struct SstConfig {
     /// length prefix [block_len:4][block_data], so existing files continue to work.
     /// Mixed block sizes within the same system are fully supported.
     pub block_size_kb: u32,
-    pub memory_flush_size_bytes: usize,
-    pub memtable_type: String,
+    /// Compaction strategy (leveled, tiered, unified)
     pub compaction_strategy: String,
+    /// Compression algorithm (snappy, lz4, zstd, none)
     pub compression: String,
+    /// Enable compression for SST DataBlocks
+    #[serde(default = "default_compression_enabled")]
+    pub compression_enabled: bool,
+    /// Compression level (1-22 for ZSTD, ignored for other algorithms)
+    #[serde(default = "default_compression_level")]
+    pub compression_level: i32,
+    /// Bloom filter configuration for SST files
     pub bloom_filter_config: Option<BloomFilterConfig>,
+    /// Cache size for SST blocks in MB
     pub cache_size_mb: u64,
-    pub write_buffer_size_mb: u64,
+    /// Maximum files per level
     pub max_files_per_level: u32,
+    /// Size multiplier between levels
     pub level_size_multiplier: f64,
+    /// Maximum number of levels
     pub max_levels: u8,
+    /// Number of background compaction threads
     pub background_thread_count: u32,
-    pub sync_mode: String,
-    pub enable_write_buffer: bool,
-    pub write_buffer_directory: String,
+    /// Data directory for SST files
     pub data_directory: String,
+    /// Enable memory-mapped I/O for SST files
     pub mmap_enabled: bool,
+    /// Enable prefetching for sequential reads
     pub prefetch_enabled: bool,
+    /// Prefetch size in KB
     pub prefetch_size_kb: u32,
+}
+
+/// VIPER (columnar storage) engine configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViperConfig {
+    /// Parquet file configuration
+    pub row_group_size: usize,
+    /// Compression for Parquet files (snappy, gzip, lz4, zstd)
+    pub compression: String,
+    /// Enable compression for Parquet files
+    #[serde(default = "default_compression_enabled")]
+    pub compression_enabled: bool,
+    /// Compression level (1-22 for ZSTD, ignored for other algorithms)
+    #[serde(default = "default_compression_level")]
+    pub compression_level: i32,
+    /// Enable statistics in Parquet files
+    pub enable_statistics: bool,
+    /// Data directory for VIPER files
+    pub data_directory: String,
+    /// Cache size for columnar data in MB
+    pub cache_size_mb: u64,
+}
+
+impl Default for ViperConfig {
+    fn default() -> Self {
+        Self {
+            row_group_size: 100_000,
+            compression: "zstd".to_string(),  // Changed to ZSTD for better compression
+            compression_enabled: true,  // Compression enabled by default
+            compression_level: 3,  // Balanced speed/compression
+            enable_statistics: true,
+            data_directory: "./data/viper_data".to_string(),
+            cache_size_mb: 512,
+        }
+    }
+}
+
+fn default_compression_enabled() -> bool {
+    true  // Compression enabled by default
+}
+
+fn default_compression_level() -> i32 {
+    3  // Balanced compression level
 }
 
 // BloomFilterConfig moved to core::bloom module for polymorphic design
@@ -317,24 +443,19 @@ pub use crate::core::bloom::BloomFilterConfig;
 impl Default for SstConfig {
     fn default() -> Self {
         Self {
-            memtable_size_mb: 64,
             level_count: 7,
-            compaction_threshold: 4,
-            block_size_kb: 1024, // 1MB blocks optimized for EC2 GP2/GP3 IOPS and modern storage
-            memory_flush_size_bytes: 64 * 1024 * 1024, // 64MB
-            memtable_type: "skiplist".to_string(),
+            compaction_threshold: 5,
+            block_size_kb: 4096, // 4MB blocks optimized for ZSTD compression effectiveness
             compaction_strategy: "leveled".to_string(),
-            compression: "snappy".to_string(),
+            compression: "zstd".to_string(),  // Changed to ZSTD for better compression
+            compression_enabled: true,  // Compression enabled by default
+            compression_level: 3,  // Balanced speed/compression
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
-            write_buffer_size_mb: 64,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
             background_thread_count: 4,
-            sync_mode: "sync".to_string(),
-            enable_write_buffer: true,
-            write_buffer_directory: "./sst_wal".to_string(),
             data_directory: "./sst_data".to_string(),
             mmap_enabled: true,
             prefetch_enabled: true,
@@ -349,9 +470,6 @@ impl SstConfig {
     /// Note: block_size_kb changes are backward compatible since each SSTable block
     /// stores its own length prefix [block_len:4][block_data], allowing mixed block sizes.
     pub fn validate(&self) -> Result<(), String> {
-        if self.memtable_size_mb == 0 {
-            return Err("memtable_size_mb must be greater than 0".to_string());
-        }
         if self.level_count == 0 {
             return Err("level_count must be greater than 0".to_string());
         }

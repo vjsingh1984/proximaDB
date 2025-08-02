@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{StorageConfig, VectorRecord, VectorId, SstConfig};
+    use crate::core::{StorageConfig, VectorRecord, VectorId, SstConfig, WriteBufferUserConfig};
     use crate::storage::engine::StorageEngine;
     use std::sync::Arc;
     use tokio::task::JoinSet;
@@ -42,28 +42,34 @@ mod tests {
         }];
         
         config.sst_config = SstConfig {
-            memtable_size_mb: 1,
             level_count: 3,
             compaction_threshold: 2,
             block_size_kb: 4,
-            memory_flush_size_bytes: 1024 * 1024,
-            memtable_type: "standard".to_string(),
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
+            compression_enabled: true,
+            compression_level: 3,
             bloom_filter_config: None,
             cache_size_mb: 1,
-            write_buffer_size_mb: 1,
             max_files_per_level: 10,
             level_size_multiplier: 10.0,
             max_levels: 7,
             background_thread_count: 2,
-            sync_mode: "async".to_string(),
-            enable_write_buffer: true, // Enable WriteBuffer for proper writes
-            write_buffer_directory: base_path.display().to_string(), // Set base path, not base_path/wal
             data_directory: base_path.join("data").display().to_string(),
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 64,
+        };
+        
+        // Configure write buffer separately
+        config.write_buffer_config = WriteBufferUserConfig {
+            write_buffer_size_mb: 1,
+            memory_flush_size_bytes: 1024 * 1024,
+            vector_count_threshold: 100_000,
+            memtable_type: "BTree".to_string(),
+            sync_mode: "perbatch".to_string(),
+            write_buffer_directory: base_path.display().to_string(),
+            enable_wal: true,
         };
         
         // For testing, we'll create the engine without collection service
@@ -81,11 +87,10 @@ mod tests {
             id: Some(id.to_string()),
             vector: vec![0.1; 128],
             metadata: vec![],
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 0,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

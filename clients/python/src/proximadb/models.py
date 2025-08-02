@@ -393,8 +393,8 @@ class Collection(BaseModel):
     id: str
     config: CollectionConfig
     stats: Optional[CollectionStats] = None
-    created_at: Optional[int] = None  # Microseconds since epoch
-    updated_at: Optional[int] = None  # Microseconds since epoch
+    timestamp: int = Field(default_factory=lambda: int(__import__('time').time()))  # Creation timestamp - seconds since epoch (unsigned)
+    updated_at: Optional[int] = None  # Only set if different from timestamp (saves bytes)
     
     @property
     def name(self) -> str:
@@ -411,9 +411,10 @@ class VectorRecord(BaseModel):
     id: Optional[str] = None
     vector: List[float]
     metadata: Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]] = Field(default_factory=dict)
-    timestamp: Optional[int] = None  # Microseconds since epoch
-    version: int = 0
-    expires_at: Optional[int] = None  # TTL support
+    timestamp: int = Field(default_factory=lambda: int(__import__('time').time()))  # Required - seconds since epoch (unsigned)
+    updated_at: Optional[int] = None  # Only set if different from timestamp (saves bytes)
+    expires_at: Optional[int] = None  # TTL support (seconds since epoch, unsigned)
+    version: Optional[int] = None  # Optional to save bytes, use small positive values
 
     @field_validator('vector')
     def validate_vector(cls, v):

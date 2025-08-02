@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::config::{StorageConfig, StorageLocation, AssignmentConfig, BloomFilterConfig};
+    use crate::core::config::{StorageConfig, StorageLocation, AssignmentConfig, BloomFilterConfig, WriteBufferUserConfig};
     
     #[test]
     fn test_storage_locations_config() {
@@ -23,6 +23,8 @@ mod tests {
             assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
             sst_config: Default::default(),
+            viper_config: Default::default(),
+            write_buffer_config: Default::default(),
             cache_size_mb: 2048,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 12,
@@ -56,6 +58,8 @@ mod tests {
                 },
             ],
             metadata_url: "file:///fast-ssd/metadata".to_string(),
+            viper_config: Default::default(),
+            write_buffer_config: Default::default(),
             ..Default::default()
         };
         
@@ -101,6 +105,8 @@ mod tests {
                 },
             ],
             metadata_url: "file:///fast-ssd/metadata".to_string(),
+            viper_config: Default::default(),
+            write_buffer_config: Default::default(),
             ..Default::default()
         };
         
@@ -135,6 +141,8 @@ mod tests {
                 strategy: "hash".to_string(),
                 affinity: true,
             },
+            viper_config: Default::default(),
+            write_buffer_config: Default::default(),
             ..Default::default()
         };
         
@@ -156,5 +164,51 @@ mod tests {
         // Assignment config should default to hash with affinity
         assert_eq!(config.assignment_config.strategy, "hash");
         assert_eq!(config.assignment_config.affinity, true);
+    }
+    
+    #[test]
+    fn test_write_buffer_config_values() {
+        // Test with custom values that should be used instead of defaults
+        let write_buffer_config = WriteBufferUserConfig {
+            write_buffer_size_mb: 8192,  // 8GB
+            memory_flush_size_bytes: 16777216,  // 16MB
+            vector_count_threshold: 100_000,  // 100k vectors
+            memtable_type: "BTree".to_string(),
+            sync_mode: "PerBatch".to_string(),
+            write_buffer_directory: "./test_wal".to_string(),
+            enable_wal: true,
+        };
+        
+        // Verify the values are set correctly
+        assert_eq!(write_buffer_config.write_buffer_size_mb, 8192);
+        assert_eq!(write_buffer_config.memory_flush_size_bytes, 16777216); // 16MB not 2MB!
+        assert_eq!(write_buffer_config.memtable_type, "BTree");
+        assert_eq!(write_buffer_config.sync_mode, "PerBatch");
+        assert_eq!(write_buffer_config.write_buffer_directory, "./test_wal");
+        assert!(write_buffer_config.enable_wal);
+    }
+    
+    #[test]
+    fn test_write_buffer_config_from_toml() {
+        // Test loading from TOML string
+        let toml_str = r#"
+            write_buffer_size_mb = 4096
+            memory_flush_size_bytes = 33554432  # 32MB
+            vector_count_threshold = 10000
+            memtable_type = "SkipList"
+            sync_mode = "Periodic"
+            write_buffer_directory = "/tmp/wal"
+            enable_wal = false
+        "#;
+        
+        let write_buffer_config: WriteBufferUserConfig = toml::from_str(toml_str).unwrap();
+        
+        assert_eq!(write_buffer_config.write_buffer_size_mb, 4096);
+        assert_eq!(write_buffer_config.memory_flush_size_bytes, 33554432); // 32MB
+        assert_eq!(write_buffer_config.vector_count_threshold, 10000);
+        assert_eq!(write_buffer_config.memtable_type, "SkipList");
+        assert_eq!(write_buffer_config.sync_mode, "Periodic");
+        assert_eq!(write_buffer_config.write_buffer_directory, "/tmp/wal");
+        assert!(!write_buffer_config.enable_wal);
     }
 }

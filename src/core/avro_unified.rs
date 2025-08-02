@@ -56,14 +56,10 @@ const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
       "doc": "Unix timestamp in milliseconds"
     },
     {
-      "name": "created_at",
-      "type": "long", 
-      "doc": "Creation timestamp in milliseconds"
-    },
-    {
       "name": "updated_at",
-      "type": "long",
-      "doc": "Last update timestamp in milliseconds"
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Last update timestamp (only if different from timestamp)"
     },
     {
       "name": "expires_at",
@@ -73,8 +69,8 @@ const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
     },
     {
       "name": "version",
-      "type": "long",
-      "default": 1,
+      "type": ["null", "long"],
+      "default": null,
       "doc": "Record version for optimistic concurrency"
     },
     {
@@ -105,17 +101,17 @@ lazy_static::lazy_static! {
 
 /// Unified vector record - single source of truth, generated from Avro schema
 /// This replaces ALL previous VectorRecord implementations across the codebase
+/// Aligned with proto: no created_at, optional fields where appropriate
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorRecord {
     pub id: String,
     pub collection_id: String,
     pub vector: Vec<f32>,
     pub metadata: HashMap<String, serde_json::Value>,
-    pub timestamp: i64,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub expires_at: Option<i64>,
-    pub version: i64,
+    pub timestamp: i64,  // Required, seconds since epoch as i64 for Avro
+    pub updated_at: Option<i64>,  // Optional
+    pub expires_at: Option<i64>,  // Optional
+    pub version: Option<i64>,  // Optional
 
     // Optional fields for search results and compatibility
     pub rank: Option<i32>,
@@ -142,10 +138,9 @@ impl VectorRecord {
             vector,
             metadata,
             timestamp: now,
-            created_at: now,
-            updated_at: now,
+            updated_at: None,
             expires_at: None,
-            version: 1,
+            version: None,
             rank: None,
             score: None,
             distance: None,
@@ -167,10 +162,9 @@ impl VectorRecord {
             vector,
             metadata,
             timestamp: ts,
-            created_at: ts,
-            updated_at: ts,
+            updated_at: None,
             expires_at: None,
-            version: 1,
+            version: None,
             rank: None,
             score: None,
             distance: None,
@@ -215,10 +209,9 @@ impl VectorRecord {
         record.put("metadata", Value::Map(metadata_map));
         
         record.put("timestamp", Value::Long(self.timestamp));
-        record.put("created_at", Value::Long(self.created_at));
-        record.put("updated_at", Value::Long(self.updated_at));
+        record.put("updated_at", self.updated_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("expires_at", self.expires_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("version", Value::Long(self.version));
+        record.put("version", self.version.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("rank", self.rank.map(Value::Int).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("score", self.score.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("distance", self.distance.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
@@ -251,15 +244,16 @@ impl VectorRecord {
 
     /// Update record and increment version
     pub fn update(&mut self) -> &mut Self {
-        self.updated_at = Utc::now().timestamp_millis();
-        self.version += 1;
+        self.updated_at = Some(Utc::now().timestamp_millis());
+        self.version = Some(self.version.unwrap_or(0) + 1);
         self
     }
 
     /// Check if record has expired
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            Utc::now().timestamp_millis() > expires_at
+            // expires_at is u32 seconds since epoch, convert current time to seconds
+            Utc::now().timestamp() > expires_at
         } else {
             false
         }
@@ -272,16 +266,17 @@ impl VectorRecord {
             vector_id: Some(self.id.clone()),
             score,
             distance: None,
-            rank,
+            rank: rank.map(|r| r as u16),
             vector: Some(self.vector.clone()),
             metadata: self.metadata.clone(),
-            collection_id: Some(self.collection_id.clone()),
-            created_at: Some(chrono::DateTime::from_timestamp(self.created_at, 0).unwrap_or_default()),
+            created_at: Some(chrono::DateTime::from_timestamp(self.timestamp, 0).unwrap_or_default()),
             debug_info: None,
             semantic_distance: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+            version: self.version.map(|v| v as u32),
+            timestamp: Some(self.timestamp as u32),
         }
     }
 
@@ -290,7 +285,8 @@ impl VectorRecord {
         let mut size = 0;
 
         // Fixed-size fields
-        size += std::mem::size_of::<i64>() * 4; // timestamp, created_at, updated_at, version
+        size += std::mem::size_of::<i64>(); // timestamp
+        size += std::mem::size_of::<Option<i64>>() * 2; // updated_at, version
         size += std::mem::size_of::<Option<i64>>(); // expires_at
         size += std::mem::size_of::<Option<i32>>(); // rank
         size += std::mem::size_of::<Option<f32>>() * 2; // score, distance

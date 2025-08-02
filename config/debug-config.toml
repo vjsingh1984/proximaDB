@@ -14,8 +14,8 @@ file_path = "./proximadb-debug/proximadb.log"
 [storage]
 data_dir = "./proximadb-debug/data"
 wal_dir = "./proximadb-debug/wal"
-memtable_size_mb = 8
-memory_flush_size_bytes = 2097152
+memtable_size_mb = 1024  # 1GB to reduce small file creation
+memory_flush_size_bytes = 16777216  # 16MB to reduce small file creation
 
 [storage.wal_config]
 strategy = "Bincode"

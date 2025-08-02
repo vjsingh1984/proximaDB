@@ -34,11 +34,10 @@ fn test_basic_deduplication() {
             key: "type".to_string(),
             value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
         }],
-        timestamp: Utc::now().timestamp_micros(),
-        created_at: Utc::now().timestamp_micros(),
-        updated_at: Utc::now().timestamp_micros(),
+        timestamp: Utc::now().timestamp() as u32,
+        updated_at: Some(Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -58,7 +57,7 @@ fn test_basic_deduplication() {
         TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
-                rec.version = 2;
+                rec.version = Some(2);
                 rec
             },
             score: 0.85,
@@ -74,7 +73,7 @@ fn test_basic_deduplication() {
     let merged = deduplicator.get_final_results(10);
     
     assert_eq!(merged.len(), 1);
-    assert_eq!(merged[0].vector_record.version, 2); // Should get the newer version
+    assert_eq!(merged[0].vector_record.version, Some(2)); // Should get the newer version
     assert_eq!(merged[0].score, 0.85);
 }
 
@@ -89,11 +88,10 @@ fn test_deduplication_without_ids() {
                 id: None,
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![],
-                timestamp: Utc::now().timestamp_micros(),
-                created_at: Utc::now().timestamp_micros(),
-                updated_at: Utc::now().timestamp_micros(),
+                timestamp: Utc::now().timestamp() as u32,
+                updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -110,11 +108,10 @@ fn test_deduplication_without_ids() {
                 id: None,
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![],
-                timestamp: Utc::now().timestamp_micros(),
-                created_at: Utc::now().timestamp_micros(),
-                updated_at: Utc::now().timestamp_micros(),
+                timestamp: Utc::now().timestamp() as u32,
+                updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -154,11 +151,10 @@ fn test_metadata_filtering() {
                 MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("science".to_string())) },
                 MetadataItem { key: "published".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("true".to_string())) },
             ],
-            timestamp: Utc::now().timestamp_micros(),
-            created_at: Utc::now().timestamp_micros(),
-            updated_at: Utc::now().timestamp_micros(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -170,11 +166,10 @@ fn test_metadata_filtering() {
                 MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("history".to_string())) },
                 MetadataItem { key: "published".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("true".to_string())) },
             ],
-            timestamp: Utc::now().timestamp_micros(),
-            created_at: Utc::now().timestamp_micros(),
-            updated_at: Utc::now().timestamp_micros(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -218,11 +213,10 @@ fn test_simple_metadata_query() {
                 MetadataItem { key: "language".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("en".to_string())) },
                 MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("tech".to_string())) },
             ],
-            timestamp: Utc::now().timestamp_micros(),
-            created_at: Utc::now().timestamp_micros(),
-            updated_at: Utc::now().timestamp_micros(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -234,11 +228,10 @@ fn test_simple_metadata_query() {
                 MetadataItem { key: "language".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("fr".to_string())) },
                 MetadataItem { key: "category".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("tech".to_string())) },
             ],
-            timestamp: Utc::now().timestamp_micros(),
-            created_at: Utc::now().timestamp_micros(),
-            updated_at: Utc::now().timestamp_micros(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -273,11 +266,10 @@ fn test_mixed_engine_deduplication() {
         id: Some("vec1".to_string()),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![],
-        timestamp: Utc::now().timestamp_micros(),
-        created_at: Utc::now().timestamp_micros(),
-        updated_at: Utc::now().timestamp_micros(),
+        timestamp: Utc::now().timestamp() as u32,
+        updated_at: Some(Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -297,7 +289,7 @@ fn test_mixed_engine_deduplication() {
         TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
-                rec.version = 2;
+                rec.version = Some(2);
                 rec
             },
             score: 0.85,
@@ -310,7 +302,7 @@ fn test_mixed_engine_deduplication() {
         TieredSearchCandidate {
             vector_record: {
                 let mut rec = base_record.clone();
-                rec.version = 3;
+                rec.version = Some(3);
                 rec
             },
             score: 0.9,
@@ -327,7 +319,7 @@ fn test_mixed_engine_deduplication() {
     
     // Should get the unflushed WAL version (highest priority)
     assert_eq!(merged.len(), 1);
-    assert_eq!(merged[0].vector_record.version, 3);
+    assert_eq!(merged[0].vector_record.version, Some(3));
     assert_eq!(merged[0].score, 0.9);
 }
 
@@ -343,11 +335,10 @@ fn test_k_limit_enforcement() {
                 id: Some(format!("vec{}", i)),
                 vector: vec![i as f32, 0.0, 0.0],
                 metadata: vec![],
-                timestamp: Utc::now().timestamp_micros(),
-                created_at: Utc::now().timestamp_micros(),
-                updated_at: Utc::now().timestamp_micros(),
+                timestamp: Utc::now().timestamp() as u32,
+                updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -390,11 +381,10 @@ fn test_complex_deduplication_scenario() {
                 id: Some("vecA".to_string()),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![MetadataItem { key: "version".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(version.to_string())) }],
-                timestamp: Utc::now().timestamp_micros(),
-                created_at: Utc::now().timestamp_micros(),
-                updated_at: Utc::now().timestamp_micros(),
+                timestamp: Utc::now().timestamp() as u32,
+                updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
-                version,
+                version: Some(version),
                 rank: None,
                 score: None,
                 distance: None,
@@ -418,11 +408,10 @@ fn test_complex_deduplication_scenario() {
                 id: Some("vecB".to_string()),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![MetadataItem { key: "version".to_string(), value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(version.to_string())) }],
-                timestamp: Utc::now().timestamp_micros(),
-                created_at: Utc::now().timestamp_micros(),
-                updated_at: Utc::now().timestamp_micros(),
+                timestamp: Utc::now().timestamp() as u32,
+                updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
-                version,
+                version: Some(version),
                 rank: None,
                 score: None,
                 distance: None,
@@ -442,11 +431,10 @@ fn test_complex_deduplication_scenario() {
             id: None,
             vector: vec![0.0, 0.0, 1.0],
             metadata: vec![],
-            timestamp: Utc::now().timestamp_micros(),
-            created_at: Utc::now().timestamp_micros(),
-            updated_at: Utc::now().timestamp_micros(),
+            timestamp: Utc::now().timestamp() as u32,
+            updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -470,11 +458,11 @@ fn test_complex_deduplication_scenario() {
     
     // Verify vecA is version 3
     let vec_a = merged.iter().find(|r| r.vector_record.id == Some("vecA".to_string())).unwrap();
-    assert_eq!(vec_a.vector_record.version, 3);
+    assert_eq!(vec_a.vector_record.version, Some(3));
     
     // Verify vecB is version 2
     let vec_b = merged.iter().find(|r| r.vector_record.id == Some("vecB".to_string())).unwrap();
-    assert_eq!(vec_b.vector_record.version, 2);
+    assert_eq!(vec_b.vector_record.version, Some(2));
     
     // Verify vecC is included
     let vec_c = merged.iter().find(|r| r.vector_record.id.is_none()).unwrap();

@@ -41,7 +41,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: None, // No expiry
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 1,
             level: 0,
@@ -56,7 +56,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: expired_time,
             updated_at: expired_time,
             expires_at: Some(expired_time), // Expired 3 hours ago
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 2,
             level: 0,
@@ -71,7 +71,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: Some(future_time), // Expires in 3 hours
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 3,
             level: 0,

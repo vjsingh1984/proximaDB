@@ -11,6 +11,7 @@
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
 use parquet::arrow::ArrowWriter;
+use parquet::file::metadata::ParquetMetaData;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -39,6 +40,38 @@ pub struct ViperCompactionResult {
     pub bytes_read: u64,
     /// Bytes written to output files
     pub bytes_written: u64,
+}
+
+/// File metadata for compaction planning
+#[derive(Debug, Clone)]
+pub struct FileMetadata {
+    /// File path
+    pub path: String,
+    /// File size in bytes
+    pub size_bytes: u64,
+    /// Number of rows in the file
+    pub row_count: u64,
+    /// Average row size in bytes
+    pub avg_row_size: f64,
+}
+
+/// Compaction plan based on file analysis
+#[derive(Debug, Clone)]
+pub struct CompactionPlan {
+    /// Input file metadata
+    pub input_files: Vec<FileMetadata>,
+    /// Total rows across all input files
+    pub total_rows: u64,
+    /// Total size across all input files
+    pub total_size_bytes: u64,
+    /// Average row size across all files
+    pub avg_row_size: f64,
+    /// Target number of output files
+    pub target_file_count: usize,
+    /// Target rows per output file
+    pub rows_per_file: u64,
+    /// Estimated size per output file
+    pub estimated_size_per_file: u64,
 }
 
 /// Compaction manager for VIPER storage engine with atomic writes
@@ -128,6 +161,100 @@ impl CompactionManager {
         Ok(parquet_files)
     }
 
+    /// Analyze candidate files and create a compaction plan
+    async fn analyze_files_and_plan_compaction(
+        &self,
+        input_files: &[String],
+        target_file_size_mb: u64,
+    ) -> Result<CompactionPlan> {
+        info!("🔍 Analyzing {} files for compaction planning", input_files.len());
+        
+        let mut file_metadata = Vec::new();
+        let fs = self.filesystem_factory.get_filesystem("file:///")?;
+        
+        // Analyze each input file
+        for (idx, file_path) in input_files.iter().enumerate() {
+            // Get file size
+            let file_size = match fs.metadata(file_path).await {
+                Ok(metadata) => metadata.size,
+                Err(e) => {
+                    warn!("Failed to get metadata for {}: {}", file_path, e);
+                    continue;
+                }
+            };
+            
+            // Read Parquet metadata (just footer, not full file)
+            let file_data = fs.read(file_path).await?;
+            let parquet_bytes = bytes::Bytes::from(file_data);
+            
+            let metadata = match parquet::file::footer::parse_metadata(&parquet_bytes) {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    warn!("Failed to parse Parquet metadata for {}: {}", file_path, e);
+                    continue;
+                }
+            };
+            
+            let row_count = metadata.file_metadata().num_rows() as u64;
+            let avg_row_size = if row_count > 0 {
+                file_size as f64 / row_count as f64
+            } else {
+                0.0
+            };
+            
+            info!(
+                "📊 File {}/{}: {} - Size: {:.2}MB, Rows: {}, Avg row size: {:.2}KB",
+                idx + 1,
+                input_files.len(),
+                file_path.split('/').last().unwrap_or("unknown"),
+                file_size as f64 / (1024.0 * 1024.0),
+                row_count,
+                avg_row_size / 1024.0
+            );
+            
+            file_metadata.push(FileMetadata {
+                path: file_path.clone(),
+                size_bytes: file_size,
+                row_count,
+                avg_row_size,
+            });
+        }
+        
+        // Calculate totals and averages
+        let total_rows: u64 = file_metadata.iter().map(|f| f.row_count).sum();
+        let total_size_bytes: u64 = file_metadata.iter().map(|f| f.size_bytes).sum();
+        let avg_row_size = if total_rows > 0 {
+            total_size_bytes as f64 / total_rows as f64
+        } else {
+            1024.0 // Default 1KB per row
+        };
+        
+        // Calculate target file count based on target size
+        let target_file_size_bytes = target_file_size_mb * 1024 * 1024;
+        let target_file_count = ((total_size_bytes as f64 / target_file_size_bytes as f64).ceil() as usize).max(1);
+        let rows_per_file = (total_rows as f64 / target_file_count as f64).ceil() as u64;
+        let estimated_size_per_file = (rows_per_file as f64 * avg_row_size) as u64;
+        
+        info!("📊 Compaction Plan Summary:");
+        info!("  - Input files: {}", file_metadata.len());
+        info!("  - Total size: {:.2}MB", total_size_bytes as f64 / (1024.0 * 1024.0));
+        info!("  - Total rows: {}", total_rows);
+        info!("  - Average row size: {:.2}KB", avg_row_size / 1024.0);
+        info!("  - Target output files: {}", target_file_count);
+        info!("  - Rows per output file: {}", rows_per_file);
+        info!("  - Estimated size per output file: {:.2}MB", estimated_size_per_file as f64 / (1024.0 * 1024.0));
+        
+        Ok(CompactionPlan {
+            input_files: file_metadata,
+            total_rows,
+            total_size_bytes,
+            avg_row_size,
+            target_file_count,
+            rows_per_file,
+            estimated_size_per_file,
+        })
+    }
+
     /// Arrow/Parquet compaction with version merging and expiry logic
     /// This is the main compaction implementation for VIPER storage engine
     pub async fn compact_parquet_files(
@@ -191,10 +318,6 @@ impl CompactionManager {
             input_files
         };
         
-        let discovered_input_files = input_files.clone(); // Save for result
-        let mut total_bytes_read = 0u64;
-        let mut total_records_processed = 0usize;
-        
         if input_files.is_empty() {
             info!("📋 No files found for compaction in collection {}", collection_id);
             return Ok(ViperCompactionResult {
@@ -206,6 +329,13 @@ impl CompactionManager {
                 bytes_written: 0,
             });
         }
+        
+        // Analyze files and create compaction plan (target 128MB files)
+        let compaction_plan = self.analyze_files_and_plan_compaction(&input_files, 128).await?;
+        
+        let discovered_input_files = input_files.clone(); // Save for result
+        let mut total_bytes_read = 0u64;
+        let mut total_records_processed = 0usize;
         
         info!("📋 Input files for compaction: {:?}", input_files);
         
@@ -272,12 +402,13 @@ impl CompactionManager {
         struct RecordData {
             id: Option<String>, // ID is optional
             version: i64,
+            timestamp: Option<i64>, // For duplicate resolution
             row_data: HashMap<String, serde_json::Value>, // Store all column data
         }
         
         let mut latest_records: HashMap<String, RecordData> = HashMap::new();
         let mut all_records_ordered: Vec<RecordData> = Vec::new(); // Maintain order for records without IDs
-        let current_time = chrono::Utc::now().timestamp_micros();
+        let current_time = chrono::Utc::now().timestamp(); // i64 seconds to match parquet expires_at column
         let mut expired_records_count = 0;
         
         info!("Processing {} input files for version merging and expiry logic", input_files.len());
@@ -354,6 +485,13 @@ impl CompactionManager {
                     trace!("Record ID extracted: {:?}", record_id);
                     let record_version = version_values[i].unwrap_or(1);
                     trace!("Record version: {}", record_version);
+                    
+                    // Extract timestamp for duplicate resolution
+                    let record_timestamp = batch.column_by_name("timestamp")
+                        .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+                        .map(|arr| if arr.is_null(i) { None } else { Some(arr.value(i)) })
+                        .unwrap_or(None);
+                    
                     let record_expires_at = if expires_at_array.is_null(i) {
                         trace!("expires_at is NULL for row {}", i);
                         None
@@ -362,6 +500,18 @@ impl CompactionManager {
                         trace!("expires_at value for row {}: {}", i, expires_value);
                         Some(expires_value)
                     };
+                    
+                    // Check for tombstone records (deleted records marked with special metadata)
+                    let is_tombstone = batch.column_by_name("is_deleted")
+                        .and_then(|col| col.as_any().downcast_ref::<arrow_array::BooleanArray>())
+                        .map(|arr| !arr.is_null(i) && arr.value(i))
+                        .unwrap_or(false);
+                    
+                    if is_tombstone {
+                        expired_records_count += 1; // Count tombstones as removed records
+                        debug!("🪦 VIPER COMPACTION: Physically deleting tombstoned record {:?}", record_id);
+                        continue;
+                    }
                     
                     // Skip expired records (treat 0 as no expiry)
                     trace!("Current time: {}, Record expires_at: {:?}", current_time, record_expires_at);
@@ -390,6 +540,20 @@ impl CompactionManager {
                             if record_version > existing_version {
                                 debug!("📝 Updating record {} from version {} to {}", id_str, existing_version, record_version);
                                 true
+                            } else if record_version == existing_version {
+                                // For same version, keep the one with earliest timestamp (first insert wins)
+                                let existing_timestamp = existing_record.timestamp.unwrap_or(i64::MAX);
+                                let current_timestamp = record_timestamp.unwrap_or(i64::MAX);
+                                
+                                if current_timestamp < existing_timestamp {
+                                    debug!("📝 Duplicate version {} for record {}: choosing earlier timestamp {} over {}", 
+                                           record_version, id_str, current_timestamp, existing_timestamp);
+                                    true
+                                } else {
+                                    debug!("📝 Duplicate version {} for record {}: keeping earlier timestamp {} over {}", 
+                                           record_version, id_str, existing_timestamp, current_timestamp);
+                                    false
+                                }
                             } else {
                                 debug!("📝 Keeping existing record {} at version {} (incoming version {})", 
                                     id_str, existing_version, record_version);
@@ -430,6 +594,7 @@ impl CompactionManager {
                         let record_data = RecordData {
                             id: record_id.clone(),
                             version: record_version,
+                            timestamp: record_timestamp,
                             row_data,
                         };
                         
@@ -481,50 +646,18 @@ impl CompactionManager {
         
         if final_records.is_empty() {
             warn!("⚠️ COMPACTION: No records to compact! All records expired or invalid?");
+            return Ok(ViperCompactionResult {
+                input_files: discovered_input_files,
+                output_files: vec![],
+                entries_processed: total_records_processed as u64,
+                entries_removed: expired_records_count as u64,
+                bytes_read: total_bytes_read,
+                bytes_written: 0,
+            });
         } else {
-            info!("📊 COMPACTION: Will write {} records to compacted file", total_records);
+            info!("📊 COMPACTION: Will write {} records to {} output files", 
+                 total_records, compaction_plan.target_file_count);
         }
-        
-        // Build Parquet data in memory
-        let mut parquet_data = Vec::new();
-        {
-            let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), None)
-                .with_context(|| "Failed to create Arrow writer")?;
-            
-            // Build the final RecordBatch from collected data
-            if !final_records.is_empty() {
-                debug!("Building RecordBatch from {} records", final_records.len());
-        info!("📊 Building RecordBatch from {} records", final_records.len());
-                
-                // Extract row data from records
-                let row_data_vec: Vec<HashMap<String, serde_json::Value>> = final_records.iter()
-                    .map(|r| r.row_data.clone())
-                    .collect();
-                
-                let batch = self.build_record_batch_from_data(schema.clone(), &row_data_vec)?;
-                debug!("Built RecordBatch with {} rows, writing to compacted file", batch.num_rows());
-        info!("📊 Built RecordBatch with {} rows, writing to compacted file", batch.num_rows());
-                
-                if batch.num_rows() == 0 {
-                    error!("❌ RecordBatch is empty despite having {} input records!", final_records.len());
-                } else if batch.num_rows() != final_records.len() {
-                    error!("❌ RecordBatch row count mismatch! Expected {}, got {}", 
-                           final_records.len(), batch.num_rows());
-                }
-                
-                writer.write(&batch)?;
-            } else {
-                warn!("⚠️ No records to write to compacted file!");
-            }
-            
-            writer.close()?;
-        }
-        
-        // Generate final output filename
-        let output_filename = format!("compacted_{}_{}.parquet", 
-            collection_id, 
-            chrono::Utc::now().timestamp_millis()
-        );
         
         info!(
             "🔄 [ATOMIC COMPACTION] Starting atomic compaction operation for collection {}",
@@ -540,6 +673,7 @@ impl CompactionManager {
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
+            skip_uuid_subdir: true,  // Use simple __compact directory without UUID subdirectory
         };
         
         let atomic_op = self.atomic_coordinator
@@ -547,53 +681,96 @@ impl CompactionManager {
             .await
             .context("Failed to begin atomic compaction operation")?;
         
-        info!("📝 Writing compacted file to staging: {}", output_filename);
+        // Split records across multiple output files
+        let mut output_files = Vec::new();
+        let mut total_bytes_written = 0u64;
+        let timestamp_base = chrono::Utc::now().timestamp_millis();
         
-        // Write compacted data to staging directory
-        self.atomic_coordinator
-            .write_to_staging(&atomic_op.operation_id, &output_filename, &parquet_data)
-            .await
-            .context("Failed to write compacted file to staging")?;
+        for file_idx in 0..compaction_plan.target_file_count {
+            let start_idx = file_idx * compaction_plan.rows_per_file as usize;
+            let end_idx = ((file_idx + 1) * compaction_plan.rows_per_file as usize).min(final_records.len());
+            
+            if start_idx >= final_records.len() {
+                break;
+            }
+            
+            let file_records = &final_records[start_idx..end_idx];
+            let file_record_count = file_records.len();
+            
+            info!(
+                "📊 Building output file {}/{} with {} records (rows {}-{})",
+                file_idx + 1,
+                compaction_plan.target_file_count,
+                file_record_count,
+                start_idx,
+                end_idx - 1
+            );
+            
+            // Build Parquet data for this file
+            let mut parquet_data = Vec::new();
+            {
+                let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), None)
+                    .with_context(|| format!("Failed to create Arrow writer for file {}", file_idx))?;
+                
+                // Extract row data from records for this file
+                let row_data_vec: Vec<HashMap<String, serde_json::Value>> = file_records.iter()
+                    .map(|r| r.row_data.clone())
+                    .collect();
+                
+                let batch = self.build_record_batch_from_data(schema.clone(), &row_data_vec)?;
+                
+                if batch.num_rows() != file_record_count {
+                    error!("❌ RecordBatch row count mismatch for file {}! Expected {}, got {}", 
+                           file_idx, file_record_count, batch.num_rows());
+                }
+                
+                writer.write(&batch)?;
+                writer.close()?;
+            }
+            
+            // Generate output filename for this file
+            let output_filename = format!("compacted_{}_{}_{:03}.parquet", 
+                collection_id, 
+                timestamp_base,
+                file_idx
+            );
+            
+            info!("📝 Writing compacted file {} to staging: {} ({:.2}MB)", 
+                 file_idx + 1, output_filename, parquet_data.len() as f64 / (1024.0 * 1024.0));
+            
+            // Write to staging
+            self.atomic_coordinator
+                .write_to_staging(&atomic_op.operation_id, &output_filename, &parquet_data)
+                .await
+                .context(format!("Failed to write compacted file {} to staging", file_idx))?;
+            
+            let final_path = format!("{}/{}", base_storage_url, output_filename);
+            output_files.push(final_path.clone());
+            total_bytes_written += parquet_data.len() as u64;
+        }
         
-        // Finalize atomic operation - this will atomically move the file to final location
+        // Finalize atomic operation - this will atomically move all files to final location
         self.atomic_coordinator
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to finalize atomic compaction")?;
         
-        let final_path = format!("{}/{}", base_storage_url, output_filename);
-        
         // Add a small delay to ensure filesystem operations complete
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
-        // Verify the compacted file exists before deleting input files
-        info!("🔍 Verifying compacted file exists before cleanup: {}", final_path);
+        // Verify all compacted files exist before deleting input files
+        info!("🔍 Verifying {} compacted files exist before cleanup", output_files.len());
         
-        // List files in the data directory to debug
-        info!("📂 Listing files in data directory after finalization:");
-        if let Ok(entries) = fs.list(base_storage_url).await {
-            for entry in entries {
-                if !entry.metadata.is_directory {
-                    info!("  - {} (parquet: {})", entry.name, entry.name.ends_with(".parquet"));
-                }
+        for (idx, output_file) in output_files.iter().enumerate() {
+            if !fs.exists(output_file).await? {
+                return Err(anyhow::anyhow!(
+                    "Compacted file {} ({}/{}) does not exist after atomic operation - aborting input file deletion for safety",
+                    output_file, idx + 1, output_files.len()
+                ));
             }
         }
         
-        if !fs.exists(&final_path).await? {
-            // Check if it's still in staging
-            let staging_path = format!("{}/___temp/__compact", base_storage_url);
-            if let Ok(staging_entries) = fs.list(&staging_path).await {
-                warn!("⚠️ Files still in staging directory:");
-                for entry in staging_entries {
-                    warn!("  - {}", entry.name);
-                }
-            }
-            
-            return Err(anyhow::anyhow!(
-                "Compacted file {} does not exist after atomic operation - aborting input file deletion for safety",
-                final_path
-            ));
-        }
+        info!("✅ All {} output files verified successfully", output_files.len());
         
         // Remove input files that were compacted (cleanup)
         // This happens AFTER the atomic operation to ensure data safety
@@ -627,31 +804,41 @@ impl CompactionManager {
         
         // Log cleanup statistics
         if expired_records_count > 0 {
-            info!("🧹 VIPER COMPACTION CLEANUP: {} expired records physically deleted", expired_records_count);
+            info!("🧹 VIPER COMPACTION CLEANUP: {} expired/tombstoned records physically deleted", expired_records_count);
         }
         
-        let bytes_written = match fs.metadata(&final_path).await {
-            Ok(metadata) => metadata.size,
-            Err(_) => 0,
-        };
+        // Log compaction results summary
+        info!("📊 COMPACTION RESULTS:");
+        info!("  - Input files: {} ({:.2}MB total)", 
+              compaction_plan.input_files.len(), 
+              compaction_plan.total_size_bytes as f64 / (1024.0 * 1024.0));
+        info!("  - Output files: {} ({:.2}MB total)", 
+              output_files.len(), 
+              total_bytes_written as f64 / (1024.0 * 1024.0));
+        info!("  - Records processed: {}", total_records_processed);
+        info!("  - Records written: {}", total_records);
+        info!("  - Records expired/removed: {}", expired_records_count);
+        info!("  - Average output file size: {:.2}MB", 
+              (total_bytes_written as f64 / output_files.len() as f64) / (1024.0 * 1024.0));
+        info!("  - Input files deleted: {}/{}", deleted_count, input_files.len());
         
         info!(
-            "✅ [VIPER COMPACTION] Atomic Arrow/Parquet compaction completed for collection {}: {} records merged, {} expired deleted, {}/{} input files removed, final file: {:?}",
+            "✅ [VIPER COMPACTION] Atomic Arrow/Parquet compaction completed for collection {}: {} records merged into {} files, {} expired deleted, {}/{} input files removed",
             collection_id,
             total_records,
+            output_files.len(),
             expired_records_count,
             deleted_count,
-            input_files.len(),
-            final_path
+            input_files.len()
         );
         
         Ok(ViperCompactionResult {
             input_files: discovered_input_files,
-            output_files: vec![final_path],
+            output_files,
             entries_processed: total_records_processed as u64,
             entries_removed: expired_records_count as u64,
             bytes_read: total_bytes_read,
-            bytes_written,
+            bytes_written: total_bytes_written,
         })
     }
 
@@ -919,4 +1106,76 @@ impl CompactionManager {
             .context("Failed to create RecordBatch from collected data")
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_compaction_plan_single_output() {
+        // Test case where all files fit in one output file
+        let input_files = vec![
+            FileMetadata {
+                path: "file1.parquet".to_string(),
+                size_bytes: 10 * 1024 * 1024, // 10MB
+                row_count: 1000,
+                avg_row_size: 10240.0,
+            },
+            FileMetadata {
+                path: "file2.parquet".to_string(),
+                size_bytes: 20 * 1024 * 1024, // 20MB
+                row_count: 2000,
+                avg_row_size: 10240.0,
+            },
+        ];
+        
+        // Total: 30MB, 3000 rows
+        let plan = CompactionPlan {
+            input_files: input_files.clone(),
+            total_rows: 3000,
+            total_size_bytes: 30 * 1024 * 1024,
+            avg_row_size: 10240.0,
+            target_file_count: 1, // 30MB fits in one 128MB file
+            rows_per_file: 3000,
+            estimated_size_per_file: 30 * 1024 * 1024,
+        };
+        
+        assert_eq!(plan.target_file_count, 1);
+        assert_eq!(plan.rows_per_file, 3000);
+    }
+    
+    #[test]
+    fn test_compaction_plan_multiple_outputs() {
+        // Test case where files need to be split
+        let input_files = vec![
+            FileMetadata {
+                path: "large1.parquet".to_string(),
+                size_bytes: 150 * 1024 * 1024, // 150MB
+                row_count: 15000,
+                avg_row_size: 10240.0,
+            },
+            FileMetadata {
+                path: "large2.parquet".to_string(),
+                size_bytes: 150 * 1024 * 1024, // 150MB
+                row_count: 15000,
+                avg_row_size: 10240.0,
+            },
+        ];
+        
+        // Total: 300MB, 30000 rows
+        // With 128MB target: 300/128 = 2.34, rounds up to 3 files
+        let plan = CompactionPlan {
+            input_files,
+            total_rows: 30000,
+            total_size_bytes: 300 * 1024 * 1024,
+            avg_row_size: 10240.0,
+            target_file_count: 3,
+            rows_per_file: 10000, // 30000/3
+            estimated_size_per_file: 100 * 1024 * 1024,
+        };
+        
+        assert_eq!(plan.target_file_count, 3);
+        assert_eq!(plan.rows_per_file, 10000);
+    }
 }

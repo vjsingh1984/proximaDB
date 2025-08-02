@@ -19,6 +19,9 @@ pub mod pipeline;
 pub mod pipeline_tests; // Pipeline tests module
 pub mod quantization;
 pub mod utilities;
+pub mod index_based_reader;
+pub mod optimized_column_filter;
+pub mod optimized_vector_writer;
 
 // New modular structure for better maintainability
 pub mod types;
@@ -45,7 +48,19 @@ pub use quantization::{
 pub use utilities::ViperUtilities;
 
 // Re-export modular types for better organization
-pub use types::*;
+pub use types::{
+    CollectionMetadata, 
+    ClusterId, 
+    VectorStorageFormat,
+    ParquetCompression,
+    VectorQualityMetrics,
+    SearchPerformanceStats,
+    ViperEngineConfig,  // Internal engine config
+    FilterableColumn,
+    ParquetSchemaDesign,
+    ParquetField,
+    ParquetFieldType,
+};
 pub use schema::SchemaManager;
 pub use compaction::CompactionManager;
 pub use flush::FlushManager;
@@ -58,5 +73,5 @@ pub use unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig as U
 // Clean Release 1 API - Pure data access layer with search optimization
 pub use readers::{
     UnifiedParquetReader, ReaderConfig, ReadingStrategy, MetadataFilter, 
-    FilterValue, QuantizationMethod, CollectionContext, FilterableColumnSpec,
+    FilterValue, QuantizationMethod, CollectionContext,
 };

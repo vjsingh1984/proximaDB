@@ -422,9 +422,10 @@ impl StreamingSearchService {
                         semantic_distance: Some(similarity),
                         quantization_info: None,
                         engine_stats: None,
+                        version: record.version,
+                        timestamp: Some(record.timestamp),
                         index_path: None,
-                        collection_id: Some(collection_id.to_string()),
-                        created_at: Some(chrono::DateTime::from_timestamp_micros(record.created_at).unwrap_or_else(chrono::Utc::now)),
+                        created_at: Some(chrono::DateTime::from_timestamp(record.timestamp as i64, 0).unwrap_or_else(chrono::Utc::now)),
                     };
                     
                     results.push(result);

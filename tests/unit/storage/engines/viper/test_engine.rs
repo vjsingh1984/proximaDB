@@ -74,7 +74,7 @@ async fn test_collection_metadata_management() {
         partition_strategy: PartitionStrategy::ByCluster,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
     
@@ -275,7 +275,7 @@ async fn test_multiple_collections() {
         partition_strategy: PartitionStrategy::ByTimestamp,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(16 * 1024 * 1024),
     };
     
@@ -293,7 +293,7 @@ async fn test_multiple_collections() {
         partition_strategy: PartitionStrategy::ByCluster,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
     

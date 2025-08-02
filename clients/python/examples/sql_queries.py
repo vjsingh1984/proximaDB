@@ -11,15 +11,15 @@ from proximadb.models import CollectionConfig, StorageEngine
 
 
 def main():
-    # Connect to ProximaDB
-    client = connect(url="http://localhost:5678")
+    # Connect to ProximaDB using REST
+    client = connect(url="http://localhost:5678", protocol="rest")
     
     # Create a collection
-    collection_name = "products"
+    collection_name = "products_demo"  # Minimum 8 characters required
     config = CollectionConfig(
         name=collection_name,
         dimension=384,  # Common embedding dimension
-        storage_engine=StorageEngine.LSM
+        storage_engine=StorageEngine.VIPER
     )
     
     try:
@@ -27,7 +27,7 @@ def main():
     except:
         pass
     
-    client.create_collection(config)
+    collection = client.create_collection(collection_name, dimension=384, storage_engine=StorageEngine.VIPER)
     print(f"Created collection: {collection_name}")
     
     # Insert sample product data
@@ -99,56 +99,83 @@ def main():
         }
     ]
     
-    response = client.insert_vectors(collection_name, products)
+    # Extract vectors, ids, and metadata separately
+    vectors = [p["vector"] for p in products]
+    ids = [p["id"] for p in products]
+    metadata = [p["metadata"] for p in products]
+    
+    response = client.insert_vectors(collection_name, vectors, ids, metadata)
     print(f"Inserted {len(products)} products")
     
     # Example 1: Basic vector similarity search
     print("\n=== Example 1: Basic Vector Similarity Search ===")
     query_vector = np.random.rand(384).tolist()
+    # Format vector as [0.1, 0.2, ...] for SQL parser
+    vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
     
     sql = f"""
-    SELECT id, metadata.name, metadata.category, metadata.price
+    SELECT id, metadata
     FROM {collection_name}
-    ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
     LIMIT 3
     """
     
-    result = client.execute_sql(sql)
-    print(f"Found {result['row_count']} similar products:")
-    for row in result['rows']:
-        print(f"  - {row['id']}: {row['metadata.name']} (${row['metadata.price']})")
+    try:
+        result = client.execute_sql(sql)
+        print(f"Found {result['row_count']} similar products:")
+        for row in result['rows']:
+            metadata = row.get('metadata', {})
+            print(f"  - {row['id']}: {metadata.get('name', 'N/A')} (${metadata.get('price', 'N/A')})")
+    except Exception as e:
+        print(f"SQL Error: {e}")
+        # Try without metadata fields to see if basic SQL works
+        sql_basic = f"""
+        SELECT id
+        FROM {collection_name}
+        ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+        LIMIT 3
+        """
+        print("\nTrying basic SQL without metadata fields...")
+        try:
+            result = client.execute_sql(sql_basic)
+            print(f"Basic SQL worked! Found {result['row_count']} results")
+            for row in result['rows']:
+                print(f"  - ID: {row['id']}")
+        except Exception as e2:
+            print(f"Basic SQL also failed: {e2}")
     
     # Example 2: Filtered vector search
     print("\n=== Example 2: Vector Search with Category Filter ===")
     sql_filtered = f"""
-    SELECT id, metadata.name, metadata.price, metadata.rating
+    SELECT id, metadata
     FROM {collection_name}
-    WHERE metadata.category = 'electronics'
-    ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
+    WHERE metadata->>'category' = 'electronics'
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
     LIMIT 3
     """
     
     result = client.execute_sql(sql_filtered)
     print(f"Found {result['row_count']} similar electronics:")
     for row in result['rows']:
-        print(f"  - {row['metadata.name']}: ${row['metadata.price']} (Rating: {row['metadata.rating']})")
+        metadata = row.get('metadata', {})
+        print(f"  - {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} (Rating: {metadata.get('rating', 'N/A')})")
     
     # Example 3: Complex filtering with price range
     print("\n=== Example 3: Price Range Filter ===")
     sql_price = f"""
-    SELECT id, metadata.name, metadata.price, metadata.in_stock
+    SELECT id, metadata
     FROM {collection_name}
-    WHERE metadata.price BETWEEN 50 AND 1000
-      AND metadata.in_stock = true
-    ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
+    WHERE metadata->>'in_stock' = 'true'
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
     LIMIT 5
     """
     
     result = client.execute_sql(sql_price)
-    print(f"Found {result['row_count']} products in price range:")
+    print(f"Found {result['row_count']} products in stock:")
     for row in result['rows']:
-        stock = "In Stock" if row.get('metadata.in_stock') else "Out of Stock"
-        print(f"  - {row['metadata.name']}: ${row['metadata.price']} ({stock})")
+        metadata = row.get('metadata', {})
+        stock = "In Stock" if metadata.get('in_stock') == True else "Out of Stock"
+        print(f"  - {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} ({stock})")
     
     # Example 4: Different distance metrics
     print("\n=== Example 4: Different Distance Metrics ===")
@@ -156,23 +183,23 @@ def main():
     
     for metric in metrics:
         sql_metric = f"""
-        SELECT id, metadata.name
+        SELECT id, metadata
         FROM {collection_name}
-        ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, '{metric}')
+        ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, '{metric}')
         LIMIT 1
         """
         
         result = client.execute_sql(sql_metric)
         if result['rows']:
-            print(f"  {metric}: {result['rows'][0]['metadata.name']}")
+            metadata = result['rows'][0].get('metadata', {})
+            print(f"  {metric}: {metadata.get('name', 'N/A')}")
     
     # Example 5: Select all fields including vector
     print("\n=== Example 5: Select All Fields ===")
     sql_all = f"""
     SELECT *
     FROM {collection_name}
-    WHERE metadata.rating > 4.5
-    ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
     LIMIT 2
     """
     

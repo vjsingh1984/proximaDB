@@ -15,7 +15,7 @@ use proximadb::proto::proximadb::MetadataItem;
 use proximadb::core::config::SstConfig;
 use proximadb::storage::persistence::write_buffer::WriteBufferConfig;
 use proximadb::storage::engines::sst::SstStorage;
-use proximadb::storage::engines::viper::{ViperEngine, types::ViperConfig as ViperEngineConfig};
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use proximadb::storage::assignment_service::get_assignment_service;
 use proximadb::storage::persistence::write_buffer::WriteBufferFlushCoordinator;
@@ -48,6 +48,8 @@ async fn test_lsm_collection_with_proper_routing() {
         assignment_config: AssignmentConfig::default(),
         mmap_enabled: false,
         sst_config: SstConfig::default(),
+        viper_config: Default::default(),
+        write_buffer_config: Default::default(),
         cache_size_mb: 100,
         bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
             bits_per_key: 10,
@@ -108,8 +110,10 @@ async fn test_lsm_collection_with_proper_routing() {
     let filesystem = filesystem_factory;
     
     // Create VIPER engine
-    let viper_config = ViperEngineConfig::default();
-    let viper_engine = Arc::new(ViperEngine::new(viper_config, filesystem.clone()).await.unwrap());
+    let viper_engine = Arc::new(ViperEngine::from_core_config(
+        proximadb::core::config::ViperConfig::default(),
+        filesystem.clone()
+    ).await.unwrap());
     
     // Create LSM engine with bloom filter config
     let mut lsm_config = SstConfig::default();

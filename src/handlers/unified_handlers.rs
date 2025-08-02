@@ -385,7 +385,7 @@ impl UnifiedHandlers {
                     score: result.score,
                     vector: result.vector.unwrap_or_default(),
                     metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata),
-                    rank: result.rank,
+                    rank: result.rank.map(|r| r as i32),
                 };
                 
                 Ok(VectorOperationResponse {
@@ -529,7 +529,7 @@ impl UnifiedHandlers {
                         score: result.score,
                         vector,
                         metadata,
-                        rank: result.rank,
+                        rank: result.rank.map(|r| r as i32),
                     }
                 }).collect();
                 

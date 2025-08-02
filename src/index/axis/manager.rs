@@ -151,7 +151,7 @@ impl AxisManager {
 
         // Check if vector is expired (MVCC support) - direct field access
         if let Some(expires_at) = vector.expires_at {
-            if Utc::now().timestamp_millis() >= expires_at {
+            if (expires_at as i64) <= Utc::now().timestamp() {
                 // Skip inserting already expired vectors
                 return Ok(());
             }

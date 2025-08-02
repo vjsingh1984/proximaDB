@@ -61,7 +61,19 @@ pub mod viper;
 pub mod sst_search_integration_test;
 pub mod sst_collection_test;
 
+// MVCC consistency tests
+pub mod mvcc_logic_integration_test;
+
+// Assignment service recovery integration tests
+pub mod assignment_service_recovery_integration_test;
+pub mod assignment_discovery_simple_test;
+
 // Storage-aware search integration tests - REMOVED (obsolete APIs)
 // pub mod storage_aware_search_tests;
+
+// Compression integration tests - NEW optimization features
+pub mod sst_compression_integration_test;
+pub mod viper_compression_integration_test;
+pub mod optimization_e2e_test;
 
 // Middleware integration tests are at this level since they cross-cut concerns

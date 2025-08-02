@@ -75,7 +75,6 @@ pub struct ManifestVersion {
 /// SST Manifest for tracking SSTable files
 pub struct SstManifest {
     /// Collection ID this manifest belongs to
-    collection_id: String,
     /// Current manifest version
     current_version: Arc<RwLock<ManifestVersion>>,
     /// Manifest file URL (includes scheme: file://, s3://, etc.)
@@ -93,7 +92,6 @@ pub struct SstManifest {
 impl SstManifest {
     /// Create a new manifest
     pub fn new(
-        collection_id: String,
         storage_url: String,
         filesystem: Arc<FilesystemFactory>,
         atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
@@ -108,7 +106,7 @@ impl SstManifest {
         Self {
             collection_id,
             current_version: Arc::new(RwLock::new(ManifestVersion {
-                version: 0,
+                version: Some(0),
                 created_at: chrono::Utc::now().timestamp(),
                 files: BTreeMap::new(),
             })),

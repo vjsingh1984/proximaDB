@@ -15,14 +15,14 @@ use tracing::{debug, warn};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
-use crate::storage::engines::viper::{ViperEngine, ViperConfig};
+use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};
 // CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Create test configuration with custom compaction settings
-fn create_compaction_config(_base_path: &str) -> ViperConfig {
-    let mut config = ViperConfig::default();
+fn create_compaction_config(_base_path: &str) -> ViperEngineConfig {
+    let mut config = ViperEngineConfig::default();
     config.enable_ml_clustering = false;
     config.flush_size_bytes = Some(512 * 1024); // 512KB for faster testing
     config.row_group_size = 100; // Small row groups for testing
@@ -66,11 +66,10 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("true".to_string())),
             },
         ],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
+        timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -84,7 +83,7 @@ async fn test_insert_flush_compact_flow() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "insert_flush_compact";
@@ -208,7 +207,7 @@ async fn test_basic_compaction() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "basic_compact";
@@ -432,7 +431,7 @@ async fn test_concurrent_compaction_and_reads() {
     let engine = Arc::new(
         {
             let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-            ViperEngine::new(config, filesystem_factory).await
+            ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         }
             .expect("Failed to create engine")
     );
@@ -571,7 +570,7 @@ async fn test_concurrent_compaction_across_collections() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = Arc::new(ViperEngine::new(config, filesystem_factory).await
+    let engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine"));
     
     let collections = vec!["collection_a", "collection_b", "collection_c"];
@@ -665,7 +664,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = Arc::new(ViperEngine::new(config, filesystem_factory).await
+    let engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine"));
     
     let collection_id = "test_atomic";
@@ -766,7 +765,7 @@ async fn test_size_tiered_compaction_strategy() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "size_tiered";
@@ -832,7 +831,7 @@ async fn test_compaction_with_metadata_filtering() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "metadata_compact";
@@ -906,7 +905,7 @@ async fn test_incremental_compaction() {
     // Incremental compaction is handled by CompactionParameters
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let engine = ViperEngine::new(config, filesystem_factory).await
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine");
     
     let collection_id = "incremental";

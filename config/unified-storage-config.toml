@@ -43,9 +43,9 @@ cache_size_mb = 2048
 bloom_filter_bits = 12
 
 [storage.lsm_config]
-memtable_size_mb = 64
+memtable_size_mb = 1024  # 1GB to reduce small file creation
 level_count = 7
-compaction_threshold = 4
+compaction_threshold = 5  # Minimum 5 files before compaction
 block_size_kb = 64
 compression = "snappy"
 

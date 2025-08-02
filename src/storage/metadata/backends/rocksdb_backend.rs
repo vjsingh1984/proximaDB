@@ -232,7 +232,7 @@ impl RocksDbMetadataBackend {
     }
     
     /// Get column family handle
-    fn get_cf<'a>(&self, db: &'a TransactionDB, cf_name: &str) -> Result<Arc<BoundColumnFamily<'a>>> {
+    fn get_cf(&self, db: &TransactionDB, cf_name: &str) -> Result<&rocksdb::ColumnFamily> {
         db.cf_handle(cf_name)
             .ok_or_else(|| anyhow::anyhow!("Column family {} not found", cf_name))
     }
@@ -318,9 +318,12 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
         match db {
             DbHandle::Transactional(db) => {
                 let cf = self.get_cf(&db, CF_NAME_INDEX)?;
-                match db.get_cf(&cf, collection_id.as_bytes()) {
+                let result = db.get_cf(&cf, collection_id.as_bytes());
+                drop(cf); // Release CF reference before await
+                match result {
                     Ok(Some(uuid_bytes)) => {
-                        self.update_stats(StatOp::Read(uuid_bytes.len() as u64)).await;
+                        let len = uuid_bytes.len() as u64;
+                        self.update_stats(StatOp::Read(len)).await;
                         Ok(Some(String::from_utf8(uuid_bytes)?))
                     }
                     Ok(None) => Ok(None),
@@ -330,9 +333,11 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
             DbHandle::Regular(db) => {
                 let cf = db.cf_handle(CF_NAME_INDEX)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                match db.get_cf(&cf, collection_id.as_bytes()) {
+                let result = db.get_cf(&cf, collection_id.as_bytes());
+                match result {
                     Ok(Some(uuid_bytes)) => {
-                        self.update_stats(StatOp::Read(uuid_bytes.len() as u64)).await;
+                        let len = uuid_bytes.len() as u64;
+                        self.update_stats(StatOp::Read(len)).await;
                         Ok(Some(String::from_utf8(uuid_bytes)?))
                     }
                     Ok(None) => Ok(None),
@@ -354,9 +359,12 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
         match db {
             DbHandle::Transactional(db) => {
                 let cf = self.get_cf(&db, CF_COLLECTIONS)?;
-                match db.get_cf(&cf, uuid.as_bytes()) {
+                let result = db.get_cf(&cf, uuid.as_bytes());
+                drop(cf); // Release CF reference before await
+                match result {
                     Ok(Some(data)) => {
-                        self.update_stats(StatOp::Read(data.len() as u64)).await;
+                        let len = data.len() as u64;
+                        self.update_stats(StatOp::Read(len)).await;
                         Ok(Some(Self::deserialize_record(&data)?))
                     }
                     Ok(None) => Ok(None),
@@ -366,9 +374,11 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
             DbHandle::Regular(db) => {
                 let cf = db.cf_handle(CF_COLLECTIONS)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                match db.get_cf(&cf, uuid.as_bytes()) {
+                let result = db.get_cf(&cf, uuid.as_bytes());
+                match result {
                     Ok(Some(data)) => {
-                        self.update_stats(StatOp::Read(data.len() as u64)).await;
+                        let len = data.len() as u64;
+                        self.update_stats(StatOp::Read(len)).await;
                         Ok(Some(Self::deserialize_record(&data)?))
                     }
                     Ok(None) => Ok(None),
@@ -392,11 +402,14 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
                 let cf = self.get_cf(&db, CF_COLLECTIONS)?;
                 let iter = db.iterator_cf(&cf, IteratorMode::Start);
                 
+                let mut total_bytes = 0u64;
                 for item in iter {
                     let (_, value) = item?;
-                    self.update_stats(StatOp::Read(value.len() as u64)).await;
+                    total_bytes += value.len() as u64;
                     collections.push(Self::deserialize_record(&value)?);
                 }
+                drop(cf); // Release CF reference before await
+                self.update_stats(StatOp::Read(total_bytes)).await;
             }
             DbHandle::Regular(db) => {
                 let cf = db.cf_handle(CF_COLLECTIONS)
@@ -425,8 +438,8 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
         match db {
             DbHandle::Transactional(db) => {
                 let cf = self.get_cf(&db, CF_COLLECTIONS)?;
-                // RocksDB key_may_exist is faster than get for existence checks
-                Ok(db.key_may_exist_cf(&cf, collection_id.as_bytes()))
+                // TransactionDB doesn't have key_may_exist_cf, use get_cf instead
+                Ok(db.get_cf(&cf, collection_id.as_bytes())?.is_some())
             }
             DbHandle::Regular(db) => {
                 let cf = db.cf_handle(CF_COLLECTIONS)
@@ -446,23 +459,23 @@ impl RocksDbMetadataBackend {
         
         match db {
             DbHandle::Transactional(db) => {
-                let mut batch = WriteBatch::default();
+                let txn = db.transaction();
                 
                 // Write to collections CF
                 let cf_collections = self.get_cf(&db, CF_COLLECTIONS)?;
-                batch.put_cf(&cf_collections, record.id.as_bytes(), &data);
+                txn.put_cf(&cf_collections, record.id.as_bytes(), &data)?;
                 
                 // Update name index
                 let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
                 let name = record.config.as_ref().map(|c| &c.name).unwrap_or(&record.id);
-                batch.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes());
+                txn.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes())?;
                 
                 // Update UUID index (reverse lookup)
                 let cf_uuid_index = self.get_cf(&db, CF_UUID_INDEX)?;
-                batch.put_cf(&cf_uuid_index, record.id.as_bytes(), name.as_bytes());
+                txn.put_cf(&cf_uuid_index, record.id.as_bytes(), name.as_bytes())?;
                 
-                // Write batch atomically
-                db.write(batch)?;
+                // Commit transaction
+                txn.commit()?;
                 self.update_stats(StatOp::Write(data_len)).await;
                 
                 let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
@@ -516,33 +529,24 @@ impl RocksDbMetadataBackend {
         
         match db {
             DbHandle::Transactional(db) => {
-                let mut batch = WriteBatch::default();
+                let txn = db.transaction();
                 
                 // Write to collections CF with proto data
                 let cf_collections = self.get_cf(&db, CF_COLLECTIONS)?;
-                batch.put_cf(&cf_collections, uuid.as_bytes(), &data);
+                txn.put_cf(&cf_collections, uuid.as_bytes(), &data)?;
                 
                 // Update name index
                 let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
-                batch.put_cf(&cf_name_index, name.as_bytes(), uuid.as_bytes());
+                txn.put_cf(&cf_name_index, name.as_bytes(), uuid.as_bytes())?;
                 
                 // Update UUID index (reverse lookup)
                 let cf_uuid_index = self.get_cf(&db, CF_UUID_INDEX)?;
-                batch.put_cf(&cf_uuid_index, uuid.as_bytes(), name.as_bytes());
+                txn.put_cf(&cf_uuid_index, uuid.as_bytes(), name.as_bytes())?;
                 
-                // Update tag indexes if available
-                if let Some(metadata) = &proto_collection.metadata {
-                    if let Some(tags) = &metadata.tags {
-                        let cf_tags = self.get_cf(&db, CF_TAGS)?;
-                        for tag in tags {
-                            let tag_key = format!("{}:{}", tag, uuid);
-                            batch.put_cf(&cf_tags, tag_key.as_bytes(), uuid.as_bytes());
-                        }
-                    }
-                }
+                // Tag indexes removed - metadata field no longer exists in Collection proto
                 
-                // Write batch atomically
-                db.write(batch)?;
+                // Commit transaction
+                txn.commit()?;
                 self.update_stats(StatOp::Write(data_len)).await;
                 
                 info!("✅ Upserted collection {} ({}) using proto format", name, uuid);
@@ -565,17 +569,7 @@ impl RocksDbMetadataBackend {
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
                 batch.put_cf(&cf_uuid_index, uuid.as_bytes(), name.as_bytes());
                 
-                // Update tag indexes if available
-                if let Some(metadata) = &proto_collection.metadata {
-                    if let Some(tags) = &metadata.tags {
-                        let cf_tags = db.cf_handle(CF_TAGS)
-                            .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                        for tag in tags {
-                            let tag_key = format!("{}:{}", tag, uuid);
-                            batch.put_cf(&cf_tags, tag_key.as_bytes(), uuid.as_bytes());
-                        }
-                    }
-                }
+                // Tag indexes removed - metadata field no longer exists in Collection proto
                 
                 // Write batch atomically
                 db.write(batch)?;
@@ -730,12 +724,10 @@ impl RocksDbMetadataBackend {
             let db = self.get_db().await?;
             
             match db {
-                DbHandle::Transactional(ref db) => {
-                    // Create checkpoint for transactional DB
-                    let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)?;
-                    let backup_dir = backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
-                    checkpoint.create_checkpoint(&backup_dir)?;
-                    info!("✅ Created RocksDB backup at: {:?}", backup_dir);
+                DbHandle::Transactional(_db) => {
+                    // TransactionDB doesn't support direct checkpoints
+                    // Use backup engine instead
+                    return Err(anyhow::anyhow!("TransactionDB backup not implemented - use backup engine API"));
                 }
                 DbHandle::Regular(ref db) => {
                     // Create checkpoint for regular DB
@@ -842,22 +834,22 @@ impl RocksDbMetadataBackend {
         if let Some(record) = record {
             match db {
                 DbHandle::Transactional(db) => {
-                    let mut batch = WriteBatch::default();
+                    let txn = db.transaction();
                     
                     // Delete from collections CF
                     let cf_collections = self.get_cf(&db, CF_COLLECTIONS)?;
-                    batch.delete_cf(&cf_collections, uuid.as_bytes());
+                    txn.delete_cf(&cf_collections, uuid.as_bytes())?;
                     
                     // Delete from name index
                     let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
                     let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| record.id.clone());
-                    batch.delete_cf(&cf_name_index, name.as_bytes());
+                    txn.delete_cf(&cf_name_index, name.as_bytes())?;
                     
                     // Delete from UUID index
                     let cf_uuid_index = self.get_cf(&db, CF_UUID_INDEX)?;
-                    batch.delete_cf(&cf_uuid_index, uuid.as_bytes());
+                    txn.delete_cf(&cf_uuid_index, uuid.as_bytes())?;
                     
-                    db.write(batch)?;
+                    txn.commit()?;
                     self.update_stats(StatOp::Delete).await;
                     
                     info!("🗑️ Deleted collection {} ({})", name, uuid);
@@ -956,22 +948,6 @@ impl RocksDbMetadataBackend {
         self.stats.read().await.clone()
     }
     
-    /// Create backup
-    pub async fn create_backup(&self) -> Result<String> {
-        if let Some(backup_config) = &self.config.backup_config {
-            let backup_id = format!("backup_{}", chrono::Utc::now().timestamp());
-            let backup_path = backup_config.backup_path.join(&backup_id);
-            
-            std::fs::create_dir_all(&backup_path)?;
-            
-            // TODO: Implement actual backup using RocksDB backup engine
-            info!("📦 Created backup: {}", backup_id);
-            
-            Ok(backup_id)
-        } else {
-            Err(anyhow::anyhow!("Backup not configured"))
-        }
-    }
 }
 
 impl Clone for BackendStatistics {
@@ -1013,8 +989,8 @@ mod tests {
             indexing_algorithm: "hnsw".to_string(),
             storage_engine: "viper".to_string(),
             created_at: 1000,
-            updated_at: 1000,
-            version: 1,
+            updated_at: Some(1000),
+            version: Some(1),
             vector_count: 0,
             total_size_bytes: 0,
             config: "{}".to_string(),
@@ -1075,7 +1051,7 @@ mod tests {
                 storage_engine: "lsm".to_string(),
                 created_at: 1000 + i,
                 updated_at: 1000 + i,
-                version: 1,
+                version: Some(1),
                 vector_count: i * 100,
                 total_size_bytes: i * 1024,
                 config: "{}".to_string(),

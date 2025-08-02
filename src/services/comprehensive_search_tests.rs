@@ -22,6 +22,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
+    use tracing::debug;
     
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
     use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};

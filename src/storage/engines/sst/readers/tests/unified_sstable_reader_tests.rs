@@ -34,7 +34,6 @@ mod tests {
 
     fn create_test_context() -> CollectionContext {
         CollectionContext {
-            collection_id: "test_collection".to_string(),
             file_path: "/tmp/lsm".to_string(),
             sstable_files: vec![
                 "/tmp/lsm/sst_001.sst".to_string(),

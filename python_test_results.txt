@@ -1,0 +1,674 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.2, pytest-8.4.1, pluggy-1.6.0 -- /home/vsingh/anaconda3/bin/python
+cachedir: .pytest_cache
+metadata: {'Python': '3.12.2', 'Platform': 'Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.39', 'Packages': {'pytest': '8.4.1', 'pluggy': '1.6.0'}, 'Plugins': {'html': '4.1.1', 'json-report': '1.5.0', 'anyio': '4.2.0', 'timeout': '2.4.0', 'xdist': '3.8.0', 'mock': '3.14.1', 'metadata': '3.1.1', 'asyncio': '1.1.0', 'cov': '6.2.1'}}
+rootdir: /home/vsingh/code/proximaDB
+plugins: html-4.1.1, json-report-1.5.0, anyio-4.2.0, timeout-2.4.0, xdist-3.8.0, mock-3.14.1, metadata-3.1.1, asyncio-1.1.0, cov-6.2.1
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 23 items / 1 skipped
+
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_proto_quantization_fields_exist FAILED [  4%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_create_collection_with_quantization_rest FAILED [  8%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_search_with_optimization_hints_rest FAILED [ 13%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_grpc_quantization_hints ERROR [ 17%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_quantization_types FAILED [ 21%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_progressive_quantization FAILED [ 26%]
+tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_search_hints_model FAILED [ 30%]
+tests/proto_first_integration_test.py::test_proto_first_vector_insert PASSED [ 34%]
+tests/proto_first_integration_test.py::test_proto_first_architecture_demo PASSED [ 39%]
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[rest] FAILED [ 43%]
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[grpc] FAILED [ 47%]
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[rest] FAILED [ 52%]
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[grpc] FAILED [ 56%]
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[rest] FAILED [ 60%]
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[grpc] FAILED [ 65%]
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[rest] FAILED [ 69%]
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[grpc] FAILED [ 73%]
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[rest] FAILED [ 78%]
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[grpc] FAILED [ 82%]
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[rest] FAILED [ 86%]
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[grpc] FAILED [ 91%]
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[rest] FAILED [ 95%]
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[grpc] FAILED [100%]
+
+==================================== ERRORS ====================================
+______ ERROR at setup of TestQuantizationE2E.test_grpc_quantization_hints ______
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c00140b0>
+
+    @pytest.fixture
+    def grpc_client(self):
+        """Create gRPC client"""
+>       client = connect_grpc("localhost:5679")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/integration/test_quantization_e2e.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+clients/python/src/proximadb/unified_client.py:1058: in connect_grpc
+    return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+clients/python/src/proximadb/unified_client.py:103: in __init__
+    config = load_config(url=url, api_key=api_key, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+clients/python/src/proximadb/config.py:347: in load_config
+    return ClientConfig.from_env(**config_dict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+cls = <class 'proximadb.config.ClientConfig'>
+overrides = {'url': 'localhost:5679'}, config_dict = {'url': 'localhost:5679'}
+url = None, api_key = None, protocol = None, timeout = None, retry_config = {}
+max_retries = None
+
+    @classmethod
+    def from_env(cls, **overrides) -> "ClientConfig":
+        """Create configuration from environment variables"""
+        config_dict = {}
+    
+        # Basic settings
+        if url := os.getenv("PROXIMADB_URL"):
+            config_dict["url"] = url
+        if api_key := os.getenv("PROXIMADB_API_KEY"):
+            config_dict["api_key"] = api_key
+        if protocol := os.getenv("PROXIMADB_PROTOCOL"):
+            config_dict["protocol"] = protocol
+        if timeout := os.getenv("PROXIMADB_TIMEOUT"):
+            config_dict["timeout"] = float(timeout)
+    
+        # Retry settings
+        retry_config = {}
+        if max_retries := os.getenv("PROXIMADB_MAX_RETRIES"):
+            retry_config["max_retries"] = int(max_retries)
+        if backoff_factor := os.getenv("PROXIMADB_BACKOFF_FACTOR"):
+            retry_config["backoff_factor"] = float(backoff_factor)
+        if retry_config:
+            config_dict["retry"] = RetryConfig(**retry_config)
+    
+        # Connection settings
+        connection_config = {}
+        if pool_size := os.getenv("PROXIMADB_POOL_SIZE"):
+            connection_config["pool_size"] = int(pool_size)
+        if read_timeout := os.getenv("PROXIMADB_READ_TIMEOUT"):
+            connection_config["read_timeout"] = float(read_timeout)
+        if connection_config:
+            config_dict["connection"] = ConnectionConfig(**connection_config)
+    
+        # TLS settings
+        tls_config = {}
+        if verify := os.getenv("PROXIMADB_TLS_VERIFY"):
+            tls_config["verify"] = verify.lower() in ("true", "1", "yes")
+        if ca_bundle := os.getenv("PROXIMADB_CA_BUNDLE"):
+            tls_config["ca_bundle"] = ca_bundle
+        if cert_file := os.getenv("PROXIMADB_CERT_FILE"):
+            tls_config["cert_file"] = cert_file
+        if key_file := os.getenv("PROXIMADB_KEY_FILE"):
+            tls_config["key_file"] = key_file
+        if tls_config:
+            config_dict["tls"] = TLSConfig(**tls_config)
+    
+        # Logging
+        if log_level := os.getenv("PROXIMADB_LOG_LEVEL"):
+            config_dict["log_level"] = log_level.upper()
+        if debug := os.getenv("PROXIMADB_DEBUG"):
+            config_dict["enable_debug_logging"] = debug.lower() in ("true", "1", "yes")
+    
+        # Performance
+        if batch_size := os.getenv("PROXIMADB_BATCH_SIZE"):
+            config_dict["default_batch_size"] = int(batch_size)
+        if max_concurrent := os.getenv("PROXIMADB_MAX_CONCURRENT"):
+            config_dict["max_concurrent_requests"] = int(max_concurrent)
+    
+        # Apply overrides
+        config_dict.update(overrides)
+    
+        # URL is required
+        if "url" not in config_dict:
+            raise ValueError("URL must be provided via PROXIMADB_URL environment variable or constructor")
+    
+>       return cls(**config_dict)
+               ^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for ClientConfig
+E       url
+E         Value error, URL must use http, https, or grpc scheme [type=value_error, input_value='localhost:5679', input_type=str]
+E           For further information visit https://errors.pydantic.dev/2.8/v/value_error
+
+clients/python/src/proximadb/config.py:220: ValidationError
+=================================== FAILURES ===================================
+___________ TestQuantizationE2E.test_proto_quantization_fields_exist ___________
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c12bec00>
+
+    def test_proto_quantization_fields_exist(self):
+        """Verify proto messages have quantization fields"""
+        # Check CollectionConfig has quantization_config
+        config = proximadb_pb2.CollectionConfig()
+        assert hasattr(config, 'quantization_config')
+    
+        # Check VectorSearchRequest has optimization_hints
+        search_req = proximadb_pb2.VectorSearchRequest()
+>       assert hasattr(search_req, 'optimization_hints')
+E       AssertionError: assert False
+E        +  where False = hasattr(, 'optimization_hints')
+
+tests/integration/test_quantization_e2e.py:64: AssertionError
+______ TestQuantizationE2E.test_create_collection_with_quantization_rest _______
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c0014680>
+rest_client = <proximadb.unified_client.ProximaDBClient object at 0x7f84bf9c1850>
+
+    def test_create_collection_with_quantization_rest(self, rest_client):
+        """Test creating collection with quantization via REST"""
+        collection_name = f"test_quant_e2e_{int(time.time())}"
+    
+>       config = CollectionConfig(
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE,
+            quantization_config=QuantizationConfig(
+                enabled=True,
+                type=QuantizationType.SCALAR,
+                bits_per_vector=8,
+                accuracy_threshold=0.95
+            )
+        )
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for CollectionConfig
+E       name
+E         Field required [type=missing, input_value={'dimension': 128, 'dista...training_threshold=0.9)}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.8/v/missing
+
+tests/integration/test_quantization_e2e.py:82: ValidationError
+------------------------------ Captured log setup ------------------------------
+INFO     proximadb.protocols.rest_sync:rest_sync.py:80 Initialized ProximaDB client for http://localhost:5678
+INFO     proximadb.unified_client:unified_client.py:151 🌐 Using REST client (forced)
+_________ TestQuantizationE2E.test_search_with_optimization_hints_rest _________
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c0014530>
+rest_client = <proximadb.unified_client.ProximaDBClient object at 0x7f84bf1c27e0>
+
+    def test_search_with_optimization_hints_rest(self, rest_client):
+        """Test search with optimization hints via REST"""
+        collection_name = f"test_quant_e2e_hints_{int(time.time())}"
+    
+        # Create collection
+>       config = CollectionConfig(dimension=256)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for CollectionConfig
+E       name
+E         Field required [type=missing, input_value={'dimension': 256}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.8/v/missing
+
+tests/integration/test_quantization_e2e.py:117: ValidationError
+------------------------------ Captured log setup ------------------------------
+INFO     proximadb.protocols.rest_sync:rest_sync.py:80 Initialized ProximaDB client for http://localhost:5678
+INFO     proximadb.unified_client:unified_client.py:151 🌐 Using REST client (forced)
+_________________ TestQuantizationE2E.test_quantization_types __________________
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c00144a0>
+rest_client = <proximadb.unified_client.ProximaDBClient object at 0x7f84bf223ec0>
+
+    def test_quantization_types(self, rest_client):
+        """Test different quantization types"""
+        base_name = "test_quant_e2e_types"
+        dimension = 512
+    
+        quantization_configs = [
+            ("scalar", QuantizationType.SCALAR, {"bits_per_vector": 8}),
+            ("product", QuantizationType.PRODUCT, {"bits_per_subvector": 4, "num_subvectors": 64}),
+            ("binary", QuantizationType.BINARY, {}),
+            ("uniform", QuantizationType.UNIFORM, {"bits_per_vector": 16})
+        ]
+    
+        for type_name, quant_type, extra_params in quantization_configs:
+            collection_name = f"{base_name}_{type_name}_{int(time.time())}"
+    
+            # Create quantization config
+            quant_config = QuantizationConfig(
+                enabled=True,
+                type=quant_type,
+                compression_ratio_target=4.0,
+                accuracy_threshold=0.9,
+                **extra_params
+            )
+    
+>           config = CollectionConfig(
+                dimension=dimension,
+                distance_metric=DistanceMetric.EUCLIDEAN,
+                quantization_config=quant_config
+            )
+E           pydantic_core._pydantic_core.ValidationError: 1 validation error for CollectionConfig
+E           name
+E             Field required [type=missing, input_value={'dimension': 512, 'dista...training_threshold=0.9)}, input_type=dict]
+E               For further information visit https://errors.pydantic.dev/2.8/v/missing
+
+tests/integration/test_quantization_e2e.py:256: ValidationError
+------------------------------ Captured log setup ------------------------------
+INFO     proximadb.protocols.rest_sync:rest_sync.py:80 Initialized ProximaDB client for http://localhost:5678
+INFO     proximadb.unified_client:unified_client.py:151 🌐 Using REST client (forced)
+______________ TestQuantizationE2E.test_progressive_quantization _______________
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c00144d0>
+rest_client = <proximadb.unified_client.ProximaDBClient object at 0x7f84bf2225a0>
+
+    def test_progressive_quantization(self, rest_client):
+        """Test progressive quantization feature"""
+        collection_name = f"test_quant_e2e_progressive_{int(time.time())}"
+    
+>       config = CollectionConfig(
+            dimension=128,
+            distance_metric=DistanceMetric.COSINE,
+            quantization_config=QuantizationConfig(
+                enabled=True,
+                type=QuantizationType.UNIFORM,
+                bits_per_vector=8,
+                progressive_quantization=True,
+                compression_ratio_target=4.0,
+                accuracy_threshold=0.95
+            )
+        )
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for CollectionConfig
+E       name
+E         Field required [type=missing, input_value={'dimension': 128, 'dista...training_threshold=0.9)}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.8/v/missing
+
+tests/integration/test_quantization_e2e.py:286: ValidationError
+------------------------------ Captured log setup ------------------------------
+INFO     proximadb.protocols.rest_sync:rest_sync.py:80 Initialized ProximaDB client for http://localhost:5678
+INFO     proximadb.unified_client:unified_client.py:151 🌐 Using REST client (forced)
+_________________ TestQuantizationE2E.test_search_hints_model __________________
+
+self = <test_quantization_e2e.TestQuantizationE2E object at 0x7f84c00147a0>
+
+    def test_search_hints_model(self):
+        """Test SearchOptimizationHints model"""
+>       hints = SearchOptimizationHints(
+            enable_two_stage_search=True,
+            quantization_hint="PQ4",
+            candidate_multiplier=4.0,
+            min_candidates=50,
+            max_candidates=500,
+            enable_clustering_optimization=True,
+            enable_metadata_filtering_hint=True,
+            enable_parallel_search=True,
+            accuracy_threshold=0.95,
+            timeout_ms=100,
+            include_expired_vectors=False,
+            custom_hints={"gpu": "true", "batch_size": "64"}
+        )
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for SearchOptimization
+E       quantization_hint
+E         Input should be a valid dictionary or instance of QuantizationHint [type=model_type, input_value='PQ4', input_type=str]
+E           For further information visit https://errors.pydantic.dev/2.8/v/model_type
+
+tests/integration/test_quantization_e2e.py:331: ValidationError
+___________ TestBasicUpsertOperations.test_basic_vector_upsert[rest] ___________
+
+self = <test_upsert_operations.TestBasicUpsertOperations object at 0x7f84bfb3e210>
+test_framework = <async_generator object test_framework at 0x7f84bf1d79f0>
+
+    @pytest.mark.asyncio
+    async def test_basic_vector_upsert(self, test_framework):
+        """Test basic vector insert and upsert operations"""
+>       await test_framework.setup_collection("test_basic_upsert")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:181: AttributeError
+___________ TestBasicUpsertOperations.test_basic_vector_upsert[grpc] ___________
+
+self = <test_upsert_operations.TestBasicUpsertOperations object at 0x7f84bf97f650>
+test_framework = <async_generator object test_framework at 0x7f84bf0a2a80>
+
+    @pytest.mark.asyncio
+    async def test_basic_vector_upsert(self, test_framework):
+        """Test basic vector insert and upsert operations"""
+>       await test_framework.setup_collection("test_basic_upsert")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:181: AttributeError
+_________ TestIDConflictResolution.test_multiple_upserts_same_id[rest] _________
+
+self = <test_upsert_operations.TestIDConflictResolution object at 0x7f84bf97f950>
+test_framework = <async_generator object test_framework at 0x7f84bf0a0110>
+
+    @pytest.mark.asyncio
+    async def test_multiple_upserts_same_id(self, test_framework):
+        """Test multiple upserts to the same vector ID"""
+>       await test_framework.setup_collection("test_id_conflicts")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:230: AttributeError
+_________ TestIDConflictResolution.test_multiple_upserts_same_id[grpc] _________
+
+self = <test_upsert_operations.TestIDConflictResolution object at 0x7f84bf97fa40>
+test_framework = <async_generator object test_framework at 0x7f84bf14a260>
+
+    @pytest.mark.asyncio
+    async def test_multiple_upserts_same_id(self, test_framework):
+        """Test multiple upserts to the same vector ID"""
+>       await test_framework.setup_collection("test_id_conflicts")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:230: AttributeError
+____________ TestIDConflictResolution.test_concurrent_upserts[rest] ____________
+
+self = <test_upsert_operations.TestIDConflictResolution object at 0x7f84bf97fdd0>
+test_framework = <async_generator object test_framework at 0x7f84bf149be0>
+
+    @pytest.mark.asyncio
+    async def test_concurrent_upserts(self, test_framework):
+        """Test concurrent upserts to same ID"""
+>       await test_framework.setup_collection("test_concurrent")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:272: AttributeError
+____________ TestIDConflictResolution.test_concurrent_upserts[grpc] ____________
+
+self = <test_upsert_operations.TestIDConflictResolution object at 0x7f84bf97fe90>
+test_framework = <async_generator object test_framework at 0x7f84bf14b9f0>
+
+    @pytest.mark.asyncio
+    async def test_concurrent_upserts(self, test_framework):
+        """Test concurrent upserts to same ID"""
+>       await test_framework.setup_collection("test_concurrent")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:272: AttributeError
+____ TestCrossTierDeduplication.test_unflushed_flushed_deduplication[rest] _____
+
+self = <test_upsert_operations.TestCrossTierDeduplication object at 0x7f84bf9c02c0>
+test_framework = <async_generator object test_framework at 0x7f84bf149700>
+
+    @pytest.mark.asyncio
+    async def test_unflushed_flushed_deduplication(self, test_framework):
+        """Test deduplication between unflushed and flushed data"""
+>       await test_framework.setup_collection("test_cross_tier", storage_engine="LSM")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:304: AttributeError
+____ TestCrossTierDeduplication.test_unflushed_flushed_deduplication[grpc] _____
+
+self = <test_upsert_operations.TestCrossTierDeduplication object at 0x7f84bf9c0380>
+test_framework = <async_generator object test_framework at 0x7f84bf14adc0>
+
+    @pytest.mark.asyncio
+    async def test_unflushed_flushed_deduplication(self, test_framework):
+        """Test deduplication between unflushed and flushed data"""
+>       await test_framework.setup_collection("test_cross_tier", storage_engine="LSM")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:304: AttributeError
+________ TestMetadataFiltering.test_upsert_with_metadata_filters[rest] _________
+
+self = <test_upsert_operations.TestMetadataFiltering object at 0x7f84bf97fd10>
+test_framework = <async_generator object test_framework at 0x7f84c1992810>
+
+    @pytest.mark.asyncio
+    async def test_upsert_with_metadata_filters(self, test_framework):
+        """Test metadata filtering during upsert search"""
+>       await test_framework.setup_collection("test_metadata_filter")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:349: AttributeError
+________ TestMetadataFiltering.test_upsert_with_metadata_filters[grpc] _________
+
+self = <test_upsert_operations.TestMetadataFiltering object at 0x7f84bf97fa10>
+test_framework = <async_generator object test_framework at 0x7f84c4a37b90>
+
+    @pytest.mark.asyncio
+    async def test_upsert_with_metadata_filters(self, test_framework):
+        """Test metadata filtering during upsert search"""
+>       await test_framework.setup_collection("test_metadata_filter")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:349: AttributeError
+_______________ TestBatchUpserts.test_mixed_batch_upserts[rest] ________________
+
+self = <test_upsert_operations.TestBatchUpserts object at 0x7f84bf9c0680>
+test_framework = <async_generator object test_framework at 0x7f84bf3b6dc0>
+
+    @pytest.mark.asyncio
+    async def test_mixed_batch_upserts(self, test_framework):
+        """Test batch with mix of new and existing vectors"""
+>       await test_framework.setup_collection("test_batch_mixed")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:402: AttributeError
+_______________ TestBatchUpserts.test_mixed_batch_upserts[grpc] ________________
+
+self = <test_upsert_operations.TestBatchUpserts object at 0x7f84bf9c0740>
+test_framework = <async_generator object test_framework at 0x7f84cf629080>
+
+    @pytest.mark.asyncio
+    async def test_mixed_batch_upserts(self, test_framework):
+        """Test batch with mix of new and existing vectors"""
+>       await test_framework.setup_collection("test_batch_mixed")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:402: AttributeError
+______________ TestPerformance.test_bulk_upsert_performance[rest] ______________
+
+self = <test_upsert_operations.TestPerformance object at 0x7f84bf9c0b30>
+test_framework = <async_generator object test_framework at 0x7f84bfb47100>
+
+    @pytest.mark.asyncio
+    async def test_bulk_upsert_performance(self, test_framework):
+        """Test performance of bulk upsert operations"""
+>       await test_framework.setup_collection("test_bulk_performance")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:447: AttributeError
+______________ TestPerformance.test_bulk_upsert_performance[grpc] ______________
+
+self = <test_upsert_operations.TestPerformance object at 0x7f84bf9c0bf0>
+test_framework = <async_generator object test_framework at 0x7f84bf9d8e10>
+
+    @pytest.mark.asyncio
+    async def test_bulk_upsert_performance(self, test_framework):
+        """Test performance of bulk upsert operations"""
+>       await test_framework.setup_collection("test_bulk_performance")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'async_generator' object has no attribute 'setup_collection'
+
+tests/python/test_upsert_operations.py:447: AttributeError
+=============================== warnings summary ===============================
+tests/python/test_sdk_upsert_operations.py:28
+  /home/vsingh/code/proximaDB/tests/python/test_sdk_upsert_operations.py:28: DeprecationWarning: proximadb.grpc_client is deprecated. Please use ProximaDBClient(protocol=Protocol.GRPC) instead.
+    from proximadb.grpc_client import ProximaDBGrpcClient
+
+tests/proto_first_integration_test.py::test_proto_first_vector_insert
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/python.py:161: PytestReturnNotNoneWarning: Test functions should return None, but tests/proto_first_integration_test.py::test_proto_first_vector_insert returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/proto_first_integration_test.py::test_proto_first_architecture_demo
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/python.py:161: PytestReturnNotNoneWarning: Test functions should return None, but tests/proto_first_integration_test.py::test_proto_first_architecture_demo returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_basic_vector_upsert[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_basic_vector_upsert[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_basic_vector_upsert[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_basic_vector_upsert[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_multiple_upserts_same_id[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_multiple_upserts_same_id[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_multiple_upserts_same_id[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_multiple_upserts_same_id[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_concurrent_upserts[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_concurrent_upserts[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_concurrent_upserts[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_concurrent_upserts[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_unflushed_flushed_deduplication[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_unflushed_flushed_deduplication[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_unflushed_flushed_deduplication[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_unflushed_flushed_deduplication[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_upsert_with_metadata_filters[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_upsert_with_metadata_filters[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_upsert_with_metadata_filters[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_upsert_with_metadata_filters[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_mixed_batch_upserts[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_mixed_batch_upserts[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_mixed_batch_upserts[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_mixed_batch_upserts[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_bulk_upsert_performance[rest]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[rest]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_bulk_upsert_performance[rest]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/_pytest/fixtures.py:1181: PytestRemovedIn9Warning: 'test_bulk_upsert_performance[grpc]' requested an async fixture 'test_framework', with no plugin or hook that handled it. This is usually an error, as pytest does not natively support it. This will turn into an error in pytest 9.
+  See: https://docs.pytest.org/en/stable/deprecations.html#sync-test-depending-on-async-fixture
+    warnings.warn(
+
+tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[grpc]
+  /home/vsingh/anaconda3/lib/python3.12/site-packages/pytest_asyncio/plugin.py:598: PytestDeprecationWarning: asyncio test 'test_bulk_upsert_performance[grpc]' requested async @pytest.fixture 'test_framework' in strict mode. You might want to use @pytest_asyncio.fixture or switch to auto mode. This will become an error in future versions of flake8-asyncio.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.2-final-0 ________________
+
+Name                                                   Stmts   Miss  Cover   Missing
+------------------------------------------------------------------------------------
+clients/python/src/proximadb/__init__.py                  24      5    79%   26-28, 84-86
+clients/python/src/proximadb/chunking.py                 232    193    17%   37, 56-65, 72-76, 95-113, 122-174, 183-223, 232-280, 292-347, 356-378, 390-457, 462-471, 480-493, 510-525, 539-541, 552-553, 563-564, 575-580
+clients/python/src/proximadb/config.py                   210     86    59%   128, 133-138, 144, 151-153, 162, 164, 166, 168, 173, 175, 177, 182, 184, 186, 191, 193, 195, 197, 199, 203, 205, 209, 211, 218, 231, 240-251, 258-259, 263-264, 268-276, 280-286, 290-309, 336, 342, 352-376
+clients/python/src/proximadb/exceptions.py               154    112    27%   32-36, 39-44, 51, 58, 65-67, 74-76, 83-85, 92-95, 102, 114-115, 127-128, 135-136, 148-149, 161-162, 174-175, 182, 189-190, 204-207, 218, 225, 230-278, 283-312
+clients/python/src/proximadb/filters.py                  176    113    36%   44, 59-60, 64-65, 69, 114-116, 120-124, 128-132, 136-140, 144-146, 150-151, 155-157, 161-162, 166-167, 171-172, 176-177, 181-182, 186-187, 191-192, 196-197, 201-202, 206-207, 211-212, 216, 220, 224-225, 229-287, 291-317, 323, 328, 333, 338, 343-346, 351-359
+clients/python/src/proximadb/grpc_client.py                3      0   100%
+clients/python/src/proximadb/metadata_utils.py            39     39     0%   6-87
+clients/python/src/proximadb/models.py                   399     11    97%   365, 371-373, 380-381, 420-424
+clients/python/src/proximadb/protocols/__init__.py         0      0   100%
+clients/python/src/proximadb/protocols/grpc_async.py     442    371    16%   24-26, 67, 83-90, 94, 116-117, 124-125, 129, 133-135, 139-145, 162, 177-215, 231-271, 276-290, 295-304, 309-321, 327-343, 350-354, 368-382, 386-409, 437-490, 504-552, 575-581, 608-664, 668-682, 699-707, 729-735, 749-758, 779-851, 867-886, 902-927, 947, 971-1022, 1048, 1070, 1080, 1093, 1106, 1120-1192
+clients/python/src/proximadb/protocols/grpc_sync.py      120    120     0%   7-322
+clients/python/src/proximadb/protocols/rest_sync.py      266    193    27%   72, 85, 132, 136-141, 147-152, 156-157, 161-165, 169-183, 187-201, 228-299, 304-336, 402-404, 408-409, 431-465, 495-586, 627-698, 720-743, 751-761, 769-779, 793-809, 826-835, 851-870, 885, 889, 895-896, 906, 917-918
+clients/python/src/proximadb/proximadb_pb2.py            186    173     7%   34-206
+clients/python/src/proximadb/proximadb_pb2_grpc.py        70     31    56%   15-16, 19, 89-91, 97-99, 104-106, 111-113, 118-120, 124-126, 130-165, 190, 217, 244, 271, 298, 325
+clients/python/src/proximadb/rest_client.py                9      2    78%   30-38
+clients/python/src/proximadb/unified_client.py           351    255    27%   50-51, 124-137, 141-145, 154, 158-169, 180-186, 193, 197-210, 224-235, 244-253, 257-263, 267-274, 278-299, 303-312, 316-322, 326-333, 337-382, 386, 397-401, 410-424, 428-434, 439-440, 446, 464-541, 549-591, 618-621, 659-714, 749-764, 772-807, 817-822, 844-852, 868, 893-901, 911-942, 951, 955, 961-962, 973-988, 998-1013, 1021, 1025-1037, 1048, 1061-1065
+------------------------------------------------------------------------------------
+TOTAL                                                   2681   1704    36%
+Coverage HTML written to dir htmlcov
+=========================== short test summary info ============================
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_proto_quantization_fields_exist
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_create_collection_with_quantization_rest
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_search_with_optimization_hints_rest
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_quantization_types
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_progressive_quantization
+FAILED tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_search_hints_model
+FAILED tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[rest]
+FAILED tests/python/test_upsert_operations.py::TestBasicUpsertOperations::test_basic_vector_upsert[grpc]
+FAILED tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[rest]
+FAILED tests/python/test_upsert_operations.py::TestIDConflictResolution::test_multiple_upserts_same_id[grpc]
+FAILED tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[rest]
+FAILED tests/python/test_upsert_operations.py::TestIDConflictResolution::test_concurrent_upserts[grpc]
+FAILED tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[rest]
+FAILED tests/python/test_upsert_operations.py::TestCrossTierDeduplication::test_unflushed_flushed_deduplication[grpc]
+FAILED tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[rest]
+FAILED tests/python/test_upsert_operations.py::TestMetadataFiltering::test_upsert_with_metadata_filters[grpc]
+FAILED tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[rest]
+FAILED tests/python/test_upsert_operations.py::TestBatchUpserts::test_mixed_batch_upserts[grpc]
+FAILED tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[rest]
+FAILED tests/python/test_upsert_operations.py::TestPerformance::test_bulk_upsert_performance[grpc]
+ERROR tests/integration/test_quantization_e2e.py::TestQuantizationE2E::test_grpc_quantization_hints
+======== 20 failed, 2 passed, 1 skipped, 31 warnings, 1 error in 2.99s =========

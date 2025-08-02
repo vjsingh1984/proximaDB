@@ -25,11 +25,17 @@ affinity = true
 mmap_enabled = true
 cache_size_mb = 256
 
+[storage.write_buffer_config]
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per batch
+memtable_type = "BTree"
+sync_mode = "PerBatch"
+write_buffer_directory = "/tmp/proximadb/write_buffer"
+enable_wal = true
+
 [storage.sst_config]
-memtable_size_mb = 8
-memory_flush_size_bytes = 2097152  # 2MB
+compaction_threshold = 5  # Minimum 5 files before compaction
 compression = "snappy"
-write_buffer_directory = "/tmp/proximadb/sst_wal"
 data_directory = "/tmp/proximadb/sst_data"
 
 [storage.filesystem_config]
@@ -50,4 +56,3 @@ timeout_seconds = 30
 [monitoring]
 metrics_enabled = true
 log_level = "info"
-EOF < /dev/null

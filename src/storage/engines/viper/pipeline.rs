@@ -2989,11 +2989,10 @@ impl CompactionEngine {
                 id: Some(format!("vec_{:06}", i)),
                 vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
                 metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
-                timestamp,
-                created_at: timestamp,
-                updated_at: timestamp,
+                timestamp: timestamp as u32,
+                updated_at: Some(timestamp as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -3152,7 +3151,7 @@ impl CompactionEngine {
         let mut time_groups: HashMap<i64, Vec<VectorRecord>> = HashMap::new();
 
         for record in records {
-            let time_bucket = record.timestamp / window_size_ms;
+            let time_bucket = (record.timestamp as i64) / window_size_ms;
             time_groups
                 .entry(time_bucket)
                 .or_insert_with(Vec::new)
@@ -3319,7 +3318,7 @@ impl CompactionEngine {
         let base_compression = avg_sparsity * 0.4 + avg_metadata_repetition * 0.3; // Up to 70% from data
         let algorithm_compression = 0.25; // Additional 25% from compression algorithm
 
-        let total_compression = (base_compression + algorithm_compression).min(0.8); // Cap at 80%
+        let total_compression = (base_compression + algorithm_compression).min(0.8f32); // Cap at 80%
 
         // Apply target compression ratio constraint
         Ok(total_compression.min(target_compression_ratio))

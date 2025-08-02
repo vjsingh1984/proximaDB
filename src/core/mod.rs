@@ -10,7 +10,11 @@ pub mod index;
 pub mod indexing;
 pub mod metadata_query;
 pub mod search;
+pub mod serialization;
+pub mod storage;
+pub mod foundation;
 pub mod storage_layout;
+pub mod memory;
 // vector_record_adapter removed - proto-first architecture everywhere
 pub mod proto_metadata_helper;
 pub mod bloom;
@@ -24,6 +28,9 @@ mod error_tests;
 
 #[cfg(test)]
 mod config_loader_tests;
+
+#[cfg(test)]
+mod flush_config_tests;
 
 // Legacy modules removed - using avro_unified as single source of truth
 

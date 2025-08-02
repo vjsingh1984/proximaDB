@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
-use crate::storage::engines::viper::{ViperEngine, ViperConfig};
+use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -100,11 +100,10 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test_value".to_string())),
             },
         ],
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
+        timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
-        version: 1,
+        version: Some(1),
         rank: None,
         score: None,
         distance: None,
@@ -121,13 +120,13 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     println!("📂 Test directory: {}", base_path);
     
     // Create config
-    let mut config = ViperConfig::default();
+    let mut config = ViperEngineConfig::default();
     config.enable_ml_clustering = false;
     config.flush_size_bytes = Some(512 * 1024); // 512KB
     
     // Create engine
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
-    let engine = ViperEngine::new(config, filesystem_factory).await?;
+    let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await?;
     
     let collection_id = "debug_test";
     

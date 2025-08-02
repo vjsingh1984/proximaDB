@@ -188,23 +188,21 @@ impl UnifiedSearchBenchmark {
         (start..end).map(|i| {
             VectorRecord {
                 id: Some(format!("vec_{}", i)),
-                collection_id: collection_id.to_string(),
                 vector: vec![i as f32 / 1000.0; dimension], // Simple pattern for reproducibility
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: format!("cat_{}", i % 10),
+                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 10))),
                     },
                     MetadataItem {
                         key: "score".to_string(),
                         value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 100).to_string())),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,

@@ -14,17 +14,16 @@ use std::sync::Arc;
 fn create_vector_record(
     id: &str,
     vector: Vec<f32>,
-    version: i64,
-    expires_at: Option<i64>,
+    version: Option<u32>,
+    expires_at: Option<u32>,
 ) -> VectorRecord {
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = chrono::Utc::now().timestamp(); // seconds since epoch
     VectorRecord {
         id: Some(id.to_string()),
         vector,
         metadata: vec![],
-        timestamp: now,
-        created_at: now,
-        updated_at: now,
+        timestamp: now as u32,
+        updated_at: Some(now as u32),
         expires_at,
         version,
         rank: None,
@@ -64,7 +63,7 @@ async fn test_three_layer_search_consistency_basic() {
     let vector_v1 = create_vector_record(
         vector_id,
         vec![1.0, 0.0, 0.0],
-        1,
+        Some(1),
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
@@ -73,13 +72,13 @@ async fn test_three_layer_search_consistency_basic() {
     // Verify WAL layer search finds the vector
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
-    assert_eq!(result.unwrap().version, 1);
+    assert_eq!(result.unwrap().version, Some(1));
 
     // Layer 2: Update vector (simulating flush to storage)
     let vector_v2 = create_vector_record(
         vector_id,
         vec![0.0, 1.0, 0.0],
-        2,
+        Some(2),
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
@@ -89,16 +88,16 @@ async fn test_three_layer_search_consistency_basic() {
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
-    assert_eq!(found_vector.version, 2);
+    assert_eq!(found_vector.version, Some(2));
     assert_eq!(found_vector.vector, vec![0.0, 1.0, 0.0]);
 
     // Layer 3: Logical delete (tombstone)
-    let current_time = chrono::Utc::now().timestamp_micros();
+    let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let vector_v3_delete = create_vector_record(
         vector_id,
         vec![0.0, 0.0, 1.0], // Vector content doesn't matter for deletes
-        3,
-        Some(current_time - 1000), // Expired 1ms ago
+        Some(3),
+        Some(current_time - 1), // Expired 1 second ago
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3_delete]);
     let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
@@ -125,7 +124,7 @@ async fn test_get_before_delete_update_consistency() {
     let original_vector = create_vector_record(
         vector_id,
         vec![1.0, 2.0, 3.0],
-        1,
+        Some(1),
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![original_vector.clone()]);
@@ -139,13 +138,13 @@ async fn test_get_before_delete_update_consistency() {
     // Ensure ID and vector match for consistency
     assert_eq!(current_vector.id, Some(vector_id.to_string()));
     assert_eq!(current_vector.vector, vec![1.0, 2.0, 3.0]);
-    assert_eq!(current_vector.version, 1);
+    assert_eq!(current_vector.version, Some(1));
 
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
         current_vector.id.as_deref().unwrap_or(""), // Use same ID
         vec![4.0, 5.0, 6.0], // New vector
-        current_vector.version + 1, // Increment version
+        Some(current_vector.version.unwrap_or(0) + 1), // Increment version
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![updated_vector.clone()]);
@@ -157,15 +156,15 @@ async fn test_get_before_delete_update_consistency() {
     let found_vector = result.unwrap();
     assert_eq!(found_vector.id, Some(vector_id.to_string()));
     assert_eq!(found_vector.vector, vec![4.0, 5.0, 6.0]);
-    assert_eq!(found_vector.version, 2);
+    assert_eq!(found_vector.version, Some(2));
 
     // Delete: Construct tombstone with same ID
-    let current_time = chrono::Utc::now().timestamp_micros();
+    let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let delete_vector = create_vector_record(
         current_vector.id.as_deref().unwrap_or(""), // Use same ID
         vec![0.0, 0.0, 0.0], // Vector content irrelevant for delete
-        found_vector.version + 1, // Increment version
-        Some(current_time - 1000), // Mark as expired
+        Some(found_vector.version.unwrap_or(0) + 1), // Increment version
+        Some(current_time - 1), // Mark as expired 1 second ago
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![delete_vector]);
     memtable.add_wal_batch(collection_id, batch3).await.unwrap();
@@ -187,7 +186,7 @@ async fn test_version_ordering_across_layers() {
     let vector_v3 = create_vector_record(
         vector_id,
         vec![3.0, 3.0, 3.0],
-        3,
+        Some(3),
         None,
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3.clone()]);
@@ -197,7 +196,7 @@ async fn test_version_ordering_across_layers() {
     let vector_v1 = create_vector_record(
         vector_id,
         vec![1.0, 1.0, 1.0],
-        1,
+        Some(1),
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
@@ -207,7 +206,7 @@ async fn test_version_ordering_across_layers() {
     let vector_v2 = create_vector_record(
         vector_id,
         vec![2.0, 2.0, 2.0],
-        2,
+        Some(2),
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
@@ -217,7 +216,7 @@ async fn test_version_ordering_across_layers() {
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
-    assert_eq!(found_vector.version, 3);
+    assert_eq!(found_vector.version, Some(3));
     assert_eq!(found_vector.vector, vec![3.0, 3.0, 3.0]);
 
     // Search should also return version 3
@@ -226,29 +225,29 @@ async fn test_version_ordering_across_layers() {
         .await
         .unwrap();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].1.version, 3);
+    assert_eq!(search_results[0].1.version, Some(3));
 }
 
 #[tokio::test]
 async fn test_expired_records_vs_active_records() {
     let memtable = GlobalPartitionedMemtable::new();
     let collection_id = "1uctd3i"; // 7-char base62 ID (realistic)
-    let current_time = chrono::Utc::now().timestamp_micros();
+    let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
 
     // Active vector
     let active_vector = create_vector_record(
         "active_vector",
         vec![1.0, 0.0, 0.0],
-        1,
-        Some(current_time + 3600_000_000), // Expires in 1 hour
+        Some(1),
+        Some(current_time + 3600), // Expires in 1 hour (in seconds)
     );
 
     // Expired vector
     let expired_vector = create_vector_record(
         "expired_vector",
         vec![0.0, 1.0, 0.0],
-        1,
-        Some(current_time - 1000), // Expired 1ms ago
+        Some(1),
+        Some(current_time - 1), // Expired 1 second ago
     );
 
     let batch = create_wal_batch(
@@ -286,7 +285,7 @@ async fn test_same_id_different_vector_values() {
     let vector_v1 = create_vector_record(
         vector_id,
         vec![1.0, 0.0, 0.0],
-        1,
+        Some(1),
         None,
     );
     let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
@@ -296,7 +295,7 @@ async fn test_same_id_different_vector_values() {
     let vector_v2 = create_vector_record(
         vector_id,
         vec![0.0, 0.0, 1.0], // Completely different vector
-        2,
+        Some(2),
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
@@ -307,7 +306,7 @@ async fn test_same_id_different_vector_values() {
     assert!(result.is_some());
     let found_vector = result.unwrap();
     assert_eq!(found_vector.id, Some(vector_id.to_string()));
-    assert_eq!(found_vector.version, 2);
+    assert_eq!(found_vector.version, Some(2));
     assert_eq!(found_vector.vector, vec![0.0, 0.0, 1.0]);
 
     // Search should find the updated vector
@@ -318,7 +317,7 @@ async fn test_same_id_different_vector_values() {
     
     assert_eq!(search_results.len(), 1);
     assert_eq!(search_results[0].1.id, Some(vector_id.to_string()));
-    assert_eq!(search_results[0].1.version, 2);
+    assert_eq!(search_results[0].1.version, Some(2));
     assert_eq!(search_results[0].1.vector, vec![0.0, 0.0, 1.0]);
 }
 
@@ -333,7 +332,7 @@ async fn test_multi_collection_mvcc_isolation() {
     let vector_a = create_vector_record(
         vector_id,
         vec![1.0, 0.0, 0.0],
-        1,
+        Some(1),
         None,
     );
     let batch_a = create_wal_batch(collection_a, 1, vec![vector_a.clone()]);
@@ -342,19 +341,19 @@ async fn test_multi_collection_mvcc_isolation() {
     let vector_b = create_vector_record(
         vector_id,
         vec![0.0, 1.0, 0.0],
-        1,
+        Some(1),
         None,
     );
     let batch_b = create_wal_batch(collection_b, 2, vec![vector_b.clone()]);
     memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
 
     // Delete from collection A only
-    let current_time = chrono::Utc::now().timestamp_micros();
+    let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let delete_a = create_vector_record(
         vector_id,
         vec![0.0, 0.0, 0.0],
-        2,
-        Some(current_time - 1000), // Expired
+        Some(2),
+        Some(current_time - 1), // Expired 1 second ago
     );
     let batch_delete = create_wal_batch(collection_a, 3, vec![delete_a]);
     memtable.add_wal_batch(collection_a, batch_delete).await.unwrap();
@@ -379,9 +378,9 @@ async fn test_flush_compaction_atomic_consistency() {
 
     // Add initial data
     let vectors = vec![
-        create_vector_record("vec1", vec![1.0, 0.0, 0.0], 1, None),
-        create_vector_record("vec2", vec![0.0, 1.0, 0.0], 1, None),
-        create_vector_record("vec3", vec![0.0, 0.0, 1.0], 1, None),
+        create_vector_record("vec1", vec![1.0, 0.0, 0.0], Some(1), None),
+        create_vector_record("vec2", vec![0.0, 1.0, 0.0], Some(1), None),
+        create_vector_record("vec3", vec![0.0, 0.0, 1.0], Some(1), None),
     ];
     let batch = create_wal_batch(collection_id, 1, vectors);
     memtable.add_wal_batch(collection_id, batch).await.unwrap();

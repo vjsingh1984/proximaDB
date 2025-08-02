@@ -747,7 +747,7 @@ class ProximaDBClient:
         """
         # Create record with expires_at set to past timestamp to mark for deletion
         import time
-        past_timestamp = int((time.time() - 1) * 1000)  # 1 second ago in milliseconds
+        past_timestamp = int(time.time() - 1)  # 1 second ago in seconds (proto expects seconds)
         delete_record = {
             "id": vector_id,
             "vector": [],  # Empty vector - server should handle appropriately
@@ -1123,7 +1123,7 @@ class ProximaDBClient:
         logger.debug(f"Creating proto batch for {len(vectors)} vectors")
         
         proto_vectors = []
-        current_time = int(time.time() * 1_000_000)  # Microseconds since epoch
+        current_time = int(time.time())  # Seconds since epoch
         
         try:
             # Convert input vectors to proto VectorRecord messages
@@ -1152,17 +1152,14 @@ class ProximaDBClient:
                         from ..metadata_utils import dict_to_proto_metadata
                         proto_vector.metadata.extend(dict_to_proto_metadata(vec['metadata']))
                     
-                    # Set timestamp (optional, microseconds since epoch)
-                    timestamp = vec.get('timestamp')
-                    if timestamp is not None:
-                        if isinstance(timestamp, (int, float)):
-                            # Convert to microseconds if needed
-                            if timestamp < 1e10:  # Assume seconds, convert to microseconds
-                                proto_vector.timestamp = int(timestamp * 1_000_000)
-                            else:  # Already in microseconds
-                                proto_vector.timestamp = int(timestamp)
+                    # Set timestamp (required, seconds since epoch)
+                    timestamp = vec.get('timestamp', current_time)
+                    if isinstance(timestamp, (int, float)):
+                        # Ensure it's in seconds (not microseconds)
+                        if timestamp > 1e10:  # Looks like microseconds, convert to seconds
+                            proto_vector.timestamp = int(timestamp / 1_000_000)
                         else:
-                            proto_vector.timestamp = current_time
+                            proto_vector.timestamp = int(timestamp)
                     else:
                         proto_vector.timestamp = current_time
                     

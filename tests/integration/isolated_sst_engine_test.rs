@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::test_utils::{IsolatedTestEnvironment, MultiEnvironmentTest};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
+use proximadb::core::VectorRecord;
 use proximadb::compute::distance::DistanceMetric;
 use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine};
 
@@ -45,6 +46,11 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     ).await?;
     
     // Verify results
+    println!("🔍 Search returned {} results", results.len());
+    for (i, result) in results.iter().enumerate() {
+        println!("  Result {}: id={}, score={}", 
+                 i, result.id, result.score);
+    }
     assert!(!results.is_empty(), "Should find search results");
     assert!(results.len() <= 5, "Should not return more than requested");
     
@@ -132,18 +138,25 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     let env = IsolatedTestEnvironment::new().await?;
     let mut engine = env.create_sst_engine().await?;
     
+    println!("🔍 DEBUG TEST: Created SST engine for collection: {}", env.collection_id());
+    
     // Insert multiple batches to trigger compaction
     let batch_size = 5;
     let num_batches = 4;
     
     for batch in 0..num_batches {
-        let vectors = (0..batch_size).map(|i| {
+        let vectors: Vec<VectorRecord> = (0..batch_size).map(|i| {
             let global_id = batch * batch_size + i;
             let mut vector = env.create_test_vectors(1)[0].clone();
             vector.id = Some(format!("{}_{}", env.collection_id(), global_id));
             vector.vector = vec![global_id as f32, (global_id + 1) as f32, (global_id + 2) as f32];
             vector
         }).collect();
+        
+        println!("🔍 DEBUG TEST: Flushing batch {} with {} vectors", batch + 1, vectors.len());
+        for (i, v) in vectors.iter().take(2).enumerate() {
+            println!("🔍 DEBUG TEST:   Vector {}: id={:?}", i, v.id);
+        }
         
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
@@ -152,9 +165,11 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             synchronous: true,
             ..Default::default()
         };
+        
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
-        println!("📦 Flushed batch {} of {}", batch + 1, num_batches);
+        println!("📦 Flushed batch {} of {} - entries_flushed={}, bytes_written={}", 
+            batch + 1, num_batches, result.entries_flushed, result.bytes_written);
     }
     
     // Enable compaction and trigger it
@@ -222,7 +237,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
                             value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(batch_id.to_string())),
                         },
                     ],
-                    timestamp: chrono::Utc::now().timestamp(),
+                    timestamp: chrono::Utc::now().timestamp() as u32,
                     ..Default::default()
                 }
             }).collect();
@@ -417,21 +432,21 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
             id: Some(format!("{}_identical", env.collection_id())),
             vector: vec![1.0, 0.0, 0.0], // Identical to query
             metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
             ..Default::default()
         },
         proximadb::core::VectorRecord {
             id: Some(format!("{}_orthogonal", env.collection_id())),
             vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
             metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
             ..Default::default()
         },
         proximadb::core::VectorRecord {
             id: Some(format!("{}_opposite", env.collection_id())),
             vector: vec![-1.0, 0.0, 0.0], // Opposite to query
             metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp() as u32,
             ..Default::default()
         },
     ];
@@ -519,7 +534,7 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
                         value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue((global_id % 10) as f64)),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
             }
         }).collect();

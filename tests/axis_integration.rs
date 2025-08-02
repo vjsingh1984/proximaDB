@@ -35,17 +35,16 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
             },
         ];
 
-        let now = Utc::now().timestamp_millis();
+        let now = Utc::now().timestamp() as u32;
 
         vectors.push(VectorRecord {
             id: Some(Uuid::new_v4().to_string()),
             vector: vector_data,
             metadata,
-            timestamp: now,
-            created_at: now,
-            updated_at: now,
+            timestamp: now as u32,
+            updated_at: Some(now),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,

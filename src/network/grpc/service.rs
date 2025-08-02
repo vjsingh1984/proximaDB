@@ -806,7 +806,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             vector_id: r.id.clone(),
                             score: r.score,
                             distance: None, // Not provided in compact format
-                            rank: r.rank,
+                            rank: r.rank.map(|rank| rank as u16),
                             vector: if include_vectors && !r.vector.is_empty() { Some(r.vector) } else { None },
                             metadata: if include_metadata && !r.metadata.is_empty() {
                                 crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
@@ -817,8 +817,9 @@ impl ProximaDb for ProximaDbGrpcService {
                             semantic_distance: None,
                             quantization_info: None,
                             engine_stats: None,
+                            version: None,
+                            timestamp: None,
                             index_path: None,
-                            collection_id: Some(req.collection_id.clone()),
                             created_at: None,
                         }).collect()
                     },
@@ -1368,7 +1369,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
         Ok(Response::new(MetricsResponse {
             metrics,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_micros(),
         }))
     }
 }
