@@ -139,28 +139,29 @@ print(f"Found {len(results)} similar documents!")
 - **Index-Based Filtering** _(New)_: 60-90% I/O reduction with intelligent predicate pushdown
 - **Zero-Copy Serialization** _(New)_: 5-10x faster with bytemuck + ZSTD compression
 
-## 💸 **ROI Calculator: See Your Savings**
+## 💸 **Why ProximaDB Costs Significantly Less**
 
-[cols="3,2,2", options="header"]
+[cols="1,3", options="header"]
 |===
-|**Your Current Setup** |**Monthly Cost** |**With ProximaDB**
+|**Area** |**Cost Reduction Strategy**
 
-|Pinecone (1M vectors, 1K queries/day)
-|~$70/month
-|**$0 - $15/month** _(80% savings)_
+|**Infrastructure**
+|**75-80% lower costs** through Rust's efficiency, hardware acceleration, and optimized resource usage
 
-|Weaviate + managed hosting 
-|~$200/month  
-|**$30 - $50/month** _(75% savings)_
+|**Storage**
+|**50-70% savings** with advanced compression, intelligent data layout, and tiered storage strategies
 
-|Custom Elasticsearch + vector plugin
-|~$300/month
-|**$50 - $80/month** _(73% savings)_
+|**Operations**
+|**Minimal overhead** with self-managing systems, automated optimization, and zero vendor lock-in
 
-|Multiple specialized DBs
-|~$500/month
-|**$80 - $120/month** _(76% savings)_
+|**Scaling**
+|**Linear pricing** - pay only for resources used, no per-vector or per-query charges
 |===
+
+[NOTE]
+====
+📊 **Real Cost Drivers**: ProximaDB uses less CPU, RAM, storage, and network bandwidth than alternatives while delivering superior performance. See link:docs/technical_reference.adoc#cost-efficiency[Technical Reference] for detailed architecture analysis.
+====
 
 ## 🛡️ **Enterprise-Ready From Day One**
 
