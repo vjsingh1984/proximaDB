@@ -210,18 +210,18 @@ class EcommerceDemo:
         # Create vector records
         vectors = []
         for i, product in enumerate(REAL_PRODUCTS):
-            # Convert metadata to list of key-value pairs
-            metadata = [
-                {"key": "name", "value": product["name"]},
-                {"key": "category", "value": product["category"]},
-                {"key": "subcategory", "value": product["subcategory"]},
-                {"key": "brand", "value": product["brand"]},
-                {"key": "price", "value": str(product["price"])},
-                {"key": "rating", "value": str(product["rating"])},
-                {"key": "in_stock", "value": str(product["in_stock"])},
-                {"key": "description", "value": product["description"][:200] + "..."},  # Truncate for metadata
-                {"key": "tags", "value": ",".join(product.get("tags", []))}
-            ]
+            # Convert metadata to dictionary format
+            metadata = {
+                "name": product["name"],
+                "category": product["category"],
+                "subcategory": product["subcategory"],
+                "brand": product["brand"],
+                "price": str(product["price"]),
+                "rating": str(product["rating"]),
+                "in_stock": str(product["in_stock"]),
+                "description": product["description"][:200] + "...",  # Truncate for metadata
+                "tags": ",".join(product.get("tags", []))
+            }
             
             vector = VectorRecord(
                 id=product["id"],
@@ -296,15 +296,20 @@ class EcommerceDemo:
         
         try:
             query_embedding = self.create_embeddings([query])[0]
-            results = self.grpc_client.search_vectors(
-                self.collection_id,
-                query_embedding.tolist(),
+            search_result = self.grpc_client.search(
+                collection_id=self.collection_id,
+                vector=query_embedding.tolist(),
                 top_k=top_k
             )
             
             elapsed = time.time() - start_time
             print(f"⚡ gRPC search completed in {elapsed*1000:.1f}ms")
-            return {"results": results, "latency_ms": elapsed*1000, "method": "gRPC"}
+            
+            # Handle the SearchResult object properly
+            if hasattr(search_result, 'results'):
+                return {"results": search_result.results, "latency_ms": elapsed*1000, "method": "gRPC"}
+            else:
+                return {"results": search_result, "latency_ms": elapsed*1000, "method": "gRPC"}
             
         except Exception as e:
             print(f"❌ gRPC search failed: {e}")
@@ -318,15 +323,24 @@ class EcommerceDemo:
         try:
             query_embedding = self.create_embeddings([query])[0]
             
-            payload = {
-                "vector": query_embedding.tolist(),
-                "top_k": top_k,
-                "distance_metric": "cosine"
-            }
-            
             response = requests.post(
-                f"{self.api_base}/collections/{self.collection_id}/search",
-                json=payload,
+                f"{self.api_base}/api/v1/vector/search",
+                json={
+                    "collection_id": self.collection_id,
+                    "queries": [{
+                        "vector": query_embedding.tolist(),
+                        "id": None,
+                        "metadata_filter": None
+                    }],
+                    "top_k": top_k,
+                    "distance_metric_override": "cosine",
+                    "include_fields": {
+                        "vector": False,
+                        "metadata": True,
+                        "score": True,
+                        "rank": True
+                    }
+                },
                 headers={"Content-Type": "application/json"}
             )
             
@@ -350,18 +364,24 @@ class EcommerceDemo:
         
         try:
             query_embedding = self.create_embeddings([query])[0]
-            vector_str = "[" + ",".join(map(str, query_embedding)) + "]"
+            # Format vector as array with first 10 values and ... for brevity
+            vector_preview = query_embedding[:10].tolist()
+            vector_str = str(vector_preview)[:-1] + ", ...]"  # Show first 10 dims with ellipsis
+            
+            # Format vector for SQL - ProximaDB expects array format
+            vector_list = query_embedding.tolist()
+            vector_json = json.dumps(vector_list)
             
             sql_query = f"""
             SELECT id, metadata
             FROM {self.collection_id}
-            ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+            ORDER BY VECTOR_SIMILARITY(vector, {vector_json}, 'cosine')
             LIMIT {top_k}
-            """
+            """.strip()
             
             payload = {"query": sql_query}
             response = requests.post(
-                f"{self.api_base}/sql",
+                f"{self.api_base}/api/v1/sql/execute",
                 json=payload,
                 headers={"Content-Type": "application/json"}
             )
@@ -401,11 +421,17 @@ class EcommerceDemo:
             items = []
         
         for i, item in enumerate(items[:5], 1):
-            score = item.get("score", item.get("distance", "N/A"))
-            vector_id = item.get("id", "N/A")
-            
-            # Extract metadata
-            metadata = item.get("metadata", {})
+            # Handle SearchResult item format
+            if hasattr(item, 'score') and hasattr(item, 'id'):
+                # Direct attribute access for gRPC SearchResult objects
+                score = item.score if hasattr(item, 'score') else (item.distance if hasattr(item, 'distance') else "N/A")
+                vector_id = item.id if hasattr(item, 'id') else "N/A"
+                metadata = item.metadata if hasattr(item, 'metadata') else {}
+            else:
+                # Dictionary access for REST/SQL results
+                score = item.get("score", item.get("distance", "N/A"))
+                vector_id = item.get("id", "N/A")
+                metadata = item.get("metadata", {})
             if isinstance(metadata, list):
                 # Convert list format to dict
                 meta_dict = {m.get("key", ""): m.get("value", "") for m in metadata}
@@ -447,8 +473,9 @@ class EcommerceDemo:
             rest_result = self.search_rest(query, top_k=3)
             self.display_results(rest_result, query)
             
-            sql_result = self.search_sql(query, top_k=3)
-            self.display_results(sql_result, query)
+            # SQL search temporarily disabled due to vector array length limitations
+            # sql_result = self.search_sql(query, top_k=3)
+            # self.display_results(sql_result, query)
             
             time.sleep(1)  # Brief pause between queries
     

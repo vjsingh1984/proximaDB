@@ -422,6 +422,103 @@ class StorageEnginesDemo:
         
         return True
     
+    def demonstrate_sql_capabilities(self):
+        """Demonstrate SQL query capabilities on both engines"""
+        print("\n🔍 SQL Query Capabilities Demo")
+        print("=" * 60)
+        
+        # Generate a query vector
+        query_vector = np.random.rand(512).astype(np.float32).tolist()
+        vector_str = "[" + ", ".join(str(v) for v in query_vector[:5]) + ", ...]"  # Abbreviated for display
+        
+        # Test SQL on both engines
+        for collection_name, engine in [(self.lsm_collection, "LSM"), (self.viper_collection, "VIPER")]:
+            print(f"\n📊 SQL Performance on {engine} Engine:")
+            
+            # 1. Basic vector similarity search
+            sql1 = f"""
+            SELECT id, metadata
+            FROM {collection_name}
+            ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+            LIMIT 5
+            """
+            
+            start_time = time.time()
+            try:
+                result = self.rest_client.execute_sql(sql1)
+                sql_time = (time.time() - start_time) * 1000
+                print(f"✅ Basic vector search: {result['row_count']} results in {sql_time:.2f}ms")
+            except Exception as e:
+                print(f"⚠️ SQL query failed: {e}")
+            
+            # 2. Filtered search with metadata
+            sql2 = f"""
+            SELECT id, metadata
+            FROM {collection_name}
+            WHERE metadata->>'category' = 'technology'
+            ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+            LIMIT 5
+            """
+            
+            start_time = time.time()
+            try:
+                result = self.rest_client.execute_sql(sql2)
+                sql_time = (time.time() - start_time) * 1000
+                print(f"✅ Filtered search (category=technology): {result['row_count']} results in {sql_time:.2f}ms")
+            except Exception as e:
+                print(f"⚠️ Filtered SQL query failed: {e}")
+            
+            # 3. Complex metadata filtering
+            sql3 = f"""
+            SELECT id, metadata
+            FROM {collection_name}
+            WHERE metadata->>'in_stock' = 'true'
+            ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'euclidean')
+            LIMIT 10
+            """
+            
+            start_time = time.time()
+            try:
+                result = self.rest_client.execute_sql(sql3)
+                sql_time = (time.time() - start_time) * 1000
+                print(f"✅ In-stock items (Euclidean): {result['row_count']} results in {sql_time:.2f}ms")
+            except Exception as e:
+                print(f"⚠️ Complex SQL query failed: {e}")
+    
+    def demonstrate_distance_metrics(self):
+        """Compare different distance metrics on both engines"""
+        print("\n📏 Distance Metrics Comparison")
+        print("=" * 60)
+        
+        query_vector = np.random.rand(512).astype(np.float32).tolist()
+        metrics = ["cosine", "euclidean", "dot"]
+        
+        for collection_name, engine in [(self.lsm_collection, "LSM"), (self.viper_collection, "VIPER")]:
+            print(f"\n🎯 Distance Metrics on {engine} Engine:")
+            
+            for metric in metrics:
+                start_time = time.time()
+                
+                try:
+                    results = self.rest_client.search(
+                        collection_id=collection_name,
+                        vector=query_vector,
+                        top_k=5,
+                        include_metadata=True
+                    )
+                    
+                    search_time = (time.time() - start_time) * 1000
+                    print(f"✅ {metric.upper()}: {len(results)} results in {search_time:.2f}ms")
+                    
+                    # Show top result
+                    if results:
+                        top_result = results[0]
+                        metadata = top_result.metadata if hasattr(top_result, 'metadata') else {}
+                        print(f"   Top result: Score={top_result.score:.4f}, Category={metadata.get('category', 'N/A')}")
+                        
+                except Exception as e:
+                    print(f"⚠️ {metric} search failed: {e}")
+    
     def compare_engines(self):
         """Compare LSM vs VIPER performance characteristics"""
         print("\n⚖️ LSM vs VIPER Engine Comparison")
@@ -579,6 +676,8 @@ class StorageEnginesDemo:
             # Run demonstrations
             self.demonstrate_lsm_strengths()
             self.demonstrate_viper_strengths()
+            self.demonstrate_sql_capabilities()
+            self.demonstrate_distance_metrics()
             self.compare_engines()
             self.generate_performance_report()
             

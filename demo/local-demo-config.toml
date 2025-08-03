@@ -1,0 +1,50 @@
+[server]
+host = "0.0.0.0"
+port = 5678
+data_dir = "./data"
+
+[grpc]
+host = "0.0.0.0"
+port = 5679
+
+[storage]
+metadata_url = "file://./metadata"
+
+[[storage.storage_locations]]
+url = "file://./data"
+weight = 1
+tags = ["local", "demo"]
+
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+[storage.sst_config]
+memtable_size_mb = 1024
+memory_flush_size_bytes = 16777216
+compression = "zstd"
+compression_enabled = true
+compression_level = 3
+compaction_threshold = 5
+write_buffer_size_mb = 8192
+block_size_kb = 4096
+
+[storage.viper_config]
+row_group_size = 50000
+compression = "zstd"
+compression_enabled = true
+compression_level = 3
+enable_statistics = true
+data_directory = "./viper_data"
+cache_size_mb = 256
+
+[logging]
+level = "info"
+file_path = "./log/proximadb.log"
+max_files = 5
+max_file_size_mb = 100
+
+[metrics]
+enabled = true
+port = 9090
+path = "/metrics"
