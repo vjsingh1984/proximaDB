@@ -278,7 +278,7 @@ LIMIT 50;
 
 ## 🚀 **Architecture Implementation Status**
 
-image::proximadb-actual-architecture.svg[ProximaDB Production Architecture, width=100%, align=center]
+image::proximadb-unified-architecture.svg[ProximaDB Production Architecture, width=100%, align=center]
 
 **🎯 All architectural components are production-ready:**
 

@@ -37,9 +37,9 @@ NOTE: See link:appendix_performance_metrics.adoc[Appendix: Performance Metrics] 
 
 == Proto-First Architecture Foundation
 
-image::proximadb-actual-architecture.svg[ProximaDB Architecture, width=100%, align=center]
+image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture, width=100%, align=center]
 
-_Diagram source: link:diagrams/proximadb-actual-architecture.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/proximadb-unified-architecture.mmd[View Mermaid source]_
 
 === Core Design Principles
 
@@ -61,7 +61,6 @@ _Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 - **Efficient result delivery** for search operations
 
 ==== 2. Unified Memtable Architecture
-
 - **Multiple backend options**: BTree, SkipList, HashMap, DashMap
 - **Specialized behaviors** for different storage engines
 - **Trait-based design** for code reuse
@@ -89,9 +88,9 @@ _Diagram source: link:diagrams/two-stage-search.mmd[View Mermaid source]_
 
 === Handler Consolidation Layer
 
-image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=800, align=center]
+image::business-system-overview.svg[ProximaDB Business System Overview, width=800, align=center]
 
-_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/business-system-overview.mmd[View Mermaid source]_
 
 **UnifiedHandlers Design**::
 - **Consolidated business logic** reducing code duplication
@@ -168,29 +167,11 @@ _Diagram source: link:diagrams/bloom-filter-architecture.mmd[View Mermaid source
 
 NOTE: See link:architecture/bloom-filter-unified-design.adoc[Bloom Filter Architecture Guide] for detailed design documentation and link:architecture/bloom-filter-quick-reference.adoc[Quick Reference] for usage patterns.
 
-=== Proto-First Data Flow
-
-image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=800, align=center]
-
-_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
-
-**Migration Benefits**::
-- **Zero double serialization**: Direct proto → WriteBuffer → Storage pipeline
-- **85% handler consolidation**: Unified business logic across protocols
-- **Native proto serialization**: Eliminates unnecessary conversions
-- **64MB message support**: Large batch operations with protocol buffers
-
-**Collection Management**::
-- **Proto-native metadata**: Direct proto::Collection storage with .proto extensions
-- **Unified atomic coordinator**: Single source of truth for all metadata operations
-- **Schema evolution**: Backward-compatible proto schema changes
-- **Type safety**: Generated proto types ensure consistency
-
 === Storage-Aware Search Infrastructure
 
-image::storage-aware-search.svg[Storage-Aware Search Infrastructure, width=800, align=center]
+image::storage-performance-unified.svg[Storage Performance Architecture, width=800, align=center]
 
-_Diagram source: link:diagrams/storage-aware-search.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/storage-performance-unified.mmd[View Mermaid source]_
 
 **Storage-Aware Search Coordination**::
 - **Layer 1**: Unflushed WriteBuffer search with latest data
@@ -269,19 +250,6 @@ The proto-first architecture provides:
 * **Code consolidation** by unifying REST and gRPC handlers
 * **Simplified client SDKs** with proto-generated bindings
 * **Efficient memory usage** in WriteBuffer and storage operations
-* **Comprehensive test coverage** ensuring reliability
-
-=== Scalability Design
-
-**Throughput Design**::
-- Optimized for batch operations
-- Concurrent query handling
-- Multiple collection support
-
-**Storage Architecture**::
-- Designed for large-scale deployments
-- Efficient storage utilization
-- Future support for distributed clusters
 
 === Hardware Acceleration Performance
 
@@ -289,53 +257,23 @@ The proto-first architecture provides:
 ====
 .Test System Configuration
 * **CPU**: AMD Ryzen 9 7950X 16-Core Processor (32 threads)
-  - Architecture: x86_64, Clock: 4.5-5.7 GHz
-  - Cache: L1=512KB, L2=16MB, L3=32MB
-  - SIMD: AVX-512 (AVX512F, AVX512BW, AVX512VL, AVX512VNNI)
 * **Memory**: 157 GB DDR5 (Quad-channel, high-bandwidth)
 * **GPU**: NVIDIA RTX 4000 Ada Generation (20 GB GDDR6, 6144 CUDA cores)
 * **Storage**: NVMe SSD (Read: ~7 GB/s, Write: ~5 GB/s)
-* **OS**: Ubuntu 24.04.2 LTS on WSL2 (Kernel 5.15.167.4)
-
-All performance numbers are from actual measurements on this system, not simulations.
 ====
 
-==== SIMD Distance Computation Performance
-
-.Real Distance Computation Performance (AVX-512, operations per second)
-[cols="2,1,1,1", options="header"]
-|===
-|Vector Dimension |Cosine |Euclidean |DotProduct
-|1024 (measured) |153,019 |183,376 |214,319
-|===
+==== Real Performance Metrics
 
 .Python Client Performance (Real Measurements)
 [cols="3,2,2,2", options="header"]
 |===
 |Operation |REST Performance |gRPC Performance |gRPC Speedup
 |Insert (batch 10) |1,063 vectors/sec |1,160 vectors/sec |1.1x
-|Insert (batch 50) |4,986 vectors/sec |5,013 vectors/sec |1.0x
 |Insert (batch 100) |10,070 vectors/sec |9,944 vectors/sec |1.0x
 |Insert (batch 500) |20,488 vectors/sec |49,025 vectors/sec |2.4x
 |Insert (batch 1K) |REST quota exceeded |36,264 vectors/sec |N/A
-|Insert (batch 5K) |REST quota exceeded |37,276 vectors/sec |N/A
-|Insert (batch 25K) |REST quota exceeded |36,139 vectors/sec |N/A
 |Search (k=10) |44 QPS |49 QPS |1.1x
 |Search Latency (p50) |22.50 ms |20.29 ms |1.1x
-|===
-
-NOTE: REST API has request size limitations. Use gRPC for bulk operations exceeding 500 vectors per batch.
-
-
-==== Memory Layout Optimization Impact
-
-.Aligned Memory Performance
-[cols="2,1,1,1", options="header"]
-|===
-|Operation |Standard Layout |Aligned (64-byte) |Improvement
-|Sequential Read (GB/s) |42.5 |48.2 |13.4%
-|Random Access (M ops/s) |185 |195 |5.4%
-|SIMD Load (cycles) |4-5 |2-3 |40%
 |===
 
 ==== Concurrent Operation Performance
@@ -348,45 +286,6 @@ NOTE: REST API has request size limitations. Use gRPC for bulk operations exceed
 |10 |485,000 |128,500 |285,000
 |50 |892,000 |425,000 |512,000
 |100 |1,050,000 |580,000 |625,000
-|===
-
-.Operation Latency Percentiles (milliseconds)
-[cols="1,1,1,1,1,1", options="header"]
-|===
-|Operation |p50 |p90 |p95 |p99 |p99.9
-|Insert |0.8 |1.2 |1.5 |2.8 |5.2
-|Search |2.5 |4.8 |6.2 |9.5 |15.8
-|Update |1.1 |1.8 |2.2 |3.5 |6.8
-|Delete |0.6 |0.9 |1.1 |1.8 |3.2
-|===
-
-==== Indexing Algorithm Performance
-
-.HNSW (Hierarchical Navigable Small World) Performance
-[cols="1,1,1,1,1", options="header"]
-|===
-|Dataset Size |Build Time (s) |Memory (MB) |Search QPS |Recall@10
-|100K |12.5 |384 |15,200 |0.98
-|1M |142.3 |3,840 |12,500 |0.97
-|10M |1,523.7 |38,400 |9,800 |0.96
-|===
-
-.IVF (Inverted File Index) Performance
-[cols="1,1,1,1,1", options="header"]
-|===
-|Dataset Size |Clusters |Build Time (s) |Search QPS |Recall@10
-|100K |100 |8.2 |22,500 |0.95
-|1M |316 |95.6 |18,200 |0.94
-|10M |1000 |1,082.4 |14,600 |0.93
-|===
-
-.LSH (Locality Sensitive Hashing) Performance
-[cols="1,1,1,1,1", options="header"]
-|===
-|Dataset Size |Hash Tables |Build Time (s) |Search QPS |Recall@10
-|100K |10 |2.1 |45,000 |0.90
-|1M |15 |23.5 |38,500 |0.89
-|10M |20 |245.8 |32,100 |0.88
 |===
 
 ==== Storage Engine Performance Comparison
@@ -410,91 +309,283 @@ NOTE: REST API has request size limitations. Use gRPC for bulk operations exceed
 |Vector Search (QPS) |12,500 |14,200
 |===
 
-=== Phase 2 Storage Optimizations
+== Recent Feature Enhancements (2025-08-01)
 
-image::storage-optimizations.svg[Storage Optimizations, width=900, align=center]
+=== Index-Based Filtering Framework
 
-_Diagram source: link:diagrams/storage-optimizations.mmd[View Mermaid source]_
+ProximaDB implements a sophisticated **index-based filtering framework** that separates filter evaluation from data reading, enabling optimal engine-specific optimizations.
 
-==== Unified Cache Layer
+==== Core Design Principles
 
-**Multi-Tier Architecture**::
-- **L1 Cache (Memory)**: Sub-microsecond access for hot data
-- **L2 Cache (NVMe SSD)**: ~100μs access for warm data  
-- **L3 Cache (Network)**: ~1ms access for distributed data
-- **Cross-Engine Sharing**: SST and VIPER engines share cached data for deduplication
+1. **Index-First Approach**: Filter evaluation returns qualifying ROW INDICES, not data
+2. **Engine-Specific Optimization**: Each engine uses indices optimally for its storage model
+3. **Early Termination**: Empty indices = skip entire blocks/row groups
+4. **Parallel Column Processing**: AND/OR operations can run on multiple threads
 
-**Adaptive Cache Management**::
-- Hot data automatically promoted to faster tiers
-- Cold data demoted to slower tiers based on access patterns
-- Memory pressure handling with configurable eviction policies
-- File: `/src/storage/unified_cache.rs` (748 lines)
+==== Engine Strategies
 
-==== Lock-Free Implementations
+[source,rust]
+----
+// SST Strategy: Read entire blocks, filter using indices
+let all_data = read_entire_block().await;
+let results = filter_by_indices(&all_data, &indices);
 
-**Replaced Arc<RwLock> Patterns**::
-- **StorageEngine**: Uses DashMap for concurrent SST tree access
-- **UnifiedAtomicCoordinator**: Lock-free atomic operations without mutex contention
-- **MemtableImplementations**: DashMap-based memtable for concurrent writes
+// VIPER Strategy: Use indices to selectively read parquet rows/columns  
+let results = read_rows_by_indices(&indices).await;
+----
 
-**Performance Impact**::
-- ~40% improvement in concurrent operations
-- Eliminated lock contention in hot paths
-- Better CPU cache utilization
-- Files: `/src/storage/atomic.rs`, `/src/storage/engine.rs`, `/src/storage/memtable/`
+==== Performance Benefits
 
-==== Predictive Prefetching
+- **VIPER**: 60-90% I/O reduction via predicate pushdown
+- **SST**: 30% processing savings via index-based filtering  
+- **Parallel**: 2-4x faster complex filter evaluation
+- **Set Ops**: Union/intersection on indices (microseconds vs milliseconds)
 
-**Intelligent SSTable Prefetching**::
-- **Sequential Pattern Detection**: Tracks access strides for sequential reads
-- **Hot Block Identification**: Frequency analysis for random access patterns
-- **ML-Based Prediction**: Uses access history to predict future reads
-- **Priority Queue**: Async prefetch with priority scheduling
+**Implementation Files**:
+- `/src/core/search/index_based_filter.rs` - Core framework
+- `/src/storage/engines/sst/index_based_reader.rs` - SST implementation
+- `/src/storage/engines/viper/index_based_reader.rs` - VIPER implementation
 
-**Features**::
-- Separate prefetch cache to avoid pollution
-- Comprehensive metrics tracking
-- File: `/src/storage/engines/sst/readers/predictive_prefetcher.rs`
+=== Storage Optimization with Bytemuck and ZSTD
 
-==== Memory Optimizations
+==== Bytemuck Serialization
 
-**Bloom Filter Optimization**::
-- Reduced from ~40MB to <8MB per collection (80% reduction)
-- Memory sharing across similar collections
-- Adaptive sizing based on collection characteristics
-- File: `/src/storage/engines/sst/optimized_bloom_filter.rs`
+**Zero-Copy Vector Storage**:
+- **5-10x faster serialization** compared to traditional methods
+- **Zero allocation overhead** for vector data
+- **Direct memory mapping** for read operations
+- **Type-safe transmutation** with compile-time guarantees
 
-**SSTable Index Cache Fix**::
-- Replaced unbounded HashMap with Moka LRU cache
-- Eliminated memory leak risk from unbounded cache growth
-- Configurable memory limits with automatic eviction
+==== ZSTD Compression
 
-**Double-Check Locking Fix**::
-- Removed antipatterns in cache readers
-- Direct Moka cache API usage instead of manual locking
-- Eliminated potential deadlock scenarios
+**Adaptive Compression Strategy**:
+- **30-50% storage reduction** with minimal CPU overhead
+- **Configurable compression levels** (1-22)
+- **Streaming compression** for large datasets
+- **Dictionary compression** for metadata
 
-== Migration Guide
+**Performance Impact**:
+[cols="3,2,2,2"]
+|===
+|Operation |Before |After |Improvement
 
-=== Proto-First Migration Benefits
+|Vector Serialization
+|500ms
+|50ms
+|10x faster
 
-**Immediate Benefits**::
-- Zero double serialization overhead
-- 85% reduction in handler duplication
-- Single API surface area
-- Type-safe operations
+|Storage Size (1M vectors)
+|4GB
+|2.4GB
+|40% reduction
 
-**Developer Experience**::
-- Proto-generated Python bindings
-- Automatic JSON ↔ Proto conversion
-- IDE autocompletion and type checking
-- Simplified client SDK
+|Compression Throughput
+|N/A
+|800MB/s
+|New capability
 
-**Operational Benefits**::
-- Reduced memory footprint
-- Faster flush operations
-- Cleaner error handling
-- Enhanced observability
+|Decompression Speed
+|N/A
+|2.1GB/s
+|New capability
+|===
+
+=== MVCC Implementation
+
+ProximaDB includes a complete Multi-Version Concurrency Control (MVCC) system across all storage engines:
+
+==== Core MVCC Rules
+
+1. **Version Continuity**: Versions must be sequential (1,2,3...) without gaps
+2. **Gap Handling**: Stop processing at first version gap
+3. **Duplicate Resolution**: For same ID and version, keep record with earliest timestamp
+4. **Tombstone Handling**: Records marked as deleted are removed during compaction
+5. **Append-Only Support**: Vectors without IDs bypass all version checks
+
+==== Implementation Highlights
+
+- **Intelligent Compaction**: Metadata-based file size estimation without loading full datasets
+- **Version Continuity Validation**: Across VIPER and SST engines
+- **Search Result Deduplication**: Consistent MVCC rules applied
+- **Comprehensive Testing**: 21 MVCC-specific tests ensure correctness
+
+=== Advanced Metadata Filtering
+
+==== SST Engine: Three-Stage Filtering Pipeline
+
+1. **Bloom Filter Pre-filtering** - Skip entire files (99% accuracy)
+2. **Index Entry Block Filtering** - Use min/max statistics to skip data blocks  
+3. **Fast In-Memory Row Filtering** - Vectorized metadata filtering on `SstRecord`
+
+==== VIPER Engine: Predicate Pushdown Strategy
+
+1. **Extract filter columns** - Identify required metadata columns
+2. **Load metadata columns only** - Skip vector column (largest data)
+3. **Column-level parallel evaluation** - Each thread processes one column
+4. **Return qualifying indices** - Enable selective vector reads (60-90% I/O savings)
+
+== AXIS Indexing Framework
+
+=== Overview
+
+The AXIS (Adaptive eXtensible Indexing System) framework provides a unified, adaptive approach to vector indexing in ProximaDB, consolidating all indexing operations under a single, extensible architecture.
+
+=== Supported Index Types
+
+[cols="2,1,2,1", options="header"]
+|===
+|Algorithm |Status |Use Case |Performance
+|**HNSW** |✅ Production |High-precision search |15K QPS @ 0.98 recall
+|**IVF** |✅ Production |Large-scale clustering |22K QPS @ 0.95 recall
+|**LSH** |✅ Production |Binary/Hamming distance |45K QPS @ 0.90 recall
+|**PQ** |🚧 Planned |Compressed vectors |N/A
+|**Annoy** |✅ Production |Tree-based search |20K QPS @ 0.92 recall
+|===
+
+=== AXIS Architecture Benefits
+
+. **Unified Interface**: Single API for all index types
+. **Adaptive Selection**: Automatic index type selection based on data characteristics
+. **Zero-downtime Migration**: Switch between index types without service interruption
+. **Performance Monitoring**: Tracks query patterns and adapts accordingly
+. **Multi-version Support**: Maintains multiple index versions during migration
+
+=== Usage Example
+
+[source,rust]
+----
+// AXIS automatically selects the best index type
+let axis_manager = AxisManager::new(config);
+axis_manager.insert(&collection_id, vector_record).await?;
+
+// Search uses the optimal index automatically
+let results = axis_manager.search(
+    &collection_id,
+    &query_vector,
+    top_k,
+    metadata_filters
+).await?;
+----
+
+== Initialization and Startup Architecture
+
+=== Clean Initialization Order (Fixed 2025-07-31)
+
+ProximaDB implements a clean initialization sequence that eliminates circular dependencies:
+
+[mermaid]
+....
+sequenceDiagram
+    participant Main as ProximaDB::new
+    participant SS as SharedServices
+    participant CS as CollectionService
+    participant SE as StorageEngine
+    participant MS as MultiServer
+    
+    Main->>SS: 1. Create SharedServices first
+    SS->>CS: Create CollectionService
+    SS-->>Main: Return (SharedServices, CollectionService)
+    
+    Main->>SE: 2. Create StorageEngine
+    Main->>SE: Inject CollectionService from SharedServices
+    
+    Main->>SE: 3. Start StorageEngine
+    SE->>SE: Recover collections from metadata
+    
+    Main->>SS: 4. Recover vectors from write buffer
+    SS->>SE: Get recovered collections
+    SS->>SS: Load vectors into memtable
+    
+    Main->>MS: 5. Create MultiServer with SharedServices
+    Main->>MS: 6. Start servers (HTTP:5678, gRPC:5679)
+....
+
+==== Key Improvements
+
+1. **SharedServices Created First**: Owns all business logic and services
+2. **No Circular Dependencies**: SharedServices doesn't depend on StorageEngine
+3. **Clean Dependency Injection**: CollectionService passed from SharedServices to StorageEngine
+4. **Proper Recovery Order**: Collections → Assignments → Vectors
+
+== Recovery Architecture
+
+=== 3-Phase Recovery System
+
+ProximaDB implements a robust 3-phase recovery process that ensures fast startup and data consistency:
+
+[mermaid]
+....
+graph TD
+    A[Server Startup] --> B[Phase 1: Metadata Recovery]
+    B --> C[Load Collection Metadata]
+    C --> D[Initialize Storage Assignments] 
+    D --> E[Phase 2: Assignment Recovery]
+    E --> F[Discover Collections from Storage]
+    F --> G[Restore Assignment Mappings]
+    G --> H[Phase 3: Write Buffer Recovery]
+    H --> I[Scan Write Buffer Files]
+    I --> J[Replay Unflushed Operations]
+    J --> K[Server Ready]
+    
+    style A fill:#e1f5fe
+    style K fill:#e8f5e8
+    style B fill:#fff3e0
+    style E fill:#fff3e0
+    style H fill:#fff3e0
+....
+
+==== Phase 1: Metadata Recovery (11.8ms avg)
+
+**Objective**: Restore collection configurations and engine assignments
+
+**Performance**: 11.8ms for 1 collection, linear scaling up to ~50ms for 50 collections
+
+==== Phase 2: Assignment Recovery (Concurrent)
+
+**Objective**: Discover collections from filesystem and restore assignment mappings
+
+**Key Features**:
+* Parallel discovery across 3 component types (WriteBuffer, Storage, Index)
+* Hash-based assignment consistency ensures same collection always maps to same location
+* Graceful handling of missing or orphaned data
+
+==== Phase 3: Write Buffer Recovery (Direct-to-Storage)
+
+**Objective**: Replay unflushed operations directly to storage engines
+
+**Design Principles**:
+* **Direct-to-Storage**: Bypasses memtable to avoid memory pressure during recovery
+* **Parallel Processing**: Collections recovered concurrently using CPU-based worker pools
+* **Automatic Cleanup**: Successfully recovered WriteBuffer files are removed
+* **Progress Tracking**: Real-time metrics on recovery progress
+
+=== Recovery Performance Metrics
+
+[cols="3,2,2,2", options="header"]
+|===
+| Scenario | Recovery Time | Memory Usage | Collections
+
+| Normal Startup
+| 231ms  
+| 45MB
+| 10 collections
+
+| Crash Recovery  
+| 9.8ms
+| +0MB (no increase)
+| 10 collections
+
+| Large Dataset Recovery
+| 445ms
+| 78MB  
+| 20 collections, 10K vectors
+|===
+
+**Key Insights**:
+* Sub-second recovery for typical production workloads
+* Memory usage remains stable during recovery (no spikes)
+* Linear scaling with collection count
+* Graceful degradation for corrupted data
 
 == Current Status - 2025
 
@@ -537,618 +628,6 @@ _Diagram source: link:diagrams/storage-optimizations.mmd[View Mermaid source]_
 - **Atomic compaction** with manifest tracking for SST
 - **SQL query engine** supporting vector similarity queries
 - **Advanced indexing** with HNSW, IVF, and LSH algorithms
-
-== Recent Feature Enhancements (2025-08-01)
-
-=== Index-Based Filtering Framework
-
-ProximaDB now implements a sophisticated **index-based filtering framework** that separates filter evaluation from data reading, enabling optimal engine-specific optimizations.
-
-==== Core Design Principles
-
-1. **Index-First Approach**: Filter evaluation returns qualifying ROW INDICES, not data
-2. **Engine-Specific Optimization**: Each engine uses indices optimally for its storage model
-3. **Early Termination**: Empty indices = skip entire blocks/row groups
-4. **Parallel Column Processing**: AND/OR operations can run on multiple threads
-
-==== Engine Strategies
-
-[source,rust]
-----
-// SST Strategy: Read entire blocks, filter using indices
-let all_data = read_entire_block().await;
-let results = filter_by_indices(&all_data, &indices);
-
-// VIPER Strategy: Use indices to selectively read parquet rows/columns  
-let results = read_rows_by_indices(&indices).await;
-----
-
-==== Performance Optimizations
-
-**Parallel Filter Execution for Complex Expressions**:
-[source,sql]
-----
--- Filter: (category = 'electronics' AND price > 100) OR (brand = 'Apple')
--- Parallel execution:
-Thread 1: category = 'electronics' → indices [1, 5, 8, 12]
-Thread 2: price > 100 → indices [2, 5, 7, 8, 10, 12]  
-Thread 3: brand = 'Apple' → indices [1, 3, 9]
-
--- Set operations:
-AND_result = Thread1 ∩ Thread2 = [5, 8, 12]
-Final_result = AND_result ∪ Thread3 = [1, 3, 5, 8, 9, 12]
-----
-
-**Benefits**:
-- **VIPER**: 60-90% I/O reduction via predicate pushdown
-- **SST**: 30% processing savings via index-based filtering  
-- **Parallel**: 2-4x faster complex filter evaluation
-- **Set Ops**: Union/intersection on indices (microseconds vs milliseconds)
-
-**Implementation Files**:
-- `/src/core/search/index_based_filter.rs` - Core framework
-- `/src/storage/engines/sst/index_based_reader.rs` - SST implementation
-- `/src/storage/engines/viper/index_based_reader.rs` - VIPER implementation
-
-=== Storage Optimization with Bytemuck and ZSTD
-
-ProximaDB has implemented significant storage optimizations using zero-copy serialization and advanced compression:
-
-==== Bytemuck Serialization
-
-**Zero-Copy Vector Storage**:
-- **5-10x faster serialization** compared to traditional methods
-- **Zero allocation overhead** for vector data
-- **Direct memory mapping** for read operations
-- **Type-safe transmutation** with compile-time guarantees
-
-[source,rust]
-----
-// Old approach: JSON serialization (slow)
-let json = serde_json::to_vec(&vector)?;  // ~500ms for 10K vectors
-
-// New approach: Bytemuck (fast)
-let bytes = bytemuck::cast_slice(&vector); // ~50ms for 10K vectors
-----
-
-==== ZSTD Compression
-
-**Adaptive Compression Strategy**:
-- **30-50% storage reduction** with minimal CPU overhead
-- **Configurable compression levels** (1-22)
-- **Streaming compression** for large datasets
-- **Dictionary compression** for metadata
-
-**Performance Impact**:
-[cols="3,2,2,2"]
-|===
-|Operation |Before |After |Improvement
-
-|Vector Serialization
-|500ms
-|50ms
-|10x faster
-
-|Storage Size (1M vectors)
-|4GB
-|2.4GB
-|40% reduction
-
-|Compression Throughput
-|N/A
-|800MB/s
-|New capability
-
-|Decompression Speed
-|N/A
-|2.1GB/s
-|New capability
-|===
-
-=== MVCC Implementation
-
-ProximaDB now includes a complete Multi-Version Concurrency Control (MVCC) system across all storage engines:
-
-==== Core MVCC Rules
-
-1. **Version Continuity**: Versions must be sequential (1,2,3...) without gaps
-2. **Gap Handling**: Stop processing at first version gap
-3. **Duplicate Resolution**: For same ID and version, keep record with earliest timestamp
-4. **Tombstone Handling**: Records marked as deleted are removed during compaction
-5. **Append-Only Support**: Vectors without IDs bypass all version checks
-
-==== Example Behaviors
-
-[source,text]
-----
-Version Gap: [id="A" v=1], [id="A" v=2], [id="A" v=4] → Keep only v=2
-Duplicate Version: [id="B" v=1 ts=300], [id="B" v=1 ts=100] → Keep v=1 ts=100
-Append-Only: [id="" v=1], [id="" v=1] → Keep both (no deduplication)
-----
-
-==== Implementation Highlights
-
-- **Intelligent Compaction**: Metadata-based file size estimation without loading full datasets
-- **Version Continuity Validation**: Across VIPER and SST engines
-- **Search Result Deduplication**: Consistent MVCC rules applied
-- **Comprehensive Testing**: 21 MVCC-specific tests ensure correctness
-
-=== Advanced Metadata Filtering
-
-==== SST Engine: Three-Stage Filtering Pipeline
-
-1. **Bloom Filter Pre-filtering** - Skip entire files (99% accuracy)
-2. **Index Entry Block Filtering** - Use min/max statistics to skip data blocks  
-3. **Fast In-Memory Row Filtering** - Vectorized metadata filtering on `SstRecord`
-
-**Benefits**:
-- Fast reconstruction, no column assembly delays
-- Optimal for low-selectivity filters and mixed workloads
-- Parallel AND/OR evaluation with set operations on indices
-
-==== VIPER Engine: Predicate Pushdown Strategy
-
-1. **Extract filter columns** - Identify required metadata columns
-2. **Load metadata columns only** - Skip vector column (largest data)
-3. **Column-level parallel evaluation** - Each thread processes one column
-4. **Return qualifying indices** - Enable selective vector reads (60-90% I/O savings)
-
-**Benefits**:
-- Massive I/O reduction for high-selectivity filters
-- True columnar processing with parallel threads
-- Optimal for analytics and filtered search workloads
-
-=== Additional Improvements
-
-==== Assignment Service Refactoring
-- ✅ Migrated from PathBuf to filesystem API for cloud storage
-- ✅ Implemented stateless discovery-driven architecture
-- ✅ Removed JSON persistence in favor of directory scanning
-- ✅ Added comprehensive recovery integration tests
-
-==== Performance Enhancements
-- ✅ Fixed SST empty/null ID handling for append-only vectors
-- ✅ Replaced BTreeMap with merge-sort approach in compaction
-- ✅ Fixed serialization mismatch between bincode and custom parser
-- ✅ Verified block size configuration flows from TOML config
-
-==== Test Infrastructure
-- ✅ Tarpaulin segfault elimination using release builds
-- ✅ 100% test pass rate with parallel execution (1,540 total tests)
-- ✅ Enhanced test coverage through targeted module testing
-- ✅ 52.18% overall test coverage achieved
-
-== AXIS Indexing Framework
-
-=== Overview
-
-The AXIS (Adaptive eXtensible Indexing System) framework provides a unified, adaptive approach to vector indexing in ProximaDB, consolidating all indexing operations under a single, extensible architecture.
-
-=== Current Architecture
-
-==== Supported Index Types
-
-[cols="2,1,2,1", options="header"]
-|===
-|Algorithm |Status |Use Case |Performance
-|**HNSW** |✅ Production |High-precision search |15K QPS @ 0.98 recall
-|**IVF** |✅ Production |Large-scale clustering |22K QPS @ 0.95 recall
-|**LSH** |✅ Production |Binary/Hamming distance |45K QPS @ 0.90 recall
-|**PQ** |🚧 Planned |Compressed vectors |N/A
-|**Annoy** |✅ Production |Tree-based search |20K QPS @ 0.92 recall
-|===
-
-==== AXIS Architecture Benefits
-
-. **Unified Interface**: Single API for all index types
-. **Adaptive Selection**: Automatic index type selection based on data characteristics
-. **Zero-downtime Migration**: Switch between index types without service interruption
-. **Performance Monitoring**: Tracks query patterns and adapts accordingly
-. **Multi-version Support**: Maintains multiple index versions during migration
-
-=== Implementation Status
-
-As of 2025-07-26, AXIS consolidation is complete:
-
-* ✅ AXIS framework fully implemented
-* ✅ All indexing consolidated under AXIS
-* ✅ VectorSearchEngine migrated to use AXIS
-* ✅ Legacy compute::indexing module removed
-* ✅ Annoy index support added to AXIS
-
-=== Usage Example
-
-[source,rust]
-----
-// AXIS automatically selects the best index type
-let axis_manager = AxisManager::new(config);
-axis_manager.insert(&collection_id, vector_record).await?;
-
-// Search uses the optimal index automatically
-let results = axis_manager.search(
-    &collection_id,
-    &query_vector,
-    top_k,
-    metadata_filters
-).await?;
-
-// Force specific algorithm if needed
-let results = axis_manager.search_with_strategy(
-    &collection_id,
-    &query_vector,
-    top_k,
-    IndexAlgorithm::HNSW { m: 16, ef_construction: 200, ef_search: 100, max_elements: 1_000_000 }
-).await?;
-----
-
-=== Adaptive Index Selection
-
-AXIS monitors query patterns and data characteristics to automatically select the optimal index:
-
-[source,rust]
-----
-// Collection-specific adaptive configuration
-let collection_strategy = IndexStrategy::builder()
-    .with_vector_count(collection.vector_count)
-    .with_dimension(collection.dimension)
-    .with_query_patterns(observed_patterns)
-    .with_optimization_goal(OptimizationGoal::BalancedPerformance)
-    .build();
-
-axis_manager.set_collection_strategy(&collection_id, collection_strategy).await?;
-----
-
-=== Performance Characteristics
-
-[cols="2,1,1,1,1", options="header"]
-|===
-|Index Type |Build Speed |Memory Usage |Query Speed |Best For
-|HNSW |Slow |High |Very Fast |High recall requirements
-|IVF |Medium |Medium |Fast |Balanced performance
-|LSH |Very Fast |Low |Very Fast |Binary vectors
-|Annoy |Fast |Low |Fast |Static datasets
-|===
-
-== Initialization and Startup Architecture
-
-=== Clean Initialization Order (Fixed 2025-07-31)
-
-ProximaDB now implements a clean initialization sequence that eliminates circular dependencies:
-
-[mermaid]
-....
-sequenceDiagram
-    participant Main as ProximaDB::new
-    participant SS as SharedServices
-    participant CS as CollectionService
-    participant SE as StorageEngine
-    participant MS as MultiServer
-    
-    Main->>SS: 1. Create SharedServices first
-    SS->>CS: Create CollectionService
-    SS-->>Main: Return (SharedServices, CollectionService)
-    
-    Main->>SE: 2. Create StorageEngine
-    Main->>SE: Inject CollectionService from SharedServices
-    
-    Main->>SE: 3. Start StorageEngine
-    SE->>SE: Recover collections from metadata
-    
-    Main->>SS: 4. Recover vectors from write buffer
-    SS->>SE: Get recovered collections
-    SS->>SS: Load vectors into memtable
-    
-    Main->>MS: 5. Create MultiServer with SharedServices
-    Main->>MS: 6. Start servers (HTTP:5678, gRPC:5679)
-....
-
-==== Key Improvements
-
-1. **SharedServices Created First**: Owns all business logic and services
-2. **No Circular Dependencies**: SharedServices doesn't depend on StorageEngine
-3. **Clean Dependency Injection**: CollectionService passed from SharedServices to StorageEngine
-4. **Proper Recovery Order**: Collections → Assignments → Vectors
-
-==== Code Structure
-
-[source,rust]
-----
-// SharedServices now returns CollectionService for StorageEngine
-pub async fn new(
-    metrics_collector: Option<Arc<MetricsCollector>>,
-    storage_config: &StorageConfig,
-) -> Result<(Self, Arc<CollectionService>)>
-
-// ProximaDB::new follows proper initialization order
-let (shared_services, collection_service) = SharedServices::new(...).await?;
-let storage_engine = StorageEngine::new_without_collection_service(...).await?;
-storage_engine.set_metadata_provider(collection_service).await;
-----
-
-== Recovery Architecture
-
-=== 3-Phase Recovery System
-
-ProximaDB implements a robust 3-phase recovery process that ensures fast startup and data consistency:
-
-[mermaid]
-....
-graph TD
-    A[Server Startup] --> B[Phase 1: Metadata Recovery]
-    B --> C[Load Collection Metadata]
-    C --> D[Initialize Storage Assignments] 
-    D --> E[Phase 2: Assignment Recovery]
-    E --> F[Discover Collections from Storage]
-    F --> G[Restore Assignment Mappings]
-    G --> H[Phase 3: Write Buffer Recovery]
-    H --> I[Scan Write Buffer Files]
-    I --> J[Replay Unflushed Operations]
-    J --> K[Server Ready]
-    
-    style A fill:#e1f5fe
-    style K fill:#e8f5e8
-    style B fill:#fff3e0
-    style E fill:#fff3e0
-    style H fill:#fff3e0
-....
-
-==== Phase 1: Metadata Recovery (11.8ms avg)
-
-**Objective**: Restore collection configurations and engine assignments
-
-[source,rust]
-----
-pub async fn recover_metadata(&self) -> Result<HashMap<String, Collection>> {
-    let start = Instant::now();
-    
-    // Load all collection metadata from persistent backend
-    let collections = self.metadata_backend.get_all_collections().await?;
-    
-    // Initialize storage assignments for discovered collections
-    for (collection_id, collection) in &collections {
-        let assignment = self.assignment_service
-            .assign_collection(collection_id, &self.storage_locations, "hash")
-            .await?;
-        tracing::info!("Restored assignment for collection {}", collection_id);
-    }
-    
-    let duration = start.elapsed();
-    tracing::info!("Metadata recovery completed in {}ms", duration.as_millis());
-    Ok(collections)
-}
-----
-
-**Performance**: 11.8ms for 1 collection, linear scaling up to ~50ms for 50 collections
-
-==== Phase 2: Assignment Recovery (Concurrent)
-
-**Objective**: Discover collections from filesystem and restore assignment mappings
-
-[source,rust]
-----
-pub async fn recover_assignments(&self) -> Result<RecoveryStats> {
-    let start = Instant::now();
-    
-    // Concurrent discovery across all storage locations
-    let (write_buffer_count, storage_count, index_count) = 
-        AssignmentDiscovery::discover_all_components_concurrent(
-            &self.write_buffer_urls,
-            &self.storage_urls, 
-            &self.index_urls,
-            &self.filesystem,
-            &self.assignment_service,
-        ).await?;
-    
-    let duration = start.elapsed();
-    tracing::info!(
-        "Assignment recovery: WriteBuffer={}, Storage={}, Index={} in {}ms",
-        write_buffer_count, storage_count, index_count, duration.as_millis()
-    );
-    
-    Ok(RecoveryStats {
-        write_buffer_collections: write_buffer_count,
-        storage_collections: storage_count,
-        index_collections: index_count,
-        recovery_time: duration,
-    })
-}
-----
-
-**Key Features**:
-* Parallel discovery across 3 component types (WriteBuffer, Storage, Index)
-* Hash-based assignment consistency ensures same collection always maps to same location
-* Graceful handling of missing or orphaned data
-
-==== Phase 3: Write Buffer Recovery (Direct-to-Storage)
-
-**Objective**: Replay unflushed operations directly to storage engines
-
-[source,rust]
-----
-pub async fn recover_write_buffer_direct(&self) -> Result<WriteBufferRecoveryStats> {
-    let start = Instant::now();
-    let mut total_records = 0;
-    let mut total_collections = 0;
-    
-    // Get all WriteBuffer assignments 
-    let assignments = self.assignment_service.get_all_assignments().await;
-    
-    for (collection_id, assignment) in assignments {
-        let write_buffer_files = self.discover_write_buffer_files(&assignment.write_buffer_url).await?;
-        
-        if !write_buffer_files.is_empty() {
-            total_collections += 1;
-            
-            // Read and replay WriteBuffer files directly to storage engines
-            for file_path in write_buffer_files {
-                let records = self.read_write_buffer_file(&file_path).await?;
-                total_records += records.len();
-                
-                // Direct write to storage engine (bypassing memtable)
-                self.storage_engine.write_direct(&collection_id, records).await?;
-            }
-            
-            // Clean up processed WriteBuffer files
-            self.cleanup_write_buffer_files(&assignment.write_buffer_url).await?;
-        }
-    }
-    
-    let duration = start.elapsed();
-    tracing::info!(
-        "WriteBuffer recovery: {} records from {} collections in {}ms",
-        total_records, total_collections, duration.as_millis()
-    );
-    
-    Ok(WriteBufferRecoveryStats {
-        total_records,
-        total_collections, 
-        recovery_time: duration,
-    })
-}
-----
-
-**Design Principles**:
-* **Direct-to-Storage**: Bypasses memtable to avoid memory pressure during recovery
-* **Parallel Processing**: Collections recovered concurrently using CPU-based worker pools
-* **Automatic Cleanup**: Successfully recovered WriteBuffer files are removed
-* **Progress Tracking**: Real-time metrics on recovery progress
-
-=== Recovery Performance Metrics
-
-==== Benchmark Results (Real Production Data)
-
-[cols="3,2,2,2", options="header"]
-|===
-| Scenario | Recovery Time | Memory Usage | Collections
-
-| Normal Startup
-| 231ms  
-| 45MB
-| 10 collections
-
-| Crash Recovery  
-| 9.8ms
-| +0MB (no increase)
-| 10 collections
-
-| Large Dataset Recovery
-| 445ms
-| 78MB  
-| 20 collections, 10K vectors
-
-| Write Buffer Corruption
-| 156ms
-| 34MB
-| Corrupted files skipped
-|===
-
-**Key Insights**:
-* Sub-second recovery for typical production workloads
-* Memory usage remains stable during recovery (no spikes)
-* Linear scaling with collection count
-* Graceful degradation for corrupted data
-
-==== Parallel Collection Loading Optimization
-
-[source,rust]
-----
-// Optimized parallel loading based on CPU count
-pub async fn load_collections_parallel(&self, collection_ids: Vec<String>) -> Result<()> {
-    let num_cpus = num_cpus::get();
-    let chunk_size = (collection_ids.len() + num_cpus - 1) / num_cpus;
-    let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 per task
-    
-    let chunks: Vec<_> = collection_ids.chunks(chunk_size).collect();
-    let tasks = chunks.into_iter().map(|chunk| {
-        let engine = self.storage_engine.clone();
-        let chunk = chunk.to_vec();
-        
-        tokio::spawn(async move {
-            for collection_id in chunk {
-                engine.ensure_collection_initialized(&collection_id).await?;
-            }
-            Ok::<(), Error>(())
-        })
-    });
-    
-    // Wait for all parallel tasks to complete
-    let results = futures::future::try_join_all(tasks).await?;
-    for result in results {
-        result??; // Propagate any errors
-    }
-    
-    Ok(())
-}
-----
-
-**Performance Impact**: Reduced startup time from hanging (sequential) to ~200ms (parallel)
-
-=== Recovery Configuration
-
-==== Development Configuration
-[source,toml]
-----
-[recovery]
-parallel_collections = 4
-discovery_timeout_secs = 30
-rebuild_on_startup = true
-skip_corrupted_files = false  # Fail on corruption for debugging
-
-[write_buffer.recovery]
-replay_batch_size = 1000
-direct_to_storage = true
-cleanup_after_recovery = true
-----
-
-==== Production Configuration
-[source,toml]
-----
-[recovery]
-parallel_collections = 8         # Match CPU cores
-discovery_timeout_secs = 60
-rebuild_on_startup = false       # Skip for faster startup
-skip_corrupted_files = true      # Graceful degradation
-
-[write_buffer.recovery]  
-replay_batch_size = 5000        # Larger batches for throughput
-direct_to_storage = true
-cleanup_after_recovery = true
-max_memory_mb = 512             # Memory limit during recovery
-----
-
-=== Recovery Error Handling
-
-==== Corruption Detection and Recovery
-
-[source,rust]
-----
-pub async fn handle_corrupted_write_buffer_file(&self, file_path: &str) -> Result<RecoveryAction> {
-    match self.attempt_recovery(&file_path).await {
-        Ok(records) => {
-            tracing::warn!("Recovered {} records from corrupted file {}", records.len(), file_path);
-            Ok(RecoveryAction::Recovered(records))
-        }
-        Err(CorruptionError::HeaderCorruption) => {
-            tracing::error!("Header corruption in {}, attempting partial recovery", file_path);
-            self.attempt_partial_recovery(&file_path).await
-        }
-        Err(CorruptionError::ChecksumMismatch) => {
-            tracing::error!("Checksum mismatch in {}, skipping file", file_path);
-            Ok(RecoveryAction::Skipped)
-        }
-        Err(CorruptionError::TruncatedFile) => {
-            tracing::error!("File {} truncated, recovering valid prefix", file_path);
-            self.recover_valid_prefix(&file_path).await
-        }
-    }
-}
-----
-
-**Recovery Strategies**:
-* **Header Corruption**: Attempt to find valid data blocks
-* **Checksum Mismatch**: Skip corrupted blocks, recover valid ones  
-* **Truncated Files**: Recover complete records from valid prefix
-* **Total Corruption**: Log error and continue with other files
 
 ---
 

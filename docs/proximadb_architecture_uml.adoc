@@ -18,9 +18,9 @@ This document provides visual representations of ProximaDB's architecture using 
 
 The complete current system architecture with accurate component relationships:
 
-image::current-architecture-accurate.svg[Current ProximaDB Architecture, width=100%, align=center]
+image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture, width=100%, align=center]
 
-_Diagram source: link:diagrams/current-architecture-accurate.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/proximadb-unified-architecture.mmd[View Mermaid source]_
 
 This diagram shows the actual implementation with:
 

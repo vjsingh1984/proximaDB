@@ -44,9 +44,9 @@ Comprehensive production workflows for ProximaDB's **DirectVectorService archite
 
 **Hardware Optimization**:: SIMD/GPU acceleration with intelligent quantization selection
 
-image::proximadb-architecture-overview.svg[ProximaDB Architecture Overview, width=800, align=center]
+image::proximadb-unified-architecture.svg[ProximaDB Architecture Overview, width=800, align=center]
 
-_Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid source]_
+_Diagram source: link:diagrams/proximadb-unified-architecture.mmd[View Mermaid source]_
 
 == Core Concepts
 
@@ -60,24 +60,17 @@ _Diagram source: link:diagrams/proximadb-architecture-overview.mmd[View Mermaid 
 
 **Multi-Engine Architecture**:: VIPER (Parquet columnar) and SST (row-based SSTable) storage engines
 
-== Getting Started Tutorial
+== Collection Management
 
-=== Step 1: Create Your First Proto-Native Collection
+=== Creating Advanced Collections
 
-image::proximadb-proto-first-data-flow.svg[Proto-First Data Flow, width=800, align=center]
+Collections are containers for vectors with specific configurations:
 
-_Diagram source: link:diagrams/proximadb-proto-first-data-flow.mmd[View Mermaid source]_
-
-Collections in ProximaDB use proto-native metadata with automatic storage engine selection and quantization support.
-
-**Using Unified Python SDK:**
 [source,python]
 ----
 from proximadb import UnifiedClient
 
-# Unified client supports both REST and gRPC
-client = UnifiedClient("http://localhost:5678")  # REST
-# client = UnifiedClient("grpc://localhost:5679")  # gRPC for performance
+client = UnifiedClient("http://localhost:5678")
 
 # Proto-native collection with advanced features
 collection_config = {
@@ -105,158 +98,224 @@ print(f"📊 Storage engine: {collection['storage_engine']}")
 print(f"🗜️ Quantization: {collection['quantization_level']}")
 ----
 
-**Using REST API (with Proto JSON mapping):**
-[source,bash]
+=== Collection Types by Use Case
+
+[source,python]
 ----
-curl -X POST http://localhost:5678/collections \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "ai_documents",
+# BERT embeddings collection
+bert_config = {
+    "collection_id": "bert_documents",
     "dimension": 768,
     "distance_metric": "cosine",
-    "storage_engine": "auto",
-    "quantization_config": {
-      "quantization_level": "pq8",
-      "enable_two_stage_search": true
-    },
-    "description": "Proto-first document embeddings"
-  }'
+    "description": "BERT base model embeddings"
+}
+
+# OpenAI embeddings collection
+openai_config = {
+    "collection_id": "openai_embeddings", 
+    "dimension": 1536,  # text-embedding-ada-002
+    "distance_metric": "cosine",
+    "description": "OpenAI text embeddings"
+}
+
+# Image embeddings collection
+image_config = {
+    "collection_id": "image_features",
+    "dimension": 512,  # ResNet features
+    "distance_metric": "euclidean",
+    "description": "Image feature vectors"
+}
 ----
 
-**Using gRPC (Native Proto):**
-[source,bash]
-----
-# gRPC call with native protobuf (64MB message support)
-grpcurl -plaintext -d '{
-  "collection": {
-    "collection_id": "ai_documents",
-    "dimension": 768,
-    "distance_metric": "COSINE",
-    "quantization_config": {
-      "quantization_level": "PQ8",
-      "enable_two_stage_search": true
-    }
-  }
-}' localhost:5679 proximadb.VectorService/CreateCollection
-----
+=== Managing Collections
 
-=== Step 2: Insert Vector Data
-
-Add vectors to your collection with optional metadata for filtering.
-
-**Using Python SDK:**
 [source,python]
 ----
-async def insert_vectors_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Sample BERT embeddings (768 dimensions)
-    # In practice, generate these using a BERT model
-    vectors = [
-        {
-            "vector_id": "doc_1",
-            "vector": [0.1, 0.2, 0.3] + [0.0] * 765,  # 768 dimensions total
-            "metadata": {
-                "title": "Introduction to Machine Learning",
-                "category": "education",
-                "author": "John Doe",
-                "published": "2024-01-15"
-            }
-        },
-        {
-            "vector_id": "doc_2", 
-            "vector": [0.4, 0.5, 0.6] + [0.0] * 765,
-            "metadata": {
-                "title": "Deep Learning Fundamentals",
-                "category": "education", 
-                "author": "Jane Smith",
-                "published": "2024-02-20"
-            }
-        }
-    ]
-    
-    # Insert vectors in batch
-    for vector_data in vectors:
-        await client.insert_vector(
-            collection_id=collection_id,
-            vector_id=vector_data["vector_id"],
-            vector=vector_data["vector"],
-            metadata=vector_data["metadata"]
-        )
-        print(f"✅ Inserted vector: {vector_data['vector_id']}")
+# List all collections
+collections = await client.list_collections()
+for collection in collections:
+    print(f"Name: {collection.name}, Vectors: {collection.vector_count}")
 
-# Run the example
-asyncio.run(insert_vectors_example(collection_id))
+# Get collection details
+collection = await client.get_collection("ai_documents")
+print(f"Storage Size: {collection.storage_size_bytes / 1024 / 1024:.2f} MB")
+
+# Delete collection (use with caution!)
+await client.delete_collection("test_collection")
 ----
 
-**Using REST API:**
-[source,bash]
+== Vector Operations
+
+=== Inserting Individual Vectors
+
+[source,python]
 ----
-curl -X POST http://localhost:5678/collections/{collection_id}/vectors \
-  -H "Content-Type: application/json" \
-  -d '{
-    "vector_id": "doc_1",
-    "vector": [0.1, 0.2, 0.3, ...],
+# Single vector with rich metadata
+vector_data = {
+    "vector_id": "user_doc_123",
+    "vector": [0.1, 0.2, 0.3] + [0.0] * 765,  # 768D vector
     "metadata": {
-      "title": "Introduction to Machine Learning",
-      "category": "education",
-      "author": "John Doe"
+        "title": "Understanding Vector Databases",
+        "author": "Data Scientist",
+        "tags": ["database", "vectors", "ai"],
+        "word_count": 1200,
+        "reading_time": 5,
+        "language": "en",
+        "published_date": "2025-06-20",
+        "url": "https://example.com/vector-db-guide"
     }
-  }'
+}
+
+sequence_number = await client.insert_vector(
+    collection_id="ai_documents",
+    vector_id=vector_data["vector_id"],
+    vector=vector_data["vector"],
+    metadata=vector_data["metadata"]
+)
+print(f"✅ Vector inserted with sequence: {sequence_number}")
 ----
 
-=== Step 3: Search for Similar Vectors
+=== High-Performance Batch Operations
 
-Perform similarity search to find vectors closest to your query.
-
-**Using Python SDK:**
 [source,python]
 ----
-async def search_vectors_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
+# Optimized batch processing
+async def optimized_batch_insert(collection_id, documents):
+    batch_size = 100
+    batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
     
-    # Query vector (would be generated from user query in practice)
-    query_vector = [0.15, 0.25, 0.35] + [0.0] * 765  # 768 dimensions
+    total_inserted = 0
+    start_time = time.time()
     
-    # Search for similar vectors
-    results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_vector,
-        k=5,  # Return top 5 most similar
-        metadata_filter={"category": "education"},  # Filter by category
-        return_metadata=True,
-        return_vectors=False  # Don't return full vectors
-    )
+    for batch_num, batch in enumerate(batches):
+        vectors = []
+        for doc in batch:
+            vectors.append({
+                "vector_id": doc["id"],
+                "vector": doc["embedding"],
+                "metadata": doc["metadata"]
+            })
+        
+        await client.batch_insert(collection_id, vectors)
+        total_inserted += len(vectors)
+        
+        elapsed = time.time() - start_time
+        rate = total_inserted / elapsed
+        print(f"Batch {batch_num + 1}: {total_inserted} vectors ({rate:.0f} vectors/sec)")
     
-    print("🔍 Search Results:")
-    for result in results:
-        print(f"  ID: {result.vector_id}")
-        print(f"  Similarity: {result.similarity_score:.4f}")
-        print(f"  Title: {result.metadata.get('title', 'N/A')}")
-        print(f"  Author: {result.metadata.get('author', 'N/A')}")
-        print()
-
-# Run the example
-asyncio.run(search_vectors_example(collection_id))
+    print(f"🎉 Completed: {total_inserted} vectors in {elapsed:.2f}s")
 ----
 
-**Using REST API:**
-[source,bash]
+=== Vector Retrieval and Updates
+
+[source,python]
 ----
-curl -X POST http://localhost:5678/collections/{collection_id}/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query_vector": [0.15, 0.25, 0.35, ...],
-    "k": 5,
-    "metadata_filter": {"category": "education"},
-    "return_metadata": true,
-    "return_vectors": false
-  }'
+# Get vector by ID
+vector_result = await client.get_vector(
+    collection_id="ai_documents",
+    vector_id="user_doc_123",
+    return_vector=True,
+    return_metadata=True
+)
+
+# Update vector with new embedding and metadata
+new_vector = np.random.rand(768).tolist()
+updated_metadata = {
+    "title": "Updated: Understanding Vector Databases",
+    "version": "2.0",
+    "last_updated": "2025-06-20T15:30:00Z"
+}
+
+await client.update_vector(
+    collection_id="ai_documents",
+    vector_id="user_doc_123",
+    vector=new_vector,
+    metadata=updated_metadata
+)
+
+# Delete vector
+await client.delete_vector("ai_documents", "user_doc_123")
+----
+
+== Advanced Search Features
+
+=== Similarity Search with Complex Filters
+
+[source,python]
+----
+# Complex metadata filtering
+metadata_filter = {
+    "category": "technology",
+    "word_count": {"$gte": 500, "$lte": 2000},
+    "tags": {"$in": ["ai", "machine-learning"]},
+    "language": "en",
+    "published_date": {"$gte": "2024-01-01"}
+}
+
+results = await client.search_vectors(
+    collection_id="ai_documents",
+    query_vector=query_vector,
+    k=10,
+    distance_threshold=0.7,  # Only return results with similarity > 0.7
+    metadata_filter=metadata_filter,
+    return_vectors=False,
+    return_metadata=True
+)
+
+print(f"🔍 Found {len(results)} results matching criteria:")
+for result in results:
+    print(f"  {result.vector_id}: {result.similarity_score:.4f}")
+    print(f"    Title: {result.metadata.get('title', 'N/A')}")
+----
+
+=== Metadata Filter Operators
+
+[cols="2,2,3"]
+|===
+|Operator |Description |Example
+
+|`$eq` |Equals |`{"category": {"$eq": "technology"}}`
+|`$ne` |Not equals |`{"status": {"$ne": "deleted"}}`
+|`$gt` |Greater than |`{"score": {"$gt": 0.8}}`
+|`$gte` |Greater than or equal |`{"word_count": {"$gte": 100}}`
+|`$lt` |Less than |`{"price": {"$lt": 50}}`
+|`$lte` |Less than or equal |`{"age": {"$lte": 25}}`
+|`$in` |In array |`{"tags": {"$in": ["ai", "ml"]}}`
+|`$nin` |Not in array |`{"category": {"$nin": ["spam", "test"]}}`
+|`$exists` |Field exists |`{"email": {"$exists": true}}`
+|`$regex` |Regular expression |`{"title": {"$regex": "^Introduction"}}`
+|===
+
+=== Range Queries and Analytics
+
+[source,python]
+----
+# Find vectors within similarity range
+results = await client.search_vectors(
+    collection_id="ai_documents",
+    query_vector=query_vector,
+    k=1000,  # Large k to get many results
+    distance_threshold=0.5,  # Minimum similarity
+    max_distance_threshold=0.9,  # Maximum similarity
+    return_metadata=True
+)
+
+# Group results by similarity ranges
+ranges = {"0.5-0.6": [], "0.6-0.7": [], "0.7-0.8": [], "0.8-0.9": []}
+
+for result in results:
+    score = result.similarity_score
+    if 0.5 <= score < 0.6:
+        ranges["0.5-0.6"].append(result)
+    elif 0.6 <= score < 0.7:
+        ranges["0.6-0.7"].append(result)
+    # ... continue for other ranges
+
+for range_label, range_results in ranges.items():
+    print(f"  {range_label}: {len(range_results)} vectors")
 ----
 
 == BERT Integration Guide
-
-ProximaDB has native support for BERT embeddings with optimized performance for common BERT model dimensions.
 
 === Supported BERT Models
 
@@ -271,14 +330,14 @@ ProximaDB has native support for BERT embeddings with optimized performance for 
 |RoBERTa |768/1024 |COSINE |Robust understanding
 |===
 
-=== Complete BERT Integration Example
+=== Complete BERT Workflow
 
 [source,python]
 ----
 from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
-from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+from proximadb import UnifiedClient
 
 class BERTEmbeddingService:
     def __init__(self, model_name="bert-base-uncased"):
@@ -304,19 +363,18 @@ class BERTEmbeddingService:
         return embedding.numpy().tolist()
 
 async def bert_workflow_example():
-    # Initialize BERT service
+    # Initialize services
     bert = BERTEmbeddingService("bert-base-uncased")
-    
-    # Connect to ProximaDB
-    client = ProximaDBClient("localhost:5678")
+    client = UnifiedClient("http://localhost:5678")
     
     # Create BERT collection
-    collection_id = await client.create_collection(CollectionConfig(
-        name="bert_embeddings",
-        dimension=768,  # BERT base dimension
-        distance_metric=DistanceMetric.COSINE,
-        description="BERT document embeddings"
-    ))
+    collection_config = {
+        "collection_id": "bert_embeddings",
+        "dimension": 768,  # BERT base dimension
+        "distance_metric": "cosine",
+        "description": "BERT document embeddings"
+    }
+    collection_id = await client.create_collection(collection_config)
     
     # Sample documents
     documents = [
@@ -331,20 +389,12 @@ async def bert_workflow_example():
             "text": "Artificial intelligence will revolutionize healthcare diagnostics.",
             "category": "healthcare",
             "source": "medical_journal"
-        },
-        {
-            "id": "article_3",
-            "text": "Natural language processing enables computers to understand human language.",
-            "category": "technology", 
-            "source": "research_paper"
         }
     ]
     
     # Generate embeddings and insert
-    print("📝 Generating BERT embeddings and inserting...")
     for doc in documents:
         embedding = bert.encode_text(doc["text"])
-        
         await client.insert_vector(
             collection_id=collection_id,
             vector_id=doc["id"],
@@ -352,17 +402,14 @@ async def bert_workflow_example():
             metadata={
                 "text": doc["text"],
                 "category": doc["category"],
-                "source": doc["source"],
-                "length": len(doc["text"])
+                "source": doc["source"]
             }
         )
-        print(f"  ✅ Inserted: {doc['id']}")
     
     # Search with natural language query
     query_text = "AI and machine learning applications"
     query_embedding = bert.encode_text(query_text)
     
-    print(f"\n🔍 Searching for: '{query_text}'")
     results = await client.search_vectors(
         collection_id=collection_id,
         query_vector=query_embedding,
@@ -370,468 +417,12 @@ async def bert_workflow_example():
         return_metadata=True
     )
     
-    print("\n📊 Results:")
+    print("🔍 BERT Search Results:")
     for i, result in enumerate(results, 1):
         print(f"{i}. ID: {result.vector_id}")
         print(f"   Similarity: {result.similarity_score:.4f}")
         print(f"   Category: {result.metadata['category']}")
         print(f"   Text: {result.metadata['text'][:100]}...")
-        print()
-    
-    # Filter search by category
-    print("🔍 Searching within 'technology' category:")
-    tech_results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_embedding,
-        k=3,
-        metadata_filter={"category": "technology"},
-        return_metadata=True
-    )
-    
-    for result in tech_results:
-        print(f"  {result.vector_id}: {result.similarity_score:.4f}")
-
-# Run the complete BERT workflow
-asyncio.run(bert_workflow_example())
-----
-
-== Collection Management
-
-=== Creating Collections
-
-Collections are containers for vectors with specific configurations:
-
-[source,python]
-----
-from proximadb import CollectionConfig, DistanceMetric
-
-# BERT embeddings collection
-bert_config = CollectionConfig(
-    name="bert_documents",
-    dimension=768,
-    distance_metric=DistanceMetric.COSINE,
-    description="BERT base model embeddings"
-)
-
-# OpenAI embeddings collection
-openai_config = CollectionConfig(
-    name="openai_embeddings", 
-    dimension=1536,  # text-embedding-ada-002
-    distance_metric=DistanceMetric.COSINE,
-    description="OpenAI text embeddings"
-)
-
-# Image embeddings collection
-image_config = CollectionConfig(
-    name="image_features",
-    dimension=512,  # ResNet features
-    distance_metric=DistanceMetric.EUCLIDEAN,
-    description="Image feature vectors"
-)
-----
-
-=== Listing Collections
-
-[source,python]
-----
-async def list_collections_example():
-    client = ProximaDBClient("localhost:5678")
-    
-    collections = await client.list_collections()
-    
-    print("📂 Your Collections:")
-    for collection in collections:
-        print(f"  Name: {collection.name}")
-        print(f"  ID: {collection.id}")
-        print(f"  Dimension: {collection.dimension}")
-        print(f"  Distance: {collection.distance_metric}")
-        print(f"  Vectors: {collection.vector_count}")
-        print(f"  Created: {collection.created_at}")
-        print()
-
-asyncio.run(list_collections_example())
-----
-
-=== Getting Collection Details
-
-[source,python]
-----
-async def get_collection_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    collection = await client.get_collection(collection_id)
-    
-    print(f"📊 Collection Details:")
-    print(f"  Name: {collection.name}")
-    print(f"  Description: {collection.description}")
-    print(f"  Dimension: {collection.dimension}")
-    print(f"  Distance Metric: {collection.distance_metric}")
-    print(f"  Vector Count: {collection.vector_count}")
-    print(f"  Storage Size: {collection.storage_size_bytes / 1024 / 1024:.2f} MB")
-    print(f"  Created: {collection.created_at}")
-    print(f"  Updated: {collection.updated_at}")
-
-asyncio.run(get_collection_example(collection_id))
-----
-
-=== Deleting Collections
-
-[source,python]
-----
-async def delete_collection_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Delete collection and all its vectors
-    await client.delete_collection(collection_id)
-    print(f"🗑️ Deleted collection: {collection_id}")
-    
-    # Verify deletion
-    try:
-        await client.get_collection(collection_id)
-    except CollectionNotFoundError:
-        print("✅ Collection successfully deleted")
-
-# Run with caution!
-# asyncio.run(delete_collection_example(collection_id))
-----
-
-== Vector Operations
-
-=== Inserting Individual Vectors
-
-[source,python]
-----
-async def insert_vector_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Single vector with rich metadata
-    vector_data = {
-        "vector_id": "user_doc_123",
-        "vector": [0.1, 0.2, 0.3] + [0.0] * 765,  # 768D vector
-        "metadata": {
-            "title": "Understanding Vector Databases",
-            "author": "Data Scientist",
-            "tags": ["database", "vectors", "ai"],
-            "word_count": 1200,
-            "reading_time": 5,
-            "language": "en",
-            "published_date": "2025-06-20",
-            "url": "https://example.com/vector-db-guide"
-        }
-    }
-    
-    sequence_number = await client.insert_vector(
-        collection_id=collection_id,
-        vector_id=vector_data["vector_id"],
-        vector=vector_data["vector"],
-        metadata=vector_data["metadata"]
-    )
-    
-    print(f"✅ Vector inserted with sequence: {sequence_number}")
-
-asyncio.run(insert_vector_example(collection_id))
-----
-
-=== Batch Vector Operations
-
-For high-throughput scenarios, use batch operations:
-
-[source,python]
-----
-async def batch_insert_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Prepare batch of vectors
-    vectors = []
-    for i in range(100):
-        vectors.append({
-            "vector_id": f"batch_doc_{i}",
-            "vector": np.random.rand(768).tolist(),  # Random 768D vector
-            "metadata": {
-                "batch_id": "batch_001",
-                "document_index": i,
-                "category": "generated",
-                "timestamp": "2025-06-20T10:00:00Z"
-            }
-        })
-    
-    # Insert batch
-    print(f"🔄 Inserting batch of {len(vectors)} vectors...")
-    start_time = time.time()
-    
-    results = await client.batch_insert(collection_id, vectors)
-    
-    elapsed = time.time() - start_time
-    print(f"✅ Batch insert completed in {elapsed:.2f}s")
-    print(f"📈 Throughput: {len(vectors) / elapsed:.0f} vectors/second")
-    
-    return results
-
-# asyncio.run(batch_insert_example(collection_id))
-----
-
-=== Retrieving Vectors
-
-[source,python]
-----
-async def get_vector_example(collection_id, vector_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Get vector by ID
-    vector_result = await client.get_vector(
-        collection_id=collection_id,
-        vector_id=vector_id,
-        return_vector=True,
-        return_metadata=True
-    )
-    
-    if vector_result:
-        print(f"📋 Vector Details:")
-        print(f"  ID: {vector_result.vector_id}")
-        print(f"  Dimensions: {len(vector_result.vector)}")
-        print(f"  Metadata: {vector_result.metadata}")
-        print(f"  First 5 values: {vector_result.vector[:5]}")
-    else:
-        print(f"❌ Vector not found: {vector_id}")
-
-asyncio.run(get_vector_example(collection_id, "doc_1"))
-----
-
-=== Updating Vectors
-
-[source,python]
-----
-async def update_vector_example(collection_id, vector_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Update vector with new embedding and metadata
-    new_vector = np.random.rand(768).tolist()
-    updated_metadata = {
-        "title": "Updated: Understanding Vector Databases",
-        "author": "Senior Data Scientist", 
-        "version": "2.0",
-        "last_updated": "2025-06-20T15:30:00Z",
-        "tags": ["database", "vectors", "ai", "updated"]
-    }
-    
-    await client.update_vector(
-        collection_id=collection_id,
-        vector_id=vector_id,
-        vector=new_vector,
-        metadata=updated_metadata
-    )
-    
-    print(f"✅ Updated vector: {vector_id}")
-
-# asyncio.run(update_vector_example(collection_id, "doc_1"))
-----
-
-=== Deleting Vectors
-
-[source,python]
-----
-async def delete_vector_example(collection_id, vector_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Delete individual vector
-    await client.delete_vector(
-        collection_id=collection_id,
-        vector_id=vector_id
-    )
-    
-    print(f"🗑️ Deleted vector: {vector_id}")
-    
-    # Verify deletion
-    result = await client.get_vector(collection_id, vector_id)
-    if result is None:
-        print("✅ Vector successfully deleted")
-
-# asyncio.run(delete_vector_example(collection_id, "doc_1"))
-----
-
-== Advanced Search Features
-
-=== Similarity Search with Filters
-
-[source,python]
-----
-async def advanced_search_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    query_vector = np.random.rand(768).tolist()
-    
-    # Complex metadata filter
-    metadata_filter = {
-        "category": "technology",
-        "word_count": {"$gte": 500, "$lte": 2000},
-        "tags": {"$in": ["ai", "machine-learning"]},
-        "language": "en",
-        "published_date": {"$gte": "2024-01-01"}
-    }
-    
-    results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_vector,
-        k=10,
-        distance_threshold=0.7,  # Only return results with similarity > 0.7
-        metadata_filter=metadata_filter,
-        return_vectors=False,
-        return_metadata=True
-    )
-    
-    print(f"🔍 Found {len(results)} results matching criteria:")
-    for result in results:
-        print(f"  {result.vector_id}: {result.similarity_score:.4f}")
-        print(f"    Title: {result.metadata.get('title', 'N/A')}")
-        print(f"    Word Count: {result.metadata.get('word_count', 'N/A')}")
-        print()
-
-# asyncio.run(advanced_search_example(collection_id))
-----
-
-=== Multi-Vector Search
-
-[source,python]
-----
-async def multi_vector_search_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Search for multiple query vectors simultaneously
-    query_vectors = [
-        np.random.rand(768).tolist(),  # Query 1
-        np.random.rand(768).tolist(),  # Query 2
-        np.random.rand(768).tolist(),  # Query 3
-    ]
-    
-    # Note: This feature may not be implemented yet
-    # This is an example of planned functionality
-    results = await client.multi_search_vectors(
-        collection_id=collection_id,
-        query_vectors=query_vectors,
-        k=5,
-        return_metadata=True
-    )
-    
-    for i, query_results in enumerate(results):
-        print(f"🔍 Results for Query {i+1}:")
-        for result in query_results:
-            print(f"  {result.vector_id}: {result.similarity_score:.4f}")
-
-# This may not work yet - check implementation status
-# asyncio.run(multi_vector_search_example(collection_id))
-----
-
-=== Range Queries
-
-[source,python]
-----
-async def range_query_example(collection_id):
-    client = ProximaDBClient("localhost:5678")
-    
-    query_vector = np.random.rand(768).tolist()
-    
-    # Find all vectors within similarity range
-    results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_vector,
-        k=1000,  # Large k to get many results
-        distance_threshold=0.5,  # Minimum similarity
-        max_distance_threshold=0.9,  # Maximum similarity
-        return_metadata=True
-    )
-    
-    print(f"📊 Found {len(results)} vectors in similarity range [0.5, 0.9]")
-    
-    # Group results by similarity ranges
-    ranges = {
-        "0.5-0.6": [],
-        "0.6-0.7": [],
-        "0.7-0.8": [],
-        "0.8-0.9": []
-    }
-    
-    for result in results:
-        score = result.similarity_score
-        if 0.5 <= score < 0.6:
-            ranges["0.5-0.6"].append(result)
-        elif 0.6 <= score < 0.7:
-            ranges["0.6-0.7"].append(result)
-        elif 0.7 <= score < 0.8:
-            ranges["0.7-0.8"].append(result)
-        elif 0.8 <= score <= 0.9:
-            ranges["0.8-0.9"].append(result)
-    
-    for range_label, range_results in ranges.items():
-        print(f"  {range_label}: {len(range_results)} vectors")
-
-# asyncio.run(range_query_example(collection_id))
-----
-
-== Metadata Filtering
-
-ProximaDB supports rich metadata filtering with NoSQL-style operators.
-
-=== Supported Filter Operators
-
-[cols="2,2,3"]
-|===
-|Operator |Description |Example
-
-|`$eq` |Equals |`{"category": {"$eq": "technology"}}`
-|`$ne` |Not equals |`{"status": {"$ne": "deleted"}}`
-|`$gt` |Greater than |`{"score": {"$gt": 0.8}}`
-|`$gte` |Greater than or equal |`{"word_count": {"$gte": 100}}`
-|`$lt` |Less than |`{"price": {"$lt": 50}}`
-|`$lte` |Less than or equal |`{"age": {"$lte": 25}}`
-|`$in` |In array |`{"tags": {"$in": ["ai", "ml"]}}`
-|`$nin` |Not in array |`{"category": {"$nin": ["spam", "test"]}}`
-|`$exists` |Field exists |`{"email": {"$exists": true}}`
-|`$regex` |Regular expression |`{"title": {"$regex": "^Introduction"}}`
-|===
-
-=== Filter Examples
-
-[source,python]
-----
-# Simple equality filter
-simple_filter = {"category": "technology"}
-
-# Range filter
-range_filter = {
-    "word_count": {"$gte": 500, "$lte": 2000},
-    "score": {"$gt": 0.7}
-}
-
-# Array membership filter  
-array_filter = {
-    "tags": {"$in": ["ai", "machine-learning", "deep-learning"]},
-    "languages": {"$nin": ["spam", "test"]}
-}
-
-# Existence filter
-existence_filter = {
-    "email": {"$exists": true},
-    "phone": {"$exists": false}
-}
-
-# Complex combined filter
-complex_filter = {
-    "category": "research",
-    "published_date": {"$gte": "2024-01-01"},
-    "authors": {"$in": ["John Doe", "Jane Smith"]},
-    "citations": {"$gt": 10},
-    "keywords": {"$exists": true},
-    "status": {"$ne": "retracted"}
-}
-
-# Use in search
-results = await client.search_vectors(
-    collection_id=collection_id,
-    query_vector=query_vector,
-    k=10,
-    metadata_filter=complex_filter,
-    return_metadata=True
-)
 ----
 
 == AI Framework Integration
@@ -841,7 +432,7 @@ results = await client.search_vectors(
 [source,python]
 ----
 import openai
-from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+from proximadb import UnifiedClient
 
 class OpenAIEmbeddingService:
     def __init__(self, api_key: str):
@@ -849,36 +440,30 @@ class OpenAIEmbeddingService:
         
     def get_embedding(self, text: str, model="text-embedding-ada-002") -> list[float]:
         """Get OpenAI embedding for text."""
-        response = openai.Embedding.create(
-            input=text,
-            model=model
-        )
+        response = openai.Embedding.create(input=text, model=model)
         return response['data'][0]['embedding']
 
 async def openai_integration_example():
-    # Initialize services
     openai_service = OpenAIEmbeddingService("your-openai-api-key")
-    client = ProximaDBClient("localhost:5678")
+    client = UnifiedClient("http://localhost:5678")
     
     # Create OpenAI collection
-    collection_id = await client.create_collection(CollectionConfig(
-        name="openai_embeddings",
-        dimension=1536,  # text-embedding-ada-002 dimension
-        distance_metric=DistanceMetric.COSINE,
-        description="OpenAI text embeddings"
-    ))
+    collection_config = {
+        "collection_id": "openai_embeddings",
+        "dimension": 1536,  # text-embedding-ada-002 dimension
+        "distance_metric": "cosine",
+        "description": "OpenAI text embeddings"
+    }
+    collection_id = await client.create_collection(collection_config)
     
-    # Documents to embed
     documents = [
         "The future of artificial intelligence is bright and full of possibilities.",
-        "Machine learning algorithms are becoming increasingly sophisticated.",
-        "Natural language processing enables human-computer interaction."
+        "Machine learning algorithms are becoming increasingly sophisticated."
     ]
     
     # Generate embeddings and insert
     for i, doc in enumerate(documents):
         embedding = openai_service.get_embedding(doc)
-        
         await client.insert_vector(
             collection_id=collection_id,
             vector_id=f"openai_doc_{i}",
@@ -896,14 +481,6 @@ async def openai_integration_example():
         k=3,
         return_metadata=True
     )
-    
-    print("🔍 OpenAI Search Results:")
-    for result in results:
-        print(f"  Score: {result.similarity_score:.4f}")
-        print(f"  Text: {result.metadata['text']}")
-
-# Run with your OpenAI API key
-# asyncio.run(openai_integration_example())
 ----
 
 === Cohere Integration
@@ -911,7 +488,7 @@ async def openai_integration_example():
 [source,python]
 ----
 import cohere
-from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
+from proximadb import UnifiedClient
 
 class CohereEmbeddingService:
     def __init__(self, api_key: str):
@@ -919,29 +496,23 @@ class CohereEmbeddingService:
         
     def get_embeddings(self, texts: list[str], model="embed-english-v2.0") -> list[list[float]]:
         """Get Cohere embeddings for multiple texts."""
-        response = self.client.embed(
-            texts=texts,
-            model=model
-        )
+        response = self.client.embed(texts=texts, model=model)
         return response.embeddings
 
 async def cohere_integration_example():
-    # Initialize services
     cohere_service = CohereEmbeddingService("your-cohere-api-key") 
-    client = ProximaDBClient("localhost:5678")
+    client = UnifiedClient("http://localhost:5678")
     
-    # Create Cohere collection
-    collection_id = await client.create_collection(CollectionConfig(
-        name="cohere_embeddings",
-        dimension=4096,  # embed-english-v2.0 dimension
-        distance_metric=DistanceMetric.COSINE,
-        description="Cohere text embeddings"
-    ))
+    collection_config = {
+        "collection_id": "cohere_embeddings",
+        "dimension": 4096,  # embed-english-v2.0 dimension
+        "distance_metric": "cosine"
+    }
+    collection_id = await client.create_collection(collection_config)
     
     documents = [
         "Climate change is one of the most pressing issues of our time.",
-        "Renewable energy sources are becoming more cost-effective.", 
-        "Sustainable development requires global cooperation."
+        "Renewable energy sources are becoming more cost-effective."
     ]
     
     # Generate embeddings in batch (more efficient)
@@ -955,74 +526,15 @@ async def cohere_integration_example():
             vector=embedding,
             metadata={"text": doc, "source": "cohere_example"}
         )
-    
-    # Search
-    query = "environmental sustainability"
-    query_embeddings = cohere_service.get_embeddings([query])
-    
-    results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_embeddings[0],
-        k=3,
-        return_metadata=True
-    )
-    
-    print("🔍 Cohere Search Results:")
-    for result in results:
-        print(f"  Score: {result.similarity_score:.4f}")
-        print(f"  Text: {result.metadata['text']}")
-
-# Run with your Cohere API key
-# asyncio.run(cohere_integration_example())
 ----
 
 == Performance Optimization
 
-=== Batch Operations
-
-Use batch operations for better throughput:
+=== Connection Configuration
 
 [source,python]
 ----
-async def optimized_batch_insert(collection_id, documents):
-    client = ProximaDBClient("localhost:5678")
-    
-    # Prepare vectors in batches of 100
-    batch_size = 100
-    batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
-    
-    total_inserted = 0
-    start_time = time.time()
-    
-    for batch_num, batch in enumerate(batches):
-        print(f"📦 Processing batch {batch_num + 1}/{len(batches)}...")
-        
-        vectors = []
-        for doc in batch:
-            vectors.append({
-                "vector_id": doc["id"],
-                "vector": doc["embedding"],
-                "metadata": doc["metadata"]
-            })
-        
-        await client.batch_insert(collection_id, vectors)
-        total_inserted += len(vectors)
-        
-        # Progress update
-        elapsed = time.time() - start_time
-        rate = total_inserted / elapsed
-        print(f"  ✅ Inserted {total_inserted} vectors ({rate:.0f} vectors/sec)")
-    
-    print(f"🎉 Batch insert completed: {total_inserted} vectors in {elapsed:.2f}s")
-----
-
-=== Connection Pooling
-
-Configure the client for high-throughput scenarios:
-
-[source,python]
-----
-from proximadb import ProximaDBClient, ClientConfig, RetryConfig
+from proximadb import UnifiedClient, ClientConfig, RetryConfig
 
 # Optimized client configuration
 config = ClientConfig(
@@ -1037,20 +549,17 @@ config = ClientConfig(
     )
 )
 
-client = ProximaDBClient(config=config)
+client = UnifiedClient(config=config)
 ----
 
 === Parallel Processing
 
-Use asyncio for concurrent operations:
-
 [source,python]
 ----
 import asyncio
-import aiofiles
 
 async def parallel_insert_example(collection_id, documents):
-    client = ProximaDBClient("localhost:5678")
+    client = UnifiedClient("http://localhost:5678")
     
     async def insert_single_vector(doc):
         try:
@@ -1075,14 +584,65 @@ async def parallel_insert_example(collection_id, documents):
     tasks = [bounded_insert(doc) for doc in documents]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Report results
     success_count = sum(1 for r in results if "✅" in str(r))
     print(f"📊 Inserted {success_count}/{len(documents)} vectors successfully")
-    
-    return results
 ----
 
-== Error Handling
+=== Performance Monitoring
+
+[source,python]
+----
+import time
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def timed_operation(operation_name: str):
+    """Context manager for timing operations."""
+    start_time = time.time()
+    try:
+        print(f"🔄 Starting {operation_name}...")
+        yield
+    finally:
+        elapsed = time.time() - start_time
+        print(f"✅ {operation_name} completed in {elapsed:.3f}s")
+
+async def performance_monitoring_example():
+    client = UnifiedClient("http://localhost:5678")
+    
+    # Time collection creation
+    async with timed_operation("Collection Creation"):
+        collection_config = {
+            "collection_id": "perf_test",
+            "dimension": 768,
+            "distance_metric": "cosine"
+        }
+        collection_id = await client.create_collection(collection_config)
+    
+    # Time batch insert
+    vectors = [
+        {
+            "vector_id": f"perf_vec_{i}",
+            "vector": np.random.rand(768).tolist(),
+            "metadata": {"index": i}
+        }
+        for i in range(1000)
+    ]
+    
+    async with timed_operation("Batch Insert (1000 vectors)"):
+        await client.batch_insert(collection_id, vectors)
+    
+    # Time search operation
+    query_vector = np.random.rand(768).tolist()
+    
+    async with timed_operation("Vector Search"):
+        results = await client.search_vectors(
+            collection_id=collection_id,
+            query_vector=query_vector,
+            k=10
+        )
+----
+
+== Error Handling and Troubleshooting
 
 === Common Error Types
 
@@ -1095,51 +655,32 @@ from proximadb.exceptions import (
     DimensionMismatchError,
     InvalidMetadataError,
     ConnectionError,
-    RateLimitError,
-    AuthenticationError
+    RateLimitError
 )
 
-async def error_handling_example():
-    client = ProximaDBClient("localhost:5678")
+async def robust_operations():
+    client = UnifiedClient("http://localhost:5678")
     
     try:
-        # This will fail - collection doesn't exist
-        await client.get_collection("nonexistent-collection-id")
+        collection = await client.get_collection("my_collection")
         
     except CollectionNotFoundError as e:
         print(f"Collection not found: {e}")
         
     except ConnectionError as e:
         print(f"Failed to connect to ProximaDB: {e}")
-        # Implement retry logic or fallback
-        
-    except RateLimitError as e:
-        print(f"Rate limit exceeded: {e}")
-        # Wait and retry
-        await asyncio.sleep(5)
         
     except DimensionMismatchError as e:
         print(f"Vector dimension mismatch: {e}")
-        # Check your vector dimensions
         
     except InvalidMetadataError as e:
         print(f"Invalid metadata format: {e}")
-        # Fix metadata structure
-        
-    except AuthenticationError as e:
-        print(f"Authentication failed: {e}")
-        # Check API keys or credentials
         
     except ProximaDBException as e:
         print(f"General ProximaDB error: {e}")
-        # Handle other ProximaDB-specific errors
-        
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        # Handle unexpected errors
 ----
 
-=== Retry Logic
+=== Retry Logic Implementation
 
 [source,python]
 ----
@@ -1174,7 +715,7 @@ async def retry_with_backoff(
 
 # Usage example
 async def robust_search(collection_id, query_vector):
-    client = ProximaDBClient("localhost:5678")
+    client = UnifiedClient("http://localhost:5678")
     
     return await retry_with_backoff(
         client.search_vectors,
@@ -1184,173 +725,6 @@ async def robust_search(collection_id, query_vector):
         k=10
     )
 ----
-
-== Monitoring and Debugging
-
-=== Enable Detailed Logging
-
-[source,python]
-----
-import logging
-
-# Configure logging for debugging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# ProximaDB client logging
-proximadb_logger = logging.getLogger('proximadb')
-proximadb_logger.setLevel(logging.DEBUG)
-
-# Your application logging
-logger = logging.getLogger(__name__)
-
-async def logged_operations():
-    client = ProximaDBClient("localhost:5678")
-    
-    logger.info("Starting vector operations...")
-    
-    try:
-        collections = await client.list_collections()
-        logger.info(f"Found {len(collections)} collections")
-        
-        for collection in collections:
-            logger.debug(f"Collection: {collection.name} ({collection.vector_count} vectors)")
-            
-    except Exception as e:
-        logger.error(f"Operation failed: {e}", exc_info=True)
-----
-
-=== Performance Monitoring
-
-[source,python]
-----
-import time
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def timed_operation(operation_name: str):
-    """Context manager for timing operations."""
-    start_time = time.time()
-    try:
-        print(f"🔄 Starting {operation_name}...")
-        yield
-    finally:
-        elapsed = time.time() - start_time
-        print(f"✅ {operation_name} completed in {elapsed:.3f}s")
-
-async def performance_monitoring_example():
-    client = ProximaDBClient("localhost:5678")
-    
-    # Time collection creation
-    async with timed_operation("Collection Creation"):
-        collection_id = await client.create_collection(CollectionConfig(
-            name="perf_test",
-            dimension=768,
-            distance_metric=DistanceMetric.COSINE
-        ))
-    
-    # Time batch insert
-    vectors = [
-        {
-            "vector_id": f"perf_vec_{i}",
-            "vector": np.random.rand(768).tolist(),
-            "metadata": {"index": i}
-        }
-        for i in range(1000)
-    ]
-    
-    async with timed_operation("Batch Insert (1000 vectors)"):
-        await client.batch_insert(collection_id, vectors)
-    
-    # Time search operation
-    query_vector = np.random.rand(768).tolist()
-    
-    async with timed_operation("Vector Search"):
-        results = await client.search_vectors(
-            collection_id=collection_id,
-            query_vector=query_vector,
-            k=10
-        )
-    
-    print(f"📊 Search returned {len(results)} results")
-----
-
-== Current Status - 2025
-
-ProximaDB is **production-ready** with complete proto-first architecture:
-
-✅ **Production Ready**: Proto-first architecture, storage-aware search, unified handlers, multi-engine storage  
-✅ **Performance Validated**: optimized search improvement, 50,000+ vectors/sec insertion, sub-100ms latency
-✅ **Quality Assured**: 520+ tests passing, gcc-14 optimized builds, comprehensive coverage
-✅ **SDK Complete**: Unified Python client (87% smaller), REST/gRPC dual protocol support
-
-**Key Achievements**:
-- **Zero Double Serialization**: Direct proto types throughout the system
-- **Handler Consolidation**: 85% code reduction eliminating REST/gRPC duplication
-- **Storage-Aware Search**: Automatic engine selection with optimized performance improvement
-- **Hardware Optimization**: SIMD/GPU acceleration with intelligent quantization
-
-== Troubleshooting
-
-=== Common Issues and Solutions
-
-**Issue: Connection Refused**
-```
-ConnectionError: Failed to connect to localhost:5678
-```
-*Solution:*
-- Check if ProximaDB server is running
-- Verify the correct host and port
-- Check firewall settings
-
-**Issue: Dimension Mismatch**
-```
-DimensionMismatchError: Vector dimension 512 doesn't match collection dimension 768
-```
-*Solution:*
-- Verify your vector dimensions match the collection
-- Check your embedding model output size
-- Recreate collection with correct dimensions if needed
-
-**Issue: Collection Not Found**
-```
-CollectionNotFoundError: Collection 'my_collection' not found
-```
-*Solution:*
-- Check collection name spelling
-- Verify collection was created successfully
-- List collections to see available collections
-
-**Issue: High Memory Usage**
-```
-Out of memory error during batch insert
-```
-*Solution:*
-- Reduce batch size
-- Use streaming inserts for large datasets
-- Increase server memory allocation
-
-**Issue: Empty Vector IDs**
-```
-Vector IDs are empty or null after insertion
-```
-*Solution:*
-- Ensure you're using the latest version of ProximaDB
-- The DirectVectorService now properly generates IDs when not provided
-- For existing vectors with empty IDs, see migration guide in link:technical_reference.adoc#vector-id-generation-fix[Technical Reference]
-- Client-provided IDs are always preferred over auto-generated ones
-
-**Issue: Slow Search Performance**
-```
-Search operations taking >5 seconds
-```
-*Solution:*
-- Check collection size and indexing status
-- Optimize metadata filters
-- Consider using approximate search settings
-- Review server resource allocation
 
 === Health Check Script
 
@@ -1362,7 +736,7 @@ async def health_check():
     print("=" * 30)
     
     try:
-        client = ProximaDBClient("localhost:5678")
+        client = UnifiedClient("http://localhost:5678")
         
         # 1. Server connectivity
         print("1. Testing server connectivity...")
@@ -1373,11 +747,12 @@ async def health_check():
         
         # 2. Collection operations
         print("2. Testing collection operations...")
-        test_collection_id = await client.create_collection(CollectionConfig(
-            name=f"health_check_{int(time.time())}",
-            dimension=128,
-            distance_metric=DistanceMetric.COSINE
-        ))
+        test_collection_config = {
+            "collection_id": f"health_check_{int(time.time())}",
+            "dimension": 128,
+            "distance_metric": "cosine"
+        }
+        test_collection_id = await client.create_collection(test_collection_config)
         print("   ✅ Collection creation working")
         
         # 3. Vector operations
@@ -1411,16 +786,13 @@ async def health_check():
     except Exception as e:
         print(f"\n❌ Health check failed: {e}")
         raise
-
-# Run health check
-asyncio.run(health_check())
 ----
 
 == Python SDK Migration Guide
 
-=== SDK Consolidation Benefits
+=== Unified Client Benefits
 
-The ProximaDB Python SDK has been consolidated from 7 separate client implementations down to a single unified client, achieving:
+The ProximaDB Python SDK has been consolidated achieving:
 
 * **87% code reduction**: From ~6,467 lines to ~800 lines
 * **Unified API**: Single client for both REST and gRPC protocols
@@ -1433,34 +805,14 @@ The ProximaDB Python SDK has been consolidated from 7 separate client implementa
 [source,python]
 ----
 # New way - automatic protocol selection for best performance
-from proximadb import ProximaDBClient
+from proximadb import UnifiedClient
 
-client = ProximaDBClient(url="localhost")
+client = UnifiedClient(url="localhost")
 
 # Force specific protocol if needed
-client = ProximaDBClient(url="localhost", protocol=Protocol.GRPC)  # For max performance
-client = ProximaDBClient(url="localhost", protocol=Protocol.REST)  # For compatibility
+client = UnifiedClient(url="localhost", protocol="grpc")  # For max performance
+client = UnifiedClient(url="localhost", protocol="rest")  # For compatibility
 ----
-
-**Legacy Code (Still Works):**
-[source,python]
-----
-# Old way - still works but shows deprecation warning
-from proximadb.rest_client import ProximaDBRestClient
-client = ProximaDBRestClient()
-
-# Old way - gRPC
-from proximadb.grpc_client import ProximaDBClient
-client = ProximaDBClient("localhost:5679")
-----
-
-=== New Features in Unified Client
-
-1. **Automatic Protocol Selection**: Prefers gRPC for performance, falls back to REST
-2. **Enhanced Connection Management**: HTTP/2, connection pooling, keepalive
-3. **Better Error Handling**: Unified error types across protocols
-4. **TLS/mTLS Support**: Client certificates for secure connections
-5. **Storage-Aware Search**: optimized performance improvement with optimizations
 
 === Performance Guidelines
 
@@ -1477,36 +829,41 @@ client = ProximaDBClient("localhost:5679")
 == Best Practices
 
 === Vector Quality
-
 1. **Normalize vectors** when using cosine similarity
 2. **Use appropriate dimensions** for your use case
 3. **Consistent preprocessing** for all vectors
 4. **Quality metadata** for effective filtering
 
 === Performance
-
 1. **Batch operations** for high throughput
 2. **Connection pooling** for concurrent access
 3. **Appropriate indexing** for your query patterns  
 4. **Filter before search** when possible
 
 === Data Management
-
 1. **Meaningful vector IDs** for easy debugging
 2. **Rich metadata** for flexible querying
 3. **Regular backups** of important collections
 4. **Monitor storage usage** and clean up unused data
 
 === Error Handling
-
 1. **Implement retry logic** for transient failures
 2. **Validate inputs** before API calls
 3. **Log operations** for debugging
 4. **Graceful degradation** when possible
 
+== Current Status
+
+ProximaDB is **production-ready** with complete proto-first architecture:
+
+✅ **Production Ready**: Proto-first architecture, storage-aware search, unified handlers, multi-engine storage  
+✅ **Performance Validated**: optimized search improvement, 50,000+ vectors/sec insertion, sub-100ms latency
+✅ **Quality Assured**: 520+ tests passing, gcc-14 optimized builds, comprehensive coverage
+✅ **SDK Complete**: Unified Python client (87% smaller), REST/gRPC dual protocol support
+
 ---
 
-**Next Steps**: Explore the Developer Guide for advanced features and API documentation.
+**Next Steps**: Explore the link:technical_reference.adoc[Technical Reference] for advanced features and API documentation.
 
 **Support**: For questions and support, visit our GitHub repository or documentation website.
 

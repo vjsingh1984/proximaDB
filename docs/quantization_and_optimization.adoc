@@ -1,7 +1,7 @@
-= ProximaDB Quantization & Optimization - Proto-First Implementation
+= ProximaDB Quantization & Optimization Guide
 :toc: left
 :toc-title: Table of Contents
-:toclevels: 4
+:toclevels: 3
 :sectlinks:
 :sectanchors:
 :sectnums:
@@ -22,7 +22,7 @@ ifdef::env-github[]
 endif::[]
 
 [.lead]
-**ProximaDB's unified quantization engine** with **DirectVectorService integration** delivers hardware-accelerated vector compression, achieving **32x compression** and **optimized search acceleration** while maintaining production-grade accuracy through the optimized architecture.
+**ProximaDB's unified quantization engine** delivers hardware-accelerated vector compression, achieving **32x compression** and **optimized search acceleration** while maintaining production-grade accuracy through proto-first architecture.
 
 [NOTE]
 ====
@@ -48,28 +48,13 @@ ProximaDB's **unified quantization engine** integrates seamlessly with the proto
 include::diagrams/unified_quantization_system.mmd[]
 ----
 
-=== System Architecture
-
-The quantization and optimization flow traverses all layers of ProximaDB:
-
-[mermaid]
-----
-include::diagrams/unified_quantization_system.mmd[]
-----
-
-=== Component Interactions
-
-// Component interactions are shown in the unified quantization system diagram above
-
 == Quantization Methods
 
-ProximaDB supports multiple quantization techniques, each optimized for different use cases:
+ProximaDB supports multiple quantization techniques optimized for different use cases:
 
 === Product Quantization (PQ)
 
 Product Quantization divides high-dimensional vectors into subvectors, quantizing each independently using learned codebooks.
-
-// Product quantization is illustrated in the unified quantization system diagram
 
 ==== How PQ Works
 
@@ -77,8 +62,6 @@ Product Quantization divides high-dimensional vectors into subvectors, quantizin
 . **Codebook Training**: Learn k centroids for each subvector space
 . **Encoding**: Replace each subvector with nearest centroid index
 . **Storage**: Store m indices instead of d floats
-
-==== PQ Configuration
 
 [source,python]
 ----
@@ -123,19 +106,10 @@ quantization_config = QuantizationConfig(
 
 Linear quantization maps floating-point values to fixed-point integers:
 
-==== Quantization Formula
-
 [latexmath]
 ++++
 q = \text{round}\left(\frac{x - \text{offset}}{\text{scale}}\right)
 ++++
-
-[latexmath]
-++++
-x' = q \times \text{scale} + \text{offset}
-++++
-
-==== Scalar Types
 
 .Scalar Quantization Options
 [width="100%",cols="1,2,1,1,2",options="header"]
@@ -167,8 +141,6 @@ x' = q \times \text{scale} + \text{offset}
 |Extreme compression
 |===
 
-==== Configuration Example
-
 [source,python]
 ----
 quantization_config = QuantizationConfig(
@@ -184,15 +156,11 @@ quantization_config = QuantizationConfig(
 
 Binary quantization provides maximum compression using 1 bit per dimension:
 
-// Binary quantization reduces vectors to 1-bit representations
-
 ==== Binary Methods
 
 . **Sign-based**: `b = 1 if x > 0 else 0`
 . **Threshold-based**: `b = 1 if x > threshold else 0`
 . **Learned thresholds**: Optimize per-dimension thresholds
-
-==== Configuration
 
 [source,python]
 ----
@@ -254,8 +222,6 @@ ProximaDB's two-stage search leverages quantization for fast candidate selection
 include::diagrams/two-stage-search.mmd[]
 ----
 
-=== Algorithm Overview
-
 [source,python]
 ----
 def two_stage_search(query, k, candidate_multiplier=3.0):
@@ -276,10 +242,6 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
     
     return results
 ----
-
-=== Performance Analysis
-
-// Performance comparisons show optimized search improvement with quantization
 
 .Two-Stage Search Performance Metrics
 [width="100%",cols="2,2,2,2",options="header"]
@@ -307,8 +269,6 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
 |Mixed precision
 |===
 
-=== Optimization Parameters
-
 [source,python]
 ----
 optimization_hints = {
@@ -322,11 +282,9 @@ optimization_hints = {
 }
 ----
 
-== Protocol Buffer Definitions
+== Protocol Buffer Integration
 
 === Core Messages
-
-==== QuantizationConfig
 
 [source,protobuf]
 ----
@@ -338,81 +296,23 @@ message QuantizationConfig {
   float compression_ratio_target = 5;             // Target compression
   optional QuantizationValidation validation = 6; // Quality control
 }
-----
 
-==== SearchOptimizationHints
-
-[source,protobuf]
-----
 message SearchOptimizationHints {
-  // Two-stage search
   bool enable_two_stage_search = 1;
   optional QuantizationLevel quantization_hint = 2;
   float candidate_multiplier = 3;
   optional int32 min_candidates = 4;
   optional int32 max_candidates = 5;
-  
-  // Performance optimization
   bool enable_clustering_optimization = 6;
   bool enable_metadata_filtering_hint = 7;
   bool enable_parallel_search = 8;
-  
-  // Quality control
   optional float accuracy_threshold = 9;
   optional int32 timeout_ms = 10;
-  
-  // Custom parameters
   map<string, string> custom_hints = 12;
 }
 ----
 
-=== Integration Points
-
-* **CollectionConfig**: Contains `quantization_config` field
-* **VectorSearchRequest**: Contains `optimization_hints` field
-* **Handler Layer**: Extracts and forwards hints
-* **Service Layer**: Processes hints and routes appropriately
-
-== Implementation Details
-
-=== Handler Layer
-
-==== gRPC Handler
-
-The gRPC handler transforms proto hints to internal format:
-
-[source,rust]
-----
-// Extract optimization hints
-let search_hints = if let Some(hints) = req.optimization_hints {
-    json!({
-        "enable_two_stage_search": hints.enable_two_stage_search,
-        "candidate_multiplier": hints.candidate_multiplier,
-        "quantization_hint": convert_quantization_hint(&hints.quantization_hint),
-        "min_candidates": hints.min_candidates,
-        "max_candidates": hints.max_candidates,
-        // ... other fields
-    })
-} else {
-    default_search_hints()
-};
-----
-
-==== REST Handler
-
-The REST handler accepts hints in JSON format:
-
-[source,rust]
-----
-pub struct RestSearchOptimizationHints {
-    pub enable_two_stage_search: Option<bool>,
-    pub quantization_hint: Option<String>,
-    pub candidate_multiplier: Option<f32>,
-    // ... other fields
-}
-----
-
-=== Service Layer
+=== Implementation Flow
 
 The vector service orchestrates search strategies:
 
@@ -431,13 +331,11 @@ match (enable_two_stage, quantization_hint) {
 }
 ----
 
-=== Storage Engine Integration
+== Storage Engine Integration
 
-==== VIPER Engine
+=== VIPER Engine
 
 VIPER leverages Parquet's columnar format:
-
-// VIPER engine integrates quantization with Parquet columnar storage
 
 .VIPER Quantization Features
 * Separate columns for quantized/full vectors
@@ -445,7 +343,7 @@ VIPER leverages Parquet's columnar format:
 * Row group pruning based on statistics
 * Memory-mapped access for large files
 
-==== SST Engine
+=== SST Engine
 
 SST uses dedicated column families:
 
@@ -471,15 +369,11 @@ SST uses dedicated column families:
 |Decoding support
 |===
 
-== Clustering: Quantization vs VIPER Storage
+== Clustering Systems
 
-=== Architectural Distinction
+ProximaDB employs two distinct clustering approaches:
 
-ProximaDB employs two distinct clustering approaches that serve different purposes:
-
-==== Quantization Clustering (Compression)
-
-Quantization clustering is used within the UnifiedQuantizationEngine for **data compression**:
+=== Quantization Clustering (Compression)
 
 * **Purpose**: Generate codebooks for Product Quantization (PQ)
 * **Algorithm**: K-means clustering on vector subspaces
@@ -487,33 +381,13 @@ Quantization clustering is used within the UnifiedQuantizationEngine for **data 
 * **Benefit**: 4-32x compression ratios
 * **Scope**: Applied universally across all storage engines
 
-.Quantization Clustering Flow
-[source,text]
-----
-Original Vectors → Split Subvectors → K-means Clustering → Codebook Generation
-     ↓                                                           ↓
-768-dim vectors → 96 subvectors of 8-dim → 256 centroids each → PQ8 encoding
-----
-
-==== VIPER ML Clustering (Organization)
-
-VIPER's ML clustering is used for **data organization and storage optimization**:
+=== VIPER ML Clustering (Organization)
 
 * **Purpose**: Group similar vectors for efficient storage and retrieval
 * **Algorithm**: K-means++ on full vectors (not subvectors)
 * **Output**: Cluster assignments for Parquet file organization
 * **Benefit**: 3-5x search performance improvement
 * **Scope**: VIPER engine only, for collections >1M vectors
-
-.VIPER Clustering Flow
-[source,text]
-----
-Vector Collection → K-means++ Clustering → Cluster Assignment → Parquet Files
-        ↓                                          ↓                   ↓
-   1M+ vectors → Up to 256 clusters → Similar vectors grouped → Optimized I/O
-----
-
-=== Key Differences
 
 [width="100%",cols="2,3,3",options="header"]
 |===
@@ -552,71 +426,9 @@ Vector Collection → K-means++ Clustering → Cluster Assignment → Parquet Fi
 |VIPER storage engine only
 |===
 
-=== Complementary Benefits
-
-The two clustering systems work together synergistically:
-
-[NOTE]
-====
-**Combined Architecture**: VIPER can store quantized vectors (from quantization clustering) organized by ML clustering:
-
-1. **Quantization reduces size**: PQ8 compression gives 4x reduction
-2. **ML clustering improves layout**: Groups similar compressed vectors
-3. **Result**: Minimal I/O + Fast distance computation = Optimal performance
-====
-
-.Example Configuration
-[source,python]
-----
-# Both clustering types working together
-config = CollectionConfig(
-    dimension=768,
-    # Quantization clustering for compression
-    quantization_config=QuantizationConfig(
-        enabled=True,
-        type=QuantizationType.PRODUCT,
-        bits_per_subvector=8,  # PQ8 compression
-        num_subvectors=96
-    ),
-    # VIPER will automatically apply ML clustering
-    # for collections >1M vectors
-    storage_engine=StorageEngine.VIPER
-)
-----
-
-=== Performance Characteristics
-
-.Combined Performance Impact
-[width="100%",cols="2,2,2,2",options="header"]
-|===
-|Metric |Quantization Only |ML Clustering Only |Both Combined
-
-|Memory Usage
-|25% of original
-|100% of original
-|25% of original
-
-|Search Speed
-|3x faster
-|2x faster
-|6x faster
-
-|I/O Reduction
-|75% (size)
-|50% (pruning)
-|87.5% total
-
-|Accuracy
-|95-98%
-|100%
-|95-98%
-|===
-
 == Client SDK Usage
 
 === Python Examples
-
-==== Creating Collections with Quantization
 
 [source,python]
 ----
@@ -644,13 +456,8 @@ config = CollectionConfig(
 )
 
 collection = client.create_collection("semantic_search", config)
-----
 
-==== Search with Optimization
-
-[source,python]
-----
-# Basic two-stage search
+# Search with optimization
 results = client.search(
     "semantic_search",
     query_vector,
@@ -658,49 +465,11 @@ results = client.search(
     optimization_hints={
         "enable_two_stage_search": True,
         "quantization_hint": "PQ8",
-        "candidate_multiplier": 3.0
-    }
-)
-
-# Advanced optimization with quality control
-results = client.search(
-    "semantic_search",
-    query_vector,
-    k=10,
-    optimization_hints={
-        "enable_two_stage_search": True,
-        "quantization_hint": "PQ8",
-        "candidate_multiplier": 5.0,
+        "candidate_multiplier": 3.0,
         "min_candidates": 100,
         "max_candidates": 1000,
         "accuracy_threshold": 0.98,
-        "enable_parallel_search": True,
-        "custom_hints": {
-            "use_gpu": "true",
-            "batch_size": "256"
-        }
-    }
-)
-----
-
-=== gRPC Examples
-
-[source,python]
-----
-from proximadb import connect_grpc
-
-client = connect_grpc("localhost:5679")
-
-# Search with quantization hints
-results = client.search_vectors(
-    "my_collection",
-    [query_vector],
-    top_k=10,
-    optimization_hints={
-        "enable_two_stage_search": True,
-        "quantization_hint": "INT8",
-        "candidate_multiplier": 3.0,
-        "enable_clustering_optimization": True
+        "enable_parallel_search": True
     }
 )
 ----
@@ -708,10 +477,6 @@ results = client.search_vectors(
 == Performance Tuning Guide
 
 === Choosing Quantization Type
-
-// Quantization selection decision tree helps choose optimal configuration
-
-=== Optimization Strategies
 
 .Strategy Selection Guide
 [width="100%",cols="2,2,1,1,3",options="header"]
@@ -750,8 +515,6 @@ results = client.search_vectors(
 |===
 
 === Performance Metrics
-
-ProximaDB tracks detailed quantization metrics:
 
 [source,python]
 ----
@@ -793,40 +556,7 @@ print(f"Recall@10: {metrics.recall_at_10:.3f}")
 . **Scale**: Progressive quantization handles growth
 . **Retrain**: Update codebooks periodically
 
-=== Common Pitfalls
-
-[WARNING]
-====
-* Don't use aggressive quantization without testing
-* Avoid binary quantization for high-precision tasks
-* Don't ignore accuracy thresholds
-* Monitor codebook drift over time
-====
-
 == Troubleshooting
-
-=== Diagnostics
-
-Enable debug logging for detailed information:
-
-[source,python]
-----
-import logging
-logging.getLogger("proximadb.quantization").setLevel(logging.DEBUG)
-
-# Search with debug traces
-results = client.search(
-    collection_id,
-    query,
-    optimization_hints={
-        "custom_hints": {
-            "debug_quantization": "true",
-            "trace_candidates": "true",
-            "profile_stages": "true"
-        }
-    }
-)
-----
 
 === Common Issues
 
@@ -856,9 +586,28 @@ results = client.search(
 |Increase timeout_ms, enable parallel
 |===
 
-== Advanced Topics
+=== Diagnostics
 
-=== Hardware Acceleration
+[source,python]
+----
+import logging
+logging.getLogger("proximadb.quantization").setLevel(logging.DEBUG)
+
+# Search with debug traces
+results = client.search(
+    collection_id,
+    query,
+    optimization_hints={
+        "custom_hints": {
+            "debug_quantization": "true",
+            "trace_candidates": "true",
+            "profile_stages": "true"
+        }
+    }
+)
+----
+
+== Hardware Acceleration
 
 ProximaDB automatically detects and uses:
 
@@ -866,9 +615,9 @@ ProximaDB automatically detects and uses:
 * **GPU**: CUDA on NVIDIA, ROCm on AMD
 * **Specialized**: AMX on Intel, SVE on ARM
 
-=== Custom Quantization
+== Advanced Topics
 
-Implement custom quantization methods:
+=== Custom Quantization
 
 [source,python]
 ----
@@ -885,8 +634,6 @@ quantization_config = QuantizationConfig(
 ----
 
 === Multi-Stage Search
-
-Beyond two-stage, implement N-stage search:
 
 [source,python]
 ----
@@ -905,7 +652,7 @@ optimization_hints = {
 
 == Conclusion
 
-ProximaDB's quantization and search optimization features provide enterprise-grade performance for billion-scale vector search. By understanding the tradeoffs and following best practices, you can achieve:
+ProximaDB's quantization and search optimization features provide enterprise-grade performance for billion-scale vector search. Key achievements:
 
 * **10-32x memory reduction** with appropriate quantization
 * **3-10x search speedup** using two-stage algorithms
