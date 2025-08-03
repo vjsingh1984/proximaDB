@@ -15,32 +15,71 @@
 
 graph TD
     A[UnifiedQuery] --> B[UnifiedParquetReader]
-    B --> C[ReadingStrategySelector]
-    C --> D{Query Analysis}
-    D --> E[Strategy Selection]
-    E --> F[DirectArrow Strategy]
-    E --> G[MetadataFiltered Strategy]
-    E --> H[QuantizedTwoStage Strategy]
-    E --> I[Hybrid Strategy]
-    F --> J[UnifiedReadResult + SimilarityResult]
-    G --> J
-    H --> J
-    I --> J
+    B --> C[OptimizedVectorReader]
+    C --> D{Strategy Selection}
+    
+    %% Strategy Selection Inputs
+    E[CollectionConfig] --> D
+    F[VectorSerializationConfig] --> D
+    G[FilterableMetadataFields] --> D
+    H[VectorDimension] --> D
+    
+    %% Reading Strategies
+    D --> I[BinaryArrayBytemuckStrategy]
+    D --> J[Float32ArrayStrategy] 
+    D --> K[CompressedVectorStrategy]
+    D --> L[MetadataFilteredStrategy]
+    
+    %% Compression Layer
+    I --> M[BytemuckSerialization]
+    K --> N[ZSTDCompression]
+    M --> O[BinaryArray]
+    N --> O
+    
+    %% Metadata Processing
+    L --> P[StrongTypedColumns]
+    P --> Q[FilterableMetadata]
+    P --> R[ExtraMetadata]
+    Q --> S[PredicatePushdown]
+    
+    %% Result Processing
+    O --> T[UnifiedReadResult]
+    S --> T
+    R --> T
+    T --> U[SimilarityResult]
+    
+    %% Background Processes
+    V[CompactionCoordinator] --> W[BackgroundCompaction]
+    X[WriteBufferFlushCoordinator] --> Y[FlushToParquet]
+    W --> Z[CompactedParquetFiles]
+    Y --> AA[FreshParquetFiles]
+    
+    %% Supporting Infrastructure
+    BB[ReaderCache] --> B
+    CC[ParquetWriterProperties] --> B
+    DD[FilesystemFactory] --> B
+    EE[UnifiedDistanceCompute] --> U
+    FF[BloomFilterStrategy] --> S
 
-    K[ReaderCache] --> B
-    L[ReaderConfig] --> C
-    M[FilesystemFactory] --> B
-    N[UnifiedDistanceCompute] --> B
-
+    %% Data Flow Connections
+    Z --> B
+    AA --> B
+    
     %% Styling
     classDef queryClass fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
     classDef readerClass fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff
     classDef strategyClass fill:#7c3aed,stroke:#5b21b6,stroke-width:2px,color:#ffffff
-    classDef resultClass fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    classDef compressionClass fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#ffffff
+    classDef metadataClass fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    classDef resultClass fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    classDef backgroundClass fill:#6b7280,stroke:#4b5563,stroke-width:2px,color:#ffffff
     classDef supportClass fill:#64748b,stroke:#475569,stroke-width:1px,color:#ffffff
 
     class A queryClass
     class B,C readerClass
-    class D,E,F,G,H,I strategyClass
-    class J resultClass
-    class K,L,M,N supportClass
+    class D,I,J,K,L strategyClass
+    class M,N,O compressionClass
+    class P,Q,R,S metadataClass
+    class T,U resultClass
+    class V,W,X,Y,Z,AA backgroundClass
+    class E,F,G,H,BB,CC,DD,EE,FF supportClass
