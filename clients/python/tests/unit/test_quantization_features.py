@@ -145,7 +145,7 @@ class TestCollectionWithQuantization:
         config = CollectionConfig(
             name="test_collection",
             dimension=768,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             quantization_config=quantization
         )
         
@@ -158,7 +158,7 @@ class TestCollectionWithQuantization:
         config = CollectionConfig(
             name="test_collection",
             dimension=384,
-            distance_metric=DistanceMetric.EUCLIDEAN
+            distance_metric="euclidean"
         )
         
         assert config.quantization_config is None
@@ -238,7 +238,7 @@ class TestProtoQuantizationMessages:
         config = proximadb_pb2.CollectionConfig()
         config.name = "test_collection"
         config.dimension = 768
-        config.distance_metric = proximadb_pb2.DistanceMetric.COSINE
+        config.distance_metric = proximadb_pb2.COSINE
         config.storage_engine = proximadb_pb2.StorageEngine.VIPER
         config.primary_indexing_algorithm = proximadb_pb2.IndexingAlgorithm.HNSW
         
@@ -322,7 +322,7 @@ class TestQuantizationIntegration:
         config = CollectionConfig(
             name="test_quantization_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             quantization_config=QuantizationConfig(
                 enabled=True,
                 type=QuantizationType.SCALAR,

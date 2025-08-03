@@ -32,7 +32,7 @@ class TestGRPCAPICompleteness:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         collection = grpc_client.create_collection(collection_name, config)
         yield collection_name
@@ -54,7 +54,7 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             assert collection is not None
             print("✅ CreateCollection - Create collection: WORKING")
@@ -403,7 +403,7 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             
             try:
@@ -435,7 +435,7 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             
             try:

@@ -47,7 +47,7 @@ class TestCollectionCRUD:
         config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="REST test collection"
         )
         
@@ -94,7 +94,7 @@ class TestCollectionCRUD:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.DOT_PRODUCT,
+            distance_metric="dot_product",
             description="gRPC test collection"
         )
         
@@ -118,7 +118,7 @@ class TestCollectionCRUD:
         config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Cross-protocol test collection"
         )
         
@@ -178,9 +178,9 @@ class TestCollectionConfiguration:
         config = CollectionConfig(
             name="test_collection",
             dimension=768,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         assert config.dimension == 768
-        assert config.distance_metric == DistanceMetric.COSINE
+        assert config.distance_metric == "cosine"
     
     def test_advanced_collection_config(self):
         """Test advanced collection configuration with all options"""
@@ -201,7 +201,7 @@ class TestCollectionConfiguration:
         config = CollectionConfig(
             name="test_collection",
             dimension=384,
-            distance_metric=DistanceMetric.EUCLIDEAN,
+            distance_metric="euclidean",
             index_configs=[index_config],  # Use plural form
             # storage_config=storage_config,  # This field doesn't exist in the model
             storage_engine=StorageEngine.VIPER,
@@ -211,7 +211,7 @@ class TestCollectionConfiguration:
         )
         
         assert config.dimension == 384
-        assert config.distance_metric == DistanceMetric.EUCLIDEAN
+        assert config.distance_metric == "euclidean"
         # The model has index_configs (plural) but we added a backward compatibility property
         assert config.index_config.algorithm == IndexingAlgorithm.HNSW
         assert config.storage_config.compression == CompressionType.LZ4
@@ -219,11 +219,11 @@ class TestCollectionConfiguration:
     def test_distance_metrics(self):
         """Test all distance metric options"""
         metrics = [
-            DistanceMetric.COSINE,
-            DistanceMetric.EUCLIDEAN,
-            DistanceMetric.DOT_PRODUCT,
-            DistanceMetric.MANHATTAN,
-            DistanceMetric.HAMMING
+            "cosine",
+            "euclidean",
+            "dot_product",
+            "manhattan",
+            "hamming"
         ]
         
         for metric in metrics:
@@ -287,7 +287,7 @@ class TestCollectionConfiguration:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Configuration test collection",
             storage_engine=StorageEngine.VIPER
         )
@@ -316,7 +316,7 @@ class TestCollectionValidation:
         valid_config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         assert valid_config.dimension == 128
         
         # Invalid dimensions should raise validation errors
@@ -324,13 +324,13 @@ class TestCollectionValidation:
             CollectionConfig(
                 name="test_collection",
                 dimension=0,  # Invalid dimension
-                distance_metric=DistanceMetric.COSINE)
+                distance_metric="cosine")
         
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
                 name="test_collection",
                 dimension=10001,  # Too large
-                distance_metric=DistanceMetric.COSINE)
+                distance_metric="cosine")
     
     def test_collection_not_found_error(self):
         """Test CollectionNotFoundError handling"""
@@ -348,7 +348,7 @@ class TestCollectionValidation:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         try:
             # Create first time - should succeed
@@ -377,7 +377,7 @@ class TestCollectionPersistence:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Persistence test collection"
         )
         

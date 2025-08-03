@@ -31,7 +31,7 @@ class TestRESTAPICompleteness:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         collection = rest_client.create_collection(collection_name, config)
         yield collection_name
@@ -53,7 +53,7 @@ class TestRESTAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = rest_client.create_collection(collection_name, config)
             assert collection is not None
             print("✅ POST /collections - Create collection: WORKING")
@@ -313,7 +313,7 @@ class TestRESTAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = rest_client.create_collection(collection_name, config)
             
             try:

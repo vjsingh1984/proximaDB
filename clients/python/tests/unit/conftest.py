@@ -100,7 +100,7 @@ def basic_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Test collection created by pytest"
     )
 
@@ -111,7 +111,7 @@ def advanced_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=768,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Advanced test collection with BERT dimensions",
         storage_engine=StorageEngine.VIPER
     )
@@ -145,7 +145,7 @@ class TestCollectionManager:
             config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         timestamp = int(time.time())  # Seconds (proto expects seconds)
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"

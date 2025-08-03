@@ -156,18 +156,13 @@ class ProximaDBClient:
     def _create_grpc_client(self):
         """Create gRPC client"""
         from .protocols.grpc_sync import ProximaDBSyncGrpcClient
+        from .config import Protocol
         
-        # Extract host and port from URL for gRPC
-        url = self.config.url
-        if url.startswith(('http://', 'https://', 'grpc://')):
-            url = url.split('://', 1)[1]
-        
-        # Default gRPC port is 5679
-        if ':' not in url:
-            url = f"{url}:5679"
+        # Use the proper protocol URL generation for gRPC
+        grpc_url = self.config.get_protocol_url(Protocol.GRPC)
         
         return ProximaDBSyncGrpcClient(
-            server_address=url,
+            server_address=grpc_url,
             timeout=60.0
         )
     

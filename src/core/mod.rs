@@ -15,7 +15,6 @@ pub mod storage;
 pub mod foundation;
 pub mod storage_layout;
 pub mod memory;
-// vector_record_adapter removed - proto-first architecture everywhere
 pub mod proto_metadata_helper;
 pub mod bloom;
 pub mod errors;
@@ -32,7 +31,6 @@ mod config_loader_tests;
 #[cfg(test)]
 mod flush_config_tests;
 
-// Legacy modules removed - using avro_unified as single source of truth
 
 pub use config::*;
 pub use config_loader::*;
@@ -72,9 +70,7 @@ pub type ProtoVectorRecord = crate::proto::proximadb::VectorRecord;
 pub use metadata_query::*;
 pub use grpc_metadata_parser::*;
 pub use vector_record_migration::{avro_to_proto, proto_to_avro, avro_batch_to_proto, proto_batch_to_avro};
-// VectorRecordAdapter removed - proto-first architecture with direct field access
 
-// VectorRecord removed - we use ProtoVectorRecord directly for proto-first architecture
 
 // Note: VectorRecord, VectorRecord, and ProtoVectorRecord are already public
 // No need to re-export them as they're defined in this module

@@ -240,7 +240,7 @@ class TestErrorHandling:
                 config = CollectionConfig(
                     name=invalid_name,
                     dimension=128,
-                    distance_metric=DistanceMetric.COSINE)
+                    distance_metric="cosine")
                 client.create_collection(invalid_name, config)
 
 
@@ -318,7 +318,7 @@ class TestProtocolInteroperability:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         try:
             # Create collection with REST

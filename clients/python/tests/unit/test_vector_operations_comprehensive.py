@@ -37,7 +37,7 @@ class TestVectorCRUD:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Vector CRUD test collection"
         )
         
@@ -232,7 +232,7 @@ class TestBatchVectorOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Batch operations test collection",
             storage_engine=StorageEngine.VIPER
         )
@@ -329,7 +329,7 @@ class TestLargeScaleOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=512,  # Larger dimension for more data per vector
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Large-scale operations test",
             storage_engine=StorageEngine.VIPER,
             # Collection configured for performance testing
@@ -492,7 +492,7 @@ class TestVectorValidation:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         collection = client.create_collection(collection_name, config)
         
         try:
@@ -519,7 +519,7 @@ class TestVectorValidation:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         collection = client.create_collection(collection_name, config)
         
         try:

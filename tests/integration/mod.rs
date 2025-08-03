@@ -33,6 +33,12 @@ pub mod isolated_sst_engine_test;
 // TODO: Fix API mismatches before enabling this test
 // pub mod isolated_write_buffer_test;
 
+// Comprehensive filesystem integration tests - REMOVED (outdated APIs)
+// pub mod filesystem_comprehensive_test;
+
+// WAL recovery integration tests - REMOVED (outdated APIs)
+// pub mod wal_recovery_test;
+
 // gRPC integration tests
 pub mod grpc;
 
@@ -47,6 +53,9 @@ pub mod vector;
 
 // Semantic distance integration tests - NEW unified system
 pub mod semantic_distance_integration;
+
+// Filestore path handling integration tests
+pub mod filestore_path_test;
 
 // Unified search integration tests - NEW unified search interface
 pub mod unified_search_integration;

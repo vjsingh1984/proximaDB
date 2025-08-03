@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use super::persistence::write_buffer::config::{MemTableType, WriteBufferStrategyType};
 use super::persistence::write_buffer::{WriteBufferConfig, WriteBufferManager};
-// Legacy WalFactory removed - WriteBufferManager now uses WriteBufferBatchFactory internally
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 

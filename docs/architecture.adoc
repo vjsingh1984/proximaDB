@@ -473,32 +473,9 @@ let results = axis_manager.search(
 
 ProximaDB implements a clean initialization sequence that eliminates circular dependencies:
 
-[mermaid]
-....
-sequenceDiagram
-    participant Main as ProximaDB::new
-    participant SS as SharedServices
-    participant CS as CollectionService
-    participant SE as StorageEngine
-    participant MS as MultiServer
-    
-    Main->>SS: 1. Create SharedServices first
-    SS->>CS: Create CollectionService
-    SS-->>Main: Return (SharedServices, CollectionService)
-    
-    Main->>SE: 2. Create StorageEngine
-    Main->>SE: Inject CollectionService from SharedServices
-    
-    Main->>SE: 3. Start StorageEngine
-    SE->>SE: Recover collections from metadata
-    
-    Main->>SS: 4. Recover vectors from write buffer
-    SS->>SE: Get recovered collections
-    SS->>SS: Load vectors into memtable
-    
-    Main->>MS: 5. Create MultiServer with SharedServices
-    Main->>MS: 6. Start servers (HTTP:5678, gRPC:5679)
-....
+image::diagrams/images/initialization-sequence.svg[ProximaDB Initialization Sequence, width=1000, align=center]
+
+_Diagram source: link:diagrams/initialization-sequence.mmd[View Mermaid source]_
 
 ==== Key Improvements
 
@@ -608,6 +585,10 @@ All architecture diagrams are generated from Mermaid source files and rendered a
 |Service Interactions
 |Detailed sequence flows between components
 |link:diagrams/service-interactions.mmd[Mermaid]
+
+|Initialization Sequence
+|Clean startup flow eliminating circular dependencies
+|link:diagrams/initialization-sequence.mmd[Mermaid]
 
 |Storage Engine Classes
 |Class relationships and dependencies

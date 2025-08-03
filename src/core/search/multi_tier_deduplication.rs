@@ -54,7 +54,7 @@ pub struct MultiTierDeduplicator {
     id_to_latest: HashMap<String, TieredSearchCandidate>,
     /// Results without IDs (no deduplication possible)
     results_without_id: Vec<TieredSearchCandidate>,
-    /// Legacy simple metadata filters for backward compatibility
+    /// Simple metadata filters for backward compatibility
     metadata_filters: Option<MetadataFilter>,
     /// Advanced logical metadata query for complex filtering
     metadata_query: Option<MetadataQuery>,
@@ -131,7 +131,7 @@ impl MultiTierDeduplicator {
             }
         }
 
-        // Fall back to legacy simple filters for backward compatibility
+        // Fall back to simple filters for backward compatibility
         match &self.metadata_filters {
             None => true, // No filters - all records match
             Some(filters) => {

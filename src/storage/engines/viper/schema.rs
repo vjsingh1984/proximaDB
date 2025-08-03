@@ -228,8 +228,8 @@ impl SchemaManager {
         }
     }
     
-    /// Parse filterable columns from collection config JSON (legacy)
-    /// This method is deprecated and only kept for backward compatibility
+    /// Parse filterable columns from collection config JSON
+    /// Kept for backward compatibility
     #[allow(dead_code)]
     pub fn parse_filterable_columns(&self, config: &str) -> Result<Vec<FilterableColumn>> {
         let config: serde_json::Value = serde_json::from_str(config)

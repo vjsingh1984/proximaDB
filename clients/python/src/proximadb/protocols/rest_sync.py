@@ -37,6 +37,15 @@ from ..models import (
     VectorArray,
     MetadataDict,
     FilterDict,
+    VectorSearchRequest,
+    SearchQuery,
+    IncludeFields,
+    MetadataFilter,
+    FilterCondition,
+    FilterOperator,
+    FilterOperation,
+    VectorBatchRequest,
+    VectorRecord,
 )
 from ..exceptions import (
     ProximaDBError,
@@ -627,35 +636,47 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
         
-        # Simplified request aligned with server expectations
-        query = {"vector": vector}
-        
-        # Add metadata filter if provided  
+        # Build metadata filter if provided
+        metadata_filter_obj = None
         if metadata_filter:
-            # Convert dict to proper filter format
-            query["metadata_filter"] = {
-                "operator": "AND",
-                "conditions": [
-                    {
-                        "field_name": key,
-                        "operation": "EQUALS", 
-                        "value": {"string_value": str(value)}
-                    }
-                    for key, value in metadata_filter.items()
-                ]
-            }
+            conditions = [
+                FilterCondition(
+                    field_name=key,
+                    operation=FilterOperation.EQUALS,
+                    value=value
+                )
+                for key, value in metadata_filter.items()
+            ]
+            metadata_filter_obj = MetadataFilter(
+                conditions=conditions,
+                operator=FilterOperator.AND
+            )
         
-        request_data = {
-            "collection_id": collection_id,
-            "queries": [query],
-            "top_k": top_k,
-            "include_fields": {
-                "vector": include_vectors,
-                "metadata": include_metadata,
-                "score": True,
-                "rank": True
-            }
-        }
+        # Create search query using model
+        search_query = SearchQuery(
+            vector=vector,
+            id=None,
+            metadata_filter=metadata_filter_obj
+        )
+        
+        # Create search request using model
+        search_request = VectorSearchRequest(
+            collection_id=collection_id,
+            queries=[search_query],
+            top_k=top_k,
+            distance_metric_override=None,  # Use collection default
+            search_parameters=None,  # Use defaults
+            include_fields=IncludeFields(
+                vector=include_vectors,
+                metadata=include_metadata,
+                score=True,
+                rank=True
+            ),
+            search_optimization=None  # Use defaults
+        )
+        
+        # Convert model to dict for JSON serialization
+        request_data = search_request.model_dump(exclude_none=True)
         
         response = self._make_request(
             "POST",

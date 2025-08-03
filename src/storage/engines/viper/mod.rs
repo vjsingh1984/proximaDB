@@ -3,14 +3,6 @@
 //! Vector-optimized Intelligent Parquet with Efficient Retrieval
 //! Default storage engine optimized for high-dimensional vector operations.
 
-// pub mod core; // Deprecated - moved to core.rs.deprecated
-// Legacy adapters - TO BE REMOVED
-// pub mod search_integration; // Replaced by unified_search_engine
-// pub mod search_adapter; // Replaced by unified_search_engine
-// Clustering moved to AXIS
-// pub mod axis_clustering_wrapper; // Moved to AXIS
-// pub mod ml_clustering; // Moved to AXIS
-// pub mod clustering_models; // Moved to AXIS
 
 pub mod readers;
 pub mod unified_search_engine; // NEW: Unified search engine implementation
@@ -31,13 +23,11 @@ pub mod flush;
 pub mod engine;
 
 // Test modules
-// Test module removed - tested removed MLClusteringEngine
 
 #[cfg(test)]
 mod tests;
 
 // Re-export main VIPER types
-// pub use core::ViperCoreEngine; // Deprecated - use ViperEngine instead
 pub use factory::ViperFactory;
 // Clustering exports moved to AXIS
 pub use pipeline::ViperPipeline;

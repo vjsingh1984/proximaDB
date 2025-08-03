@@ -1,332 +1,111 @@
-#!/usr/bin/env python3
 """
-ProximaDB Python SDK Test Configuration
-Shared fixtures and configuration for all test modules
+Pytest configuration and fixtures for ProximaDB tests.
 """
 
 import pytest
-import logging
-import time
 import sys
 import os
-from typing import Generator, Dict, Any
+import time
+import tempfile
+import shutil
+from pathlib import Path
 
-# Add the SDK source to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add Python SDK to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clients/python/src"))
 
-from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
-from proximadb.exceptions import ProximaDBError
-
-
-# Configure logging for tests
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# Test configuration
-TEST_CONFIG = {
-    "rest_endpoint": "http://localhost:5678",
-    "grpc_endpoint": "http://localhost:5679",
-    "default_timeout": 30.0,
-    "max_retry_attempts": 3,
-    "test_collection_prefix": "pytest_",
-    "cleanup_on_failure": True
-}
+from proximadb import ProximaDBClient
 
 
 @pytest.fixture(scope="session")
-def test_config() -> Dict[str, Any]:
-    """Test configuration fixture"""
-    return TEST_CONFIG.copy()
+def rest_server_url():
+    """ProximaDB REST server URL for testing."""
+    return "http://localhost:5678"
 
 
 @pytest.fixture(scope="session")
-def verify_server_running(test_config):
-    """Verify ProximaDB server is running before tests"""
+def grpc_server_url():
+    """ProximaDB gRPC server URL for testing."""
+    return "localhost:5679"
+
+
+@pytest.fixture(scope="session")
+def client(rest_server_url):
+    """ProximaDB REST client instance."""
+    return ProximaDBClient(rest_server_url)
+
+
+@pytest.fixture(scope="session")
+def grpc_client(grpc_server_url):
+    """ProximaDB gRPC client instance."""
+    return ProximaDBClient(grpc_server_url)
+
+
+@pytest.fixture
+def test_collection_name():
+    """Generate a unique collection name for testing."""
+    import uuid
+    return f"test_collection_{uuid.uuid4().hex[:8]}"
+
+
+@pytest.fixture
+def cleanup_collection(client, test_collection_name):
+    """Cleanup collection after test."""
+    yield test_collection_name
     try:
-        rest_client = connect_rest(test_config["rest_endpoint"])
-        
-        # Try to connect and get health status
-        try:
-            health = rest_client.health()
-            logging.info(f"✅ ProximaDB REST server is healthy: {health}")
-        except Exception as e:
-            logging.warning(f"⚠️ Health check failed, but server appears to be running: {e}")
-        
-        # Try basic operation
-        collections = rest_client.list_collections()
-        logging.info(f"✅ ProximaDB server responding - found {len(collections)} collections")
-        
-        return True
-        
-    except Exception as e:
-        pytest.fail(f"❌ ProximaDB server not accessible at {test_config['rest_endpoint']}: {e}")
+        client.delete_collection(test_collection_name)
+    except:
+        pass  # Collection might not exist
 
 
-@pytest.fixture(scope="class")
-def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
-    """Shared REST client fixture for test classes"""
-    client = connect_rest(test_config["rest_endpoint"])
-    yield client
-    
-    if hasattr(client, 'close'):
-        client.close()
-
-
-@pytest.fixture(scope="class")
-def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
-    """Shared gRPC client fixture for test classes"""
-    client = connect_grpc(test_config["grpc_endpoint"])
-    yield client
-    
-    if hasattr(client, 'close'):
-        client.close()
-
-
-@pytest.fixture
-def unique_collection_name(test_config) -> str:
-    """Generate unique collection name for each test"""
-    timestamp = int(time.time())  # Seconds (proto expects seconds, not milliseconds)
-    test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
-    return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
-
-
-@pytest.fixture
-def basic_collection_config() -> CollectionConfig:
-    """Basic collection configuration for tests"""
-    return CollectionConfig(
-        name="test_collection_basic",  # Minimum 8 characters
-        dimension=128,
-        distance_metric=DistanceMetric.COSINE,
-        description="Test collection created by pytest"
-    )
-
-
-@pytest.fixture
-def advanced_collection_config() -> CollectionConfig:
-    """Advanced collection configuration for tests"""
-    return CollectionConfig(
-        name="test_collection_advanced",  # Minimum 8 characters
-        dimension=384,
-        distance_metric=DistanceMetric.COSINE,
-        description="Advanced test collection with BERT dimensions",
-        storage_engine=StorageEngine.VIPER
-    )
-
-
-@pytest.fixture
-def test_collection(rest_client, unique_collection_name, basic_collection_config):
-    """Create and manage a test collection with automatic cleanup"""
-    collection = rest_client.create_collection(unique_collection_name, basic_collection_config)
-    yield collection
-    
-    # Cleanup
+@pytest.fixture(scope="session")
+def bert_service():
+    """BERT embedding service for tests."""
+    integration_path = Path(__file__).parent / "integration"
+    sys.path.insert(0, str(integration_path))
     try:
-        rest_client.delete_collection(unique_collection_name)
-        logging.debug(f"Cleaned up test collection: {unique_collection_name}")
-    except Exception as e:
-        logging.warning(f"Failed to cleanup collection {unique_collection_name}: {e}")
+        from bert_embedding_service import BERTEmbeddingService
+        return BERTEmbeddingService("all-MiniLM-L6-v2")
+    except ImportError:
+        pytest.skip("BERT embedding service not available")
 
 
-class TestCollectionManager:
-    """Helper class for managing test collections"""
-    
-    def __init__(self, client: ProximaDBClient, config: Dict[str, Any]):
-        self.client = client
-        self.config = config
-        self.created_collections = []
-    
-    def create_test_collection(self, name_suffix: str = "", config: CollectionConfig = None) -> str:
-        """Create a test collection with automatic tracking"""
-        if config is None:
-            config = CollectionConfig(
-                name="test_collection_default",  # Minimum 8 characters
-                dimension=128,
-                distance_metric=DistanceMetric.COSINE)
-        
-        timestamp = int(time.time())  # Seconds (proto expects seconds)
-        collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
-        
-        collection = self.client.create_collection(collection_name, config)
-        self.created_collections.append(collection_name)
-        
-        return collection_name
-    
-    def cleanup_all(self):
-        """Clean up all created collections"""
-        for collection_name in self.created_collections:
-            try:
-                self.client.delete_collection(collection_name)
-                logging.debug(f"Cleaned up collection: {collection_name}")
-            except Exception as e:
-                logging.warning(f"Failed to cleanup {collection_name}: {e}")
-        
-        self.created_collections.clear()
+@pytest.fixture(scope="session")
+def corpus_data():
+    """Load 10MB corpus data for testing."""
+    corpus_path = Path(__file__).parent.parent.parent / "embedding_cache/corpus_10.0mb.json"
+    if corpus_path.exists():
+        import json
+        with open(corpus_path, 'r') as f:
+            return json.load(f)
+    return []
+
+
+@pytest.fixture(scope="session")
+def cached_embeddings():
+    """Load cached embeddings for testing."""
+    embeddings_path = Path(__file__).parent.parent.parent / "embedding_cache/embeddings_10.0mb.npy"
+    if embeddings_path.exists():
+        import numpy as np
+        return np.load(embeddings_path)
+    return None
 
 
 @pytest.fixture
-def collection_manager(rest_client, test_config):
-    """Collection manager fixture with automatic cleanup"""
-    manager = TestCollectionManager(rest_client, test_config)
-    yield manager
-    
-    # Cleanup all collections created by this manager
-    manager.cleanup_all()
+def temp_dir():
+    """Create temporary directory for tests."""
+    temp_dir = tempfile.mkdtemp()
+    yield temp_dir
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# Test markers
 def pytest_configure(config):
-    """Configure custom pytest markers"""
+    """Configure pytest with custom markers."""
     config.addinivalue_line(
-        "markers", "slow: marks tests as slow (may take > 10 seconds)"
-    )
-    config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests requiring running server"
+        "markers", "integration: marks tests as integration tests (requires running server)"
     )
     config.addinivalue_line(
-        "markers", "storage: marks tests related to storage layer functionality"
+        "markers", "slow: marks tests as slow running"
     )
     config.addinivalue_line(
-        "markers", "search: marks tests related to search and similarity operations"
+        "markers", "embedding: marks tests that require BERT embeddings"
     )
-    config.addinivalue_line(
-        "markers", "large_data: marks tests that work with large datasets"
-    )
-
-
-# Pytest hooks
-def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add markers and skip conditions"""
-    for item in items:
-        # Add integration marker to all tests by default
-        if not any(marker.name == "unit" for marker in item.iter_markers()):
-            item.add_marker(pytest.mark.integration)
-        
-        # Mark slow tests
-        if "large" in item.name or "stress" in item.name or "compaction" in item.name:
-            item.add_marker(pytest.mark.slow)
-        
-        # Mark storage tests
-        if "storage" in item.name or "wal" in item.name or "flush" in item.name:
-            item.add_marker(pytest.mark.storage)
-        
-        # Mark search tests
-        if "search" in item.name or "similarity" in item.name or "proximity" in item.name:
-            item.add_marker(pytest.mark.search)
-
-
-def pytest_runtest_setup(item):
-    """Setup for each test item"""
-    # Skip slow tests if running in fast mode
-    if item.config.getoption("--fast", default=False):
-        if any(marker.name == "slow" for marker in item.iter_markers()):
-            pytest.skip("Skipping slow test in fast mode")
-
-
-def pytest_addoption(parser):
-    """Add custom command line options"""
-    parser.addoption(
-        "--fast",
-        action="store_true",
-        default=False,
-        help="Run only fast tests, skip slow/large data tests"
-    )
-    parser.addoption(
-        "--rest-endpoint",
-        action="store",
-        default="http://localhost:5678",
-        help="ProximaDB REST endpoint for testing"
-    )
-    parser.addoption(
-        "--grpc-endpoint", 
-        action="store",
-        default="http://localhost:5679",
-        help="ProximaDB gRPC endpoint for testing"
-    )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def configure_test_endpoints(request):
-    """Configure test endpoints from command line options"""
-    rest_endpoint = request.config.getoption("--rest-endpoint")
-    grpc_endpoint = request.config.getoption("--grpc-endpoint")
-    
-    TEST_CONFIG["rest_endpoint"] = rest_endpoint
-    TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
-    
-    logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
-
-
-# Exception handling helpers
-class ProximaDBTestError(Exception):
-    """Custom exception for test-specific errors"""
-    pass
-
-
-def assert_proximadb_error(exc_info, expected_message_fragment: str = None):
-    """Helper to assert ProximaDB errors with optional message checking"""
-    assert issubclass(exc_info.type, ProximaDBError), f"Expected ProximaDBError, got {exc_info.type}"
-    
-    if expected_message_fragment:
-        assert expected_message_fragment.lower() in str(exc_info.value).lower(), \
-            f"Expected '{expected_message_fragment}' in error message: {exc_info.value}"
-
-
-# Performance measurement helpers
-@pytest.fixture
-def performance_monitor():
-    """Fixture for monitoring test performance"""
-    class PerformanceMonitor:
-        def __init__(self):
-            self.timings = {}
-            self.start_times = {}
-        
-        def start_timer(self, operation: str):
-            self.start_times[operation] = time.time()
-        
-        def end_timer(self, operation: str) -> float:
-            if operation in self.start_times:
-                duration = time.time() - self.start_times[operation]
-                self.timings[operation] = duration
-                del self.start_times[operation]
-                return duration
-            return 0.0
-        
-        def get_timings(self) -> Dict[str, float]:
-            return self.timings.copy()
-        
-        def assert_performance(self, operation: str, max_seconds: float):
-            assert operation in self.timings, f"No timing recorded for {operation}"
-            actual = self.timings[operation]
-            assert actual <= max_seconds, f"{operation} took {actual:.3f}s, expected <= {max_seconds}s"
-    
-    return PerformanceMonitor()
-
-
-# Test data generators
-def generate_test_vectors(count: int, dimension: int) -> list:
-    """Generate test vectors for use in tests"""
-    import numpy as np
-    return [np.random.random(dimension).astype(np.float32).tolist() for _ in range(count)]
-
-
-def generate_test_metadata(count: int, categories: list = None) -> list:
-    """Generate test metadata for use in tests"""
-    if categories is None:
-        categories = ["technology", "science", "healthcare", "education", "business"]
-    
-    metadata_list = []
-    for i in range(count):
-        metadata = {
-            "index": i,
-            "category": categories[i % len(categories)],
-            "importance": (i % 10) + 1,
-            "test_timestamp": time.time(),
-            "test_generated": True
-        }
-        metadata_list.append(metadata)
-    
-    return metadata_list

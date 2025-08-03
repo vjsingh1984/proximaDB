@@ -7,7 +7,6 @@
 //! - Efficient per-collection flush isolation
 
 use anyhow::Result;
-// async_trait removed - no longer implementing trait methods
 use tracing::{debug, info, warn, error};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -21,7 +20,6 @@ use crate::compute::unified_distance::{
     DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
 };
 use crate::core::VectorRecord;
-// WalEntry removed - working directly with VectorRecord and WriteBufferVectorBatch
 
 /// Collection partition within the global memtable
 #[derive(Debug)]
@@ -336,7 +334,6 @@ impl CollectionPartition {
         final_results
     }
 
-    // Legacy append method removed - use add_batch() directly with WriteBufferVectorBatch
 }
 
 /// Global partitioned memtable implementation for WAL operations
@@ -431,7 +428,6 @@ impl GlobalPartitionedMemtable {
         Ok(sequences)
     }
 
-    // Legacy append() method removed - use add_wal_batch() with modern WriteBufferVectorBatch architecture
 
     /// Get any vector from the memtable (useful for testing/debugging)
     pub async fn get_any_vector(&self) -> Result<Option<VectorRecord>> {
@@ -453,7 +449,6 @@ impl GlobalPartitionedMemtable {
         Ok(None)
     }
 
-    // Legacy get_by_content() removed - use vector search methods instead
 
     /// Search for similar vectors within a specific collection using configurable distance metric
     pub async fn search_vectors(
@@ -903,7 +898,6 @@ impl GlobalPartitionedMemtable {
     }
 }
 
-// MemtableCore trait removed - GlobalPartitionedMemtable works directly with VectorRecord/WriteBufferVectorBatch
 
 impl GlobalPartitionedMemtable {
     /// Get all vectors without sequences (for flush operations) - MODERN

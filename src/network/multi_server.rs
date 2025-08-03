@@ -328,25 +328,16 @@ impl SharedServices {
         } else {
             info!("📁 SharedServices: Configuring local filesystem for metadata");
 
-            // Parse the base path from file:// URL for local filesystem
-            let base_path = if storage_config.metadata_url.starts_with("file://") {
-                let path = storage_config.metadata_url.strip_prefix("file://").unwrap_or("");
-                Some(std::path::PathBuf::from(path))
-            } else {
-                Some(std::path::PathBuf::from(&storage_config.metadata_url))
-            };
+            // IMPORTANT: For file:// URLs, we should NOT set a root_dir because:
+            // 1. The filestore backend uses full URLs like "file://./demo_metadata/current"
+            // 2. Setting root_dir causes the LocalFileSystem to prepend the root to these paths
+            // 3. This results in duplicated paths like "./demo_metadata/./demo_metadata/current"
+            //
+            // The LocalFileSystem should work with URLs as-is without any root directory.
+            info!("📂 SharedServices: Using default filesystem config without root_dir to prevent path duplication");
 
-            info!(
-                "📂 SharedServices: Setting local filesystem root_dir to: {:?}",
-                base_path
-            );
-
-            let mut fs_config =
-                crate::storage::persistence::filesystem::FilesystemConfig::default();
-            if let Some(ref mut local_config) = fs_config.local {
-                local_config.root_dir = base_path;
-            }
-            fs_config
+            // Use default config - no root_dir set
+            crate::storage::persistence::filesystem::FilesystemConfig::default()
         };
 
         info!(

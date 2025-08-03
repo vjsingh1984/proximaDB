@@ -21,7 +21,7 @@
 
 use crate::proto::proximadb::VectorRecord;
 
-/// Legacy Avro VectorRecord type alias for compatibility
+/// Avro VectorRecord type alias for compatibility
 pub type AvroVectorRecord = crate::core::avro_unified::VectorRecord;
 
 /// Proto VectorRecord type alias for convenience

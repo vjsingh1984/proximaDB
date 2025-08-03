@@ -551,8 +551,6 @@ pub fn create_router(state: AppState) -> Router {
         // SQL query endpoint
         .route("/api/v1/sql/execute", post(execute_sql))          // execute SQL queries
         // Convenience endpoints for common operations
-        // Single vector endpoints removed - use batch operations instead
-        // Legacy single-vector APIs don't exist in proto-first architecture
         // Internal testing endpoints (WARNING: NOT FOR PRODUCTION USE)
         .route("/internal/flush", post(internal_flush_all))
         .route("/internal/flush/:collection_id", post(internal_flush_collection))
@@ -851,8 +849,6 @@ pub async fn get_vector(
     }
 }
 
-// Legacy single-vector endpoints removed - use batch operations instead
-// These APIs don't exist in proto-first architecture
 
 /// Execute SQL query endpoint
 pub async fn execute_sql(

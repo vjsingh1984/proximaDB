@@ -1,6 +1,5 @@
 //! Storage engines and distance metrics
 
-use serde::{Deserialize, Serialize};
 
 // Use the canonical DistanceMetric from compute distance module
 pub use crate::compute::distance::DistanceMetric;

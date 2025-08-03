@@ -5,7 +5,6 @@
 
 pub mod bloom_filter;
 pub mod compaction;
-// pub mod manifest; // Removed - using directory-based discovery
 pub mod mmap;
 pub mod readers;
 pub mod sstable_writer;
@@ -26,7 +25,6 @@ pub use bloom_filter::{
     SstableBloomFilter, BloomStrategy, CompositeBloomFilter,
 };
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
-// Manifest removed - using directory-based discovery
 pub use readers::UnifiedSstableReader;
 
 // Additional exports for unified reader (SstableHeader is already defined below)
@@ -37,7 +35,6 @@ use crate::core::{SstConfig, VectorRecord};
 use crate::core::search::SearchResult;
 use crate::core::serialization::{VectorSerializationConfig, VectorAnalysis};
 use crate::storage::optimization::{SortingStats};
-// Removed duplicate import - readers module is already defined above
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
@@ -388,9 +385,9 @@ impl SstRecord {
         match data[0] {
             0x02 => Self::deserialize_optimized(&data[1..]),
             _ => {
-                // Legacy bincode format for backward compatibility  
+                // Bincode format for backward compatibility  
                 bincode::deserialize(data)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize legacy SstRecord: {}", e))
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize SstRecord: {}", e))
             }
         }
     }
@@ -806,9 +803,9 @@ impl DataBlock {
             0x03 => Self::deserialize_compressed(&data[1..]),
             0x02 => Self::deserialize_uncompressed(&data[1..]),
             _ => {
-                // Legacy bincode format for backward compatibility
+                // Bincode format for backward compatibility
                 let mut block: DataBlock = bincode::deserialize(data)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize legacy DataBlock: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize DataBlock: {}", e))?;
                 block.compression_enabled = false;
                 block.compression_ratio = 1.0;
                 Ok(block)
@@ -908,7 +905,6 @@ struct DataBlockMetadata {
     pub uncompressed_size: u32,
 }
 
-// Removed - using bloom_filter::BloomFilter instead
 
 /// Batch extraction statistics for performance monitoring
 #[derive(Debug, Default)]
@@ -929,13 +925,10 @@ impl BatchExtractionStats {
 pub struct SstStorage {
     config: SstConfig,
     collection_id: String,
-    // REMOVED: memtable - SST is now pure SSTable storage
     // Global WAL memtable handles all in-memory buffering
-    // REMOVED: write_buffer_manager - Not needed for pure SSTable storage
     data_dir: PathBuf,
     compaction_manager: Option<Arc<CompactionManager>>,
     filesystem: Arc<FilesystemFactory>,
-    // Collection service removed - indexing configuration handled by AXIS
     // Atomic coordinator for safe flush and compaction operations
     atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
     // Unified search engine for consistent search implementation
@@ -1069,12 +1062,9 @@ impl SstStorage {
         Ok(())
     }
     
-    // Manifest getter removed - using directory-based discovery
 
 
-    // Collection service setter removed - indexing configuration handled by AXIS
 
-    // REMOVED: put, get, delete, exists methods - SST is now pure SSTable storage
     // All writes go through WAL → Flush → SSTable directly
     // No intermediate memtable needed
 
@@ -1234,7 +1224,6 @@ impl SstStorage {
         })
     }
 
-    // REMOVED: memtable_size, memtable_len, iter_all methods
     // SST is now pure SSTable storage - no memtable to query
     
 }
@@ -1268,8 +1257,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService> {
-        // Collection service removed - indexing configuration handled by AXIS
-        None
+            None
     }
 
     /// SST-specific flush implementation - Extract records from WAL vector record batches
@@ -2152,7 +2140,6 @@ impl SstStorage {
             let min_sequence = sstable_records.iter().map(|r| r.sequence_number).min().unwrap_or(0);
             let max_sequence = sstable_records.iter().map(|r| r.sequence_number).max().unwrap_or(0);
             
-            // Metadata statistics collection removed - directory-based discovery doesn't need manifest
             
             // SSTable file is now discoverable via directory listing
             info!("Created SSTable file: {} with {} records at level {}", filename, sstable_records.len(), level);

@@ -1159,7 +1159,6 @@ impl DirectVectorService {
         });
     }
     
-    // Legacy WAL writing methods removed - using OptimizedWriteBufferWriter exclusively
     
     /*
         &self,
@@ -1189,7 +1188,7 @@ impl DirectVectorService {
                 }
             }
         } else {
-            // Fallback to legacy writer
+            // Fallback to standard writer
             let collection_id = collection_id.to_string();
             let vectors = vectors.to_vec();
             let sequences = sequences.to_vec();
@@ -1423,7 +1422,6 @@ impl DirectVectorService {
     
     /// Calculate similarity result using unified distance computation
     /// Returns semantically consistent results with proper normalization
-    // Removed calculate_similarity_result and get_similarity_score - now calling distance_compute directly
 
     /// Optimized serialization with pluggable formats - maintains flexibility for different workloads
     /// Proto (default): Zero-copy writes, best for write-heavy workloads
@@ -1504,7 +1502,7 @@ impl DirectVectorService {
     }
     
     /// ✅ BATCH VECTOR OPERATIONS: Modern batch-based API (insert/upsert/delete)
-    /// Replaces legacy single-vector APIs - deletes use expires_at for tombstones
+    /// Deletes use expires_at for tombstones
     pub async fn handle_vector_batch_proto_vec(
         &self,
         collection_id: &str,
@@ -1749,8 +1747,6 @@ impl DirectVectorService {
         crate::core::search::json_comparison::evaluate_filter(filter_expr, &metadata_map)
     }
     
-    // Removed get_unified_similarity_score - now using SimilarityResult.normalized_score directly
-    // The UnifiedDistanceCompute already provides normalized scores in [0,1] range
 }
 
 /// Recovery statistics for WAL direct flush recovery

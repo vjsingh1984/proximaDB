@@ -161,7 +161,7 @@ impl WriteBufferBatchStrategy for BincodeSerializationStrategy {
         });
     }
 
-    // Removed legacy methods write_proto_batch and write_avro_batch
+    // Note: write_proto_batch and write_avro_batch methods were consolidated
     // All writes should use write_native_batch directly with collection_id
 
     async fn write_native_batch(&self, batch: WriteBufferVectorBatch, collection_id: &str) -> Result<Vec<u64>> {

@@ -165,9 +165,12 @@ impl FilestoreMetadataBackend {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         info!("🏗️ Initializing Filestore metadata backend: {}", config.storage_url);
+        info!("📁 DEBUG: Raw storage URL: '{}'", config.storage_url);
         
         // Parse base path from URL
         let base_path = Self::parse_base_path(&config.storage_url)?;
+        info!("📁 DEBUG: Parsed base_path: {:?}", base_path);
+        info!("📁 DEBUG: Base path as string: {}", base_path.display());
         
         // Proto-first architecture - no schema needed
             
@@ -216,6 +219,52 @@ impl FilestoreMetadataBackend {
         info!("✅ Filestore metadata backend ready, recovered sequence: {}", recovered_sequence);
         Ok(backend)
     }
+
+    /// Create new filestore backend for testing with atomic operations disabled
+    #[cfg(test)]
+    pub async fn new_for_testing(
+        config: FilestoreMetadataConfig,
+        filesystem_factory: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
+        info!("🏗️ Initializing Filestore metadata backend for testing: {}", config.storage_url);
+        
+        // Parse base path from URL
+        let base_path = Self::parse_base_path(&config.storage_url)?;
+        
+        // Create in-memory index
+        let index = Arc::new(SingleCollectionIndex::new());
+        
+        // Create atomic coordinator for metadata operations
+        let atomic_coordinator = Arc::new(
+            UnifiedAtomicCoordinator::new(
+                filesystem_factory.clone(),
+                config.temp_dir.clone(),
+            ).await
+            .context("Failed to create atomic coordinator")?
+        );
+        
+        let backend = Self {
+            config: config.clone(),
+            filesystem_factory,
+            base_path,
+            index,
+            sequence: AtomicU64::new(0),
+            snapshot_manager: Arc::new(Mutex::new(None)),
+            ops_since_snapshot: AtomicU64::new(0),
+            atomic_operations_enabled: false, // Disabled for testing
+            atomic_coordinator,
+        };
+        
+        // Initialize storage directories
+        backend.initialize_storage().await?;
+        
+        // Recover from existing data
+        let recovered_sequence = backend.recover_from_storage().await?;
+        backend.sequence.store(recovered_sequence, Ordering::SeqCst);
+        
+        info!("✅ Filestore metadata backend ready for testing, recovered sequence: {}", recovered_sequence);
+        Ok(backend)
+    }
     
     /// Parse base path from storage URL
     fn parse_base_path(url: &str) -> Result<PathBuf> {
@@ -240,21 +289,27 @@ impl FilestoreMetadataBackend {
     /// Initialize storage directory structure
     async fn initialize_storage(&self) -> Result<()> {
         let fs = self.get_fs()?;
+        info!("📁 DEBUG: Initializing storage with filesystem for URL: {}", self.config.storage_url);
         
-        // Create directory structure
+        // Create directory structure using URLs consistently
+        let base_url = &self.config.storage_url;
         let dirs = [
-            &self.base_path,
-            &self.base_path.join("current"),
-            &self.base_path.join("__staging"),
-            &self.base_path.join("archive"),
+            base_url.to_string(),
+            format!("{}/current", base_url.trim_end_matches('/')),
+            format!("{}/current/__staging", base_url.trim_end_matches('/')),
+            format!("{}/__staging", base_url.trim_end_matches('/')),
+            format!("{}/archive", base_url.trim_end_matches('/')),
         ];
         
-        for dir in &dirs {
-            let dir_str = dir.to_string_lossy();
-            if !fs.exists(&dir_str).await? {
-                fs.create_dir_all(&dir_str).await
-                    .with_context(|| format!("Failed to create directory: {}", dir_str))?;
-                debug!("📁 Created directory: {}", dir_str);
+        for dir_url in &dirs {
+            info!("📁 DEBUG: Checking/creating directory: {}", dir_url);
+            if !fs.exists(dir_url).await? {
+                info!("📁 DEBUG: Creating directory via filesystem: {}", dir_url);
+                fs.create_dir_all(dir_url).await
+                    .with_context(|| format!("Failed to create directory: {}", dir_url))?;
+                info!("📁 Created directory: {}", dir_url);
+            } else {
+                info!("📁 DEBUG: Directory already exists: {}", dir_url);
             }
         }
         
@@ -488,20 +543,26 @@ impl FilestoreMetadataBackend {
         // Create staging config for atomic operation  
         // The base_url should point to the current directory where files will be stored
         let base_url = format!("{}/current", self.config.storage_url.trim_end_matches('/'));
+        info!("📁 DEBUG: Creating staging config:");
+        info!("📁 DEBUG:   self.config.storage_url = '{}'", self.config.storage_url);
+        info!("📁 DEBUG:   Computed base_url = '{}'", base_url);
+        
         let staging_config = StagingConfig {
-            base_url,
+            base_url: base_url.clone(),
             operation_type: StagingOperationType::Metadata,
             collection_id: None, // No collection-specific directories for metadata
-            custom_staging_dir: Some("../__staging".to_string()), // Use the parent-level staging directory
+            custom_staging_dir: Some("__staging".to_string()), // Use staging directory within current
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
-            ..Default::default()  // This will pick up skip_uuid_subdir: false
+            skip_uuid_subdir: true,  // Skip UUID subdirectory to prevent orphaned directories
+            ..Default::default()
         };
         
         info!("📁 Staging config:");
         info!("    base_url: {}", staging_config.base_url);
         info!("    custom_staging_dir: {:?}", staging_config.custom_staging_dir);
         info!("    operation_type: {:?}", staging_config.operation_type);
+        info!("📁 DEBUG: Expected staging path: {}/{}/<operation_id>", base_url, "__staging");
         
         // Begin atomic operation
         let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
@@ -594,7 +655,11 @@ impl FilestoreMetadataBackend {
         // Create operation filename with sequence
         let filename = format!("op_{:016}.oplog", operation.sequence);
         let op_path = ops_dir.join(&filename);
-        let temp_path = self.base_path.join("staging").join(&format!("temp_{}", filename));
+        
+        // Create staging directory if it doesn't exist for simple operations
+        let staging_dir = self.base_path.join("staging");
+        std::fs::create_dir_all(&staging_dir).ok();
+        let temp_path = staging_dir.join(&format!("temp_{}", filename));
         
         // Serialize operation to Avro
         // Serialize operation log entry as JSON for simplicity
@@ -1020,7 +1085,8 @@ impl FilestoreMetadataBackend {
             custom_staging_dir: Some("__metadata".to_string()),
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
-            ..Default::default()  // This will pick up skip_uuid_subdir: false
+            skip_uuid_subdir: true,  // Skip UUID subdirectory to prevent orphaned directories
+            ..Default::default()
         };
         
         // Begin atomic operation
@@ -1488,5 +1554,147 @@ mod tests {
         // Test delete collection
         backend.delete_collection("test_collection").await.unwrap();
         assert!(!backend.collection_exists("test_collection").await.unwrap());
+    }
+}
+
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use tempfile::TempDir;
+    use crate::proto::proximadb::{IndexingAlgorithm, CollectionConfig, CollectionStats};
+
+    #[tokio::test]
+    async fn test_atomic_operation_path_handling() {
+        // Test that atomic operations don't duplicate paths
+        let temp_dir = TempDir::new().unwrap();
+        let metadata_url = format!("file://{}", temp_dir.path().to_str().unwrap());
+        
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let fs_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+        let config = FilestoreMetadataConfig {
+            storage_url: metadata_url.clone(),
+            enable_compression: true,
+            enable_snapshots: true,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+        
+        let backend = FilestoreMetadataBackend::new(config, fs_factory).await.unwrap();
+        
+        // Create a test collection using proper proto structure
+        
+        let collection = crate::proto::proximadb::Collection {
+            id: "test_atomic".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_atomic_collection".to_string(),
+                dimension: 128,
+                distance_metric: 0, // Cosine
+                storage_engine: 0, // VIPER
+                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization_config: None,
+                primary_index_name: String::new(),
+                enable_automatic_index_selection: false,
+                description: Some("Test atomic collection".to_string()),
+                tags: vec!["test".to_string()],
+                owner: Some("test_user".to_string()),
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        };
+        
+        // Store the collection
+        backend.upsert_collection_proto(&collection).await.unwrap();
+        
+        // Verify the staging directory structure
+        let current_staging = temp_dir.path().join("current").join("__staging");
+        assert!(current_staging.exists(), "Current staging directory should exist");
+        
+        // Verify no duplicated paths
+        let duplicated_path = temp_dir.path().join(temp_dir.path().file_name().unwrap());
+        assert!(!duplicated_path.exists(), "Should not create duplicated directory structure");
+    }
+
+    #[tokio::test]
+    async fn test_relative_path_handling() {
+        // Test relative path handling specifically
+        let test_dir = "test_relative_metadata";
+        std::fs::remove_dir_all(test_dir).ok(); // Clean up any previous test runs
+        std::fs::create_dir_all(test_dir).ok();
+        std::fs::create_dir_all(format!("{}/current", test_dir)).ok();
+        std::fs::create_dir_all(format!("{}/staging", test_dir)).ok();
+        
+        let metadata_url = format!("file://./{}", test_dir);
+        
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let fs_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+        let config = FilestoreMetadataConfig {
+            storage_url: metadata_url.clone(),
+            enable_compression: true,
+            enable_snapshots: true,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+        
+        let backend = FilestoreMetadataBackend::new_for_testing(config, fs_factory).await.unwrap();
+        
+        // Store a collection using proper proto structure
+        let collection = crate::proto::proximadb::Collection {
+            id: "relative_test".to_string(),
+            config: Some(CollectionConfig {
+                name: "relative_test_collection".to_string(),
+                dimension: 128,
+                distance_metric: 0, // Cosine
+                storage_engine: 0, // VIPER
+                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization_config: None,
+                primary_index_name: String::new(),
+                enable_automatic_index_selection: false,
+                description: Some("Test relative collection".to_string()),
+                tags: vec!["test".to_string()],
+                owner: Some("test_user".to_string()),
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        };
+        
+        backend.upsert_collection_proto(&collection).await.unwrap();
+        
+        // Verify correct path structure
+        assert!(std::path::Path::new(test_dir).join("current").exists());
+        assert!(!std::path::Path::new(test_dir).join(test_dir).exists());
+        
+        // Cleanup
+        std::fs::remove_dir_all(test_dir).ok();
     }
 }

@@ -29,7 +29,6 @@ use tracing::{debug, info, warn};
 // Using String directly instead of String alias for proto-first architecture
 use crate::proto::proximadb::{CollectionConfig, Collection};
 use crate::core::config::StorageConfig;
-// Using proto types directly - CollectionRecord is obsolete
 use crate::storage::assignment_service::{
     get_assignment_service, AssignmentService, StorageComponentType,
 };
@@ -176,7 +175,6 @@ impl CollectionService {
     }
 
     
-    // Removed legacy conversion methods - use get_proto_collection() directly for proto-first architecture
     
     /// Get the full proto collection with all metadata - direct access to deserialized object
     pub async fn get_proto_collection(&self, identifier: &str) -> Result<Option<Collection>> {
@@ -222,7 +220,6 @@ impl CollectionService {
     }
     
     /// Convert Collection to core Collection - direct proto to core mapping
-    // Removed second convert_proto_to_collection method - use proto types directly
 
     /// Get IndexConfig for a collection by name or UUID with caching
     pub async fn get_native_index_config(&self, identifier: &str) -> Result<Option<crate::index::config::IndexConfig>> {
@@ -445,7 +442,6 @@ impl CollectionService {
         }
     }
     
-    // Removed get_full_config - use get_proto_collection() directly for proto-first architecture
 
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
@@ -933,7 +929,6 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    // Removed old assignment config methods - no longer needed with unified assignment
     
     /// Generate unique collection ID using base62-encoded seconds with random padding
     /// Format: {base62(seconds)}{random_base62_char}

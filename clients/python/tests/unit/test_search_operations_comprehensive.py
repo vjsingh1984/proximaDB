@@ -43,7 +43,7 @@ class TestSearchOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Search operations test collection"
         )
         
@@ -448,7 +448,7 @@ class TestSearchOperations:
         config = CollectionConfig(
             name=empty_collection,  # Use unique name instead of "test_collection"
             dimension=768,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         grpc_client.create_collection(empty_collection, config)
         
         try:
@@ -486,7 +486,7 @@ class TestAdvancedSearchFeatures:
         config = CollectionConfig(
             name=collection_name,
             dimension=768,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         collection = grpc_client.create_collection(collection_name, config)
         

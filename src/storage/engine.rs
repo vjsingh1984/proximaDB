@@ -192,7 +192,6 @@ impl StorageEngine {
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?,
         );
 
-        // Metadata store removed - now handled by SharedServices as per user's architectural guidance
         // StorageEngine focuses on pure storage operations (LSM, WAL, MMAP)
         tracing::info!("📂 StorageEngine: Metadata operations delegated to SharedServices");
 
@@ -809,8 +808,7 @@ impl StorageEngine {
     }
 
     // Get collection metadata
-    // NOTE: Collection metadata operations removed from storage layer.
-    // These operations should be performed directly through CollectionService.
+    // Collection metadata operations should be performed directly through CollectionService.
     // Storage layer focuses only on data persistence, not metadata management.
 
     /// Delete collection and all its data
@@ -1385,7 +1383,7 @@ impl StorageEngine {
 
         // LSM is now pure SSTable storage - no vectors to get from memtable
         // All LSM data is in SSTables which should be accessed via the search API
-        // This method is deprecated for LSM - use search API instead
+        // Use search API instead
         tracing::debug!(
             "LSM is pure SSTable storage - vectors for collection {} must be accessed via search API",
             collection_id

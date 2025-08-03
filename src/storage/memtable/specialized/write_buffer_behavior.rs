@@ -191,7 +191,6 @@ impl WriteBufferBehaviorWrapper {
         self.sequence_generator.load(Ordering::SeqCst)
     }
 
-    // WalEntry and extract_vector_id removed - use WriteBufferVectorBatch for batch operations
 
     /// Add WriteBufferOperation with single deserialization (OPTIMAL: single CPU deserialize for all strategies)
     /// This deserializes the payload once and creates WriteBufferVectorBatch for storage
@@ -305,7 +304,6 @@ impl WriteBufferBehaviorWrapper {
         Ok(sequences)
     }
 
-    // Legacy get_unflushed_batches removed - use the modern GlobalPartitionedMemtable-based method
 
     /// Mark batch as flushed (Write Buffer-specific behavior)
     pub async fn mark_batch_flushed(&self, collection_id: &str, batch_id: &str) -> Result<()> {
@@ -328,7 +326,6 @@ impl WriteBufferBehaviorWrapper {
 
 /// Write Buffer-specific implementation
 impl WriteBufferBehaviorWrapper {
-    // REMOVED: insert_wal_entry() - Use add_vector_batch() for unified API
 
     /// Get all vectors from the memtable (for recovery) - MODERN
     pub async fn get_all_vectors(
@@ -388,7 +385,7 @@ impl WriteBufferBehaviorWrapper {
         Ok(size >= self.config.flush_threshold_bytes * 2 || count >= 50000)
     }
 
-    /// Clear flushed entries for a specific collection (legacy compatibility wrapper)
+    /// Clear flushed entries for a specific collection
     pub async fn clear_flushed_by_collection_id(
         &self,
         collection_id: &crate::core::String,
@@ -397,12 +394,8 @@ impl WriteBufferBehaviorWrapper {
         self.clear_flushed(collection_id).await
     }
 
-    // REMOVED: insert_batch() - Use add_vector_batch() for unified API
 
-    // REMOVED: insert_with_sequence() - Use add_vector_batch() for unified API with custom sequence
 
-    // REMOVED: should_flush() - Flush decisions are made by DirectVectorService based on GlobalPartitionedMemtable stats
-    // WriteBufferBehaviorWrapper only provides WAL serialization/deserialization behavior
 
     /// Get unflushed batches for collection (MODERN - for direct storage engine flush)
     pub async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WriteBufferVectorBatch>> {
@@ -505,7 +498,6 @@ impl WriteBufferBehaviorWrapper {
         self.inner.get_vector_by_id(collection_id, vector_id).await
     }
 
-    // get_latest_version removed - use get_latest_vector with collection_id parameter
 
     /// Cleanup old versions (keep only N latest)
     pub async fn cleanup_versions(&self, vector_id: &str, keep_count: usize) -> Result<usize> {
@@ -539,9 +531,6 @@ impl WriteBufferBehaviorWrapper {
     }
 }
 
-// REMOVED: Legacy MemtableCore<u64, WalEntry> trait implementation
-// This trait used the deprecated WalEntry type which has been eliminated
-// All functionality has been moved to modern batch-oriented methods
 
 impl WriteBufferBehaviorWrapper {
     /// Get all vectors from all collections ordered by sequence (MODERN)
@@ -633,7 +622,7 @@ impl WriteBufferBehaviorWrapper {
         self.inner.remove_batch(collection_id, batch_id).await
     }
 
-    /// Get statistics with String keys (legacy compatibility wrapper)
+    /// Get statistics with String keys
     pub async fn get_stats_by_collection_id(
         &self,
     ) -> Result<
@@ -771,10 +760,7 @@ impl WriteBufferBehaviorWrapper {
     }
 }
 
-// OrderedWalEntry removed - use WriteBufferVectorBatch for batch operations
 
-// OrderedVectorRecord removed - storage engines handle their own ordering and serialization
-// VectorRecord is passed directly to avoid double serialization overhead
 
 /// Write Buffer-specific metrics
 #[derive(Debug, Clone, Default)]

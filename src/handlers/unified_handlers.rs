@@ -589,7 +589,7 @@ impl UnifiedHandlers {
     }
     
     
-    /// Update utility methods to use DirectVectorService (remove legacy single-vector APIs)
+    /// Force flush all collections
     pub async fn force_flush_all(&self) -> Result<serde_json::Value> {
         debug!("⚡ UnifiedHandlers: Force flushing all collections");
         self.direct_vector_service.force_flush_all().await

@@ -1,7 +1,7 @@
 //! Batch-Oriented Write Buffer Strategy (Modern Architecture)
 //!
-//! This module defines the new WriteBufferBatchStrategy trait that replaces the deprecated
-//! individual-entry based WalStrategy. The batch-oriented approach provides:
+//! This module defines the WriteBufferBatchStrategy trait for batch-oriented operations.
+//! The batch-oriented approach provides:
 //! - Better performance through batch operations
 //! - Zero-copy Avro serialization 
 //! - Native batch storage in memtables
@@ -244,8 +244,6 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
         Ok(wal_operation)
     }
 
-    // Removed legacy methods: write_avro_batch, write_proto_batch, write_vector_batch
-    // All writes should use write_native_batch directly with collection_id
 
     /// Primary method: Write native WriteBufferVectorBatch directly to memtable
     /// This is the core method that all others delegate to
@@ -477,7 +475,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
         }
     }
 
-    /// Legacy wrapper for backward compatibility
+    /// Wrapper for backward compatibility
     async fn persist_wal_operation_to_disk(
         &self,
         collection_id: &str,
@@ -908,8 +906,6 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
     }
 }
 
-// Removed WalBatchStrategyExt trait - insert_vector/insert_vectors methods were only used in tests
-// All production code should use write_native_batch directly with collection_id
 
 /// Write Buffer disk entry structure for persistence
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

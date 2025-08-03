@@ -45,7 +45,7 @@ class TestVIPERStorageLayout:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="VIPER flush test collection",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=8.0)  # Low threshold to trigger flush
@@ -291,7 +291,7 @@ class TestSSTStorageLayout:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="SST compaction test collection",
             storage_layout="sst",  # SST tree storage
             flush_config=FlushConfig(max_wal_size_mb=6.0)  # Lower threshold for more frequent flushes
@@ -535,7 +535,7 @@ class TestStorageLayoutComparison:
         viper_config = CollectionConfig(
             name=viper_collection,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="VIPER performance test",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=10.0)
@@ -544,7 +544,7 @@ class TestStorageLayoutComparison:
         sst_config = CollectionConfig(
             name=sst_collection,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="SST performance test",
             storage_layout="sst",
             flush_config=FlushConfig(max_wal_size_mb=10.0)
@@ -747,7 +747,7 @@ class TestCrossStorageSearch:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Unified search test across storage layers",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=5.0)

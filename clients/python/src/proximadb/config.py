@@ -293,9 +293,9 @@ class ClientConfig(BaseModel):
         
         # ProximaDB standard port allocation
         if target_protocol == Protocol.REST:
-            port = 5679 if scheme == "https" else 5678
+            port = 5678  # REST API port (same for HTTP/HTTPS) 
         elif target_protocol == Protocol.GRPC:
-            port = 5681 if scheme == "https" else 5680  
+            port = 5679  # gRPC API port (same for HTTP/HTTPS)  
         elif target_protocol == Protocol.AVRO:
             port = 5683 if scheme == "https" else 5682
         else:

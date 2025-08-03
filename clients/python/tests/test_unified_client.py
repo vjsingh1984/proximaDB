@@ -53,7 +53,7 @@ def test_pydantic_model_creation():
     config = CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW,
         description="Test collection",
@@ -63,7 +63,7 @@ def test_pydantic_model_creation():
     
     assert config.name == "test_collection"
     assert config.dimension == 128
-    assert config.distance_metric == DistanceMetric.COSINE
+    assert config.distance_metric == "cosine"
     assert config.storage_engine == StorageEngine.VIPER
     assert config.primary_indexing_algorithm == IndexingAlgorithm.HNSW
     assert config.description == "Test collection"
@@ -113,9 +113,9 @@ def test_type_conversion_helpers():
     client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.REST)
     
     # Test distance metric conversion
-    assert client._proto_to_pydantic_distance_metric(1) == DistanceMetric.COSINE
-    assert client._proto_to_pydantic_distance_metric(2) == DistanceMetric.EUCLIDEAN
-    assert client._proto_to_pydantic_distance_metric(3) == DistanceMetric.DOT_PRODUCT
+    assert client._proto_to_pydantic_distance_metric(1) == "cosine"
+    assert client._proto_to_pydantic_distance_metric(2) == "euclidean"
+    assert client._proto_to_pydantic_distance_metric(3) == "dot_product"
     
     # Test storage engine conversion
     assert client._proto_to_pydantic_storage_engine(1) == StorageEngine.VIPER
@@ -131,7 +131,7 @@ def test_type_conversion_helpers():
     try:
         from proximadb import proximadb_pb2 as pb2
         
-        assert client._pydantic_to_proto_distance_metric(DistanceMetric.COSINE) == pb2.DistanceMetric.COSINE
+        assert client._pydantic_to_proto_distance_metric("cosine") == pb2.COSINE
         assert client._pydantic_to_proto_storage_engine(StorageEngine.VIPER) == pb2.StorageEngine.VIPER
         assert client._pydantic_to_proto_indexing_algorithm(IndexingAlgorithm.HNSW) == pb2.IndexingAlgorithm.HNSW
         

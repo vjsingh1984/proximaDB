@@ -101,7 +101,7 @@ pub struct WriteBufferOperation {
     pub operation_type: String,
     /// Binary payload data (Proto bytes default, strategy-specific for others)
     pub payload_data: Vec<u8>,
-    /// Payload format: "proto" (default), "avro" (legacy), "bincode" (performance)
+    /// Payload format: "proto" (default), "avro", "bincode" (performance)
     pub payload_format: String,
     /// Number of vectors in this batch (for metrics)
     pub vector_count: usize,
@@ -111,7 +111,6 @@ pub struct WriteBufferOperation {
 pub use compact_batch_id::CompactBatchId as BatchId;
 
 
-// WalEntry removed - use WriteBufferVectorBatch for batch-oriented operations instead
 
 impl WriteBufferOperation {
     /// Calculate the actual memory size of this WAL operation including vector data
@@ -127,7 +126,6 @@ impl WriteBufferOperation {
     }
 
     /// Extract VectorRecord from WAL entry operation
-    /// Used by migration adapters and legacy compatibility
     pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
         // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
@@ -172,7 +170,6 @@ pub struct WriteBufferStats {
     pub compression_ratio: f64,
 }
 
-// FlushResult removed - use crate::storage::traits::FlushResult instead
 
 /// Atomic flush cycle for consistent WAL→Storage operations
 #[derive(Debug, Clone)]
@@ -845,7 +842,7 @@ pub struct WriteBufferManagerPoolStats {
 }
 
 impl WriteBufferManager {
-    /// Create new WriteBufferManager (legacy method for compatibility with tests)
+    /// Create new WriteBufferManager
     pub async fn new(strategy: Box<dyn WriteBufferBatchStrategy>, config: WriteBufferConfig) -> Result<Self> {
         // Use new_pool_manager with a default manager ID for backwards compatibility
         Self::new_pool_manager(strategy, config, "default_manager".to_string()).await
@@ -986,7 +983,6 @@ impl WriteBufferManager {
         Self::create_with_factory(strategy_type, config, filesystem).await
     }
 
-    // Atomicity manager methods removed - use UnifiedAtomicCoordinator from atomic module instead
 
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
@@ -999,15 +995,10 @@ impl WriteBufferManager {
         &self.config
     }
 
-    // Execute atomic operation method removed - use UnifiedAtomicCoordinator instead
 
-    // Execute in transaction method removed - use UnifiedAtomicCoordinator instead
 
-    // Begin transaction method removed - use UnifiedAtomicCoordinator instead
 
-    // Commit transaction method removed - use UnifiedAtomicCoordinator instead
 
-    // Rollback transaction method removed - use UnifiedAtomicCoordinator instead
 
     /// Insert single vector record (converted to batch of 1 via WriteBufferVectorBatch)
     pub async fn insert(
@@ -1079,7 +1070,7 @@ impl WriteBufferManager {
         &self,
         collection_id: String,
         records: Vec<(VectorId, VectorRecord)>,
-        _immediate_sync: bool, // Deprecated - sync happens during atomic flush
+        _immediate_sync: bool,
     ) -> Result<Vec<u64>> {
         let vector_records: Vec<VectorRecord> = records.into_iter().map(|(_, record)| record).collect();
         
@@ -1140,7 +1131,7 @@ impl WriteBufferManager {
         from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
-        // Get vectors from the collection instead of legacy entries
+        // Get vectors from the collection
         let vectors = self.strategy.get_collection_vectors(collection_id).await?;
         
         // Apply sequence filtering and limit if needed
@@ -1247,7 +1238,6 @@ impl WriteBufferManager {
         Ok(stats)
     }
 
-    // Legacy recover method removed - using enhanced version below
 
     /// Graceful shutdown
     pub async fn close(&self) -> Result<()> {
@@ -1316,8 +1306,6 @@ impl WriteBufferManager {
         self.strategy.write_native_batch(native_batch, collection_id).await
     }
 
-    // REMOVED: write_vector_batch_native method - first release, zero-copy Arc-based API only
-    // REMOVED: write_vector_batch_with_sync method - deprecated in favor of write_native_batch
 
     /// Insert multiple vectors efficiently (modern API)
     pub async fn insert_vectors(

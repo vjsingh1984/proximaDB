@@ -43,7 +43,7 @@ class TestSearchOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Search operations test collection"
         )
         
@@ -459,7 +459,7 @@ class TestSearchOperations:
     def test_empty_collection_search(self, grpc_client, bert_model):
         """Test search on empty collection"""
         empty_collection_name = f"empty_search_{int(time.time())}"
-        config = CollectionConfig(name=empty_collection_name, dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(name=empty_collection_name, dimension=384, distance_metric="cosine")
         empty_collection = grpc_client.create_collection(empty_collection_name, config)
         
         try:
@@ -498,7 +498,7 @@ class TestAdvancedSearchFeatures:
     def test_search_performance_basic(self, grpc_client, bert_model):
         """Test basic search performance characteristics"""
         collection_name = f"perf_test_{int(time.time())}"
-        config = CollectionConfig(name=collection_name, dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(name=collection_name, dimension=384, distance_metric="cosine")
         
         collection = grpc_client.create_collection(collection_name, config)
         
@@ -540,7 +540,7 @@ class TestAdvancedSearchFeatures:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             quantization_config=QuantizationConfig(
                 enabled=True,
                 type=QuantizationType.SCALAR,
@@ -629,7 +629,7 @@ class TestAdvancedSearchFeatures:
     def test_grpc_search_with_optimization(self, grpc_client, bert_model):
         """Test gRPC search with optimization hints"""
         collection_name = f"grpc_opt_test_{int(time.time())}"
-        config = CollectionConfig(name=collection_name, dimension=384, distance_metric=DistanceMetric.COSINE)
+        config = CollectionConfig(name=collection_name, dimension=384, distance_metric="cosine")
         
         collection = grpc_client.create_collection(collection_name, config)
         
@@ -688,7 +688,7 @@ class TestAdvancedSearchFeatures:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.EUCLIDEAN,
+            distance_metric="euclidean",
             quantization_config=QuantizationConfig(
                 enabled=True,
                 type=QuantizationType.UNIFORM,

@@ -57,22 +57,22 @@ cargo test --all
 
 == Testing Framework
 
-=== Test Statistics (2025-08-02)
+=== Test Statistics (2025-08-03)
 
 [cols="2,1,3"]
 |===
 | Test Category | Count | Description
 
 | **Total Rust Tests**
-| 1,407
+| 901
 | Comprehensive test suite - 100% pass rate achieved
 
 | **Main Library Tests**  
-| 882
-| Core functionality (all passed, 0 failures, 10 ignored)
+| 890
+| Core functionality (all passed, 0 failures, 11 ignored)
 
 | **Integration Tests**
-| 267
+| 11
 | Cross-module workflows (all passed, 0 failures)
 
 | **Python SDK Tests**
@@ -88,13 +88,13 @@ cargo test --all
 
 ```
 tests/
-├── unit/                 # Unit tests (398 tests)
+├── unit/                 # Unit tests (890 tests in library)
 │   ├── storage/         # Storage engine tests
 │   ├── services/        # Service layer tests
 │   ├── compute/         # Distance metrics tests
 │   ├── index/           # AXIS indexing tests
 │   └── core/           # Core functionality tests
-├── integration/         # Integration tests (153 tests)
+├── integration/         # Integration tests (11 tests)
 │   ├── api/            # API integration tests
 │   ├── storage/        # Storage integration tests
 │   └── end_to_end/     # Full system tests
@@ -303,13 +303,13 @@ cargo test-coverage-safe
 cargo test --all
 ----
 
-=== Current Coverage Status (2025-08-02)
+=== Current Coverage Status (2025-08-03)
 
 ==== Overall Statistics
 - **Current Coverage**: 38.10% (9,669/25,379 lines)
 - **Total Modules**: 185 analyzed
 - **Target Goal**: 50% coverage (+11.9% needed)
-- **Test Success Rate**: 100% (1,092 tests passing)
+- **Test Success Rate**: 100% (890 library tests passing, 11 ignored)
 
 ==== Category Coverage Analysis
 
@@ -532,12 +532,12 @@ valgrind --leak-check=full target/debug/proximadb-server
 |Test Category |Passed |Failed |Success Rate
 
 |Unit Tests (Library)
-|595
+|890
 |0
 |100%
 
 |Integration Tests  
-|141
+|11
 |0
 |100%
 
@@ -547,7 +547,7 @@ valgrind --leak-check=full target/debug/proximadb-server
 |98.8%
 
 |**Total**
-|**904**
+|**1069**
 |**2**
 |**99.8%**
 |===

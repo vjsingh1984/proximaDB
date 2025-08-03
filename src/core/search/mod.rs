@@ -1,11 +1,8 @@
 //! Search module for ProximaDB storage-aware search implementations
 
-// pub mod lsm_search; // Obsolete - uses old storage_aware interface
 pub mod multi_tier_deduplication;
 pub mod results;
-// pub mod storage_aware; // Obsolete - replaced by unified search
 pub mod unified_interface;
-// pub mod viper_search; // Obsolete - uses old storage_aware interface
 pub mod typesafe_filter;
 pub mod index_based_filter;
 
@@ -173,11 +170,6 @@ pub use multi_tier_deduplication::{
 };
 
 // Filter types are already defined above, no need to re-export
-// Obsolete storage_aware exports - replaced by unified search
-// pub use storage_aware::{
-//     ClusteringHints, QuantizationLevel, SearchCapabilities, SearchEngineFactory,
-//     SearchMetrics, SearchValidator, StorageSearchEngine,
-// };
 pub use results::{SearchResult, SearchResultSet, SearchDebugInfo, QuantizationInfo, EngineStats};
 pub use unified_interface::{
     UnifiedSearchEngine, UnifiedSearchOrchestrator, UnifiedSearchContext,

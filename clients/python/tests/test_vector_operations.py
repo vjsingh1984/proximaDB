@@ -44,7 +44,7 @@ class TestVectorCRUD:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Vector CRUD test collection"
         )
         
@@ -264,7 +264,7 @@ class TestBatchVectorOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Batch operations test collection",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=32.0)
@@ -362,7 +362,7 @@ class TestLargeScaleOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=512,  # Larger dimension for more data per vector
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Large-scale operations test",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=16.0)  # Lower threshold to trigger flush
@@ -525,7 +525,7 @@ class TestVectorValidation:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         collection = client.create_collection(collection_name, config)
         
         try:
@@ -552,7 +552,7 @@ class TestVectorValidation:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         collection = client.create_collection(collection_name, config)
         
         try:

@@ -216,28 +216,22 @@ impl SameMountTempExecutor {
     }
 
     fn generate_temp_path(&self, final_path: &str) -> FsResult<String> {
-        // Handle URLs properly
+        // Use centralized URL path extraction for consistent handling
+        use super::FilesystemFactory;
+        
         let (base_url, path_part) = if final_path.contains("://") {
-            // It's a URL - extract the path part after the scheme
-            let parts: Vec<&str> = final_path.splitn(2, "://").collect();
-            if parts.len() != 2 {
-                return Err(FilesystemError::InvalidPath("Invalid URL format".to_string()));
-            }
-            let scheme = parts[0];
-            let remaining = parts[1];
+            // Extract scheme for URL reconstruction
+            use url::Url;
+            let parsed_url = Url::parse(final_path)?;
+            let scheme = parsed_url.scheme();
             
-            // For file:// URLs, the path starts after the third slash
-            let path_start = if scheme == "file" {
-                remaining
-            } else {
-                // For other schemes (s3://, gs://), find the first slash after the bucket
-                remaining.splitn(2, '/').nth(1).unwrap_or(remaining)
-            };
+            // Use centralized path extraction (handles relative paths correctly)
+            let path = FilesystemFactory::extract_path_from_url_safe(final_path)?;
             
-            (format!("{}://", scheme), path_start)
+            (format!("{}://", scheme), path)
         } else {
             // Not a URL, treat as regular path
-            ("".to_string(), final_path)
+            ("".to_string(), final_path.to_string())
         };
         
         let final_path = Path::new(&path_part);

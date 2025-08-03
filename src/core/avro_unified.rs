@@ -337,17 +337,13 @@ impl VectorRecord {
     }
 }
 
-// SearchResult removed - now using unified SearchResult from core::search::results
-// Avro serialization is obsolete in proto-first architecture
 
-// Collection struct removed - use crate::proto::proximadb::Collection for proto-first architecture
 
 /// Use proto-generated enums as single source of truth
 pub use crate::proto::proximadb::DistanceMetric;
 pub use crate::proto::proximadb::StorageEngine;
 pub use crate::proto::proximadb::IndexingAlgorithm;
 
-// IndexingAlgorithm enum removed - using proto-generated version
 
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -696,7 +692,6 @@ pub struct CollectionResponse {
     pub processing_time_us: i64,
 }
 
-// SearchResultsBinary removed - obsolete in proto-first architecture
 
 // Implementation blocks for new types
 impl CollectionRequest {

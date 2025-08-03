@@ -958,7 +958,7 @@ mod arm_implementations {
 #[cfg(target_arch = "aarch64")]
 pub use arm_implementations::*;
 
-// Legacy SimdLevel enum for backwards compatibility in hardware detection
+// SimdLevel enum for hardware detection
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SimdLevel {
     Scalar,

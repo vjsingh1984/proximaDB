@@ -9,7 +9,7 @@
 //! It's responsible for:
 //! - Merging incremental operations into snapshots
 //! - Archiving old snapshots and incremental logs
-//! - Cleaning up obsolete files
+//! - Cleaning up old files
 //! - Maintaining the last N snapshots for recovery
 //!
 //! The checkpoint creation process is atomic and blocks all API operations during execution.

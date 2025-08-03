@@ -18,10 +18,7 @@ use crate::proto::proximadb::{
 use crate::services::collection_service::CollectionService;
 use crate::services::direct_vector_service::DirectVectorService;
 use crate::network::grpc::conversions::convert_search_results;
-// Removed uuid import - no longer auto-generating vector IDs
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::StorageEngine as StorageEngineImpl;
-// Note: schema_types module has been removed, types moved to crate::core
 use crate::core::{
     VectorInsertResponse as SchemaVectorInsertResponse,
     VectorOperationMetrics as SchemaVectorOperationMetrics,
@@ -38,7 +35,6 @@ pub struct ProximaDbGrpcService {
 }
 
 impl ProximaDbGrpcService {
-    // Legacy constructors removed - use new_with_services with SharedServices instead
 
     async fn create_collection_service(
         metadata_config: Option<crate::core::config::MetadataBackendConfig>,
@@ -107,8 +103,6 @@ impl ProximaDbGrpcService {
         )
     }
 
-    // Removed create_direct_vector_service - DirectVectorService is now created in SharedServices
-    // This ensures consistent service creation across all protocols
 
     /// Create gRPC service with pre-initialized shared services (multi-server pattern)
     pub async fn new_with_services(services: crate::network::multi_server::SharedServices) -> Self {
@@ -597,7 +591,6 @@ impl ProximaDb for ProximaDbGrpcService {
         return Ok(Response::new(proto_response));
     }
 
-    // Vector mutation removed - using unified batch operations with expires_at for deletes
 
     /// Vector search with multiple search types: similarity, metadata filters, ID lookup
     async fn vector_search(
@@ -874,7 +867,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 }));
             }
             
-            // Legacy path: Convert to bytes format preserving unified distance scores
+            // Convert to bytes format preserving unified distance scores
             serde_json::to_vec(&serde_json::json!({
                 "results": search_results.iter().map(|result| {
                     serde_json::json!({
@@ -1014,7 +1007,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 }));
             }
             
-            // Legacy JSON path
+            // JSON path
             for (index, query) in req.queries.iter().enumerate() {
                 // Reuse the same search params for all queries
                 let query_params = search_params.clone();

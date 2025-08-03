@@ -2,102 +2,140 @@
 
 sequenceDiagram
     participant Main as ProximaDB::new
+    participant MC as MetricsCollector
     participant SS as SharedServices
-    participant CS as CollectionService  
+    participant CS as CollectionService
     participant DVS as DirectVectorService
-    participant VIPER as ViperEngine
-    participant SST as SstEngine
-    participant WB as WriteBufferManager
-    participant AC as AtomicCoordinator
+    participant SE as StorageEngine
+    participant QE as QueryEngine
     participant MS as MultiServer
+    participant REST as REST Server
+    participant GRPC as gRPC Server
     
-    Note over Main: 🚀 ProximaDB Initialization (2025-08-02)
+    Note over Main: 🚀 ProximaDB Initialization Sequence
     
-    Main->>Main: 1. Initialize configuration<br/>(demo/docker-config.toml)
-    
-    Main->>AC: 2. Create UnifiedAtomicCoordinator
-    activate AC
-    AC->>AC: Initialize staging operations
-    AC->>AC: Setup storage backends
-    AC-->>Main: AtomicCoordinator ready
-    deactivate AC
-    
-    Main->>WB: 3. Create WriteBufferManager
-    activate WB
-    WB->>WB: Setup memory pools
-    WB->>WB: Initialize serialization strategies
-    WB-->>Main: WriteBufferManager ready
-    deactivate WB
-    
-    Main->>VIPER: 4. Create VIPER Engine
-    activate VIPER
-    VIPER->>VIPER: Initialize parquet writer
-    VIPER->>VIPER: Setup unified search engine
-    VIPER-->>Main: VIPER Engine ready
-    deactivate VIPER
-    
-    Main->>SST: 5. Create SST Engine
-    activate SST
-    SST->>SST: Initialize sstable manager
-    SST->>SST: Setup unified search engine
-    SST-->>Main: SST Engine ready
-    deactivate SST
-    
-    Main->>SS: 6. Create SharedServices
-    activate SS
-    SS->>CS: Create CollectionService
-    activate CS
-    CS->>CS: Initialize metadata store
-    CS-->>SS: CollectionService ready
-    deactivate CS
-    
-    SS->>DVS: Create DirectVectorService
-    activate DVS
-    DVS->>DVS: Inject VIPER engine
-    DVS->>DVS: Inject SST engine
-    DVS->>DVS: Configure dual-engine coordination
-    DVS-->>SS: DirectVectorService ready
-    deactivate DVS
-    
-    SS-->>Main: SharedServices ready
-    deactivate SS
-    
-    Note over Main,DVS: ✅ Dual Engine Architecture Initialized
-    
-    Main->>Main: 7. Recovery Phase
-    
-    Main->>WB: Recover from write buffers
-    activate WB
-    WB->>WB: Scan persistence directories
-    WB->>WB: Load unflushed batches
-    WB-->>Main: Recovery complete (vectors loaded)
-    deactivate WB
-    
-    Note over WB: 📦 Vector Recovery Complete
-    
-    Main->>CS: 8. Collection Discovery
-    activate CS
-    CS->>CS: Scan metadata backends
-    CS->>CS: Load collection configurations
-    CS-->>Main: Collections discovered
-    deactivate CS
-    
-    Note over CS: 🗃️ Collection Metadata Ready
-    
-    Main->>MS: 9. Start MultiServer
-    activate MS
-    MS->>MS: Initialize Axum REST server (port 5678)
-    MS->>MS: Initialize Tonic gRPC server (port 5679)
-    MS->>MS: Setup unified handlers
-    MS-->>Main: Servers started
-    deactivate MS
-    
-    Note over Main,MS: 🎉 ProximaDB Ready!<br/>Test Status: 1,372 passed, 0 failed, 35 ignored
-    
-    rect rgb(230, 255, 230)
-        Note over DVS, SST: ✅ Strengths<br/>• Dual engine support working<br/>• ACID transactions via AtomicCoordinator<br/>• 100% test pass rate for enabled tests<br/>• Direct memtable access (40-60% faster)
+    rect rgb(230, 240, 255)
+        Note over Main,MC: Phase 1: Core Services Creation
+        
+        Main->>Main: 1. Load configuration<br/>(demo/docker-config.toml)
+        
+        Main->>MC: 2. Create MetricsCollector
+        activate MC
+        MC->>MC: Initialize metrics config
+        MC->>MC: Setup metrics receiver
+        MC-->>Main: Arc<MetricsCollector> ready
+        deactivate MC
     end
     
-    rect rgb(255, 230, 230)
-        Note over CS, DVS: ⚠️ Known Issues<br/>• SQL metadata filtering returns 0 results<br/>• Collection service routing defaults to VIPER<br/>• SST engine expects .sst files but gets .parquet
+    rect rgb(230, 255, 230)
+        Note over Main,DVS: Phase 2: SharedServices Creation (Avoids Circular Dependencies)
+        
+        Main->>SS: 3. Create SharedServices FIRST
+        activate SS
+        SS->>CS: Create CollectionService
+        activate CS
+        CS->>CS: Initialize metadata store
+        CS->>CS: Setup collection providers
+        CS-->>SS: CollectionService ready
+        deactivate CS
+        
+        SS->>DVS: Create DirectVectorService
+        activate DVS
+        DVS->>DVS: Initialize dual-engine support
+        DVS->>DVS: Setup memtable access
+        DVS-->>SS: DirectVectorService ready
+        deactivate DVS
+        
+        SS-->>Main: Return (SharedServices, CollectionService)
+        deactivate SS
+        
+        Note over SS: ✅ All services unified under SharedServices
+    end
+    
+    rect rgb(255, 240, 230)
+        Note over Main,SE: Phase 3: Storage Engine Creation
+        
+        Main->>SE: 4. Create StorageEngine<br/>(without CollectionService)
+        activate SE
+        SE->>SE: Initialize storage backends
+        SE->>SE: Setup VIPER engine
+        SE->>SE: Setup SST engine
+        SE-->>Main: StorageEngine ready
+        deactivate SE
+        
+        Main->>SE: 5. Inject CollectionService<br/>from SharedServices
+        activate SE
+        SE->>SE: set_metadata_provider(collection_service)
+        SE-->>Main: CollectionService injected
+        deactivate SE
+        
+        Note over SE: ✅ No duplicate CollectionService created
+    end
+    
+    rect rgb(240, 230, 255)
+        Note over Main,MS: Phase 4: Network Layer Setup
+        
+        Main->>QE: 6. Create QueryEngine
+        activate QE
+        QE->>QE: Initialize SQL parser
+        QE->>QE: Setup query planner
+        QE-->>Main: QueryEngine ready
+        deactivate QE
+        
+        Main->>Main: 7. Configure server addresses<br/>REST: bind_address:5678<br/>gRPC: bind_address:5679
+        
+        Main->>MS: 8. Create MultiServer<br/>with SharedServices
+        activate MS
+        MS->>MS: Setup HTTP configuration
+        MS->>MS: Setup gRPC configuration
+        MS->>MS: Configure TLS if enabled
+        MS-->>Main: MultiServer ready
+        deactivate MS
+    end
+    
+    Note over Main: 🏁 ProximaDB::new() Complete
+    
+    rect rgb(255, 255, 230)
+        Note over Main,GRPC: Phase 5: Startup Sequence (ProximaDB::start)
+        
+        Main->>SE: 9. Start StorageEngine
+        activate SE
+        SE->>SE: Recover collections from metadata
+        SE->>SE: Initialize storage paths
+        SE->>SE: Load engine configurations
+        SE-->>Main: Collections recovered
+        deactivate SE
+        
+        Main->>SS: 10. Recover vectors from write buffer
+        activate SS
+        SS->>SE: Get recovered collections
+        SS->>SS: Scan write buffer directories
+        SS->>SS: Load unflushed vectors into memtable
+        SS-->>Main: Vectors recovered
+        deactivate SS
+        
+        Main->>MS: 11. Start MultiServer
+        activate MS
+        MS->>REST: Start REST server (port 5678)
+        activate REST
+        REST->>REST: Setup Axum routes
+        REST->>REST: Configure unified handlers
+        REST-->>MS: REST server started
+        deactivate REST
+        
+        MS->>GRPC: Start gRPC server (port 5679)
+        activate GRPC
+        GRPC->>GRPC: Setup Tonic services
+        GRPC->>GRPC: Configure proto handlers
+        GRPC-->>MS: gRPC server started
+        deactivate GRPC
+        
+        MS-->>Main: Servers running
+        deactivate MS
+    end
+    
+    Note over Main,GRPC: 🎉 ProximaDB Ready!<br/>REST: http://localhost:5678<br/>gRPC: http://localhost:5679
+    
+    rect rgb(200, 255, 200)
+        Note over Main,SE: ✅ Key Design Benefits<br/>• No circular dependencies<br/>• Clean separation of concerns<br/>• Proper recovery order<br/>• Test Status: 890 passed, 0 failed
     end

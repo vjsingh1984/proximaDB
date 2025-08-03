@@ -114,7 +114,7 @@ def test_end_to_end_flow():
         config = CollectionConfig(
             name=collection_name,
             dimension=dimension,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             storage_engine=StorageEngine.VIPER,
             description="BERT embedding test collection"
         )

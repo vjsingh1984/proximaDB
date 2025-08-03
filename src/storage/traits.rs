@@ -222,7 +222,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         -> &crate::storage::persistence::filesystem::FilesystemFactory;
 
     /// Get collection service for IndexConfig retrieval - to be implemented by each engine
-    /// NOTE: This is deprecated - IndexConfig should be handled by AXIS indexing service
+    /// IndexConfig should be handled by AXIS indexing service
     fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService>;
 
     /// Get collection's IndexConfig from collection service

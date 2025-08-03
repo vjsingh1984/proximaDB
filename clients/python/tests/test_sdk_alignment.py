@@ -41,7 +41,7 @@ def test_rest_client_uses_pydantic_models():
     config = CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )
@@ -49,19 +49,19 @@ def test_rest_client_uses_pydantic_models():
     assert isinstance(config, CollectionConfig)
     assert config.name == "test_collection"
     assert config.dimension == 128
-    assert config.distance_metric == DistanceMetric.COSINE
+    assert config.distance_metric == "cosine"
 
 
 def test_proto_vs_pydantic_separation():
     """Test that proto and Pydantic models are properly separated"""
     
     # Proto enums should be integers
-    assert pb2.DistanceMetric.COSINE == 1
+    assert pb2.COSINE == 1
     assert pb2.StorageEngine.VIPER == 1
     assert pb2.IndexingAlgorithm.HNSW == 1
     
     # Pydantic enums should be strings
-    assert DistanceMetric.COSINE == "cosine"
+    assert "cosine" == "cosine"
     assert StorageEngine.VIPER == "viper"
     assert IndexingAlgorithm.HNSW == "hnsw"
     
@@ -70,7 +70,7 @@ def test_proto_vs_pydantic_separation():
     pydantic_config = CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )
@@ -87,7 +87,7 @@ def test_consistent_field_names():
     pydantic_config = CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )

@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 /// Configuration for memory pool behavior
 #[derive(Debug, Clone)]

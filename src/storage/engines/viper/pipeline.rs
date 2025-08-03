@@ -331,7 +331,7 @@ pub struct WriterPool {
 }
 
 // TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
-// These were referenced from the deprecated core module
+// These were referenced from the original core module
 // For now, providing placeholder types to fix compilation
 
 /// Placeholder for ParquetWriter implementation
@@ -3471,7 +3471,7 @@ impl WriterPool {
     }
 }
 
-// Implementations removed - using ones from viper_core module
+// Note: Implementations moved to viper_core module
 
 impl Default for ViperPipelineConfig {
     fn default() -> Self {

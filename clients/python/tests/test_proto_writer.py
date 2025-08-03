@@ -90,7 +90,7 @@ def test_proto_serialization():
     config = pb2.CollectionConfig()
     config.name = "proto_test_collection"
     config.dimension = 384
-    config.distance_metric = pb2.DistanceMetric.COSINE
+    config.distance_metric = pb2.COSINE
     config.storage_engine = pb2.StorageEngine.SST
     config.primary_indexing_algorithm = pb2.IndexingAlgorithm.HNSW
     

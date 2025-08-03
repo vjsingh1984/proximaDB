@@ -28,7 +28,7 @@ def test_collection_creation():
         config = pb2.CollectionConfig()
         config.name = collection_name
         config.dimension = 128
-        config.distance_metric = pb2.DistanceMetric.COSINE
+        config.distance_metric = pb2.COSINE
         config.primary_indexing_algorithm = pb2.IndexingAlgorithm.HNSW
         config.storage_engine = pb2.StorageEngine.VIPER
         

@@ -940,23 +940,32 @@ impl FilesystemFactory {
         }
     }
 
-    /// Get the path component from URL
-    pub fn extract_path(&self, url: &str) -> FsResult<String> {
-        if url.contains("://") {
-            let parsed = Url::parse(url)?;
-            let path = parsed.path();
-            
-            // Handle relative paths in file:// URLs
-            if parsed.scheme() == "file" && path.starts_with("/.") {
-                // file://./mydir becomes ./mydir
-                Ok(path[1..].to_string())
-            } else {
-                Ok(path.to_string())
-            }
-        } else {
-            // Treat as local path if no scheme
-            Ok(url.to_string())
+    /// Centralized URL path extraction utility (handles relative paths correctly)
+    /// This method should be used throughout the filesystem layer for consistent URL parsing
+    pub fn extract_path_from_url_safe(url: &str) -> FsResult<String> {
+        if !url.contains("://") {
+            // No scheme present - return as-is
+            return Ok(url.to_string());
         }
+        
+        let parsed_url = Url::parse(url)?;
+        let path = parsed_url.path();
+        
+        // Handle relative paths that were converted to absolute by URL parser
+        // The URL parser converts file://./relative/path to path="/relative/path"
+        // We need to preserve the relative nature for local filesystem
+        if parsed_url.scheme() == "file" && url.starts_with("file://./") {
+            // Extract the relative part after "file://"
+            let relative_path = &url[7..]; // Remove "file://" prefix
+            Ok(relative_path.to_string())
+        } else {
+            Ok(path.to_string())
+        }
+    }
+
+    /// Get the path component from URL (uses centralized utility)
+    pub fn extract_path(&self, url: &str) -> FsResult<String> {
+        Self::extract_path_from_url_safe(url)
     }
 
     /// List all available filesystem types

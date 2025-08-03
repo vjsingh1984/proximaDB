@@ -26,7 +26,7 @@ use crate::storage::traits::UnifiedStorageEngine;
 pub enum RecoveryMode {
     /// Recover directly to storage engine (recommended)
     DirectToStorage,
-    /// Recover to memtable then flush (legacy mode)
+    /// Recover to memtable then flush (alternative mode)
     ViaMemtable,
 }
 

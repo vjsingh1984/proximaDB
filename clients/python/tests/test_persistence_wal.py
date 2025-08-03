@@ -36,7 +36,7 @@ class TestDataPersistence:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Persistence test collection"
         )
         
@@ -76,7 +76,7 @@ class TestDataPersistence:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         try:
             # Create collection
@@ -131,7 +131,7 @@ class TestDataPersistence:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         try:
             # Create with REST
@@ -211,7 +211,7 @@ class TestWALOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=512,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="WAL flush test collection",
             flush_config=FlushConfig(max_wal_size_mb=8.0)  # Low threshold
         )
@@ -275,7 +275,7 @@ class TestWALOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="WAL durability test"
         )
         
@@ -331,7 +331,7 @@ class TestWALOperations:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="Concurrent WAL test"
         )
         
@@ -438,7 +438,7 @@ class TestRecoveryMechanisms:
         config = CollectionConfig(
             name=collection_name,
             dimension=384,
-            distance_metric=DistanceMetric.EUCLIDEAN,
+            distance_metric="euclidean",
             description="Recovery test collection with specific config",
             storage_engine=StorageEngine.VIPER
         )
@@ -489,7 +489,7 @@ class TestRecoveryMechanisms:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         try:
             collection = rest_client.create_collection(collection_name, config)
@@ -563,7 +563,7 @@ class TestStorageIntegration:
         config = CollectionConfig(
             name=collection_name,
             dimension=256,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             description="WAL-VIPER integration test",
             storage_engine=StorageEngine.VIPER,
             flush_config=FlushConfig(max_wal_size_mb=4.0)  # Small threshold

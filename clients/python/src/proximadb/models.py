@@ -388,18 +388,35 @@ class CollectionStats(BaseModel):
     data_size_bytes: int = 0
 
 
+class CollectionInfo(BaseModel):
+    """Collection info for list response"""
+    id: str
+    name: str
+    dimension: int
+    metric: str
+    created_at: int
+    updated_at: int
+    vector_count: Optional[int] = None
+    indexed: bool = False
+
+
 class Collection(BaseModel):
     """Collection information"""
     id: str
     config: CollectionConfig
-    stats: Optional[CollectionStats] = None
-    timestamp: int = Field(default_factory=lambda: int(__import__('time').time()))  # Creation timestamp - seconds since epoch (unsigned)
-    updated_at: Optional[int] = None  # Only set if different from timestamp (saves bytes)
+    stats: CollectionStats = Field(default_factory=CollectionStats)  # Made required to match REST API
+    created_at: int = Field(default_factory=lambda: int(__import__('time').time()))  # Renamed from timestamp
+    updated_at: int = Field(default_factory=lambda: int(__import__('time').time()))  # Made required
     
     @property
     def name(self) -> str:
         """Backward compatibility property for collection name"""
         return self.config.name
+    
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility property for timestamp"""
+        return self.created_at
 
 
 # ============================================================================
@@ -499,6 +516,22 @@ class SearchResult(BaseModel):
     rank: Optional[int] = None
 
 
+class VectorGetResponse(BaseModel):
+    """Vector get response"""
+    id: str
+    collection_id: str
+    vector: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    score: Optional[float] = None
+    rank: Optional[int] = None
+
+
+class ListCollectionsResponse(BaseModel):
+    """List collections response"""
+    collections: List[CollectionInfo]
+    total_count: int
+
+
 # ============================================================================
 # REQUEST/RESPONSE MODELS
 # ============================================================================
@@ -528,18 +561,20 @@ class CollectionResponse(BaseModel):
 
 
 class VectorBatchRequest(BaseModel):
-    """Vector batch operation request"""
+    """Vector batch operation request - aligned with REST API"""
     collection_id: str
-    operation: VectorOperationType
-    records: List[VectorRecord]
-    options: Optional[Dict[str, bool]] = None
+    vectors: List[VectorRecord]  # Changed from 'records' to match REST API
+    batch_timeout_ms: Optional[int] = None
+    request_id: Optional[str] = None
 
 
 class VectorSearchRequest(BaseModel):
     """Vector search request"""
     collection_id: str
     queries: List[SearchQuery]
-    search_params: Optional[SearchParameters] = None
+    top_k: int = 10
+    distance_metric_override: Optional[str] = None
+    search_parameters: Optional[SearchParameters] = None  # Fixed field name
     include_fields: Optional[IncludeFields] = None
     search_optimization: Optional[SearchOptimization] = None
 

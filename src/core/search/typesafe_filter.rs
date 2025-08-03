@@ -193,7 +193,7 @@ impl TypeSafeFilterEvaluator {
             }
             
             // Cross-type conversions when metadata doesn't match expected type
-            // This can happen with legacy data or flexible schemas
+            // This can happen with flexible schemas or type mismatches
             (Some(MetadataValue::StringValue(s)), FilterableDataType::FilterableInteger) => {
                 // Try to parse string as integer
                 if let (Ok(si), serde_json::Value::Number(jn)) = (s.parse::<i64>(), json_value) {
@@ -234,7 +234,7 @@ impl TypeSafeFilterEvaluator {
     }
 }
 
-/// Convert MetadataItem values to serde_json for legacy compatibility
+/// Convert MetadataItem values to serde_json for compatibility
 /// This is used as a fallback when type-safe filtering isn't available
 pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_json::Value> {
     let mut map = HashMap::new();

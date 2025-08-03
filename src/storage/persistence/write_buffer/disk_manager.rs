@@ -326,7 +326,7 @@ impl WriteBufferDiskManager {
             "pbwal" => SerializationFormat::ProtocolBuffers,
             "bcwal" => SerializationFormat::Bincode,
             "avwal" => SerializationFormat::Avro,
-            // Legacy extensions for backward compatibility
+            // Alternative extensions for backward compatibility
             "proto" => SerializationFormat::ProtocolBuffers,
             "bincode" => SerializationFormat::Bincode,
             "avro" => SerializationFormat::Avro,
