@@ -644,6 +644,10 @@ All architecture diagrams are generated from Mermaid source files and rendered a
 |Write Buffer Strategy Pattern
 |WriteBuffer persistence strategies
 |link:diagrams/write-buffer-strategy-pattern.mmd[Mermaid]
+
+|Unified Parquet Reader Architecture
+|Automatic strategy selection for VIPER engine reads
+|link:diagrams/unified-parquet-reader-architecture.mmd[Mermaid]
 |===
 
 === Diagram Rendering Notes

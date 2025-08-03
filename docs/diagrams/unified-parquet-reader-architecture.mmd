@@ -1,0 +1,46 @@
+%%{init: {'theme':'base', 'themeVariables': { 
+  'primaryColor':'#1e293b', 
+  'primaryTextColor':'#ffffff', 
+  'primaryBorderColor':'#334155', 
+  'lineColor':'#64748b', 
+  'secondaryColor':'#3b82f6',
+  'tertiaryColor':'#e2e8f0',
+  'background':'#f8fafc',
+  'mainBkg':'#ffffff',
+  'secondBkg':'#f1f5f9',
+  'tertiaryBkg':'#e2e8f0',
+  'fontSize':'11px', 
+  'fontFamily':'Inter, -apple-system, sans-serif'
+}}}%%
+
+graph TD
+    A[UnifiedQuery] --> B[UnifiedParquetReader]
+    B --> C[ReadingStrategySelector]
+    C --> D{Query Analysis}
+    D --> E[Strategy Selection]
+    E --> F[DirectArrow Strategy]
+    E --> G[MetadataFiltered Strategy]
+    E --> H[QuantizedTwoStage Strategy]
+    E --> I[Hybrid Strategy]
+    F --> J[UnifiedReadResult + SimilarityResult]
+    G --> J
+    H --> J
+    I --> J
+
+    K[ReaderCache] --> B
+    L[ReaderConfig] --> C
+    M[FilesystemFactory] --> B
+    N[UnifiedDistanceCompute] --> B
+
+    %% Styling
+    classDef queryClass fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    classDef readerClass fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff
+    classDef strategyClass fill:#7c3aed,stroke:#5b21b6,stroke-width:2px,color:#ffffff
+    classDef resultClass fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    classDef supportClass fill:#64748b,stroke:#475569,stroke-width:1px,color:#ffffff
+
+    class A queryClass
+    class B,C readerClass
+    class D,E,F,G,H,I strategyClass
+    class J resultClass
+    class K,L,M,N supportClass
