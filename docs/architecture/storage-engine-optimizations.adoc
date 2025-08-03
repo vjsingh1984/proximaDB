@@ -4,27 +4,23 @@
 :icons: font
 :source-highlighter: highlightjs
 
-This document consolidates all storage engine optimization insights from SST and VIPER improvements.
+This document outlines key storage engine optimizations for SST and VIPER engines.
 
 == Overview
 
-Both storage engines underwent significant optimizations achieving:
-- **70% code reduction** through unified interfaces
+Both storage engines achieved significant improvements through unified interfaces:
+- **70% code reduction** through polymorphic designs
 - **2.6x query performance** improvement
-- **Zero code duplication** with polymorphic designs
+- **Zero code duplication** with shared components
 
 == SST Engine Optimizations
 
 === Unified SSTable Reader
 
-==== Problem
-Multiple SSTable reader implementations with duplicated logic:
-- `SstableReader` - Basic functionality
-- `FilteredSstableReader` - Metadata filtering
-- `VersionedSstableReader` - Version handling
-- `CompressedSstableReader` - Compression support
+**Problem**: Multiple SSTable reader implementations with duplicated logic
 
-==== Solution: UnifiedSstableReader
+**Solution**: UnifiedSstableReader consolidating all functionality:
+
 [source,rust]
 ----
 pub struct UnifiedSstableReader {
@@ -36,15 +32,13 @@ pub struct UnifiedSstableReader {
 }
 ----
 
-==== Results
-- **70% code reduction** (5 files → 1 file)
-- **2.6x faster** metadata queries
-- **Block-level filtering** for efficient scans
-- **Zero duplication** of reader logic
+**Results**:
+- 70% code reduction (5 files → 1 file)
+- 2.6x faster metadata queries
+- Block-level filtering for efficient scans
 
 === Atomic Compaction Operations
 
-==== Implementation
 [source,rust]
 ----
 // Atomic compaction with staging
@@ -52,22 +46,17 @@ let staging_op = atomic_coordinator
     .begin_atomic_operation(&staging_config)
     .await?;
 
-// Write to staging area
 write_merged_sstable(&staging_op, merged_data).await?;
-
-// Atomic swap
 atomic_coordinator.finalize_atomic_operation(&staging_op.id).await?;
 ----
 
-==== Benefits
-- **ACID guarantees** for compaction
-- **No partial states** during crashes
-- **Automatic rollback** on failures
-- **25% faster** compaction cycles
+**Benefits**:
+- ACID guarantees for compaction
+- No partial states during crashes
+- 25% faster compaction cycles
 
 === Metadata Bloom Filters
 
-==== Design
 [source,rust]
 ----
 pub struct MetadataBloomFilter {
@@ -76,37 +65,28 @@ pub struct MetadataBloomFilter {
 }
 ----
 
-==== Performance Impact
-- **95% reduction** in blocks scanned for metadata queries
-- **3x faster** predicate evaluation
-- **Memory efficient** with configurable FPR
+**Performance Impact**:
+- 95% reduction in blocks scanned for metadata queries
+- 3x faster predicate evaluation
+- Memory efficient with configurable FPR
 
 === Manifest-Based SSTable Tracking
 
-==== Features
-- Centralized SSTable registry
-- Atomic manifest updates
-- Compaction candidate selection
-- File lifecycle management
+**Features**:
+- Centralized SSTable registry with atomic updates
+- Compaction candidate selection and file lifecycle management
 
-==== Benefits
-- **Eliminates file scanning** on startup
-- **50% faster** recovery time
-- **Efficient compaction** scheduling
-- **Automatic garbage collection**
+**Benefits**:
+- Eliminates file scanning on startup
+- 50% faster recovery time
+- Efficient compaction scheduling
 
 == VIPER Engine Optimizations
 
 === Unified Parquet Reader
 
-==== Problem
-Similar to SST, multiple reader implementations:
-- Basic reader
-- Filtered reader
-- Clustering-aware reader
-- Quantized reader
+**Solution**: Single reader with integrated optimization features:
 
-==== Solution
 [source,rust]
 ----
 pub struct UnifiedParquetReader {
@@ -117,18 +97,15 @@ pub struct UnifiedParquetReader {
 }
 ----
 
-==== Results
-- **60% code reduction**
-- **Predicate pushdown** to Parquet level
-- **Smart row group** selection
-- **4x faster** filtered queries
+**Results**:
+- 60% code reduction
+- Predicate pushdown to Parquet level
+- 4x faster filtered queries
 
 === Collection-Aware Compaction
 
-==== Implementation
 [source,rust]
 ----
-// Collection config drives compaction strategy
 let strategy = match collection_config.compaction_strategy {
     CompactionStrategy::Leveled => LeveledCompaction::new(),
     CompactionStrategy::Tiered => TieredCompaction::new(),
@@ -136,34 +113,31 @@ let strategy = match collection_config.compaction_strategy {
 };
 ----
 
-==== Benefits
-- **Collection-specific** optimization
-- **30% reduction** in write amplification
-- **Better space utilization**
-- **Predictable performance**
+**Benefits**:
+- Collection-specific optimization
+- 30% reduction in write amplification
+- Better space utilization
 
 === ML-Driven Clustering
 
-==== Approach
+**Approach**:
 - K-means clustering on vectors
 - Cluster-aware file organization
 - Locality-preserving storage
 
-==== Results
-- **85% reduction** in search space
-- **10x faster** approximate search
-- **Better cache utilization**
-- **Lower I/O requirements**
+**Results**:
+- 85% reduction in search space
+- 10x faster approximate search
+- Better cache utilization
 
 == Unified Improvements
 
 === Common Bloom Filter Design
 
-Both engines now use the same bloom filter infrastructure:
+Both engines use shared bloom filter infrastructure:
 
 [source,rust]
 ----
-// Factory pattern for strategy selection
 let bloom_filter = BloomFilterFactory::create(&BloomFilterConfig {
     strategy: match engine_type {
         EngineType::SST => BloomFilterStrategy::ByteAligned,
@@ -176,13 +150,13 @@ let bloom_filter = BloomFilterFactory::create(&BloomFilterConfig {
 
 === Shared Atomic Operations
 
-Both engines use UnifiedAtomicCoordinator:
+Both engines use UnifiedAtomicCoordinator for:
 - Consistent failure handling
 - Unified staging areas
 - Common recovery mechanisms
 - Cross-engine atomic operations
 
-=== Performance Metrics Comparison
+== Performance Metrics
 
 [cols="3,2,2,2"]
 |===
@@ -222,7 +196,7 @@ Both engines use UnifiedAtomicCoordinator:
 == Key Design Principles
 
 === 1. Single Responsibility
-Each component does one thing well:
+Each component has a focused purpose:
 - Readers: Read data
 - Writers: Write data
 - Compactors: Merge files
@@ -251,17 +225,8 @@ All state changes are atomic:
 
 == Migration Impact
 
-=== Before Migration
-- Duplicate code across engines
-- Inconsistent APIs
-- Engine-specific bugs
-- Maintenance nightmare
-
-=== After Migration
-- Unified codebase
-- Consistent behavior
-- Shared bug fixes
-- Easy feature additions
+**Before**: Duplicate code, inconsistent APIs, engine-specific bugs
+**After**: Unified codebase, consistent behavior, shared bug fixes
 
 == Lessons Learned
 
@@ -278,5 +243,3 @@ All state changes are atomic:
 3. **Adaptive compression**: Choose codec based on data characteristics
 4. **Hardware acceleration**: SIMD/GPU for distance calculations
 5. **Tiered storage**: Automatic hot/cold data separation
-
-This consolidates all storage engine optimization insights.

@@ -36,11 +36,11 @@ endif::[]
 |30 min
 
 |🟡 **Developers** 
-|link:developer_guide.adoc[Developer Guide] → link:proximadb-technical-reference.adoc[Technical Reference] → link:appendix_implementation_details.adoc[Implementation Details]
+|link:developer_guide.adoc[Developer Guide] → link:technical_reference.adoc[Technical Reference] → link:appendix_implementation_details.adoc[Implementation Details]
 |2 hours
 
 |🔴 **Architects**
-|link:proximadb-technical-reference.adoc[Technical Reference] → link:architecture.adoc[Architecture Deep Dive] → link:appendix_performance_metrics.adoc[Performance Metrics]
+|link:technical_reference.adoc[Technical Reference] → link:architecture.adoc[Architecture Deep Dive] → link:appendix_performance_metrics.adoc[Performance Metrics]
 |4+ hours
 |===
 
@@ -76,7 +76,7 @@ endif::[]
 |===
 |**Document** |**Description** |**Audience**
 
-|link:proximadb-technical-reference.adoc[Technical Reference]
+|link:technical_reference.adoc[Technical Reference]
 |Comprehensive technical documentation with architecture, APIs, and configuration
 |All Technical Users
 
@@ -129,17 +129,17 @@ endif::[]
 
 === 🔧 "I want to integrate ProximaDB into my application"
 1. link:developer_guide.adoc#client-sdk-usage[SDK documentation]
-2. link:proximadb-technical-reference.adoc#api-reference[API reference]
+2. link:technical_reference.adoc#api-reference[API reference]
 3. link:appendix_implementation_details.adoc[Implementation patterns]
 
 === 🏗️ "I want to understand the architecture"
-1. link:proximadb-technical-reference.adoc#architecture-overview[System architecture]
+1. link:technical_reference.adoc#proto-first-architecture-implementation[System architecture]
 2. link:architecture.adoc[Architecture deep dive]
 3. link:appendix_implementation_details.adoc[Implementation details]
 
 === ⚡ "I want to optimize performance"
 1. link:appendix_performance_metrics.adoc[Performance benchmarks]
-2. link:proximadb-technical-reference.adoc#performance-characteristics[Optimization techniques]
+2. link:technical_reference.adoc#performance-characteristics[Optimization techniques]
 3. link:appendix_performance_metrics.adoc#optimization-guidelines[Tuning guidelines]
 
 === 🏢 "I want to deploy ProximaDB in production"

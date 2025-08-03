@@ -587,6 +587,72 @@ graph TD
 * Linear scaling with collection count
 * Graceful degradation for corrupted data
 
+== Architecture Diagrams Reference
+
+=== Core System Diagrams
+
+All architecture diagrams are generated from Mermaid source files and rendered as SVG for optimal viewing:
+
+[cols="2,3,1"]
+|===
+|**Diagram** |**Description** |**Source**
+
+|Unified Architecture
+|Complete system overview with all components
+|link:diagrams/proximadb-unified-architecture.mmd[Mermaid]
+
+|Business System Overview  
+|High-level business flow and integration points
+|link:diagrams/business-system-overview.mmd[Mermaid]
+
+|Service Interactions
+|Detailed sequence flows between components
+|link:diagrams/service-interactions.mmd[Mermaid]
+
+|Storage Engine Classes
+|Class relationships and dependencies
+|link:diagrams/storage-engine-classes.mmd[Mermaid]
+
+|Multi-Disk Architecture
+|Storage persistence and management
+|link:diagrams/multi_disk_architecture.mmd[Mermaid]
+
+|Two-Stage Search
+|Quantized search optimization process
+|link:diagrams/two-stage-search.mmd[Mermaid]
+
+|Unified Quantization System
+|Hardware-accelerated quantization pipeline
+|link:diagrams/unified_quantization_system.mmd[Mermaid]
+
+|Bloom Filter Architecture
+|Polymorphic filter design and strategies
+|link:diagrams/bloom-filter-architecture.mmd[Mermaid]
+
+|Storage Performance Unified
+|Performance optimization architecture
+|link:diagrams/storage-performance-unified.mmd[Mermaid]
+
+|Deployment Architecture
+|Production deployment strategies
+|link:diagrams/deployment-architecture.mmd[Mermaid]
+
+|Initialization Sequence
+|System startup and recovery flows
+|link:diagrams/initialization-sequence.mmd[Mermaid]
+
+|Write Buffer Strategy Pattern
+|WriteBuffer persistence strategies
+|link:diagrams/write-buffer-strategy-pattern.mmd[Mermaid]
+|===
+
+=== Diagram Rendering Notes
+
+* **GitHub/GitLab**: Diagrams render automatically in web interface
+* **Local Viewing**: Use AsciiDoctor with Mermaid plugin
+* **SVG Output**: Pre-rendered SVGs available in `diagrams/images/`
+* **Source Control**: All `.mmd` files are version controlled
+
 == Current Status - 2025
 
 === Production Readiness

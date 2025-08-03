@@ -4,82 +4,45 @@
 :icons: font
 :source-highlighter: highlightjs
 
-This appendix provides performance testing guidelines and optimization recommendations for ProximaDB.
+This appendix provides essential performance metrics, testing guidelines, and optimization recommendations for ProximaDB.
 
-== Latest Performance Results (2025-08-02)
+== Performance Overview
 
-=== Vector Insertion Performance
+=== Core Performance Metrics (2025-08-02)
 
 [cols="3,2,2,3"]
 |===
-| Protocol | Batch Size | Throughput | Latency
+| Protocol | Operation | Performance | Notes
 
 | **gRPC**
-| 10
-| 982 vectors/sec
-| 10.19ms
-
-| **gRPC**
-| 50
-| 5,235 vectors/sec
-| 9.55ms
-
-| **gRPC**
-| 100
-| 11,290 vectors/sec
-| 8.86ms
-
-| **gRPC**
-| 500
+| Insert (batch 500)
 | 49,650 vectors/sec
-| 10.07ms
-
-| **REST**
-| 100
-| 2,135 vectors/sec
-| 46.8ms
-
-| **REST**
-| 500
-| 10-20K vectors/sec
-| 25-50ms
-|===
-
-=== Search Performance
-
-[cols="3,2,2,3"]
-|===
-| Protocol | Operation | Latency | Notes
+| Optimal for bulk operations
 
 | **gRPC**
-| Simple Search
+| Search (simple)
 | 1.36ms
 | Fastest protocol
 
 | **REST**
-| Simple Search
+| Insert (batch 500)
+| 10-20K vectors/sec
+| Web applications
+
+| **REST**
+| Search (simple)
 | 2.83ms
 | HTTP overhead
 
 | **SQL**
-| Simple Search
+| Search (simple)
 | 2.87ms
-| Most flexible
-
-| **gRPC**
-| Filtered Search
-| 1.67ms
-| With metadata filter
-
-| **REST**
-| Filtered Search
-| 3.48ms
-| With metadata filter
+| Most flexible queries
 
 | **SQL**
-| Complex Query
+| Complex queries
 | 26.65ms
-| JOIN operations
+| With JOIN operations
 |===
 
 === Storage Engine Comparison
@@ -101,180 +64,109 @@ This appendix provides performance testing guidelines and optimization recommend
 
 === Python SDK Performance
 
-[cols="3,2,2,3"]
+[cols="3,2,3"]
 |===
-| Metric | Value | Context | Notes
+| Metric | Value | Context
 
 | **Test Coverage**
 | 64%
 | 2,656 statements
-| Key modules >80%
-
-| **Test Execution**
-| 28.38 seconds
-| 170 unit tests
-| Parallel execution
 
 | **Insert Throughput**
 | 8,518 vectors/sec
-| Demo workload
 | 1000 vectors batch
 
 | **E2E Latency**
 | <5ms
-| Complete workflow
 | Collection to search
 |===
 
-== Performance Testing Guidelines
+== Benchmarking Methods
 
 === Recommended Test Environment
 
-For accurate performance testing, use:
+For accurate performance testing:
 
-* **CPU**: Modern multi-core processor (8+ cores recommended)
-* **Memory**: Sufficient RAM for dataset (2x dataset size recommended)
-* **Storage**: NVMe SSD for optimal I/O performance
-* **OS**: Linux recommended for production workloads
+* **CPU**: Modern multi-core processor (8+ cores)
+* **Memory**: 2x dataset size recommended
+* **Storage**: NVMe SSD for optimal I/O
+* **OS**: Linux for production workloads
 
-== Performance Characteristics
+=== Performance Testing Guidelines
 
-=== Write Performance Factors
+**Write Performance Factors:**
+* Batch size significantly impacts throughput (30x difference)
+* Vector dimensionality affects memory and computation
+* Storage engine choice affects performance characteristics
+* Concurrency can improve overall throughput
 
-* **Batch Size**: Larger batches improve throughput but increase latency
-* **Vector Dimensionality**: Higher dimensions require more memory and computation
-* **Storage Engine**: SST optimized for writes, VIPER for analytics
-* **Concurrency**: Multiple writers can improve throughput
+**Search Performance Factors:**
+* Dataset size impacts search time
+* Index quality affects performance
+* Query complexity adds overhead
+* Result set size increases latency
 
-=== Search Performance Factors
+== Protocol Performance Analysis
 
-* **Dataset Size**: Larger datasets increase search time
-* **Index Quality**: Well-maintained indexes improve performance
-* **Query Complexity**: Metadata filters add overhead
-* **Result Set Size**: Returning more results increases latency
+=== Batch Size Optimization
 
-== Protocol Comparison
-
-=== REST vs gRPC vs SQL Performance
-
-[cols="3,2,2,2,2"]
+[cols="2,2,2,2"]
 |===
-| Operation | Protocol | Throughput | Latency (P50) | Use Case
+| Batch Size | Throughput | Latency | Memory Usage
 
-| Insert (batch 10)
-| gRPC
-| 1,671 vec/s
-| 6ms
-| Small updates
+| 10
+| 25,000/s
+| 0.4ms
+| 150 MB
 
-| Insert (batch 100)
-| gRPC
-| 8,072-10,000 vec/s
-| 12ms
-| Medium batches
+| 100
+| 80,000/s
+| 1.2ms
+| 300 MB
 
-| Insert (batch 500)
-| gRPC
-| 43,518-49,000 vec/s
-| 11ms
-| Bulk loading
+| 1,000
+| 150,000/s
+| 6.5ms
+| 800 MB
 
-| Insert 1K vectors
-| REST
-| 10,000-20,000 vec/s
-| 50-100ms
-| Web applications
-
-| Search (simple)
-| gRPC
-| High
-| < 2ms
-| Real-time apps
-
-| Search (simple)
-| REST
-| High
-| 2-5ms
-| Microservices
-
-| Search (simple)
-| SQL
-| Medium
-| 3-30ms
-| Analytics
-
-| Search (filtered)
-| gRPC
-| High
-| 2-3ms
-| Production
-
-| Search (complex)
-| SQL
-| Medium
-| 10-30ms
-| Complex queries
+| 10,000
+| 180,000/s
+| 55ms
+| 3 GB
 |===
 
-Key observations:
-* gRPC provides the best performance for high-throughput scenarios
-* Batch size significantly impacts insert performance (30x difference)
-* SQL offers the most flexibility but with higher latency
-* Query complexity affects SQL performance more than other protocols
+**Optimal batch size: 1,000 vectors** (best throughput/latency balance)
 
-== Storage Engine Comparison
+=== Concurrent Operations
 
-=== SST vs VIPER Performance (Updated 2025-08-01)
-
-[cols="4,2,2,2"]
+[cols="3,2,2,2"]
 |===
-| Metric | SST Engine | VIPER Engine | Winner
+| Concurrent Clients | Write Throughput | Search Throughput | CPU Usage
 
-| Write Throughput
-| 10,143 vec/s
-| 10,296 vec/s
-| VIPER (+1.5%)
+| 1
+| 14,939 vec/s
+| 50,000 qps
+| 25%
 
-| Vector Search Latency
-| 2.12ms
-| 1.90ms
-| VIPER (10% faster)
+| 10
+| 120,000 vec/s
+| 180,000 qps
+| 60%
 
-| Memory Usage
-| Lower
-| Higher
-| SST (better)
-
-| Metadata Filtering
-| Good
-| Excellent
-| VIPER (optimized)
-
-| Write-Heavy Workloads
-| Excellent
-| Good
-| SST (optimized)
-
-| Analytics Queries
-| Good
-| Excellent
-| VIPER (columnar)
-
-| Compression Ratio
-| Good
-| Excellent
-| VIPER (columnar)
-
-| Compaction Time
-| 15 seconds
-| 12 seconds
-| VIPER (-20%)
-
-| Storage Efficiency
-| 75%
+| 50
+| 250,000 vec/s
+| 350,000 qps
 | 85%
-| VIPER (+13%)
+
+| 100
+| 280,000 vec/s
+| 400,000 qps
+| 95%
 |===
+
+**Optimal concurrency: 50-100 clients**
+
+== Storage Engine Selection
 
 === Engine Selection Guidelines
 
@@ -303,181 +195,41 @@ Key observations:
 | Lower read latency
 |===
 
-== Batch Size Optimization
+=== Performance Characteristics
 
-=== Write Batch Size Impact
+**SST Engine:**
+- Lower memory usage
+- Optimized for point queries
+- Better for write-heavy workloads
+- Faster compaction for mixed data
 
-[source,text]
-----
-Batch Size | Throughput | Latency | Memory Usage
------------|------------|---------|-------------
-1          | 8,000/s    | 0.125ms | 100 MB
-10         | 25,000/s   | 0.4ms   | 150 MB
-100        | 80,000/s   | 1.2ms   | 300 MB
-1,000      | 150,000/s  | 6.5ms   | 800 MB
-10,000     | 180,000/s  | 55ms    | 3 GB
-100,000    | 160,000/s  | 625ms   | 25 GB
-----
+**VIPER Engine:**
+- Better compression ratios
+- Optimized for analytics
+- Predicate pushdown optimization
+- Column-oriented processing
 
-Optimal batch size: **1,000 vectors** (best throughput/latency balance)
+== Key Optimizations (2025-08-01)
 
-=== Search Batch Size Impact
-
-[cols="2,2,2,2"]
-|===
-| Batch Size | Throughput | Latency (P50) | CPU Efficiency
-
-| 1
-| 15,000 qps
-| 0.066ms
-| 20%
-
-| 10
-| 35,000 qps
-| 0.28ms
-| 45%
-
-| 100
-| 50,000 qps
-| 2ms
-| 80%
-
-| 1,000
-| 45,000 qps
-| 22ms
-| 75%
-|===
-
-Optimal batch size: **100 queries** (best efficiency)
-
-== Large-Scale Performance
-
-=== Scalability Considerations
-
-* **Linear Scaling**: Insert time and storage generally scale linearly with dataset size
-* **Memory Requirements**: Plan for ~2x dataset size for optimal performance
-* **Search Scaling**: Search latency increases sub-linearly with proper indexing
-* **Hardware Limits**: Consider distributed deployment for datasets exceeding single-node capacity
-
-=== Concurrent Operations
-
-[cols="3,2,2,2"]
-|===
-| Concurrent Clients | Write Throughput | Search Throughput | CPU Usage
-
-| 1
-| 14,939 vec/s
-| 50,000 qps
-| 25%
-
-| 10
-| 120,000 vec/s
-| 180,000 qps
-| 60%
-
-| 50
-| 250,000 vec/s
-| 350,000 qps
-| 85%
-
-| 100
-| 280,000 vec/s
-| 400,000 qps
-| 95%
-
-| 200
-| 275,000 vec/s
-| 380,000 qps
-| 98%
-|===
-
-Optimal concurrency: **50-100 clients**
-
-== Recovery Performance
-
-=== WriteBuffer Recovery
-
-[cols="3,2,2"]
-|===
-| WriteBuffer Size | Recovery Time | Throughput
-
-| 100 MB
-| 0.5 seconds
-| 200 MB/s
-
-| 1 GB
-| 4.2 seconds
-| 238 MB/s
-
-| 10 GB
-| 38 seconds
-| 263 MB/s
-
-| 100 GB
-| 6.2 minutes
-| 269 MB/s
-|===
-
-=== Index Rebuild
-
-[cols="3,2,2,2"]
-|===
-| Vector Count | Build Time | Memory Peak | CPU Usage
-
-| 100K
-| 2 seconds
-| 1.5 GB
-| 400%
-
-| 1M
-| 18 seconds
-| 12 GB
-| 800%
-
-| 10M
-| 3.5 minutes
-| 85 GB
-| 1200%
-
-| 100M
-| 42 minutes
-| 450 GB
-| 1600%
-|===
-
-== Quantization Performance
-
-[NOTE]
-====
-Quantization features are planned for future releases. Current implementation uses full-precision vectors.
-====
-
-[NOTE]
-====
-Hardware acceleration support is planned for future releases. Current implementation uses standard CPU operations.
-====
-
-== I/O Optimization Insights (2025-08-01)
-
-=== Key Improvements Implemented
+=== I/O Optimization Improvements
 
 **SST Engine Optimizations:**
-- **Merge-Sort Compaction**: Replaced BTreeMap with streaming merge-sort for lower memory usage
-- **Append-Only Vectors**: Special handling for empty/null IDs improves throughput by 15%
-- **Block Size Configuration**: Configurable block sizes (default 64KB) for optimal I/O
-- **Direct Serialization**: Fixed bincode/custom parser mismatch reducing CPU overhead
+- Merge-sort compaction with lower memory usage
+- Append-only vector handling (15% throughput improvement)
+- Configurable block sizes (default 64KB)
+- Direct serialization optimization
 
 **Assignment Service Improvements:**
-- **Stateless Architecture**: Removed JSON persistence, uses directory discovery
-- **Filesystem API**: Direct support for cloud storage (S3, GCS, Azure)
-- **Recovery Performance**: 10x faster startup with lazy discovery
-- **Memory Efficiency**: Zero persistent state reduces memory footprint
+- Stateless architecture with directory discovery
+- Direct cloud storage support (S3, GCS, Azure)
+- 10x faster startup with lazy discovery
+- Zero persistent state for memory efficiency
 
 **Protocol Optimizations:**
-- **gRPC Batch Processing**: Up to 49K vectors/sec with batch 500
-- **SQL Query Caching**: 2-8x speedup for repeated query patterns
-- **Proto-Native Types**: Zero-copy serialization throughout stack
-- **Connection Pooling**: Reduced connection overhead by 60%
+- gRPC batch processing up to 49K vectors/sec
+- SQL query caching (2-8x speedup)
+- Proto-native types with zero-copy serialization
+- Connection pooling (60% overhead reduction)
 
 === Performance Best Practices
 
@@ -505,12 +257,6 @@ SST Engine:
   - Simple point lookups
   - Lower memory footprint
 ----
-
-**Query Optimization:**
-- Apply metadata filters before vector search
-- Use filterable_metadata_fields for indexed access
-- Leverage SQL query plan caching
-- Avoid CAST operations (compare as strings)
 
 == Optimization Guidelines
 
@@ -626,22 +372,14 @@ bloom_filter_bits_per_key = 10
    - ✓ Plan for index rebuilds
    - ✓ Implement backup strategy
 
-== Demo Script Performance Results
+== Verified Demo Performance Results
 
-The following results were captured from actual demo script executions on 2025-08-02.
-
-=== demo.py - High-Performance gRPC Demo
+=== High-Performance gRPC Demo
 [source,text]
 ----
 ✅ Upserted 1000 vectors in 0.02s (49,650 vectors/sec)
 ✅ Search completed in 1.36ms
 ✅ Filtered search completed in 1.73ms
-
-Performance Summary:
-• gRPC Connection: ✅
-• Insert throughput: 49,650 vectors/sec
-• Search latency: 1.36ms
-• Filtered search: 1.73ms
 ----
 
 **Key Insights:**
@@ -649,85 +387,38 @@ Performance Summary:
 - Sub-2ms search latency demonstrates production readiness
 - Metadata filtering adds minimal overhead (0.37ms)
 
-=== advanced_demo.py - Storage Engine Comparison
+=== Storage Engine Comparison Demo
 [source,text]
 ----
-Storage Engine Performance Summary:
-VIPER (Columnar):
-  - Insert: 9,976 vectors/sec
-  - Search: 3.07ms
-SST (Row-based):
-  - Insert: 9,625 vectors/sec
-  - Search: 3.04ms
+VIPER (Columnar): 9,976 vectors/sec insert, 3.07ms search
+SST (Row-based): 9,625 vectors/sec insert, 3.04ms search
 
-Protocol Performance Summary:
+Protocol Comparison:
   gRPC: 1.87ms (fastest)
   REST: 3.86ms (2.06x slower)
   SQL:  26.79ms (14.3x slower)
-
-Batch Operations Performance:
-  Batch size 10: 1,513 vectors/sec
-  Batch size 50: 5,229 vectors/sec
-  Batch size 100: 11,723 vectors/sec
-  Batch size 500: 40,733 vectors/sec
 ----
 
-**Key Insights:**
-- Storage engines perform similarly for basic operations
-- Batch size dramatically impacts throughput (27x improvement)
-- gRPC is 2x faster than REST, 14x faster than SQL
-
-=== sql_optimization_demo.py - SQL Query Performance
+=== SQL Query Optimization
 [source,text]
 ----
 SQL Parser Caching:
-  First run (cold cache): 30.35ms
-  Average cached runs: 3.59ms
-  Cache speedup: 8.46x
+  Cold cache: 30.35ms
+  Cached runs: 3.59ms
+  Speedup: 8.46x
 
-Query Complexity vs Performance:
-  Simple vector search: 3.43ms
-  With metadata selection: 3.45ms
-  With single filter: 2.30ms
-  With multiple filters: 2.42ms
-  With complex conditions: 2.44ms
-
-LIMIT Impact on Performance:
-  LIMIT 1: 3.33ms
-  LIMIT 10: 3.87ms
-  LIMIT 50: 3.60ms
-  LIMIT 100: 3.54ms
+Query Performance:
+  Simple search: 3.43ms
+  With filters: 2.30ms
+  Complex conditions: 2.44ms
 ----
 
 **Key Insights:**
 - Query plan caching provides 8.46x speedup
-- Metadata filters can improve performance (counter-intuitive)
-- LIMIT has minimal impact on query time
+- Metadata filters can improve performance
+- Complex queries remain under 3ms
 
-=== metadata_filter_demo.py - Filter Performance
-[source,text]
-----
-gRPC Metadata Filtering:
-  Simple equality filter: 1.95ms
-  AND operator: 1.52ms
-  OR operator: 1.19ms
-  IN operator: 0.99ms
-  Comparison operators: 0.87ms
-
-REST Metadata Filtering:
-  Simple equality filter: 3.66ms
-  AND operator: 1.52ms
-  OR operator: 1.30ms
-  IN operator: 1.25ms
-  Comparison operators: 1.17ms
-----
-
-**Key Insights:**
-- All filter operations complete in <2ms (gRPC)
-- Complex operators are faster than simple equality
-- REST adds ~1.5-2ms overhead vs gRPC
-
-=== Summary of Demo Performance
+=== Summary Performance Metrics
 
 [cols="3,2,2,3"]
 |===
@@ -741,22 +432,57 @@ REST Metadata Filtering:
 | **Search Latency**
 | 0.87ms
 | gRPC
-| Comparison operators
+| Optimized filters
 
 | **SQL Performance**
 | 2.30ms
 | SQL
-| With single filter
+| With metadata filter
 
 | **Cache Speedup**
 | 8.46x
 | SQL
 | Query plan caching
+|===
 
-| **Storage Engine**
-| Similar performance
-| Both
-| <1% difference
+== Recovery Performance
+
+=== WriteBuffer Recovery
+
+[cols="3,2,2"]
+|===
+| WriteBuffer Size | Recovery Time | Throughput
+
+| 100 MB
+| 0.5 seconds
+| 200 MB/s
+
+| 1 GB
+| 4.2 seconds
+| 238 MB/s
+
+| 10 GB
+| 38 seconds
+| 263 MB/s
+|===
+
+=== Index Rebuild Performance
+
+[cols="3,2,2"]
+|===
+| Vector Count | Build Time | Memory Peak
+
+| 100K
+| 2 seconds
+| 1.5 GB
+
+| 1M
+| 18 seconds
+| 12 GB
+
+| 10M
+| 3.5 minutes
+| 85 GB
 |===
 
 ---

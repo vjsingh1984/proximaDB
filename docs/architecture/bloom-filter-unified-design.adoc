@@ -17,7 +17,7 @@ ProximaDB's unified bloom filter architecture provides a polymorphic, strategy-b
 
 == Overview
 
-The bloom filter architecture was completely redesigned to address multiple implementations that had emerged organically throughout the codebase. The new unified design provides:
+The bloom filter architecture was redesigned to address multiple implementations throughout the codebase. The unified design provides:
 
 * **Single trait interface** for all bloom filter operations
 * **Strategy pattern** for different implementation needs
@@ -25,9 +25,11 @@ The bloom filter architecture was completely redesigned to address multiple impl
 * **Type-safe serialization** with version control
 * **Zero code duplication** across storage engines
 
-== Architecture
+image::bloom-filter-architecture.svg[Bloom Filter Architecture]
 
-=== Core Trait Design
+== Core Architecture
+
+=== Trait Interface
 
 [source,rust]
 ----
@@ -44,7 +46,6 @@ pub trait BloomFilterStrategy: Send + Sync {
 === Strategy Implementations
 
 ==== ByteAligned Strategy
-
 Optimized for disk persistence in SSTable files:
 
 [source,rust]
@@ -61,7 +62,6 @@ pub struct ByteAlignedBloomFilter {
 * **Memory**: ~10 bits per key for 1% false positive rate
 
 ==== BitPacked Strategy
-
 Memory-efficient implementation for in-memory structures:
 
 [source,rust]
@@ -78,24 +78,7 @@ pub struct BitPackedBloomFilter {
 * **Benefits**: 64-bit word operations, cache-friendly
 * **Memory**: Minimal overhead with bit packing
 
-==== Simple Strategy
-
-Fast implementation for small datasets:
-
-[source,rust]
-----
-pub struct SimpleBloomFilter {
-    bits: Vec<bool>,
-    size: usize,
-}
-----
-
-* **Use Case**: Small collections, testing
-* **Benefits**: Simple logic, fast for <1000 items
-* **Trade-offs**: Higher memory usage
-
 ==== Composite Strategy
-
 Metadata-aware filtering with multiple sub-filters:
 
 [source,rust]
@@ -111,7 +94,6 @@ pub struct CompositeBloomFilter {
 * **Features**: Dynamic metadata column tracking
 
 ==== NoOp Strategy
-
 Edge case handling for disabled or empty filters:
 
 [source,rust]
@@ -127,7 +109,6 @@ impl BloomFilterStrategy for NoOpBloomFilter {
 
 * **Use Case**: Disabled filters, empty collections
 * **Benefits**: Zero memory usage, consistent API
-* **Behavior**: Conservative (always returns true)
 
 == Factory Pattern
 
@@ -139,7 +120,6 @@ pub struct BloomFilterFactory;
 
 impl BloomFilterFactory {
     pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
-        // Handle edge cases first
         if !config.enabled || config.expected_items == 0 {
             return Box::new(NoOpBloomFilter);
         }
@@ -153,9 +133,6 @@ impl BloomFilterFactory {
                     config.expected_items,
                     config.false_positive_rate.unwrap_or(0.01)
                 ))
-            }
-            BloomStrategy::Simple => {
-                Box::new(SimpleBloomFilter::new(config.expected_items))
             }
             BloomStrategy::Composite => {
                 Box::new(CompositeBloomFilter::new_with_config(config))
@@ -182,20 +159,17 @@ pub struct BloomFilterConfig {
 pub enum BloomStrategy {
     ByteAligned,
     BitPacked,
-    Simple,
     Composite,
 }
 ----
 
-== Integration Points
+== Storage Engine Integration
 
-=== SST Engine Integration
-
-The SST engine uses ByteAligned filters for SSTable files:
+=== SST Engine
+ByteAligned filters for SSTable files:
 
 [source,rust]
 ----
-// In SSTable writer
 let config = BloomFilterConfig {
     enabled: true,
     strategy: BloomStrategy::ByteAligned,
@@ -208,18 +182,10 @@ let bloom_filter = BloomFilterFactory::create(&config);
 for record in &records {
     bloom_filter.insert(&record.key);
 }
-
-// Serialize with metadata
-let metadata = SstableMetadata {
-    bloom_filter: Some(bloom_filter.serialize()?),
-    bloom_filter_config: Some(config),
-    // ... other metadata
-};
 ----
 
-=== VIPER Engine Integration
-
-VIPER uses Composite filters for metadata-aware filtering:
+=== VIPER Engine
+Composite filters for metadata-aware filtering:
 
 [source,rust]
 ----
@@ -239,29 +205,23 @@ for record in &records {
 ----
 
 === Memtable Integration
-
-Memtables use BitPacked filters for memory efficiency:
+BitPacked filters for memory efficiency:
 
 [source,rust]
 ----
-impl GlobalPartitionedMemtable {
-    fn initialize_partition(&mut self, collection_id: &str) {
-        let config = BloomFilterConfig {
-            strategy: BloomStrategy::BitPacked,
-            expected_items: 10000,
-            false_positive_rate: Some(0.01),
-            ..Default::default()
-        };
-        
-        let filter = BloomFilterFactory::create(&config);
-        self.bloom_filters.insert(collection_id.to_string(), filter);
-    }
-}
+let config = BloomFilterConfig {
+    strategy: BloomStrategy::BitPacked,
+    expected_items: 10000,
+    false_positive_rate: Some(0.01),
+    ..Default::default()
+};
+
+let filter = BloomFilterFactory::create(&config);
 ----
 
 == Serialization
 
-=== Type-Safe Serialization
+=== Type-Safe Format
 
 [source,rust]
 ----
@@ -287,14 +247,12 @@ impl SerializedBloomFilter {
     }
     
     pub fn to_filter(&self) -> Result<Box<dyn BloomFilterStrategy>> {
-        // Factory handles polymorphic deserialization
-        let filter = match self.strategy {
+        match self.strategy {
             BloomStrategy::ByteAligned => {
-                ByteAlignedBloomFilter::deserialize(&self.data)?
+                ByteAlignedBloomFilter::deserialize(&self.data)
             }
             // ... other strategies
-        };
-        Ok(filter)
+        }
     }
 }
 ----
@@ -316,12 +274,6 @@ impl SerializedBloomFilter {
 | O(k)
 | O(k)
 | In-memory
-
-| Simple
-| 8 bytes
-| O(1)
-| O(1)
-| Small datasets
 
 | Composite
 | Variable
@@ -372,7 +324,7 @@ pub fn murmur_hash(key: &[u8], seed: u32) -> u32 {
 }
 ----
 
-=== Double Hashing
+=== Double Hashing Strategy
 
 [source,rust]
 ----
@@ -389,7 +341,7 @@ fn get_hash_indices(&self, key: &[u8], num_bits: usize) -> Vec<usize> {
 }
 ----
 
-== Edge Cases and Error Handling
+== Error Handling
 
 === Division by Zero Protection
 
@@ -397,18 +349,16 @@ fn get_hash_indices(&self, key: &[u8], num_bits: usize) -> Vec<usize> {
 ----
 impl ByteAlignedBloomFilter {
     pub fn new(mut num_bits: u32, num_hashes: u32) -> Self {
-        // Ensure minimum size to prevent division by zero
         if num_bits == 0 {
             num_bits = 64;  // Minimum viable size
         }
         
-        // Round up to byte boundary
         let num_bytes = ((num_bits + 7) / 8) as usize;
         
         Self {
             bits: vec![0; num_bytes],
             num_bits,
-            num_hashes: num_hashes.max(1),  // At least one hash
+            num_hashes: num_hashes.max(1),
         }
     }
 }
@@ -420,87 +370,10 @@ impl ByteAlignedBloomFilter {
 ----
 impl BloomFilterFactory {
     pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
-        // Return NoOp for empty or disabled filters
         if !config.enabled || config.expected_items == 0 {
             return Box::new(NoOpBloomFilter);
         }
-        
         // Normal creation logic...
-    }
-}
-----
-
-== Migration Guide
-
-=== From Old SST Implementation
-
-[source,rust]
-----
-// Old code
-let bloom_filter = BloomFilter::new(bits_per_key);
-
-// New code
-let config = BloomFilterConfig {
-    strategy: BloomStrategy::ByteAligned,
-    bits_per_key: Some(bits_per_key),
-    expected_items: estimated_records,
-    ..Default::default()
-};
-let bloom_filter = BloomFilterFactory::create(&config);
-----
-
-=== From Old Memtable Implementation
-
-[source,rust]
-----
-// Old code
-let filter = SimpleBloomFilter::new(1000);
-
-// New code
-let filter = BloomFilterFactory::create(&BloomFilterConfig {
-    strategy: BloomStrategy::BitPacked,
-    expected_items: 1000,
-    false_positive_rate: Some(0.01),
-    ..Default::default()
-});
-----
-
-== Testing
-
-=== Unit Tests
-
-[source,rust]
-----
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_false_positive_rate() {
-        let config = BloomFilterConfig {
-            strategy: BloomStrategy::BitPacked,
-            expected_items: 1000,
-            false_positive_rate: Some(0.01),
-            ..Default::default()
-        };
-        
-        let mut filter = BloomFilterFactory::create(&config);
-        
-        // Add items
-        for i in 0..1000 {
-            filter.insert(&i.to_le_bytes());
-        }
-        
-        // Check false positive rate
-        let mut false_positives = 0;
-        for i in 1000..2000 {
-            if filter.might_contain(&i.to_le_bytes()) {
-                false_positives += 1;
-            }
-        }
-        
-        let actual_rate = false_positives as f64 / 1000.0;
-        assert!(actual_rate < 0.02);  // Within 2x target
     }
 }
 ----
@@ -511,7 +384,6 @@ mod tests {
    - Use ByteAligned for disk storage
    - Use BitPacked for in-memory structures
    - Use Composite for metadata filtering
-   - Use Simple only for very small datasets
 
 2. **Configure Appropriately**:
    - Set realistic expected_items counts
@@ -530,4 +402,4 @@ mod tests {
 
 == Conclusion
 
-The unified bloom filter architecture successfully consolidates multiple implementations into a single, extensible design. The strategy pattern provides flexibility while maintaining type safety, and the factory pattern ensures consistent usage across all storage engines. This design eliminates code duplication, improves maintainability, and provides better performance through specialized implementations.
+The unified bloom filter architecture consolidates multiple implementations into a single, extensible design. The strategy pattern provides flexibility while maintaining type safety, and the factory pattern ensures consistent usage across all storage engines. This design eliminates code duplication, improves maintainability, and provides better performance through specialized implementations.

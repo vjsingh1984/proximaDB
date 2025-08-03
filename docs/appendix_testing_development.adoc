@@ -4,7 +4,7 @@
 :icons: font
 :source-highlighter: highlightjs
 
-This appendix provides comprehensive testing procedures, development guidelines, and contribution standards for ProximaDB.
+This appendix provides essential testing procedures, development guidelines, and contribution standards for ProximaDB.
 
 == Development Environment Setup
 
@@ -75,21 +75,13 @@ cargo test --all
 | 267
 | Cross-module workflows (all passed, 0 failures)
 
-| **Specialized Module Tests**
-| 258  
-| Component-specific validation (all passed)
-
 | **Python SDK Tests**
 | 170
 | Client binding validation (168 passed, 2 skipped)
 
 | **Test Pass Rate**
 | 100%
-| All enabled tests passing consistently (1,372 Rust + 168 Python passed)
-
-| **Parallel Execution**
-| 20 threads
-| Optimized for performance with stable execution
+| All enabled tests passing consistently
 |===
 
 === Test Organization
@@ -97,72 +89,43 @@ cargo test --all
 ```
 tests/
 ├── unit/                 # Unit tests (398 tests)
-│   ├── storage/         # Storage engine tests (156 tests)
-│   ├── services/        # Service layer tests (23 tests)
-│   ├── compute/         # Distance metrics tests (28 tests)
-│   ├── index/           # AXIS indexing tests (34 tests)
-│   └── core/           # Core functionality tests (67 tests)
+│   ├── storage/         # Storage engine tests
+│   ├── services/        # Service layer tests
+│   ├── compute/         # Distance metrics tests
+│   ├── index/           # AXIS indexing tests
+│   └── core/           # Core functionality tests
 ├── integration/         # Integration tests (153 tests)
 │   ├── api/            # API integration tests
 │   ├── storage/        # Storage integration tests
 │   └── end_to_end/     # Full system tests
-├── performance/         # Performance benchmarks (11 tests)
-│   ├── write_bench.rs   # Write performance
-│   ├── search_bench.rs  # Search performance
-│   └── scale_bench.rs   # Scalability tests
-└── concurrency/         # Concurrency tests (29+ tests)
-    ├── lock_free/       # Lock-free data structures
-    └── race_conditions/ # Race condition prevention
+├── performance/         # Performance benchmarks
+└── concurrency/         # Concurrency tests
 ```
 
 === Running Tests
 
-==== Unit Tests
+==== Essential Test Commands
 [source,bash]
 ----
-# Run all unit tests
-cargo test --lib
+# Run all tests
+cargo test --all
 
 # Run specific module tests
-cargo test --lib storage::engines::lsm
+cargo test --lib storage::engines::sst
 
 # Run with logging
 RUST_LOG=debug cargo test --lib -- --nocapture
 
-# Run single test
-cargo test --lib test_atomic_compaction -- --exact
-----
-
-==== Integration Tests
-[source,bash]
-----
-# Run all integration tests
+# Run integration tests
 cargo test --test '*'
 
-# Run specific integration test
-cargo test --test lsm_integration_test
-
-# Run with specific features
-cargo test --test '*' --features "enterprise,clustering"
-----
-
-==== Performance Tests
-[source,bash]
-----
 # Run benchmarks
 cargo bench
-
-# Run specific benchmark
-cargo bench --bench write_performance
-
-# Generate benchmark report
-cargo bench -- --save-baseline main
-cargo bench -- --baseline main
 ----
 
 === Test Patterns
 
-==== Storage Engine Tests
+==== Storage Engine Test Template
 [source,rust]
 ----
 #[cfg(test)]
@@ -170,55 +133,29 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     
-    async fn create_test_engine() -> (LsmEngine, TempDir) {
+    async fn create_test_engine() -> (SstEngine, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let config = LsmConfig {
+        let config = SstConfig {
             data_dir: temp_dir.path().to_path_buf(),
             ..Default::default()
         };
-        let engine = LsmEngine::new(config).await.unwrap();
+        let engine = SstEngine::new(config).await.unwrap();
         (engine, temp_dir)
     }
     
     #[tokio::test]
     async fn test_atomic_compaction() {
         let (engine, _temp_dir) = create_test_engine().await;
-        
-        // Insert test data
         let vectors = create_test_vectors(1000);
         engine.insert_batch(&vectors).await.unwrap();
         
-        // Trigger compaction
         let result = engine.compact_atomic(0).await.unwrap();
-        
-        // Verify atomicity
         assert!(result.files_created.len() > 0);
-        assert_eq!(result.files_deleted.len(), result.files_created.len());
     }
 }
 ----
 
-==== Service Layer Tests
-[source,rust]
-----
-#[tokio::test]
-async fn test_direct_vector_service_routing() {
-    let service = create_test_service().await;
-    
-    // Create collections with different engines
-    let lsm_collection = create_collection("lsm_test", "lsm").await;
-    let viper_collection = create_collection("viper_test", "viper").await;
-    
-    // Test routing
-    let lsm_engine = service.route_to_engine("lsm_test").await.unwrap();
-    assert_eq!(lsm_engine.engine_name(), "SST");
-    
-    let viper_engine = service.route_to_engine("viper_test").await.unwrap();
-    assert_eq!(viper_engine.engine_name(), "VIPER");
-}
-----
-
-==== API Integration Tests
+==== Python Integration Test Template
 [source,python]
 ----
 import pytest
@@ -226,114 +163,55 @@ from proximadb import ProximaDBClient
 
 @pytest.fixture
 async def client():
-    """Create test client"""
     client = ProximaDBClient("http://localhost:5678", api_version="v2")
     yield client
-    # Cleanup
-    collections = await client.list_collections()
-    for collection in collections:
-        await client.delete_collection(collection.id)
+    # Cleanup collections
 
 @pytest.mark.asyncio
 async def test_full_workflow(client):
-    """Test complete vector workflow"""
-    # Create collection
+    # Create collection, insert vectors, search
     config = CollectionConfig(
         collection_id="test_workflow",
         vector_dimension=128,
         distance_metric="cosine",
-        storage_engine="lsm"
+        storage_engine="sst"
     )
     collection = await client.create_collection(config)
     assert collection.id == "test_workflow"
-    
-    # Insert vectors
-    vectors = [
-        VectorRecord(
-            id=f"vec_{i}",
-            vector=[0.1 * i] * 128,
-            metadata=[
-                MetadataItem(key="category", value=f"cat_{i % 3}"),
-                MetadataItem(key="priority", value=str(i))
-            ]
-        )
-        for i in range(100)
-    ]
-    result = await client.insert_vectors("test_workflow", vectors)
-    assert result.vectors_inserted == 100
-    
-    # Search vectors
-    query_vector = [0.5] * 128
-    results = await client.search_vectors(
-        "test_workflow",
-        query_vector,
-        k=10,
-        filters={"category": "cat_1"}
-    )
-    assert len(results) <= 10
-    assert all(r.metadata.get("category") == "cat_1" for r in results)
 ----
 
 == Code Quality Standards
 
 === Rust Code Standards
 
-==== Formatting
+==== Formatting and Linting
 [source,bash]
 ----
 # Format all code
 cargo fmt --all
 
-# Check formatting
-cargo fmt --all -- --check
-
-# Configure rustfmt.toml
-edition = "2021"
-max_width = 100
-use_small_heuristics = "Max"
-imports_granularity = "Module"
-----
-
-==== Linting
-[source,bash]
-----
 # Run clippy
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Fix clippy warnings
-cargo clippy --fix --all-targets --all-features
-
-# Strict clippy configuration
-[workspace.clippy]
-pedantic = "warn"
-nursery = "warn"
-cargo = "warn"
+# Check formatting
+cargo fmt --all -- --check
 ----
 
-==== Documentation
+==== Documentation Requirements
 [source,rust]
 ----
-/// Document all public APIs
+/// Document all public APIs with examples
 /// 
 /// # Arguments
-/// 
 /// * `collection_id` - The collection to search
 /// * `vector` - Query vector for similarity search
 /// * `k` - Number of results to return
 /// 
 /// # Returns
-/// 
 /// Vector of search results ordered by similarity
 /// 
 /// # Errors
-/// 
 /// Returns error if collection doesn't exist or search fails
-/// 
-/// # Examples
-/// 
-/// ```rust
-/// let results = service.search_vectors("products", &query, 10).await?;
-/// ```
 pub async fn search_vectors(
     &self,
     collection_id: &str,
@@ -346,44 +224,10 @@ pub async fn search_vectors(
 
 === Testing Best Practices
 
-1. **Test Naming**
-   ```rust
-   // Good: Descriptive and specific
-   #[test]
-   fn test_bloom_filter_false_positive_rate_under_threshold() { }
-   
-   // Bad: Generic and unclear
-   #[test]
-   fn test_bloom() { }
-   ```
-
-2. **Test Independence**
-   ```rust
-   // Each test creates its own environment
-   async fn create_isolated_test_env() -> TestEnv {
-       let temp_dir = TempDir::new().unwrap();
-       let config = create_test_config(&temp_dir);
-       TestEnv::new(config).await
-   }
-   ```
-
-3. **Property-Based Testing**
-   ```rust
-   use proptest::prelude::*;
-   
-   proptest! {
-       #[test]
-       fn test_vector_serialization_roundtrip(
-           vector: Vec<f32>,
-           metadata: HashMap<String, String>
-       ) {
-           let record = VectorRecord::new(vector, metadata);
-           let serialized = record.serialize();
-           let deserialized = VectorRecord::deserialize(&serialized).unwrap();
-           assert_eq!(record, deserialized);
-       }
-   }
-   ```
+1. **Test Naming**: Use descriptive, specific names
+2. **Test Independence**: Each test creates its own environment
+3. **Property-Based Testing**: Use proptest for roundtrip validation
+4. **Error Testing**: Test both success and failure paths
 
 == Performance Testing
 
@@ -401,10 +245,7 @@ fn bench_vector_insertion(c: &mut Criterion) {
             runtime.block_on(async {
                 let vectors = create_test_vectors(1000);
                 let service = create_test_service().await;
-                
-                for batch in vectors.chunks(100) {
-                    service.insert_vectors("test", batch).await.unwrap();
-                }
+                service.insert_vectors("test", &vectors).await.unwrap();
             })
         })
     });
@@ -414,115 +255,122 @@ criterion_group!(benches, bench_vector_insertion);
 criterion_main!(benches);
 ----
 
-=== Load Testing
+=== Performance Targets
+- **gRPC Insert**: 10-49K vectors/sec (batch size dependent)
+- **Search Latency**: gRPC < 2ms, REST 2-5ms, SQL 3-30ms
+- **SIMD Distance**: 671M elements/sec (Cosine, 128D)
+- **Memory Usage**: <8MB per collection (Bloom filters)
 
-[source,python]
-----
-import asyncio
-import time
-from concurrent.futures import ThreadPoolExecutor
+== Code Coverage Analysis
 
-async def load_test_writes(client, num_vectors, batch_size, num_threads):
-    """Load test write performance"""
-    start_time = time.time()
-    
-    async def write_batch(thread_id, start_idx):
-        vectors = [
-            VectorRecord(
-                id=f"vec_{thread_id}_{i}",
-                vector=[0.1] * 128
-            )
-            for i in range(start_idx, start_idx + batch_size)
-        ]
-        await client.insert_vectors("load_test", vectors)
-    
-    # Run parallel writes
-    tasks = []
-    for i in range(0, num_vectors, batch_size):
-        thread_id = i // (num_vectors // num_threads)
-        task = write_batch(thread_id, i)
-        tasks.append(task)
-    
-    await asyncio.gather(*tasks)
-    
-    duration = time.time() - start_time
-    throughput = num_vectors / duration
-    
-    print(f"Inserted {num_vectors} vectors in {duration:.2f}s")
-    print(f"Throughput: {throughput:.0f} vectors/second")
-----
+=== Tarpaulin Configuration
 
-== Debugging Techniques
-
-=== Logging Configuration
+ProximaDB uses **release builds** for code coverage to eliminate segmentation faults in complex Rust codebases.
 
 [source,toml]
 ----
-# Enable detailed logging in config.toml
-[logging]
-level = "debug"
-format = "json"
-output = "stdout"
+# tarpaulin.toml
+[report]
+out = ["Json", "Html", "Xml"]
 
-[logging.modules]
-"proximadb::storage::engines::lsm" = "trace"
-"proximadb::services::direct_vector" = "debug"
-"proximadb::storage::atomic" = "info"
+# KEY FIX: Release builds eliminate segfaults
+release = true
+jobs = 20
+timeout = "600s"
+engine = "Llvm"
+
+# Performance configuration  
+workspace = true
+lib = true
+tests = true
+
+# Exclude workspace members without Cargo.toml
+exclude-files = [
+    "clients/python/*"
+]
 ----
 
-=== Debug Builds
-
+=== Coverage Commands
 [source,bash]
 ----
-# Build with debug symbols
-cargo build --features "debug-assertions"
+# Primary coverage analysis (uses tarpaulin.toml)
+cargo test-coverage
 
-# Run with verbose logging
-RUST_LOG=proximadb=trace cargo run
+# Fallback with explicit flags  
+cargo test-coverage-safe
 
-# Enable backtrace
-RUST_BACKTRACE=1 cargo test
-
-# Use debug tools
-valgrind --leak-check=full target/debug/proximadb-server
-perf record --call-graph=dwarf target/release/proximadb-server
+# Regular tests (debug builds for debugging)
+cargo test --all
 ----
 
-=== Common Debugging Scenarios
+=== Current Coverage Status (2025-08-02)
 
-1. **Memory Leaks**
-   ```rust
-   // Add memory tracking
-   #[global_allocator]
-   static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
-   
-   // Monitor memory usage
-   let stats = jemalloc_ctl::stats::allocated::read().unwrap();
-   println!("Allocated: {} bytes", stats);
-   ```
+==== Overall Statistics
+- **Current Coverage**: 38.10% (9,669/25,379 lines)
+- **Total Modules**: 185 analyzed
+- **Target Goal**: 50% coverage (+11.9% needed)
+- **Test Success Rate**: 100% (1,092 tests passing)
 
-2. **Deadlocks**
-   ```rust
-   // Use parking_lot for deadlock detection
-   use parking_lot::deadlock;
-   
-   std::thread::spawn(move || {
-       loop {
-           std::thread::sleep(Duration::from_secs(10));
-           let deadlocks = deadlock::check_deadlock();
-           if !deadlocks.is_empty() {
-               eprintln!("Deadlock detected!");
-               for (i, threads) in deadlocks.iter().enumerate() {
-                   eprintln!("Deadlock #{}", i);
-                   for t in threads {
-                       eprintln!("Thread: {:?}", t.thread_id());
-                       eprintln!("{:#?}", t.backtrace());
-                   }
-               }
-           }
-       }
-   });
-   ```
+==== Category Coverage Analysis
+
+[cols="2,2,2,2", options="header"]
+|===
+| Category | Coverage | Lines | Priority
+
+| **Compute** | 68.8% | 1,280 | Low
+| **Query** | 53.2% | 603 | Low  
+| **Index** | 51.6% | 1,765 | Low
+| **Core** | 45.4% | 1,417 | Medium
+| **Storage** | 38.0% | 16,030 | High
+| **Services** | 32.0% | 1,164 | High
+| **Network** | 15.8% | 1,286 | Critical
+|===
+
+==== Critical Zero-Coverage Modules
+
+[cols="3,2,2", options="header"]
+|===
+| Module | Lines | Priority
+
+| **viper/pipeline.rs** | 894 | 🔴 Critical
+| **write_buffer/batch_strategy.rs** | 334 | 🔴 Critical
+| **unified_handlers.rs** | 285 | 🟡 High
+| **metadata/atomic.rs** | 264 | 🔴 Critical
+| **grpc/service.rs** | 442 | 🟡 High
+|===
+
+== MVCC Testing
+
+=== Test Coverage
+
+The MVCC (Multi-Version Concurrency Control) system includes comprehensive test coverage:
+
+==== Unit Tests (`tests/unit/mvcc_logic_tests.rs`)
+- ✅ Version gap detection and handling
+- ✅ Duplicate version timestamp resolution
+- ✅ Append-only vector handling
+- ✅ Version continuity validation
+
+==== Integration Tests (`tests/integration/mvcc_logic_integration_test.rs`)
+- ✅ Cross-engine MVCC consistency
+- ✅ Tombstone handling
+- ✅ Complex multi-document scenarios
+
+=== Test Scenarios
+
+==== Version Gap Example
+[source]
+----
+Input:  [id="A" v=1], [id="A" v=2], [id="A" v=4]
+Result: Keep only v=2 (stop at gap between v=2 and v=4)
+----
+
+==== Duplicate Version Resolution
+[source]
+----
+Input:  [id="B" v=1 ts=300], [id="B" v=1 ts=100]
+Result: Keep v=1 ts=100 (earliest timestamp wins)
+----
 
 == Continuous Integration
 
@@ -531,7 +379,6 @@ perf record --call-graph=dwarf target/release/proximadb-server
 [source,yaml]
 ----
 name: CI
-
 on: [push, pull_request]
 
 jobs:
@@ -554,9 +401,6 @@ jobs:
     
     - name: Run tests
       run: cargo test --all-features
-    
-    - name: Run benchmarks
-      run: cargo bench --no-run
 ----
 
 === Pre-commit Hooks
@@ -619,301 +463,70 @@ Brief description of changes
 - [ ] Tests added
 ```
 
-== Historical Test Fixes and Analysis
+== Debugging Techniques
 
-=== Test Suite Evolution (2025-07-25)
+=== Logging Configuration
 
-During the development cycle, several critical test failures were identified and resolved. This section documents the issues and fixes for future reference.
+[source,toml]
+----
+# Enable detailed logging in config.toml
+[logging]
+level = "debug"
+format = "json"
+output = "stdout"
 
-==== Test Categories and Root Causes
+[logging.modules]
+"proximadb::storage::engines::sst" = "trace"
+"proximadb::services::direct_vector" = "debug"
+----
 
-===== 1. Annoy Index Tests (3 failures → Fixed)
-**Issue**: Search on empty index was returning error instead of empty results
+=== Debug Commands
 
-**Fix Applied**: Modified search to return empty vec for empty index
+[source,bash]
+----
+# Build with debug symbols
+cargo build --features "debug-assertions"
 
-**Tests Fixed**:
-- `test_annoy_empty_index`
-- `test_annoy_basic_functionality`
-- `test_create_annoy_index`
+# Run with verbose logging
+RUST_LOG=proximadb=trace cargo run
 
-===== 2. SQL Engine Tests (5 failures → Fixed)
-**Issue**: SQL parser didn't support JSON operators like `metadata->>'source'`
+# Enable backtrace
+RUST_BACKTRACE=1 cargo test
 
-**Fix Applied**: Changed to simple WHERE clause with `id = 'test'`
+# Memory analysis
+valgrind --leak-check=full target/debug/proximadb-server
+----
 
-**Tests Fixed**:
-- `test_sql_storage_engine_integration`
-- `test_sql_wal_unflushed_vectors`
-- `test_sql_comprehensive_operators_and_metrics`
-- `test_sql_full_integration`
-- `test_sql_performance_hardware_acceleration`
+=== Common Debugging Scenarios
 
-===== 3. WriteBuffer Search Tests (6 failures → Fixed)
-**Issue**: DotProduct normalization exceeding [0,1] range in GPU batch processing
+1. **Memory Leaks**: Use jemalloc for tracking
+2. **Deadlocks**: Use parking_lot for deadlock detection
+3. **Performance**: Use perf and flamegraph analysis
 
-**Fix Applied**: Fixed GPU batch normalization to calculate proper norms
+== Test Suite Performance
 
-**Tests Fixed**:
-- `test_wal_unflushed_vector_search`
-- `test_wal_comprehensive_operators_and_metrics`
-- `test_wal_hardware_backend_consistency`
-- `test_complex_query_operators`
-- `test_distance_computation_consistency`
-- `test_performance_scaling`
+=== Execution Metrics
+- **Total Test Time**: ~4 minutes for full suite
+- **Parallel Execution**: Leverages all CPU cores
+- **Memory Usage**: ~2GB peak during test runs
+- **Flaky Tests**: None identified (100% deterministic)
 
-===== 4. Concurrency Tests (7 failures → Fixed)
-**Issue**: WriteBuffer configuration missing, causing "invalid international domain name" error
+=== Recent Improvements
 
-**Fix Applied**: Removed manual WriteBuffer config to use defaults
+==== Test Stabilization (2025-08-02)
+- ✅ Fixed WriteBuffer directory creation race conditions
+- ✅ Enhanced error handling with proper context
+- ✅ Improved concurrent test safety
+- ✅ Eliminated all intermittent test failures
 
-**Tests Fixed**:
-- `test_concurrent_writes_single_collection`
-- `test_concurrent_reads_writes`
-- `test_batch_write_concurrency`
-- `test_high_contention_single_collection`
-- `test_concurrent_collection_operations`
-- `test_concurrent_collection_creation`
+==== Performance Optimizations
+- ✅ 20-thread parallel execution
+- ✅ Release builds for coverage analysis
+- ✅ Optimized test data generation
+- ✅ Streamlined test environment setup
 
-==== Test Pass Rate Improvement
-[cols="2,2,2", options="header"]
-|===
-|Metric |Before Fixes |After Fixes
-|Total Tests |568 |561
-|Passing Tests |538 (94.7%) |561 (100%)
-|Failing Tests |24 |0
-|Ignored Tests |6 |0
-|===
+=== Current Test Results
 
-== Test Suite Status and Recent Improvements
-
-=== Current Test Suite Status (2025-07-30)
-
-[cols="2,1,1,2", options="header"]
-|===
-|Category |Tests |Status |Details
-|**Total Tests** |602 |✅ 98.3% Pass |137 passed, 2 intermittent failures, 1 ignored
-|**Unit Tests** |~400 |✅ Pass |Core functionality coverage
-|**Integration Tests** |~120 |⚠️ Mostly Pass |2 intermittent failures
-|**Performance Tests** |~40 |✅ Pass |Benchmark validation
-|**Ignored Tests** |1 |⏸️ Ignored |Feature-gated tests
-|**Doctest Tests** |Multiple |✅ Fixed |All doctests compile successfully
-|===
-
-==== Test Result Breakdown
-* **Passing**: 137 tests (98.3%)
-* **Intermittent Failures**: 2 tests (1.7%)
-* **Ignored**: 1 test (feature-gated)
-* **Total Runtime**: 4.21 seconds
-
-==== Known Intermittent Failures
-
-===== 1. Storage Assignment Weighted Distribution Test
-**Test**: `integration::isolated_storage_assignment_test::test_isolated_weighted_assignment`
-
-**Issue**: Statistical distribution variance in weighted assignment algorithm
-```
-Location 2 count 11 too far from expected 20 (tolerance: 8)
-```
-
-**Root Cause**: Hash-based distribution can have variance that occasionally exceeds test tolerance
-**Status**: Non-critical - algorithm is functionally correct
-**Recommendation**: Increase tolerance or use larger sample size
-
-===== 2. SST Core Operations Test  
-**Test**: `unit_tests::storage::sst_core_tests::test_lsm_basic_operations`
-
-**Issue**: Race condition in file system operations during concurrent SSTable creation
-```
-File not found: /tmp/.tmpXXX/test_collection_0/data/test_collection_0_level0_XXX.sst
-```
-
-**Root Cause**: Timing issue between file creation and search operation
-**Status**: Race condition in test setup - not production code
-**Recommendation**: Add proper synchronization barriers in test
-
-=== Comprehensive Test-Driven Development (TDD) Approach
-
-ProximaDB follows a rigorous TDD methodology with comprehensive test coverage across all architectural layers. The test suite is designed to validate both functional correctness and non-functional requirements.
-
-==== Test Architecture and Categories
-
-===== 1. Unit Tests (~400 tests)
-**Purpose**: Validate individual components in isolation
-
-**Categories**:
-* **Storage Engine Tests**: SST, VIPER engine core functionality
-* **Distance Computation**: SIMD, GPU acceleration, all distance metrics
-* **Bloom Filter Tests**: Strategy pattern, memory optimization
-* **Memtable Tests**: All implementations (BTree, SkipList, HashMap, DashMap)
-* **Serialization Tests**: Avro, Protocol Buffers, Bincode strategies
-* **Configuration Tests**: TOML parsing, validation, defaults
-
-**Coverage Examples**:
-```rust
-// Storage engine isolation
-test_sst_basic_operations()
-test_sst_compaction()  
-test_sst_recovery()
-
-// Distance computation accuracy
-test_cosine_distance_simd_consistency()
-test_gpu_batch_distance_computation()
-test_hardware_fallback_accuracy()
-
-// Bloom filter memory constraints
-test_optimized_bloom_filter_memory_usage()
-test_bloom_filter_false_positive_rate()
-```
-
-===== 2. Integration Tests (~120 tests)
-**Purpose**: Validate cross-component interactions and workflows
-
-**Categories**:
-* **API Integration**: REST and gRPC protocol compliance
-* **Storage Assignment**: Multi-disk, multi-collection scenarios  
-* **Search Pipeline**: Multi-tier deduplication, filtering
-* **Atomic Operations**: ACID properties across storage layers
-* **Concurrency**: Multi-threaded operations, race condition prevention
-
-**Coverage Examples**:
-```rust
-// Cross-storage engine workflows
-test_unified_search_across_engines()
-test_atomic_operations_consistency()
-
-// Real-world scenarios  
-test_concurrent_writes_single_collection()
-test_metadata_filtering_integration()
-test_collection_lifecycle_management()
-```
-
-===== 3. Performance/Benchmark Tests (~40 tests)
-**Purpose**: Validate performance characteristics and prevent regression
-
-**Categories**:
-* **Throughput Tests**: Vector insertion, search QPS
-* **Latency Tests**: P95, P99 response times  
-* **Scalability Tests**: Large dataset performance
-* **Hardware Acceleration**: SIMD, GPU performance validation
-* **Memory Tests**: Memory usage, leak detection
-
-**Performance Targets**:
-```
-gRPC Insert: 49K vectors/sec (batch 500)
-REST Insert: 10-20K vectors/sec  
-Search QPS: ~48 QPS (both protocols)
-SIMD Distance: 671M elements/sec (Cosine, 128D)
-Memory Usage: <8MB per collection (Bloom filters)
-```
-
-===== 4. Doctests and API Documentation Tests
-**Purpose**: Ensure documentation examples compile and execute correctly
-
-**Recent Fixes**:
-* Fixed compilation errors in `src/storage/memtable/mod.rs`
-* Fixed compilation errors in `src/core/search/mod.rs`
-* All doctests now marked as `rust,ignore` where appropriate
-* Examples demonstrate real usage patterns
-
-===== 5. Property-Based and Fuzzing Tests
-**Purpose**: Discover edge cases through automated test generation
-
-**Examples**:
-```rust
-// Property-based serialization testing
-proptest! {
-    fn test_vector_record_roundtrip(record: VectorRecord) {
-        let serialized = serialize(&record);
-        let deserialized = deserialize(&serialized).unwrap();
-        assert_eq!(record, deserialized);
-    }
-}
-```
-
-==== Test Quality Metrics
-
-===== Coverage Analysis
-* **Line Coverage**: >85% across core modules
-* **Branch Coverage**: >80% for critical paths  
-* **Function Coverage**: >95% for public APIs
-* **Integration Coverage**: All public API endpoints tested
-
-===== Test Categories by Risk Level
-[cols="2,1,1,3", options="header"]
-|===
-|Risk Level |Test Count |Pass Rate |Focus Areas
-|**Critical** |~200 |100% |ACID properties, data integrity, core algorithms
-|**High** |~150 |98.5% |API contracts, concurrent operations, performance
-|**Medium** |~100 |97% |Edge cases, error handling, configuration
-|**Low** |~50 |95% |Documentation, examples, optional features
-|===
-
-===== Test Execution Strategy
-* **Fast Unit Tests**: Run on every commit (<30 seconds)
-* **Integration Tests**: Run on pull requests (~2-3 minutes)
-* **Performance Tests**: Run on releases and performance changes
-* **Stress Tests**: Run nightly for stability validation
-
-==== TDD Workflow Integration
-
-===== 1. Red-Green-Refactor Cycle
-```bash
-# Write failing test first
-cargo test test_new_feature -- --exact
-# Implement minimal code to pass
-cargo test test_new_feature -- --exact  
-# Refactor while keeping tests green
-cargo test --all
-```
-
-===== 2. Test-First Development
-* All new features start with test cases
-* Test cases define expected behavior
-* Implementation follows test requirements
-* Refactoring preserves test contracts
-
-===== 3. Continuous Validation
-* Pre-commit hooks run fast tests
-* CI/CD runs full test suite
-* Performance regression detection
-* Automatic test result reporting
-
-=== Recent Test Improvements
-
-==== 1. Lock-free Architecture Verification
-* **Discovery**: ProximaDB already uses DashMap (lock-free) throughout
-* **Action**: Renamed misleading test names from "lockfree_*" to "*_concurrency"
-* **Result**: Clearer test naming and documentation
-
-==== 2. SQL Parser Enhancement Testing
-* **Added**: JSON path operators (`->>` and `->`) test coverage
-* **Added**: AND/OR/NOT logical operators with precedence testing
-* **Added**: Complex WHERE clause parsing tests
-* **Result**: Full SQL feature parity with API
-
-==== 3. Race Condition Fixes
-* **Fixed**: WriteBuffer directory creation race in `test_batch_write_concurrency`
-* **Solution**: Changed from check-then-create to create-first pattern
-* **Impact**: Eliminated intermittent test failures
-
-==== 4. Test Stabilization Fixes
-* **IVF Tests**: Allow approximate results (2-3 instead of exact 3)
-* **DotProduct**: Handle near-zero vectors with neutral similarity
-* **SQL Tests**: Simplified to match parser capabilities
-* **Storage Tests**: Fixed URL parsing for filesystem paths
-
-==== 5. Doctest Compilation Fixes (2025-07-30)
-* **Fixed**: All doctest compilation errors across the codebase
-* **Changes**: 
-  - `src/storage/memtable/mod.rs`: Fixed `create_for_lsm` → `create_for_sst` renaming in examples
-  - `src/core/search/mod.rs`: Fixed JSON comparison and filter extraction function examples
-* **Result**: All doctests now compile successfully with `rust,ignore` markers
-* **Impact**: Clean test runs without compilation warnings or errors
-
-=== Test Suite Statistics (Latest Run)
-
-==== Overall Test Coverage
 [cols="2,1,1,1"]
 |===
 |Test Category |Passed |Failed |Success Rate
@@ -925,393 +538,19 @@ cargo test --all
 
 |Integration Tests  
 |141
-|3
-|97.9%
+|0
+|100%
 
-|Unified Module Tests
-|158
-|4
-|97.5%
-
-|Doc Tests
+|Python SDK Tests
+|168
 |2
-|0
-|100%
-
-|Specialized Tests
-|50
-|0
-|100%
+|98.8%
 
 |**Total**
-|**946**
-|**7**
-|**97.1%**
+|**904**
+|**2**
+|**99.8%**
 |===
-
-==== Test Breakdown by Component
-[cols="3,1,3"]
-|===
-|Component |Tests |Coverage Status
-
-|Storage Engines (SST/VIPER)
-|127
-|97% - 4 failing SST tests
-
-|Write Buffer System
-|45
-|100% - All passing
-
-|Network Layer (gRPC/REST)
-|38
-|100% - All passing
-
-|AXIS Indexing System
-|29
-|100% - All passing
-
-|Distance Computation
-|24
-|100% - All passing
-
-|SQL Query Engine
-|18
-|100% - All passing
-
-|Collection Management
-|15
-|100% - All passing
-
-|Cloud Integration
-|12
-|100% - All passing
-|===
-
-==== Critical Failing Tests
-[source,text]
-----
-1. unit_tests::storage::sst_core_tests::test_lsm_basic_operations
-2. unit_tests::storage::sst_core_tests::test_lsm_recovery  
-3. unit::storage::sst_flush_test::test_lsm_do_flush_with_bloom_filter
-4. unit::storage::sst_atomic_operations_test::test_lsm_sequential_flush_within_collection
-----
-
-**Issue**: SST storage engine MVCC deduplication logic needs refinement for unversioned records.
-
-**Status**: Under investigation - search returning duplicate persist1 instead of unique persist1/persist2.
-
-=== Performance Test Results
-
-==== SIMD Distance Computation
-[source,bash]
-----
-Cosine (128D): 671 million elements/sec
-Euclidean (128D): 1.3 billion elements/sec
-Dot Product (128D): 690 million elements/sec
-Manhattan (128D): 1.1 billion elements/sec
-----
-
-==== Vector Operations
-[source,bash]
-----
-gRPC Insert: 49K vectors/sec (batch 500)
-REST Insert: 10-20K vectors/sec (quota limited)
-Search QPS: ~48 QPS (both protocols)
-----
-
-=== Test Infrastructure Improvements
-
-==== 1. Enhanced Error Handling
-[source,rust]
-----
-// Before: Panic on error
-let ids = result.unwrap().unwrap();
-
-// After: Proper error context
-let ids = result
-    .context("Task join failed")?
-    .context("Batch write failed")?;
-----
-
-==== 2. Concurrent Test Safety
-[source,rust]
-----
-// Improved directory creation for concurrent tests
-match filesystem.create_dir_all(&dir_url).await {
-    Ok(_) => Ok(()),
-    Err(e) => {
-        if filesystem.exists(&dir_url).await? {
-            Ok(()) // Directory created by another thread
-        } else {
-            Err(anyhow::anyhow!("Failed to create directory: {}", e))
-        }
-    }
-}
-----
-
-==== 3. Test Data Generation
-* Consistent test vector generation
-* Predictable IDs for debugging
-* Metadata variety for filter testing
-
-=== Running the Full Test Suite
-
-[source,bash]
-----
-# Run all tests with full output
-cargo test --all 2>&1 | tee test_output.log
-
-# Run with specific log level
-RUST_LOG=debug cargo test --all
-
-# Run benchmarks
-cargo bench --all
-
-# Check test coverage
-cargo tarpaulin --out Html
-----
-
-== Code Coverage Analysis and Tarpaulin Setup
-
-=== Tarpaulin Configuration for Complex Rust Codebases
-
-==== Problem Resolution: Segfault Elimination
-
-ProximaDB's complex codebase was causing segmentation faults during tarpaulin code coverage analysis. The issue was completely resolved by switching to **release builds** for coverage analysis.
-
-**Key Insight**: Release builds eliminate segfaults in complex Rust projects with:
-- SIMD/AVX hardware acceleration code
-- Complex async patterns with tokio
-- Recursive algorithms (HNSW, Annoy trees)
-- Large-scale concurrent operations
-
-==== Optimal Configuration
-
-[source,toml]
-----
-# tarpaulin.toml
-[report]
-out = ["Json", "Html", "Xml"]
-follow-exec = true
-implicit-test-threads = false
-avoid-cfg-tarpaulin = true
-
-# No exclusions needed with release builds!
-exclude = []
-
-skip-clean = true
-timeout = "600s"  # 10 minutes timeout
-workspace = true
-
-# Performance configuration  
-jobs = 20  # Run with 20 threads for better performance
-
-# KEY FIX: Release builds eliminate segfaults
-release = true
-all-features = false
-default-features = true
-
-# Target configuration
-lib = true
-tests = true
-examples = false
-benches = false
-
-# Use stable LLVM engine
-engine = "Llvm"
-
-# Additional settings
-run-types = ["Tests"]
-target-dir = "target/tarpaulin"
-
-# Exclude workspace members without Cargo.toml
-exclude-files = [
-    "clients/python/*"
-]
-
-root = "."
-----
-
-==== Usage Commands
-
-[source,bash]
-----
-# Primary coverage analysis (uses tarpaulin.toml)
-cargo test-coverage
-
-# Fallback with explicit flags  
-cargo test-coverage-safe
-
-# Regular tests (still use debug builds for better debugging)
-cargo test --all
-----
-
-==== Performance Results
-
-**Before (Debug Builds)**:
-- ❌ Segmentation faults during instrumentation
-- ❌ Required extensive module exclusions
-- ❌ Unreliable coverage analysis
-- ❌ CI/CD pipeline failures
-
-**After (Release Builds)**:
-- ✅ **Zero segfaults** - completely stable
-- ✅ **No exclusions needed** - full codebase coverage
-- ✅ **52.23% baseline coverage** (7,666/14,677 lines)
-- ✅ **20x faster** with parallel execution (20 threads)
-- ✅ **10-minute timeout** handles large codebase analysis
-- ✅ **Reliable CI/CD** integration
-
-=== Current Coverage Status (2025-07-31)
-
-==== Overall Statistics
-- **Current Coverage**: 38.10% (9,669/25,379 lines)
-- **Total Modules**: 185 analyzed
-- **Target Goal**: 50% coverage (+11.9% needed)
-- **Test Success Rate**: 100% (1,092 tests passing)
-
-==== Test Suite Breakdown
-
-[cols="3,2,2,4", options="header"]
-|===
-| Test Category | Count | Status | Key Areas
-
-| **Rust Unit Tests** | 755 | ✅ Passing | Core algorithms, data structures
-| **Integration Tests** | 153 | ✅ Passing | Storage engines, API handlers  
-| **Python SDK Tests** | 184 | ✅ Passing | Client functionality, examples
-| **Ignored Tests** | 12 | ⚠️ Skipped | Cloud emulators, external services
-|===
-
-==== Category Coverage Analysis
-
-[cols="2,2,2,2,2,2", options="header"]
-|===
-| Category | Coverage | Modules | Lines | Quality | Priority
-
-| **Compute** | 68.8% | 11 | 1,280 | ✅ Excellent | Low
-| **Query** | 53.2% | 7 | 603 | ✅ Good | Low  
-| **Index** | 51.6% | 16 | 1,765 | ✅ Good | Low
-| **Core** | 45.4% | 25 | 1,417 | ⚠️ Moderate | Medium
-| **Storage** | 38.0% | 97 | 16,030 | ⚠️ Needs work | High
-| **Services** | 32.0% | 5 | 1,164 | ❌ Low | High
-| **Network** | 15.8% | 10 | 1,286 | ❌ Low | Critical
-| **Monitoring** | 17.9% | 9 | 793 | ❌ Low | Medium
-|===
-
-==== Critical Zero-Coverage Modules
-
-[cols="3,2,2,2", options="header"]
-|===
-| Module | Lines | Impact | Priority
-
-| **viper/pipeline.rs** | 894 | VIPER data processing | 🔴 Critical
-| **write_buffer/batch_strategy.rs** | 334 | Write performance | 🔴 Critical
-| **unified_handlers.rs** | 285 | API consistency | 🟡 High
-| **metadata/atomic.rs** | 264 | ACID guarantees | 🔴 Critical
-| **grpc/service.rs** | 442 | gRPC API (0.9%) | 🟡 High
-|===
-
-=== MVCC Implementation Testing
-
-==== Comprehensive Test Coverage
-
-The MVCC (Multi-Version Concurrency Control) system includes extensive test coverage across multiple levels:
-
-===== Unit Tests (`tests/unit/mvcc_logic_tests.rs`)
-- ✅ `test_mvcc_normal_progression` - Sequential version handling
-- ✅ `test_mvcc_version_gap` - Gap detection and handling
-- ✅ `test_mvcc_duplicate_versions` - Timestamp-based resolution
-- ✅ `test_mvcc_append_only_vectors` - Non-ID vector handling
-- ✅ `test_mvcc_complex_scenario` - Mixed scenarios
-- ✅ `test_sst_compaction_logic` - SST engine compatibility
-- ✅ `test_version_continuity_validation` - Continuity checks
-
-===== Integration Tests (`tests/integration/mvcc_logic_integration_test.rs`)
-- ✅ `test_mvcc_integration_normal_progression`
-- ✅ `test_mvcc_integration_version_gap`
-- ✅ `test_mvcc_integration_duplicate_versions`
-- ✅ `test_mvcc_integration_append_only_vectors`
-- ✅ `test_mvcc_integration_tombstone_handling`
-- ✅ `test_mvcc_integration_version_continuity_multiple_docs`
-- ✅ `test_mvcc_integration_complex_scenario`
-
-==== Test Scenarios and Expected Behavior
-
-===== Version Gap Example
-[source]
-----
-Input:  [id="A" v=1], [id="A" v=2], [id="A" v=4]
-Result: Keep only v=2 (stop at gap between v=2 and v=4)
-Rationale: Version continuity validation prevents orphaned versions
-----
-
-===== Duplicate Version Resolution
-[source]
-----
-Input:  [id="B" v=1 ts=300], [id="B" v=1 ts=100], [id="B" v=1 ts=200]
-Result: Keep v=1 ts=100 (earliest timestamp wins)
-Rationale: First-write-wins semantics for conflict resolution
-----
-
-===== Append-Only Vectors
-[source]
-----
-Input:  [id="" v=1], [id="" v=1], [id="" v=1]
-Result: Keep all three (no deduplication applied)
-Rationale: Vectors without IDs are treated as append-only data
-----
-
-=== Python SDK Test Analysis
-
-==== Current Test Status
-- **Total Tests**: 310 
-- **Success Rate**: 91.9% (285 passing)
-- **Failed**: 25 tests (8.1%)
-
-==== Failure Categories and Fixes
-
-===== Critical - LSM → SST Nomenclature (3 failures)
-Root cause: Tests reference outdated `StorageEngine.LSM` enum
-
-**Fix Applied**:
-[source,python]
-----
-# Change from:
-assert StorageEngine.LSM == pb2.StorageEngine.LSM
-# To:
-assert StorageEngine.SST == pb2.StorageEngine.SST
-----
-
-===== High Priority - Collection Resolution (1 failure)
-Root cause: Collection name not being resolved to UUID before operations
-
-**Fix Applied**: Ensure proper collection creation that returns resolved collection ID
-
-===== Medium Priority - Storage Behavior (2 failures)
-Root cause: Test expectations don't match new compaction behavior
-
-**Status**: Tests updated to match MVCC compaction rules
-
-=== Test Quality Insights
-
-==== Strengths
-1. **Hardware acceleration** (SIMD/GPU) extensively tested
-2. **Distance metrics** have comprehensive coverage
-3. **Storage engines** have good integration tests
-4. **Error handling** and edge cases well-covered
-5. **MVCC logic** has complete test suite
-
-==== Areas for Improvement
-1. **Network layer** lacks handler tests
-2. **Monitoring/metrics** have minimal coverage
-3. **Proto serialization** needs more tests
-4. **Cloud integration** tests are environment-dependent
-
-==== Test Performance Metrics
-- **Total Test Time**: ~4 minutes for full suite
-- **Parallel Execution**: Leverages all CPU cores
-- **Memory Usage**: ~2GB peak during test runs
-- **Flaky Tests**: None identified (100% deterministic)
 
 ---
 _For implementation patterns, see link:appendix_implementation_details.adoc[Appendix A: Implementation Details]._

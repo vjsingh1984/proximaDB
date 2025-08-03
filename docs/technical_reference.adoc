@@ -496,11 +496,16 @@ pub struct ProductQuantization {
 
 === Configuration Schema
 
-**Storage Configuration**:
+**Basic Configuration**:
 [source,toml]
 ----
+[server]
+rest_port = 5678
+grpc_port = 5679
+
 [storage]
-data_directory = "/data/proximadb"
+default_engine = "viper"
+data_directory = "/var/lib/proximadb"
 write_buffer_flush_threshold_mb = 64
 compaction_enabled = true
 
@@ -512,6 +517,16 @@ quantization_enabled = true
 [storage.sst]
 bloom_filter_fp_rate = 0.001
 compaction_style = "leveled"
+
+[wal]
+batch_size = 1000
+channel_capacity = 10000
+write_buffer_size = "64MB"
+
+[flush]
+max_wal_age_hours = 24.0
+max_wal_size_mb = 128.0
+max_vector_count = 1000000
 ----
 
 **Performance Tuning**:
@@ -626,6 +641,58 @@ impl VectorSerializationFramework {
 - Version Gap: [id="A" v=1], [id="A" v=2], [id="A" v=4] → Keep only v=2
 - Duplicate Version: [id="B" v=1 ts=300], [id="B" v=1 ts=100] → Keep v=1 ts=100
 - Append-Only: [id="" v=1], [id="" v=1] → Keep both (no deduplication)
+
+== API Reference
+
+=== REST API
+
+ProximaDB provides a comprehensive REST API for HTTP/JSON integration:
+
+[source,http]
+----
+POST /v2/collections
+Content-Type: application/x-protobuf
+
+CreateCollectionRequest {
+  collection_id: "products",
+  config: {
+    vector_dimension: 768,
+    distance_metric: COSINE,
+    storage_engine: SST
+  }
+}
+----
+
+**Key Endpoints**:
+- `POST /v2/collections` - Create collections
+- `POST /v2/collections/{id}/vectors` - Insert vectors
+- `POST /v2/collections/{id}/search` - Search vectors
+- `GET /v2/collections/{id}` - Get collection info
+- `DELETE /v2/collections/{id}` - Delete collection
+
+=== gRPC API
+
+For high-performance applications, use the native gRPC API:
+
+[source,protobuf]
+----
+service ProximaDB {
+  rpc CreateCollection(CreateCollectionRequest) 
+      returns (CreateCollectionResponse);
+  rpc InsertVectors(InsertVectorsRequest) 
+      returns (InsertVectorsResponse);
+  rpc SearchVectors(SearchVectorsRequest) 
+      returns (SearchVectorsResponse);
+}
+----
+
+**Performance Benefits**:
+- Native protobuf serialization (no JSON overhead)
+- Streaming support for large datasets
+- Built-in compression and authentication
+- Connection multiplexing
+
+See link:api/unified_rest_api.adoc[Unified REST API Reference] for complete documentation.
 
 == Error Handling
 
@@ -938,6 +1005,45 @@ batch_size_optimization = true
 cache_enabled = true
 compression_level = 6  # ZSTD compression level
 ----
+
+== Operational Guide
+
+=== Deployment
+
+ProximaDB supports multiple deployment models:
+
+* **Single node**: Development and testing
+* **Distributed**: Production workloads
+* **Cloud native**: Kubernetes operators
+* **Multi-region**: Global deployments
+
+See link:architecture.adoc#deployment-architecture[Deployment Architecture] for detailed guidance.
+
+=== Monitoring
+
+Built-in monitoring includes:
+
+* Prometheus metrics endpoint at `/metrics`
+* OpenTelemetry tracing integration
+* Health check endpoints (`/health`, `/ready`)
+* Performance dashboards
+
+=== Maintenance
+
+Regular maintenance tasks:
+
+1. **Compaction**: Automatic via CompactionCoordinator or manual triggers
+2. **Backup**: Incremental snapshots of collections and metadata
+3. **Upgrades**: Rolling updates with zero-downtime deployment
+4. **Monitoring**: Alert configuration for performance thresholds
+
+== References
+
+* link:https://github.com/proximadb/proximadb[GitHub Repository]
+* link:architecture.adoc[System Architecture Guide]
+* link:api/unified_rest_api.adoc[REST API Reference]
+* link:developer_guide.adoc[Developer Guide]
+* link:../CHANGELOG.adoc[Release History]
 
 ---
 *Last updated: 2025-08-01*
