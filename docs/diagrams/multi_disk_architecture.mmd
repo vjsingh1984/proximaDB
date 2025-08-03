@@ -113,11 +113,11 @@ graph TB
     BaseWriteBuffer -.-> BaseWriteBufferNote
     Cloud -.-> CloudNote
     
-    %% Styling
-    classDef server fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
-    classDef storage fill:#FFF8E1,stroke:#F57C00,stroke-width:2px
-    classDef cloud fill:#E8F5E9,stroke:#388E3C,stroke-width:2px
-    classDef note fill:#FFF3E0,stroke:#FF9800,stroke-width:1px
+    %% Professional Styling with High Contrast
+    classDef server fill:#1e40af,stroke:#1d4ed8,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef storage fill:#dc2626,stroke:#b91c1c,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef cloud fill:#059669,stroke:#047857,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef note fill:#92400e,stroke:#a16207,stroke-width:2px,color:#ffffff,font-weight:bold
     
     class REST,gRPC,CollSvc,AvroSvc,VectorCoord,RRAService,SCMapper,Discovery,WriteBufferMgr,AvroWriteBuffer,BincodeWriteBuffer,BaseWriteBuffer,VIPER,SST,FSFactory server
     class WriteBuffer1,WriteBuffer2,WriteBuffer3,Storage1,Storage2,Storage3,Meta1,Meta2,Meta3 storage

@@ -67,7 +67,7 @@ impl LocalFileSystem {
     fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
         use crate::storage::persistence::filesystem::FilesystemFactory;
         
-        let path = FilesystemFactory::extract_path_from_url_safe(url)?;
+        let path = FilesystemFactory::resolve_path(url)?;
         
         // Validate that it's a file URL if it has a scheme
         if url.contains("://") {
@@ -180,9 +180,14 @@ impl FileSystem for LocalFileSystem {
         // Create parent directories if requested
         if options.create_dirs {
             if let Some(parent) = resolved_path.parent() {
+                println!("📁 DEBUG LocalFileSystem::write creating parent directories for: {:?}", parent);
                 fs::create_dir_all(parent)
                     .await
-                    .map_err(FilesystemError::Io)?;
+                    .map_err(|e| {
+                        println!("❌ DEBUG LocalFileSystem::write failed to create parent {:?}: {:?}", parent, e);
+                        FilesystemError::Io(e)
+                    })?;
+                println!("✅ DEBUG LocalFileSystem::write successfully created parent directories: {:?}", parent);
             }
         }
 
@@ -369,16 +374,25 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        info!("📁 DEBUG LocalFileSystem::list called with path: '{}'", path);
+        println!("📁 DEBUG LocalFileSystem::list called with path: '{}'", path);
+        println!("📁 DEBUG LocalFileSystem::list config.root_dir: {:?}", self.config.root_dir);
+        
         // Extract path from URL
         let path_str = self.extract_path_from_url(path)?;
+        println!("📁 DEBUG LocalFileSystem::list extracted path_str: '{}'", path_str);
+        
         let resolved_path = PathBuf::from(path_str);
-        info!("📁 DEBUG LocalFileSystem::list resolved_path: {:?}", resolved_path);
+        println!("📁 DEBUG LocalFileSystem::list resolved_path: {:?}", resolved_path);
+        println!("📁 DEBUG LocalFileSystem::list resolved_path exists: {}", resolved_path.exists());
+        println!("📁 DEBUG LocalFileSystem::list resolved_path is_dir: {}", resolved_path.is_dir());
 
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
             .await
-            .map_err(FilesystemError::Io)?;
+            .map_err(|e| {
+                println!("❌ DEBUG LocalFileSystem::list fs::read_dir failed on {:?}: {:?}", resolved_path, e);
+                FilesystemError::Io(e)
+            })?;
 
         while let Some(entry) = dir.next_entry().await.map_err(FilesystemError::Io)? {
             let entry_path = entry.path();
@@ -417,63 +431,112 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn create_dir(&self, path: &str) -> FsResult<()> {
+        println!("📁 DEBUG LocalFileSystem::create_dir called with path: '{}'", path);
         let path_str = self.extract_path_from_url(path)?;
+        println!("📁 DEBUG LocalFileSystem::create_dir extracted path_str: '{}'", path_str);
         let resolved_path = PathBuf::from(path_str);
+        println!("📁 DEBUG LocalFileSystem::create_dir resolved_path: {:?}", resolved_path);
 
         fs::create_dir(&resolved_path)
             .await
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::AlreadyExists => {
-                    FilesystemError::AlreadyExists(resolved_path.display().to_string())
+            .map_err(|e| {
+                println!("❌ DEBUG LocalFileSystem::create_dir failed on {:?}: {:?}", resolved_path, e);
+                match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => {
+                        FilesystemError::AlreadyExists(resolved_path.display().to_string())
+                    }
+                    _ => FilesystemError::Io(e),
                 }
-                _ => FilesystemError::Io(e),
             })
     }
 
     async fn create_dir_all(&self, path: &str) -> FsResult<()> {
-        info!("📁 LocalFileSystem::create_dir_all called with path: '{}'", path);
+        println!("📁 DEBUG LocalFileSystem::create_dir_all called with path: '{}'", path);
         let path_str = self.extract_path_from_url(path)?;
+        println!("📁 DEBUG LocalFileSystem::create_dir_all extracted path_str: '{}'", path_str);
         let resolved_path = PathBuf::from(path_str);
-        info!("📁 LocalFileSystem::create_dir_all resolved to: {:?}", resolved_path);
-        info!("📁 LocalFileSystem config: root_dir={:?}", self.config.root_dir);
+        println!("📁 DEBUG LocalFileSystem::create_dir_all resolved_path: {:?}", resolved_path);
+        println!("📁 DEBUG LocalFileSystem config: root_dir={:?}", self.config.root_dir);
 
-        fs::create_dir_all(&resolved_path)
-            .await
-            .map_err(FilesystemError::Io)
+        match fs::create_dir_all(&resolved_path).await {
+            Ok(()) => {
+                println!("✅ DEBUG LocalFileSystem::create_dir_all succeeded: {:?}", resolved_path);
+                Ok(())
+            }
+            Err(e) => {
+                // For create_dir_all, AlreadyExists should not normally happen as tokio::fs::create_dir_all handles it
+                // But let's be defensive and handle it anyway
+                match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => {
+                        println!("ℹ️ DEBUG LocalFileSystem::create_dir_all directory already exists (unexpected but OK): {:?}", resolved_path);
+                        Ok(())
+                    }
+                    _ => {
+                        println!("❌ DEBUG LocalFileSystem::create_dir_all failed on {:?}: {:?}", resolved_path, e);
+                        Err(FilesystemError::Io(e))
+                    }
+                }
+            }
+        }
     }
 
     async fn copy(&self, from: &str, to: &str) -> FsResult<()> {
+        println!("📋 DEBUG LocalFileSystem::copy called: from='{}' to='{}'", from, to);
         let from_path_str = self.extract_path_from_url(from)?;
         let from_path = PathBuf::from(from_path_str);
         let to_path_str = self.extract_path_from_url(to)?;
         let to_path = PathBuf::from(to_path_str);
+        println!("📋 DEBUG LocalFileSystem::copy paths: from={:?} to={:?}", from_path, to_path);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
+            println!("📋 DEBUG LocalFileSystem::copy creating parent directories for: {:?}", parent);
             fs::create_dir_all(parent)
                 .await
-                .map_err(FilesystemError::Io)?;
+                .map_err(|e| {
+                    println!("❌ DEBUG LocalFileSystem::copy failed to create parent {:?}: {:?}", parent, e);
+                    FilesystemError::Io(e)
+                })?;
+            println!("✅ DEBUG LocalFileSystem::copy successfully created parent directories: {:?}", parent);
         }
 
         fs::copy(&from_path, &to_path)
             .await
-            .map_err(FilesystemError::Io)?;
+            .map_err(|e| {
+                println!("❌ DEBUG LocalFileSystem::copy failed to copy file: {:?}", e);
+                FilesystemError::Io(e)
+            })?;
 
+        println!("✅ DEBUG LocalFileSystem::copy completed successfully");
         Ok(())
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
+        println!("🚚 DEBUG LocalFileSystem::move_file called:");
+        println!("🚚 DEBUG   from: '{}'", from);
+        println!("🚚 DEBUG   to: '{}'", to);
+        
         // Extract paths from URLs
         let from_path_str = self.extract_path_from_url(from)?;
-        let from_path = PathBuf::from(from_path_str);
+        println!("🚚 DEBUG   from_path_str: '{}'", from_path_str);
+        let from_path = PathBuf::from(&from_path_str);
+        println!("🚚 DEBUG   from_path: '{:?}'", from_path);
+        
         let to_path_str = self.extract_path_from_url(to)?;
-        let to_path = PathBuf::from(to_path_str);
+        println!("🚚 DEBUG   to_path_str: '{}'", to_path_str);
+        let to_path = PathBuf::from(&to_path_str);
+        println!("🚚 DEBUG   to_path: '{:?}'", to_path);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
+            println!("🚚 DEBUG LocalFileSystem::move_file creating parent directories for: {:?}", parent);
             fs::create_dir_all(parent)
                 .await
-                .map_err(FilesystemError::Io)?;
+                .map_err(|e| {
+                    println!("❌ DEBUG LocalFileSystem::move_file failed to create parent {:?}: {:?}", parent, e);
+                    FilesystemError::Io(e)
+                })?;
+            println!("✅ DEBUG LocalFileSystem::move_file successfully created parent directories: {:?}", parent);
         }
 
         fs::rename(&from_path, &to_path)

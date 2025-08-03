@@ -6,6 +6,15 @@ Essential implementation patterns and code examples for ProximaDB.
 
 image::unified-parquet-reader-architecture.svg[Unified Parquet Reader Architecture]
 
+.Unified Parquet Reader Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/unified-parquet-reader-architecture.mmd[]
+----
+====
+
 == Core Patterns
 
 === DirectVectorService

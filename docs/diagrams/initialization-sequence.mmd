@@ -14,8 +14,8 @@ sequenceDiagram
     
     Note over Main:  ProximaDB Initialization Sequence
     
-    rect rgb(230, 240, 255)
-        Note over Main,MC: Phase 1: Core Services Creation
+    rect rgb(30, 64, 175)
+        Note over Main,MC: <span style="color:white">**Phase 1: Core Services Creation**</span>
         
         Main->>Main: 1. Load configuration<br/>(demo/docker-config.toml)
         
@@ -27,8 +27,8 @@ sequenceDiagram
         deactivate MC
     end
     
-    rect rgb(230, 255, 230)
-        Note over Main,DVS: Phase 2: SharedServices Creation (Avoids Circular Dependencies)
+    rect rgb(21, 128, 61)
+        Note over Main,DVS: <span style="color:white">**Phase 2: SharedServices Creation (Avoids Circular Dependencies)**</span>
         
         Main->>SS: 3. Create SharedServices FIRST
         activate SS
@@ -52,8 +52,8 @@ sequenceDiagram
         Note over SS:  All services unified under SharedServices
     end
     
-    rect rgb(255, 240, 230)
-        Note over Main,SE: Phase 3: Storage Engine Creation
+    rect rgb(194, 65, 12)
+        Note over Main,SE: <span style="color:white">**Phase 3: Storage Engine Creation**</span>
         
         Main->>SE: 4. Create StorageEngine<br/>(without CollectionService)
         activate SE
@@ -72,8 +72,8 @@ sequenceDiagram
         Note over SE:  No duplicate CollectionService created
     end
     
-    rect rgb(240, 230, 255)
-        Note over Main,MS: Phase 4: Network Layer Setup
+    rect rgb(124, 58, 237)
+        Note over Main,MS: <span style="color:white">**Phase 4: Network Layer Setup**</span>
         
         Main->>QE: 6. Create QueryEngine
         activate QE
@@ -95,8 +95,8 @@ sequenceDiagram
     
     Note over Main:  ProximaDB::new() Complete
     
-    rect rgb(255, 255, 230)
-        Note over Main,GRPC: Phase 5: Startup Sequence (ProximaDB::start)
+    rect rgb(217, 119, 6)
+        Note over Main,GRPC: <span style="color:white">**Phase 5: Startup Sequence (ProximaDB::start)**</span>
         
         Main->>SE: 9. Start StorageEngine
         activate SE
@@ -136,6 +136,6 @@ sequenceDiagram
     
     Note over Main,GRPC:  ProximaDB Ready!<br/>REST: http://localhost:5678<br/>gRPC: http://localhost:5679
     
-    rect rgb(200, 255, 200)
-        Note over Main,SE:  Key Design Benefits<br/>• No circular dependencies<br/>• Clean separation of concerns<br/>• Proper recovery order<br/>• Test Status: 890 passed, 0 failed
+    rect rgb(5, 150, 105)
+        Note over Main,SE: <span style="color:white">**🔥 Key Design Benefits**<br/>• No circular dependencies<br/>• Clean separation of concerns<br/>• Proper recovery order<br/>• Test Status: 890 passed, 0 failed</span>
     end

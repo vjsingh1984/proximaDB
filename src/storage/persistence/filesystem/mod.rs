@@ -942,30 +942,57 @@ impl FilesystemFactory {
 
     /// Centralized URL path extraction utility (handles relative paths correctly)
     /// This method should be used throughout the filesystem layer for consistent URL parsing
-    pub fn extract_path_from_url_safe(url: &str) -> FsResult<String> {
+    /// Unified path extraction from URLs with consistent behavior
+    /// This is the SINGLE method that should be used throughout the filesystem layer
+    pub fn resolve_path(url: &str) -> FsResult<String> {
+        // Debug logging can be removed once issues are resolved
+        println!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
+        
+        // Case 1: No scheme present - return as-is (this preserves relative paths)
         if !url.contains("://") {
-            // No scheme present - return as-is
+            println!("🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'", url);
             return Ok(url.to_string());
         }
         
-        let parsed_url = Url::parse(url)?;
-        let path = parsed_url.path();
+        // Case 2: Parse URL with scheme
+        let parsed_url = Url::parse(url).map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
         
-        // Handle relative paths that were converted to absolute by URL parser
-        // The URL parser converts file://./relative/path to path="/relative/path"
-        // We need to preserve the relative nature for local filesystem
-        if parsed_url.scheme() == "file" && url.starts_with("file://./") {
-            // Extract the relative part after "file://"
-            let relative_path = &url[7..]; // Remove "file://" prefix
-            Ok(relative_path.to_string())
+        // Case 3: Handle file:// URLs with special logic to preserve relative paths
+        if parsed_url.scheme() == "file" {
+            // CRITICAL: Always preserve the original path structure from the URL
+            // The URL parser mangles relative paths, so we extract manually
+            if url.starts_with("file://./") {
+                // Explicit relative path: file://./path/to/file
+                let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
+                println!("🔍 DEBUG resolve_path: Explicit relative path: '{}'", relative_path);
+                Ok(relative_path.to_string())
+            } else if url.starts_with("file:///") {
+                // Absolute path: file:///absolute/path
+                let absolute_path = parsed_url.path();
+                println!("🔍 DEBUG resolve_path: Absolute path: '{}'", absolute_path);
+                Ok(absolute_path.to_string())
+            } else if url.starts_with("file://") {
+                // Implicit relative path: file://relative/path (treat as relative)
+                let relative_path = &url[7..]; // Remove "file://" prefix
+                println!("🔍 DEBUG resolve_path: Implicit relative path: '{}'", relative_path);
+                Ok(relative_path.to_string())
+            } else {
+                // Fallback
+                let path = parsed_url.path();
+                println!("🔍 DEBUG resolve_path: Fallback path: '{}'", path);
+                Ok(path.to_string())
+            }
         } else {
+            // Case 4: Non-file schemes (s3://, azure://, etc.)
+            let path = parsed_url.path();
+            println!("🔍 DEBUG resolve_path: Non-file scheme path: '{}'", path);
             Ok(path.to_string())
         }
     }
 
     /// Get the path component from URL (uses centralized utility)
     pub fn extract_path(&self, url: &str) -> FsResult<String> {
-        Self::extract_path_from_url_safe(url)
+        Self::resolve_path(url)
     }
 
     /// List all available filesystem types

@@ -6,6 +6,26 @@ Comprehensive technical documentation for ProximaDB.
 
 image::write-buffer-strategy-pattern.svg[Write Buffer Strategy Pattern]
 
+.Write Buffer Strategy Pattern Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/write-buffer-strategy-pattern.mmd[]
+----
+====
+
+image::bloom-filter-architecture.svg[Bloom Filter Architecture]
+
+.Bloom Filter Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/bloom-filter-architecture.mmd[]
+----
+====
+
 == API Reference
 
 === REST API

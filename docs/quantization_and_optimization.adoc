@@ -6,6 +6,15 @@
 
 image::unified_quantization_system.svg[Unified Quantization System]
 
+.Unified Quantization System Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/unified_quantization_system.mmd[]
+----
+====
+
 ProximaDB's quantization engine provides hardware-accelerated vector compression with up to 32x compression and 3-10x search speedup while maintaining high accuracy.
 
 == Quantization Types

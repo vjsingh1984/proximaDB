@@ -8,15 +8,42 @@
 
 image::business-system-overview.svg[ProximaDB Overview, align=center]
 
+.Business System Overview Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/business-system-overview.mmd[]
+----
+====
+
 **Core Features**: DirectVectorService (40-60% latency reduction), Proto-First Design (zero double serialization), Dual Storage (SST + VIPER), Hardware Acceleration (SIMD/GPU).
 
 == Core Components
 
 image::direct-vector-service.svg[DirectVectorService Architecture]
 
+.DirectVectorService Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/direct-vector-service.mmd[]
+----
+====
+
 **DirectVectorService**: Direct memtable access, coordinated search across WriteBuffer + Storage, atomic operations, result streaming.
 
 image::storage-engine-classes.svg[Storage Engine Classes]
+
+.Storage Engine Classes Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/storage-engine-classes.mmd[]
+----
+====
 
 **Storage Engines**: SST (row-based, write-optimized, bloom filters, MVCC). VIPER (columnar, analytics-optimized, 60-90% I/O reduction).
 
@@ -34,9 +61,27 @@ image::storage-engine-classes.svg[Storage Engine Classes]
 
 image::service-interactions.svg[Service Interactions]
 
+.Service Interactions Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/service-interactions.mmd[]
+----
+====
+
 **Write Path**: Client → DirectVectorService → UnifiedMemtable → WriteBuffer → Storage Engine
 
 image::two-stage-search.svg[Two-Stage Search Process]
+
+.Two-Stage Search Process Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/two-stage-search.mmd[]
+----
+====
 
 **Search Path**: Request → DirectVectorService → Parallel Search (WriteBuffer + Memtable + Storage) → Result Merging → Response
 
@@ -44,11 +89,40 @@ image::two-stage-search.svg[Two-Stage Search Process]
 
 image::deployment-architecture.svg[Deployment Architecture]
 
+.Deployment Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/deployment-architecture.mmd[]
+----
+====
+
+image::multi_disk_architecture.svg[Multi-Disk Storage Architecture]
+
+.Multi-Disk Storage Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/multi_disk_architecture.mmd[]
+----
+====
+
 **Single Node**: Docker container, REST/gRPC ports, local/cloud storage, Prometheus metrics.
 
 **Multi-Node (Planned)**: Consistent hashing, Raft consensus, cross-node coordination.
 
 image::storage-performance-unified.svg[Storage Performance Characteristics]
+
+.Storage Performance Characteristics Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/storage-performance-unified.mmd[]
+----
+====
 
 **Performance**: Insert <1ms (memtable), <5ms (durable). Search <2ms (P50), <10ms (P99). Writes 49K vectors/sec, reads 48 QPS.
 

@@ -6,6 +6,15 @@ Get ProximaDB running in 5 minutes.
 
 image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture]
 
+.ProximaDB Unified Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/proximadb-unified-architecture.mmd[]
+----
+====
+
 == Prerequisites
 
 Docker & Docker Compose, 4GB RAM, 10GB disk space.
@@ -41,6 +50,15 @@ results = client.search_vectors("my_docs", query_vector, top_k=5, metadata_filte
 == Configuration
 
 image::initialization-sequence.svg[Initialization Sequence]
+
+.Initialization Sequence Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/initialization-sequence.mmd[]
+----
+====
 
 **Basic config.toml**: Set ports (REST 5678, gRPC 5679), data directory, compaction intervals, compression settings.
 

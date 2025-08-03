@@ -226,7 +226,7 @@ impl SameMountTempExecutor {
             let scheme = parsed_url.scheme();
             
             // Use centralized path extraction (handles relative paths correctly)
-            let path = FilesystemFactory::extract_path_from_url_safe(final_path)?;
+            let path = FilesystemFactory::resolve_path(final_path)?;
             
             (format!("{}://", scheme), path)
         } else {

@@ -72,8 +72,8 @@ sequenceDiagram
     Handler-->>-gRPC:  Direct Proto Response
     gRPC-->>-Client:  No Results<br/> Expected matches but got 0
     
-    rect rgb(255, 230, 230)
-        Note over VIPER, SST:  Critical Issues<br/>• VIPER metadata filters return 0 results<br/>• SST engine expects .sst but gets .parquet<br/>• SQL AND/OR operators not implemented<br/>• Collection service routing broken
+    rect rgb(185, 28, 28)
+        Note over VIPER, SST: <span style="color:white">**⚠️ Critical Issues**<br/>• VIPER metadata filters return 0 results<br/>• SST engine expects .sst but gets .parquet<br/>• SQL AND/OR operators not implemented<br/>• Collection service routing broken</span>
     end
     
     %% Collection Management Flow
