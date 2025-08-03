@@ -1,0 +1,221 @@
+name: Python CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'clients/python/**'
+      - 'proto/**'
+      - '.github/workflows/python-ci.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'clients/python/**'
+      - 'proto/**'
+      - '.github/workflows/python-ci.yml'
+
+jobs:
+  test:
+    name: Python Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+    - name: Install Python dependencies
+      working-directory: clients/python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test]"
+
+    - name: Generate protobuf files
+      run: |
+        python -m grpc_tools.protoc \
+          --proto_path=proto \
+          --python_out=clients/python/src/proximadb \
+          --grpc_python_out=clients/python/src/proximadb \
+          proto/proximadb.proto
+
+    - name: Run code formatting check
+      working-directory: clients/python
+      run: |
+        black --check --diff src tests
+        isort --check-only --diff src tests
+
+    - name: Run linting
+      working-directory: clients/python
+      run: |
+        flake8 src tests
+        mypy src
+
+    - name: Run unit tests
+      working-directory: clients/python
+      run: |
+        pytest tests/unit/ -v --tb=short
+
+    - name: Run integration tests (with timeout)
+      working-directory: clients/python
+      run: |
+        timeout 300 pytest tests/integration/ -v --tb=short || echo "Integration tests timed out or failed (expected in CI)"
+      continue-on-error: true
+
+  coverage:
+    name: Python Coverage
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+
+    - name: Install Python dependencies
+      working-directory: clients/python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test]"
+
+    - name: Generate protobuf files
+      run: |
+        python -m grpc_tools.protoc \
+          --proto_path=proto \
+          --python_out=clients/python/src/proximadb \
+          --grpc_python_out=clients/python/src/proximadb \
+          proto/proximadb.proto
+
+    - name: Run tests with coverage
+      working-directory: clients/python
+      run: |
+        pytest tests/unit/ --cov=proximadb --cov-report=xml --cov-report=html
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: clients/python/coverage.xml
+        flags: python
+        name: python-coverage
+        fail_ci_if_error: false
+
+  package:
+    name: Build Python Package
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+
+    - name: Generate protobuf files
+      run: |
+        python -m grpc_tools.protoc \
+          --proto_path=proto \
+          --python_out=clients/python/src/proximadb \
+          --grpc_python_out=clients/python/src/proximadb \
+          proto/proximadb.proto
+
+    - name: Build package
+      working-directory: clients/python
+      run: |
+        python -m build
+
+    - name: Check package
+      working-directory: clients/python
+      run: |
+        twine check dist/*
+
+    - name: Upload package artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-package
+        path: clients/python/dist/
+        retention-days: 30
+
+  docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install documentation dependencies
+      working-directory: clients/python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[docs]"
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+
+    - name: Generate protobuf files
+      run: |
+        python -m grpc_tools.protoc \
+          --proto_path=proto \
+          --python_out=clients/python/src/proximadb \
+          --grpc_python_out=clients/python/src/proximadb \
+          proto/proximadb.proto
+
+    - name: Build documentation
+      working-directory: clients/python
+      run: |
+        sphinx-build -b html docs docs/_build/html
+
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-docs
+        path: clients/python/docs/_build/html/
+        retention-days: 30

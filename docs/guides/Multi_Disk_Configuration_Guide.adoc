@@ -1,28 +1,18 @@
-= ProximaDB Multi-Disk Configuration Guide
-:toc:
-:toc-placement: preamble
-:icons: font
-:source-highlighter: highlight.js
+= Multi-Disk Configuration Guide
+:toc: left
 :imagesdir: ../diagrams/images
 
-== Overview
-
-This guide covers ProximaDB's multi-disk persistence system configuration for enhanced performance, scalability, and fault tolerance through intelligent data distribution across multiple storage devices.
+ProximaDB's multi-disk persistence system for enhanced performance, scalability, and fault tolerance.
 
 image::multi_disk_architecture.svg[Multi-Disk Architecture,800,600]
 
 == Architecture Benefits
 
-=== Performance & Reliability
 * **Parallel I/O Operations**: Concurrent read/write across multiple disks
-* **Load Distribution**: Round-robin collection assignment
+* **Load Distribution**: Round-robin collection assignment  
 * **Fault Tolerance**: Disk failure isolation with automatic recovery
-* **Scalable Throughput**: Linear performance scaling with additional disks
-
-=== Cloud Integration
 * **Multi-Cloud Support**: AWS S3, Azure Blob, Google Cloud Storage
 * **Hybrid Deployments**: Local high-performance with cloud backup
-* **Elastic Scaling**: Dynamic storage resource addition
 
 == Core Configuration
 
@@ -65,297 +55,94 @@ cache_size_mb = 128
 flush_interval_secs = 30
 ----
 
-=== Distribution Strategies
+=== Configuration Options
 
-[source,toml]
-----
-[storage.wal_config]
-# Available strategies
-distribution_strategy = "LoadBalanced" # Round-robin (default)
-distribution_strategy = "HashBased" # Consistent hashing
-distribution_strategy = "PerformanceBased" # Fastest disk first
-
-# Collection affinity
-collection_affinity = true # Same collection → same disk
-collection_affinity = false # Maximum distribution
-----
-
-=== Disk Type Configuration
-
-[source,toml]
-----
-# Performance tiers
-disk_type = { NvmeSsd = { max_iops = 100000 } } # Highest performance
-disk_type = { SataSsd = { max_iops = 50000 } } # High performance
-disk_type = { Hdd = { max_iops = 1000 } } # High capacity
-disk_type = { NetworkStorage = { latency_ms = 5.0 } } # Cloud storage
-----
+**Disk Types:**
+* `NvmeSsd`: Highest performance (max_iops = 100000)
+* `SataSsd`: High performance (max_iops = 50000)  
+* `Hdd`: High capacity (max_iops = 1000)
+* `NetworkStorage`: Cloud storage (latency_ms = 5.0)
 
 == Cloud Storage Configuration
 
-=== Multi-Cloud Setup
+=== Supported Providers
 
-[source,toml]
-----
-[storage.wal_config]
-wal_urls = [
-"file:///mnt/nvme1/wal", # Local NVMe
-"s3://proximadb-wal/cluster1", # AWS S3
-"adls://storage.dfs.core.windows.net/wal", # Azure Data Lake
-"gcs://proximadb-gcs/wal" # Google Cloud
-]
-distribution_strategy = "LoadBalanced"
-----
+**AWS S3:**
+* URL: `s3://bucket-name/prefix`
+* Authentication: IAM roles, use_iam_role = true
 
-=== Cloud Provider Configurations
+**Azure Blob:**
+* URL: `adls://account.dfs.core.windows.net/container/prefix`  
+* Authentication: Managed Identity, use_managed_identity = true
 
-==== AWS S3
-[source,toml]
-----
-[storage.metadata_backend]
-backend_type = "filestore"
-storage_url = "s3://proximadb-metadata/cluster1"
-
-[storage.metadata_backend.cloud_config.s3_config]
-region = "us-east-1"
-bucket = "proximadb-metadata"
-use_iam_role = true
-----
-
-==== Azure Blob Storage
-[source,toml]
-----
-[storage.metadata_backend]
-storage_url = "adls://proximadbmeta.dfs.core.windows.net/metadata"
-
-[storage.metadata_backend.cloud_config.azure_config]
-account_name = "proximadbmeta"
-container = "metadata"
-use_managed_identity = true
-----
-
-==== Google Cloud Storage
-[source,toml]
-----
-[storage.metadata_backend]
-storage_url = "gcs://proximadb-metadata/cluster1"
-
-[storage.metadata_backend.cloud_config.gcs_config]
-project_id = "proximadb-project"
-bucket = "proximadb-metadata"
-use_workload_identity = true
-----
+**Google Cloud:**
+* URL: `gcs://bucket-name/prefix`
+* Authentication: Workload Identity, use_workload_identity = true
 
 == Deployment Scenarios
 
 === Development Environment
-[source,toml]
-----
-[storage.wal_config]
-wal_urls = [
-"file:///tmp/proximadb/disk1/wal",
-"file:///tmp/proximadb/disk2/wal"
+```toml
+[storage.storage_layout]
+base_paths = [
+    { base_dir = "/tmp/proximadb/disk1/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 10000 } }}
 ]
-distribution_strategy = "LoadBalanced"
-memory_flush_size_bytes = 262144 # 256KB for testing
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/tmp/proximadb/disk1/storage"
-instance_id = 1
-disk_type = { NvmeSsd = { max_iops = 10000 } }
-----
+```
 
 === Production On-Premises
-[source,toml]
-----
-[storage.wal_config]
-wal_urls = [
-"file:///mnt/nvme1/proximadb/wal",
-"file:///mnt/nvme2/proximadb/wal",
-"file:///mnt/nvme3/proximadb/wal",
-"file:///mnt/nvme4/proximadb/wal"
+```toml
+[storage.storage_layout]
+base_paths = [
+    { base_dir = "/mnt/nvme1/proximadb/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 500000 } }},
+    { base_dir = "/mnt/nvme2/proximadb/storage", instance_id = 2, disk_type = { NvmeSsd = { max_iops = 500000 } }},
+    { base_dir = "/mnt/nvme3/proximadb/storage", instance_id = 3, disk_type = { NvmeSsd = { max_iops = 500000 } }}
 ]
-distribution_strategy = "PerformanceBased"
-memory_flush_size_bytes = 16777216 # 16MB
-global_flush_threshold = 1073741824 # 1GB
+```
 
-[[storage.storage_layout.base_paths]]
-base_dir = "/mnt/nvme1/proximadb/storage"
-instance_id = 1
-disk_type = { NvmeSsd = { max_iops = 500000 } }
-capacity_config = { max_wal_size_mb = 10240, warning_threshold_percent = 90.0 }
-----
-
-=== Hybrid Cloud Deployment
-[source,toml]
-----
-[storage.wal_config]
-wal_urls = [
-"file:///mnt/nvme1/wal", # Local performance
-"s3://backup-wal/cluster1" # Cloud backup
+=== Hybrid Cloud Deployment  
+```toml
+[storage.storage_layout]
+base_paths = [
+    { base_dir = "/mnt/nvme1/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 200000 } }},
+    { base_dir = "s3://cold-storage/cluster1", instance_id = 2, disk_type = { NetworkStorage = { latency_ms = 50.0 } }}
 ]
-distribution_strategy = "PerformanceBased"
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/mnt/nvme1/storage" # Hot data local
-instance_id = 1
-disk_type = { NvmeSsd = { max_iops = 200000 } }
-
-[[storage.storage_layout.base_paths]]
-base_dir = "s3://cold-storage/cluster1" # Cold data cloud
-instance_id = 2
-disk_type = { NetworkStorage = { latency_ms = 50.0 } }
-----
+```
 
 == Performance Tuning
 
-=== WriteBuffer Optimization
-[source,toml]
-----
-[storage.wal_config]
-# Flush threshold tuning
-memory_flush_size_bytes = 1048576 # 1MB - frequent small flushes
-memory_flush_size_bytes = 16777216 # 16MB - balanced performance
-memory_flush_size_bytes = 67108864 # 64MB - maximum batch size
-
-# Memory management
-global_flush_threshold = 536870912 # 512MB - conservative
-global_flush_threshold = 2147483648 # 2GB - aggressive
-----
-
-=== Disk-Specific Optimization
-[source,toml]
-----
-# NVMe optimization
-[[storage.storage_layout.base_paths]]
-disk_type = { NvmeSsd = { max_iops = 1000000 } }
-capacity_config = {
-max_wal_size_mb = 20480, # 20GB WriteBuffer
-warning_threshold_percent = 95.0 # Use more space on fast disks
-}
-
-# Network storage optimization
-[[storage.storage_layout.base_paths]]
-disk_type = { NetworkStorage = { latency_ms = 5.0 } }
-capacity_config = {
-max_wal_size_mb = 1024, # 1GB WriteBuffer
-warning_threshold_percent = 80.0 # Conservative on network
-}
-----
+* **NVMe Optimization**: Use max_iops = 1000000 for high-performance disks
+* **Network Storage**: Use latency_ms = 5.0, conservative capacity settings
+* **Capacity Management**: Adjust warning_threshold_percent based on disk type (95% for NVMe, 80% for network)
 
 == Monitoring and Maintenance
 
 === Health Check Commands
-[source,bash]
-----
-# Assignment service status
-curl http://localhost:5678/health/assignment
-
-# Assignment statistics
-curl http://localhost:5678/admin/assignment/stats
-
-# Storage usage
+```bash
+# Server health and storage usage
+curl http://localhost:5678/health
 curl http://localhost:5678/admin/storage/usage
 
-# Check distribution balance
-curl http://localhost:5678/admin/assignment/stats | jq '.wal.directory_distribution'
-----
-
-=== Log Monitoring
-[source,bash]
-----
-# Assignment service logs
-tail -f /var/log/proximadb/server.log | grep "assignment"
-
-# Multi-disk operations
-tail -f /var/log/proximadb/server.log | grep "multi-disk\|round-robin"
-
-# WriteBuffer operations
-tail -f /var/log/proximadb/server.log | grep "flush\|WriteBuffer"
-----
-
-=== Disk Usage Monitoring
-[source,bash]
-----
-# Check all configured disks
+# Check disk usage across all configured disks  
 for disk in /data/disk1 /data/disk2 /data/disk3; do
-echo "=== $disk ==="
-df -h $disk
-du -sh $disk/wal $disk/storage $disk/metadata 2>/dev/null
+  echo "=== $disk ==="
+  df -h $disk
 done
-----
+```
 
 == Troubleshooting
 
 === Common Issues
 
-==== Assignment Service Problems
-[source,bash]
-----
-# Check service initialization
-grep "RoundRobinAssignmentService" /var/log/proximadb/server.log
-
-# Verify permissions
-ls -la /data/disk*/wal /data/disk*/storage
-
-# Test directory creation
-sudo -u proximadb mkdir -p /data/disk1/wal/test_collection
-----
-
-==== URL Configuration Errors
-[source,bash]
-----
-# Check for parsing errors
-grep "No such file or directory" /var/log/proximadb/server.log
-
-# Verify URL format
-# Correct: file:///data/disk1/wal
-# Incorrect: file://data/disk1/wal (missing slash)
-----
-
-==== Distribution Problems
-[source,bash]
-----
-# Check assignment distribution
-curl http://localhost:5678/admin/assignment/stats | jq '.wal.directory_distribution'
-
-# Good distribution example across 3 disks:
-# {"0": 5, "1": 4, "2": 4} # Even distribution
-# {"0": 13, "1": 0, "2": 0} # Investigate poor distribution
-----
-
-=== Recovery Procedures
-
-==== Disk Failure Recovery
-1. **Identify Failed Disk**: Monitor alerts and check disk health
-2. **Replace Disk**: Install new disk at same mount point
-3. **Restore Data**: From backups or replicas if available
-4. **Verify Recovery**: Assignment service auto-discovers new layout
-
-==== Performance Issues
-* **Disk I/O Bottlenecks**: Use `iostat`, `iotop` to identify issues
-* **Memory Pressure**: Adjust `memory_flush_size_bytes` and `global_flush_threshold`
-* **Network Latency**: Increase timeout values, use regional storage
+* **Permission Problems**: Verify directory permissions with `ls -la /data/disk*/storage`
+* **URL Configuration Errors**: Use correct format `file:///data/disk1/storage` (not `file://data/disk1/storage`)
+* **Disk Failure Recovery**: Replace disk at same mount point, service auto-discovers new layout
+* **Performance Issues**: Use `iostat`, `iotop` to identify I/O bottlenecks
 
 == Best Practices
 
-=== Configuration
-1. **Consistent Naming**: Use consistent path conventions across environments
-2. **Environment Separation**: Different configs for dev/staging/prod
-3. **Version Control**: Keep configurations in source control
-4. **Documentation**: Maintain disk assignment documentation
-
-=== Operations
-1. **Health Monitoring**: Regular SMART checks and disk health monitoring
-2. **Capacity Planning**: Monitor usage trends and plan for growth
-3. **Recovery Testing**: Regular backup and recovery procedure validation
-4. **Performance Baselines**: Establish monitoring baselines
-
-=== Security
-1. **Encryption**: Enable disk encryption or cloud provider encryption
-2. **Network Security**: Use VPCs/VNETs for cloud deployments
-3. **Access Control**: Proper file system permissions
-4. **Audit Logging**: Enable for compliance requirements
+* **Configuration**: Use consistent path conventions, separate configs for environments, version control
+* **Operations**: Regular SMART checks, capacity planning, recovery testing, performance baselines
+* **Security**: Enable disk/cloud encryption, proper file system permissions, audit logging
 
 == URL Schemes Reference
 
@@ -363,7 +150,3 @@ curl http://localhost:5678/admin/assignment/stats | jq '.wal.directory_distribut
 * **AWS S3**: `s3://bucket-name/prefix`
 * **Azure Blob**: `adls://account.dfs.core.windows.net/container/prefix`
 * **Google Cloud**: `gcs://bucket-name/prefix`
-* **HDFS**: `hdfs://namenode:port/path` (future support)
-
----
-*Multi-disk configuration enables ProximaDB to scale performance and reliability across diverse storage infrastructure.*

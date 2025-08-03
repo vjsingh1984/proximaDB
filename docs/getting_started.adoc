@@ -1,176 +1,69 @@
 = Getting Started with ProximaDB
 :toc: left
-:toclevels: 2
-:source-highlighter: rouge
+:imagesdir: diagrams/images
 
 Get ProximaDB running in 5 minutes.
 
+image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture]
+
 == Prerequisites
 
-* Docker & Docker Compose
-* 4GB RAM minimum
-* 10GB disk space
+Docker & Docker Compose, 4GB RAM, 10GB disk space.
 
 == Installation
 
-=== Using Docker (Recommended)
+**Docker (Recommended)**: Clone repository, run `docker compose up -d`, verify with `curl http://localhost:5678/health`.
 
-[source,bash]
-----
-# Clone the repository
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
+**From Source**: Rust 1.70+, `cargo build --release`, `cargo run --release --bin proximadb-server`.
 
-# Start ProximaDB
-docker compose up -d
+== Quick Start
 
-# Verify it's running
-curl http://localhost:5678/health
-----
+1. **Install**: `pip install proximadb-client`
 
-=== Building from Source
-
-[source,bash]
-----
-# Requirements: Rust 1.70+
-cargo build --release
-cargo run --release --bin proximadb-server
-----
-
-== First Steps
-
-=== 1. Install Python Client
-
-[source,bash]
-----
-pip install proximadb-client
-----
-
-=== 2. Create Your First Collection
-
-[source,python]
-----
+2. **Create Collection**: 
+```python
 from proximadb import ProximaDBClient
-
-# Connect to ProximaDB
 client = ProximaDBClient("http://localhost:5678")
+client.create_collection(name="my_docs", dimension=384, engine="viper")
+```
 
-# Create a collection
-collection = client.create_collection(
-    name="my_docs",
-    dimension=384,  # Embedding dimension
-    engine="viper"  # Or "sst" for write-heavy workloads
-)
-----
-
-=== 3. Insert Vectors
-
-[source,python]
-----
-# Insert vectors with metadata
-vectors = [
-    {
-        "id": "doc1",
-        "vector": [0.1, 0.2, ...],  # 384-dimensional
-        "metadata": {
-            "title": "Introduction to AI",
-            "category": "tutorial"
-        }
-    }
-]
-
+3. **Insert Vectors**:
+```python
+vectors = [{"id": "doc1", "vector": [0.1, 0.2, ...], "metadata": {"title": "AI Guide"}}]
 client.insert_vectors("my_docs", vectors)
-----
+```
 
-=== 4. Search for Similar Vectors
-
-[source,python]
-----
-# Search by vector similarity
-query_vector = [0.15, 0.25, ...]
-results = client.search_vectors(
-    collection="my_docs",
-    vector=query_vector,
-    top_k=5,
-    metadata_filter={"category": "tutorial"}
-)
-
-# Or use SQL
-results = client.search_sql("""
-    SELECT id, metadata, similarity
-    FROM my_docs
-    WHERE similarity(vector, :query) > 0.8
-    AND metadata->>'category' = 'tutorial'
-    ORDER BY similarity DESC
-    LIMIT 5
-""", {"query": query_vector})
-----
+4. **Search**:
+```python
+results = client.search_vectors("my_docs", query_vector, top_k=5, metadata_filter={"category": "tutorial"})
+```
 
 == Configuration
 
-=== Basic Configuration
+image::initialization-sequence.svg[Initialization Sequence]
 
-Create `config.toml`:
+**Basic config.toml**: Set ports (REST 5678, gRPC 5679), data directory, compaction intervals, compression settings.
 
-[source,toml]
-----
-[server]
-rest_port = 5678
-grpc_port = 5679
-
-[storage]
-data_dir = "./data"
-
-[storage.sst]
-compaction_interval_secs = 300
-
-[storage.viper]
-enable_compression = true
-----
-
-=== Storage Engine Selection
-
-* **SST Engine**: Best for write-heavy workloads
-* **VIPER Engine**: Best for analytics and complex queries
+**Storage Engines**: SST (write-heavy), VIPER (analytics/complex queries).
 
 == Next Steps
 
-1. **Explore Demos**: Check `demo/` directory for examples
-2. **Read User Guide**: link:user_guide.adoc[Complete usage guide]
+1. **Demos**: Check `demo/` directory
+2. **User Guide**: link:user_guide.adoc[Complete usage guide]  
 3. **API Reference**: link:api/unified_rest_api.adoc[REST API docs]
-4. **Deploy to Production**: link:user_guide.adoc#docker-deployment[Production guide]
+4. **Production**: link:user_guide.adoc#docker-deployment[Deployment guide]
 
 == Troubleshooting
 
-=== Common Issues
+**Port conflicts**: Change ports with `REST_PORT=5680 GRPC_PORT=5681 docker compose up`
 
-**Port Already in Use**
-[source,bash]
-----
-# Change ports in docker-compose.yml or config.toml
-REST_PORT=5680 GRPC_PORT=5681 docker compose up
-----
+**Memory issues**: Increase Docker limit with `docker run -m 8g`
 
-**Memory Issues**
-[source,bash]
-----
-# Increase Docker memory limit
-docker run -m 8g proximadb/proximadb:latest
-----
-
-**Connection Refused**
-[source,bash]
-----
-# Check if service is running
-docker ps | grep proximadb
-curl http://localhost:5678/health
-----
+**Connection refused**: Check with `docker ps | grep proximadb` and `curl http://localhost:5678/health`
 
 == Getting Help
 
-* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
-* **Discussions**: https://github.com/vjsingh1984/proximadb/discussions
-* **Email**: singhvjd@gmail.com
+GitHub Issues, Discussions, Email: singhvjd@gmail.com
 
 ---
 

@@ -445,7 +445,7 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_kb: 4096, // 4MB blocks optimized for ZSTD compression effectiveness
+            block_size_kb: 8192, // 8MB blocks optimized for ZSTD compression effectiveness
             compaction_strategy: "leveled".to_string(),
             compression: "zstd".to_string(),  // Changed to ZSTD for better compression
             compression_enabled: true,  // Compression enabled by default
@@ -499,10 +499,14 @@ impl SstConfig {
                 // Good for high-throughput scenarios
                 info!("block_size_kb={}KB - Optimized for high-throughput workloads", self.block_size_kb);
             }
+            8192 => {
+                // Optimal for ZSTD compression and high-throughput workloads
+                info!("block_size_kb=8MB - Optimized for ZSTD compression and high-throughput workloads");
+            }
             _ if self.block_size_kb < 256 => {
                 warn!("block_size_kb={}KB - Consider 256KB+ for better I/O efficiency", self.block_size_kb);
             }
-            _ if self.block_size_kb > 4096 => {
+            _ if self.block_size_kb > 8192 => {
                 warn!("block_size_kb={}KB - Very large blocks may increase memory pressure", self.block_size_kb);
             }
             _ => {

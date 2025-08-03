@@ -1,275 +1,55 @@
 = Testing & Development
 :toc: left
-:toclevels: 2
 
-Testing strategies, development workflows, and debugging guide.
+Testing strategies, development workflows, and debugging guide for ProximaDB.
 
 == Testing Strategy
 
-=== Test Coverage
+**Test Coverage**: Core services 450+ tests (95%), storage engines 380+ tests (92%), API handlers 250+ tests (88%), Python SDK 170+ tests (64%).
 
-[cols="2,2,2"]
-|===
-|Component |Tests |Coverage
+**Unit Tests**: `cargo test --lib` for all, `cargo test storage::engines::sst` for specific modules, `cargo test -- --nocapture` for output.
 
-|Core Services
-|450+
-|95%
+**Integration Tests**: `cargo test --test '*'` for all, `cargo test --test vector_operations` for specific tests, `cargo test --release` for faster execution.
 
-|Storage Engines
-|380+
-|92%
-
-|API Handlers
-|250+
-|88%
-
-|Python SDK
-|170+
-|64%
-|===
-
-=== Test Types
-
-==== Unit Tests
-[source,bash]
-----
-# Run all unit tests
-cargo test --lib
-
-# Run specific module
-cargo test storage::engines::sst
-
-# Run with output
-cargo test -- --nocapture
-----
-
-==== Integration Tests
-[source,bash]
-----
-# Run integration tests
-cargo test --test '*'
-
-# Run specific integration test
-cargo test --test vector_operations
-
-# Run with release mode (faster)
-cargo test --release
-----
-
-==== Python SDK Tests
-[source,bash]
-----
-cd clients/python
-pytest tests/ -v
-
-# With coverage
-pytest tests/ --cov=proximadb --cov-report=html
-----
+**Python SDK Tests**: `pytest tests/ -v` for testing, `pytest tests/ --cov=proximadb --cov-report=html` for coverage.
 
 == Development Workflow
 
-=== Setup Development Environment
+**Setup**: Clone repository, install Rust stable, cargo-watch, cargo-tarpaulin. Setup Python with `pip install -e ".[dev]"`.
 
-[source,bash]
-----
-# Clone repository
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
+**Development Server**: Use `cargo watch -x 'run --bin proximadb-server'` for auto-restart, `RUST_LOG=debug` for debug logging, `--config dev.toml` for custom config.
 
-# Install dependencies
-rustup update stable
-cargo install cargo-watch cargo-tarpaulin
-
-# Setup Python environment
-cd clients/python
-pip install -e ".[dev]"
-----
-
-=== Common Tasks
-
-==== Running Development Server
-[source,bash]
-----
-# Watch mode (auto-restart on changes)
-cargo watch -x 'run --bin proximadb-server'
-
-# With debug logging
-RUST_LOG=debug cargo run --bin proximadb-server
-
-# With custom config
-cargo run --bin proximadb-server -- --config dev.toml
-----
-
-==== Code Quality Checks
-[source,bash]
-----
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy -- -D warnings
-
-# Check dependencies
-cargo audit
-----
+**Code Quality**: `cargo fmt` for formatting, `cargo clippy -- -D warnings` for linting, `cargo audit` for dependency checks.
 
 == Debugging Guide
 
-=== Enable Debug Logging
+**Debug Logging**: Set `log_level = "debug"` in config.toml or use `RUST_LOG=proximadb=debug,tower_http=debug`.
 
-[source,toml]
-----
-# In config.toml
-[server]
-log_level = "debug"
-log_format = "json"
+**Memory Issues**: Use `valgrind --leak-check=full` for memory leak detection.
 
-# Or via environment
-RUST_LOG=proximadb=debug,tower_http=debug
-----
+**Performance Issues**: Use `perf record/report` for CPU profiling, `cargo flamegraph` for flame graphs.
 
-=== Common Issues
-
-==== Memory Leaks
-[source,bash]
-----
-# Run with memory profiler
-cargo build --release
-valgrind --leak-check=full ./target/release/proximadb-server
-----
-
-==== Performance Issues
-[source,bash]
-----
-# CPU profiling
-cargo build --release
-perf record -F 99 ./target/release/proximadb-server
-perf report
-
-# Flame graphs
-cargo flamegraph --bin proximadb-server
-----
-
-==== Test Failures
-[source,bash]
-----
-# Run single test with backtrace
-RUST_BACKTRACE=1 cargo test test_name -- --exact
-
-# Run tests sequentially
-cargo test -- --test-threads=1
-----
+**Test Failures**: Use `RUST_BACKTRACE=1 cargo test test_name -- --exact` for detailed traces, `cargo test -- --test-threads=1` for sequential execution.
 
 == Benchmarking
 
-=== Running Benchmarks
+**Running**: `cargo bench` for all, `cargo bench vector_insert` for specific tests, `cargo bench -- --save-baseline main` for comparisons.
 
-[source,bash]
-----
-# Run all benchmarks
-cargo bench
-
-# Run specific benchmark
-cargo bench vector_insert
-
-# Compare with baseline
-cargo bench -- --save-baseline main
-cargo bench -- --baseline main
-----
-
-=== Writing Benchmarks
-
-[source,rust]
-----
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
-fn vector_insert_benchmark(c: &mut Criterion) {
-    let vectors = create_test_vectors(1000);
-    
-    c.bench_function("insert 1000 vectors", |b| {
-        b.iter(|| {
-            insert_vectors(black_box(&vectors))
-        });
-    });
-}
-
-criterion_group!(benches, vector_insert_benchmark);
-criterion_main!(benches);
-----
+**Writing**: Use criterion crate with `black_box` for preventing optimizations, benchmark functions with `b.iter()` loops.
 
 == CI/CD Pipeline
 
-=== GitHub Actions
+**GitHub Actions**: Automated testing on push/PR with `cargo test --all`, `cargo fmt --check`, `cargo clippy -- -D warnings`.
 
-[source,yaml]
-----
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-      - run: cargo test --all
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-----
-
-=== Pre-commit Hooks
-
-[source,bash]
-----
-# .git/hooks/pre-commit
-#!/bin/bash
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test --lib
-----
+**Pre-commit Hooks**: Format check, linting, and lib tests before commits.
 
 == Release Process
 
-=== Version Bumping
-[source,bash]
-----
-# Update version in Cargo.toml
-cargo set-version 1.0.1
+**Version Bumping**: Use `cargo set-version 1.0.1` for Rust, `poetry version 1.0.1` for Python SDK.
 
-# Update Python SDK version
-cd clients/python
-poetry version 1.0.1
-----
+**Building**: `cargo build --release` for optimized binary, `docker build -t proximadb:latest` for container, `poetry build` for Python wheel.
 
-=== Building Release
-[source,bash]
-----
-# Build optimized binary
-cargo build --release
-
-# Build Docker image
-docker build -t proximadb:latest .
-
-# Build Python wheel
-cd clients/python
-poetry build
-----
-
-=== Testing Release
-[source,bash]
-----
-# Test release binary
-./target/release/proximadb-server --version
-
-# Test Docker image
-docker run proximadb:latest --version
-
-# Test Python package
-pip install dist/proximadb-*.whl
-python -c "import proximadb; print(proximadb.__version__)"
-----
+**Testing**: Verify binary version, Docker image functionality, and Python package installation.
 
 ---
 

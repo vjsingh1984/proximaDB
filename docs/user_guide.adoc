@@ -1,870 +1,134 @@
-= ProximaDB User Guide - Proto-First Vector Database
-:doctype: book
+= User Guide
 :toc: left
-:toclevels: 3
-:sectlinks:
-:sectanchors:
-:sectnums:
-:source-highlighter: rouge
-:rouge-style: github
-:icons: font
-:experimental:
-:imagesdir: diagrams/images
-:version: 2025.1
-:revdate: {docdate}
-:author: ProximaDB Team
 
-ifdef::env-github[]
-:tip-caption: :bulb:
-:note-caption: :information_source:
-:important-caption: :heavy_exclamation_mark:
-:caution-caption: :fire:
-:warning-caption: :warning:
-endif::[]
+== Overview
 
-[abstract]
-== Abstract
+ProximaDB is a high-performance vector database with unified REST/gRPC APIs and optimized storage engines.
 
-Comprehensive production workflows for ProximaDB's **DirectVectorService architecture**, delivering **40-60% insert latency reduction**, **optimized search performance**, and **unified SDK experience** for modern AI applications.
+== Collections
 
-[NOTE]
-====
-High Performance: **New to ProximaDB?** Start with the link:getting_started.adoc[Getting Started Guide] for a 5-minute introduction to proto-first architecture.
-====
-
-== Proto-First Advantages
-
-**Zero Double Serialization**:: Protocol Buffers flow natively through the entire system without conversions
-
-**85% Code Reduction**:: Unified handlers eliminate REST/gRPC duplication
-
-**Storage-Aware Search**:: Automatic engine selection delivers optimized performance improvement
-
-**Unified Python SDK**:: Single client (87% smaller) supports both REST and gRPC protocols
-
-**Hardware Optimization**:: SIMD/GPU acceleration with intelligent quantization selection
-
-image::proximadb-unified-architecture.svg[ProximaDB Architecture Overview, width=800, align=center]
-
-_Diagram source: link:diagrams/proximadb-unified-architecture.mmd[View Mermaid source]_
-
-== Core Concepts
-
-**Proto-Native Collections**:: Containers using native protobuf types with .proto extensions
-
-**Unified Vector Operations**:: Single API surface for insert, search, update, delete across REST/gRPC
-
-**Storage-Aware Intelligence**:: Automatic WriteBuffer → VIPER → SST engine selection based on data location
-
-**Two-Stage Search**:: Binary quantization for candidate selection + FP32 refinement for accuracy
-
-**Multi-Engine Architecture**:: VIPER (Parquet columnar) and SST (row-based SSTable) storage engines
-
-== Collection Management
-
-=== Creating Advanced Collections
-
-Collections are containers for vectors with specific configurations:
-
+=== Create Collection
 [source,python]
 ----
-from proximadb import UnifiedClient
+from proximadb import ProximaDBClient
 
-client = UnifiedClient("http://localhost:5678")
+client = ProximaDBClient("http://localhost:5678")
 
-# Proto-native collection with advanced features
-collection_config = {
-"collection_id": "ai_documents",
-"dimension": 768, # BERT/Sentence Transformer dimension
-"distance_metric": "cosine",
-"storage_engine": "auto", # Auto-select VIPER or SST
-"quantization_config": {
-"quantization_level": "pq8", # Product quantization
-"enable_two_stage_search": True,
-"candidate_multiplier": 3
-},
-"metadata_schema": {
-"title": "string",
-"category": "string",
-"timestamp": "string",
-"word_count": "int64"
-},
-"description": "Proto-first document embeddings with quantization"
-}
-
-collection = client.create_collection(collection_config)
-print(f"NOTE: Created proto-native collection: {collection['collection_id']}")
-print(f" Storage engine: {collection['storage_engine']}")
-print(f" Quantization: {collection['quantization_level']}")
+collection = client.create_collection({
+    "name": "documents",
+    "dimension": 768,
+    "distance_metric": "cosine"
+})
 ----
 
-=== Collection Types by Use Case
-
+=== Manage Collections
 [source,python]
 ----
-# BERT embeddings collection
-bert_config = {
-"collection_id": "bert_documents",
-"dimension": 768,
-"distance_metric": "cosine",
-"description": "BERT base model embeddings"
-}
+# List collections
+collections = client.list_collections()
 
-# OpenAI embeddings collection
-openai_config = {
-"collection_id": "openai_embeddings",
-"dimension": 1536, # text-embedding-ada-002
-"distance_metric": "cosine",
-"description": "OpenAI text embeddings"
-}
+# Get collection
+collection = client.get_collection("documents")
 
-# Image embeddings collection
-image_config = {
-"collection_id": "image_features",
-"dimension": 512, # ResNet features
-"distance_metric": "euclidean",
-"description": "Image feature vectors"
-}
-----
-
-=== Managing Collections
-
-[source,python]
-----
-# List all collections
-collections = await client.list_collections()
-for collection in collections:
-print(f"Name: {collection.name}, Vectors: {collection.vector_count}")
-
-# Get collection details
-collection = await client.get_collection("ai_documents")
-print(f"Storage Size: {collection.storage_size_bytes / 1024 / 1024:.2f} MB")
-
-# Delete collection (use with caution!)
-await client.delete_collection("test_collection")
+# Delete collection
+client.delete_collection("documents")
 ----
 
 == Vector Operations
 
-=== Inserting Individual Vectors
-
+=== Insert Vectors
 [source,python]
 ----
-# Single vector with rich metadata
-vector_data = {
-"vector_id": "user_doc_123",
-"vector": [0.1, 0.2, 0.3] + [0.0] * 765, # 768D vector
-"metadata": {
-"title": "Understanding Vector Databases",
-"author": "Data Scientist",
-"tags": ["database", "vectors", "ai"],
-"word_count": 1200,
-"reading_time": 5,
-"language": "en",
-"published_date": "2025-06-20",
-"url": "https://example.com/vector-db-guide"
-}
-}
-
-sequence_number = await client.insert_vector(
-collection_id="ai_documents",
-vector_id=vector_data["vector_id"],
-vector=vector_data["vector"],
-metadata=vector_data["metadata"]
+# Single vector
+client.insert_vector(
+    collection_id="documents",
+    vector_id="doc_1",
+    vector=[0.1, 0.2, 0.3],
+    metadata={"title": "My Document"}
 )
-print(f"NOTE: Vector inserted with sequence: {sequence_number}")
+
+# Batch insert
+vectors = [
+    {"id": "doc_1", "vector": [0.1, 0.2], "metadata": {"title": "Doc 1"}},
+    {"id": "doc_2", "vector": [0.3, 0.4], "metadata": {"title": "Doc 2"}}
+]
+client.batch_insert("documents", vectors)
 ----
 
-=== High-Performance Batch Operations
-
+=== Search Vectors
 [source,python]
 ----
-# Optimized batch processing
-async def optimized_batch_insert(collection_id, documents):
-batch_size = 100
-batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
-
-total_inserted = 0
-start_time = time.time()
-
-for batch_num, batch in enumerate(batches):
-vectors = []
-for doc in batch:
-vectors.append({
-"vector_id": doc["id"],
-"vector": doc["embedding"],
-"metadata": doc["metadata"]
-})
-
-await client.batch_insert(collection_id, vectors)
-total_inserted += len(vectors)
-
-elapsed = time.time() - start_time
-rate = total_inserted / elapsed
-print(f"Batch {batch_num + 1}: {total_inserted} vectors ({rate:.0f} vectors/sec)")
-
-print(f" Completed: {total_inserted} vectors in {elapsed:.2f}s")
-----
-
-=== Vector Retrieval and Updates
-
-[source,python]
-----
-# Get vector by ID
-vector_result = await client.get_vector(
-collection_id="ai_documents",
-vector_id="user_doc_123",
-return_vector=True,
-return_metadata=True
+# Basic search
+results = client.search_vectors(
+    collection_id="documents",
+    query_vector=[0.1, 0.2],
+    k=10
 )
 
-# Update vector with new embedding and metadata
-new_vector = np.random.rand(768).tolist()
-updated_metadata = {
-"title": "Updated: Understanding Vector Databases",
-"version": "2.0",
-"last_updated": "2025-06-20T15:30:00Z"
-}
-
-await client.update_vector(
-collection_id="ai_documents",
-vector_id="user_doc_123",
-vector=new_vector,
-metadata=updated_metadata
+# Search with metadata filter
+results = client.search_vectors(
+    collection_id="documents", 
+    query_vector=[0.1, 0.2],
+    k=10,
+    metadata_filter={"category": "tech"}
 )
-
-# Delete vector
-await client.delete_vector("ai_documents", "user_doc_123")
 ----
 
-== Advanced Search Features
+== BERT Integration
 
-=== Similarity Search with Complex Filters
-
-[source,python]
-----
-# Complex metadata filtering
-metadata_filter = {
-"category": "technology",
-"word_count": {"$gte": 500, "$lte": 2000},
-"tags": {"$in": ["ai", "machine-learning"]},
-"language": "en",
-"published_date": {"$gte": "2024-01-01"}
-}
-
-results = await client.search_vectors(
-collection_id="ai_documents",
-query_vector=query_vector,
-k=10,
-distance_threshold=0.7, # Only return results with similarity > 0.7
-metadata_filter=metadata_filter,
-return_vectors=False,
-return_metadata=True
-)
-
-print(f" Found {len(results)} results matching criteria:")
-for result in results:
-print(f" {result.vector_id}: {result.similarity_score:.4f}")
-print(f" Title: {result.metadata.get('title', 'N/A')}")
-----
-
-=== Metadata Filter Operators
-
-[cols="2,2,3"]
-|===
-|Operator |Description |Example
-
-|`$eq` |Equals |`{"category": {"$eq": "technology"}}`
-|`$ne` |Not equals |`{"status": {"$ne": "deleted"}}`
-|`$gt` |Greater than |`{"score": {"$gt": 0.8}}`
-|`$gte` |Greater than or equal |`{"word_count": {"$gte": 100}}`
-|`$lt` |Less than |`{"price": {"$lt": 50}}`
-|`$lte` |Less than or equal |`{"age": {"$lte": 25}}`
-|`$in` |In array |`{"tags": {"$in": ["ai", "ml"]}}`
-|`$nin` |Not in array |`{"category": {"$nin": ["spam", "test"]}}`
-|`$exists` |Field exists |`{"email": {"$exists": true}}`
-|`$regex` |Regular expression |`{"title": {"$regex": "^Introduction"}}`
-|===
-
-=== Range Queries and Analytics
-
-[source,python]
-----
-# Find vectors within similarity range
-results = await client.search_vectors(
-collection_id="ai_documents",
-query_vector=query_vector,
-k=1000, # Large k to get many results
-distance_threshold=0.5, # Minimum similarity
-max_distance_threshold=0.9, # Maximum similarity
-return_metadata=True
-)
-
-# Group results by similarity ranges
-ranges = {"0.5-0.6": [], "0.6-0.7": [], "0.7-0.8": [], "0.8-0.9": []}
-
-for result in results:
-score = result.similarity_score
-if 0.5 <= score < 0.6:
-ranges["0.5-0.6"].append(result)
-elif 0.6 <= score < 0.7:
-ranges["0.6-0.7"].append(result)
-# ... continue for other ranges
-
-for range_label, range_results in ranges.items():
-print(f" {range_label}: {len(range_results)} vectors")
-----
-
-== BERT Integration Guide
-
-=== Supported BERT Models
-
-[cols="2,1,2,2"]
-|===
-|Model |Dimensions |Distance Metric |Use Case
-
-|BERT Base |768 |COSINE |General text embeddings
-|BERT Large |1024 |COSINE |High-quality representations
-|Sentence-BERT |384 |EUCLIDEAN |Sentence similarity
-|DistilBERT |768 |COSINE |Fast inference
-|RoBERTa |768/1024 |COSINE |Robust understanding
-|===
-
-=== Complete BERT Workflow
-
+=== Basic Setup
 [source,python]
 ----
 from transformers import AutoTokenizer, AutoModel
-import torch
-import numpy as np
-from proximadb import UnifiedClient
+from proximadb import ProximaDBClient
 
-class BERTEmbeddingService:
-def __init__(self, model_name="bert-base-uncased"):
-self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-self.model = AutoModel.from_pretrained(model_name)
-self.model.eval()
+# BERT embedding service
+class BERTEmbeddings:
+    def __init__(self, model="bert-base-uncased"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model)
+        self.model = AutoModel.from_pretrained(model)
+    
+    def encode(self, text):
+        inputs = self.tokenizer(text, return_tensors="pt", truncation=True)
+        outputs = self.model(**inputs)
+        return outputs.last_hidden_state[:, 0, :].squeeze().tolist()
 
-def encode_text(self, text: str) -> list[float]:
-"""Generate BERT embedding for text."""
-inputs = self.tokenizer(
-text,
-return_tensors="pt",
-truncation=True,
-max_length=512,
-padding=True
-)
+# Usage
+bert = BERTEmbeddings()
+client = ProximaDBClient("http://localhost:5678")
 
-with torch.no_grad():
-outputs = self.model(**inputs)
-# Use [CLS] token representation
-embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+# Create collection for BERT
+collection = client.create_collection({
+    "name": "bert_docs",
+    "dimension": 768,
+    "distance_metric": "cosine"
+})
 
-return embedding.numpy().tolist()
-
-async def bert_workflow_example():
-# Initialize services
-bert = BERTEmbeddingService("bert-base-uncased")
-client = UnifiedClient("http://localhost:5678")
-
-# Create BERT collection
-collection_config = {
-"collection_id": "bert_embeddings",
-"dimension": 768, # BERT base dimension
-"distance_metric": "cosine",
-"description": "BERT document embeddings"
-}
-collection_id = await client.create_collection(collection_config)
-
-# Sample documents
-documents = [
-{
-"id": "article_1",
-"text": "Machine learning is transforming how we process and understand data.",
-"category": "technology",
-"source": "tech_blog"
-},
-{
-"id": "article_2",
-"text": "Artificial intelligence will revolutionize healthcare diagnostics.",
-"category": "healthcare",
-"source": "medical_journal"
-}
-]
-
-# Generate embeddings and insert
-for doc in documents:
-embedding = bert.encode_text(doc["text"])
-await client.insert_vector(
-collection_id=collection_id,
-vector_id=doc["id"],
-vector=embedding,
-metadata={
-"text": doc["text"],
-"category": doc["category"],
-"source": doc["source"]
-}
-)
-
-# Search with natural language query
-query_text = "AI and machine learning applications"
-query_embedding = bert.encode_text(query_text)
-
-results = await client.search_vectors(
-collection_id=collection_id,
-query_vector=query_embedding,
-k=3,
-return_metadata=True
-)
-
-print(" BERT Search Results:")
-for i, result in enumerate(results, 1):
-print(f"{i}. ID: {result.vector_id}")
-print(f" Similarity: {result.similarity_score:.4f}")
-print(f" Category: {result.metadata['category']}")
-print(f" Text: {result.metadata['text'][:100]}...")
+# Generate and insert embeddings
+text = "Machine learning is transforming data processing"
+embedding = bert.encode(text)
+client.insert_vector("bert_docs", "doc_1", embedding, {"text": text})
 ----
 
-== AI Framework Integration
+== Error Handling
 
-=== OpenAI Integration
-
+=== Basic Error Handling
 [source,python]
 ----
-import openai
-from proximadb import UnifiedClient
-
-class OpenAIEmbeddingService:
-def __init__(self, api_key: str):
-openai.api_key = api_key
-
-def get_embedding(self, text: str, model="text-embedding-ada-002") -> list[float]:
-"""Get OpenAI embedding for text."""
-response = openai.Embedding.create(input=text, model=model)
-return response['data'][0]['embedding']
-
-async def openai_integration_example():
-openai_service = OpenAIEmbeddingService("your-openai-api-key")
-client = UnifiedClient("http://localhost:5678")
-
-# Create OpenAI collection
-collection_config = {
-"collection_id": "openai_embeddings",
-"dimension": 1536, # text-embedding-ada-002 dimension
-"distance_metric": "cosine",
-"description": "OpenAI text embeddings"
-}
-collection_id = await client.create_collection(collection_config)
-
-documents = [
-"The future of artificial intelligence is bright and full of possibilities.",
-"Machine learning algorithms are becoming increasingly sophisticated."
-]
-
-# Generate embeddings and insert
-for i, doc in enumerate(documents):
-embedding = openai_service.get_embedding(doc)
-await client.insert_vector(
-collection_id=collection_id,
-vector_id=f"openai_doc_{i}",
-vector=embedding,
-metadata={"text": doc, "source": "openai_example"}
-)
-
-# Search with query
-query = "AI and machine learning trends"
-query_embedding = openai_service.get_embedding(query)
-
-results = await client.search_vectors(
-collection_id=collection_id,
-query_vector=query_embedding,
-k=3,
-return_metadata=True
-)
-----
-
-=== Cohere Integration
-
-[source,python]
-----
-import cohere
-from proximadb import UnifiedClient
-
-class CohereEmbeddingService:
-def __init__(self, api_key: str):
-self.client = cohere.Client(api_key)
-
-def get_embeddings(self, texts: list[str], model="embed-english-v2.0") -> list[list[float]]:
-"""Get Cohere embeddings for multiple texts."""
-response = self.client.embed(texts=texts, model=model)
-return response.embeddings
-
-async def cohere_integration_example():
-cohere_service = CohereEmbeddingService("your-cohere-api-key")
-client = UnifiedClient("http://localhost:5678")
-
-collection_config = {
-"collection_id": "cohere_embeddings",
-"dimension": 4096, # embed-english-v2.0 dimension
-"distance_metric": "cosine"
-}
-collection_id = await client.create_collection(collection_config)
-
-documents = [
-"Climate change is one of the most pressing issues of our time.",
-"Renewable energy sources are becoming more cost-effective."
-]
-
-# Generate embeddings in batch (more efficient)
-embeddings = cohere_service.get_embeddings(documents)
-
-# Insert vectors
-for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
-await client.insert_vector(
-collection_id=collection_id,
-vector_id=f"cohere_doc_{i}",
-vector=embedding,
-metadata={"text": doc, "source": "cohere_example"}
-)
-----
-
-== Performance Optimization
-
-=== Connection Configuration
-
-[source,python]
-----
-from proximadb import UnifiedClient, ClientConfig, RetryConfig
-
-# Optimized client configuration
-config = ClientConfig(
-endpoint="localhost:5678",
-max_connections=20, # Connection pool size
-timeout=60.0, # Request timeout
-keepalive_time=30, # Keep connections alive
-retry_config=RetryConfig(
-max_retries=3,
-backoff_factor=1.5,
-max_backoff=10.0
-)
-)
-
-client = UnifiedClient(config=config)
-----
-
-=== Parallel Processing
-
-[source,python]
-----
-import asyncio
-
-async def parallel_insert_example(collection_id, documents):
-client = UnifiedClient("http://localhost:5678")
-
-async def insert_single_vector(doc):
-try:
-await client.insert_vector(
-collection_id=collection_id,
-vector_id=doc["id"],
-vector=doc["embedding"],
-metadata=doc["metadata"]
-)
-return f"NOTE: {doc['id']}"
-except Exception as e:
-return f" {doc['id']}: {e}"
-
-# Process up to 10 vectors concurrently
-semaphore = asyncio.Semaphore(10)
-
-async def bounded_insert(doc):
-async with semaphore:
-return await insert_single_vector(doc)
-
-# Run all insertions concurrently
-tasks = [bounded_insert(doc) for doc in documents]
-results = await asyncio.gather(*tasks, return_exceptions=True)
-
-success_count = sum(1 for r in results if "[OK]" in str(r))
-print(f" Inserted {success_count}/{len(documents)} vectors successfully")
-----
-
-=== Performance Monitoring
-
-[source,python]
-----
-import time
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def timed_operation(operation_name: str):
-"""Context manager for timing operations."""
-start_time = time.time()
-try:
-print(f" Starting {operation_name}...")
-yield
-finally:
-elapsed = time.time() - start_time
-print(f"NOTE: {operation_name} completed in {elapsed:.3f}s")
-
-async def performance_monitoring_example():
-client = UnifiedClient("http://localhost:5678")
-
-# Time collection creation
-async with timed_operation("Collection Creation"):
-collection_config = {
-"collection_id": "perf_test",
-"dimension": 768,
-"distance_metric": "cosine"
-}
-collection_id = await client.create_collection(collection_config)
-
-# Time batch insert
-vectors = [
-{
-"vector_id": f"perf_vec_{i}",
-"vector": np.random.rand(768).tolist(),
-"metadata": {"index": i}
-}
-for i in range(1000)
-]
-
-async with timed_operation("Batch Insert (1000 vectors)"):
-await client.batch_insert(collection_id, vectors)
-
-# Time search operation
-query_vector = np.random.rand(768).tolist()
-
-async with timed_operation("Vector Search"):
-results = await client.search_vectors(
-collection_id=collection_id,
-query_vector=query_vector,
-k=10
-)
-----
-
-== Error Handling and Troubleshooting
-
-=== Common Error Types
-
-[source,python]
-----
-from proximadb.exceptions import (
-ProximaDBException,
-CollectionNotFoundError,
-VectorNotFoundError,
-DimensionMismatchError,
-InvalidMetadataError,
-ConnectionError,
-RateLimitError
-)
-
-async def robust_operations():
-client = UnifiedClient("http://localhost:5678")
+from proximadb.exceptions import ProximaDBException, CollectionNotFoundError
 
 try:
-collection = await client.get_collection("my_collection")
-
-except CollectionNotFoundError as e:
-print(f"Collection not found: {e}")
-
-except ConnectionError as e:
-print(f"Failed to connect to ProximaDB: {e}")
-
-except DimensionMismatchError as e:
-print(f"Vector dimension mismatch: {e}")
-
-except InvalidMetadataError as e:
-print(f"Invalid metadata format: {e}")
-
+    collection = client.get_collection("my_collection")
+except CollectionNotFoundError:
+    print("Collection not found")
 except ProximaDBException as e:
-print(f"General ProximaDB error: {e}")
+    print(f"Error: {e}")
 ----
-
-=== Retry Logic Implementation
-
-[source,python]
-----
-import asyncio
-from typing import Callable, Any
-
-async def retry_with_backoff(
-func: Callable,
-max_retries: int = 3,
-backoff_factor: float = 1.5,
-max_backoff: float = 60.0,
-*args,
-**kwargs
-) -> Any:
-"""Retry function with exponential backoff."""
-
-for attempt in range(max_retries + 1):
-try:
-return await func(*args, **kwargs)
-
-except (ConnectionError, RateLimitError) as e:
-if attempt == max_retries:
-raise e
-
-wait_time = min(backoff_factor ** attempt, max_backoff)
-print(f"⏳ Attempt {attempt + 1} failed, retrying in {wait_time:.1f}s...")
-await asyncio.sleep(wait_time)
-
-except Exception as e:
-# Don't retry non-retryable errors
-raise e
-
-# Usage example
-async def robust_search(collection_id, query_vector):
-client = UnifiedClient("http://localhost:5678")
-
-return await retry_with_backoff(
-client.search_vectors,
-max_retries=3,
-collection_id=collection_id,
-query_vector=query_vector,
-k=10
-)
-----
-
-=== Health Check Script
-
-[source,python]
-----
-async def health_check():
-"""Comprehensive health check for ProximaDB."""
-print(" ProximaDB Health Check")
-print("=" * 30)
-
-try:
-client = UnifiedClient("http://localhost:5678")
-
-# 1. Server connectivity
-print("1. Testing server connectivity...")
-start = time.time()
-collections = await client.list_collections()
-latency = (time.time() - start) * 1000
-print(f" NOTE: Connected (latency: {latency:.1f}ms)")
-
-# 2. Collection operations
-print("2. Testing collection operations...")
-test_collection_config = {
-"collection_id": f"health_check_{int(time.time())}",
-"dimension": 128,
-"distance_metric": "cosine"
-}
-test_collection_id = await client.create_collection(test_collection_config)
-print(" NOTE: Collection creation working")
-
-# 3. Vector operations
-print("3. Testing vector operations...")
-test_vector = np.random.rand(128).tolist()
-await client.insert_vector(
-collection_id=test_collection_id,
-vector_id="health_check_vector",
-vector=test_vector,
-metadata={"test": True}
-)
-print(" NOTE: Vector insertion working")
-
-# 4. Search operations
-print("4. Testing search operations...")
-query_vector = np.random.rand(128).tolist()
-results = await client.search_vectors(
-collection_id=test_collection_id,
-query_vector=query_vector,
-k=1
-)
-print(" NOTE: Vector search working")
-
-# 5. Cleanup
-print("5. Cleaning up test data...")
-await client.delete_collection(test_collection_id)
-print(" NOTE: Cleanup completed")
-
-print("\n All health checks passed!")
-
-except Exception as e:
-print(f"\n Health check failed: {e}")
-raise
-----
-
-== Python SDK Migration Guide
-
-=== Unified Client Benefits
-
-The ProximaDB Python SDK has been consolidated achieving:
-
-* **87% code reduction**: From ~6,467 lines to ~800 lines
-* **Unified API**: Single client for both REST and gRPC protocols
-* **Better performance**: Automatic protocol selection for optimal speed
-* **Backward compatibility**: Existing code continues to work with deprecation warnings
-
-=== Recommended Migration
-
-**New Unified Client Approach:**
-[source,python]
-----
-# New way - automatic protocol selection for best performance
-from proximadb import UnifiedClient
-
-client = UnifiedClient(url="localhost")
-
-# Force specific protocol if needed
-client = UnifiedClient(url="localhost", protocol="grpc") # For max performance
-client = UnifiedClient(url="localhost", protocol="rest") # For compatibility
-----
-
-=== Performance Guidelines
-
-**Protocol Selection:**
-* **Use gRPC** for high-throughput batch processing (3.4x faster than REST)
-* **Use REST** for simple integrations and web applications
-* **Use AUTO** (default) for automatic selection based on workload
-
-**Batch Size Optimization:**
-* **gRPC optimal**: 3,000 vectors per batch (77,872 vectors/second)
-* **REST optimal**: 1,500 vectors per batch (21,273 vectors/second)
-* **Small batches**: Use 100-500 vectors for low latency
 
 == Best Practices
 
-=== Vector Quality
-1. **Normalize vectors** when using cosine similarity
-2. **Use appropriate dimensions** for your use case
-3. **Consistent preprocessing** for all vectors
-4. **Quality metadata** for effective filtering
-
-=== Performance
-1. **Batch operations** for high throughput
-2. **Connection pooling** for concurrent access
-3. **Appropriate indexing** for your query patterns
-4. **Filter before search** when possible
-
-=== Data Management
-1. **Meaningful vector IDs** for easy debugging
-2. **Rich metadata** for flexible querying
-3. **Regular backups** of important collections
-4. **Monitor storage usage** and clean up unused data
-
-=== Error Handling
-1. **Implement retry logic** for transient failures
-2. **Validate inputs** before API calls
-3. **Log operations** for debugging
-4. **Graceful degradation** when possible
-
-== Current Status
-
-ProximaDB is **production-ready** with complete proto-first architecture:
-
-NOTE: **Production Ready**: Proto-first architecture, storage-aware search, unified handlers, multi-engine storage
-NOTE: **Performance Validated**: optimized search improvement, 50,000+ vectors/sec insertion, sub-100ms latency
-NOTE: **Quality Assured**: 520+ tests passing, gcc-14 optimized builds, comprehensive coverage
-NOTE: **SDK Complete**: Unified Python client (87% smaller), REST/gRPC dual protocol support
-
----
-
-**Next Steps**: Explore the link:technical_reference.adoc[Technical Reference] for advanced features and API documentation.
-
-**Support**: For questions and support, visit our GitHub repository or documentation website.
-
-**License**: Apache 2.0
+* Use batch operations for better performance
+* Normalize vectors when using cosine similarity  
+* Add meaningful metadata for filtering
+* Implement retry logic for production use
+* Use appropriate distance metrics for your data type

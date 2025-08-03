@@ -1,238 +1,49 @@
 = Performance Metrics
 :toc: left
-:toclevels: 2
 
-Performance benchmarks, optimization guidelines, and tuning recommendations.
+Performance benchmarks and optimization guidelines for ProximaDB.
 
 == Benchmark Results
 
-=== Insert Performance
+**Insert Performance**: gRPC achieves 49K vectors/sec (batch 500), 10K vectors/sec (batch 100). REST achieves 20K vectors/sec (batch 100), 2K vectors/sec (batch 10).
 
-[cols="3,2,2,2"]
-|===
-|Operation |Protocol |Batch Size |Throughput
+**Search Latency**: SST P50: 1.8ms, P95: 4.5ms, P99: 9.2ms. VIPER P50: 1.5ms, P95: 3.8ms, P99: 7.5ms. SQL queries: P50: 3.2ms, P95: 12ms, P99: 28ms.
 
-|Vector Insert
-|gRPC
-|500
-|49,000 vec/sec
-
-|Vector Insert
-|gRPC
-|100
-|10,000 vec/sec
-
-|Vector Insert
-|REST
-|100
-|20,000 vec/sec
-
-|Vector Insert
-|REST
-|10
-|2,000 vec/sec
-|===
-
-=== Search Performance
-
-[cols="3,2,2,2"]
-|===
-|Metric |P50 |P95 |P99
-
-|Search Latency (SST)
-|1.8ms
-|4.5ms
-|9.2ms
-
-|Search Latency (VIPER)
-|1.5ms
-|3.8ms
-|7.5ms
-
-|SQL Query Latency
-|3.2ms
-|12ms
-|28ms
-
-|Metadata Filter
-|0.8ms
-|2.1ms
-|4.5ms
-|===
-
-=== Resource Usage
-
-[cols="2,2,2"]
-|===
-|Resource |Baseline |Under Load
-
-|Memory (Base)
-|100MB
-|100MB
-
-|Memory (1M vectors)
-|2.1GB
-|3.5GB
-
-|CPU (Idle)
-|0.5%
-|0.5%
-
-|CPU (Search)
-|25%
-|85%
-
-|Disk I/O (Write)
-|50MB/s
-|180MB/s
-|===
+**Resource Usage**: Base memory 100MB, 1M vectors require 2.1-3.5GB. CPU usage: 0.5% idle, up to 85% under search load. Disk I/O: 50-180MB/s write throughput.
 
 == Optimization Guidelines
 
-=== Hardware Acceleration
+**Hardware Acceleration**: Enable SIMD (AVX-512/NEON) and GPU (CUDA/ROCm) for distance computations with CPU fallback.
 
-Enable SIMD/GPU for distance computations:
+**Memory Optimization**: Configure vector pool (512MB), cache (256MB), and bloom filter memory (128MB).
 
-[source,toml]
-----
-[compute]
-enable_simd = true      # AVX-512/NEON
-enable_gpu = true       # CUDA/ROCm
-fallback_cpu = true     # Always have fallback
-----
-
-=== Memory Optimization
-
-Configure memory pools and caching:
-
-[source,toml]
-----
-[memory]
-vector_pool_size_mb = 512
-cache_size_mb = 256
-bloom_filter_memory_mb = 128
-----
-
-=== Storage Optimization
-
-==== SST Engine Tuning
-[source,toml]
-----
-[storage.sst]
-block_size = 16384                  # 16KB blocks
-bloom_filter_bits_per_key = 10      # 1% FPR
-compression = "zstd"
-compression_level = 3               # Balance speed/ratio
-----
-
-==== VIPER Engine Tuning
-[source,toml]
-----
-[storage.viper]
-row_group_size = 50000              # Optimal for vectors
-enable_statistics = true            # For predicate pushdown
-compression = "zstd"
-compression_level = 6               # Higher for cold data
-----
+**Storage Optimization**: SST uses 8MB blocks, 1% bloom filter FPR, ZSTD level 3. VIPER uses 50K row groups, statistics enabled, ZSTD level 6.
 
 == Workload-Specific Tuning
 
-=== Write-Heavy Workloads
+**Write-Heavy**: Use SST engine, increase write buffer (256MB), reduce compaction frequency (600s), enable batch commits.
 
-* Use SST engine
-* Increase write buffer size
-* Reduce compaction frequency
-* Enable batch commits
+**Read-Heavy**: Use VIPER engine, increase cache (1024MB), enable bloom filters, optimize with HNSW indexes.
 
-[source,toml]
-----
-[storage]
-engine = "sst"
-write_buffer_size_mb = 256
-flush_threshold_mb = 128
-compaction_interval_secs = 600
-----
-
-=== Read-Heavy Workloads
-
-* Use VIPER engine
-* Increase cache sizes
-* Enable bloom filters
-* Optimize indexes
-
-[source,toml]
-----
-[storage]
-engine = "viper"
-cache_size_mb = 1024
-enable_bloom_filters = true
-index_type = "hnsw"
-----
-
-=== Mixed Workloads
-
-* Use dual-engine setup
-* Route by collection
-* Balance resources
-* Monitor metrics
+**Mixed**: Use dual-engine setup, route by collection, balance resources, monitor metrics.
 
 == Performance Tips
 
-=== Batch Operations
-* Insert vectors in batches of 100-500
-* Use gRPC for maximum throughput
-* Enable async processing
+**Batch Operations**: Insert 100-500 vectors per batch, use gRPC for maximum throughput, enable async processing.
 
-=== Query Optimization
-* Use metadata filters to reduce search space
-* Enable query plan caching
-* Leverage SQL for complex queries
+**Query Optimization**: Use metadata filters, enable query plan caching, leverage SQL for complex queries.
 
-=== Resource Management
-* Monitor memory usage with Prometheus
-* Set appropriate limits
-* Use connection pooling
+**Resource Management**: Monitor with Prometheus, set appropriate limits, use connection pooling.
 
-== Monitoring Metrics
+== Monitoring
 
-Key metrics to track:
-
-[source,yaml]
-----
-# Prometheus queries
-- rate(proximadb_vectors_inserted_total[5m])
-- histogram_quantile(0.99, proximadb_search_latency_seconds)
-- proximadb_memory_usage_bytes
-- rate(proximadb_compactions_total[1h])
-----
+Key Prometheus metrics: vector insert rate, P99 search latency, memory usage, compaction frequency.
 
 == Capacity Planning
 
-=== Storage Requirements
+**Storage**: 1M vectors (128-dim) require 512MB raw / 250MB compressed. 100M vectors (768-dim) require 300GB raw / 120GB compressed.
 
-[cols="2,2,2"]
-|===
-|Vectors |Raw Size |Compressed
-
-|1M (128-dim)
-|512MB
-|250MB
-
-|10M (384-dim)
-|15GB
-|7GB
-
-|100M (768-dim)
-|300GB
-|120GB
-|===
-
-=== Memory Requirements
-
-* Base: 100MB
-* Per million vectors: ~2GB
-* Indexes: +20% of vector data
-* Cache: Configure based on working set
+**Memory**: Base 100MB + ~2GB per million vectors + 20% for indexes. Configure cache based on working set.
 
 ---
 

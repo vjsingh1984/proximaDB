@@ -1,8 +1,10 @@
 = Technical Reference
 :toc: left
-:toclevels: 2
+:imagesdir: diagrams/images
 
 Comprehensive technical documentation for ProximaDB.
+
+image::write-buffer-strategy-pattern.svg[Write Buffer Strategy Pattern]
 
 == API Reference
 
@@ -102,101 +104,22 @@ DELETE FROM my_collection WHERE id = 'vec1';
 
 == Configuration Reference
 
-=== Server Configuration
+=== Configuration
 
-[source,toml]
-----
-[server]
-rest_port = 5678                    # REST API port
-grpc_port = 5679                    # gRPC API port
-worker_threads = 16                 # Number of worker threads
-max_connections = 1000              # Maximum concurrent connections
-request_timeout_secs = 30           # Request timeout
-log_level = "info"                  # Log level: debug/info/warn/error
-----
+**Server**: REST port 5678, gRPC port 5679, configurable worker threads and connections
 
-=== Storage Configuration
+**Storage**: Dual engine (SST + VIPER), configurable data directory, write buffer settings
 
-[source,toml]
-----
-[storage]
-data_dir = "/var/lib/proximadb"     # Data directory
-engine = "dual"                     # Engine: sst/viper/dual
-
-[storage.write_buffer]
-memory_flush_size_bytes = 67108864  # 64MB per collection
-write_buffer_size_mb = 2048         # 2GB global limit
-serialization_strategy = "bincode"  # bincode/proto/avro
-
-[storage.sst]
-block_size = 16384                  # 16KB blocks
-compaction_interval_secs = 300      # 5 minutes
-max_files_before_compaction = 10
-bloom_filter_bits_per_key = 10      # 1% FPR
-
-[storage.viper]
-row_group_size = 50000
-compression_codec = "zstd"
-compression_level = 6
-enable_statistics = true
-----
-
-=== Cloud Storage
-
-[source,toml]
-----
-# AWS S3
-[storage.s3]
-region = "us-east-1"
-bucket = "proximadb-data"
-use_iam_role = true
-endpoint = ""  # Optional custom endpoint
-
-# Azure Blob Storage
-[storage.azure]
-account_name = "proximadbstorage"
-container = "data"
-use_managed_identity = true
-
-# Google Cloud Storage
-[storage.gcs]
-project_id = "my-project"
-bucket = "proximadb-data"
-use_workload_identity = true
-----
+**Cloud Storage**: AWS S3, Azure Blob, Google Cloud Storage support with native authentication
 
 == Distance Metrics
 
-Supported distance metrics:
-
-[cols="2,3,2"]
-|===
-|Metric |Description |Range
-
-|cosine
-|Cosine similarity
-|[0, 2]
-
-|euclidean
-|L2 distance
-|[0, ∞)
-
-|dot_product
-|Inner product
-|(-∞, ∞)
-
-|manhattan
-|L1 distance
-|[0, ∞)
-
-|hamming
-|Bit differences
-|[0, n]
-
-|jaccard
-|Set similarity
-|[0, 1]
-|===
+* **cosine**: Cosine similarity [0, 2]
+* **euclidean**: L2 distance [0, ∞)  
+* **dot_product**: Inner product (-∞, ∞)
+* **manhattan**: L1 distance [0, ∞)
+* **hamming**: Bit differences [0, n]
+* **jaccard**: Set similarity [0, 1]
 
 == Index Types
 
@@ -226,31 +149,8 @@ Supported distance metrics:
 
 == Error Codes
 
-[cols="2,3,2"]
-|===
-|Code |Description |Action
-
-|COLLECTION_NOT_FOUND
-|Collection does not exist
-|Create collection first
-
-|DIMENSION_MISMATCH
-|Vector dimension incorrect
-|Check collection dimension
-
-|INVALID_METADATA
-|Metadata parsing failed
-|Validate JSON format
-
-|STORAGE_ERROR
-|Storage operation failed
-|Check disk space/permissions
-
-|TIMEOUT
-|Operation timed out
-|Retry with backoff
-|===
-
----
-
-For implementation examples, see link:appendix_implementation_details.adoc[Implementation Details].
+* **COLLECTION_NOT_FOUND**: Collection does not exist - Create collection first
+* **DIMENSION_MISMATCH**: Vector dimension incorrect - Check collection dimension  
+* **INVALID_METADATA**: Metadata parsing failed - Validate JSON format
+* **STORAGE_ERROR**: Storage operation failed - Check disk space/permissions
+* **TIMEOUT**: Operation timed out - Retry with backoff

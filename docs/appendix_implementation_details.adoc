@@ -1,286 +1,56 @@
 = Implementation Details
 :toc: left
-:toclevels: 2
+:imagesdir: diagrams/images
 
 Essential implementation patterns and code examples for ProximaDB.
+
+image::unified-parquet-reader-architecture.svg[Unified Parquet Reader Architecture]
 
 == Core Patterns
 
 === DirectVectorService
 
-The main service handling all vector operations:
-
-[source,rust]
-----
-// Engine routing based on collection config
-pub async fn route_to_engine(&self, collection_id: &str) -> Result<Arc<dyn StorageEngine>> {
-    let collection = self.collection_service.get_collection(collection_id).await?;
-    match collection.config.storage_engine {
-        StorageEngineType::SST => self.storage_engines.get("sst"),
-        StorageEngineType::VIPER => self.storage_engines.get("viper"),
-    }
-}
-
-// Atomic vector insertion
-pub async fn insert_vectors(&self, collection_id: &str, vectors: Vec<VectorRecord>) -> Result<()> {
-    let engine = self.route_to_engine(collection_id).await?;
-    let batch = VectorBatch::new(vectors);
-    
-    // Write to memtable first
-    self.memtable.insert_batch(&batch).await?;
-    
-    // Persist to WriteBuffer
-    self.write_buffer.append_batch(&batch).await?;
-    
-    Ok(())
-}
-----
+Main service handling vector operations with engine routing and atomic insertions.
 
 === Atomic Operations
 
-Three-phase commit pattern for consistency:
-
-[source,rust]
-----
-// Phase 1: Prepare
-let op = atomic_coordinator.begin_atomic_operation(&config).await?;
-
-// Phase 2: Execute
-storage_engine.write_to_staging(&op.id, &data).await?;
-
-// Phase 3: Commit
-atomic_coordinator.finalize_atomic_operation(&op.id).await?;
-----
+Three-phase commit pattern: Prepare → Execute → Commit for consistency across operations.
 
 === Search Coordination
 
-Parallel search across multiple layers:
-
-[source,rust]
-----
-pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
-    // Search all layers in parallel
-    let (wal_results, memtable_results, storage_results) = tokio::join!(
-        self.write_buffer.search(&request),
-        self.memtable.search(&request),
-        self.storage_engine.search(&request)
-    );
-    
-    // Merge and deduplicate by version
-    let merged = self.merge_results(vec![
-        wal_results?, 
-        memtable_results?, 
-        storage_results?
-    ]);
-    
-    Ok(SearchResponse { results: merged })
-}
-----
+Parallel search across WriteBuffer, memtable, and storage layers with MVCC deduplication by version.
 
 == Storage Engine Details
 
 === SST Engine
 
-Row-based storage optimized for writes:
-
-[source,rust]
-----
-// Block-based filtering
-pub fn filter_blocks(&self, predicate: &Predicate) -> Vec<BlockId> {
-    self.metadata_index
-        .iter()
-        .filter(|(_, stats)| predicate.matches_stats(stats))
-        .map(|(block_id, _)| *block_id)
-        .collect()
-}
-
-// Efficient point lookup
-pub async fn get(&self, key: &str) -> Result<Option<VectorRecord>> {
-    if !self.bloom_filter.might_contain(key) {
-        return Ok(None);
-    }
-    
-    let block_id = self.index.find_block(key)?;
-    let block = self.read_block(block_id).await?;
-    block.find_record(key)
-}
-----
+Row-based storage with block-based filtering, bloom filters for point lookups, and metadata indexing.
 
 === VIPER Engine
 
-Columnar storage for analytics:
-
-[source,rust]
-----
-// Predicate pushdown to Parquet
-pub async fn filtered_search(&self, filter: &MetadataFilter) -> Result<Vec<RecordId>> {
-    let row_groups = self.reader.metadata().row_groups();
-    
-    // Filter at row group level first
-    let matching_groups = row_groups
-        .iter()
-        .enumerate()
-        .filter(|(_, rg)| self.matches_row_group_stats(rg, filter))
-        .map(|(idx, _)| idx)
-        .collect::<Vec<_>>();
-    
-    // Read only matching row groups
-    let mut results = Vec::new();
-    for group_idx in matching_groups {
-        let batch = self.reader.get_row_group(group_idx)?;
-        results.extend(self.apply_filter(&batch, filter)?);
-    }
-    
-    Ok(results)
-}
-----
+Columnar Parquet storage with predicate pushdown, row group statistics filtering, and batch processing.
 
 == Key Algorithms
 
 === MVCC Deduplication
 
-[source,rust]
-----
-pub fn deduplicate_by_version(records: Vec<VectorRecord>) -> Vec<VectorRecord> {
-    let mut latest: HashMap<String, (u64, VectorRecord)> = HashMap::new();
-    
-    for record in records {
-        match latest.entry(record.id.clone()) {
-            Entry::Vacant(e) => {
-                e.insert((record.version, record));
-            }
-            Entry::Occupied(mut e) => {
-                if record.version > e.get().0 {
-                    e.insert((record.version, record));
-                }
-            }
-        }
-    }
-    
-    latest.into_values().map(|(_, record)| record).collect()
-}
-----
+Version-based record deduplication using HashMap for latest version tracking.
 
 === Distance Computation
 
-Hardware-accelerated distance metrics:
-
-[source,rust]
-----
-#[cfg(target_arch = "x86_64")]
-pub fn cosine_similarity_avx(a: &[f32], b: &[f32]) -> f32 {
-    unsafe {
-        let mut dot = _mm256_setzero_ps();
-        let mut norm_a = _mm256_setzero_ps();
-        let mut norm_b = _mm256_setzero_ps();
-        
-        for i in (0..a.len()).step_by(8) {
-            let va = _mm256_loadu_ps(&a[i]);
-            let vb = _mm256_loadu_ps(&b[i]);
-            
-            dot = _mm256_fmadd_ps(va, vb, dot);
-            norm_a = _mm256_fmadd_ps(va, va, norm_a);
-            norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
-        }
-        
-        // Horizontal sum and compute similarity
-        let dot_sum = hsum_ps_avx(dot);
-        let norm_a_sum = hsum_ps_avx(norm_a).sqrt();
-        let norm_b_sum = hsum_ps_avx(norm_b).sqrt();
-        
-        dot_sum / (norm_a_sum * norm_b_sum)
-    }
-}
-----
+Hardware-accelerated metrics including AVX-optimized cosine similarity for x86_64 platforms.
 
 == Configuration Examples
 
-=== Production Config
+**Production**: 16 worker threads, 64MB flush threshold, ZSTD compression level 6, 50K row groups
 
-[source,toml]
-----
-[server]
-rest_port = 5678
-grpc_port = 5679
-worker_threads = 16
-
-[storage]
-data_dir = "/var/lib/proximadb"
-
-[storage.write_buffer]
-memory_flush_size_bytes = 67108864  # 64MB
-write_buffer_size_mb = 2048         # 2GB global
-
-[storage.sst]
-compaction_interval_secs = 300
-max_files_before_compaction = 10
-bloom_filter_fpr = 0.01
-
-[storage.viper]
-compression_codec = "zstd"
-compression_level = 6
-row_group_size = 50000
-----
-
-=== Development Config
-
-[source,toml]
-----
-[server]
-rest_port = 5678
-grpc_port = 5679
-log_level = "debug"
-
-[storage]
-data_dir = "./data"
-
-[storage.write_buffer]
-memory_flush_size_bytes = 1048576  # 1MB for testing
-
-[storage.sst]
-compaction_interval_secs = 60     # Faster for testing
-----
+**Development**: Debug logging, 1MB flush threshold for faster testing, 60s compaction interval
 
 == Testing Patterns
 
-=== Integration Test Setup
+**Setup**: TempDir isolation, DirectVectorService initialization, test context management
 
-[source,rust]
-----
-async fn setup_test_env() -> TestContext {
-    let temp_dir = TempDir::new().unwrap();
-    let config = Config {
-        storage: StorageConfig {
-            data_dir: temp_dir.path().to_path_buf(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    
-    let service = DirectVectorService::new(config).await.unwrap();
-    
-    TestContext {
-        service,
-        temp_dir,
-    }
-}
-
-#[tokio::test]
-async fn test_vector_operations() {
-    let ctx = setup_test_env().await;
-    
-    // Create collection
-    ctx.service.create_collection("test", 128).await.unwrap();
-    
-    // Insert vectors
-    let vectors = create_test_vectors(100);
-    ctx.service.insert_vectors("test", vectors).await.unwrap();
-    
-    // Search
-    let results = ctx.service.search("test", &query_vector, 10).await.unwrap();
-    assert_eq!(results.len(), 10);
-}
-----
+**Operations**: Collection creation, vector insertion, search validation with assertion checks
 
 ---
 

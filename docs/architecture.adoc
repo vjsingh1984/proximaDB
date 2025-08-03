@@ -1,6 +1,5 @@
 = ProximaDB Architecture
 :toc: left
-:toclevels: 2
 :imagesdir: diagrams/images
 
 **High-performance vector database with proto-first design and dual storage engines.**
@@ -9,162 +8,57 @@
 
 image::business-system-overview.svg[ProximaDB Overview, align=center]
 
-ProximaDB uses a streamlined architecture optimized for vector operations:
-
-* **DirectVectorService**: Eliminates abstraction layers for 40-60% latency reduction
-* **Proto-First Design**: Native protobuf serialization throughout
-* **Dual Storage Engines**: SST (write-optimized) + VIPER (analytics-optimized)
-* **Hardware Acceleration**: Automatic SIMD/GPU optimization
+**Core Features**: DirectVectorService (40-60% latency reduction), Proto-First Design (zero double serialization), Dual Storage (SST + VIPER), Hardware Acceleration (SIMD/GPU).
 
 == Core Components
 
-=== DirectVectorService
+image::direct-vector-service.svg[DirectVectorService Architecture]
 
-The heart of ProximaDB - handles all vector operations with minimal overhead:
+**DirectVectorService**: Direct memtable access, coordinated search across WriteBuffer + Storage, atomic operations, result streaming.
 
-[source,rust]
-----
-DirectVectorService
-├── Direct memtable access (writes)
-├── Coordinated search (WriteBuffer + Storage)
-├── Atomic operations via UnifiedAtomicCoordinator
-└── Result streaming for large queries
-----
+image::storage-engine-classes.svg[Storage Engine Classes]
 
-=== Storage Engines
+**Storage Engines**: SST (row-based, write-optimized, bloom filters, MVCC). VIPER (columnar, analytics-optimized, 60-90% I/O reduction).
 
-==== SST Engine (Row-Based)
-* Optimized for write-heavy workloads
-* Fast point lookups and updates
-* Efficient compaction with bloom filters
-* MVCC support for consistency
-
-==== VIPER Engine (Columnar)
-* Optimized for analytics and complex queries
-* Efficient compression with Parquet format
-* Predicate pushdown for filtered searches
-* 60-90% I/O reduction on metadata queries
-
-=== AXIS Indexing System
-
-Adaptive index selection based on data characteristics:
-
-* **HNSW**: For high-recall requirements
-* **IVF**: For large-scale datasets
-* **LSH**: For approximate matching
-* **Annoy**: For memory-constrained environments
+**AXIS Indexing**: Adaptive selection - HNSW (high-recall), IVF (large-scale), LSH (approximate), Annoy (memory-constrained).
 
 == Key Design Patterns
 
-=== Proto-First Architecture
+**Proto-First Architecture**: REST/gRPC → Proto → DirectVectorService → Storage. Benefits: zero double serialization, consistent data model, efficient transport.
 
-[source]
-----
-REST Request → JSON → Proto → DirectVectorService → Proto → Storage
-gRPC Request → Proto → DirectVectorService → Proto → Storage
-----
+**Unified Interfaces**: Trait-based design with UnifiedMemtable, UnifiedSearchEngine, UnifiedAtomicCoordinator, BloomFilterStrategy.
 
-Benefits:
-* Zero double serialization
-* Consistent data model
-* Efficient network transport
-* Language-agnostic API
-
-=== Unified Interfaces
-
-All components use trait-based design for flexibility:
-
-* `UnifiedMemtable`: Multiple backend implementations
-* `UnifiedSearchEngine`: Consistent search across engines  
-* `UnifiedAtomicCoordinator`: ACID operations
-* `BloomFilterStrategy`: Pluggable filter implementations
-
-=== Memory Optimization
-
-Advanced memory management for efficiency:
-
-* **Vector Memory Pool**: 30-50% allocation reduction
-* **RAII Pooled Vectors**: Automatic lifecycle management
-* **Zero-Copy Operations**: Using bytemuck for serialization
-* **Adaptive Compression**: ZSTD with smart thresholds
+**Memory Optimization**: Vector Memory Pool (30-50% allocation reduction), RAII pooling, zero-copy bytemuck, adaptive ZSTD compression.
 
 == Data Flow
 
-=== Write Path
+image::service-interactions.svg[Service Interactions]
 
-[source]
-----
-Client Request
-    ↓
-DirectVectorService
-    ↓
-UnifiedMemtable (in-memory)
-    ↓
-WriteBuffer (persistent)
-    ↓
-Storage Engine (SST/VIPER)
-----
+**Write Path**: Client → DirectVectorService → UnifiedMemtable → WriteBuffer → Storage Engine
 
-=== Search Path
+image::two-stage-search.svg[Two-Stage Search Process]
 
-[source]
-----
-Search Request
-    ↓
-DirectVectorService
-    ↓
-Parallel Search:
-├── WriteBuffer (recent data)
-├── Memtable (active data)
-└── Storage Engine (historical)
-    ↓
-Result Merging & Deduplication
-    ↓
-Client Response
-----
+**Search Path**: Request → DirectVectorService → Parallel Search (WriteBuffer + Memtable + Storage) → Result Merging → Response
 
-== Deployment Architecture
+== Deployment & Performance
 
-=== Single Node
-* Docker container with REST/gRPC ports
-* Local or cloud storage backend
-* Prometheus metrics endpoint
+image::deployment-architecture.svg[Deployment Architecture]
 
-=== Multi-Node (Planned)
-* Consistent hashing for data distribution
-* Raft consensus for metadata
-* Cross-node query coordination
+**Single Node**: Docker container, REST/gRPC ports, local/cloud storage, Prometheus metrics.
 
-== Performance Characteristics
+**Multi-Node (Planned)**: Consistent hashing, Raft consensus, cross-node coordination.
 
-=== Latency Profile
-* **Insert**: <1ms (memtable), <5ms (durable)
-* **Search**: <2ms (P50), <10ms (P99)
-* **Update**: <2ms (in-place optimization)
+image::storage-performance-unified.svg[Storage Performance Characteristics]
 
-=== Throughput
-* **Writes**: 49K vectors/sec (gRPC batch)
-* **Reads**: 48 QPS concurrent search
-* **Mixed**: 80/20 read/write optimal
+**Performance**: Insert <1ms (memtable), <5ms (durable). Search <2ms (P50), <10ms (P99). Writes 49K vectors/sec, reads 48 QPS.
 
-=== Resource Usage
-* **Memory**: 100MB base + data
-* **CPU**: Scales with cores (SIMD)
-* **Storage**: 30-50% compression ratio
+**Resources**: 100MB base memory, scales with cores (SIMD), 30-50% compression ratio.
 
 == Security & Reliability
 
-=== Data Protection
-* ACID transactions with MVCC
-* Atomic operations for consistency
-* Write-ahead logging for durability
-* Point-in-time recovery support
+**Data Protection**: ACID transactions, MVCC, atomic operations, WAL durability, point-in-time recovery.
 
-=== Operational Features
-* Health checks and readiness probes
-* Prometheus metrics integration
-* Structured JSON logging
-* Hot configuration reload
+**Operations**: Health checks, Prometheus integration, JSON logging, hot config reload.
 
 == Next Steps
 

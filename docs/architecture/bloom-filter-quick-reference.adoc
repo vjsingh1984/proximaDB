@@ -1,102 +1,47 @@
-= Bloom Filter Quick Reference
-:doctype: article
+= Bloom Filter Reference
 :toc: left
-:toclevels: 2
-:source-highlighter: rouge
-:rouge-style: github
-:icons: font
-:experimental:
-:version: 2025.1
 
-[.lead]
-Quick reference guide for using ProximaDB's unified bloom filter architecture.
-
-== Configuration Templates
+== Configuration
 
 === SST Configuration
 [source,toml]
 ----
 [storage.sst.bloom_filter]
 enabled = true
-strategy = "ByteAligned"
-bits_per_key = 10 # 10 bits = ~1% false positive rate
-expected_items = 50000 # Adjust based on SSTable size
+bits_per_key = 10
+expected_items = 50000
 ----
 
-=== VIPER Metadata Configuration
+=== VIPER Configuration
 [source,toml]
 ----
 [storage.viper.bloom_filter]
 enabled = true
-strategy = "Composite"
 false_positive_rate = 0.01
-metadata_columns = ["category", "tags", "author"]
+metadata_columns = ["category", "tags"]
 ----
 
-=== Memtable Configuration
-[source,toml]
-----
-[storage.memtable.bloom_filter]
-enabled = true
-strategy = "BitPacked"
-false_positive_rate = 0.01
-expected_items = 10000 # Per-partition estimate
-----
-
-== Quick Usage Patterns
-
-=== Creating Filters
-[source,rust]
-----
-use proximadb::core::bloom::{BloomFilterFactory, BloomFilterConfig, BloomStrategy};
-
-// SSTable
-let sstable_filter = BloomFilterFactory::create(&BloomFilterConfig {
-enabled: true,
-strategy: BloomStrategy::ByteAligned,
-bits_per_key: Some(10),
-expected_items: records.len(),
-..Default::default()
-});
-
-// Memtable
-let memtable_filter = BloomFilterFactory::create(&BloomFilterConfig {
-enabled: true,
-strategy: BloomStrategy::BitPacked,
-false_positive_rate: Some(0.01),
-expected_items: 10000,
-..Default::default()
-});
-----
+== Usage Patterns
 
 === Basic Operations
 [source,rust]
 ----
+// Create filter
+let filter = BloomFilterFactory::create(&BloomFilterConfig {
+    enabled: true,
+    strategy: BloomStrategy::ByteAligned,
+    bits_per_key: Some(10),
+    expected_items: records.len(),
+    ..Default::default()
+});
+
 // Insert and check
 bloom_filter.insert(&record.key);
 if bloom_filter.might_contain(&search_key) {
-// Key might exist, check actual data
-if let Some(value) = sstable.get(&search_key) {
-// Found it
-}
-}
-
-// Memory usage
-let memory_bytes = bloom_filter.approximate_memory_usage();
-----
-
-=== Metadata Filtering
-[source,rust]
-----
-use proximadb::core::bloom::CompositeBloomFilter;
-
-let mut composite = CompositeBloomFilter::new();
-composite.insert_key(&record.id);
-composite.insert_metadata("category", "electronics");
-
-if composite.might_contain_key(&search_id) &&
-composite.might_match_metadata("category", "electronics") {
-// Likely match, verify with actual data
+    // Check actual data only if bloom filter says maybe
+    if let Some(value) = sstable.get(&search_key) {
+        // Found it
+    }
 }
 ----
 
@@ -106,12 +51,10 @@ composite.might_match_metadata("category", "electronics") {
 // Serialize
 let serialized = bloom_filter.serialize()?;
 metadata.bloom_filter = Some(serialized);
-metadata.bloom_filter_strategy = Some(BloomStrategy::ByteAligned);
 
-// Deserialize
+// Deserialize  
 if let Some(filter_data) = metadata.bloom_filter {
-let strategy = metadata.bloom_filter_strategy.unwrap_or(BloomStrategy::ByteAligned);
-let filter = BloomFilterFactory::deserialize(&filter_data, strategy)?;
+    let filter = BloomFilterFactory::deserialize(&filter_data, strategy)?;
 }
 ----
 
@@ -151,132 +94,58 @@ let filter = BloomFilterFactory::deserialize(&filter_data, strategy)?;
 
 [source,rust]
 ----
-// Optimal SSTable (100K records, 1% FPR)
+// SSTable storage (1% FPR)
 BloomFilterConfig {
-enabled: true,
-strategy: BloomStrategy::ByteAligned,
-bits_per_key: Some(10),
-expected_items: 100_000,
-false_positive_rate: None,
+    enabled: true,
+    strategy: BloomStrategy::ByteAligned,
+    bits_per_key: Some(10),
+    expected_items: 100_000,
 }
 
-// Memory-optimized (2% FPR for less memory)
+// Memory-optimized (2% FPR)
 BloomFilterConfig {
-enabled: true,
-strategy: BloomStrategy::BitPacked,
-expected_items: 50_000,
-false_positive_rate: Some(0.02),
-}
-
-// High-accuracy (0.1% FPR)
-BloomFilterConfig {
-enabled: true,
-strategy: BloomStrategy::BitPacked,
-bits_per_key: Some(20),
-expected_items: 10_000,
-false_positive_rate: None,
+    enabled: true,
+    strategy: BloomStrategy::BitPacked,
+    false_positive_rate: Some(0.02),
+    expected_items: 50_000,
 }
 ----
 
 == Performance Notes
 
-=== Memory Estimation
-[source,rust]
-----
-fn estimate_memory(items: usize, fpr: f64) -> usize {
-let ln2_squared = 0.48045301391; // ln(2)^2
-let bits_per_item = -1.0 * (fpr.ln() / ln2_squared);
-let bits = (items as f64 * bits_per_item).ceil() as usize;
-(bits + 7) / 8 + 64 // Round up to byte + overhead
-}
-----
-
-=== Query Optimization
-[source,rust]
-----
-// Check bloom filter before expensive operations
-if !bloom_filter.might_contain(&key) {
-return None; // Definitely not present, skip disk I/O
-}
-sstable.get(&key) // Only read if bloom filter says maybe
-----
+* Check bloom filter before expensive disk I/O operations
+* Use appropriate strategy for dataset size and memory constraints
+* Enable bloom filters for SSTable files with >1000 records
+* Monitor false positive rates in production
 
 == Common Pitfalls
 
-[source,rust]
-----
-// DON'T: Wrong strategy for dataset size
-BloomFilterConfig {
-strategy: BloomStrategy::Simple, // Bad for 1M items!
-expected_items: 1_000_000,
-}
-
-// DO: Use appropriate strategy
-BloomFilterConfig {
-strategy: BloomStrategy::BitPacked, // Good for in-memory
-expected_items: 1_000_000,
-false_positive_rate: Some(0.01),
-}
-
-// DON'T: Assume filter is always created
-filter.insert(&key); // May panic if disabled!
-
-// DO: Check configuration
-if config.enabled && config.expected_items > 0 {
-let filter = BloomFilterFactory::create(&config);
-filter.insert(&key);
-}
-
-// DON'T: Use bloom filter for tiny datasets
-if records.len() < 100 {
-// Direct HashMap lookup is faster
-}
-----
+* **Wrong Strategy**: Use Simple only for <1000 items, BitPacked for memory, ByteAligned for storage
+* **Disabled Filters**: Always check `config.enabled` before operations
+* **Tiny Datasets**: Direct HashMap lookup faster for <100 records
+* **Memory Overuse**: Monitor memory usage with large datasets
 
 == Debugging
 
 === Monitor Effectiveness
 [source,rust]
 ----
-// Track performance
-let mut bloom_hits = 0;
-let mut bloom_misses = 0;
-let mut false_positives = 0;
-
-if bloom_filter.might_contain(&key) {
-bloom_hits += 1;
-if sstable.get(&key).is_none() {
-false_positives += 1;
-}
-} else {
-bloom_misses += 1;
-}
-
+// Track performance metrics
 let effectiveness = bloom_misses as f64 / (bloom_hits + bloom_misses) as f64;
 info!("Bloom filter prevented {:.1}% of disk reads", effectiveness * 100.0);
-----
 
-=== Verify Configuration
-[source,rust]
-----
-info!(
-"Bloom filter: strategy={:?}, memory={} bytes, fpr={:.4}",
-config.strategy,
-filter.approximate_memory_usage(),
-filter.false_positive_rate()
-);
+// Log configuration
+info!("Bloom filter: strategy={:?}, memory={} bytes, fpr={:.4}",
+    config.strategy, filter.approximate_memory_usage(), filter.false_positive_rate());
 ----
 
 == Migration Checklist
 
-- [ ] Identify current bloom filter usage
-- [ ] Choose appropriate strategy for each use case
-- [ ] Update configuration files
-- [ ] Replace old instantiation with factory calls
-- [ ] Update serialization/deserialization code
-- [ ] Test false positive rates
-- [ ] Monitor memory usage
-- [ ] Remove old implementations
+* Choose appropriate strategy for each use case
+* Update configuration files with new settings
+* Replace old instantiation with factory calls
+* Test false positive rates and memory usage
+* Remove old implementations
 
 == Strategy Comparison
 
@@ -318,5 +187,5 @@ filter.false_positive_rate()
 == Reference Links
 
 * link:bloom-filter-unified-design.adoc[Detailed Design Document]
-* link:../../technical_reference.adoc#_bloom_filter_architecture[Technical Reference]
-* link:../../developer_guide.adoc#_bloom_filters[Developer Guide]
+* link:../../technical_reference.adoc[Technical Reference]
+* link:../../developer_guide.adoc[Developer Guide]
