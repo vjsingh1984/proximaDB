@@ -1,265 +1,177 @@
-= Getting Started with ProximaDB - Proto-First Vector Database
-:doctype: book
+= Getting Started with ProximaDB
 :toc: left
-:toclevels: 3
-:sectlinks:
-:sectanchors:
-:sectnums:
+:toclevels: 2
 :source-highlighter: rouge
-:rouge-style: github
-:icons: font
-:experimental:
-:imagesdir: diagrams/images
-:version: 2025.1
 
-[.lead]
-Get ProximaDB's **DirectVectorService architecture** running in under 5 minutes with **40-60% insert latency reduction**, **optimized search performance**, and **unified Python SDK**.
+Get ProximaDB running in 5 minutes.
 
-== What Makes ProximaDB Different
+== Prerequisites
 
-[cols="2,3"]
-|===
-|**Innovation** |**Benefit**
+* Docker & Docker Compose
+* 4GB RAM minimum
+* 10GB disk space
 
-|DirectVectorService |40-60% insert latency reduction, no registry overhead
-|Storage-Aware Search |Optimized performance with automatic engine selection
-|Proto-First Architecture |Zero double serialization throughout pipeline
-|Unified Python SDK |87% smaller (6,467 → 800 lines)
-|Hardware Optimization |SIMD/GPU acceleration for quantization
-|===
+== Installation
 
-image::business-system-overview.svg[ProximaDB Business System Overview, width=800, align=center]
-
-_Diagram source: link:diagrams/business-system-overview.mmd[View Mermaid source]_
-
-== Quick Installation
-
-=== Docker (Recommended)
+=== Using Docker (Recommended)
 
 [source,bash]
 ----
-# Complete production-ready setup
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb/demo && docker compose up -d
-
-# Verify both REST and gRPC endpoints
-curl http://localhost:5678/health
-grpcurl -plaintext localhost:5679 list
-----
-
-=== From Source (Production Build)
-
-[source,bash]
-----
-# Prerequisites: Rust 1.75+, gcc-14, Protocol Buffers compiler
+# Clone the repository
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb
 
-# Build with production optimizations
-cargo build --release
-./target/release/proximadb-server
+# Start ProximaDB
+docker compose up -d
 
-# Dual protocol servers
-# REST API: http://localhost:5678
-# gRPC API: grpc://localhost:5679
+# Verify it's running
+curl http://localhost:5678/health
 ----
 
-== First Vector Operations
-
-=== Unified Python SDK Setup
+=== Building from Source
 
 [source,bash]
 ----
-# Install the unified ProximaDB Python SDK
-pip install proximadb
-
-# Optional: Install sentence transformers for embeddings
-pip install sentence-transformers
+# Requirements: Rust 1.70+
+cargo build --release
+cargo run --release --bin proximadb-server
 ----
 
-=== Proto-First Client Workflow
+== First Steps
+
+=== 1. Install Python Client
+
+[source,bash]
+----
+pip install proximadb-client
+----
+
+=== 2. Create Your First Collection
 
 [source,python]
 ----
-from proximadb import UnifiedClient
-from sentence_transformers import SentenceTransformer
+from proximadb import ProximaDBClient
 
-# 1. Connect to ProximaDB (unified client supports both REST and gRPC)
-client = UnifiedClient("http://localhost:5678")  # REST
-# client = UnifiedClient("grpc://localhost:5679")  # gRPC (for performance)
+# Connect to ProximaDB
+client = ProximaDBClient("http://localhost:5678")
 
-# 2. Create a collection with quantization support
-collection_config = {
-    "collection_id": "ai_documents",
-    "dimension": 384,
-    "distance_metric": "cosine",
-    "quantization_config": {
-        "quantization_level": "pq8",  # Product quantization (8-bit)
-        "enable_two_stage_search": True
-    }
-}
-collection = client.create_collection(collection_config)
+# Create a collection
+collection = client.create_collection(
+    name="my_docs",
+    dimension=384,  # Embedding dimension
+    engine="viper"  # Or "sst" for write-heavy workloads
+)
+----
 
-# 3. Generate embeddings with modern model
-model = SentenceTransformer('all-MiniLM-L6-v2')
-texts = [
-    "ProximaDB delivers optimized search performance",
-    "Proto-first architecture eliminates double serialization",
-    "Storage-aware search automatically selects optimal engines",
-    "Unified quantization provides hardware acceleration"
-]
-embeddings = model.encode(texts)
+=== 3. Insert Vectors
 
-# 4. Batch insert with proto-native operations
-vectors = []
-for i, (text, embedding) in enumerate(zip(texts, embeddings)):
-    vectors.append({
-        "id": f"doc_{i}",
-        "vector": embedding.tolist(),
+[source,python]
+----
+# Insert vectors with metadata
+vectors = [
+    {
+        "id": "doc1",
+        "vector": [0.1, 0.2, ...],  # 384-dimensional
         "metadata": {
-            "text": text,
-            "category": "architecture",
-            "timestamp": "2025-01-12"
+            "title": "Introduction to AI",
+            "category": "tutorial"
         }
-    })
-
-# Insert batch (optimized for 64MB gRPC limit)
-client.insert_vectors_batch(collection_id="ai_documents", vectors=vectors)
-
-# 5. Search with optimization hints
-query_embedding = model.encode(["vector database performance optimization"])
-search_request = {
-    "collection_id": "ai_documents",
-    "query_vector": query_embedding[0].tolist(),
-    "k": 3,
-    "search_optimization_hints": {
-        "enable_two_stage_search": True,
-        "candidate_multiplier": 3,
-        "quantization_hint": "pq8"
-    },
-    "metadata_filter": {
-        "category": "architecture"
     }
-}
+]
 
-results = client.search_vectors(search_request)
-
-# 6. View results with performance metrics
-print(f"Search completed in {results.latency_ms}ms")
-for result in results.vectors:
-    print(f"Score: {result.distance:.4f} - {result.metadata['text']}")
-    
-# 7. Check collection stats
-stats = client.get_collection_stats("ai_documents")
-print(f"Total vectors: {stats.vector_count}")
-print(f"Storage engine: {stats.storage_engine}")
-print(f"Quantization: {stats.quantization_level}")
+client.insert_vectors("my_docs", vectors)
 ----
 
-== Production Performance Tips
-
-=== Optimal Batch Sizes (64MB gRPC Limit)
-
-[cols="2,2,2,3"]
-|===
-|**Vector Dim** |**Batch Size** |**Throughput** |**Use Case**
-
-|128 |30,000 |50,000 vec/s |Small embeddings
-|384 |10,000 |18,000 vec/s |Sentence transformers
-|768 |5,000 |10,000 vec/s |Large language models
-|1536 |2,500 |5,000 vec/s |GPT embeddings
-|===
-
-=== Quantization Selection Guide
+=== 4. Search for Similar Vectors
 
 [source,python]
 ----
-# High accuracy (>95% recall)
-quantization_config = {"quantization_level": "int8"}
+# Search by vector similarity
+query_vector = [0.15, 0.25, ...]
+results = client.search_vectors(
+    collection="my_docs",
+    vector=query_vector,
+    top_k=5,
+    metadata_filter={"category": "tutorial"}
+)
 
-# Balanced (90% recall, 4x compression)
-quantization_config = {"quantization_level": "pq8"}
-
-# Maximum compression (85% recall, 32x compression)
-quantization_config = {"quantization_level": "binary"}
+# Or use SQL
+results = client.search_sql("""
+    SELECT id, metadata, similarity
+    FROM my_docs
+    WHERE similarity(vector, :query) > 0.8
+    AND metadata->>'category' = 'tutorial'
+    ORDER BY similarity DESC
+    LIMIT 5
+""", {"query": query_vector})
 ----
 
-=== Hardware Optimization
+== Configuration
 
-- **x86 with AVX2**: 40% faster distance calculations
-- **ARM with NEON**: 25% improvement on compatible hardware  
-- **GPU acceleration**: Use gRPC for large batch operations
-- **Multi-disk setup**: Configure hot/warm/cold storage tiers
+=== Basic Configuration
 
-== Troubleshooting
+Create `config.toml`:
 
-[cols="2,3,3"]
-|===
-|**Issue** |**Cause** |**Solution**
-
-|Connection refused |Server not running |Check `cargo run --bin proximadb-server`
-|Dimension mismatch |Vector size mismatch |Verify collection dimension=384
-|Slow search (>100ms) |No quantization |Enable `two_stage_search: True`
-|High memory usage |Large vectors in memory |Configure WriteBuffer flush thresholds
-|Proto parse errors |Mismatched schemas |Update to latest Python SDK
-|===
-
-== Advanced Features Preview
-
-=== Multi-Engine Storage Strategy
-
-[source,python]
+[source,toml]
 ----
-# VIPER engine for analytics workloads
-collection_config = {
-    "storage_engine": "viper",
-    "enable_ml_clustering": True,
-    "parquet_compression": "zstd"
-}
+[server]
+rest_port = 5678
+grpc_port = 5679
 
-# SST engine for high-write workloads  
-collection_config = {
-    "storage_engine": "sst",
-    "enable_bloom_filters": True,
-    "compaction_style": "leveled"
-}
+[storage]
+data_dir = "./data"
+
+[storage.sst]
+compaction_interval_secs = 300
+
+[storage.viper]
+enable_compression = true
 ----
 
-=== Storage-Aware Search
+=== Storage Engine Selection
 
-ProximaDB automatically selects the optimal search strategy:
-
-- **WriteBuffer search**: Latest unflushed vectors
-- **VIPER search**: Columnar Parquet with predicate pushdown
-- **SST search**: Row-based SSTable with bloom filters
+* **SST Engine**: Best for write-heavy workloads
+* **VIPER Engine**: Best for analytics and complex queries
 
 == Next Steps
 
-[cols="2,3,1"]
-|===
-|**Path** |**Description** |**Time**
+1. **Explore Demos**: Check `demo/` directory for examples
+2. **Read User Guide**: link:user_guide.adoc[Complete usage guide]
+3. **API Reference**: link:api/unified_rest_api.adoc[REST API docs]
+4. **Deploy to Production**: link:user_guide.adoc#docker-deployment[Production guide]
 
-|link:user_guide.adoc[**User Guide**] 
-|Comprehensive workflows, advanced features, production setup
-|1 hour
+== Troubleshooting
 
-|link:developer_guide.adoc[**Developer Guide**] 
-|API development, SDK customization, contribution guidelines
-|2 hours
+=== Common Issues
 
-|link:architecture.adoc[**Architecture Overview**] 
-|Proto-first design, storage engines, performance characteristics
-|45 min
+**Port Already in Use**
+[source,bash]
+----
+# Change ports in docker-compose.yml or config.toml
+REST_PORT=5680 GRPC_PORT=5681 docker compose up
+----
 
-|link:quantization_and_optimization.adoc[**Quantization Guide**] 
-|Hardware acceleration, quantization levels, performance tuning
-|30 min
+**Memory Issues**
+[source,bash]
+----
+# Increase Docker memory limit
+docker run -m 8g proximadb/proximadb:latest
+----
 
-|link:api/unified_rest_api.adoc[**API Reference**] 
-|Complete REST and gRPC API documentation
-|Reference
-|===
+**Connection Refused**
+[source,bash]
+----
+# Check if service is running
+docker ps | grep proximadb
+curl http://localhost:5678/health
+----
+
+== Getting Help
+
+* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+* **Discussions**: https://github.com/vjsingh1984/proximadb/discussions
+* **Email**: singhvjd@gmail.com
 
 ---
 
-**Ready for production?** See the link:user_guide.adoc[User Guide] for real-world examples with production workflows.
+Ready to build? Check out the link:user_guide.adoc[User Guide] for detailed examples.

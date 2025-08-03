@@ -107,26 +107,6 @@ impl LocalFileSystem {
         Ok(Self { config })
     }
 
-    /// Unified method to extract path from URL and resolve relative to root if configured
-    /// This replaces the separate extract_path_from_url + resolve_path pattern
-    fn extract_and_resolve_path(&self, url_or_path: &str) -> FsResult<PathBuf> {
-        // Extract path from URL using centralized method
-        let path_str = self.extract_path_from_url(url_or_path)?;
-        let path_buf = PathBuf::from(path_str);
-
-        // Apply root directory resolution if configured
-        let resolved = if let Some(ref root_dir) = self.config.root_dir {
-            if path_buf.is_absolute() {
-                path_buf
-            } else {
-                root_dir.join(path_buf)
-            }
-        } else {
-            path_buf
-        };
-        
-        Ok(resolved)
-    }
 
     /// Convert std::fs::Metadata to FileMetadata
     fn convert_metadata(&self, path: &Path, metadata: &std::fs::Metadata) -> FileMetadata {
@@ -174,8 +154,9 @@ impl LocalFileSystem {
 #[async_trait]
 impl FileSystem for LocalFileSystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
-        // Extract and resolve path in one step
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        // Extract path from URL
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
 
         match fs::read(&resolved_path).await {
             Ok(data) => Ok(data),
@@ -192,7 +173,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         let options = options.unwrap_or_default();
 
         // Create parent directories if requested
@@ -249,7 +231,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
 
         let mut file = fs::OpenOptions::new()
             .create(true)
@@ -268,7 +251,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
 
         if !resolved_path.exists() {
             return Err(FilesystemError::NotFound(
@@ -288,15 +272,17 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         Ok(resolved_path.exists())
     }
 
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
         
-        // Extract and resolve path in one step
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        // Extract path from URL
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         
         // Open file for reading
         let mut file = match tokio::fs::File::open(&resolved_path).await {
@@ -362,7 +348,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn metadata(&self, path: &str) -> FsResult<FileMetadata> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
 
         let metadata = if self.config.follow_symlinks {
             fs::metadata(&resolved_path).await
@@ -383,8 +370,9 @@ impl FileSystem for LocalFileSystem {
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
         info!("📁 DEBUG LocalFileSystem::list called with path: '{}'", path);
-        // Extract and resolve path in one step
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        // Extract path from URL
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         info!("📁 DEBUG LocalFileSystem::list resolved_path: {:?}", resolved_path);
 
         let mut entries = Vec::new();
@@ -429,7 +417,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn create_dir(&self, path: &str) -> FsResult<()> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
 
         fs::create_dir(&resolved_path)
             .await
@@ -443,7 +432,8 @@ impl FileSystem for LocalFileSystem {
 
     async fn create_dir_all(&self, path: &str) -> FsResult<()> {
         info!("📁 LocalFileSystem::create_dir_all called with path: '{}'", path);
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         info!("📁 LocalFileSystem::create_dir_all resolved to: {:?}", resolved_path);
         info!("📁 LocalFileSystem config: root_dir={:?}", self.config.root_dir);
 
@@ -453,8 +443,10 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn copy(&self, from: &str, to: &str) -> FsResult<()> {
-        let from_path = self.extract_and_resolve_path(from)?;
-        let to_path = self.extract_and_resolve_path(to)?;
+        let from_path_str = self.extract_path_from_url(from)?;
+        let from_path = PathBuf::from(from_path_str);
+        let to_path_str = self.extract_path_from_url(to)?;
+        let to_path = PathBuf::from(to_path_str);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
@@ -471,9 +463,11 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
-        // Extract and resolve paths in one step
-        let from_path = self.extract_and_resolve_path(from)?;
-        let to_path = self.extract_and_resolve_path(to)?;
+        // Extract paths from URLs
+        let from_path_str = self.extract_path_from_url(from)?;
+        let from_path = PathBuf::from(from_path_str);
+        let to_path_str = self.extract_path_from_url(to)?;
+        let to_path = PathBuf::from(to_path_str);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
@@ -498,8 +492,9 @@ impl FileSystem for LocalFileSystem {
     }
     
     async fn sync_file(&self, path: &str) -> FsResult<()> {
-        // Extract and resolve path in one step
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        // Extract path from URL
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         
         // Only sync if enabled in config
         if !self.config.sync_enabled {
@@ -528,7 +523,8 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>> {
-        let resolved_path = self.extract_and_resolve_path(path)?;
+        let path_str = self.extract_path_from_url(path)?;
+        let resolved_path = PathBuf::from(path_str);
         
         let file = if create {
             tokio::fs::OpenOptions::new()
@@ -611,6 +607,12 @@ mod tests {
         // Create a temporary directory
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
+        
+        // Clean up any existing test structure first
+        let test_metadata_path = temp_path.join("test_metadata");
+        if test_metadata_path.exists() {
+            std::fs::remove_dir_all(&test_metadata_path).unwrap();
+        }
         
         // Create test structure
         std::fs::create_dir_all(temp_path.join("test_metadata/current")).unwrap();
@@ -701,12 +703,28 @@ mod tests {
         
         let fs = LocalFileSystem::new(config).await.unwrap();
         
+        // Clean up any existing test directories/files first
+        // Check if the metadata directory exists and clean it up
+        if fs.exists("file://./metadata").await.unwrap_or(false) {
+            // List and delete all files in the directory
+            if let Ok(entries) = fs.list("file://./metadata/current").await {
+                for entry in entries {
+                    let _ = fs.delete(&entry.url).await;
+                }
+            }
+            // Delete the directory itself
+            let _ = fs.delete("file://./metadata/current").await;
+            let _ = fs.delete("file://./metadata").await;
+        }
+        
         // Create a directory structure
         let test_url = "file://./metadata/current";
         fs.create_dir_all(test_url).await.unwrap();
         
         // Write a file
         let file_url = "file://./metadata/current/test.oplog";
+        // Clean up if file exists from previous run
+        let _ = fs.delete(file_url).await;
         fs.write(file_url, b"test data", None).await.unwrap();
         
         // List the directory
@@ -736,6 +754,18 @@ mod tests {
         let config = LocalConfig::default();
         let fs = LocalFileSystem::new(config).await.unwrap();
         
+        // Clean up any existing test directories first
+        if fs.exists("file://./test_metadata").await.unwrap_or(false) {
+            // List and delete all files recursively
+            if let Ok(entries) = fs.list("file://./test_metadata/current").await {
+                for entry in entries {
+                    let _ = fs.delete(&entry.url).await;
+                }
+            }
+            let _ = fs.delete("file://./test_metadata/current").await;
+            let _ = fs.delete("file://./test_metadata").await;
+        }
+        
         // Test with relative URL
         let relative_url = "file://./test_metadata/current";
         fs.create_dir_all(relative_url).await.unwrap();
@@ -760,54 +790,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_path_consistency() {
-        // Test that resolve_path behaves consistently
+        // Test that paths are extracted consistently without root_dir resolution
         let temp_dir = TempDir::new().unwrap();
         
-        // Test with root_dir
+        // Test with root_dir set (but it shouldn't affect path extraction)
         let config_with_root = LocalConfig {
             root_dir: Some(temp_dir.path().to_path_buf()),
             ..Default::default()
         };
         let fs_with_root = LocalFileSystem::new(config_with_root).await.unwrap();
         
-        // Test path resolution
-        let resolved = fs_with_root.extract_and_resolve_path("file://./subdir/file.txt").unwrap();
-        assert_eq!(resolved, temp_dir.path().join("./subdir/file.txt"));
+        // Path extraction should return the path as-is
+        let path_str = fs_with_root.extract_path_from_url("file://./subdir/file.txt").unwrap();
+        assert_eq!(path_str, "./subdir/file.txt");
         
-        // Test without root_dir
+        // Test without root_dir - should be the same
         let config_no_root = LocalConfig::default();
         let fs_no_root = LocalFileSystem::new(config_no_root).await.unwrap();
         
-        let resolved = fs_no_root.extract_and_resolve_path("file://./subdir/file.txt").unwrap();
-        assert_eq!(resolved, std::path::PathBuf::from("./subdir/file.txt"));
+        let path_str = fs_no_root.extract_path_from_url("file://./subdir/file.txt").unwrap();
+        assert_eq!(path_str, "./subdir/file.txt");
     }
 
     #[tokio::test]
-    #[ignore = "Environment-specific permission issues on some systems"]
     async fn test_prevent_double_relative_path_resolution() {
-        // This test specifically checks the bug where paths like
-        // "./demo_metadata" with root_dir "./demo_metadata" 
-        // resulted in "./demo_metadata/./demo_metadata"
+        // This test verifies that paths are used as-is without root_dir resolution
+        // Previously there was a bug where paths were being resolved against root_dir
         
         let temp_dir = TempDir::new().unwrap();
-        let metadata_dir = temp_dir.path().join("metadata");
-        std::fs::create_dir_all(&metadata_dir).unwrap();
+        let working_dir = temp_dir.path();
         
-        // Create filesystem with root_dir pointing to metadata
+        // Change to temp directory so relative paths work
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(working_dir).unwrap();
+        
+        // Create filesystem WITHOUT root_dir - paths should be used as-is
         let config = LocalConfig {
-            root_dir: Some(metadata_dir.clone()),
-            sync_enabled: false, // Disable sync for testing to avoid permission issues
+            root_dir: None, // No root_dir - paths are used as-is
+            sync_enabled: false, // Disable sync for testing
             ..Default::default()
         };
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
-        // Create subdirectory using a path that's already relative to root
-        let subdir_path = "current"; // NOT "./metadata/current"
-        fs.create_dir_all(subdir_path).await.unwrap();
-        
-        // Verify it was created at the correct location
-        assert!(metadata_dir.join("current").exists());
-        assert!(!metadata_dir.join("metadata/current").exists());
         
         // Test with URL - use FileOptions to ensure proper creation
         let options = Some(crate::storage::persistence::filesystem::FileOptions {
@@ -819,8 +842,40 @@ mod tests {
             metadata: None,
             temp_path: None,
         });
-        fs.write("file://current/test.txt", b"data", options).await.unwrap();
-        assert!(metadata_dir.join("current/test.txt").exists());
+        
+        // Write using a file:// URL with proper relative path format
+        let test_path = "metadata/current/test.txt";
+        let test_url = format!("file://./{}", test_path);
+        fs.write(&test_url, b"test data", options.clone()).await.unwrap();
+        
+        // Verify the file was created at the expected location
+        assert!(std::path::Path::new(test_path).exists(), "File should exist at {}", test_path);
+        
+        // Also test with a relative path (no file:// prefix)
+        let another_path = "metadata/current/another.txt";
+        fs.write(another_path, b"more data", options).await.unwrap();
+        assert!(std::path::Path::new(another_path).exists(), "File should exist at {}", another_path);
+        
+        // Test that previously problematic paths work correctly
+        // This used to cause double path resolution
+        let problematic_path = "./test_metadata/current/file.txt";
+        let problematic_url = format!("file://{}", problematic_path);
+        // Use options to create directories
+        let create_dirs_options = Some(crate::storage::persistence::filesystem::FileOptions {
+            create_dirs: true,
+            overwrite: true,
+            buffer_size: None,
+            encryption: None,
+            storage_class: None,
+            metadata: None,
+            temp_path: None,
+        });
+        fs.write(&problematic_url, b"problematic data", create_dirs_options).await.unwrap();
+        assert!(std::path::Path::new("test_metadata/current/file.txt").exists(), 
+                "File should exist at test_metadata/current/file.txt");
+        
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
     }
 }
 

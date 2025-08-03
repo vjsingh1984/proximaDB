@@ -20,80 +20,80 @@ graph TB
     
     subgraph DataInput["📥 Data Input Layer"]
         direction TB
-        VectorInput["🔢 Vector Data<br/>📊 Dimensions: 64-4096<br/>📦 Batch Size: 500-10K<br/>⚡ 49K vectors/sec peak"]
+        VectorInput[" Vector Data<br/> Dimensions: 64-4096<br/> Batch Size: 500-10K<br/> 49K vectors/sec peak"]
         
-        MetadataInput["🏷️ Metadata Input<br/>📋 JSON/Proto format<br/>🔍 Filterable fields<br/>📊 Index optimization"]
+        MetadataInput[" Metadata Input<br/> JSON/Proto format<br/> Filterable fields<br/> Index optimization"]
     end
     
-    subgraph MemoryOptimizations["🚀 Memory Performance Layer"]
+    subgraph MemoryOptimizations[" Memory Performance Layer"]
         direction TB
         
-        subgraph VectorMemory["💾 Vector Memory Management"]
-            MemPool["Vector Memory Pool<br/>📁 compute/memory_pool.rs<br/>📈 30-50% Allocation Reduction<br/>🔄 Buffer Reuse Strategy<br/>⚡ Zero-Copy Operations"]
+        subgraph VectorMemory[" Vector Memory Management"]
+            MemPool["Vector Memory Pool<br/> compute/memory_pool.rs<br/> 30-50% Allocation Reduction<br/> Buffer Reuse Strategy<br/> Zero-Copy Operations"]
             
-            LockFreeStructures["Lock-Free Data Structures<br/>📁 storage/memtable/<br/>🏗️ DashMap Global Partitioning<br/>⚡ Concurrent Read/Write<br/>🔒 No Mutex Contention"]
+            LockFreeStructures["Lock-Free Data Structures<br/> storage/memtable/<br/> DashMap Global Partitioning<br/> Concurrent Read/Write<br/> No Mutex Contention"]
         end
         
         subgraph CacheIntelligence["🧠 Cache Intelligence"]
-            AccessPattern["Access Pattern Learning<br/>📊 Temporal Locality Analysis<br/>🎯 Predictive Prefetching<br/>📈 95% Cache Hit Rate<br/>⚡ Sub-microsecond Response"]
+            AccessPattern["Access Pattern Learning<br/> Temporal Locality Analysis<br/> Predictive Prefetching<br/> 95% Cache Hit Rate<br/> Sub-microsecond Response"]
             
-            AdaptiveCache["Adaptive Cache Sizing<br/>🤖 ML-driven Optimization<br/>📊 Workload-based Tuning<br/>🔄 Dynamic Rebalancing"]
+            AdaptiveCache["Adaptive Cache Sizing<br/> ML-driven Optimization<br/> Workload-based Tuning<br/> Dynamic Rebalancing"]
         end
     end
     
-    subgraph UnifiedCacheArchitecture["💾 Unified Multi-Tier Cache"]
+    subgraph UnifiedCacheArchitecture[" Unified Multi-Tier Cache"]
         direction TB
         
-        subgraph L1MemoryCache["🔥 L1 Memory Cache (Hot Data)"]
-            L1Hot["L1 Hot Cache<br/>💾 RAM-based Storage<br/>⚡ Sub-microsecond Access<br/>📊 95% Hit Rate<br/>🎯 Active Vector Data<br/>💰 Cost: High, Perf: Maximum"]
+        subgraph L1MemoryCache[" L1 Memory Cache (Hot Data)"]
+            L1Hot["L1 Hot Cache<br/> RAM-based Storage<br/> Sub-microsecond Access<br/> 95% Hit Rate<br/> Active Vector Data<br/> Cost: High, Perf: Maximum"]
             
-            L1Warm["L1 Warm Cache<br/>💾 Compressed Memory<br/>⚡ 1-5μs Access<br/>📊 85% Hit Rate<br/>🗜️ ZSTD Compression<br/>💰 Cost: Medium-High"]
+            L1Warm["L1 Warm Cache<br/> Compressed Memory<br/> 1-5μs Access<br/> 85% Hit Rate<br/> ZSTD Compression<br/> Cost: Medium-High"]
         end
         
-        subgraph L2NVMeCache["💽 L2 NVMe Cache (Warm Data)"]
-            L2Fast["L2 Fast NVMe<br/>💽 High-speed NVMe SSD<br/>⚡ ~100μs Access<br/>📊 80% Hit Rate<br/>🔄 Write-through Policy<br/>💰 Cost: Medium, Perf: High"]
+        subgraph L2NVMeCache[" L2 NVMe Cache (Warm Data)"]
+            L2Fast["L2 Fast NVMe<br/> High-speed NVMe SSD<br/> ~100μs Access<br/> 80% Hit Rate<br/> Write-through Policy<br/> Cost: Medium, Perf: High"]
             
-            L2Compressed["L2 Compressed Storage<br/>💽 ZSTD Block Compression<br/>⚡ ~200μs Access<br/>📊 60% Size Reduction<br/>🗜️ Adaptive Compression"]
+            L2Compressed["L2 Compressed Storage<br/> ZSTD Block Compression<br/> ~200μs Access<br/> 60% Size Reduction<br/> Adaptive Compression"]
         end
         
-        subgraph L3CloudCache["☁️ L3 Cloud Cache (Cold Data)"]
-            L3Network["L3 Network Cache<br/>☁️ Distributed Edge Nodes<br/>⚡ ~10ms Access<br/>📊 Global Data Distribution<br/>🌐 Multi-region Support"]
+        subgraph L3CloudCache[" L3 Cloud Cache (Cold Data)"]
+            L3Network["L3 Network Cache<br/> Distributed Edge Nodes<br/> ~10ms Access<br/> Global Data Distribution<br/> Multi-region Support"]
             
-            L3Archive["L3 Archive Storage<br/>❄️ Cold Data Archive<br/>⚡ ~100ms Access<br/>💾 Highest Compression<br/>💰 Cost: Lowest"]
+            L3Archive["L3 Archive Storage<br/> Cold Data Archive<br/> ~100ms Access<br/> Highest Compression<br/> Cost: Lowest"]
         end
     end
     
-    subgraph StorageEngineOptimization["🏗️ Storage Engine Performance"]
+    subgraph StorageEngineOptimization[" Storage Engine Performance"]
         direction TB
         
-        subgraph ViperOptimizations["📊 VIPER Engine Optimizations"]
-            ViperCache["Columnar Cache Strategy<br/>📁 viper/optimized_reader.rs<br/>🏗️ Column-level Caching<br/>📊 60-90% I/O Reduction<br/>⚡ Predicate Pushdown"]
+        subgraph ViperOptimizations[" VIPER Engine Optimizations"]
+            ViperCache["Columnar Cache Strategy<br/> viper/optimized_reader.rs<br/> Column-level Caching<br/> 60-90% I/O Reduction<br/> Predicate Pushdown"]
             
-            ViperCompression["BinaryArray Compression<br/>📁 viper/optimized_vector_writer.rs<br/>🗜️ Bytemuck + ZSTD<br/>📊 30-50% Storage Reduction<br/>⚡ Zero-copy Deserialization"]
+            ViperCompression["BinaryArray Compression<br/> viper/optimized_vector_writer.rs<br/> Bytemuck + ZSTD<br/> 30-50% Storage Reduction<br/> Zero-copy Deserialization"]
         end
         
-        subgraph SstOptimizations["🧱 SST Engine Optimizations"]
-            SstCache["Three-Stage Cache Pipeline<br/>📁 sst/three_stage_filter.rs<br/>🌸 Bloom Filter Pre-filtering<br/>📊 99% Accuracy<br/>⚡ 30% Processing Savings"]
+        subgraph SstOptimizations[" SST Engine Optimizations"]
+            SstCache["Three-Stage Cache Pipeline<br/> sst/three_stage_filter.rs<br/> Bloom Filter Pre-filtering<br/> 99% Accuracy<br/> 30% Processing Savings"]
             
-            SstCompression["DataBlock Compression<br/>📁 sst/optimized_record.rs<br/>🗜️ ZSTD + Bytemuck<br/>📊 5-10x Serialization Speedup<br/>⚡ Adaptive Threshold"]
+            SstCompression["DataBlock Compression<br/> sst/optimized_record.rs<br/> ZSTD + Bytemuck<br/> 5-10x Serialization Speedup<br/> Adaptive Threshold"]
         end
     end
     
-    subgraph IntelligentTiering["🎯 Intelligent Data Tiering"]
+    subgraph IntelligentTiering[" Intelligent Data Tiering"]
         direction TB
         
-        subgraph TieringLogic["🤖 Automated Tiering Decision"]
-            TierClassifier["Tier Classification Engine<br/>📊 Access Frequency Analysis<br/>⏱️ Temporal Pattern Recognition<br/>🔄 Update Pattern Learning<br/>🎯 Cost-Performance Optimization"]
+        subgraph TieringLogic[" Automated Tiering Decision"]
+            TierClassifier["Tier Classification Engine<br/> Access Frequency Analysis<br/> Temporal Pattern Recognition<br/> Update Pattern Learning<br/> Cost-Performance Optimization"]
             
-            TierMigration["Automated Data Migration<br/>🔄 Background Tier Movement<br/>📊 Performance Monitoring<br/>⚡ Zero-downtime Migration<br/>🎯 SLA-driven Decisions"]
+            TierMigration["Automated Data Migration<br/> Background Tier Movement<br/> Performance Monitoring<br/> Zero-downtime Migration<br/> SLA-driven Decisions"]
         end
         
         subgraph TierTargets["📂 Tier Performance Targets"]
-            HotTierTarget["🔥 Hot Tier Targets<br/>⚡ <1ms P95 latency<br/>📊 >90% cache hit rate<br/>💾 Memory + Fast NVMe<br/>🎯 Active workload data"]
+            HotTierTarget[" Hot Tier Targets<br/> <1ms P95 latency<br/> >90% cache hit rate<br/> Memory + Fast NVMe<br/> Active workload data"]
             
-            WarmTierTarget["🌡️ Warm Tier Targets<br/>⚡ <10ms P95 latency<br/>📊 >70% cache hit rate<br/>💽 NVMe + Network cache<br/>🎯 Recently accessed data"]
+            WarmTierTarget[" Warm Tier Targets<br/> <10ms P95 latency<br/> >70% cache hit rate<br/> NVMe + Network cache<br/> Recently accessed data"]
             
-            ColdTierTarget["❄️ Cold Tier Targets<br/>⚡ <100ms P95 latency<br/>📊 Cost optimization focus<br/>☁️ Cloud object storage<br/>🎯 Archive & compliance data"]
+            ColdTierTarget[" Cold Tier Targets<br/> <100ms P95 latency<br/> Cost optimization focus<br/> Cloud object storage<br/> Archive & compliance data"]
         end
     end
     

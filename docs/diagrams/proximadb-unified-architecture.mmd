@@ -19,90 +19,90 @@ graph TB
     %% Professional Enterprise-Grade Design
     %% ===========================================
     
-    subgraph ClientLayer["🌟 Client Integration Layer"]
+    subgraph ClientLayer[" Client Integration Layer"]
         direction TB
-        PythonSDK["🐍 Python SDK<br/>📁 clients/python/<br/>✅ Auto gRPC/REST Detection<br/>✅ Type Safety & Async<br/>🚀 Zero-Config AI Integration"]
+        PythonSDK["🐍 Python SDK<br/> clients/python/<br/> Auto gRPC/REST Detection<br/> Type Safety & Async<br/> Zero-Config AI Integration"]
         
-        RestAPI["🌐 REST API<br/>📍 Port 5678<br/>📊 10-20K vectors/sec<br/>🔧 Universal Compatibility<br/>📋 JSON Messaging"]
+        RestAPI[" REST API<br/> Port 5678<br/> 10-20K vectors/sec<br/> Universal Compatibility<br/> JSON Messaging"]
         
-        GrpcAPI["⚡ gRPC API<br/>📍 Port 5679<br/>📊 49K vectors/sec<br/>🎯 Production Performance<br/>📦 Protobuf Binary"]
+        GrpcAPI[" gRPC API<br/> Port 5679<br/> 49K vectors/sec<br/> Production Performance<br/> Protobuf Binary"]
         
-        SQLEngine["🧠 SQL Query Engine<br/>📁 query/sql_engine/<br/>📝 Standard SQL Syntax<br/>🔍 Vector Similarity Queries<br/>📋 Collection Name Resolution"]
+        SQLEngine["🧠 SQL Query Engine<br/> query/sql_engine/<br/> Standard SQL Syntax<br/> Vector Similarity Queries<br/> Collection Name Resolution"]
     end
     
-    subgraph NetworkLayer["🔄 Network & Gateway Layer"]
+    subgraph NetworkLayer[" Network & Gateway Layer"]
         direction TB
-        MultiServer["🌐 MultiServer<br/>📁 network/multi_server.rs<br/>🔧 Axum + Tonic Framework<br/>🤝 Protocol Coordination"]
+        MultiServer[" MultiServer<br/> network/multi_server.rs<br/> Axum + Tonic Framework<br/>🤝 Protocol Coordination"]
         
-        SharedServices["🏛️ SharedServices Hub<br/>📁 network/multi_server.rs<br/>🔄 Business Logic Centralization<br/>⚡ Zero Circular Dependencies<br/>📦 Service Ownership Pattern"]
+        SharedServices[" SharedServices Hub<br/> network/multi_server.rs<br/> Business Logic Centralization<br/> Zero Circular Dependencies<br/> Service Ownership Pattern"]
         
-        UnifiedHandlers["🔧 Unified Handlers<br/>📁 handlers/unified_handlers.rs<br/>🔄 Protocol-Agnostic Processing<br/>📊 JSON ↔ Protobuf Conversion"]
+        UnifiedHandlers[" Unified Handlers<br/> handlers/unified_handlers.rs<br/> Protocol-Agnostic Processing<br/> JSON ↔ Protobuf Conversion"]
     end
     
-    subgraph CoreServices["⚡ Core Business Services"]
+    subgraph CoreServices[" Core Business Services"]
         direction TB
-        DirectVectorSvc["🚀 DirectVectorService<br/>📁 services/direct_vector_service.rs<br/>⚡ 40-60% Latency Reduction<br/>🎯 Direct Memtable Access<br/>🔄 Dual Engine Coordination<br/>🛡️ ACID Transaction Safety"]
+        DirectVectorSvc[" DirectVectorService<br/> services/direct_vector_service.rs<br/> 40-60% Latency Reduction<br/> Direct Memtable Access<br/> Dual Engine Coordination<br/> ACID Transaction Safety"]
         
-        CollectionSvc["📋 CollectionService<br/>📁 services/collection_service.rs<br/>🗃️ Multi-Tenant Metadata<br/>🔧 Proto Serialization<br/>⚙️ Auto Configuration"]
+        CollectionSvc[" CollectionService<br/> services/collection_service.rs<br/> Multi-Tenant Metadata<br/> Proto Serialization<br/> Auto Configuration"]
         
-        subgraph PerformanceOpt["🚀 Performance Optimization"]
-            VectorMemPool["💾 Vector Memory Pool<br/>📁 compute/memory_pool.rs<br/>📈 30-50% Allocation Reduction<br/>🔄 Reusable Buffer Management"]
+        subgraph PerformanceOpt[" Performance Optimization"]
+            VectorMemPool[" Vector Memory Pool<br/> compute/memory_pool.rs<br/> 30-50% Allocation Reduction<br/> Reusable Buffer Management"]
             
-            QueryCache["⚡ Query Plan Cache<br/>📁 query/sql_engine/query_cache.rs<br/>🎯 LRU + TTL Strategy<br/>📊 2-8x Query Speedup"]
+            QueryCache[" Query Plan Cache<br/> query/sql_engine/query_cache.rs<br/> LRU + TTL Strategy<br/> 2-8x Query Speedup"]
             
-            HardwareAccel["🖥️ Hardware Acceleration<br/>📁 compute/unified_distance.rs<br/>🔧 SIMD (AVX-512/AVX2/NEON)<br/>🎮 GPU Support (CUDA/ROCm)<br/>📊 1.3B elements/sec"]
+            HardwareAccel[" Hardware Acceleration<br/> compute/unified_distance.rs<br/> SIMD (AVX-512/AVX2/NEON)<br/>🎮 GPU Support (CUDA/ROCm)<br/> 1.3B elements/sec"]
         end
     end
     
-    subgraph StorageArchitecture["🗄️ Dual Storage Architecture"]
+    subgraph StorageArchitecture[" Dual Storage Architecture"]
         direction TB
-        StorageCoordinator["🎯 Storage Coordinator<br/>📁 storage/engine.rs<br/>🤖 Intelligent Engine Selection<br/>📊 Workload-Based Routing"]
+        StorageCoordinator[" Storage Coordinator<br/> storage/engine.rs<br/> Intelligent Engine Selection<br/> Workload-Based Routing"]
         
-        subgraph MemoryLayer["💾 Memory Management Layer"]
-            WriteBufferWrapper["🔄 WriteBuffer Wrapper<br/>📁 storage/memtable/specialized/<br/>🚀 DashMap Global Partitioning<br/>💾 Persistence Coordination<br/>📦 Batch Processing Optimization"]
+        subgraph MemoryLayer[" Memory Management Layer"]
+            WriteBufferWrapper[" WriteBuffer Wrapper<br/> storage/memtable/specialized/<br/> DashMap Global Partitioning<br/> Persistence Coordination<br/> Batch Processing Optimization"]
             
-            WriteBufferMgr["💾 WriteBuffer Manager<br/>📁 storage/persistence/write_buffer/<br/>🔄 Proto/Avro/Bincode Support<br/>⚡ Multi-Format Serialization"]
+            WriteBufferMgr[" WriteBuffer Manager<br/> storage/persistence/write_buffer/<br/> Proto/Avro/Bincode Support<br/> Multi-Format Serialization"]
         end
         
-        subgraph DualEngines["🏗️ Dual Storage Engines"]
-            ViperEngine["📊 VIPER Engine<br/>📁 storage/engines/viper/engine.rs<br/>🏗️ Columnar Storage (Parquet)<br/>🤖 ML-Optimized Format<br/>⭐ Default for Analytics<br/>📈 Predicate Pushdown Support<br/>🗜️ 60-90% I/O Reduction"]
+        subgraph DualEngines[" Dual Storage Engines"]
+            ViperEngine[" VIPER Engine<br/> storage/engines/viper/engine.rs<br/> Columnar Storage (Parquet)<br/> ML-Optimized Format<br/>⭐ Default for Analytics<br/> Predicate Pushdown Support<br/> 60-90% I/O Reduction"]
             
-            SstEngine["🧱 SST Engine<br/>📁 storage/engines/sst/mod.rs<br/>📊 Row-based SSTable Format<br/>🔍 Directory-based Discovery<br/>🔥 High Write Throughput<br/>🌸 Bloom Filter Optimization<br/>⚡ Three-Stage Filter Pipeline"]
+            SstEngine[" SST Engine<br/> storage/engines/sst/mod.rs<br/> Row-based SSTable Format<br/> Directory-based Discovery<br/> High Write Throughput<br/> Bloom Filter Optimization<br/> Three-Stage Filter Pipeline"]
         end
         
-        subgraph SearchOptimization["🔍 Search Optimization Layer"]
-            ViperSearch["🏗️ VIPER Search Engine<br/>📁 viper/unified_search_engine.rs<br/>📊 Index-based Filter Evaluation<br/>⚡ Parallel Column Processing<br/>🎯 Optimal Column Selection"]
+        subgraph SearchOptimization[" Search Optimization Layer"]
+            ViperSearch[" VIPER Search Engine<br/> viper/unified_search_engine.rs<br/> Index-based Filter Evaluation<br/> Parallel Column Processing<br/> Optimal Column Selection"]
             
-            SstSearch["🧱 SST Search Engine<br/>📁 sst/unified_search_engine.rs<br/>🌸 Three-Stage Filter Pipeline<br/>📊 Bloom Pre-filtering (99%)<br/>🔍 MVCC Resolution<br/>⚡ Row-level Optimization"]
+            SstSearch[" SST Search Engine<br/> sst/unified_search_engine.rs<br/> Three-Stage Filter Pipeline<br/> Bloom Pre-filtering (99%)<br/> MVCC Resolution<br/> Row-level Optimization"]
         end
     end
     
-    subgraph IndexingSystem["🎯 AXIS Adaptive Indexing"]
+    subgraph IndexingSystem[" AXIS Adaptive Indexing"]
         direction TB
-        AxisManager["🤖 AXIS Manager<br/>📁 index/axis/manager.rs<br/>🎯 Adaptive Index Selection<br/>📊 Performance Monitoring<br/>🔄 Zero-Downtime Switching"]
+        AxisManager[" AXIS Manager<br/> index/axis/manager.rs<br/> Adaptive Index Selection<br/> Performance Monitoring<br/> Zero-Downtime Switching"]
         
-        IndexTypes["📚 Multi-Algorithm Support<br/>📁 index/axis/<br/>🌐 HNSW (Precision)<br/>🏗️ IVF (Scale)<br/>⚡ LSH (Speed)<br/>🌳 Annoy (Static)<br/>🎯 Auto-Selection Based on Data"]
+        IndexTypes[" Multi-Algorithm Support<br/> index/axis/<br/> HNSW (Precision)<br/> IVF (Scale)<br/> LSH (Speed)<br/> Annoy (Static)<br/> Auto-Selection Based on Data"]
     end
     
-    subgraph PersistenceLayer["💾 ACID Persistence Layer"]
+    subgraph PersistenceLayer[" ACID Persistence Layer"]
         direction TB
-        AtomicCoordinator["⚛️ Unified Atomic Coordinator<br/>📁 storage/atomic.rs<br/>🛡️ ACID Transaction Support<br/>🔒 Multi-Backend Consistency<br/>📁 Staging-based Operations<br/>☁️ Multi-Cloud Coordination"]
+        AtomicCoordinator[" Unified Atomic Coordinator<br/> storage/atomic.rs<br/> ACID Transaction Support<br/> Multi-Backend Consistency<br/> Staging-based Operations<br/> Multi-Cloud Coordination"]
         
-        subgraph CloudStorage["☁️ Multi-Cloud Storage Backends"]
-            S3Backend["🔶 Amazon S3<br/>📁 filesystem/s3.rs<br/>🔧 AWS SDK Integration"]
-            AzureBackend["🔷 Azure Blob Storage<br/>📁 filesystem/azure.rs<br/>🔧 Azure SDK Integration"] 
-            GCSBackend["🔴 Google Cloud Storage<br/>📁 filesystem/gcs.rs<br/>🔧 GCS SDK Integration"]
-            LocalBackend["💻 Local Filesystem<br/>📁 filesystem/local.rs<br/>🔧 POSIX Compliance"]
+        subgraph CloudStorage[" Multi-Cloud Storage Backends"]
+            S3Backend["🔶 Amazon S3<br/> filesystem/s3.rs<br/> AWS SDK Integration"]
+            AzureBackend["🔷 Azure Blob Storage<br/> filesystem/azure.rs<br/> Azure SDK Integration"] 
+            GCSBackend["🔴 Google Cloud Storage<br/> filesystem/gcs.rs<br/> GCS SDK Integration"]
+            LocalBackend["💻 Local Filesystem<br/> filesystem/local.rs<br/> POSIX Compliance"]
         end
     end
     
-    subgraph AdvancedFeatures["🚀 Advanced Enterprise Features"]
+    subgraph AdvancedFeatures[" Advanced Enterprise Features"]
         direction TB
-        MVCCSystem["🔄 MVCC System<br/>📁 core/search/results.rs<br/>📊 Version Continuity Validation<br/>⏰ Timestamp-based Resolution<br/>🗑️ Tombstone Handling<br/>🔄 Multi-Version Concurrency"]
+        MVCCSystem[" MVCC System<br/> core/search/results.rs<br/> Version Continuity Validation<br/>⏰ Timestamp-based Resolution<br/> Tombstone Handling<br/> Multi-Version Concurrency"]
         
-        Quantization["🗜️ Quantization Engine<br/>📁 compute/quantization/<br/>💾 80% Memory Reduction<br/>⚡ INT8/INT4 Support<br/>🎯 Auto-Selection Strategies"]
+        Quantization[" Quantization Engine<br/> compute/quantization/<br/> 80% Memory Reduction<br/> INT8/INT4 Support<br/> Auto-Selection Strategies"]
         
-        Compression["🗜️ Vector Compression<br/>📁 core/serialization/<br/>⚡ Bytemuck Zero-Copy<br/>📊 ZSTD Compression<br/>🚀 5-10x Serialization Speedup<br/>📈 30-50% Storage Reduction"]
+        Compression[" Vector Compression<br/> core/serialization/<br/> Bytemuck Zero-Copy<br/> ZSTD Compression<br/> 5-10x Serialization Speedup<br/> 30-50% Storage Reduction"]
     end
     
     %% ===========================================

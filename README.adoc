@@ -1,284 +1,104 @@
-= ProximaDB: The AI-Native Vector Database That Actually Delivers
-:doctype: book
-:toc: left
+= ProximaDB: Enterprise Vector Database for AI
+:toc: macro
 :toclevels: 2
-:sectlinks:
-:sectanchors:
-:source-highlighter: rouge
-:rouge-style: github
-:icons: font
 :imagesdir: docs/diagrams/images
-:experimental:
-:version: 1.0.0
-:revdate: {docdate}
-:author: ProximaDB Team
-
-ifdef::env-github[]
-:tip-caption: :bulb:
-:note-caption: :information_source:
-:important-caption: :heavy_exclamation_mark:
-:caution-caption: :fire:
-:warning-caption: :warning:
-endif::[]
 
 // Licensed under the Apache License, Version 2.0
 
-[.text-center]
-image::business-system-overview.svg[ProximaDB Business System Overview, width=90%, align=center]
+image::business-system-overview.svg[ProximaDB Overview, align=center]
 
-[.lead.text-center]
-🚀 **Stop Fighting Your Vector Database. Start Building Amazing AI.** 🚀
+**The vector database that delivers enterprise performance without enterprise complexity.**
 
-[.text-center]
-_The only vector database that gives you enterprise performance without enterprise complexity_
+toc::[]
 
----
-
-## 💡 **Why Developers Choose ProximaDB Over Everything Else**
-
-[cols="1,3", options="header"]
-|===
-|⚡ **The Problem** |🎯 **ProximaDB Solution**
-
-|"My vector DB is slow and unpredictable"
-|**49,000 vectors/sec** with predictable <2ms latency
-
-|"I need multiple vector DBs for different use cases" 
-|**One database, dual engines**: Write-optimized SST + Analytics-optimized VIPER
-
-|"Hardware acceleration is too complex"
-|**Auto-detected optimization**: Your CPU's AVX-512, GPU CUDA, ARM NEON - all automatic
-
-|"Vector search accuracy vs speed tradeoffs suck"
-|**AXIS smart indexing**: Automatically picks HNSW, IVF, LSH, or Annoy based on your data
-
-|"Cloud costs are killing my AI project"
-|**80% less memory usage** + intelligent caching = dramatically lower infrastructure costs
-
-|"My AI app needs SQL for metadata filtering"
-|**Full SQL support** with JSON operators - query vectors like you query databases
-|===
-
-## 🎯 **What Makes ProximaDB Different?**
-
-**🔥 Built for Modern AI Workloads:**
-- **Multi-Modal Ready**: Handle text, image, audio embeddings in one system
-- **RAG-Optimized**: Built-in MVCC deduplication and similarity grouping
-- **Real-Time Updates**: No rebuild delays - add/update/delete vectors instantly
-- **Advanced SQL**: Full AND/OR/NOT operators, comparison operators, and metadata filtering
-
-**⚡ Enterprise Performance, Startup Simplicity:**
-- **One Docker Command**: From zero to production-ready in 30 seconds
-- **Zero-Copy Operations**: 5-10x faster with bytemuck and ZSTD compression
-- **Smart Storage**: Choose row-based SST for writes or columnar VIPER for analytics
-- **Scales With You**: Start on your laptop, scale to multi-cloud without code changes
-
-## ⚡ **Get Started in 30 Seconds - Seriously**
+== Quick Start (30 seconds)
 
 [source,bash]
 ----
-# One command to rule them all
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb && docker compose up -d
-
-# That's it. You now have a production-ready vector database.
 ----
-
-**Want to see it work?** Try this Python example:
 
 [source,python]
 ----
 from proximadb import connect_rest
 
-# Connect and create your first collection
 client = connect_rest("http://localhost:5678")
 collection = client.create_collection("my_ai_app", dimension=384)
 
-# Insert your embeddings (works with any embedding model)
-embeddings = [[0.1, 0.2, ...], [0.3, 0.4, ...]]  # Your vectors here
-metadata = [{"doc": "page1.pdf"}, {"doc": "page2.pdf"}]
+# Insert vectors
 client.insert_vectors("my_ai_app", embeddings, metadata)
 
-# Search with powerful SQL syntax - now with AND/OR/NOT!
+# Search with SQL
 results = client.search_sql("""
     SELECT vector_id, metadata 
-    FROM my_ai_app 
-    WHERE similarity(vector, [0.1, 0.2, ...]) > 0.8 
-    AND (metadata->>'type' = 'important' OR metadata->>'priority' > 5)
-    AND metadata->>'status' != 'archived'
+    FROM my_ai_app
+    WHERE similarity(vector, [...]) > 0.8 
+    AND metadata->>'type' = 'important'
 """)
-
-print(f"Found {len(results)} similar documents!")
 ----
 
-## 🎯 **Perfect For These Use Cases**
+== Key Features
 
-[cols="2,3", frame="none", grid="none"]
+=== Performance
+* **49K vectors/sec** insertion (gRPC)
+* **<10ms** search latency at scale
+* **80% memory reduction** vs alternatives
+* **5-10x faster** with zero-copy serialization
+
+=== Architecture
+* **Dual Storage Engines**: Write-optimized SST + Analytics-optimized VIPER
+* **AXIS Indexing**: Auto-selects HNSW/IVF/LSH/Annoy based on data
+* **Multi-Cloud Native**: S3, Azure, GCS with atomic operations
+* **Hardware Acceleration**: CPU AVX-512, GPU CUDA, ARM NEON - automatic
+
+=== Enterprise Ready
+* **100% test coverage** (1,400+ tests)
+* **ACID transactions** with MVCC
+* **SQL query engine** with full AND/OR/NOT operators
+* **Zero-downtime updates**
+
+== Documentation
+
+[cols="2,3,1"]
 |===
-|🤖 **RAG Applications** |High-speed document retrieval with metadata filtering
-|🖼️ **Image/Video Search** |Multi-modal embeddings with real-time updates  
-|💬 **Chatbot Memory** |Conversation history with semantic similarity
-|📊 **Recommendation Engines** |User/item embeddings with rapid inference
-|🔍 **Semantic Search** |Natural language queries over your content
-|🛡️ **Anomaly Detection** |Real-time vector analysis with threshold alerts
-|===
+|Goal |Guide |Time
 
-## 🏆 **Technical Superiority That Actually Matters**
-
-**🚀 Performance That Scales:**
-- **49K vectors/sec** insertion rate (gRPC)  
-- **Sub-10ms** search latency at scale
-- **48 QPS** concurrent search performance
-- **1.3B elements/sec** distance computation
-
-**🧠 Smart Architecture:**
-- **AXIS Indexing**: Auto-selects optimal algorithm (HNSW/IVF/LSH/Annoy)
-- **Dual Storage**: Write-optimized SST + Analytics-optimized VIPER engines
-- **Multi-Cloud Native**: S3, Azure, GCS with atomic consistency
-- **Hardware Aware**: Leverages your CPU/GPU without configuration
-- **Index-Based Filtering** _(New)_: 60-90% I/O reduction with intelligent predicate pushdown
-- **Zero-Copy Serialization** _(New)_: 5-10x faster with bytemuck + ZSTD compression
-
-## 💸 **Why ProximaDB Costs Significantly Less**
-
-[cols="1,3", options="header"]
-|===
-|**Area** |**Cost Reduction Strategy**
-
-|**Infrastructure**
-|**75-80% lower costs** through Rust's efficiency, hardware acceleration, and optimized resource usage
-
-|**Storage**
-|**50-70% savings** with advanced compression, intelligent data layout, and tiered storage strategies
-
-|**Operations**
-|**Minimal overhead** with self-managing systems, automated optimization, and zero vendor lock-in
-
-|**Scaling**
-|**Linear pricing** - pay only for resources used, no per-vector or per-query charges
-|===
-
-[NOTE]
-====
-📊 **Real Cost Drivers**: ProximaDB uses less CPU, RAM, storage, and network bandwidth than alternatives while delivering superior performance. See link:docs/technical_reference.adoc#cost-efficiency[Technical Reference] for detailed architecture analysis.
-====
-
-## 🛡️ **Enterprise-Ready From Day One**
-
-**✅ Production Reliability:**
-- **100% Test Success** (1,400+ tests across Rust & Python) - No surprises in production
-- **ACID Transactions** - Your data consistency is guaranteed with MVCC support
-- **Zero-Downtime Updates** - Hot-swap indexes without service interruption
-- **Multi-Cloud Resilience** - Automatic failover across cloud providers
-- **52% Test Coverage** - Comprehensive testing across 328K+ lines of code
-
-**🚀 DevOps Friendly:**
-- **Prometheus Metrics** built-in for monitoring
-- **Docker + Kubernetes** ready with health checks
-- **Hot Configuration Reload** - No restart required
-- **Structured Logging** with configurable levels
-
-## 📚 **Learn More & Get Support**
-
-**🎯 Choose Your Path:**
-
-[cols="2,3,1", options="header"]
-|===
-|**I Want To...** |**Start Here** |**Time**
-
-|Try ProximaDB now
-|link:docs/getting_started.adoc[🚀 **Quick Start Guide**] 
+|Get started quickly
+|link:docs/getting_started.adoc[Quick Start Guide]
 |5 min
 
-|Build an AI application  
-|link:docs/user_guide.adoc[👨‍💻 **User Guide & Examples**]
+|Build AI applications  
+|link:docs/user_guide.adoc[User Guide]
 |15 min
 
-|Understand the architecture
-|link:docs/architecture.adoc[🏗️ **Architecture Deep Dive**]
-|20 min
-
 |Deploy to production
-|link:docs/user_guide.adoc#docker-deployment[☁️ **Production Deployment**]
+|link:docs/user_guide.adoc#docker-deployment[Production Guide]
 |30 min
 
-|Contribute or customize
-|link:docs/developer_guide.adoc[🔧 **Developer Guide**]
+|Understand internals
+|link:docs/architecture.adoc[Architecture]
+|20 min
+
+|Contribute code
+|link:docs/developer_guide.adoc[Developer Guide]
 |45 min
 |===
 
-**💬 Community & Support:**
-- 🐛 **Found a bug?** → https://github.com/vjsingh1984/proximadb/issues[GitHub Issues]
-- 💡 **Feature request?** → https://github.com/vjsingh1984/proximadb/discussions[GitHub Discussions]  
-- 📧 **Enterprise support?** → singhvjd@gmail.com
+== Use Cases
 
-## 🚀 **Why ProximaDB Will Accelerate Your AI Development**
+* **RAG Applications**: High-speed document retrieval with metadata filtering
+* **Semantic Search**: Natural language queries over your content  
+* **Recommendation Engines**: User/item embeddings with rapid inference
+* **Image/Video Search**: Multi-modal embeddings with real-time updates
+* **Chatbot Memory**: Conversation history with semantic similarity
 
-**Stop wasting time on database problems. Start solving real AI challenges.**
+== Community
 
-✅ **30-second setup** → More time building, less time configuring  
-✅ **80% cost reduction** → More budget for AI models and features  
-✅ **Zero manual tuning** → Automatic optimization means less DevOps overhead  
-✅ **SQL familiarity** → Your team already knows how to query it  
-✅ **Multi-cloud ready** → No vendor lock-in, deploy anywhere  
-
-## 📊 **Proven Performance (Not Marketing Claims)**
-
-[cols="3,2,2", options="header"] 
-|===
-|**Benchmark** |**ProximaDB** |**Industry Average**
-
-|Vector insertion rate
-|**49,000/sec** _(gRPC)_
-|~10,000/sec
-
-|Search latency (P95)
-|**< 10ms**
-|50-200ms  
-
-|Memory efficiency  
-|**80% reduction**
-|Baseline
-
-|Test coverage
-|**100%** _(1,400 tests)_
-|60-80%
-
-|Storage compression
-|**30-50%** _(ZSTD)_
-|10-20%
-
-|Setup time
-|**30 seconds**
-|2-4 hours
-|===
-
-## 🤝 **Join the Community**
-
-**💻 Why Developers Will Love ProximaDB:**
-- Clean, documented APIs designed for productivity
-- Excellent error messages to accelerate debugging  
-- Real-world examples beyond toy demonstrations
-- Growing community with responsive support
-
-**🏢 Why Enterprises Will Choose ProximaDB:**
-- Apache 2.0 license with transparent, open-source approach
-- Enterprise-grade reliability and comprehensive observability  
-- No vendor lock-in with flexible deployment options
-- Professional support available for production deployments
+* **Issues**: https://github.com/vjsingh1984/proximadb/issues
+* **Discussions**: https://github.com/vjsingh1984/proximadb/discussions  
+* **Enterprise Support**: singhvjd@gmail.com
 
 ---
 
-[.text-center]
-**Ready to supercharge your AI application?**
-
-[.text-center]
-**⭐ Star us on GitHub** | **📖 Read the Docs** | **💬 Join Discussions**
-
-[.text-center]
-link:https://github.com/vjsingh1984/proximadb[**→ Get Started Now ←**]
-
----
-
-[.text-center]
-_Licensed under Apache 2.0 | Built with ❤️ for the AI community_
+_Licensed under Apache 2.0_

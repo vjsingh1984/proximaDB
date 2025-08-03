@@ -20,7 +20,7 @@ include::../diagrams/proximadb-proto-first-data-flow.mmd[]
 
 [horizontal]
 **Zero Double Serialization**:: Direct protobuf types with automatic JSON mapping
-**Unified Handlers**:: 85% code reduction - single business logic for REST/gRPC  
+**Unified Handlers**:: 85% code reduction - single business logic for REST/gRPC
 **Type Safety**:: Proto-generated types ensure consistency across all protocols
 **Batch Optimization**:: 64MB message support for high-throughput operations
 
@@ -51,20 +51,20 @@ The current version does not require authentication. Future versions will suppor
 [source,json]
 ----
 {
-  "success": true,
-  "data": {
-    "status": "healthy",
-    "service": "proximadb-rest",
-    "version": "0.1.0",
-    "vector_service": {
-      "status": "healthy",
-      "uptime_seconds": 3600,
-      "storage_engines": {
-        "viper": "healthy",
-        "lsm": "healthy"
-      }
-    }
-  }
+"success": true,
+"data": {
+"status": "healthy",
+"service": "proximadb-rest",
+"version": "0.1.0",
+"vector_service": {
+"status": "healthy",
+"uptime_seconds": 3600,
+"storage_engines": {
+"viper": "healthy",
+"lsm": "healthy"
+}
+}
+}
 }
 ----
 
@@ -84,23 +84,23 @@ Unified endpoint for all collection-related operations.
 [source,json]
 ----
 {
-  "operation": "string",                    // Required: operation type
-  "collection_id": "string",                // Optional: collection UUID
-  "collection_name": "string",              // Optional: collection name
-  "config": {                               // Optional: for create/update
-    "name": "string",                       // Required for create
-    "dimension": 128,                       // Required for create
-    "distance_metric": "cosine",            // cosine|euclidean|dot_product
-    "storage_engine": "viper",              // viper|lsm
-    "primary_indexing_algorithm": "hnsw",   // hnsw|ivf|flat|pq|annoy
-    "filterable_columns": [...],            // Optional: metadata columns
-    "quantization_config": {...},           // Optional: quantization settings
-    "description": "string"                 // Optional: description
-  },
-  "query_params": {                         // Optional: for list operation
-    "limit": "100",
-    "offset": "0"
-  }
+"operation": "string", // Required: operation type
+"collection_id": "string", // Optional: collection UUID
+"collection_name": "string", // Optional: collection name
+"config": { // Optional: for create/update
+"name": "string", // Required for create
+"dimension": 128, // Required for create
+"distance_metric": "cosine", // cosine|euclidean|dot_product
+"storage_engine": "viper", // viper|lsm
+"primary_indexing_algorithm": "hnsw", // hnsw|ivf|flat|pq|annoy
+"filterable_columns": [...], // Optional: metadata columns
+"quantization_config": {...}, // Optional: quantization settings
+"description": "string" // Optional: description
+},
+"query_params": { // Optional: for list operation
+"limit": "100",
+"offset": "0"
+}
 }
 ----
 
@@ -110,28 +110,28 @@ Unified endpoint for all collection-related operations.
 [source,json]
 ----
 {
-  "operation": "create",
-  "config": {
-    "name": "product_embeddings",
-    "dimension": 384,
-    "distance_metric": "cosine",
-    "storage_engine": "viper",
-    "primary_indexing_algorithm": "hnsw",
-    "filterable_columns": [
-      {
-        "name": "category",
-        "data_type": "string",
-        "indexed": true,
-        "supports_range": false
-      },
-      {
-        "name": "price",
-        "data_type": "float",
-        "indexed": true,
-        "supports_range": true
-      }
-    ]
-  }
+"operation": "create",
+"config": {
+"name": "product_embeddings",
+"dimension": 384,
+"distance_metric": "cosine",
+"storage_engine": "viper",
+"primary_indexing_algorithm": "hnsw",
+"filterable_columns": [
+{
+"name": "category",
+"data_type": "string",
+"indexed": true,
+"supports_range": false
+},
+{
+"name": "price",
+"data_type": "float",
+"indexed": true,
+"supports_range": true
+}
+]
+}
 }
 ----
 
@@ -139,8 +139,8 @@ Unified endpoint for all collection-related operations.
 [source,json]
 ----
 {
-  "operation": "get",
-  "collection_id": "550e8400-e29b-41d4-a716-446655440000"
+"operation": "get",
+"collection_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ----
 
@@ -161,18 +161,18 @@ Batch insert, update, or delete vectors.
 [source,json]
 ----
 {
-  "collection_id": "string",                // Required: collection ID
-  "vectors": [                              // Required: vector array
-    {
-      "id": "string",                       // Optional: vector ID (auto-generated if not provided)
-      "vector": [0.1, 0.2, ...],           // Required: vector data
-      "metadata": {                         // Optional: metadata
-        "key": "value"
-      },
-      "expires_at": 1234567890             // Optional: TTL timestamp
-    }
-  ],
-  "batch_timeout_ms": 5000                 // Optional: timeout
+"collection_id": "string", // Required: collection ID
+"vectors": [ // Required: vector array
+{
+"id": "string", // Optional: vector ID (auto-generated if not provided)
+"vector": [0.1, 0.2, ...], // Required: vector data
+"metadata": { // Optional: metadata
+"key": "value"
+},
+"expires_at": 1234567890 // Optional: TTL timestamp
+}
+],
+"batch_timeout_ms": 5000 // Optional: timeout
 }
 ----
 
@@ -180,15 +180,15 @@ Batch insert, update, or delete vectors.
 [source,json]
 ----
 {
-  "success": true,
-  "operation": "batch",
-  "metrics": {
-    "total_processed": 100,
-    "successful_count": 100,
-    "failed_count": 0,
-    "processing_time_us": 12345
-  },
-  "vector_ids": ["id1", "id2", ...]
+"success": true,
+"operation": "batch",
+"metrics": {
+"total_processed": 100,
+"successful_count": 100,
+"failed_count": 0,
+"processing_time_us": 12345
+},
+"vector_ids": ["id1", "id2", ...]
 }
 ----
 
@@ -207,36 +207,36 @@ Search for similar vectors with optional metadata filtering.
 [source,json]
 ----
 {
-  "collection_id": "string",                // Required
-  "queries": [                              // Required: batch queries
-    {
-      "vector": [0.1, 0.2, ...],           // Required: query vector
-      "metadata_filter": {                  // Optional: filters
-        "conditions": [
-          {
-            "field_name": "category",
-            "operation": "equals",          // equals|greater_than|less_than|in|contains
-            "value": "electronics"
-          }
-        ],
-        "operator": "and"                   // and|or|not
-      }
-    }
-  ],
-  "top_k": 10,                             // Required: results per query
-  "include_fields": {                       // Optional: response fields
-    "vector": false,
-    "metadata": true,
-    "score": true
-  },
-  "search_optimization": {                  // Optional: optimization hints
-    "enable_two_stage": true,
-    "quantization_hint": {
-      "hint_type": "scalar",
-      "parameters": {"bits": 8}
-    },
-    "timeout_ms": 5000
-  }
+"collection_id": "string", // Required
+"queries": [ // Required: batch queries
+{
+"vector": [0.1, 0.2, ...], // Required: query vector
+"metadata_filter": { // Optional: filters
+"conditions": [
+{
+"field_name": "category",
+"operation": "equals", // equals|greater_than|less_than|in|contains
+"value": "electronics"
+}
+],
+"operator": "and" // and|or|not
+}
+}
+],
+"top_k": 10, // Required: results per query
+"include_fields": { // Optional: response fields
+"vector": false,
+"metadata": true,
+"score": true
+},
+"search_optimization": { // Optional: optimization hints
+"enable_two_stage": true,
+"quantization_hint": {
+"hint_type": "scalar",
+"parameters": {"bits": 8}
+},
+"timeout_ms": 5000
+}
 }
 ----
 
@@ -244,20 +244,20 @@ Search for similar vectors with optional metadata filtering.
 [source,json]
 ----
 {
-  "success": true,
-  "operation": "search",
-  "results": [
-    {
-      "id": "vec_123",
-      "score": 0.95,
-      "vector": [0.1, 0.2, ...],           // If include_fields.vector = true
-      "metadata": {                         // If include_fields.metadata = true
-        "category": "electronics",
-        "price": 299.99
-      },
-      "rank": 1
-    }
-  ]
+"success": true,
+"operation": "search",
+"results": [
+{
+"id": "vec_123",
+"score": 0.95,
+"vector": [0.1, 0.2, ...], // If include_fields.vector = true
+"metadata": { // If include_fields.metadata = true
+"category": "electronics",
+"price": 299.99
+},
+"rank": 1
+}
+]
 }
 ----
 
@@ -380,10 +380,10 @@ ProximaDB implements a sophisticated polymorphic search architecture that automa
 [source]
 ----
 Query → SearchEngineFactory → Multi-Tier Search → Deduplication → Results
-         ↓                    ↓
-         Storage Detection    ├─ WriteBuffer (Unflushed data)
-         ↓                    ├─ SST (Recent data)
-         Optimization Hints   └─ VIPER (Compacted data)
+↓ ↓
+Storage Detection ├─ WriteBuffer (Unflushed data)
+↓ ├─ SST (Recent data)
+Optimization Hints └─ VIPER (Compacted data)
 ----
 
 ==== Key Features
@@ -424,11 +424,11 @@ Query → SearchEngineFactory → Multi-Tier Search → Deduplication → Result
 [source,json]
 ----
 {
-  "success": false,
-  "operation": "create",
-  "error_message": "Collection already exists",
-  "error_code": "ALREADY_EXISTS",
-  "processing_time_us": 1234
+"success": false,
+"operation": "create",
+"error_message": "Collection already exists",
+"error_code": "ALREADY_EXISTS",
+"processing_time_us": 1234
 }
 ----
 
@@ -486,35 +486,35 @@ Query → SearchEngineFactory → Multi-Tier Search → Deduplication → Result
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/collection \
-  -H "Content-Type: application/json" \
-  -d '{
-    "operation": "create",
-    "config": {
-      "name": "demo_collection",
-      "dimension": 128,
-      "distance_metric": "cosine",
-      "storage_engine": "viper",
-      "primary_indexing_algorithm": "hnsw",
-      "filterable_columns": [
-        {
-          "name": "category",
-          "data_type": "string",
-          "indexed": true,
-          "supports_range": false
-        }
-      ],
-      "quantization_config": {
-        "enabled": true,
-        "search_quantization": {
-          "enabled": true,
-          "default_level": {
-            "level_type": "scalar",
-            "bits": 8
-          }
-        }
-      }
-    }
-  }'
+-H "Content-Type: application/json" \
+-d '{
+"operation": "create",
+"config": {
+"name": "demo_collection",
+"dimension": 128,
+"distance_metric": "cosine",
+"storage_engine": "viper",
+"primary_indexing_algorithm": "hnsw",
+"filterable_columns": [
+{
+"name": "category",
+"data_type": "string",
+"indexed": true,
+"supports_range": false
+}
+],
+"quantization_config": {
+"enabled": true,
+"search_quantization": {
+"enabled": true,
+"default_level": {
+"level_type": "scalar",
+"bits": 8
+}
+}
+}
+}
+}'
 ----
 
 === 2. Insert Vectors with Metadata
@@ -522,21 +522,21 @@ curl -X POST http://localhost:5678/api/v1/collection \
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/vector/batch \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "550e8400-e29b-41d4-a716-446655440000",
-    "vectors": [
-      {
-        "id": "product_123",
-        "vector": [0.1, 0.2, 0.3, ...],
-        "metadata": {
-          "category": "electronics",
-          "brand": "TechCorp",
-          "price": 299.99
-        }
-      }
-    ]
-  }'
+-H "Content-Type: application/json" \
+-d '{
+"collection_id": "550e8400-e29b-41d4-a716-446655440000",
+"vectors": [
+{
+"id": "product_123",
+"vector": [0.1, 0.2, 0.3, ...],
+"metadata": {
+"category": "electronics",
+"brand": "TechCorp",
+"price": 299.99
+}
+}
+]
+}'
 ----
 
 === 3. Search with Metadata Filtering
@@ -544,34 +544,34 @@ curl -X POST http://localhost:5678/api/v1/vector/batch \
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/vector/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "550e8400-e29b-41d4-a716-446655440000",
-    "queries": [{
-      "vector": [0.15, 0.25, 0.35, ...],
-      "metadata_filter": {
-        "conditions": [
-          {
-            "field_name": "category",
-            "operation": "equals",
-            "value": "electronics"
-          },
-          {
-            "field_name": "price",
-            "operation": "less_than",
-            "value": 250.0
-          }
-        ],
-        "operator": "and"
-      }
-    }],
-    "top_k": 10,
-    "include_fields": {
-      "vector": false,
-      "metadata": true,
-      "score": true
-    }
-  }'
+-H "Content-Type: application/json" \
+-d '{
+"collection_id": "550e8400-e29b-41d4-a716-446655440000",
+"queries": [{
+"vector": [0.15, 0.25, 0.35, ...],
+"metadata_filter": {
+"conditions": [
+{
+"field_name": "category",
+"operation": "equals",
+"value": "electronics"
+},
+{
+"field_name": "price",
+"operation": "less_than",
+"value": 250.0
+}
+],
+"operator": "and"
+}
+}],
+"top_k": 10,
+"include_fields": {
+"vector": false,
+"metadata": true,
+"score": true
+}
+}'
 ----
 
 === 4. Search with Optimization
@@ -579,25 +579,25 @@ curl -X POST http://localhost:5678/api/v1/vector/search \
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/vector/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "550e8400-e29b-41d4-a716-446655440000",
-    "queries": [{
-      "vector": [0.15, 0.25, 0.35, ...]
-    }],
-    "top_k": 100,
-    "search_optimization": {
-      "enable_two_stage": true,
-      "quantization_hint": {
-        "hint_type": "product",
-        "parameters": {
-          "bits_per_code": 8,
-          "num_subvectors": 8
-        }
-      },
-      "timeout_ms": 1000
-    }
-  }'
+-H "Content-Type: application/json" \
+-d '{
+"collection_id": "550e8400-e29b-41d4-a716-446655440000",
+"queries": [{
+"vector": [0.15, 0.25, 0.35, ...]
+}],
+"top_k": 100,
+"search_optimization": {
+"enable_two_stage": true,
+"quantization_hint": {
+"hint_type": "product",
+"parameters": {
+"bits_per_code": 8,
+"num_subvectors": 8
+}
+},
+"timeout_ms": 1000
+}
+}'
 ----
 
 == Migration Guide
@@ -665,14 +665,14 @@ client = ProximaDBRestClient(url="http://localhost:5678")
 
 # Create collection
 collection = client.create_collection(
-    name="products",
-    dimension=384,
-    distance_metric="cosine",
-    storage_engine="viper",
-    filterable_columns=[
-        {"name": "category", "data_type": "string", "indexed": True},
-        {"name": "price", "data_type": "float", "indexed": True, "supports_range": True}
-    ]
+name="products",
+dimension=384,
+distance_metric="cosine",
+storage_engine="viper",
+filterable_columns=[
+{"name": "category", "data_type": "string", "indexed": True},
+{"name": "price", "data_type": "float", "indexed": True, "supports_range": True}
+]
 )
 
 # Insert vectors
@@ -680,27 +680,27 @@ vectors = np.random.rand(100, 384).astype(np.float32)
 metadata = [{"category": "electronics", "price": 100 + i*10} for i in range(100)]
 
 result = client.insert_vectors(
-    collection_id=collection.id,
-    vectors=vectors,
-    ids=[f"vec_{i}" for i in range(100)],
-    metadata=metadata
+collection_id=collection.id,
+vectors=vectors,
+ids=[f"vec_{i}" for i in range(100)],
+metadata=metadata
 )
 
 # Search with optimization
 query_vector = np.random.rand(384).astype(np.float32)
 results = client.search(
-    collection_id=collection.id,
-    query=query_vector,
-    k=10,
-    filter={"category": "electronics", "price": {"$lt": 500}},
-    optimization_hints={
-        "enable_two_stage_search": True,
-        "quantization_hint": "PQ8"
-    }
+collection_id=collection.id,
+query=query_vector,
+k=10,
+filter={"category": "electronics", "price": {"$lt": 500}},
+optimization_hints={
+"enable_two_stage_search": True,
+"quantization_hint": "PQ8"
+}
 )
 
 for result in results:
-    print(f"ID: {result.id}, Score: {result.score}, Metadata: {result.metadata}")
+print(f"ID: {result.id}, Score: {result.score}, Metadata: {result.metadata}")
 ----
 
 == Version History

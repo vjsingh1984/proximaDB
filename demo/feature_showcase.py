@@ -21,7 +21,7 @@ class FeatureShowcase:
     def print_section(self, title: str):
         """Print formatted section header"""
         print(f"\n{'='*70}")
-        print(f"🎯 {title}")
+        print(f"{title}")
         print(f"{'='*70}\n")
         
     def demo_1_distance_metrics(self):
@@ -46,7 +46,7 @@ class FeatureShowcase:
         
         for name, metric, description in metrics[:3]:  # Demo first 3
             collection = f"{self.collection_prefix}_{name}"
-            print(f"📊 Testing {name.upper()} distance:")
+            print(f"Testing {name.upper()} distance:")
             print(f"   {description}")
             
             try:
@@ -73,9 +73,9 @@ class FeatureShowcase:
                 self.client.delete_collection(collection)
                 
             except Exception as e:
-                print(f"   ❌ Error: {e}")
+                print(f"   Error: {e}")
                 
-        print("\n✅ Distance metrics demonstrated successfully!")
+        print("\nDistance metrics demonstrated successfully!")
         
     def demo_2_metadata_filtering(self):
         """Demo 2: Advanced Metadata Filtering"""
@@ -83,7 +83,7 @@ class FeatureShowcase:
         
         collection = f"{self.collection_prefix}_filtering"
         
-        print("📋 Creating collection with products...")
+        print("Creating collection with products...")
         self.client.create_collection(name=collection, dimension=4, engine="viper")
         
         # Insert products with metadata
@@ -96,7 +96,7 @@ class FeatureShowcase:
         
         vectors = [VectorRecord(**p) for p in products]
         self.client.insert_vectors(collection, vectors)
-        print(f"✅ Inserted {len(products)} products")
+        print(f"Inserted {len(products)} products")
         
         # Test different filters
         filters = [
@@ -108,7 +108,7 @@ class FeatureShowcase:
         query_vector = [0.9, 0.1, 0.0, 0.0]
         
         for i, filter_spec in enumerate(filters, 1):
-            print(f"\n🔍 Filter {i}: {filter_spec}")
+            print(f"\nFilter {i}: {filter_spec}")
             try:
                 results = self.client.search(
                     collection,
@@ -125,7 +125,7 @@ class FeatureShowcase:
                 print(f"   ⚠️  Note: {e}")
         
         self.client.delete_collection(collection)
-        print("\n✅ Metadata filtering demonstrated!")
+        print("\nMetadata filtering demonstrated!")
         
     def demo_3_batch_operations(self):
         """Demo 3: High-Performance Batch Operations"""
@@ -137,7 +137,7 @@ class FeatureShowcase:
         # Test different batch sizes
         batch_sizes = [10, 100, 500, 1000]
         
-        print("⚡ Testing batch insertion performance:")
+        print("Testing batch insertion performance:")
         print(f"{'Batch Size':>12} | {'Time (s)':>10} | {'Vectors/sec':>12}")
         print("-" * 40)
         
@@ -161,7 +161,7 @@ class FeatureShowcase:
             print(f"{batch_size:>12} | {elapsed:>10.3f} | {rate:>12.0f}")
         
         # Test batch search
-        print("\n🔍 Testing batch search:")
+        print("\nTesting batch search:")
         query_vectors = [np.random.rand(128).tolist() for _ in range(5)]
         
         start = time.time()
@@ -169,7 +169,7 @@ class FeatureShowcase:
             self.client.search(collection, qv, top_k=10)
         elapsed = time.time() - start
         
-        print(f"✅ Searched 5 queries in {elapsed:.3f}s ({5/elapsed:.1f} queries/sec)")
+        print(f"Searched 5 queries in {elapsed:.3f}s ({5/elapsed:.1f} queries/sec)")
         
         self.client.delete_collection(collection)
         
@@ -180,7 +180,7 @@ class FeatureShowcase:
         collection = f"{self.collection_prefix}_updates"
         self.client.create_collection(name=collection, dimension=4, engine="viper")
         
-        print("📝 Initial vector insertion:")
+        print("Initial vector insertion:")
         vec_id = "product_123"
         
         # Version 1
@@ -190,7 +190,7 @@ class FeatureShowcase:
             metadata={"version": 1, "name": "Product v1", "updated": "2024-01-01"}
         )
         self.client.insert_vectors(collection, [v1])
-        print(f"✅ Inserted {vec_id} (version 1)")
+        print(f"Inserted {vec_id} (version 1)")
         
         # Version 2 - Update
         v2 = VectorRecord(
@@ -199,15 +199,15 @@ class FeatureShowcase:
             metadata={"version": 2, "name": "Product v2", "updated": "2024-01-02"}
         )
         self.client.upsert_vectors(collection, [v2])
-        print(f"✅ Updated {vec_id} (version 2)")
+        print(f"Updated {vec_id} (version 2)")
         
         # Verify update
         results = self.client.get_vectors(collection, [vec_id])
         if results and results[0]:
-            print(f"📋 Current state: {results[0].get('metadata', {})}")
+            print(f"Current state: {results[0].get('metadata', {})}")
         
         self.client.delete_collection(collection)
-        print("\n✅ Vector updates demonstrated!")
+        print("\nVector updates demonstrated!")
         
     def demo_5_collection_management(self):
         """Demo 5: Collection Management"""
@@ -230,12 +230,12 @@ class FeatureShowcase:
                     dimension=dim,
                     engine=engine
                 )
-                print(f"✅ Created: {full_name} (dim={dim}, engine={engine})")
+                print(f"Created: {full_name} (dim={dim}, engine={engine})")
             except Exception as e:
                 print(f"⚠️  {full_name}: {e}")
         
         # List collections
-        print("\n📋 Listing collections:")
+        print("\nListing collections:")
         all_collections = self.client.list_collections()
         showcase_collections = [c for c in all_collections if self.collection_prefix in c]
         for col in showcase_collections:
@@ -244,7 +244,7 @@ class FeatureShowcase:
         # Get collection info (if supported)
         if showcase_collections:
             col_name = showcase_collections[0]
-            print(f"\n🔍 Collection info for {col_name}:")
+            print(f"\nCollection info for {col_name}:")
             try:
                 info = self.client.get_collection_info(col_name)
                 print(f"   {json.dumps(info, indent=2)}")
@@ -255,7 +255,7 @@ class FeatureShowcase:
         print("\n🧹 Cleaning up collections...")
         for col in showcase_collections:
             self.client.delete_collection(col)
-            print(f"   ✅ Deleted: {col}")
+            print(f"   Deleted: {col}")
             
     def demo_6_persistence(self):
         """Demo 6: Persistence and Recovery"""

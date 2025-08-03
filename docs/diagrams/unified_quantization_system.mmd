@@ -2,63 +2,63 @@
 graph TB
     %% Vector Input Processing
     subgraph VectorInput["📥 High-Dimensional Vector Input"]
-        OriginalVectors["Original Vectors<br/>🔢 128-4096 Dimensions<br/>💾 Float32 Precision<br/>📊 Large Memory Footprint"]
+        OriginalVectors["Original Vectors<br/> 128-4096 Dimensions<br/> Float32 Precision<br/> Large Memory Footprint"]
         
-        VectorAnalysis["Vector Analysis<br/>📊 Dimensionality Analysis<br/>📈 Distribution Profiling<br/>🎯 Quantization Strategy Selection"]
+        VectorAnalysis["Vector Analysis<br/> Dimensionality Analysis<br/> Distribution Profiling<br/> Quantization Strategy Selection"]
     end
     
     %% Quantization Methods
-    subgraph QuantMethods["🗜️ Quantization Methods"]
-        ScalarQuant["Scalar Quantization<br/>📁 compute/unified_quantization.rs<br/>🔢 Float32 → Int8/Int16<br/>📉 4-8x Size Reduction<br/>⚡ Hardware SIMD Support"]
+    subgraph QuantMethods[" Quantization Methods"]
+        ScalarQuant["Scalar Quantization<br/> compute/unified_quantization.rs<br/> Float32 → Int8/Int16<br/> 4-8x Size Reduction<br/> Hardware SIMD Support"]
         
-        ProductQuant["Product Quantization (PQ)<br/>📊 Vector Subspace Clustering<br/>🏗️ Codebook-based Compression<br/>📉 16-64x Size Reduction<br/>🎯 Learned Representations"]
+        ProductQuant["Product Quantization (PQ)<br/> Vector Subspace Clustering<br/> Codebook-based Compression<br/> 16-64x Size Reduction<br/> Learned Representations"]
         
-        BinaryQuant["Binary Quantization<br/>🔑 Float32 → Binary<br/>📉 32x Size Reduction<br/>⚡ Ultra-fast Hamming Distance<br/>🎯 Extreme Compression"]
+        BinaryQuant["Binary Quantization<br/> Float32 → Binary<br/> 32x Size Reduction<br/> Ultra-fast Hamming Distance<br/> Extreme Compression"]
     end
     
     %% Adaptive Selection Engine
-    subgraph AdaptiveEngine["🤖 Adaptive Selection Engine"]
-        WorkloadProfiler["Workload Profiler<br/>📊 Query Pattern Analysis<br/>⏱️ Latency vs Accuracy Trade-offs<br/>📈 Performance Monitoring"]
+    subgraph AdaptiveEngine[" Adaptive Selection Engine"]
+        WorkloadProfiler["Workload Profiler<br/> Query Pattern Analysis<br/> Latency vs Accuracy Trade-offs<br/> Performance Monitoring"]
         
-        StrategySelector["Strategy Selector<br/>🎯 Optimal Method Selection<br/>🔄 Dynamic Switching<br/>📊 Multi-objective Optimization"]
+        StrategySelector["Strategy Selector<br/> Optimal Method Selection<br/> Dynamic Switching<br/> Multi-objective Optimization"]
         
-        AccuracyMonitor["Accuracy Monitor<br/>🎯 Precision Tracking<br/>📊 Quality Metrics<br/>⚠️ Degradation Detection"]
+        AccuracyMonitor["Accuracy Monitor<br/> Precision Tracking<br/> Quality Metrics<br/> Degradation Detection"]
     end
     
     %% Hardware Acceleration
-    subgraph HardwareAccel["🚀 Hardware Acceleration"]
-        SIMDOps["SIMD Operations<br/>📁 compute/distance/avx512.rs<br/>⚡ AVX-512/NEON Instructions<br/>🔢 Vectorized Quantization<br/>📈 8-16x Throughput"]
+    subgraph HardwareAccel[" Hardware Acceleration"]
+        SIMDOps["SIMD Operations<br/> compute/distance/avx512.rs<br/> AVX-512/NEON Instructions<br/> Vectorized Quantization<br/> 8-16x Throughput"]
         
-        GPUAccel["GPU Acceleration<br/>🖥️ CUDA/ROCm Support<br/>⚡ Parallel Quantization<br/>📊 Batch Processing<br/>🚀 100x Speedup"]
+        GPUAccel["GPU Acceleration<br/> CUDA/ROCm Support<br/> Parallel Quantization<br/> Batch Processing<br/> 100x Speedup"]
         
-        CacheOptim["Cache Optimization<br/>💾 Memory Layout Optimization<br/>📊 Cache-friendly Access Patterns<br/>⚡ Reduced Memory Bandwidth"]
+        CacheOptim["Cache Optimization<br/> Memory Layout Optimization<br/> Cache-friendly Access Patterns<br/> Reduced Memory Bandwidth"]
     end
     
     %% Storage Integration
-    subgraph StorageIntegration["🗄️ Storage Integration"]
-        ViperIntegration["VIPER Integration<br/>📁 engines/viper/quantization.rs<br/>🏗️ Columnar Quantization<br/>📦 Parquet Compression<br/>📊 ML-optimized Format"]
+    subgraph StorageIntegration[" Storage Integration"]
+        ViperIntegration["VIPER Integration<br/> engines/viper/quantization.rs<br/> Columnar Quantization<br/> Parquet Compression<br/> ML-optimized Format"]
         
-        SSTIntegration["SST Integration<br/>📁 engines/sst/mod.rs<br/>🧱 Row-based Quantization<br/>🔍 Index Acceleration<br/>📈 Query Performance"]
+        SSTIntegration["SST Integration<br/> engines/sst/mod.rs<br/> Row-based Quantization<br/> Index Acceleration<br/> Query Performance"]
         
-        IndexIntegration["Index Integration<br/>📁 index/axis/quantization/<br/>🎯 Quantized Indexes<br/>🔍 Approximate Search<br/>⚡ Memory Efficient"]
+        IndexIntegration["Index Integration<br/> index/axis/quantization/<br/> Quantized Indexes<br/> Approximate Search<br/> Memory Efficient"]
     end
     
     %% Performance Metrics
-    subgraph Performance["📊 Performance & Quality Metrics"]
-        CompressionRatio["Compression Ratio<br/>📉 Scalar: 4-8x<br/>📉 PQ: 16-64x<br/>📉 Binary: 32x<br/>🎯 Configurable Trade-offs"]
+    subgraph Performance[" Performance & Quality Metrics"]
+        CompressionRatio["Compression Ratio<br/> Scalar: 4-8x<br/> PQ: 16-64x<br/> Binary: 32x<br/> Configurable Trade-offs"]
         
-        SearchAccuracy["Search Accuracy<br/>🎯 Scalar: 99.5%+<br/>🎯 PQ: 95-99%<br/>🎯 Binary: 85-95%<br/>📊 Application-dependent"]
+        SearchAccuracy["Search Accuracy<br/> Scalar: 99.5%+<br/> PQ: 95-99%<br/> Binary: 85-95%<br/> Application-dependent"]
         
-        QuerySpeed["Query Speed<br/>⚡ 2-10x Faster Search<br/>🚀 Reduced Memory Bandwidth<br/>💾 Better Cache Utilization<br/>📈 Linear Scaling"]
+        QuerySpeed["Query Speed<br/> 2-10x Faster Search<br/> Reduced Memory Bandwidth<br/> Better Cache Utilization<br/> Linear Scaling"]
     end
     
     %% Usage Patterns
-    subgraph UsagePatterns["🎯 Usage Pattern Optimization"]
-        AnalyticsWorkload["Analytics Workload<br/>📊 Product Quantization<br/>🏗️ High Compression<br/>📈 Batch Processing<br/>🎯 Accuracy Focus"]
+    subgraph UsagePatterns[" Usage Pattern Optimization"]
+        AnalyticsWorkload["Analytics Workload<br/> Product Quantization<br/> High Compression<br/> Batch Processing<br/> Accuracy Focus"]
         
-        RealtimeWorkload["Real-time Workload<br/>⚡ Scalar Quantization<br/>🚀 Low Latency<br/>⚡ Hardware Acceleration<br/>🎯 Speed Focus"]
+        RealtimeWorkload["Real-time Workload<br/> Scalar Quantization<br/> Low Latency<br/> Hardware Acceleration<br/> Speed Focus"]
         
-        ArchiveWorkload["Archive Workload<br/>🗜️ Binary Quantization<br/>💰 Storage Cost Optimization<br/>📦 Maximum Compression<br/>🎯 Cost Focus"]
+        ArchiveWorkload["Archive Workload<br/> Binary Quantization<br/> Storage Cost Optimization<br/> Maximum Compression<br/> Cost Focus"]
     end
     
     %% Data Flow

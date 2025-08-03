@@ -26,7 +26,7 @@ endif::[]
 
 [NOTE]
 ====
-🔗 **Proto-First Architecture**: 
+**Proto-First Architecture**:
 * link:architecture.adoc[Architecture Overview] - Storage-aware search foundation
 * link:technical_reference.adoc[Technical Reference] - Zero double serialization implementation
 * link:developer_guide.adoc[Developer Guide] - Proto-native development workflows
@@ -66,13 +66,13 @@ Product Quantization divides high-dimensional vectors into subvectors, quantizin
 [source,python]
 ----
 quantization_config = QuantizationConfig(
-    enabled=True,
-    type=QuantizationType.PRODUCT,
-    bits_per_subvector=8,          # 256 codes per subvector
-    num_subvectors=96,              # For 768-dim: 768/8 = 96
-    adaptive_subvectors=True,       # Auto-adjust based on dimension
-    compression_ratio_target=8.0,   # Target 8x compression
-    accuracy_threshold=0.95         # Maintain 95% recall
+enabled=True,
+type=QuantizationType.PRODUCT,
+bits_per_subvector=8, # 256 codes per subvector
+num_subvectors=96, # For 768-dim: 768/8 = 96
+adaptive_subvectors=True, # Auto-adjust based on dimension
+compression_ratio_target=8.0, # Target 8x compression
+accuracy_threshold=0.95 # Maintain 95% recall
 )
 ----
 
@@ -144,11 +144,11 @@ q = \text{round}\left(\frac{x - \text{offset}}{\text{scale}}\right)
 [source,python]
 ----
 quantization_config = QuantizationConfig(
-    enabled=True,
-    type=QuantizationType.SCALAR,
-    bits_per_vector=8,              # INT8 quantization
-    clamp_values=True,              # Clamp outliers
-    accuracy_threshold=0.99         # High accuracy target
+enabled=True,
+type=QuantizationType.SCALAR,
+bits_per_vector=8, # INT8 quantization
+clamp_values=True, # Clamp outliers
+accuracy_threshold=0.99 # High accuracy target
 )
 ----
 
@@ -165,11 +165,11 @@ Binary quantization provides maximum compression using 1 bit per dimension:
 [source,python]
 ----
 quantization_config = QuantizationConfig(
-    enabled=True,
-    type=QuantizationType.BINARY,
-    threshold=0.0,                  # Sign-based by default
-    sign_based=True,
-    compression_ratio_target=32.0   # 32x compression
+enabled=True,
+type=QuantizationType.BINARY,
+threshold=0.0, # Sign-based by default
+sign_based=True,
+compression_ratio_target=32.0 # 32x compression
 )
 ----
 
@@ -225,22 +225,22 @@ include::diagrams/two-stage-search.mmd[]
 [source,python]
 ----
 def two_stage_search(query, k, candidate_multiplier=3.0):
-    # Stage 1: Fast quantized search
-    candidates = quantized_search(
-        query, 
-        k * candidate_multiplier,
-        use_quantized_vectors=True
-    )
-    
-    # Stage 2: Precise reranking
-    results = precise_rerank(
-        query,
-        candidates,
-        k,
-        use_full_precision=True
-    )
-    
-    return results
+# Stage 1: Fast quantized search
+candidates = quantized_search(
+query,
+k * candidate_multiplier,
+use_quantized_vectors=True
+)
+
+# Stage 2: Precise reranking
+results = precise_rerank(
+query,
+candidates,
+k,
+use_full_precision=True
+)
+
+return results
 ----
 
 .Two-Stage Search Performance Metrics
@@ -272,13 +272,13 @@ def two_stage_search(query, k, candidate_multiplier=3.0):
 [source,python]
 ----
 optimization_hints = {
-    "enable_two_stage_search": True,
-    "quantization_hint": "PQ8",         # Stage 1 quantization
-    "candidate_multiplier": 3.0,        # 3x candidates
-    "min_candidates": 100,              # Minimum for quality
-    "max_candidates": 1000,             # Maximum for latency
-    "enable_parallel_search": True,     # Multi-threaded
-    "accuracy_threshold": 0.95          # Target recall
+"enable_two_stage_search": True,
+"quantization_hint": "PQ8", # Stage 1 quantization
+"candidate_multiplier": 3.0, # 3x candidates
+"min_candidates": 100, # Minimum for quality
+"max_candidates": 1000, # Maximum for latency
+"enable_parallel_search": True, # Multi-threaded
+"accuracy_threshold": 0.95 # Target recall
 }
 ----
 
@@ -289,26 +289,26 @@ optimization_hints = {
 [source,protobuf]
 ----
 message QuantizationConfig {
-  bool enabled = 1;                               // Enable quantization
-  QuantizationLevel level = 2;                    // Quantization type
-  optional string codebook_id = 3;                // Pre-trained codebook
-  bool progressive_quantization = 4;              // Progressive mode
-  float compression_ratio_target = 5;             // Target compression
-  optional QuantizationValidation validation = 6; // Quality control
+bool enabled = 1; // Enable quantization
+QuantizationLevel level = 2; // Quantization type
+optional string codebook_id = 3; // Pre-trained codebook
+bool progressive_quantization = 4; // Progressive mode
+float compression_ratio_target = 5; // Target compression
+optional QuantizationValidation validation = 6; // Quality control
 }
 
 message SearchOptimizationHints {
-  bool enable_two_stage_search = 1;
-  optional QuantizationLevel quantization_hint = 2;
-  float candidate_multiplier = 3;
-  optional int32 min_candidates = 4;
-  optional int32 max_candidates = 5;
-  bool enable_clustering_optimization = 6;
-  bool enable_metadata_filtering_hint = 7;
-  bool enable_parallel_search = 8;
-  optional float accuracy_threshold = 9;
-  optional int32 timeout_ms = 10;
-  map<string, string> custom_hints = 12;
+bool enable_two_stage_search = 1;
+optional QuantizationLevel quantization_hint = 2;
+float candidate_multiplier = 3;
+optional int32 min_candidates = 4;
+optional int32 max_candidates = 5;
+bool enable_clustering_optimization = 6;
+bool enable_metadata_filtering_hint = 7;
+bool enable_parallel_search = 8;
+optional float accuracy_threshold = 9;
+optional int32 timeout_ms = 10;
+map<string, string> custom_hints = 12;
 }
 ----
 
@@ -324,10 +324,10 @@ include::diagrams/direct-vector-service.mmd[]
 [source,rust]
 ----
 match (enable_two_stage, quantization_hint) {
-    (true, "PQ8") => self.two_stage_pq_search(...),
-    (true, "INT8") => self.two_stage_scalar_search(...),
-    (true, "BINARY") => self.two_stage_binary_search(...),
-    _ => self.standard_search(...)
+(true, "PQ8") => self.two_stage_pq_search(...),
+(true, "INT8") => self.two_stage_scalar_search(...),
+(true, "BINARY") => self.two_stage_binary_search(...),
+_ => self.standard_search(...)
 }
 ----
 
@@ -434,43 +434,43 @@ ProximaDB employs two distinct clustering approaches:
 ----
 from proximadb import connect_rest
 from proximadb.models import (
-    CollectionConfig, 
-    QuantizationConfig, 
-    QuantizationType
+CollectionConfig,
+QuantizationConfig,
+QuantizationType
 )
 
 client = connect_rest("http://localhost:5678")
 
 # Product Quantization for high-dimensional data
 config = CollectionConfig(
-    dimension=768,
-    distance_metric=DistanceMetric.COSINE,
-    quantization_config=QuantizationConfig(
-        enabled=True,
-        type=QuantizationType.PRODUCT,
-        bits_per_subvector=8,
-        num_subvectors=96,
-        progressive_quantization=True,
-        accuracy_threshold=0.95
-    )
+dimension=768,
+distance_metric=DistanceMetric.COSINE,
+quantization_config=QuantizationConfig(
+enabled=True,
+type=QuantizationType.PRODUCT,
+bits_per_subvector=8,
+num_subvectors=96,
+progressive_quantization=True,
+accuracy_threshold=0.95
+)
 )
 
 collection = client.create_collection("semantic_search", config)
 
 # Search with optimization
 results = client.search(
-    "semantic_search",
-    query_vector,
-    k=10,
-    optimization_hints={
-        "enable_two_stage_search": True,
-        "quantization_hint": "PQ8",
-        "candidate_multiplier": 3.0,
-        "min_candidates": 100,
-        "max_candidates": 1000,
-        "accuracy_threshold": 0.98,
-        "enable_parallel_search": True
-    }
+"semantic_search",
+query_vector,
+k=10,
+optimization_hints={
+"enable_two_stage_search": True,
+"quantization_hint": "PQ8",
+"candidate_multiplier": 3.0,
+"min_candidates": 100,
+"max_candidates": 1000,
+"accuracy_threshold": 0.98,
+"enable_parallel_search": True
+}
 )
 ----
 
@@ -595,15 +595,15 @@ logging.getLogger("proximadb.quantization").setLevel(logging.DEBUG)
 
 # Search with debug traces
 results = client.search(
-    collection_id,
-    query,
-    optimization_hints={
-        "custom_hints": {
-            "debug_quantization": "true",
-            "trace_candidates": "true",
-            "profile_stages": "true"
-        }
-    }
+collection_id,
+query,
+optimization_hints={
+"custom_hints": {
+"debug_quantization": "true",
+"trace_candidates": "true",
+"profile_stages": "true"
+}
+}
 )
 ----
 
@@ -622,14 +622,14 @@ ProximaDB automatically detects and uses:
 [source,python]
 ----
 quantization_config = QuantizationConfig(
-    enabled=True,
-    type=QuantizationType.CUSTOM,
-    custom_config={
-        "type_id": "my_custom_pq",
-        "bits_per_element": 6,
-        "codebook_training": "kmeans_plus_plus",
-        "distance_correction": "asymmetric"
-    }
+enabled=True,
+type=QuantizationType.CUSTOM,
+custom_config={
+"type_id": "my_custom_pq",
+"bits_per_element": 6,
+"codebook_training": "kmeans_plus_plus",
+"distance_correction": "asymmetric"
+}
 )
 ----
 
@@ -638,15 +638,15 @@ quantization_config = QuantizationConfig(
 [source,python]
 ----
 optimization_hints = {
-    "custom_hints": {
-        "search_stages": "3",
-        "stage_1_method": "BINARY",
-        "stage_1_candidates": "10000",
-        "stage_2_method": "PQ4", 
-        "stage_2_candidates": "1000",
-        "stage_3_method": "FP32",
-        "stage_3_candidates": "100"
-    }
+"custom_hints": {
+"search_stages": "3",
+"stage_1_method": "BINARY",
+"stage_1_candidates": "10000",
+"stage_2_method": "PQ4",
+"stage_2_candidates": "1000",
+"stage_3_method": "FP32",
+"stage_3_candidates": "100"
+}
 }
 ----
 
@@ -661,7 +661,7 @@ ProximaDB's quantization and search optimization features provide enterprise-gra
 
 [NOTE]
 ====
-📚 For additional information, see:
+For additional information, see:
 * link:developer_guide.adoc[Developer Guide]
 * link:architecture.adoc[Architecture Overview]
 * API Reference (REST/gRPC)

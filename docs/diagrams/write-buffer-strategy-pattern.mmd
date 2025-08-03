@@ -3,7 +3,7 @@ classDiagram
     %% Strategy Pattern Implementation for Write Buffer Serialization
     
     class WriteBufferManager {
-        📁 storage/persistence/write_buffer/mod.rs
+         storage/persistence/write_buffer/mod.rs
         -strategy: Box~dyn SerializationStrategy~
         -batch_coordinator: BatchSyncCoordinator
         -flush_coordinator: FlushCoordinator
@@ -11,87 +11,87 @@ classDiagram
         +write_batch(vectors: Vec~VectorRecord~) Result~()~
         +flush_to_storage() Result~FlushResult~
         +set_strategy(strategy: SerializationStrategy)
-        🎯 Strategy Pattern Coordinator
+         Strategy Pattern Coordinator
     }
     
     class SerializationStrategy {
         <<interface>>
-        📁 storage/persistence/write_buffer/
+         storage/persistence/write_buffer/
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() &str
         +supports_schema_evolution() bool
-        ⚡ Pluggable Serialization Interface
+         Pluggable Serialization Interface
     }
     
     class ProtoSerializationStrategy {
-        📁 proto_serialization_strategy.rs
+         proto_serialization_strategy.rs
         -schema_registry: ProtoSchemaRegistry
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "protobuf"
         +supports_schema_evolution() true
-        🔧 Protocol Buffers - Production Default
-        📊 Zero-copy deserialization
-        🔄 Schema evolution support
+         Protocol Buffers - Production Default
+         Zero-copy deserialization
+         Schema evolution support
     }
     
     class AvroSerializationStrategy {
-        📁 avro_serialization_strategy.rs
+         avro_serialization_strategy.rs
         -schema: Schema
         -writer_cache: LruCache~String, Writer~
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "avro"
         +supports_schema_evolution() true
-        🏗️ Apache Avro - Schema Evolution
-        📋 Rich metadata support
-        🔄 Forward/backward compatibility
+         Apache Avro - Schema Evolution
+         Rich metadata support
+         Forward/backward compatibility
     }
     
     class BincodeSerializationStrategy {
-        📁 bincode_serialization_strategy.rs
+         bincode_serialization_strategy.rs
         -config: BincodeConfig
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "bincode"
         +supports_schema_evolution() false
-        ⚡ Bincode - High Performance
-        📦 Compact binary format
-        🚀 Fastest serialization
+         Bincode - High Performance
+         Compact binary format
+         Fastest serialization
     }
     
     class BatchSyncCoordinator {
-        📁 batch_sync_coordinator.rs
+         batch_sync_coordinator.rs
         -active_batches: DashMap~BatchId, BatchMetadata~
         -serialization_strategy: Arc~dyn SerializationStrategy~
         +coordinate_batch_write(batch: VectorBatch) Result~BatchId~
         +sync_batch_to_disk(batch_id: BatchId) Result~()~
         +get_batch_status(batch_id: BatchId) BatchStatus
-        🔄 Coordinates batched writes
-        ⚛️ ACID transaction support
+         Coordinates batched writes
+         ACID transaction support
     }
     
     class FlushCoordinator {
-        📁 flush_coordinator.rs
+         flush_coordinator.rs
         -flush_strategy: FlushStrategy
         -atomic_coordinator: Arc~UnifiedAtomicCoordinator~
         +schedule_flush(trigger: FlushTrigger) Result~()~
         +execute_flush() Result~FlushResult~
         +get_flush_stats() FlushStatistics
-        💾 Manages write buffer flushes
-        📊 Performance monitoring
+         Manages write buffer flushes
+         Performance monitoring
     }
     
     class VectorBatch {
-        📁 storage/persistence/write_buffer/
+         storage/persistence/write_buffer/
         +collection_id: String
         +vectors: Vec~VectorRecord~
         +metadata: BatchMetadata
         +timestamp: SystemTime
         +batch_id: BatchId
-        📦 Batch data container
-        🎯 Optimized for bulk operations
+         Batch data container
+         Optimized for bulk operations
     }
     
     class BatchMetadata {
@@ -99,8 +99,8 @@ classDiagram
         +compression_type: CompressionType
         +checksum: u64
         +schema_version: u32
-        📋 Batch processing metadata
-        🔍 Integrity verification
+         Batch processing metadata
+         Integrity verification
     }
     
     %% Strategy Pattern Relationships
@@ -120,9 +120,9 @@ classDiagram
     WriteBufferManager : +get_optimal_strategy(requirements)
     
     %% Performance Annotations
-    ProtoSerializationStrategy : ⚡ 15MB/s throughput
-    AvroSerializationStrategy : 📊 12MB/s + rich metadata  
-    BincodeSerializationStrategy : 🚀 25MB/s fastest
+    ProtoSerializationStrategy :  15MB/s throughput
+    AvroSerializationStrategy :  12MB/s + rich metadata  
+    BincodeSerializationStrategy :  25MB/s fastest
     
     %% Usage Patterns
     note for ProtoSerializationStrategy "Production Default\n• Schema evolution\n• Cross-language support\n• Compact binary format"

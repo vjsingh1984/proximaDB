@@ -120,28 +120,28 @@ class EcommerceDemo:
         try:
             # gRPC for high-performance inserts
             self.grpc_client = connect_grpc("grpc://localhost:5679")
-            print("✅ gRPC connection established (for inserts/upserts)")
+            print("gRPC connection established (for inserts/upserts)")
         except Exception as e:
             print(f"⚠️  gRPC connection failed: {e}")
             
         try:
             # REST for flexible operations
             self.rest_client = connect_rest("http://localhost:5678")
-            print("✅ REST connection established (for search/queries)")
+            print("REST connection established (for search/queries)")
         except Exception as e:
             print(f"⚠️  REST connection failed: {e}")
             
         if not self.grpc_client and not self.rest_client:
-            raise Exception("❌ No ProximaDB connections available")
+            raise Exception("No ProximaDB connections available")
     
     def load_embedding_model(self):
         """Load BERT model for text embeddings"""
         print("🤖 Loading BERT model (all-MiniLM-L6-v2)...")
         try:
             self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            print("✅ BERT model loaded successfully")
+            print("BERT model loaded successfully")
         except Exception as e:
-            raise Exception(f"❌ Failed to load BERT model: {e}")
+            raise Exception(f"Failed to load BERT model: {e}")
     
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
         """Generate BERT embeddings for text list"""
@@ -162,12 +162,12 @@ class EcommerceDemo:
                 )
                 
                 result = self.rest_client.create_collection(self.collection_id, config)
-                print(f"✅ Collection created via REST: {result}")
+                print(f"Collection created via REST: {result}")
                 return
                 
             except Exception as e:
                 if "already exists" in str(e).lower():
-                    print("✅ Collection already exists")
+                    print("Collection already exists")
                     return
                 else:
                     print(f"⚠️  REST collection creation failed: {e}")
@@ -183,16 +183,16 @@ class EcommerceDemo:
                 )
                 
                 result = self.grpc_client.create_collection(self.collection_id, config)
-                print(f"✅ Collection created via gRPC: {result}")
+                print(f"Collection created via gRPC: {result}")
                 
             except Exception as e:
                 if "already exists" in str(e).lower():
-                    print("✅ Collection already exists")
+                    print("Collection already exists")
                 else:
-                    print(f"❌ gRPC collection creation failed: {e}")
+                    print(f"gRPC collection creation failed: {e}")
                     raise
         else:
-            raise Exception("❌ No client available for collection creation")
+            raise Exception("No client available for collection creation")
     
     def insert_products_grpc(self):
         """High-performance product insertion via gRPC"""
@@ -200,7 +200,7 @@ class EcommerceDemo:
             print("⚠️  gRPC not available, skipping bulk insert")
             return
             
-        print(f"\n⚡ Inserting {len(REAL_PRODUCTS)} products via gRPC...")
+        print(f"\nInserting {len(REAL_PRODUCTS)} products via gRPC...")
         start_time = time.time()
         
         # Generate embeddings for all product descriptions
@@ -234,18 +234,18 @@ class EcommerceDemo:
             result = self.grpc_client.insert_vectors(self.collection_id, vectors)
             elapsed = time.time() - start_time
             rate = len(vectors) / elapsed
-            print(f"✅ Inserted {len(vectors)} products in {elapsed:.2f}s ({rate:.0f} products/sec)")
-            print(f"📊 Performance: {result}")
+            print(f"Inserted {len(vectors)} products in {elapsed:.2f}s ({rate:.0f} products/sec)")
+            print(f"Performance: {result}")
             
         except Exception as e:
-            print(f"❌ gRPC insert failed: {e}")
+            print(f"gRPC insert failed: {e}")
             print("   Falling back to REST insertion...")
             self.insert_products_rest()
     
     def insert_products_rest(self):
         """Fallback product insertion via REST"""
         if not self.rest_client:
-            print("❌ No REST client available")
+            print("No REST client available")
             return
             
         print(f"\n🌐 Inserting products via REST API...")
@@ -279,19 +279,19 @@ class EcommerceDemo:
             try:
                 result = self.rest_client.insert_vectors(self.collection_id, vectors)
                 total_inserted += len(vectors)
-                print(f"✅ Batch {i//batch_size + 1}: {len(vectors)} products")
+                print(f"Batch {i//batch_size + 1}: {len(vectors)} products")
                 
             except Exception as e:
-                print(f"❌ REST batch insert failed: {e}")
+                print(f"REST batch insert failed: {e}")
         
-        print(f"✅ Total inserted via REST: {total_inserted} products")
+        print(f"Total inserted via REST: {total_inserted} products")
     
     def search_grpc(self, query: str, top_k: int = 5) -> Dict:
         """Semantic search via gRPC"""
         if not self.grpc_client:
             return {"error": "gRPC not available"}
             
-        print(f"\n🔍 gRPC Search: '{query}'")
+        print(f"\ngRPC Search: '{query}'")
         start_time = time.time()
         
         try:
@@ -303,7 +303,7 @@ class EcommerceDemo:
             )
             
             elapsed = time.time() - start_time
-            print(f"⚡ gRPC search completed in {elapsed*1000:.1f}ms")
+            print(f"gRPC search completed in {elapsed*1000:.1f}ms")
             
             # Handle the SearchResult object properly
             if hasattr(search_result, 'results'):
@@ -312,7 +312,7 @@ class EcommerceDemo:
                 return {"results": search_result, "latency_ms": elapsed*1000, "method": "gRPC"}
             
         except Exception as e:
-            print(f"❌ gRPC search failed: {e}")
+            print(f"gRPC search failed: {e}")
             return {"error": str(e)}
     
     def search_rest(self, query: str, top_k: int = 5) -> Dict:
@@ -354,12 +354,12 @@ class EcommerceDemo:
                 return {"error": f"HTTP {response.status_code}: {response.text}"}
                 
         except Exception as e:
-            print(f"❌ REST search failed: {e}")
+            print(f"REST search failed: {e}")
             return {"error": str(e)}
     
     def search_sql(self, query: str, top_k: int = 5) -> Dict:
         """Semantic search via SQL interface"""
-        print(f"\n📊 SQL Search: '{query}'")
+        print(f"\nSQL Search: '{query}'")
         start_time = time.time()
         
         try:
@@ -390,26 +390,26 @@ class EcommerceDemo:
             
             if response.status_code == 200:
                 results = response.json()
-                print(f"📊 SQL search completed in {elapsed*1000:.1f}ms")
+                print(f"SQL search completed in {elapsed*1000:.1f}ms")
                 return {"results": results, "latency_ms": elapsed*1000, "method": "SQL"}
             else:
                 return {"error": f"HTTP {response.status_code}: {response.text}"}
                 
         except Exception as e:
-            print(f"❌ SQL search failed: {e}")
+            print(f"SQL search failed: {e}")
             return {"error": str(e)}
     
     def display_results(self, search_result: Dict, query: str):
         """Format and display search results"""
         if "error" in search_result:
-            print(f"❌ Search Error: {search_result['error']}")
+            print(f"Search Error: {search_result['error']}")
             return
             
         method = search_result.get("method", "Unknown")
         latency = search_result.get("latency_ms", 0)
         results = search_result.get("results", {})
         
-        print(f"\n📋 Results for '{query}' via {method} ({latency:.1f}ms):")
+        print(f"\nResults for '{query}' via {method} ({latency:.1f}ms):")
         print("=" * 60)
         
         # Handle different result formats
@@ -459,11 +459,11 @@ class EcommerceDemo:
         ]
         
         print("\n" + "="*70)
-        print("🎯 SEMANTIC SEARCH DEMO - Multiple Methods Comparison")
+        print("SEMANTIC SEARCH DEMO - Multiple Methods Comparison")
         print("="*70)
         
         for query in queries:
-            print(f"\n🔍 Query: '{query}'")
+            print(f"\nQuery: '{query}'")
             print("-" * 50)
             
             # Try different search methods
@@ -505,8 +505,8 @@ class EcommerceDemo:
         with open("/home/vsingh/code/proximaDB/demo/ui_integration.json", "w") as f:
             json.dump(ui_data, f, indent=2)
         
-        print("✅ UI integration data exported to demo/ui_integration.json")
-        print("🌐 Start Web UI with: python demo/serve_ui.py")
+        print("UI integration data exported to demo/ui_integration.json")
+        print("Start Web UI with: python demo/serve_ui.py")
         print("   Then visit: http://localhost:8090")
 
 def main():
@@ -539,11 +539,11 @@ def main():
         demo.export_for_ui()
         
         print("\n" + "="*70)
-        print("🎉 Demo completed successfully!")
-        print("✅ Real BERT embeddings generated")
-        print("✅ High-performance gRPC insertions") 
-        print("✅ Multi-protocol search demonstration")
-        print("✅ Web UI integration data exported")
+        print("Demo completed successfully!")
+        print("Real BERT embeddings generated")
+        print("High-performance gRPC insertions") 
+        print("Multi-protocol search demonstration")
+        print("Web UI integration data exported")
         print()
         print("Next steps:")
         print("1. Run: python demo/serve_ui.py")
@@ -552,7 +552,7 @@ def main():
         print("="*70)
         
     except Exception as e:
-        print(f"\n❌ Demo failed: {e}")
+        print(f"\nDemo failed: {e}")
         print("\nTroubleshooting:")
         print("1. Ensure ProximaDB server is running: ./target/release/proximadb-server")
         print("2. Install dependencies: pip install sentence-transformers proximadb-client")

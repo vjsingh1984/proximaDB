@@ -27,16 +27,16 @@ Complete development guide for the proto-first ProximaDB architecture, including
 
 [NOTE]
 ====
-🔗 **Architecture**: See link:architecture.adoc[Proto-First Architecture] | **Implementation**: See link:technical_reference.adoc[Technical Reference] | **API**: See link:api/unified_rest_api.adoc[REST API Reference]
+**Architecture**: See link:architecture.adoc[Proto-First Architecture] | **Implementation**: See link:technical_reference.adoc[Technical Reference] | **API**: See link:api/unified_rest_api.adoc[REST API Reference]
 ====
 
 == Development Status - 2025
 
-=== Proto-First Migration Complete ✅
+=== Proto-First Migration Complete [OK]
 
 **Achievement Summary**::
 - **Zero double serialization**: Direct proto types throughout the system
-- **85% code reduction**: Handler consolidation eliminates duplication  
+- **85% code reduction**: Handler consolidation eliminates duplication
 - **87% SDK reduction**: 6,467 → 800 lines in Python client
 - **Optimized search**: Storage-aware polymorphic search improvement
 - **1,092 tests passing**: Comprehensive coverage with production scenarios
@@ -45,33 +45,33 @@ Complete development guide for the proto-first ProximaDB architecture, including
 |===
 |Component |Status |Quality |Performance
 
-|🏗️ **Proto-First Architecture**
-|✅ Complete 
+| **Proto-First Architecture**
+|NOTE: Complete
 |1,092 tests passing
 |Zero serialization overhead
 
-|🔄 **Handler Consolidation**
-|✅ Complete
+| **Handler Consolidation**
+|NOTE: Complete
 |85% code reduction
 |Single business logic
 
-|🔍 **Storage-Aware Search**
-|✅ Complete
+| **Storage-Aware Search**
+|NOTE: Complete
 |100% accuracy maintained
 |Optimized search performance
 
-|🐍 **Python SDK**
-|✅ Complete
+| **Python SDK**
+|NOTE: Complete
 |87% reduction achieved
 |Type-safe proto bindings
 
-|⚡ **Hardware Optimization**
-|✅ Complete
+|Performance: **Hardware Optimization**
+|NOTE: Complete
 |SIMD/GPU detection
 |Hardware-aware quantization
 
-|☁️ **Multi-Cloud Support**
-|✅ Complete
+| **Multi-Cloud Support**
+|NOTE: Complete
 |S3/Azure/GCS ready
 |Zero-downtime migration
 |===
@@ -101,7 +101,7 @@ rustup update stable
 
 # 3. Install dependencies
 sudo apt update && sudo apt install -y \
-    build-essential pkg-config libssl-dev protobuf-compiler cmake
+build-essential pkg-config libssl-dev protobuf-compiler cmake
 
 # 4. Build project
 cargo build --release
@@ -111,22 +111,22 @@ cargo build --release
 
 ```
 proximadb/
-├── Cargo.toml              # Root project configuration
-├── build.rs                # Build script for protobuf
-├── proto/                  # Protocol buffer definitions
-├── src/                    # Rust source code
-│   ├── api/                # API layer implementations
-│   ├── core/               # Core business logic
-│   ├── network/            # Network layer (gRPC/REST)
-│   ├── storage/            # Storage layer (VIPER/SST)
-│   ├── services/           # Business logic services
-│   └── utils/              # Utility functions
-├── clients/                # Client SDKs
-│   ├── python/             # Python client library
-│   └── java/               # Java client library (planned)
-├── docs/                   # Documentation
-├── tests/                  # Integration tests
-└── config/                # Configuration files
+├── Cargo.toml # Root project configuration
+├── build.rs # Build script for protobuf
+├── proto/ # Protocol buffer definitions
+├── src/ # Rust source code
+│ ├── api/ # API layer implementations
+│ ├── core/ # Core business logic
+│ ├── network/ # Network layer (gRPC/REST)
+│ ├── storage/ # Storage layer (VIPER/SST)
+│ ├── services/ # Business logic services
+│ └── utils/ # Utility functions
+├── clients/ # Client SDKs
+│ ├── python/ # Python client library
+│ └── java/ # Java client library (planned)
+├── docs/ # Documentation
+├── tests/ # Integration tests
+└── config/ # Configuration files
 ```
 
 == Build System
@@ -172,19 +172,19 @@ ProximaDB provides a comprehensive gRPC API defined in `proto/proximadb.proto`.
 [source,protobuf]
 ----
 service ProximaDB {
-  // Collection Management
-  rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
-  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
-  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
-  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
-  
-  // Vector Operations
-  rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
-  rpc SearchVectors(SearchVectorsRequest) returns (SearchVectorsResponse);
-  rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
-  
-  // Health and Admin
-  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+// Collection Management
+rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
+rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+
+// Vector Operations
+rpc InsertVector(InsertVectorRequest) returns (InsertVectorResponse);
+rpc SearchVectors(SearchVectorsRequest) returns (SearchVectorsResponse);
+rpc BatchInsert(BatchInsertRequest) returns (BatchInsertResponse);
+
+// Health and Admin
+rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 ----
 
@@ -203,17 +203,17 @@ ProximaDB implements storage-aware polymorphic search that automatically optimiz
 // - Hardware acceleration (SIMD, NEON, CUDA, ROCm, MPS)
 
 let request = SearchVectorsRequest {
-    collection_id: viper_collection_id,
-    query_vector: query_embedding,
-    k: 10,
-    search_hints: Some(SearchHints {
-        predicate_pushdown: true,
-        quantization_level: PQ4,
-        clustering_hints: Some(ClusteringHints {
-            enable_ml_clustering: true,
-            max_clusters_to_search: 5,
-        }),
-    }),
+collection_id: viper_collection_id,
+query_vector: query_embedding,
+k: 10,
+search_hints: Some(SearchHints {
+predicate_pushdown: true,
+quantization_level: PQ4,
+clustering_hints: Some(ClusteringHints {
+enable_ml_clustering: true,
+max_clusters_to_search: 5,
+}),
+}),
 };
 ----
 
@@ -233,13 +233,13 @@ let request = SearchVectorsRequest {
 // - Level-aware search prioritization
 
 let request = SearchVectorsRequest {
-    collection_id: sst_collection_id,
-    query_vector: query_embedding,
-    k: 10,
-    search_hints: Some(SearchHints {
-        use_bloom_filters: true,
-        max_levels_to_search: 5,
-    }),
+collection_id: sst_collection_id,
+query_vector: query_embedding,
+k: 10,
+search_hints: Some(SearchHints {
+use_bloom_filters: true,
+max_levels_to_search: 5,
+}),
 };
 ----
 
@@ -253,7 +253,7 @@ let request = SearchVectorsRequest {
 |100% (baseline)
 
 |VIPER + PQ4
-|Quantization + clustering  
+|Quantization + clustering
 |10-15x faster
 |90% accuracy
 
@@ -272,28 +272,28 @@ let request = SearchVectorsRequest {
 # Create Collection
 POST /collections
 {
-  "name": "bert_embeddings",
-  "dimension": 768,
-  "distance_metric": "COSINE"
+"name": "bert_embeddings",
+"dimension": 768,
+"distance_metric": "COSINE"
 }
 
 # Insert Vector
 POST /collections/{id}/vectors
 {
-  "vector_id": "doc_123",
-  "vector": [0.1, 0.2, ...],
-  "metadata": {"category": "research"}
+"vector_id": "doc_123",
+"vector": [0.1, 0.2, ...],
+"metadata": {"category": "research"}
 }
 
 # Search Vectors
 POST /collections/{id}/search
 {
-  "query_vector": [0.1, 0.2, ...],
-  "k": 10,
-  "search_hints": {
-    "quantization_level": "PQ4",
-    "predicate_pushdown": true
-  }
+"query_vector": [0.1, 0.2, ...],
+"k": 10,
+"search_hints": {
+"quantization_level": "PQ4",
+"predicate_pushdown": true
+}
 }
 ----
 
@@ -313,33 +313,33 @@ import asyncio
 from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
 
 async def main():
-    client = ProximaDBClient("localhost:5678")
-    
-    # Create collection
-    collection_config = CollectionConfig(
-        name="bert_embeddings",
-        dimension=768,
-        distance_metric=DistanceMetric.COSINE
-    )
-    collection_id = await client.create_collection(collection_config)
-    
-    # Insert vectors
-    vectors = [
-        {
-            "vector_id": "doc_1",
-            "vector": bert_embedding_1,
-            "metadata": {"category": "news"}
-        }
-    ]
-    await client.batch_insert(collection_id, vectors)
-    
-    # Search
-    results = await client.search_vectors(
-        collection_id=collection_id,
-        query_vector=query_embedding,
-        k=5,
-        metadata_filter={"category": "news"}
-    )
+client = ProximaDBClient("localhost:5678")
+
+# Create collection
+collection_config = CollectionConfig(
+name="bert_embeddings",
+dimension=768,
+distance_metric=DistanceMetric.COSINE
+)
+collection_id = await client.create_collection(collection_config)
+
+# Insert vectors
+vectors = [
+{
+"vector_id": "doc_1",
+"vector": bert_embedding_1,
+"metadata": {"category": "news"}
+}
+]
+await client.batch_insert(collection_id, vectors)
+
+# Search
+results = await client.search_vectors(
+collection_id=collection_id,
+query_vector=query_embedding,
+k=5,
+metadata_filter={"category": "news"}
+)
 
 asyncio.run(main())
 ----
@@ -352,34 +352,34 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 
 class BERTEmbeddingGenerator:
-    def __init__(self, model_name="bert-base-uncased"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-    
-    def generate_embedding(self, text: str) -> list[float]:
-        inputs = self.tokenizer(text, return_tensors="pt", 
-                              truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            embedding = outputs.last_hidden_state[:, 0, :].squeeze()
-        return embedding.numpy().tolist()
+def __init__(self, model_name="bert-base-uncased"):
+self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+self.model = AutoModel.from_pretrained(model_name)
+
+def generate_embedding(self, text: str) -> list[float]:
+inputs = self.tokenizer(text, return_tensors="pt",
+truncation=True, max_length=512)
+with torch.no_grad():
+outputs = self.model(**inputs)
+embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+return embedding.numpy().tolist()
 
 # Usage with ProximaDB
 bert = BERTEmbeddingGenerator()
 collection_id = await client.create_collection(CollectionConfig(
-    name="bert_documents",
-    dimension=768,
-    distance_metric=DistanceMetric.COSINE
+name="bert_documents",
+dimension=768,
+distance_metric=DistanceMetric.COSINE
 ))
 
 for i, text in enumerate(texts):
-    embedding = bert.generate_embedding(text)
-    await client.insert_vector(
-        collection_id=collection_id,
-        vector_id=f"doc_{i}",
-        vector=embedding,
-        metadata={"text": text}
-    )
+embedding = bert.generate_embedding(text)
+await client.insert_vector(
+collection_id=collection_id,
+vector_id=f"doc_{i}",
+vector=embedding,
+metadata={"text": text}
+)
 ----
 
 === Distance Metrics
@@ -473,31 +473,31 @@ cargo test --test integration
 
 ```
 tests/
-├── unit/                   # Unit tests
-├── integration/            # Integration tests
-├── e2e/                    # End-to-end tests
-└── fixtures/               # Test data
+├── unit/ # Unit tests
+├── integration/ # Integration tests
+├── e2e/ # End-to-end tests
+└── fixtures/ # Test data
 ```
 
 [source,rust]
 ----
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_collection_creation() {
-        let storage = create_test_storage().await;
-        let collection = Collection {
-            name: "test_collection".to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Cosine,
-            ..Default::default()
-        };
-        
-        let result = storage.create_collection(collection).await;
-        assert!(result.is_ok());
-    }
+use super::*;
+
+#[tokio::test]
+async fn test_collection_creation() {
+let storage = create_test_storage().await;
+let collection = Collection {
+name: "test_collection".to_string(),
+dimension: 128,
+distance_metric: DistanceMetric::Cosine,
+..Default::default()
+};
+
+let result = storage.create_collection(collection).await;
+assert!(result.is_ok());
+}
 }
 ----
 
@@ -596,9 +596,9 @@ docker run -p 5678:5678 -v $(pwd)/data:/data proximadb:latest
 
 # With custom config
 docker run -p 5678:5678 \
-  -v $(pwd)/config:/config \
-  -v $(pwd)/data:/data \
-  proximadb:latest --config /config/production.toml
+-v $(pwd)/config:/config \
+-v $(pwd)/data:/data \
+proximadb:latest --config /config/production.toml
 ----
 
 === Kubernetes Deployment
@@ -608,34 +608,34 @@ docker run -p 5678:5678 \
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: proximadb
+name: proximadb
 spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: proximadb
-  template:
-    metadata:
-      labels:
-        app: proximadb
-    spec:
-      containers:
-      - name: proximadb
-        image: proximadb:latest
-        ports:
-        - containerPort: 5678
-        env:
-        - name: PROXIMADB_HOST
-          value: "0.0.0.0"
-        - name: PROXIMADB_STORAGE_URL
-          value: "s3://proximadb-production"
-        resources:
-          requests:
-            memory: "2Gi"
-            cpu: "1000m"
-          limits:
-            memory: "4Gi"
-            cpu: "2000m"
+replicas: 3
+selector:
+matchLabels:
+app: proximadb
+template:
+metadata:
+labels:
+app: proximadb
+spec:
+containers:
+- name: proximadb
+image: proximadb:latest
+ports:
+- containerPort: 5678
+env:
+- name: PROXIMADB_HOST
+value: "0.0.0.0"
+- name: PROXIMADB_STORAGE_URL
+value: "s3://proximadb-production"
+resources:
+requests:
+memory: "2Gi"
+cpu: "1000m"
+limits:
+memory: "4Gi"
+cpu: "2000m"
 ----
 
 == Performance Best Practices
@@ -646,9 +646,9 @@ spec:
 [source,python]
 ----
 config = CollectionConfig(
-    name="analytics_collection",
-    dimension=256,
-    storage_engine=StorageEngine.VIPER
+name="analytics_collection",
+dimension=256,
+storage_engine=StorageEngine.VIPER
 )
 ----
 
@@ -656,13 +656,13 @@ config = CollectionConfig(
 [source,python]
 ----
 config = CollectionConfig(
-    name="realtime_collection", 
-    dimension=256,
-    storage_engine=StorageEngine.SST,
-    sst_config=SstConfig(
-        memtable_size_mb=128,
-        use_bloom_filter=True
-    )
+name="realtime_collection",
+dimension=256,
+storage_engine=StorageEngine.SST,
+sst_config=SstConfig(
+memtable_size_mb=128,
+use_bloom_filter=True
+)
 )
 ----
 
@@ -682,10 +682,10 @@ config = CollectionConfig(
 [source,rust]
 ----
 pub struct RateLimitConfig {
-    pub enabled: bool,
-    pub max_requests: u32,
-    pub window_duration: Duration,
-    pub global_max_requests: Option<u32>,
+pub enabled: bool,
+pub max_requests: u32,
+pub window_duration: Duration,
+pub global_max_requests: Option<u32>,
 }
 ----
 
@@ -720,7 +720,7 @@ verify_integrity = true
 [storage.write_buffer_config.performance.cloud_backup.frequency]
 operations_threshold = 1000
 time_threshold_secs = 300
-size_threshold_bytes = 104857600  # 100MB
+size_threshold_bytes = 104857600 # 100MB
 ----
 
 **Backup Strategies:**
@@ -808,7 +808,7 @@ Detailed description including:
 
 Examples:
 feat(api): add vector similarity search endpoint
-fix(storage): resolve race condition in WriteBuffer flushing  
+fix(storage): resolve race condition in WriteBuffer flushing
 docs(readme): update installation instructions
 ```
 
@@ -878,6 +878,6 @@ perf report
 
 ---
 
-**Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>  
-**Repository**: https://github.com/vjsingh1984/proximadb  
+**Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>
+**Repository**: https://github.com/vjsingh1984/proximadb
 **License**: Apache 2.0

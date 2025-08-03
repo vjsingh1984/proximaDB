@@ -1,253 +1,72 @@
-= ProximaDB Documentation Index: Complete Documentation Portal
-:doctype: book
+= ProximaDB Documentation
 :toc: left
-:toclevels: 3
-:sectlinks:
-:sectanchors:
-:sectnums:
-:source-highlighter: rouge
-:rouge-style: github
-:icons: font
-:experimental:
+:toclevels: 2
 :imagesdir: diagrams/images
-:version: 1.0.0
-:revdate: {docdate}
-:author: ProximaDB Team
 
-ifdef::env-github[]
-:tip-caption: :bulb:
-:note-caption: :information_source:
-:important-caption: :heavy_exclamation_mark:
-:caution-caption: :fire:
-:warning-caption: :warning:
-endif::[]
+**Complete documentation for ProximaDB - the enterprise vector database for AI applications.**
 
-[.lead]
-*ProximaDB Documentation Portal* provides comprehensive navigation and quick access to all documentation resources for the **DirectVectorService-powered** vector database delivering **40-60% insert latency reduction** and **optimized search performance**.
-
-== 🚀 Quick Start Guide
-
-[cols="1,3,1"]
-|===
-|**Level** |**Documentation Path** |**Time**
-
-|🟢 **New Users**
-|link:../README.adoc[Overview] → link:getting_started.adoc[Getting Started] → link:user_guide.adoc[User Guide]
-|30 min
-
-|🟡 **Developers** 
-|link:developer_guide.adoc[Developer Guide] → link:technical_reference.adoc[Technical Reference] → link:appendix_implementation_details.adoc[Implementation Details]
-|2 hours
-
-|🔴 **Architects**
-|link:technical_reference.adoc[Technical Reference] → link:architecture.adoc[Architecture Deep Dive] → link:appendix_performance_metrics.adoc[Performance Metrics]
-|4+ hours
-|===
-
-[TIP]
-====
-🎯 **Fastest Start**: Get ProximaDB running in 5 minutes with the link:getting_started.adoc[Getting Started Guide]
-====
-
-== 📚 Documentation Categories
-
-=== 🎯 Getting Started
+== Quick Navigation
 
 [cols="2,3,1"]
 |===
-|**Document** |**Description** |**Audience**
+|Document |Description |Time
 
-|link:../README.adoc[Project Overview]
-|Main project introduction, competitive advantages, and quick setup
-|All Users
+|link:getting_started.adoc[Getting Started]
+|Setup ProximaDB in 5 minutes
+|5 min
 
-|link:../demo/README.adoc[Demo Guide]
-|Complete feature demonstrations with platform-specific setup
-|New Users
+|link:user_guide.adoc[User Guide]  
+|Complete usage guide with examples
+|15 min
 
-|link:user_guide.adoc[User Guide]
-|Comprehensive usage reference for all features
-|End Users
-|===
-
-=== 🛠️ Development & Architecture
-
-[cols="2,3,1"]
-|===
-|**Document** |**Description** |**Audience**
+|link:architecture.adoc[Architecture]
+|System design and components
+|20 min
 
 |link:technical_reference.adoc[Technical Reference]
-|Comprehensive technical documentation with architecture, APIs, and configuration
-|All Technical Users
+|APIs, configuration, and internals
+|30 min
 
 |link:developer_guide.adoc[Developer Guide]
-|Complete development reference with setup, API docs, and testing
-|Developers
-
-|link:architecture.adoc[Architecture Deep Dive]
-|Detailed system architecture, components, and design decisions
-|Architects
-
-|link:appendix_implementation_details.adoc[Implementation Details]
-|Code patterns, examples, and advanced implementation techniques
-|Senior Developers
-
-|link:appendix_performance_metrics.adoc[Performance Metrics]
-|Comprehensive benchmarks, optimization guidelines, and tuning
-|Performance Engineers
+|Contributing and extending ProximaDB
+|45 min
 |===
 
-=== 🚀 Advanced Features & Planning
+== Documentation by Role
 
-[cols="2,3,1"]
-|===
-|**Document** |**Description** |**Audience**
+=== For Users
+* link:getting_started.adoc[Getting Started] - Quick setup guide
+* link:user_guide.adoc[User Guide] - Using ProximaDB effectively
+* link:api/unified_rest_api.adoc[REST API Reference] - API documentation
 
-|link:quantization_and_optimization.adoc[Vector Quantization]
-|Comprehensive quantization implementation and performance tuning
-|ML Engineers
+=== For Developers  
+* link:developer_guide.adoc[Developer Guide] - Contributing to ProximaDB
+* link:technical_reference.adoc[Technical Reference] - Deep technical details
+* link:appendix_implementation_details.adoc[Implementation Details] - Code patterns
 
-|link:quantization_and_optimization.adoc[Advanced Optimization]
-|Quantization techniques and performance optimization strategies
-|Technical Leaders
+=== For Architects
+* link:architecture.adoc[Architecture] - System design overview
+* link:appendix_performance_metrics.adoc[Performance Metrics] - Benchmarks and optimization
+* link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Guide] - Advanced deployment
 
-|link:../CLAUDE.md[Development Instructions]
-|AI assistant instructions and development guidelines
-|Contributors
+== Specialized Topics
 
-|link:../CHANGELOG.adoc[Changelog]
-|Complete list of features, fixes, and improvements
-|All Users
-|===
+=== Storage & Optimization
+* link:architecture/storage-engine-optimizations.adoc[Storage Engine Optimizations]
+* link:architecture/wal-optimization-insights.adoc[WriteBuffer Optimization]
+* link:architecture/bloom-filter-unified-design.adoc[Bloom Filter Design]
 
-== 🧭 Navigation by Use Case
+=== Advanced Features
+* link:quantization_and_optimization.adoc[Vector Quantization]
+* link:enhancements/viper_vector_compression_enhancement.adoc[VIPER Compression]
 
-=== 🎯 "I want to try ProximaDB quickly"
-1. link:../README.adoc#getting-started[Project overview]
-2. link:getting_started.adoc[5-minute getting started guide]
-3. link:user_guide.adoc[Complete user workflows]
+== Additional Resources
 
-=== 🔧 "I want to integrate ProximaDB into my application"
-1. link:developer_guide.adoc#client-sdk-usage[SDK documentation]
-2. link:technical_reference.adoc#api-reference[API reference]
-3. link:appendix_implementation_details.adoc[Implementation patterns]
-
-=== 🏗️ "I want to understand the architecture"
-1. link:technical_reference.adoc#proto-first-architecture-implementation[System architecture]
-2. link:architecture.adoc[Architecture deep dive]
-3. link:appendix_implementation_details.adoc[Implementation details]
-
-=== ⚡ "I want to optimize performance"
-1. link:appendix_performance_metrics.adoc[Performance benchmarks]
-2. link:technical_reference.adoc#performance-characteristics[Optimization techniques]
-3. link:appendix_performance_metrics.adoc#optimization-guidelines[Tuning guidelines]
-
-=== 🏢 "I want to deploy ProximaDB in production"
-1. link:architecture.adoc#deployment-architecture[Deployment strategies]
-2. link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-disk configuration]
-3. link:developer_guide.adoc#deployment[Production deployment guide]
-
-== 📖 Documentation Standards
-
-=== Visual Hierarchy
-
-All ProximaDB documentation follows consistent visual standards:
-
-* **Headings**: Standardized with emoji icons for quick navigation
-* **Code Blocks**: Syntax highlighting with language specification
-* **Admonitions**: Consistent icons and styling across all documents
-* **Cross-references**: Internal links for seamless navigation
-* **Tables**: Structured layouts for easy scanning
-
-=== Content Organization
-
-* **Lead Paragraphs**: Every document starts with a clear description
-* **Navigation Dashboards**: Status tables for quick understanding
-* **Related Documents**: Cross-links to relevant documentation
-* **Progressive Disclosure**: Information organized from basic to advanced
-
-== 🔄 Document Maintenance
-
-=== Update Schedule
-
-* **Requirements**: Updated with each major feature release
-* **Architecture Docs**: Updated with architectural changes
-* **Developer Guide**: Updated with API changes
-* **Demo Guide**: Updated with new features and examples
-
-=== Version Control
-
-All documentation is version-controlled alongside code with:
-
-* Clear commit messages for documentation changes
-* Review process for major documentation updates
-* Automated cross-reference validation
-* Regular documentation health checks
-
-== 🤝 Contributing to Documentation
-
-[IMPORTANT]
-====
-📝 **Documentation Contributions Welcome**: Help improve ProximaDB documentation by following our link:developer_guide.adoc#contributing[contribution guidelines]
-====
-
-=== Documentation Types Needed
-
-* **Tutorials**: Step-by-step guides for common use cases
-* **How-to Guides**: Problem-solving focused documentation
-* **Explanations**: Background theory and design rationales
-* **Reference**: Complete API and configuration documentation
-
-=== Style Guidelines
-
-* Use clear, concise language
-* Include practical examples
-* Add visual diagrams where helpful
-* Test all code examples
-* Cross-reference related content
-* Update version information
-
-== Release Notes: Documentation Overhaul (2025-07-30)
-
-=== Overview
-Comprehensive documentation alignment with ProximaDB v1.0.0 codebase for production release.
-
-=== Major Updates
-
-==== 1. Terminology Modernization ✅
-* **SST (Sorted String Tables)**: Replaced all LSM references
-* **WriteBuffer**: Replaced all WAL (Write-Ahead Log) references  
-* **Current Classes**: Updated from LockFree* to UnifiedAtomicCoordinator, StorageEngine
-
-==== 2. Configuration Corrections ✅
-* **Bincode as Default**: Fixed documentation showing Avro as default serialization
-* **All Examples Updated**: Configuration samples now use `strategy = "bincode"`
-* **Storage Examples**: Updated from `[storage.lsm]` to `[storage.sst]`
-
-==== 3. Documentation Quality ✅
-* **97.1% Test Coverage**: 946 passed out of 974 total tests
-* **Verified Performance**: 49K vectors/sec gRPC throughput confirmed
-* **Fixed Links**: All internal documentation links verified and corrected
-* **Streamlined Diagrams**: Removed 15 redundant diagrams, regenerated all SVGs
-
-==== 4. Marketing Enhancement ✅
-* **README.adoc**: Transformed to compelling sales document with ROI calculator
-* **Requirements**: Shows 100% production readiness
-* **Architecture Diagrams**: Enhanced with user-focused benefits
-
-=== Production Readiness
-[cols="2,1"]
-|===
-|Metric |Status
-|Test Coverage |946/974 (97.1%)
-|Documentation Accuracy |✅ Verified
-|Configuration Examples |✅ Tested
-|Performance Claims |✅ Benchmarked
-|Internal Links |✅ Working
-|===
+* link:requirements.adoc[Requirements & Roadmap]
+* link:appendix_testing_development.adoc[Testing & Development]  
+* link:../CHANGELOG.adoc[Release History]
+* link:../CONTRIBUTING.adoc[Contributing Guidelines]
 
 ---
 
-**Last Updated**: {docdate} +
-**Documentation Version**: {version} +
-**Contact**: ProximaDB Team
+_Last updated: {docdate}_

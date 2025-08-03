@@ -1,102 +1,102 @@
 %%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1e293b', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#334155', 'lineColor':'#64748b', 'fontSize':'12px', 'fontFamily':'Inter, -apple-system, sans-serif', 'secondaryColor':'#0f172a', 'tertiaryColor':'#1e40af', 'background':'#ffffff', 'mainBkg':'#f8fafc', 'secondBkg':'#e2e8f0' }}}%%
 sequenceDiagram
-    participant Client as 📱 Client
-    participant REST as 🌐 REST API
-    participant gRPC as ⚡ gRPC API  
-    participant Handler as 🔧 UnifiedHandlers
-    participant DVS as ⚡ DirectVectorService
-    participant CS as 🗃️ CollectionService
-    participant Engine as 🗄️ StorageEngine
-    participant VIPER as 🏗️ VIPER Engine
-    participant SST as 🧱 SST Engine
-    participant Atomic as ⚛️ AtomicCoordinator
-    participant Cloud as ☁️ Cloud Storage
+    participant Client as  Client
+    participant REST as  REST API
+    participant gRPC as  gRPC API  
+    participant Handler as  UnifiedHandlers
+    participant DVS as  DirectVectorService
+    participant CS as  CollectionService
+    participant Engine as  StorageEngine
+    participant VIPER as  VIPER Engine
+    participant SST as  SST Engine
+    participant Atomic as  AtomicCoordinator
+    participant Cloud as  Cloud Storage
     
     %% Vector Insert Flow
     Note over Client,Cloud: Vector Insert Operation (Test Status: 1,372 passed, 0 failed, 35 ignored)
     
-    Client->>+REST: POST /collections/{id}/vectors<br/>📦 JSON Batch (500 vectors)
-    REST->>+Handler: insert_vectors_unified()<br/>🔄 JSON → Proto
-    Handler->>+DVS: insert_vectors_direct()<br/>⚡ Direct Memtable Access
+    Client->>+REST: POST /collections/{id}/vectors<br/> JSON Batch (500 vectors)
+    REST->>+Handler: insert_vectors_unified()<br/> JSON → Proto
+    Handler->>+DVS: insert_vectors_direct()<br/> Direct Memtable Access
     
-    Note over DVS: 🔧 Engine Routing Decision<br/>Collection Service Available?
+    Note over DVS:  Engine Routing Decision<br/>Collection Service Available?
     
     alt Collection Service Configured
         DVS->>+CS: get_collection_storage_engine(collection_id)
         CS-->>-DVS: "SST" | "VIPER" | Error
     else No Collection Service (Current Issue)
-        Note over DVS: ⚠️ Defaults to VIPER<br/>(Known routing limitation)
+        Note over DVS:  Defaults to VIPER<br/>(Known routing limitation)
     end
     
     alt VIPER Engine (Default)
-        DVS->>+VIPER: do_flush()<br/>🏗️ Columnar Storage
-        VIPER->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
-        Atomic->>+Cloud: write_to_staging()<br/>💾 Creates .parquet files
-        Cloud-->>-Atomic: ✅ Write Confirmed
-        Atomic-->>-VIPER: ✅ Transaction ID
-        VIPER-->>-DVS: ✅ Insert Complete
+        DVS->>+VIPER: do_flush()<br/> Columnar Storage
+        VIPER->>+Atomic: begin_atomic_operation()<br/> ACID Transaction
+        Atomic->>+Cloud: write_to_staging()<br/> Creates .parquet files
+        Cloud-->>-Atomic:  Write Confirmed
+        Atomic-->>-VIPER:  Transaction ID
+        VIPER-->>-DVS:  Insert Complete
     else SST Engine (If Configured)  
-        DVS->>+SST: do_flush()<br/>🧱 Row-based Storage
-        SST->>+Atomic: begin_atomic_operation()<br/>⚛️ ACID Transaction
-        Atomic->>+Cloud: write_sstables()<br/>💾 Creates .sst files
-        Cloud-->>-Atomic: ✅ Write Confirmed
-        Atomic-->>-SST: ✅ Transaction ID
-        SST-->>-DVS: ✅ Insert Complete
+        DVS->>+SST: do_flush()<br/> Row-based Storage
+        SST->>+Atomic: begin_atomic_operation()<br/> ACID Transaction
+        Atomic->>+Cloud: write_sstables()<br/> Creates .sst files
+        Cloud-->>-Atomic:  Write Confirmed
+        Atomic-->>-SST:  Transaction ID
+        SST-->>-DVS:  Insert Complete
     end
     
-    DVS-->>-Handler: ✅ Batch Inserted
-    Handler-->>-REST: ✅ Proto → JSON Response
-    REST-->>-Client: 📊 Insert Stats<br/>⏱️ 10-49K vectors/sec
+    DVS-->>-Handler:  Batch Inserted
+    Handler-->>-REST:  Proto → JSON Response
+    REST-->>-Client:  Insert Stats<br/> 10-49K vectors/sec
     
     %% Vector Search Flow
     Note over Client,Cloud: Vector Search with Metadata Filtering (Known Issues)
     
-    Client->>+gRPC: SearchVectors()<br/>⚡ Query + metadata filter
-    gRPC->>+Handler: search_vectors_unified()<br/>🔄 Direct Proto
-    Handler->>+DVS: search_vectors()<br/>🎯 Dual Engine Search
+    Client->>+gRPC: SearchVectors()<br/> Query + metadata filter
+    gRPC->>+Handler: search_vectors_unified()<br/> Direct Proto
+    Handler->>+DVS: search_vectors()<br/> Dual Engine Search
     
-    Note over DVS: 🔍 Parallel Search Strategy<br/>Both engines searched simultaneously
+    Note over DVS:  Parallel Search Strategy<br/>Both engines searched simultaneously
     
     par VIPER Search
-        DVS->>+VIPER: search_vectors_unified()<br/>🏗️ Reads .parquet files
-        VIPER->>VIPER: ❌ Metadata filter bug<br/>(Returns 0 results)
-        VIPER-->>-DVS: 📊 Empty Results (Issue)
+        DVS->>+VIPER: search_vectors_unified()<br/> Reads .parquet files
+        VIPER->>VIPER:  Metadata filter bug<br/>(Returns 0 results)
+        VIPER-->>-DVS:  Empty Results (Issue)
     and SST Search
-        DVS->>+SST: search_vectors_unified()<br/>🧱 Looks for .sst files
-        SST->>SST: ❌ File pattern mismatch<br/>(No .sst files found)
-        SST-->>-DVS: 📊 Empty Results (Issue)
+        DVS->>+SST: search_vectors_unified()<br/> Looks for .sst files
+        SST->>SST:  File pattern mismatch<br/>(No .sst files found)
+        SST-->>-DVS:  Empty Results (Issue)
     end
     
-    DVS->>DVS: merge_and_deduplicate()<br/>📊 MVCC Resolution
-    DVS-->>-Handler: ❌ Empty Results (0 matches)
-    Handler-->>-gRPC: ⚡ Direct Proto Response
-    gRPC-->>-Client: 🔍 No Results<br/>⚠️ Expected matches but got 0
+    DVS->>DVS: merge_and_deduplicate()<br/> MVCC Resolution
+    DVS-->>-Handler:  Empty Results (0 matches)
+    Handler-->>-gRPC:  Direct Proto Response
+    gRPC-->>-Client:  No Results<br/> Expected matches but got 0
     
     rect rgb(255, 230, 230)
-        Note over VIPER, SST: ❌ Critical Issues<br/>• VIPER metadata filters return 0 results<br/>• SST engine expects .sst but gets .parquet<br/>• SQL AND/OR operators not implemented<br/>• Collection service routing broken
+        Note over VIPER, SST:  Critical Issues<br/>• VIPER metadata filters return 0 results<br/>• SST engine expects .sst but gets .parquet<br/>• SQL AND/OR operators not implemented<br/>• Collection service routing broken
     end
     
     %% Collection Management Flow
     Note over Client,Cloud: Collection Operations
     
-    Client->>+REST: POST /collections<br/>🗃️ Collection Config
-    REST->>+Handler: handle_collection_operation()<br/>🔄 JSON → Proto
-    Handler->>+CS: create_collection()<br/>🏗️ Metadata Setup
-    CS->>+Engine: initialize_storage()<br/>📁 Directory Creation
-    Engine->>+Atomic: setup_collection_storage()<br/>⚛️ Atomic Setup
-    Atomic->>+Cloud: create_collection_dirs()<br/>📁 Cloud Directories
-    Cloud-->>-Atomic: ✅ Directories Created
-    Atomic-->>-Engine: ✅ Storage Ready
-    Engine-->>-CS: ✅ Collection Initialized
-    CS-->>-Handler: ✅ Collection Created
-    Handler-->>-REST: ✅ Proto → JSON Response
-    REST-->>-Client: 🗃️ Collection Details
+    Client->>+REST: POST /collections<br/> Collection Config
+    REST->>+Handler: handle_collection_operation()<br/> JSON → Proto
+    Handler->>+CS: create_collection()<br/> Metadata Setup
+    CS->>+Engine: initialize_storage()<br/> Directory Creation
+    Engine->>+Atomic: setup_collection_storage()<br/> Atomic Setup
+    Atomic->>+Cloud: create_collection_dirs()<br/> Cloud Directories
+    Cloud-->>-Atomic:  Directories Created
+    Atomic-->>-Engine:  Storage Ready
+    Engine-->>-CS:  Collection Initialized
+    CS-->>-Handler:  Collection Created
+    Handler-->>-REST:  Proto → JSON Response
+    REST-->>-Client:  Collection Details
     
     %% Error Handling Flow
     Note over Client,Cloud: Error Handling & Recovery
     
-    Client->>+gRPC: InsertVectors()<br/>❌ Invalid Data Format
+    Client->>+gRPC: InsertVectors()<br/> Invalid Data Format
     gRPC->>+Handler: handle_vector_batch()
-    Handler->>Handler: validate_proto()<br/>🔍 Schema Validation
-    Handler-->>-gRPC: ❌ ValidationError<br/>📋 Detailed Error Info
-    gRPC-->>-Client: ❌ Error Response<br/>🔧 Actionable Message
+    Handler->>Handler: validate_proto()<br/> Schema Validation
+    Handler-->>-gRPC:  ValidationError<br/> Detailed Error Info
+    gRPC-->>-Client:  Error Response<br/> Actionable Message

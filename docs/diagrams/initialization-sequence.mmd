@@ -12,7 +12,7 @@ sequenceDiagram
     participant REST as REST Server
     participant GRPC as gRPC Server
     
-    Note over Main: 🚀 ProximaDB Initialization Sequence
+    Note over Main:  ProximaDB Initialization Sequence
     
     rect rgb(230, 240, 255)
         Note over Main,MC: Phase 1: Core Services Creation
@@ -49,7 +49,7 @@ sequenceDiagram
         SS-->>Main: Return (SharedServices, CollectionService)
         deactivate SS
         
-        Note over SS: ✅ All services unified under SharedServices
+        Note over SS:  All services unified under SharedServices
     end
     
     rect rgb(255, 240, 230)
@@ -69,7 +69,7 @@ sequenceDiagram
         SE-->>Main: CollectionService injected
         deactivate SE
         
-        Note over SE: ✅ No duplicate CollectionService created
+        Note over SE:  No duplicate CollectionService created
     end
     
     rect rgb(240, 230, 255)
@@ -93,7 +93,7 @@ sequenceDiagram
         deactivate MS
     end
     
-    Note over Main: 🏁 ProximaDB::new() Complete
+    Note over Main:  ProximaDB::new() Complete
     
     rect rgb(255, 255, 230)
         Note over Main,GRPC: Phase 5: Startup Sequence (ProximaDB::start)
@@ -134,8 +134,8 @@ sequenceDiagram
         deactivate MS
     end
     
-    Note over Main,GRPC: 🎉 ProximaDB Ready!<br/>REST: http://localhost:5678<br/>gRPC: http://localhost:5679
+    Note over Main,GRPC:  ProximaDB Ready!<br/>REST: http://localhost:5678<br/>gRPC: http://localhost:5679
     
     rect rgb(200, 255, 200)
-        Note over Main,SE: ✅ Key Design Benefits<br/>• No circular dependencies<br/>• Clean separation of concerns<br/>• Proper recovery order<br/>• Test Status: 890 passed, 0 failed
+        Note over Main,SE:  Key Design Benefits<br/>• No circular dependencies<br/>• Clean separation of concerns<br/>• Proper recovery order<br/>• Test Status: 890 passed, 0 failed
     end

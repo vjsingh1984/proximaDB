@@ -13,79 +13,79 @@
 }}}%%
 graph TB
     %% Load Balancer & CDN
-    subgraph Edge["🌐 Edge & Load Balancing"]
-        CDN["Content Delivery Network<br/>⚡ Global Edge Locations<br/>📊 Static Asset Caching"]
-        LB["Load Balancer<br/>🔄 HAProxy/NGINX<br/>⚖️ Traffic Distribution<br/>🛡️ SSL Termination"]
+    subgraph Edge[" Edge & Load Balancing"]
+        CDN["Content Delivery Network<br/> Global Edge Locations<br/> Static Asset Caching"]
+        LB["Load Balancer<br/> HAProxy/NGINX<br/> Traffic Distribution<br/> SSL Termination"]
     end
     
     %% Application Tier - Multi-Instance
-    subgraph AppTier["🚀 Application Tier (Auto-Scaling)"]
+    subgraph AppTier[" Application Tier (Auto-Scaling)"]
         subgraph Instance1["ProximaDB Instance 1"]
-            App1REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>📊 Test Status: 1,372 passed"]
-            App1GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🚀 10-49K vectors/sec"]
+            App1REST["REST Server<br/> :5678<br/> HTTP/JSON API<br/> Test Status: 1,372 passed"]
+            App1GRPC["gRPC Server<br/> :5679<br/> Binary Proto<br/> 10-49K vectors/sec"]
         end
         
         subgraph Instance2["ProximaDB Instance 2"]
-            App2REST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>⚠️ SQL metadata filtering issues"]
-            App2GRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🔄 Dual Engine Support"]
+            App2REST["REST Server<br/> :5678<br/> HTTP/JSON API<br/> SQL metadata filtering issues"]
+            App2GRPC["gRPC Server<br/> :5679<br/> Binary Proto<br/> Dual Engine Support"]
         end
         
         subgraph InstanceN["ProximaDB Instance N"]
-            AppNREST["REST Server<br/>📍 :5678<br/>🌐 HTTP/JSON API<br/>✅ 100% test pass rate"]
-            AppNGRPC["gRPC Server<br/>📍 :5679<br/>⚡ Binary Proto<br/>🎯 DirectVectorService"]
+            AppNREST["REST Server<br/> :5678<br/> HTTP/JSON API<br/> 100% test pass rate"]
+            AppNGRPC["gRPC Server<br/> :5679<br/> Binary Proto<br/> DirectVectorService"]
         end
     end
     
     %% Multi-Disk Storage Configuration
-    subgraph Storage["🗄️ Multi-Disk Storage Configuration"]
-        subgraph HighPerf["⚡ High-Performance Tier"]
-            NVMe1["NVMe SSD 1<br/>💾 Hot Data Storage<br/>⚡ <100μs Latency<br/>📊 Memory-Mapped Files"]
-            NVMe2["NVMe SSD 2<br/>💾 Index Storage<br/>🎯 AXIS Indexes<br/>🔍 Search Optimization"]
+    subgraph Storage[" Multi-Disk Storage Configuration"]
+        subgraph HighPerf[" High-Performance Tier"]
+            NVMe1["NVMe SSD 1<br/> Hot Data Storage<br/> <100μs Latency<br/> Memory-Mapped Files"]
+            NVMe2["NVMe SSD 2<br/> Index Storage<br/> AXIS Indexes<br/> Search Optimization"]
         end
         
         subgraph Standard["💿 Standard Tier"]
-            SSD1["SATA SSD 1<br/>💿 Warm Data Storage<br/>⏱️ ~1ms Latency<br/>🗜️ Compressed Data"]
-            SSD2["SATA SSD 2<br/>💿 Write Buffers<br/>📝 WAL + Memtables<br/>🔄 Batch Processing"]
+            SSD1["SATA SSD 1<br/>💿 Warm Data Storage<br/> ~1ms Latency<br/> Compressed Data"]
+            SSD2["SATA SSD 2<br/>💿 Write Buffers<br/> WAL + Memtables<br/> Batch Processing"]
         end
         
-        subgraph Archive["📦 Archive Tier"]
-            HDD1["SATA HDD 1<br/>📦 Cold Data Archive<br/>⏱️ ~10ms Latency<br/>💰 Cost Optimized"]
-            HDD2["SATA HDD 2<br/>📦 Backup Storage<br/>🔄 Snapshot Storage<br/>🛡️ Disaster Recovery"]
+        subgraph Archive[" Archive Tier"]
+            HDD1["SATA HDD 1<br/> Cold Data Archive<br/> ~10ms Latency<br/> Cost Optimized"]
+            HDD2["SATA HDD 2<br/> Backup Storage<br/> Snapshot Storage<br/> Disaster Recovery"]
         end
     end
     
     %% Database & Metadata
-    subgraph DataLayer["🗃️ Data & Metadata Layer"]
-        MetadataDB["Metadata Database<br/>🗃️ PostgreSQL/FileStore<br/>📋 Collection Metadata<br/>🔍 Query Planning"]
+    subgraph DataLayer[" Data & Metadata Layer"]
+        MetadataDB["Metadata Database<br/> PostgreSQL/FileStore<br/> Collection Metadata<br/> Query Planning"]
         
-        ConfigStore["Configuration Store<br/>⚙️ Configuration Management<br/>🔧 Runtime Settings<br/>📊 Performance Tuning"]
+        ConfigStore["Configuration Store<br/> Configuration Management<br/> Runtime Settings<br/> Performance Tuning"]
     end
     
     %% Cloud Storage Integration
-    subgraph CloudTier["☁️ Multi-Cloud Storage"]
+    subgraph CloudTier[" Multi-Cloud Storage"]
         subgraph AWS["🔶 Amazon Web Services"]
-            S3["S3 Storage<br/>📦 Object Storage<br/>🔄 Intelligent Tiering<br/>💰 Cost Optimization"]
-            EBS["EBS Volumes<br/>💾 Block Storage<br/>⚡ High IOPS<br/>📊 Provisioned Performance"]
+            S3["S3 Storage<br/> Object Storage<br/> Intelligent Tiering<br/> Cost Optimization"]
+            EBS["EBS Volumes<br/> Block Storage<br/> High IOPS<br/> Provisioned Performance"]
         end
         
         subgraph Azure["🔷 Microsoft Azure"]
-            BlobStorage["Blob Storage<br/>📦 Cool/Archive Tiers<br/>🔄 Lifecycle Management<br/>💰 Cost Optimization"]
-            PremiumSSD["Premium SSD<br/>💾 High-Performance Disks<br/>⚡ Ultra Low Latency<br/>📊 Consistent Performance"]
+            BlobStorage["Blob Storage<br/> Cool/Archive Tiers<br/> Lifecycle Management<br/> Cost Optimization"]
+            PremiumSSD["Premium SSD<br/> High-Performance Disks<br/> Ultra Low Latency<br/> Consistent Performance"]
         end
         
         subgraph GCP["🔴 Google Cloud Platform"]
-            CloudStorage["Cloud Storage<br/>📦 Nearline/Coldline<br/>🤖 Auto-class Management<br/>💰 Predictive Cost Control"]
-            PersistentDisk["Persistent Disk<br/>💾 SSD/HDD Options<br/>⚡ Regional Persistence<br/>🔄 Automatic Snapshots"]
+            CloudStorage["Cloud Storage<br/> Nearline/Coldline<br/> Auto-class Management<br/> Predictive Cost Control"]
+            PersistentDisk["Persistent Disk<br/> SSD/HDD Options<br/> Regional Persistence<br/> Automatic Snapshots"]
         end
     end
     
     %% Monitoring & Operations
-    subgraph Monitoring["📊 Monitoring & Operations"]
-        Prometheus["Prometheus<br/>📊 Metrics Collection<br/>⏰ Time-series Data<br/>🔔 Alerting Rules"]
+    subgraph Monitoring[" Monitoring & Operations"]
+        Prometheus["Prometheus<br/> Metrics Collection<br/>⏰ Time-series Data<br/> Alerting Rules"]
         
-        Grafana["Grafana<br/>📈 Visualization<br/>📊 Performance Dashboards<br/>🎯 Real-time Monitoring"]
+        Grafana["Grafana<br/> Visualization<br/> Performance Dashboards<br/> Real-time Monitoring"]
         
-        Logging["Centralized Logging<br/>📝 ELK Stack/Splunk<br/>🔍 Log Aggregation<br/>🐛 Troubleshooting"]
+        Logging["Centralized Logging<br/> ELK Stack/Splunk<br/> Log Aggregation<br/>🐛 Troubleshooting"]
     end
     
     %% Network Flow

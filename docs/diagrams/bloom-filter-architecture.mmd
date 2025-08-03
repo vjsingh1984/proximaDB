@@ -14,56 +14,56 @@
 graph LR
     %% Input Processing
     subgraph Input["📥 Vector Input Processing"]
-        VectorID["Vector ID<br/>🏷️ String Identifier<br/>📝 User-provided<br/>🔑 Unique Key"]
+        VectorID["Vector ID<br/> String Identifier<br/> User-provided<br/> Unique Key"]
         
-        HashInput["Hash Input Prep<br/>🔧 ID Normalization<br/>📝 UTF-8 Encoding<br/>⚡ Fast Processing"]
+        HashInput["Hash Input Prep<br/> ID Normalization<br/> UTF-8 Encoding<br/> Fast Processing"]
     end
     
     %% Hash Function Pipeline
-    subgraph HashPipeline["🔧 Multi-Hash Pipeline"]
-        Hash1["Hash Function 1<br/>📐 Blake3 (Primary)<br/>⚡ Cryptographic Quality<br/>🚀 Hardware Accelerated"]
+    subgraph HashPipeline[" Multi-Hash Pipeline"]
+        Hash1["Hash Function 1<br/>📐 Blake3 (Primary)<br/> Cryptographic Quality<br/> Hardware Accelerated"]
         
-        Hash2["Hash Function 2<br/>📐 CRC32 (Secondary)<br/>⚡ Ultra Fast<br/>🔄 Hardware CRC"]
+        Hash2["Hash Function 2<br/>📐 CRC32 (Secondary)<br/> Ultra Fast<br/> Hardware CRC"]
         
-        Hash3["Hash Function 3<br/>📐 xxHash (Tertiary)<br/>🚀 Speed Optimized<br/>📊 Good Distribution"]
+        Hash3["Hash Function 3<br/>📐 xxHash (Tertiary)<br/> Speed Optimized<br/> Good Distribution"]
     end
     
     %% Bloom Filter Strategies
-    subgraph FilterStrategies["🌸 Bloom Filter Strategies"]
-        SimpleStrategy["Simple Strategy<br/>📁 strategies/simple.rs<br/>🔧 Single Bit Array<br/>💾 Memory Efficient<br/>⚡ Fast Lookups"]
+    subgraph FilterStrategies[" Bloom Filter Strategies"]
+        SimpleStrategy["Simple Strategy<br/> strategies/simple.rs<br/> Single Bit Array<br/> Memory Efficient<br/> Fast Lookups"]
         
-        BitPackedStrategy["Bit-Packed Strategy<br/>📁 strategies/bit_packed.rs<br/>🗜️ Compressed Storage<br/>📦 64-bit Packing<br/>📈 80% Memory Reduction"]
+        BitPackedStrategy["Bit-Packed Strategy<br/> strategies/bit_packed.rs<br/> Compressed Storage<br/> 64-bit Packing<br/> 80% Memory Reduction"]
         
-        ByteAlignedStrategy["Byte-Aligned Strategy<br/>📁 strategies/byte_aligned.rs<br/>🔧 Cache-Friendly<br/>⚡ SIMD Optimized<br/>🎯 64-byte Alignment"]
+        ByteAlignedStrategy["Byte-Aligned Strategy<br/> strategies/byte_aligned.rs<br/> Cache-Friendly<br/> SIMD Optimized<br/> 64-byte Alignment"]
         
-        CompositeStrategy["Composite Strategy<br/>📁 strategies/composite.rs<br/>🏗️ Multi-tier Filter<br/>⚡ Adaptive Sizing<br/>📊 Dynamic Optimization"]
+        CompositeStrategy["Composite Strategy<br/> strategies/composite.rs<br/> Multi-tier Filter<br/> Adaptive Sizing<br/> Dynamic Optimization"]
     end
     
     %% Filter Operations
-    subgraph Operations["🔍 Filter Operations"]
-        InsertOp["Insert Operation<br/>➕ Add Vector ID<br/>🔧 Set Hash Bits<br/>⚡ O(k) Complexity"]
+    subgraph Operations[" Filter Operations"]
+        InsertOp["Insert Operation<br/>➕ Add Vector ID<br/> Set Hash Bits<br/> O(k) Complexity"]
         
-        QueryOp["Query Operation<br/>🔍 Check Existence<br/>📊 Probabilistic Result<br/>⚡ O(k) Lookup"]
+        QueryOp["Query Operation<br/> Check Existence<br/> Probabilistic Result<br/> O(k) Lookup"]
         
-        FalsePositive["False Positive Handling<br/>⚠️ 1-5% Rate (Configurable)<br/>🔍 Verification Required<br/>📊 Performance Trade-off"]
+        FalsePositive["False Positive Handling<br/> 1-5% Rate (Configurable)<br/> Verification Required<br/> Performance Trade-off"]
     end
     
     %% Performance Metrics
-    subgraph Performance["📊 Performance Characteristics"]
-        MemoryUsage["Memory Usage<br/>💾 8MB → 40MB<br/>📉 80% Reduction Achieved<br/>🎯 Configurable Size"]
+    subgraph Performance[" Performance Characteristics"]
+        MemoryUsage["Memory Usage<br/> 8MB → 40MB<br/> 80% Reduction Achieved<br/> Configurable Size"]
         
-        QuerySpeed["Query Performance<br/>⚡ ~100ns per lookup<br/>🚀 SIMD Acceleration<br/>📊 99.9% Cache Hit"]
+        QuerySpeed["Query Performance<br/> ~100ns per lookup<br/> SIMD Acceleration<br/> 99.9% Cache Hit"]
         
-        AccuracyMetrics["Accuracy Metrics<br/>🎯 False Positive: <5%<br/>✅ No False Negatives<br/>📈 Tunable Precision"]
+        AccuracyMetrics["Accuracy Metrics<br/> False Positive: <5%<br/> No False Negatives<br/> Tunable Precision"]
     end
     
     %% Storage Integration
-    subgraph Storage["🗄️ Storage Integration"]
-        SSTableFilter["SSTable Integration<br/>📁 engines/sst/bloom_filter.rs<br/>🔍 Skip Non-matching Tables<br/>📈 Query Acceleration"]
+    subgraph Storage[" Storage Integration"]
+        SSTableFilter["SSTable Integration<br/> engines/sst/bloom_filter.rs<br/> Skip Non-matching Tables<br/> Query Acceleration"]
         
-        VIPERFilter["VIPER Integration<br/>📁 engines/viper/mod.rs<br/>🏗️ Column Pruning<br/>📊 Parquet Optimization"]
+        VIPERFilter["VIPER Integration<br/> engines/viper/mod.rs<br/> Column Pruning<br/> Parquet Optimization"]
         
-        PersistentStorage["Persistent Storage<br/>💾 Serialized Filters<br/>🔄 Lazy Loading<br/>⚡ Fast Startup"]
+        PersistentStorage["Persistent Storage<br/> Serialized Filters<br/> Lazy Loading<br/> Fast Startup"]
     end
     
     %% Data Flow

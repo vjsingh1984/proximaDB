@@ -1,41 +1,41 @@
 %%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#1e293b', 'primaryTextColor':'#ffffff', 'primaryBorderColor':'#334155', 'lineColor':'#64748b', 'fontSize':'12px', 'fontFamily':'Inter, -apple-system, sans-serif', 'secondaryColor':'#0f172a', 'tertiaryColor':'#1e40af', 'background':'#ffffff', 'mainBkg':'#f8fafc', 'secondBkg':'#e2e8f0' }}}%%
 flowchart TD
     %% Input Stage
-    Start([🔍 Vector Search Request<br/>📊 Query Vector + Filters<br/>🎯 Top-K Results])
+    Start([ Vector Search Request<br/> Query Vector + Filters<br/> Top-K Results])
     
     %% Query Processing
-    QueryParse{🔍 Parse Search Query<br/>📋 Extract Components}
-    VectorQuery[Vector Component<br/>🔢 128-4096 dimensions<br/>📏 Distance Metric]
-    MetadataFilter[Metadata Filters<br/>🏷️ WHERE conditions<br/>🗃️ Collection scope]
+    QueryParse{ Parse Search Query<br/> Extract Components}
+    VectorQuery[Vector Component<br/> 128-4096 dimensions<br/> Distance Metric]
+    MetadataFilter[Metadata Filters<br/> WHERE conditions<br/> Collection scope]
     
     %% Stage 1: Coarse Search
-    Stage1{🎯 Stage 1: Coarse Search<br/>📊 Approximate Filtering}
+    Stage1{ Stage 1: Coarse Search<br/> Approximate Filtering}
     
     %% Index Selection
-    IndexSelect{🤖 AXIS Index Selection<br/>📈 Performance Optimization}
-    HNSW[🔗 HNSW Index<br/>🎯 High Precision<br/>⚡ Graph Traversal]
-    IVF[🏗️ IVF Index<br/>📊 Large Scale<br/>🔍 Clustering-based]
-    LSH[🔑 LSH Index<br/>🎲 Binary/Hamming<br/>⚡ Hash-based]
-    Annoy[🌳 Annoy Index<br/>🚀 Fast Approximate<br/>🌲 Tree-based]
+    IndexSelect{ AXIS Index Selection<br/> Performance Optimization}
+    HNSW[ HNSW Index<br/> High Precision<br/> Graph Traversal]
+    IVF[ IVF Index<br/> Large Scale<br/> Clustering-based]
+    LSH[ LSH Index<br/> Binary/Hamming<br/> Hash-based]
+    Annoy[ Annoy Index<br/> Fast Approximate<br/> Tree-based]
     
     %% Coarse Results
-    CoarseResults[📊 Coarse Candidates<br/>🔢 10-100x Target K<br/>⚡ Fast Retrieval]
+    CoarseResults[ Coarse Candidates<br/> 10-100x Target K<br/> Fast Retrieval]
     
     %% Stage 2: Fine Search  
-    Stage2{🎯 Stage 2: Fine Search<br/>📏 Exact Distance Calculation}
+    Stage2{ Stage 2: Fine Search<br/> Exact Distance Calculation}
     
     %% Distance Computation
-    DistanceCalc[📏 Distance Calculation<br/>📁 compute/unified_distance.rs<br/>🔧 SIMD Optimized<br/>🖥️ Hardware Accelerated]
+    DistanceCalc[ Distance Calculation<br/> compute/unified_distance.rs<br/> SIMD Optimized<br/> Hardware Accelerated]
     
     %% Metadata Application
-    MetadataApply{🏷️ Apply Metadata Filters<br/>🔍 WHERE clause processing}
-    FilteredResults[✅ Filtered Results<br/>🎯 Exact Matches<br/>📊 Score + Metadata]
+    MetadataApply{ Apply Metadata Filters<br/> WHERE clause processing}
+    FilteredResults[ Filtered Results<br/> Exact Matches<br/> Score + Metadata]
     
     %% Final Processing
-    RankingSort[📊 Ranking & Sorting<br/>🏆 Score Normalization<br/>📈 Top-K Selection]
+    RankingSort[ Ranking & Sorting<br/> Score Normalization<br/> Top-K Selection]
     
     %% Output
-    FinalResults([🎯 Final Results<br/>📊 Top-K Vectors<br/>⏱️ <10ms p95<br/>🎯 99.9% Accuracy])
+    FinalResults([ Final Results<br/> Top-K Vectors<br/> <10ms p95<br/> 99.9% Accuracy])
     
     %% Flow Connections
     Start --> QueryParse

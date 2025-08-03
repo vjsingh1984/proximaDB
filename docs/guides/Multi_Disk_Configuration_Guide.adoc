@@ -33,14 +33,14 @@ image::multi_disk_architecture.svg[Multi-Disk Architecture,800,600]
 # Multi-disk WriteBuffer configuration
 [storage.wal_config]
 wal_urls = [
-    "file:///data/disk1/wal",
-    "file:///data/disk2/wal", 
-    "file:///data/disk3/wal"
+"file:///data/disk1/wal",
+"file:///data/disk2/wal",
+"file:///data/disk3/wal"
 ]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
-memory_flush_size_bytes = 1048576  # 1MB
-global_flush_threshold = 536870912  # 512MB
+memory_flush_size_bytes = 1048576 # 1MB
+global_flush_threshold = 536870912 # 512MB
 
 # Storage layout per disk
 [[storage.storage_layout.base_paths]]
@@ -71,13 +71,13 @@ flush_interval_secs = 30
 ----
 [storage.wal_config]
 # Available strategies
-distribution_strategy = "LoadBalanced"      # Round-robin (default)
-distribution_strategy = "HashBased"         # Consistent hashing
-distribution_strategy = "PerformanceBased"  # Fastest disk first
+distribution_strategy = "LoadBalanced" # Round-robin (default)
+distribution_strategy = "HashBased" # Consistent hashing
+distribution_strategy = "PerformanceBased" # Fastest disk first
 
 # Collection affinity
-collection_affinity = true   # Same collection → same disk
-collection_affinity = false  # Maximum distribution
+collection_affinity = true # Same collection → same disk
+collection_affinity = false # Maximum distribution
 ----
 
 === Disk Type Configuration
@@ -85,10 +85,10 @@ collection_affinity = false  # Maximum distribution
 [source,toml]
 ----
 # Performance tiers
-disk_type = { NvmeSsd = { max_iops = 100000 } }        # Highest performance
-disk_type = { SataSsd = { max_iops = 50000 } }         # High performance
-disk_type = { Hdd = { max_iops = 1000 } }              # High capacity
-disk_type = { NetworkStorage = { latency_ms = 5.0 } }  # Cloud storage
+disk_type = { NvmeSsd = { max_iops = 100000 } } # Highest performance
+disk_type = { SataSsd = { max_iops = 50000 } } # High performance
+disk_type = { Hdd = { max_iops = 1000 } } # High capacity
+disk_type = { NetworkStorage = { latency_ms = 5.0 } } # Cloud storage
 ----
 
 == Cloud Storage Configuration
@@ -99,10 +99,10 @@ disk_type = { NetworkStorage = { latency_ms = 5.0 } }  # Cloud storage
 ----
 [storage.wal_config]
 wal_urls = [
-    "file:///mnt/nvme1/wal",                           # Local NVMe
-    "s3://proximadb-wal/cluster1",                     # AWS S3
-    "adls://storage.dfs.core.windows.net/wal",        # Azure Data Lake
-    "gcs://proximadb-gcs/wal"                          # Google Cloud
+"file:///mnt/nvme1/wal", # Local NVMe
+"s3://proximadb-wal/cluster1", # AWS S3
+"adls://storage.dfs.core.windows.net/wal", # Azure Data Lake
+"gcs://proximadb-gcs/wal" # Google Cloud
 ]
 distribution_strategy = "LoadBalanced"
 ----
@@ -113,7 +113,7 @@ distribution_strategy = "LoadBalanced"
 [source,toml]
 ----
 [storage.metadata_backend]
-backend_type = "filestore"  
+backend_type = "filestore"
 storage_url = "s3://proximadb-metadata/cluster1"
 
 [storage.metadata_backend.cloud_config.s3_config]
@@ -153,11 +153,11 @@ use_workload_identity = true
 ----
 [storage.wal_config]
 wal_urls = [
-    "file:///tmp/proximadb/disk1/wal",
-    "file:///tmp/proximadb/disk2/wal"
+"file:///tmp/proximadb/disk1/wal",
+"file:///tmp/proximadb/disk2/wal"
 ]
 distribution_strategy = "LoadBalanced"
-memory_flush_size_bytes = 262144  # 256KB for testing
+memory_flush_size_bytes = 262144 # 256KB for testing
 
 [[storage.storage_layout.base_paths]]
 base_dir = "/tmp/proximadb/disk1/storage"
@@ -170,14 +170,14 @@ disk_type = { NvmeSsd = { max_iops = 10000 } }
 ----
 [storage.wal_config]
 wal_urls = [
-    "file:///mnt/nvme1/proximadb/wal",
-    "file:///mnt/nvme2/proximadb/wal",
-    "file:///mnt/nvme3/proximadb/wal",
-    "file:///mnt/nvme4/proximadb/wal"
+"file:///mnt/nvme1/proximadb/wal",
+"file:///mnt/nvme2/proximadb/wal",
+"file:///mnt/nvme3/proximadb/wal",
+"file:///mnt/nvme4/proximadb/wal"
 ]
 distribution_strategy = "PerformanceBased"
-memory_flush_size_bytes = 16777216   # 16MB
-global_flush_threshold = 1073741824  # 1GB
+memory_flush_size_bytes = 16777216 # 16MB
+global_flush_threshold = 1073741824 # 1GB
 
 [[storage.storage_layout.base_paths]]
 base_dir = "/mnt/nvme1/proximadb/storage"
@@ -191,18 +191,18 @@ capacity_config = { max_wal_size_mb = 10240, warning_threshold_percent = 90.0 }
 ----
 [storage.wal_config]
 wal_urls = [
-    "file:///mnt/nvme1/wal",      # Local performance
-    "s3://backup-wal/cluster1"    # Cloud backup
+"file:///mnt/nvme1/wal", # Local performance
+"s3://backup-wal/cluster1" # Cloud backup
 ]
 distribution_strategy = "PerformanceBased"
 
 [[storage.storage_layout.base_paths]]
-base_dir = "/mnt/nvme1/storage"          # Hot data local
+base_dir = "/mnt/nvme1/storage" # Hot data local
 instance_id = 1
 disk_type = { NvmeSsd = { max_iops = 200000 } }
 
 [[storage.storage_layout.base_paths]]
-base_dir = "s3://cold-storage/cluster1"  # Cold data cloud
+base_dir = "s3://cold-storage/cluster1" # Cold data cloud
 instance_id = 2
 disk_type = { NetworkStorage = { latency_ms = 50.0 } }
 ----
@@ -214,13 +214,13 @@ disk_type = { NetworkStorage = { latency_ms = 50.0 } }
 ----
 [storage.wal_config]
 # Flush threshold tuning
-memory_flush_size_bytes = 1048576      # 1MB - frequent small flushes
-memory_flush_size_bytes = 16777216     # 16MB - balanced performance
-memory_flush_size_bytes = 67108864     # 64MB - maximum batch size
+memory_flush_size_bytes = 1048576 # 1MB - frequent small flushes
+memory_flush_size_bytes = 16777216 # 16MB - balanced performance
+memory_flush_size_bytes = 67108864 # 64MB - maximum batch size
 
 # Memory management
-global_flush_threshold = 536870912     # 512MB - conservative
-global_flush_threshold = 2147483648    # 2GB - aggressive
+global_flush_threshold = 536870912 # 512MB - conservative
+global_flush_threshold = 2147483648 # 2GB - aggressive
 ----
 
 === Disk-Specific Optimization
@@ -229,17 +229,17 @@ global_flush_threshold = 2147483648    # 2GB - aggressive
 # NVMe optimization
 [[storage.storage_layout.base_paths]]
 disk_type = { NvmeSsd = { max_iops = 1000000 } }
-capacity_config = { 
-    max_wal_size_mb = 20480,           # 20GB WriteBuffer
-    warning_threshold_percent = 95.0   # Use more space on fast disks
+capacity_config = {
+max_wal_size_mb = 20480, # 20GB WriteBuffer
+warning_threshold_percent = 95.0 # Use more space on fast disks
 }
 
-# Network storage optimization  
+# Network storage optimization
 [[storage.storage_layout.base_paths]]
 disk_type = { NetworkStorage = { latency_ms = 5.0 } }
 capacity_config = {
-    max_wal_size_mb = 1024,            # 1GB WriteBuffer
-    warning_threshold_percent = 80.0   # Conservative on network
+max_wal_size_mb = 1024, # 1GB WriteBuffer
+warning_threshold_percent = 80.0 # Conservative on network
 }
 ----
 
@@ -251,7 +251,7 @@ capacity_config = {
 # Assignment service status
 curl http://localhost:5678/health/assignment
 
-# Assignment statistics  
+# Assignment statistics
 curl http://localhost:5678/admin/assignment/stats
 
 # Storage usage
@@ -279,9 +279,9 @@ tail -f /var/log/proximadb/server.log | grep "flush\|WriteBuffer"
 ----
 # Check all configured disks
 for disk in /data/disk1 /data/disk2 /data/disk3; do
-    echo "=== $disk ==="
-    df -h $disk
-    du -sh $disk/wal $disk/storage $disk/metadata 2>/dev/null
+echo "=== $disk ==="
+df -h $disk
+du -sh $disk/wal $disk/storage $disk/metadata 2>/dev/null
 done
 ----
 
@@ -309,7 +309,7 @@ sudo -u proximadb mkdir -p /data/disk1/wal/test_collection
 grep "No such file or directory" /var/log/proximadb/server.log
 
 # Verify URL format
-# Correct: file:///data/disk1/wal  
+# Correct: file:///data/disk1/wal
 # Incorrect: file://data/disk1/wal (missing slash)
 ----
 
@@ -320,7 +320,7 @@ grep "No such file or directory" /var/log/proximadb/server.log
 curl http://localhost:5678/admin/assignment/stats | jq '.wal.directory_distribution'
 
 # Good distribution example across 3 disks:
-# {"0": 5, "1": 4, "2": 4}  # Even distribution
+# {"0": 5, "1": 4, "2": 4} # Even distribution
 # {"0": 13, "1": 0, "2": 0} # Investigate poor distribution
 ----
 

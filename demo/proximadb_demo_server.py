@@ -473,12 +473,12 @@ class ProximaDBDemoServer:
     
     def run(self):
         """Start the server"""
-        print(f"🚀 ProximaDB Unified Demo Server")
+        print(f"ProximaDB Unified Demo Server")
         print(f"📡 Serving on http://localhost:{self.port}")
         print(f"🔗 WebSocket: ws://localhost:{self.port}/ws")
         print(f"🔗 ProximaDB URL: {self.proximadb_url}")
-        print(f"📁 Static files: {self.static_dir}")
-        print(f"\n✨ Available demos: {', '.join(self.demos.keys())}")
+        print(f"Static files: {self.static_dir}")
+        print(f"\nAvailable demos: {', '.join(self.demos.keys())}")
         print("\nPress Ctrl+C to stop")
         
         self.app.on_startup.append(self.startup)
@@ -583,10 +583,10 @@ class DemoRunner:
             })
         
         # Detect metrics
-        elif "📊" in line:
+        elif "[METRIC]" in line:
             parts = line.split(":")
             if len(parts) >= 2:
-                metric_name = parts[0].replace("📊", "").strip()
+                metric_name = parts[0].replace("[METRIC]", "").strip()
                 metric_value = parts[1].strip()
                 await self.broadcast({
                     "type": "metric",
@@ -597,19 +597,19 @@ class DemoRunner:
                 })
         
         # Detect success/error
-        elif "✅" in line:
+        elif "[SUCCESS]" in line:
             await self.broadcast({
                 "type": "success",
                 "demo_id": self.demo_id,
                 "run_id": self.run_id,
-                "message": line.replace("✅", "").strip()
+                "message": line.replace("[SUCCESS]", "").strip()
             })
-        elif "❌" in line:
+        elif "[ERROR]" in line:
             await self.broadcast({
                 "type": "error",
                 "demo_id": self.demo_id,
                 "run_id": self.run_id,
-                "message": line.replace("❌", "").strip()
+                "message": line.replace("[ERROR]", "").strip()
             })
         
         # Regular log line

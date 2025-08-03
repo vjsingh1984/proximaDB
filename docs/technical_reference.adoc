@@ -1,1031 +1,256 @@
-= ProximaDB Technical Reference - Proto-First Implementation
-:doctype: book
+= Technical Reference
 :toc: left
-:toclevels: 3
-:sectlinks:
-:sectanchors:
-:sectnums:
-:source-highlighter: rouge
-:rouge-style: github
-:icons: font
-:experimental:
-:imagesdir: diagrams/images
-:version: 2025.1
+:toclevels: 2
 
-[.lead]
-Comprehensive technical implementation details for ProximaDB's proto-first architecture, storage engines, and performance optimizations.
-
-== Proto-First Architecture Implementation
-
-=== Zero Double Serialization Pipeline
-
-image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture, width=800, align=center]
-
-_Diagram source: link:diagrams/proximadb-unified-architecture.mmd[View Mermaid source]_
-
-**Core Principle**: Protocol Buffers flow natively through the entire system without intermediate conversions.
-
-[source,rust]
-----
-// VectorRecord is aliased to proto::proximadb::VectorRecord
-pub type VectorRecord = crate::proto::proximadb::VectorRecord;
-
-// Direct proto → WriteBuffer → Storage pipeline
-impl ProtoWriteBufferBatchStrategy {
-    pub fn serialize_batch(&self, vectors: Vec<VectorRecord>) -> Result<Vec<u8>> {
-        let batch = VectorBatch { records: vectors };
-        Ok(batch.encode_to_vec())
-    }
-}
-----
-
-**Handler Consolidation Benefits**:
-- Unified handlers reduced from 12,500 to 1,875 lines
-- Protocol-agnostic business logic with DirectVectorService
-- 40-60% faster operations through direct memtable access
-
-=== DirectVectorService Architecture
-
-image::direct-vector-service.svg[DirectVectorService Architecture, width=800, align=center]
-
-_Diagram source: link:diagrams/direct-vector-service.mmd[View Mermaid source]_
-
-[source,rust]
-----
-pub struct DirectVectorService {
-    global_memtable: Arc<WriteBufferBehaviorWrapper>,
-    flush_coordinator: Arc<WriteBufferFlushCoordinator>,
-    viper_engine: Arc<ViperEngine>,
-    sst_engine: Arc<SstStorage>,
-    distance_compute: UnifiedDistanceCompute,
-}
-
-impl DirectVectorService {
-    pub async fn search_vectors_streaming(&self, query: proto::SearchQuery) -> Result<Vec<proto::SearchResult>> {
-        // Layer 1: Search unflushed WriteBuffer
-        let write_buffer_results = self.search_unflushed_vectors(&query).await?;
-        
-        // Layer 2: Search storage engines with optimization hints
-        let storage_results = match query.optimization_hints {
-            Some(hints) if hints.predicate_pushdown => 
-                self.viper_engine.search_with_predicate_pushdown(&query).await?,
-            _ => self.sst_engine.search_with_bloom_filters(&query).await?,
-        };
-        
-        // Layer 3: Multi-tier deduplication with MVCC ordering
-        self.deduplicate_results(write_buffer_results, storage_results, query.k).await
-    }
-}
-----
-
-== Performance Characteristics
-
-=== Key Performance Metrics
-
-[cols="2,2,2", options="header"]
-|===
-| Operation | Latency | Throughput
-| Vector Insert (batch 100) | 5.73ms | 17,445 vectors/sec
-| Vector Insert (batch 500) | 23.84ms | 20,972 vectors/sec
-| Search (top-10) | 0.6ms | 1,667 searches/sec
-| Search (top-100) | 1.2ms | 833 searches/sec
-| Collection Create | 6.19ms | 162 ops/sec
-|===
-
-=== Optimization Guidelines
-
-* **Batch Size**: Optimal at 100-500 vectors for maximum throughput
-* **Search Performance**: Sub-millisecond for datasets under 100K vectors
-* **Proto Overhead**: Less than 0.2ms per request (< 10% impact)
-* **Hardware Acceleration**: 2-3x improvement with AVX-512/GPU enabled
-
-For detailed performance analysis, see link:appendix_performance_metrics.adoc[Performance Metrics Appendix].
-
-== Storage Engine Details
-
-=== VIPER Storage Engine
-
-**Parquet Integration with Quantization**:
-[source,rust]
-----
-struct ViperEngine {
-    parquet_writer: ParquetWriter<VectorRecord>,
-    ml_clustering: Option<KMeansCluster>,
-    quantization_engine: Arc<UnifiedQuantizationEngine>,
-    column_projection: ColumnProjectionStrategy,
-}
-----
-
-**Vector Storage Format**:
-- **Schema**: Dynamic Parquet schema with List<Float32> for vectors
-- **Quantization**: Adjacent columns for quantized vectors (vector_pq8, vector_binary)
-- **Metadata**: List<Struct<key: String, value: String>> for structured access
-
-=== Unified Parquet Reader Architecture
-
-image::unified-parquet-reader-architecture.svg[Unified Parquet Reader Architecture, width=800, align=center]
-
-_Diagram source: link:diagrams/unified-parquet-reader-architecture.mmd[View Mermaid source]_
-
-**Automatic Strategy Selection with Semantic Distance Results**:
-
-**Key Components**:
-[source,rust]
-----
-pub struct UnifiedParquetReader {
-    filesystem: Arc<FilesystemFactory>,
-    strategy_selector: Arc<ReadingStrategySelector>,
-    cache: Arc<tokio::sync::RwLock<ReaderCache>>,
-    distance_compute: Arc<UnifiedDistanceCompute>,
-}
-
-pub struct UnifiedReadResult {
-    pub vectors: Vec<VectorRecord>,
-    pub similarity_results: Vec<SimilarityResult>,
-    pub total_candidates: usize,
-    pub filtered_candidates: usize,
-    pub strategy_used: String,
-    pub processing_time_ms: u64,
-    pub optimization_stats: OptimizationStats,
-}
-----
-
-==== Reading Strategy Types
-
-[cols="2,2,2,2,2", options="header"]
-|===
-|Strategy |Latency |Throughput |Memory Usage |Best For
-
-|**DirectArrow**
-|5-20ms
-|Very High
-|Moderate
-|Simple queries, small data
-
-|**MetadataFiltered** 
-|10-50ms
-|High
-|Low
-|Filtered queries
-
-|**QuantizedTwoStage**
-|15-100ms
-|Very High
-|Low
-|Large-scale search
-
-|**Hybrid**
-|Variable
-|High
-|Moderate
-|Complex mixed queries
-|===
-
-==== Semantic Distance Integration
-
-**Supported Distance Metrics (13 Total)**:
-
-[cols="2,1,3", options="header"]
-|===
-| Metric | Type | Description
-
-| **Cosine**
-| Angular
-| Angle-based similarity (0=identical, 2=opposite), magnitude-independent
-
-| **Euclidean**
-| Spatial
-| L2 norm - straight-line distance, magnitude-dependent
-
-| **Dot Product**
-| Similarity
-| Inner product (higher = more similar)
-
-| **Manhattan**
-| Spatial
-| L1 norm - sum of absolute differences
-
-| **Hamming**
-| Binary
-| Bit-level differences for binary vectors
-
-| **Jaccard**
-| Set
-| Intersection over union for set similarity
-
-| **Chebyshev, Canberra, Minkowski, Angular, Bray-Curtis, Hellinger**
-| Various
-| Extended metrics with specialized use cases
-|===
-
-**Hardware Acceleration**:
-- AVX-512, AVX2, SSE4.2 for x86_64
-- ARM NEON for aarch64
-- GPU support: CUDA, ROCm, Metal, OpenCL
-- Automatic fallback to scalar implementation
-
-**Normalized Distance Semantics**:
-All distance metrics return normalized values where **LOWER = MORE SIMILAR** for consistent ranking.
-
-==== Filesystem-Agnostic Reading Strategy
-
-[cols="2,2,4", options="header"]
-|===
-|URL Scheme |Strategy |Description
-
-|`file://`
-|LocalArrow
-|Direct Arrow Parquet reader for maximum local performance
-
-|`s3://`
-|CloudRanged  
-|HTTP range requests with multipart support
-
-|`gcs://`, `gs://`
-|CloudRanged
-|HTTP range requests (single ranges)
-
-|`adls://`, `abfss://`
-|CloudRanged
-|HTTP range requests for Azure Data Lake
-
-|`hdfs://` + webhdfs
-|CloudRanged
-|WebHDFS range requests
-
-|`hdfs://` (traditional)
-|CloudBuffered
-|Full file download + in-memory processing
-|===
-
-**Cloud Optimization Benefits**:
-- **Network Transfer**: 90-99% reduction via range requests
-- **Memory Usage**: Configurable limits with bounded processing
-- **Query Planning**: Footer-only reads (~KB instead of GB)
-- **Column Projection**: HTTP range requests for specific columns
-
-=== SST Storage Engine
-
-**SSTable Format**:
-[source,rust]
-----
-struct LsmRecord {
-    key: Vec<u8>,
-    value: Vec<u8>,
-    timestamp: u64,
-    sequence_number: u64,
-    record_type: RecordType,
-}
-----
-
-**Compaction Strategy**:
-- **Levels**: Size-tiered compaction with exponential growth
-- **Bloom Filters**: 0.1% false positive rate for efficient lookups
-- **Merge Policy**: Timestamp-based conflict resolution
-
-== Search Engine Implementation
-
-=== Two-Stage Search Strategy
-
-[source,rust]
-----
-pub struct TwoStageSearchEngine {
-    distance_compute: Arc<UnifiedDistanceCompute>,
-    quantization_engine: Arc<UnifiedQuantizationEngine>,
-    filesystem: Arc<FilesystemFactory>,
-    cloud_reader: Arc<CloudOptimizedParquetReader>,
-    metrics: Arc<SearchMetrics>,
-}
-----
-
-**Stage 1: Quantized Candidate Selection**:
-- Performance optimizations with cloud-aware readers
-- Early termination for close matches
-- Comprehensive metrics collection
-
-**Stage 2: FP32 Refinement**:
-- Memory-efficient candidate management with bounded heap
-- SIMD-optimized distance calculations
-- Batch processing for optimal performance
-
-=== Storage-Aware Polymorphic Search
-
-**Engine Selection Logic**:
-[source,rust]
-----
-async fn select_search_engine(&self, query: &SearchQuery) -> Vec<Box<dyn SearchEngine>> {
-    let mut engines = Vec::new();
-    
-    // WriteBuffer search for unflushed data
-    if self.write_buffer_has_unflushed_data(query.collection_id) {
-        engines.push(Box::new(WriteBufferSearchEngine::new(self.write_buffer.clone())));
-    }
-    
-    // VIPER search with two-stage strategy for quantized data
-    if self.has_quantized_data(query.collection_id) {
-        engines.push(Box::new(TwoStageSearchEngine::new(
-            self.distance_compute.clone(),
-            self.quantization_engine.clone(),
-        )));
-    }
-    
-    // Storage engine selection based on data presence
-    if self.viper_has_data(query.collection_id) {
-        engines.push(Box::new(ViperSearchEngine::new(self.viper.clone())));
-    }
-    
-    if self.sst_has_data(query.collection_id) {
-        engines.push(Box::new(SstSearchEngine::new(self.sst.clone())));
-    }
-    
-    engines
-}
-----
-
-**Result Aggregation**:
-- **Deduplication**: ID-based merging with timestamp precedence
-- **Ranking**: Unified distance scoring across all engines
-- **Limit**: Top-k selection with exact tie-breaking
-
-=== AXIS Indexing System
-
-**Index Types**:
-[source,rust]
-----
-pub enum IndexType {
-    HNSW { m: usize, ef_construction: usize, ef_search: usize },
-    IVF { nlist: usize, nprobe: usize },
-    Flat,
-}
-----
-
-**HNSW Implementation**:
-- **Graph Construction**: Probabilistic layer assignment
-- **Search**: Beam search with configurable ef parameter
-- **Updates**: Incremental updates with rebuild thresholds
-
-== Serialization Systems
-
-=== WriteBuffer Persistence & Recovery
-
-**DirectVectorService Integration**:
-[source,rust]
-----
-pub struct DirectVectorService {
-    global_memtable: Arc<WriteBufferBehaviorWrapper>,
-    write_buffer_config: WriteBufferConfig,
-    collection_service: Option<Arc<dyn CollectionMetadataProvider>>,
-    distance_compute: UnifiedDistanceCompute,
-}
-
-impl DirectVectorService {
-    pub async fn insert_vectors(&self, vectors: Vec<VectorRecord>) -> Result<()> {
-        // 1. Memory write (fast path)
-        self.memtable.add_vector_batch(vectors.clone()).await?;
-        
-        // 2. Atomic disk persistence (durability)
-        if self.should_persist_to_disk() {
-            self.persist_vectors_async(vectors).await?;
-        }
-        
-        Ok(())
-    }
-}
-----
-
-**WriteBuffer Serialization Strategies**:
-
-[cols="2,2,2,3", options="header"]
-|===
-|Strategy |Speed |Compatibility |Use Case
-
-|**Bincode**
-|Fastest
-|Rust-native only
-|Default production choice
-
-|**Proto**
-|Fast
-|Cross-language
-|Multi-language environments
-
-|**Avro**
-|Slower
-|Schema evolution
-|Legacy compatibility
-|===
-
-=== Protocol Buffer Schemas
-
-**Core Message Types**:
-[source,protobuf]
-----
-message VectorRecord {
-    string id = 1;
-    string collection_id = 2;
-    repeated float vector = 3;
-    google.protobuf.Struct metadata = 4;
-    int64 timestamp = 5;
-}
-
-message SearchRequest {
-    string collection_id = 1;
-    repeated float query_vector = 2;
-    int32 k = 3;
-    google.protobuf.Struct metadata_filter = 4;
-}
-----
-
-== Distance Computation
-
-=== Unified Distance System
-
-**SIMD Optimization**:
-- **x86**: AVX2 and AVX-512 support
-- **ARM**: NEON optimization
-- **Fallback**: Portable implementation
-
-**Batch Processing**:
-[source,rust]
-----
-pub fn distance_batch(query: &[f32], vectors: &[&[f32]], metric: DistanceMetric) -> Vec<f32> {
-    match metric {
-        DistanceMetric::Cosine => cosine_distance_batch_simd(query, vectors),
-        DistanceMetric::Euclidean => euclidean_distance_batch_simd(query, vectors),
-        _ => generic_distance_batch(query, vectors, metric),
-    }
-}
-----
-
-=== Quantization Implementation
-
-**Product Quantization**:
-[source,rust]
-----
-pub struct ProductQuantization {
-    codebooks: Vec<Vec<Vec<f32>>>,
-    subvector_size: usize,
-    num_clusters: usize,
-}
-----
-
-**Quantization Levels**:
-- **1-bit**: Binary quantization with 32x compression
-- **4-bit**: 8x compression with 72% quality retention
-- **8-bit**: 4x compression with 90% quality retention
-
-== Configuration Management
-
-=== Configuration Schema
-
-**Basic Configuration**:
-[source,toml]
-----
-[server]
-rest_port = 5678
-grpc_port = 5679
-
-[storage]
-default_engine = "viper"
-data_directory = "/var/lib/proximadb"
-write_buffer_flush_threshold_mb = 64
-compaction_enabled = true
-
-[storage.viper]
-enable_clustering = true
-clustering_threshold = 1000000
-quantization_enabled = true
-
-[storage.sst]
-bloom_filter_fp_rate = 0.001
-compaction_style = "leveled"
-
-[wal]
-batch_size = 1000
-channel_capacity = 10000
-write_buffer_size = "64MB"
-
-[flush]
-max_wal_age_hours = 24.0
-max_wal_size_mb = 128.0
-max_vector_count = 1000000
-----
-
-**Performance Tuning**:
-- **Memory**: Configure memtable sizes based on available RAM
-- **Disk**: Adjust flush thresholds for SSD vs HDD
-- **Network**: Tune batch sizes for network latency
-
-=== Monitoring Configuration
-
-**Metrics Collection**:
-[source,toml]
-----
-[monitoring]
-enabled = true
-metrics_endpoint = "/metrics"
-sampling_rate = 1.0
-
-[monitoring.prometheus]
-enabled = true
-port = 9090
-----
-
-**Alerting Rules**:
-- **High Latency**: P95 > 100ms
-- **Error Rate**: >1% of requests failing
-- **Memory Usage**: >80% of available memory
-
-== Advanced Storage Optimizations
-
-=== Index-Based Filtering Framework
-
-ProximaDB implements a sophisticated index-based filtering framework that separates filter evaluation from data reading:
-
-[source,rust]
-----
-// Core framework in /src/core/search/index_based_filter.rs
-pub trait IndexBasedFilter {
-    /// Evaluate filter and return qualifying row indices
-    async fn evaluate_filter(&self, filter: &FilterExpression, metadata: &MetadataView) -> Result<Vec<usize>>;
-    
-    /// Apply indices to extract matching records
-    async fn apply_indices(&self, indices: &[usize], data: &DataView) -> Result<Vec<VectorRecord>>;
-}
-
-// SST Implementation: Three-stage filtering pipeline
-impl IndexBasedFilter for SstIndexReader {
-    async fn evaluate_filter(&self, filter: &FilterExpression, metadata: &MetadataView) -> Result<Vec<usize>> {
-        let bloom_candidates = self.bloom_filter_check(filter)?;
-        let block_candidates = self.index_entry_filtering(filter, bloom_candidates)?;
-        let row_indices = self.in_memory_row_filtering(filter, block_candidates)?;
-        Ok(row_indices)
-    }
-}
-
-// VIPER Implementation: Column-level predicate pushdown
-impl IndexBasedFilter for ViperIndexReader {
-    async fn evaluate_filter(&self, filter: &FilterExpression, metadata: &MetadataView) -> Result<Vec<usize>> {
-        let filter_columns = self.extract_filter_columns(filter);
-        let column_data = self.load_metadata_columns(&filter_columns).await?;
-        let indices = self.parallel_column_evaluation(filter, column_data).await?;
-        Ok(indices)
-    }
-}
-----
-
-**Engine Strategies**:
-- **SST Strategy**: Read entire blocks, filter using indices
-- **VIPER Strategy**: Use indices to selectively read parquet rows/columns (60-90% I/O reduction)
-
-**Parallel Filter Execution**:
-Complex filter expressions can be executed in parallel across multiple threads with set operations (union/intersection) on indices.
-
-=== Bytemuck Zero-Copy Serialization
-
-**Vector Serialization Optimization**:
-[source,rust]
-----
-pub struct VectorSerializationFramework {
-    compression_algorithm: CompressionAlgorithm, // ZSTD, LZ4, None
-    vector_analysis: VectorAnalysisEngine,
-}
-
-impl VectorSerializationFramework {
-    pub fn serialize_vectors_optimized(&self, vectors: &[Vec<f32>]) -> Result<Vec<u8>> {
-        // Bytemuck zero-copy serialization for Vec<f32>
-        let serialized = unsafe { bytemuck::cast_slice(vectors.as_slice()) };
-        
-        // Adaptive compression based on vector characteristics
-        match self.should_compress(vectors) {
-            true => self.compress_with_zstd(serialized),
-            false => Ok(serialized.to_vec()),
-        }
-    }
-}
-----
-
-**Performance Achievements**:
-- **Serialization Speed**: 500-1000 MB/s (5-10x improvement)
-- **Memory Usage**: 10-20% overhead (50% reduction from baseline)
-- **Compression Ratios**: 30-50% average size reduction
-
-=== MVCC Implementation Details
-
-**Core Rules**:
-1. **Version Continuity**: Versions must be sequential (1,2,3...) without gaps
-2. **Gap Handling**: Stop processing at first version gap
-3. **Duplicate Resolution**: For same ID and version, keep record with earliest timestamp
-4. **Tombstone Handling**: Records marked as deleted are removed during compaction
-5. **Append-Only Support**: Vectors without IDs bypass all version checks
-
-**Example Behaviors**:
-- Version Gap: [id="A" v=1], [id="A" v=2], [id="A" v=4] → Keep only v=2
-- Duplicate Version: [id="B" v=1 ts=300], [id="B" v=1 ts=100] → Keep v=1 ts=100
-- Append-Only: [id="" v=1], [id="" v=1] → Keep both (no deduplication)
+Comprehensive technical documentation for ProximaDB.
 
 == API Reference
 
 === REST API
 
-ProximaDB provides a comprehensive REST API for HTTP/JSON integration:
+==== Collections
 
 [source,http]
 ----
-POST /v2/collections
-Content-Type: application/x-protobuf
-
-CreateCollectionRequest {
-  collection_id: "products",
-  config: {
-    vector_dimension: 768,
-    distance_metric: COSINE,
-    storage_engine: SST
-  }
+# Create collection
+POST /collections
+{
+  "name": "my_collection",
+  "dimension": 384,
+  "engine": "viper"
 }
+
+# Get collection
+GET /collections/{name}
+
+# Delete collection
+DELETE /collections/{name}
+
+# List collections
+GET /collections
 ----
 
-**Key Endpoints**:
-- `POST /v2/collections` - Create collections
-- `POST /v2/collections/{id}/vectors` - Insert vectors
-- `POST /v2/collections/{id}/search` - Search vectors
-- `GET /v2/collections/{id}` - Get collection info
-- `DELETE /v2/collections/{id}` - Delete collection
+==== Vectors
+
+[source,http]
+----
+# Insert vectors
+POST /collections/{name}/vectors
+{
+  "vectors": [
+    {
+      "id": "vec1",
+      "vector": [0.1, 0.2, ...],
+      "metadata": {"key": "value"}
+    }
+  ]
+}
+
+# Search vectors
+POST /collections/{name}/search
+{
+  "vector": [0.1, 0.2, ...],
+  "top_k": 10,
+  "metadata_filter": {"key": "value"}
+}
+
+# Get vector
+GET /collections/{name}/vectors/{id}
+
+# Delete vector
+DELETE /collections/{name}/vectors/{id}
+----
 
 === gRPC API
 
-For high-performance applications, use the native gRPC API:
-
-[source,protobuf]
+[source,proto]
 ----
 service ProximaDB {
-  rpc CreateCollection(CreateCollectionRequest) 
-      returns (CreateCollectionResponse);
-  rpc InsertVectors(InsertVectorsRequest) 
-      returns (InsertVectorsResponse);
-  rpc SearchVectors(SearchVectorsRequest) 
-      returns (SearchVectorsResponse);
+  // Collection operations
+  rpc CreateCollection(CreateCollectionRequest) returns (Collection);
+  rpc GetCollection(GetCollectionRequest) returns (Collection);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (Empty);
+  
+  // Vector operations
+  rpc InsertVectors(VectorBatchRequest) returns (VectorBatchResponse);
+  rpc SearchVectors(VectorSearchRequest) returns (VectorSearchResponse);
+  rpc GetVector(GetVectorRequest) returns (VectorRecord);
 }
 ----
 
-**Performance Benefits**:
-- Native protobuf serialization (no JSON overhead)
-- Streaming support for large datasets
-- Built-in compression and authentication
-- Connection multiplexing
+=== SQL Interface
 
-See link:api/unified_rest_api.adoc[Unified REST API Reference] for complete documentation.
-
-== Error Handling
-
-=== Error Types
-
-**Hierarchical Error System**:
-[source,rust]
+[source,sql]
 ----
-pub enum ProximaError {
-    Storage(StorageError),
-    Network(NetworkError),
-    Serialization(SerializationError),
-    Configuration(ConfigError),
-    Internal(InternalError),
-}
+-- Create collection
+CREATE COLLECTION my_collection (dimension=384, engine='viper');
+
+-- Insert vectors
+INSERT INTO my_collection (id, vector, metadata) 
+VALUES ('vec1', [0.1, 0.2, ...], '{"key": "value"}');
+
+-- Search vectors
+SELECT id, metadata, similarity(vector, [0.1, 0.2, ...]) as score
+FROM my_collection
+WHERE metadata->>'key' = 'value'
+ORDER BY score DESC
+LIMIT 10;
+
+-- Delete vectors
+DELETE FROM my_collection WHERE id = 'vec1';
 ----
 
-=== Logging
+== Configuration Reference
 
-**Structured Logging**:
-- **Format**: JSON structured logs for production
-- **Levels**: ERROR, WARN, INFO, DEBUG, TRACE
-- **Context**: Request IDs for distributed tracing
-
-== Performance Optimization
-
-=== Memory Management
-
-**Memory Pool Architecture**:
-- **Vector Buffers**: Pre-allocated pools for common vector sizes
-- **Result Caching**: LRU cache for frequently accessed results
-- **Arena Allocation**: Bulk allocation for reduced fragmentation
-
-=== Concurrency
-
-**Lock-Free Structures**:
-- **DashMap**: Concurrent hash maps for hot paths
-- **Arc-based References**: Shared ownership without blocking
-- **Async/Await**: Non-blocking I/O throughout the stack
-
-=== Caching
-
-**Multi-Level Caching**:
-- **L1**: In-memory vector cache
-- **L2**: Query result cache
-- **L3**: Metadata and schema cache
-
-== Performance Benchmarks
-
-=== Real-World Performance Results
-
-==== Insert Performance (Large Batch Optimization)
-
-[cols="2,2,2,2", options="header"]
-|===
-| Batch Size | Latency (P50) | Latency (P95) | Throughput
-
-| 10 vectors
-| 1.2ms
-| 2.8ms
-| 8,333 vectors/sec
-
-| 100 vectors
-| 5.7ms
-| 12.1ms
-| 17,544 vectors/sec
-
-| 500 vectors
-| 23.8ms
-| 45.2ms
-| 21,008 vectors/sec
-
-| 1000 vectors
-| 48.9ms
-| 89.7ms
-| 20,449 vectors/sec
-|===
-
-==== Search Performance (Real Latencies)
-
-[cols="2,2,2,2", options="header"]
-|===
-| Dataset Size | k=10 Latency | k=100 Latency | QPS
-
-| 1K vectors
-| 0.3ms
-| 0.8ms
-| 3,333 QPS
-
-| 10K vectors
-| 0.6ms
-| 1.2ms
-| 1,667 QPS
-
-| 100K vectors
-| 2.1ms
-| 4.8ms
-| 476 QPS
-
-| 1M vectors
-| 8.7ms
-| 18.2ms
-| 115 QPS
-|===
-
-=== Hardware Acceleration
-
-**Performance Multipliers**:
-- **SIMD (AVX-512)**: 2-4x faster distance calculations
-- **GPU Acceleration**: 5-10x for large batch operations
-- **Memory Bandwidth**: 70-90% utilization (up from 30-50%)
-
-=== Performance Optimization Guidelines
-
-==== Batch Sizes (Optimized for 64MB gRPC Limit)
-
-- **Insert Operations**: 100-500 vectors for optimal throughput
-- **Search Operations**: Single queries with parallel execution
-- **Bulk Operations**: Stream processing for large datasets
-
-==== Memory Configuration
+=== Server Configuration
 
 [source,toml]
 ----
-[storage.write_buffer_config]
-memory_flush_size_bytes = 16777216  # 16MB per collection
-write_buffer_size_mb = 8192         # 8GB global limit
-vector_count_threshold = 10000      # 10K vectors per collection
+[server]
+rest_port = 5678                    # REST API port
+grpc_port = 5679                    # gRPC API port
+worker_threads = 16                 # Number of worker threads
+max_connections = 1000              # Maximum concurrent connections
+request_timeout_secs = 30           # Request timeout
+log_level = "info"                  # Log level: debug/info/warn/error
 ----
 
-==== Search Optimization
-
-- **Index Selection**: HNSW for accuracy, IVF for speed
-- **Quantization**: 8-bit for balanced performance/quality
-- **Caching**: Enable for repeated query patterns
-
-== Multi-Version Concurrency Control (MVCC)
-
-=== Implementation
-
-**VIPER Engine MVCC**:
-[source,rust]
-----
-async fn compact_records(&self, records: Vec<RecordData>) -> Vec<RecordData> {
-    let mut records_by_id: HashMap<String, Vec<RecordData>> = HashMap::new();
-    
-    // Group by ID (skip append-only vectors)
-    for record in records {
-        if record.id.is_empty() { continue; }
-        records_by_id.entry(record.id.clone()).or_default().push(record);
-    }
-    
-    // Process each ID with MVCC rules
-    for (id, mut versions) in records_by_id {
-        versions.sort_by(|a, b| a.version.cmp(&b.version).then(a.timestamp.cmp(&b.timestamp)));
-        
-        // Validate version continuity
-        let mut expected_version = 1;
-        for record in versions {
-            if record.version == expected_version {
-                // Handle duplicate versions - keep earliest timestamp
-                expected_version += 1;
-            } else if record.version > expected_version {
-                break; // Version gap detected
-            }
-        }
-    }
-}
-----
-
-== Intelligent Compaction System
-
-=== Metadata-Based File Analysis
-
-**File Size Estimation**:
-The compaction system analyzes parquet file metadata to create optimally-sized output files without loading entire datasets:
-
-[source,rust]
-----
-async fn analyze_files_and_plan_compaction(&self, input_files: &[String], target_file_size_mb: u64) -> Result<CompactionPlan> {
-    let mut total_size = 0u64;
-    let mut total_rows = 0u64;
-    
-    // Analyze each file's metadata (fast operation)
-    for file_path in input_files {
-        let metadata = self.read_parquet_metadata(file_path).await?;
-        total_size += metadata.file_size;
-        total_rows += metadata.num_rows;
-    }
-    
-    // Calculate optimal output file count
-    let target_size_bytes = target_file_size_mb * 1024 * 1024;
-    let target_file_count = (total_size / target_size_bytes).max(1);
-    let rows_per_file = total_rows / target_file_count;
-    
-    Ok(CompactionPlan { input_files: input_files.to_vec(), target_file_count, rows_per_file, estimated_output_size: total_size })
-}
-----
-
-=== Compaction Benefits
-
-**Performance Improvements**:
-- **File Count Reduction**: Consolidates many small files into optimal sizes
-- **Query Performance**: Fewer files to scan during search operations
-- **Storage Efficiency**: Removes duplicate and deleted records
-
-== Write Buffer and Flush Logic
-
-=== Multi-Trigger Flush System
-
-**Flush Triggers**:
-1. **Memory Threshold**: 16MB per collection (configurable)
-2. **Vector Count**: 10,000 vectors per collection
-3. **Time-Based**: Periodic flush every 5 minutes
-4. **Manual**: Administrative flush commands
-
-**Implementation Logic**:
-The flush system monitors multiple conditions and triggers when any threshold is exceeded, ensuring optimal memory usage and data durability.
-
-== Cost Efficiency Architecture
-
-=== Compute Efficiency
-
-**Rust Zero-Cost Abstractions**:
-- Compile-time optimizations eliminate runtime overhead
-- Memory safety without garbage collection
-- Native performance with type safety
-
-**Hardware Vectorization**:
-- SIMD instruction utilization for vector operations
-- Automatic CPU feature detection and optimization
-- GPU acceleration for large-scale computations
-
-**Async I/O and Multi-threading**:
-- Non-blocking I/O prevents thread starvation
-- Work-stealing schedulers for optimal CPU utilization
-- Concurrent processing of independent operations
-
-=== Memory Efficiency
-
-**Memory Pool Architecture**:
-- Pre-allocated buffers reduce allocation overhead
-- Object reuse minimizes garbage collection pressure
-- Arena allocation for bulk operations
-
-**Zero-Copy Operations**:
-- Direct memory mapping for large files
-- Bytemuck serialization without intermediate copies
-- Streaming processing for bounded memory usage
-
-=== Storage Optimization
-
-**Compression Strategies**:
-- ZSTD compression for optimal storage density
-- Adaptive compression based on data characteristics
-- Column-wise compression in Parquet format
-
-**Intelligent Data Layout**:
-- Columnar storage for analytical workloads
-- Row-oriented access for transactional patterns
-- Hybrid layouts for mixed workloads
-
-=== Network and I/O Efficiency
-
-**Protocol Optimization**:
-- Binary protocols (gRPC) over text-based alternatives
-- Message batching reduces network roundtrips
-- Connection pooling and reuse
-
-**Smart Data Transfer**:
-- HTTP range requests for cloud storage
-- Selective column reading reduces bandwidth
-- Compression in transit
-
-**Predicate Pushdown**:
-- Server-side filtering reduces data transfer
-- Index-based elimination of irrelevant data
-- Early termination for performance optimization
-
-=== Real-World Impact
-
-**Resource Usage Comparison**:
-- 70% reduction in memory usage vs traditional vector databases
-- 60% reduction in storage costs through compression
-- 80% reduction in network bandwidth via optimization
-
-**Operational Benefits**:
-- Lower infrastructure costs through efficiency
-- Reduced operational complexity
-- Improved scalability characteristics
-
-== Configuration for Cost Optimization
+=== Storage Configuration
 
 [source,toml]
 ----
-[storage.compaction]
-max_files_before_compaction = 5
-min_compaction_interval_secs = 60
-target_file_size_mb = 128
+[storage]
+data_dir = "/var/lib/proximadb"     # Data directory
+engine = "dual"                     # Engine: sst/viper/dual
 
-[storage.write_buffer_config]
-memory_flush_size_bytes = 16777216  # 16MB per collection
-write_buffer_size_mb = 8192         # 8GB global limit
-vector_count_threshold = 10000      # 10K vectors per collection
+[storage.write_buffer]
+memory_flush_size_bytes = 67108864  # 64MB per collection
+write_buffer_size_mb = 2048         # 2GB global limit
+serialization_strategy = "bincode"  # bincode/proto/avro
 
-[performance.optimization]
-enable_simd = true
-enable_gpu_acceleration = true
-batch_size_optimization = true
-cache_enabled = true
-compression_level = 6  # ZSTD compression level
+[storage.sst]
+block_size = 16384                  # 16KB blocks
+compaction_interval_secs = 300      # 5 minutes
+max_files_before_compaction = 10
+bloom_filter_bits_per_key = 10      # 1% FPR
+
+[storage.viper]
+row_group_size = 50000
+compression_codec = "zstd"
+compression_level = 6
+enable_statistics = true
 ----
 
-== Operational Guide
+=== Cloud Storage
 
-=== Deployment
+[source,toml]
+----
+# AWS S3
+[storage.s3]
+region = "us-east-1"
+bucket = "proximadb-data"
+use_iam_role = true
+endpoint = ""  # Optional custom endpoint
 
-ProximaDB supports multiple deployment models:
+# Azure Blob Storage
+[storage.azure]
+account_name = "proximadbstorage"
+container = "data"
+use_managed_identity = true
 
-* **Single node**: Development and testing
-* **Distributed**: Production workloads
-* **Cloud native**: Kubernetes operators
-* **Multi-region**: Global deployments
+# Google Cloud Storage
+[storage.gcs]
+project_id = "my-project"
+bucket = "proximadb-data"
+use_workload_identity = true
+----
 
-See link:architecture.adoc#deployment-architecture[Deployment Architecture] for detailed guidance.
+== Distance Metrics
 
-=== Monitoring
+Supported distance metrics:
 
-Built-in monitoring includes:
+[cols="2,3,2"]
+|===
+|Metric |Description |Range
 
-* Prometheus metrics endpoint at `/metrics`
-* OpenTelemetry tracing integration
-* Health check endpoints (`/health`, `/ready`)
-* Performance dashboards
+|cosine
+|Cosine similarity
+|[0, 2]
 
-=== Maintenance
+|euclidean
+|L2 distance
+|[0, ∞)
 
-Regular maintenance tasks:
+|dot_product
+|Inner product
+|(-∞, ∞)
 
-1. **Compaction**: Automatic via CompactionCoordinator or manual triggers
-2. **Backup**: Incremental snapshots of collections and metadata
-3. **Upgrades**: Rolling updates with zero-downtime deployment
-4. **Monitoring**: Alert configuration for performance thresholds
+|manhattan
+|L1 distance
+|[0, ∞)
 
-== References
+|hamming
+|Bit differences
+|[0, n]
 
-* link:https://github.com/proximadb/proximadb[GitHub Repository]
-* link:architecture.adoc[System Architecture Guide]
-* link:api/unified_rest_api.adoc[REST API Reference]
-* link:developer_guide.adoc[Developer Guide]
-* link:../CHANGELOG.adoc[Release History]
+|jaccard
+|Set similarity
+|[0, 1]
+|===
+
+== Index Types
+
+=== HNSW (Hierarchical Navigable Small World)
+* Best for: High recall requirements
+* Memory: O(M × N) where M is connections
+* Build time: O(N log N)
+* Search time: O(log N)
+
+=== IVF (Inverted File)
+* Best for: Large datasets
+* Memory: O(N) + centroids
+* Build time: O(N × K) clustering
+* Search time: O(nprobe × N/K)
+
+=== LSH (Locality Sensitive Hashing)
+* Best for: Approximate matching
+* Memory: O(L × N) where L is tables
+* Build time: O(L × N)
+* Search time: O(L)
+
+=== Annoy (Approximate Nearest Neighbors)
+* Best for: Memory-constrained
+* Memory: O(N × n_trees)
+* Build time: O(N × n_trees × log N)
+* Search time: O(n_trees × log N)
+
+== Error Codes
+
+[cols="2,3,2"]
+|===
+|Code |Description |Action
+
+|COLLECTION_NOT_FOUND
+|Collection does not exist
+|Create collection first
+
+|DIMENSION_MISMATCH
+|Vector dimension incorrect
+|Check collection dimension
+
+|INVALID_METADATA
+|Metadata parsing failed
+|Validate JSON format
+
+|STORAGE_ERROR
+|Storage operation failed
+|Check disk space/permissions
+
+|TIMEOUT
+|Operation timed out
+|Retry with backoff
+|===
 
 ---
-*Last updated: 2025-08-01*
+
+For implementation examples, see link:appendix_implementation_details.adoc[Implementation Details].

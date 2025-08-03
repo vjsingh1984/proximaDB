@@ -1,556 +1,276 @@
-= Appendix C: Testing & Development
+= Testing & Development
 :toc: left
-:toclevels: 3
-:icons: font
-:source-highlighter: highlightjs
+:toclevels: 2
 
-This appendix provides essential testing procedures, development guidelines, and contribution standards for ProximaDB.
+Testing strategies, development workflows, and debugging guide.
 
-== Development Environment Setup
+== Testing Strategy
 
-=== Prerequisites
+=== Test Coverage
 
-[cols="2,2,3"]
+[cols="2,2,2"]
 |===
-| Component | Version | Installation
+|Component |Tests |Coverage
 
-| Rust
-| 1.75.0+
-| `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`
+|Core Services
+|450+
+|95%
 
-| Protocol Buffers
-| 3.20+
-| `apt install protobuf-compiler` or `brew install protobuf`
+|Storage Engines
+|380+
+|92%
 
-| Python
-| 3.8+
-| `apt install python3-pip` or `brew install python`
+|API Handlers
+|250+
+|88%
 
-| Docker
-| 20.10+
-| See https://docs.docker.com/install/
-
-| Git
-| 2.25+
-| `apt install git` or `brew install git`
+|Python SDK
+|170+
+|64%
 |===
 
-=== Initial Setup
+=== Test Types
+
+==== Unit Tests
+[source,bash]
+----
+# Run all unit tests
+cargo test --lib
+
+# Run specific module
+cargo test storage::engines::sst
+
+# Run with output
+cargo test -- --nocapture
+----
+
+==== Integration Tests
+[source,bash]
+----
+# Run integration tests
+cargo test --test '*'
+
+# Run specific integration test
+cargo test --test vector_operations
+
+# Run with release mode (faster)
+cargo test --release
+----
+
+==== Python SDK Tests
+[source,bash]
+----
+cd clients/python
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=proximadb --cov-report=html
+----
+
+== Development Workflow
+
+=== Setup Development Environment
 
 [source,bash]
 ----
 # Clone repository
-git clone https://github.com/proximadb/proximadb.git
+git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb
 
-# Install Rust dependencies
-cargo build --all-features
+# Install dependencies
+rustup update stable
+cargo install cargo-watch cargo-tarpaulin
 
-# Install Python SDK for testing
-cd python-sdk
+# Setup Python environment
+cd clients/python
 pip install -e ".[dev]"
-cd ..
-
-# Run initial tests
-cargo test --all
 ----
 
-== Testing Framework
+=== Common Tasks
 
-=== Test Statistics (2025-08-03)
-
-[cols="2,1,3"]
-|===
-| Test Category | Count | Description
-
-| **Total Rust Tests**
-| 901
-| Comprehensive test suite - 100% pass rate achieved
-
-| **Main Library Tests**  
-| 890
-| Core functionality (all passed, 0 failures, 11 ignored)
-
-| **Integration Tests**
-| 11
-| Cross-module workflows (all passed, 0 failures)
-
-| **Python SDK Tests**
-| 170
-| Client binding validation (168 passed, 2 skipped)
-
-| **Test Pass Rate**
-| 100%
-| All enabled tests passing consistently
-|===
-
-=== Test Organization
-
-```
-tests/
-├── unit/                 # Unit tests (890 tests in library)
-│   ├── storage/         # Storage engine tests
-│   ├── services/        # Service layer tests
-│   ├── compute/         # Distance metrics tests
-│   ├── index/           # AXIS indexing tests
-│   └── core/           # Core functionality tests
-├── integration/         # Integration tests (11 tests)
-│   ├── api/            # API integration tests
-│   ├── storage/        # Storage integration tests
-│   └── end_to_end/     # Full system tests
-├── performance/         # Performance benchmarks
-└── concurrency/         # Concurrency tests
-```
-
-=== Running Tests
-
-==== Essential Test Commands
+==== Running Development Server
 [source,bash]
 ----
-# Run all tests
-cargo test --all
+# Watch mode (auto-restart on changes)
+cargo watch -x 'run --bin proximadb-server'
 
-# Run specific module tests
-cargo test --lib storage::engines::sst
+# With debug logging
+RUST_LOG=debug cargo run --bin proximadb-server
 
-# Run with logging
-RUST_LOG=debug cargo test --lib -- --nocapture
+# With custom config
+cargo run --bin proximadb-server -- --config dev.toml
+----
 
-# Run integration tests
-cargo test --test '*'
+==== Code Quality Checks
+[source,bash]
+----
+# Format code
+cargo fmt
 
-# Run benchmarks
+# Run linter
+cargo clippy -- -D warnings
+
+# Check dependencies
+cargo audit
+----
+
+== Debugging Guide
+
+=== Enable Debug Logging
+
+[source,toml]
+----
+# In config.toml
+[server]
+log_level = "debug"
+log_format = "json"
+
+# Or via environment
+RUST_LOG=proximadb=debug,tower_http=debug
+----
+
+=== Common Issues
+
+==== Memory Leaks
+[source,bash]
+----
+# Run with memory profiler
+cargo build --release
+valgrind --leak-check=full ./target/release/proximadb-server
+----
+
+==== Performance Issues
+[source,bash]
+----
+# CPU profiling
+cargo build --release
+perf record -F 99 ./target/release/proximadb-server
+perf report
+
+# Flame graphs
+cargo flamegraph --bin proximadb-server
+----
+
+==== Test Failures
+[source,bash]
+----
+# Run single test with backtrace
+RUST_BACKTRACE=1 cargo test test_name -- --exact
+
+# Run tests sequentially
+cargo test -- --test-threads=1
+----
+
+== Benchmarking
+
+=== Running Benchmarks
+
+[source,bash]
+----
+# Run all benchmarks
 cargo bench
+
+# Run specific benchmark
+cargo bench vector_insert
+
+# Compare with baseline
+cargo bench -- --save-baseline main
+cargo bench -- --baseline main
 ----
 
-=== Test Patterns
-
-==== Storage Engine Test Template
-[source,rust]
-----
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    
-    async fn create_test_engine() -> (SstEngine, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let config = SstConfig {
-            data_dir: temp_dir.path().to_path_buf(),
-            ..Default::default()
-        };
-        let engine = SstEngine::new(config).await.unwrap();
-        (engine, temp_dir)
-    }
-    
-    #[tokio::test]
-    async fn test_atomic_compaction() {
-        let (engine, _temp_dir) = create_test_engine().await;
-        let vectors = create_test_vectors(1000);
-        engine.insert_batch(&vectors).await.unwrap();
-        
-        let result = engine.compact_atomic(0).await.unwrap();
-        assert!(result.files_created.len() > 0);
-    }
-}
-----
-
-==== Python Integration Test Template
-[source,python]
-----
-import pytest
-from proximadb import ProximaDBClient
-
-@pytest.fixture
-async def client():
-    client = ProximaDBClient("http://localhost:5678", api_version="v2")
-    yield client
-    # Cleanup collections
-
-@pytest.mark.asyncio
-async def test_full_workflow(client):
-    # Create collection, insert vectors, search
-    config = CollectionConfig(
-        collection_id="test_workflow",
-        vector_dimension=128,
-        distance_metric="cosine",
-        storage_engine="sst"
-    )
-    collection = await client.create_collection(config)
-    assert collection.id == "test_workflow"
-----
-
-== Code Quality Standards
-
-=== Rust Code Standards
-
-==== Formatting and Linting
-[source,bash]
-----
-# Format all code
-cargo fmt --all
-
-# Run clippy
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Check formatting
-cargo fmt --all -- --check
-----
-
-==== Documentation Requirements
-[source,rust]
-----
-/// Document all public APIs with examples
-/// 
-/// # Arguments
-/// * `collection_id` - The collection to search
-/// * `vector` - Query vector for similarity search
-/// * `k` - Number of results to return
-/// 
-/// # Returns
-/// Vector of search results ordered by similarity
-/// 
-/// # Errors
-/// Returns error if collection doesn't exist or search fails
-pub async fn search_vectors(
-    &self,
-    collection_id: &str,
-    vector: &[f32],
-    k: usize
-) -> Result<Vec<SearchResult>> {
-    // Implementation
-}
-----
-
-=== Testing Best Practices
-
-1. **Test Naming**: Use descriptive, specific names
-2. **Test Independence**: Each test creates its own environment
-3. **Property-Based Testing**: Use proptest for roundtrip validation
-4. **Error Testing**: Test both success and failure paths
-
-== Performance Testing
-
-=== Benchmark Structure
+=== Writing Benchmarks
 
 [source,rust]
 ----
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-fn bench_vector_insertion(c: &mut Criterion) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+fn vector_insert_benchmark(c: &mut Criterion) {
+    let vectors = create_test_vectors(1000);
     
-    c.bench_function("insert_1k_vectors", |b| {
+    c.bench_function("insert 1000 vectors", |b| {
         b.iter(|| {
-            runtime.block_on(async {
-                let vectors = create_test_vectors(1000);
-                let service = create_test_service().await;
-                service.insert_vectors("test", &vectors).await.unwrap();
-            })
-        })
+            insert_vectors(black_box(&vectors))
+        });
     });
 }
 
-criterion_group!(benches, bench_vector_insertion);
+criterion_group!(benches, vector_insert_benchmark);
 criterion_main!(benches);
 ----
 
-=== Performance Targets
-- **gRPC Insert**: 10-49K vectors/sec (batch size dependent)
-- **Search Latency**: gRPC < 2ms, REST 2-5ms, SQL 3-30ms
-- **SIMD Distance**: 671M elements/sec (Cosine, 128D)
-- **Memory Usage**: <8MB per collection (Bloom filters)
+== CI/CD Pipeline
 
-== Code Coverage Analysis
-
-=== Tarpaulin Configuration
-
-ProximaDB uses **release builds** for code coverage to eliminate segmentation faults in complex Rust codebases.
-
-[source,toml]
-----
-# tarpaulin.toml
-[report]
-out = ["Json", "Html", "Xml"]
-
-# KEY FIX: Release builds eliminate segfaults
-release = true
-jobs = 20
-timeout = "600s"
-engine = "Llvm"
-
-# Performance configuration  
-workspace = true
-lib = true
-tests = true
-
-# Exclude workspace members without Cargo.toml
-exclude-files = [
-    "clients/python/*"
-]
-----
-
-=== Coverage Commands
-[source,bash]
-----
-# Primary coverage analysis (uses tarpaulin.toml)
-cargo test-coverage
-
-# Fallback with explicit flags  
-cargo test-coverage-safe
-
-# Regular tests (debug builds for debugging)
-cargo test --all
-----
-
-=== Current Coverage Status (2025-08-03)
-
-==== Overall Statistics
-- **Current Coverage**: 38.10% (9,669/25,379 lines)
-- **Total Modules**: 185 analyzed
-- **Target Goal**: 50% coverage (+11.9% needed)
-- **Test Success Rate**: 100% (890 library tests passing, 11 ignored)
-
-==== Category Coverage Analysis
-
-[cols="2,2,2,2", options="header"]
-|===
-| Category | Coverage | Lines | Priority
-
-| **Compute** | 68.8% | 1,280 | Low
-| **Query** | 53.2% | 603 | Low  
-| **Index** | 51.6% | 1,765 | Low
-| **Core** | 45.4% | 1,417 | Medium
-| **Storage** | 38.0% | 16,030 | High
-| **Services** | 32.0% | 1,164 | High
-| **Network** | 15.8% | 1,286 | Critical
-|===
-
-==== Critical Zero-Coverage Modules
-
-[cols="3,2,2", options="header"]
-|===
-| Module | Lines | Priority
-
-| **viper/pipeline.rs** | 894 | 🔴 Critical
-| **write_buffer/batch_strategy.rs** | 334 | 🔴 Critical
-| **unified_handlers.rs** | 285 | 🟡 High
-| **metadata/atomic.rs** | 264 | 🔴 Critical
-| **grpc/service.rs** | 442 | 🟡 High
-|===
-
-== MVCC Testing
-
-=== Test Coverage
-
-The MVCC (Multi-Version Concurrency Control) system includes comprehensive test coverage:
-
-==== Unit Tests (`tests/unit/mvcc_logic_tests.rs`)
-- ✅ Version gap detection and handling
-- ✅ Duplicate version timestamp resolution
-- ✅ Append-only vector handling
-- ✅ Version continuity validation
-
-==== Integration Tests (`tests/integration/mvcc_logic_integration_test.rs`)
-- ✅ Cross-engine MVCC consistency
-- ✅ Tombstone handling
-- ✅ Complex multi-document scenarios
-
-=== Test Scenarios
-
-==== Version Gap Example
-[source]
-----
-Input:  [id="A" v=1], [id="A" v=2], [id="A" v=4]
-Result: Keep only v=2 (stop at gap between v=2 and v=4)
-----
-
-==== Duplicate Version Resolution
-[source]
-----
-Input:  [id="B" v=1 ts=300], [id="B" v=1 ts=100]
-Result: Keep v=1 ts=100 (earliest timestamp wins)
-----
-
-== Continuous Integration
-
-=== GitHub Actions Workflow
+=== GitHub Actions
 
 [source,yaml]
 ----
-name: CI
+# .github/workflows/test.yml
+name: Tests
 on: [push, pull_request]
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        components: rustfmt, clippy
-    
-    - name: Check formatting
-      run: cargo fmt -- --check
-    
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-    
-    - name: Run tests
-      run: cargo test --all-features
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+      - run: cargo test --all
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
 ----
 
 === Pre-commit Hooks
 
 [source,bash]
 ----
-#!/bin/bash
 # .git/hooks/pre-commit
-
-# Format code
-cargo fmt --all
-
-# Run clippy
-cargo clippy --all-targets --all-features -- -D warnings || exit 1
-
-# Run quick tests
-cargo test --lib || exit 1
-
-echo "✓ Pre-commit checks passed"
+#!/bin/bash
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test --lib
 ----
 
-== Contributing Guidelines
+== Release Process
 
-=== Code Review Checklist
-
-- [ ] Tests added for new functionality
-- [ ] Documentation updated
-- [ ] Benchmarks run for performance changes
-- [ ] Breaking changes documented
-- [ ] Error messages are helpful
-- [ ] Resource cleanup handled properly
-- [ ] Concurrent access considered
-- [ ] Security implications reviewed
-
-=== Pull Request Template
-
-```markdown
-## Description
-Brief description of changes
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Performance improvement
-- [ ] Documentation update
-
-## Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing completed
-
-## Performance Impact
-- [ ] Benchmarks run
-- [ ] No regression detected
-
-## Checklist
-- [ ] Code follows style guidelines
-- [ ] Self-review completed
-- [ ] Documentation updated
-- [ ] Tests added
-```
-
-== Debugging Techniques
-
-=== Logging Configuration
-
-[source,toml]
-----
-# Enable detailed logging in config.toml
-[logging]
-level = "debug"
-format = "json"
-output = "stdout"
-
-[logging.modules]
-"proximadb::storage::engines::sst" = "trace"
-"proximadb::services::direct_vector" = "debug"
-----
-
-=== Debug Commands
-
+=== Version Bumping
 [source,bash]
 ----
-# Build with debug symbols
-cargo build --features "debug-assertions"
+# Update version in Cargo.toml
+cargo set-version 1.0.1
 
-# Run with verbose logging
-RUST_LOG=proximadb=trace cargo run
-
-# Enable backtrace
-RUST_BACKTRACE=1 cargo test
-
-# Memory analysis
-valgrind --leak-check=full target/debug/proximadb-server
+# Update Python SDK version
+cd clients/python
+poetry version 1.0.1
 ----
 
-=== Common Debugging Scenarios
+=== Building Release
+[source,bash]
+----
+# Build optimized binary
+cargo build --release
 
-1. **Memory Leaks**: Use jemalloc for tracking
-2. **Deadlocks**: Use parking_lot for deadlock detection
-3. **Performance**: Use perf and flamegraph analysis
+# Build Docker image
+docker build -t proximadb:latest .
 
-== Test Suite Performance
+# Build Python wheel
+cd clients/python
+poetry build
+----
 
-=== Execution Metrics
-- **Total Test Time**: ~4 minutes for full suite
-- **Parallel Execution**: Leverages all CPU cores
-- **Memory Usage**: ~2GB peak during test runs
-- **Flaky Tests**: None identified (100% deterministic)
+=== Testing Release
+[source,bash]
+----
+# Test release binary
+./target/release/proximadb-server --version
 
-=== Recent Improvements
+# Test Docker image
+docker run proximadb:latest --version
 
-==== Test Stabilization (2025-08-02)
-- ✅ Fixed WriteBuffer directory creation race conditions
-- ✅ Enhanced error handling with proper context
-- ✅ Improved concurrent test safety
-- ✅ Eliminated all intermittent test failures
-
-==== Performance Optimizations
-- ✅ 20-thread parallel execution
-- ✅ Release builds for coverage analysis
-- ✅ Optimized test data generation
-- ✅ Streamlined test environment setup
-
-=== Current Test Results
-
-[cols="2,1,1,1"]
-|===
-|Test Category |Passed |Failed |Success Rate
-
-|Unit Tests (Library)
-|890
-|0
-|100%
-
-|Integration Tests  
-|11
-|0
-|100%
-
-|Python SDK Tests
-|168
-|2
-|98.8%
-
-|**Total**
-|**1069**
-|**2**
-|**99.8%**
-|===
+# Test Python package
+pip install dist/proximadb-*.whl
+python -c "import proximadb; print(proximadb.__version__)"
+----
 
 ---
-_For implementation patterns, see link:appendix_implementation_details.adoc[Appendix A: Implementation Details]._
+
+For contribution guidelines, see link:../CONTRIBUTING.adoc[Contributing Guide].

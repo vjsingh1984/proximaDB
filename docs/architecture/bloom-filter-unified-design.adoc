@@ -34,12 +34,12 @@ image::bloom-filter-architecture.svg[Bloom Filter Architecture]
 [source,rust]
 ----
 pub trait BloomFilterStrategy: Send + Sync {
-    fn insert(&mut self, key: &[u8]);
-    fn might_contain(&self, key: &[u8]) -> bool;
-    fn clear(&mut self);
-    fn false_positive_rate(&self) -> f64;
-    fn serialize(&self) -> Result<Vec<u8>>;
-    fn approximate_memory_usage(&self) -> usize;
+fn insert(&mut self, key: &[u8]);
+fn might_contain(&self, key: &[u8]) -> bool;
+fn clear(&mut self);
+fn false_positive_rate(&self) -> f64;
+fn serialize(&self) -> Result<Vec<u8>>;
+fn approximate_memory_usage(&self) -> usize;
 }
 ----
 
@@ -51,9 +51,9 @@ Optimized for disk persistence in SSTable files:
 [source,rust]
 ----
 pub struct ByteAlignedBloomFilter {
-    bits: Vec<u8>,
-    num_bits: u32,
-    num_hashes: u32,
+bits: Vec<u8>,
+num_bits: u32,
+num_hashes: u32,
 }
 ----
 
@@ -67,10 +67,10 @@ Memory-efficient implementation for in-memory structures:
 [source,rust]
 ----
 pub struct BitPackedBloomFilter {
-    bits: Vec<u64>,
-    num_bits: usize,
-    num_hashes: u32,
-    items_added: u32,
+bits: Vec<u64>,
+num_bits: usize,
+num_hashes: u32,
+items_added: u32,
 }
 ----
 
@@ -84,8 +84,8 @@ Metadata-aware filtering with multiple sub-filters:
 [source,rust]
 ----
 pub struct CompositeBloomFilter {
-    key_filter: Box<dyn BloomFilterStrategy>,
-    metadata_filters: HashMap<String, Box<dyn BloomFilterStrategy>>,
+key_filter: Box<dyn BloomFilterStrategy>,
+metadata_filters: HashMap<String, Box<dyn BloomFilterStrategy>>,
 }
 ----
 
@@ -101,9 +101,9 @@ Edge case handling for disabled or empty filters:
 pub struct NoOpBloomFilter;
 
 impl BloomFilterStrategy for NoOpBloomFilter {
-    fn might_contain(&self, _key: &[u8]) -> bool {
-        true  // Always check actual data
-    }
+fn might_contain(&self, _key: &[u8]) -> bool {
+true // Always check actual data
+}
 }
 ----
 
@@ -119,26 +119,26 @@ impl BloomFilterStrategy for NoOpBloomFilter {
 pub struct BloomFilterFactory;
 
 impl BloomFilterFactory {
-    pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
-        if !config.enabled || config.expected_items == 0 {
-            return Box::new(NoOpBloomFilter);
-        }
-        
-        match config.strategy {
-            BloomStrategy::ByteAligned => {
-                Box::new(ByteAlignedBloomFilter::new_with_config(config))
-            }
-            BloomStrategy::BitPacked => {
-                Box::new(BitPackedBloomFilter::new(
-                    config.expected_items,
-                    config.false_positive_rate.unwrap_or(0.01)
-                ))
-            }
-            BloomStrategy::Composite => {
-                Box::new(CompositeBloomFilter::new_with_config(config))
-            }
-        }
-    }
+pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
+if !config.enabled || config.expected_items == 0 {
+return Box::new(NoOpBloomFilter);
+}
+
+match config.strategy {
+BloomStrategy::ByteAligned => {
+Box::new(ByteAlignedBloomFilter::new_with_config(config))
+}
+BloomStrategy::BitPacked => {
+Box::new(BitPackedBloomFilter::new(
+config.expected_items,
+config.false_positive_rate.unwrap_or(0.01)
+))
+}
+BloomStrategy::Composite => {
+Box::new(CompositeBloomFilter::new_with_config(config))
+}
+}
+}
 }
 ----
 
@@ -148,18 +148,18 @@ impl BloomFilterFactory {
 ----
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilterConfig {
-    pub enabled: bool,
-    pub strategy: BloomStrategy,
-    pub expected_items: usize,
-    pub false_positive_rate: Option<f64>,
-    pub bits_per_key: Option<u32>,
+pub enabled: bool,
+pub strategy: BloomStrategy,
+pub expected_items: usize,
+pub false_positive_rate: Option<f64>,
+pub bits_per_key: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BloomStrategy {
-    ByteAligned,
-    BitPacked,
-    Composite,
+ByteAligned,
+BitPacked,
+Composite,
 }
 ----
 
@@ -171,16 +171,16 @@ ByteAligned filters for SSTable files:
 [source,rust]
 ----
 let config = BloomFilterConfig {
-    enabled: true,
-    strategy: BloomStrategy::ByteAligned,
-    expected_items: records.len(),
-    bits_per_key: Some(10),
-    ..Default::default()
+enabled: true,
+strategy: BloomStrategy::ByteAligned,
+expected_items: records.len(),
+bits_per_key: Some(10),
+..Default::default()
 };
 
 let bloom_filter = BloomFilterFactory::create(&config);
 for record in &records {
-    bloom_filter.insert(&record.key);
+bloom_filter.insert(&record.key);
 }
 ----
 
@@ -193,14 +193,14 @@ let mut composite_filter = CompositeBloomFilter::new();
 
 // Add key filter
 for record in &records {
-    composite_filter.insert_key(&record.id);
+composite_filter.insert_key(&record.id);
 }
 
 // Add metadata filters
 for record in &records {
-    for (key, value) in &record.metadata {
-        composite_filter.insert_metadata(key, value);
-    }
+for (key, value) in &record.metadata {
+composite_filter.insert_metadata(key, value);
+}
 }
 ----
 
@@ -210,10 +210,10 @@ BitPacked filters for memory efficiency:
 [source,rust]
 ----
 let config = BloomFilterConfig {
-    strategy: BloomStrategy::BitPacked,
-    expected_items: 10000,
-    false_positive_rate: Some(0.01),
-    ..Default::default()
+strategy: BloomStrategy::BitPacked,
+expected_items: 10000,
+false_positive_rate: Some(0.01),
+..Default::default()
 };
 
 let filter = BloomFilterFactory::create(&config);
@@ -227,33 +227,33 @@ let filter = BloomFilterFactory::create(&config);
 ----
 #[derive(Serialize, Deserialize)]
 pub struct SerializedBloomFilter {
-    pub version: u32,
-    pub strategy: BloomStrategy,
-    pub data: Vec<u8>,
-    pub metadata: Option<HashMap<String, String>>,
+pub version: u32,
+pub strategy: BloomStrategy,
+pub data: Vec<u8>,
+pub metadata: Option<HashMap<String, String>>,
 }
 
 impl SerializedBloomFilter {
-    pub fn from_filter(
-        filter: &dyn BloomFilterStrategy,
-        strategy: BloomStrategy
-    ) -> Result<Self> {
-        Ok(Self {
-            version: 1,
-            strategy,
-            data: filter.serialize()?,
-            metadata: None,
-        })
-    }
-    
-    pub fn to_filter(&self) -> Result<Box<dyn BloomFilterStrategy>> {
-        match self.strategy {
-            BloomStrategy::ByteAligned => {
-                ByteAlignedBloomFilter::deserialize(&self.data)
-            }
-            // ... other strategies
-        }
-    }
+pub fn from_filter(
+filter: &dyn BloomFilterStrategy,
+strategy: BloomStrategy
+) -> Result<Self> {
+Ok(Self {
+version: 1,
+strategy,
+data: filter.serialize()?,
+metadata: None,
+})
+}
+
+pub fn to_filter(&self) -> Result<Box<dyn BloomFilterStrategy>> {
+match self.strategy {
+BloomStrategy::ByteAligned => {
+ByteAlignedBloomFilter::deserialize(&self.data)
+}
+// ... other strategies
+}
+}
 }
 ----
 
@@ -297,30 +297,30 @@ Where k = number of hash functions, m = number of metadata fields
 [source,rust]
 ----
 pub fn murmur_hash(key: &[u8], seed: u32) -> u32 {
-    let mut h = seed;
-    
-    for chunk in key.chunks(4) {
-        let mut k = 0u32;
-        for (i, &byte) in chunk.iter().enumerate() {
-            k |= (byte as u32) << (i * 8);
-        }
-        
-        k = k.wrapping_mul(0xcc9e2d51);
-        k = k.rotate_left(15);
-        k = k.wrapping_mul(0x1b873593);
-        
-        h ^= k;
-        h = h.rotate_left(13);
-        h = h.wrapping_mul(5).wrapping_add(0xe6546b64);
-    }
-    
-    h ^= key.len() as u32;
-    h = h.wrapping_mul(0x85ebca6b);
-    h ^= h >> 13;
-    h = h.wrapping_mul(0xc2b2ae35);
-    h ^= h >> 16;
-    
-    h
+let mut h = seed;
+
+for chunk in key.chunks(4) {
+let mut k = 0u32;
+for (i, &byte) in chunk.iter().enumerate() {
+k |= (byte as u32) << (i * 8);
+}
+
+k = k.wrapping_mul(0xcc9e2d51);
+k = k.rotate_left(15);
+k = k.wrapping_mul(0x1b873593);
+
+h ^= k;
+h = h.rotate_left(13);
+h = h.wrapping_mul(5).wrapping_add(0xe6546b64);
+}
+
+h ^= key.len() as u32;
+h = h.wrapping_mul(0x85ebca6b);
+h ^= h >> 13;
+h = h.wrapping_mul(0xc2b2ae35);
+h ^= h >> 16;
+
+h
 }
 ----
 
@@ -329,15 +329,15 @@ pub fn murmur_hash(key: &[u8], seed: u32) -> u32 {
 [source,rust]
 ----
 fn get_hash_indices(&self, key: &[u8], num_bits: usize) -> Vec<usize> {
-    let h1 = murmur_hash(key, 0);
-    let h2 = murmur_hash(key, h1);
-    
-    (0..self.num_hashes)
-        .map(|i| {
-            let hash = h1.wrapping_add(i.wrapping_mul(h2));
-            (hash as usize) % num_bits
-        })
-        .collect()
+let h1 = murmur_hash(key, 0);
+let h2 = murmur_hash(key, h1);
+
+(0..self.num_hashes)
+.map(|i| {
+let hash = h1.wrapping_add(i.wrapping_mul(h2));
+(hash as usize) % num_bits
+})
+.collect()
 }
 ----
 
@@ -348,19 +348,19 @@ fn get_hash_indices(&self, key: &[u8], num_bits: usize) -> Vec<usize> {
 [source,rust]
 ----
 impl ByteAlignedBloomFilter {
-    pub fn new(mut num_bits: u32, num_hashes: u32) -> Self {
-        if num_bits == 0 {
-            num_bits = 64;  // Minimum viable size
-        }
-        
-        let num_bytes = ((num_bits + 7) / 8) as usize;
-        
-        Self {
-            bits: vec![0; num_bytes],
-            num_bits,
-            num_hashes: num_hashes.max(1),
-        }
-    }
+pub fn new(mut num_bits: u32, num_hashes: u32) -> Self {
+if num_bits == 0 {
+num_bits = 64; // Minimum viable size
+}
+
+let num_bytes = ((num_bits + 7) / 8) as usize;
+
+Self {
+bits: vec![0; num_bytes],
+num_bits,
+num_hashes: num_hashes.max(1),
+}
+}
 }
 ----
 
@@ -369,36 +369,36 @@ impl ByteAlignedBloomFilter {
 [source,rust]
 ----
 impl BloomFilterFactory {
-    pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
-        if !config.enabled || config.expected_items == 0 {
-            return Box::new(NoOpBloomFilter);
-        }
-        // Normal creation logic...
-    }
+pub fn create(config: &BloomFilterConfig) -> Box<dyn BloomFilterStrategy> {
+if !config.enabled || config.expected_items == 0 {
+return Box::new(NoOpBloomFilter);
+}
+// Normal creation logic...
+}
 }
 ----
 
 == Best Practices
 
 1. **Choose the Right Strategy**:
-   - Use ByteAligned for disk storage
-   - Use BitPacked for in-memory structures
-   - Use Composite for metadata filtering
+- Use ByteAligned for disk storage
+- Use BitPacked for in-memory structures
+- Use Composite for metadata filtering
 
 2. **Configure Appropriately**:
-   - Set realistic expected_items counts
-   - Use 10 bits per key for 1% false positive rate
-   - Enable only when beneficial (>100 items)
+- Set realistic expected_items counts
+- Use 10 bits per key for 1% false positive rate
+- Enable only when beneficial (>100 items)
 
 3. **Handle Edge Cases**:
-   - Always check filter.enabled before creating
-   - Use NoOpBloomFilter for disabled/empty cases
-   - Validate configuration before use
+- Always check filter.enabled before creating
+- Use NoOpBloomFilter for disabled/empty cases
+- Validate configuration before use
 
 4. **Monitor Performance**:
-   - Track false positive rates in production
-   - Monitor memory usage
-   - Adjust parameters based on workload
+- Track false positive rates in production
+- Monitor memory usage
+- Adjust parameters based on workload
 
 == Conclusion
 

@@ -8,14 +8,14 @@ The official Python client for ProximaDB - the cloud-native vector database for 
 
 == Features
 
-* 🚀 **High Performance**: Optimized for ML workloads with numpy integration
-* 🔄 **Async/Sync APIs**: Both synchronous and asynchronous client support  
-* 🛡️ **Type Safe**: Full typing support with dataclasses
-* 📊 **Batching**: Efficient batch operations for bulk inserts and searches
-* 🔍 **Rich Filtering**: Advanced metadata filtering with complex queries
-* 🌐 **Multi-Protocol**: gRPC and REST API support
-* 📈 **Observability**: Built-in metrics and logging
-* 🔐 **Security**: TLS encryption and authentication support
+* High Performance: **High Performance**: Optimized for ML workloads with numpy integration
+* **Async/Sync APIs**: Both synchronous and asynchronous client support
+* **Type Safe**: Full typing support with dataclasses
+* **Batching**: Efficient batch operations for bulk inserts and searches
+* **Rich Filtering**: Advanced metadata filtering with complex queries
+* **Multi-Protocol**: gRPC and REST API support
+* **Observability**: Built-in metrics and logging
+* **Security**: TLS encryption and authentication support
 
 == Installation
 
@@ -41,8 +41,8 @@ from proximadb import GrpcClient
 
 # Initialize client
 client = GrpcClient(
-    host="localhost",
-    port=5678
+host="localhost",
+port=5678
 )
 
 # Connect to server
@@ -50,38 +50,38 @@ await client.connect()
 
 # Create a collection
 result = await client.create_collection(
-    name="documents",
-    dimension=768,
-    distance_metric="COSINE",
-    indexing_algorithm="HNSW"
+name="documents",
+dimension=768,
+distance_metric="COSINE",
+indexing_algorithm="HNSW"
 )
 
 # Insert vectors
 vectors = [
-    {
-        "id": "doc1",
-        "vector": np.random.rand(768).tolist(),
-        "metadata": {"title": "First document", "category": "test"}
-    },
-    {
-        "id": "doc2", 
-        "vector": np.random.rand(768).tolist(),
-        "metadata": {"title": "Second document", "category": "test"}
-    }
+{
+"id": "doc1",
+"vector": np.random.rand(768).tolist(),
+"metadata": {"title": "First document", "category": "test"}
+},
+{
+"id": "doc2",
+"vector": np.random.rand(768).tolist(),
+"metadata": {"title": "Second document", "category": "test"}
+}
 ]
 
 insert_result = await client.insert_vectors(
-    collection_id="documents",
-    vectors=vectors
+collection_id="documents",
+vectors=vectors
 )
 
 # Search vectors
 query_vector = np.random.rand(768).tolist()
 search_results = await client.search_vectors(
-    collection_id="documents",
-    query_vectors=[query_vector],
-    top_k=5,
-    include_metadata=True
+collection_id="documents",
+query_vectors=[query_vector],
+top_k=5,
+include_metadata=True
 )
 
 # Disconnect
@@ -96,27 +96,27 @@ from proximadb import RestClient
 
 # Initialize REST client
 client = RestClient(
-    base_url="http://localhost:5678"
+base_url="http://localhost:5678"
 )
 
 # Create collection via REST
 collection = client.create_collection({
-    "name": "embeddings",
-    "config": {
-        "dimension": 384,
-        "distance_metric": "COSINE",
-        "storage_engine": "VIPER"
-    }
+"name": "embeddings",
+"config": {
+"dimension": 384,
+"distance_metric": "COSINE",
+"storage_engine": "VIPER"
+}
 })
 
 # Insert vectors via REST
 response = client.insert_vectors(
-    collection_id="embeddings",
-    vectors=[{
-        "id": "vec1",
-        "vector": [0.1] * 384,
-        "metadata": {"source": "BERT"}
-    }]
+collection_id="embeddings",
+vectors=[{
+"id": "vec1",
+"vector": [0.1] * 384,
+"metadata": {"source": "BERT"}
+}]
 )
 ----
 
@@ -129,12 +129,12 @@ response = client.insert_vectors(
 # Efficient batch insert
 batch_size = 1000
 for i in range(0, len(all_vectors), batch_size):
-    batch = all_vectors[i:i+batch_size]
-    await client.insert_vectors(
-        collection_id="documents",
-        vectors=batch,
-        upsert_mode=True
-    )
+batch = all_vectors[i:i+batch_size]
+await client.insert_vectors(
+collection_id="documents",
+vectors=batch,
+upsert_mode=True
+)
 ----
 
 === Metadata Filtering
@@ -143,13 +143,13 @@ for i in range(0, len(all_vectors), batch_size):
 ----
 # Search with filters
 results = await client.search_vectors(
-    collection_id="documents",
-    query_vectors=[query_vector],
-    top_k=10,
-    metadata_filter={
-        "category": "science",
-        "year": {"$gte": 2020}
-    }
+collection_id="documents",
+query_vectors=[query_vector],
+top_k=10,
+metadata_filter={
+"category": "science",
+"year": {"$gte": 2020}
+}
 )
 ----
 
@@ -174,11 +174,11 @@ await client.delete_collection("documents")
 [source,python]
 ----
 client = GrpcClient(
-    host="localhost",
-    port=5678,
-    max_retries=3,
-    timeout=30,
-    keepalive_time=60
+host="localhost",
+port=5678,
+max_retries=3,
+timeout=30,
+keepalive_time=60
 )
 ----
 
@@ -187,10 +187,10 @@ client = GrpcClient(
 [source,python]
 ----
 client = GrpcClient(
-    host="proximadb.example.com",
-    port=443,
-    use_tls=True,
-    tls_cert_path="/path/to/cert.pem"
+host="proximadb.example.com",
+port=443,
+use_tls=True,
+tls_cert_path="/path/to/cert.pem"
 )
 ----
 
@@ -257,13 +257,13 @@ client = GrpcClient(
 from proximadb.exceptions import ProximaDBError, ConnectionError, CollectionNotFoundError
 
 try:
-    await client.search_vectors(...)
+await client.search_vectors(...)
 except CollectionNotFoundError:
-    print("Collection doesn't exist")
+print("Collection doesn't exist")
 except ConnectionError:
-    print("Failed to connect to server")
+print("Failed to connect to server")
 except ProximaDBError as e:
-    print(f"Operation failed: {e}")
+print(f"Operation failed: {e}")
 ----
 
 == Testing
