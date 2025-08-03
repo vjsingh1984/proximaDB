@@ -100,3 +100,17 @@ sequenceDiagram
     Handler->>Handler: validate_proto()<br/> Schema Validation
     Handler-->>-gRPC:  ValidationError<br/> Detailed Error Info
     gRPC-->>-Client:  Error Response<br/> Actionable Message
+    
+    %% Professional Styling for Service Interaction Diagram
+    classDef clientStyle fill:#3b82f6,stroke:#1d4ed8,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef apiStyle fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef serviceStyle fill:#8b5cf6,stroke:#7c3aed,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef engineStyle fill:#f59e0b,stroke:#d97706,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef cloudStyle fill:#ef4444,stroke:#dc2626,stroke-width:3px,color:#ffffff,font-weight:bold
+    
+    %% Apply Styling
+    class Client clientStyle
+    class REST,gRPC apiStyle
+    class Handler,DVS,CS serviceStyle
+    class VIPER,SST,Engine engineStyle
+    class Atomic,Cloud cloudStyle

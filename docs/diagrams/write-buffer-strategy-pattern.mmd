@@ -130,3 +130,19 @@ classDiagram
     note for AvroSerializationStrategy "Analytics Workloads\n• Rich schema metadata\n• Schema registry integration\n• Forward/backward compatibility"
     
     note for BincodeSerializationStrategy "High-Performance Scenarios\n• Maximum throughput\n• Rust-native serialization\n• No schema evolution"
+    
+    %% Professional Styling with High Contrast
+    classDef managerStyle fill:#1e40af,stroke:#1d4ed8,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef strategyStyle fill:#dc2626,stroke:#b91c1c,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef traitStyle fill:#7c3aed,stroke:#6b46c1,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef coordinatorStyle fill:#059669,stroke:#047857,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef dataStyle fill:#d97706,stroke:#b45309,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef optimizationStyle fill:#0891b2,stroke:#0e7490,stroke-width:3px,color:#ffffff,font-weight:bold
+    
+    %% Apply Styling
+    class WriteBufferManager managerStyle
+    class ProtoSerializationStrategy,AvroSerializationStrategy,BincodeSerializationStrategy strategyStyle
+    class WriteBufferStrategy,UnifiedWriteBufferInterface traitStyle
+    class BatchSyncCoordinator,FlushCoordinator coordinatorStyle
+    class VectorBatch,BatchMetadata dataStyle
+    class GlobalPartitionedMemtableStrategy,PerformanceOptimizations optimizationStyle
