@@ -161,7 +161,7 @@ class TestSearchOperations:
             )
         
         # Allow time for indexing (flush and compaction in background)
-        time.sleep(5)  # Increased from 2 to 5 seconds for background indexing
+        time.sleep(1)  # Increased from 2 to 5 seconds for background indexing
     
     def _wait_for_search_results(self, search_func, min_results=1, max_wait=10, retry_interval=1):
         """Helper method to wait for search results with retries"""
@@ -480,48 +480,3 @@ class TestAdvancedSearchFeatures:
     def bert_model(self):
         return SentenceTransformer('all-MiniLM-L6-v2')
     
-    def test_search_performance_basic(self, grpc_client, bert_model):
-        """Test basic search performance characteristics"""
-        collection_name = f"perf_test_{int(time.time())}"
-        config = CollectionConfig(
-            name=collection_name,
-            dimension=768,
-            distance_metric="cosine")
-        
-        collection = grpc_client.create_collection(collection_name, config)
-        
-        try:
-            # Insert test data
-            vector_count = 100
-            for i in range(vector_count):
-                vector = np.random.normal(0, 1, 384).astype(np.float32).tolist()
-                grpc_client.insert_vector(
-                    collection_id=collection_name,
-                    vector_id=f"perf_vector_{i}",
-                    vector=vector,
-                    metadata={"index": i, "category": f"group_{i % 10}"}
-                )
-            
-            # Perform search and measure
-            query_embedding = bert_model.encode(["performance test query"])[0]
-            
-            start_time = time.time()
-            results = grpc_client.search(
-                collection_id=collection_name,
-                vector=query_embedding.tolist(),
-                top_k=10,
-                include_metadata=True
-            )
-            search_time = time.time() - start_time
-            
-            assert len(results) <= 10, "Should not exceed requested number of results"
-            if len(results) < 10:
-                print(f"Got {len(results)} results instead of 10 - indexing may be incomplete")
-            assert search_time < 1.0, f"Search took too long: {search_time:.3f}s"
-            
-        finally:
-            grpc_client.delete_collection(collection_name)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])

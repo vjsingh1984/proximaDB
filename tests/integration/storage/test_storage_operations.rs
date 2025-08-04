@@ -96,6 +96,7 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
 /// Test WAL operations and batching
 #[tokio::test]
 async fn test_wal_operations_and_batching() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection
@@ -173,6 +174,7 @@ async fn test_wal_operations_and_batching() {
 /// Test flush operations
 #[tokio::test]
 async fn test_flush_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection
@@ -279,6 +281,7 @@ async fn test_flush_operations() {
 /// Test compaction operations
 #[tokio::test]
 async fn test_compaction_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection with LSM engine for compaction testing
@@ -387,6 +390,7 @@ async fn test_compaction_operations() {
 /// Test cross-engine consistency
 #[tokio::test]
 async fn test_cross_engine_consistency() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create identical collections with different engines
@@ -490,6 +494,7 @@ async fn test_cross_engine_consistency() {
 /// Test atomic operations
 #[tokio::test]
 async fn test_atomic_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection

@@ -26,6 +26,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from ..config import ClientConfig, load_config
+from ..metadata_utils import json_compatible_value
 from ..models import (
     Collection,
     CollectionConfig,
@@ -446,9 +447,7 @@ class ProximaDBClient:
             vector = vector.tolist()
         
         # Convert metadata to server format
-        metadata_items = []
-        if metadata:
-            metadata_items = [{"key": k, "value": str(v)} for k, v in metadata.items()]
+        metadata_items = self._convert_metadata_to_rest_format(metadata) if metadata else []
         
         # Use batch API with single vector
         vector_record = {
@@ -476,6 +475,30 @@ class ProximaDBClient:
             errors=resp_data.get('errors', []),
             duration_ms=resp_data.get('duration_ms', 0.0)
         )
+    
+    def _convert_metadata_to_rest_format(self, metadata_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Convert Python dict metadata to REST API MetadataItem array format"""
+        if not metadata_dict:
+            return []
+        
+        items = []
+        for key, value in metadata_dict.items():
+            item = {"key": key}
+            
+            # Set the appropriate typed value field
+            if isinstance(value, bool):
+                item["bool_value"] = value
+            elif isinstance(value, (int, float)):
+                item["number_value"] = float(value)
+            elif isinstance(value, str):
+                item["string_value"] = value
+            elif value is None:
+                item["string_value"] = ""
+            else:
+                item["string_value"] = str(value)
+                
+            items.append(item)
+        return items
     
     def insert_vectors(
         self,
@@ -510,10 +533,15 @@ class ProximaDBClient:
         # Prepare vector data
         vector_data = []
         for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
+            # Convert metadata dict to REST API format
+            metadata_items = self._convert_metadata_to_rest_format(
+                metadata[i] if metadata else {}
+            )
             item = {
                 "id": vector_id,
                 "vector": vector,
-                "metadata": metadata[i] if metadata else {}
+                "metadata": metadata_items,
+                "timestamp": int(time.time())  # Current time in seconds
             }
             vector_data.append(item)
         

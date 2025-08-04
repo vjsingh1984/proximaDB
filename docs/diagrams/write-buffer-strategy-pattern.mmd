@@ -139,10 +139,16 @@ classDiagram
     classDef dataStyle fill:#d97706,stroke:#b45309,stroke-width:3px,color:#ffffff,font-weight:bold
     classDef optimizationStyle fill:#0891b2,stroke:#0e7490,stroke-width:3px,color:#ffffff,font-weight:bold
     
-    %% Apply Styling
+    %% Apply Styling (one per line to avoid parser issues)
     class WriteBufferManager managerStyle
-    class ProtoSerializationStrategy,AvroSerializationStrategy,BincodeSerializationStrategy strategyStyle
-    class WriteBufferStrategy,UnifiedWriteBufferInterface traitStyle
-    class BatchSyncCoordinator,FlushCoordinator coordinatorStyle
-    class VectorBatch,BatchMetadata dataStyle
-    class GlobalPartitionedMemtableStrategy,PerformanceOptimizations optimizationStyle
+    class ProtoSerializationStrategy strategyStyle
+    class AvroSerializationStrategy strategyStyle
+    class BincodeSerializationStrategy strategyStyle
+    class WriteBufferStrategy traitStyle
+    class UnifiedWriteBufferInterface traitStyle
+    class BatchSyncCoordinator coordinatorStyle
+    class FlushCoordinator coordinatorStyle
+    class VectorBatch dataStyle
+    class BatchMetadata dataStyle
+    class GlobalPartitionedMemtableStrategy optimizationStyle
+    class PerformanceOptimizations optimizationStyle

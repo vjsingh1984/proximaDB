@@ -431,7 +431,7 @@ class VectorRecord(BaseModel):
     timestamp: int = Field(default_factory=lambda: int(__import__('time').time()))  # Required - seconds since epoch (unsigned)
     updated_at: Optional[int] = None  # Only set if different from timestamp (saves bytes)
     expires_at: Optional[int] = None  # TTL support (seconds since epoch, unsigned)
-    version: Optional[int] = None  # Optional to save bytes, use small positive values
+    version: Optional[int] = 0  # Optional to save bytes, use small positive values
 
     @field_validator('vector')
     def validate_vector(cls, v):

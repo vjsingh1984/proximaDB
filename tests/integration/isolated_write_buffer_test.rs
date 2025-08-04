@@ -14,6 +14,7 @@ use proximadb::storage::persistence::write_buffer::optimized_write_buffer_writer
 
 #[tokio::test]
 async fn test_isolated_write_buffer_basic_operations() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create WriteBuffer configuration
@@ -62,6 +63,7 @@ async fn test_isolated_write_buffer_basic_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_write_buffer_serialization_strategies() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let test_vectors = env.create_test_vectors(5);
     
@@ -114,6 +116,7 @@ async fn test_isolated_write_buffer_serialization_strategies() -> Result<()> {
 
 #[tokio::test] 
 async fn test_isolated_write_buffer_batch_operations() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     
     let wb_config = WriteBufferConfig {
@@ -189,6 +192,7 @@ async fn test_isolated_write_buffer_batch_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_write_buffer_concurrent_writes() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     
     let wb_config = WriteBufferConfig {
@@ -288,6 +292,7 @@ async fn test_isolated_write_buffer_concurrent_writes() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_write_buffer_recovery() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let test_vectors = env.create_test_vectors(8);
     
@@ -353,6 +358,7 @@ async fn test_isolated_write_buffer_recovery() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_write_buffer_compression() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create larger vectors to see compression effect
@@ -446,6 +452,7 @@ async fn test_isolated_write_buffer_compression() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_write_buffer_error_handling() -> Result<()> {
+    setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     
     let wb_config = WriteBufferConfig {

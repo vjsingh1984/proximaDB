@@ -3,12 +3,21 @@
 //! Tests the integration between AXIS and other ProximaDB components
 
 use chrono::Utc;
+use std::sync::Once;
 use proximadb::core::VectorRecord;
 use proximadb::index::axis::{
     AxisConfig, AxisManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };
 use std::sync::Arc;
 use uuid::Uuid;
+
+static INIT: Once = Once::new();
+
+fn setup_hardware_capabilities() {
+    INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 /// Helper function to create test vector records
 fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> Vec<VectorRecord> {
@@ -56,6 +65,7 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
 
 #[tokio::test]
 async fn test_axis_large_scale_insertion() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = AxisManager::new(config).await.unwrap();
 
@@ -87,6 +97,7 @@ async fn test_axis_large_scale_insertion() {
 
 #[tokio::test]
 async fn test_axis_concurrent_operations() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = Arc::new(AxisManager::new(config).await.unwrap());
 
@@ -126,6 +137,7 @@ async fn test_axis_concurrent_operations() {
 
 #[tokio::test]
 async fn test_axis_adaptive_optimization() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = AxisManager::new(config).await.unwrap();
 
@@ -171,6 +183,7 @@ async fn test_axis_adaptive_optimization() {
 
 #[tokio::test]
 async fn test_axis_complex_hybrid_queries() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = AxisManager::new(config).await.unwrap();
 
@@ -233,6 +246,7 @@ async fn test_axis_complex_hybrid_queries() {
 
 #[tokio::test]
 async fn test_axis_system_recovery() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = AxisManager::new(config).await.unwrap();
 
@@ -272,6 +286,7 @@ async fn test_axis_system_recovery() {
 
 #[tokio::test]
 async fn test_axis_collection_lifecycle() {
+    setup_hardware_capabilities();
     let config = AxisConfig::default();
     let axis_manager = AxisManager::new(config).await.unwrap();
 

@@ -352,8 +352,8 @@ class TestConfigFunctions:
         assert config.should_use_grpc() is True  # Default to gRPC
         
         # Test get_protocol_url
-        assert config.get_protocol_url(Protocol.REST) == "https://api.proximadb.com:5679"
-        assert config.get_protocol_url(Protocol.GRPC) == "api.proximadb.com:5681"
+        assert config.get_protocol_url(Protocol.REST) == "https://api.proximadb.com:5678"
+        assert config.get_protocol_url(Protocol.GRPC) == "api.proximadb.com:5679"
     
     def test_client_config_headers(self):
         """Test ClientConfig header methods"""

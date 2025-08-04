@@ -67,66 +67,80 @@ class TestDockerDemoContainer:
         
         # Test create collection
         collection_data = {
-            "name": collection_name,
-            "dimension": 384,
-            "distance_metric": "cosine",
-            "storage_engine": "viper",
-            "indexing_algorithm": "hnsw",
-            "filterable_metadata_fields": ["category", "author"]
+            "operation": "create",
+            "config": {
+                "name": collection_name,
+                "dimension": 384,
+                "distance_metric": "cosine",
+                "storage_engine": "viper",
+                "primary_indexing_algorithm": "hnsw",
+                "filterable_metadata_fields": ["category", "author"]
+            }
         }
         
-        response = session.post(f"{base_url}/v1/collections", json=collection_data)
+        response = session.post(f"{base_url}/api/v1/collection", json=collection_data)
         assert response.status_code in [200, 201], f"Collection creation failed: {response.status_code}"
         
+        # Extract collection ID from response
+        creation_response = response.json()
+        collection_id = creation_response.get("collection", {}).get("id")
+        assert collection_id, f"Collection ID not found in response: {creation_response}"
+        
         # Test list collections
-        response = session.get(f"{base_url}/v1/collections")
+        response = session.get(f"{base_url}/api/v1/collections")
         assert response.status_code == 200, f"List collections failed: {response.status_code}"
         
         collections = response.json()
-        assert collections.get("success") is True, "List collections not successful"
+        assert "collections" in collections, f"Collections not found in response: {collections}"
         
         # Test get specific collection
-        response = session.get(f"{base_url}/v1/collections/{collection_name}")
+        response = session.get(f"{base_url}/api/v1/collection/{collection_id}")
         assert response.status_code == 200, f"Get collection failed: {response.status_code}"
         
         # Test delete collection
-        response = session.delete(f"{base_url}/v1/collections/{collection_name}")
+        response = session.delete(f"{base_url}/api/v1/collection/{collection_id}")
         assert response.status_code in [200, 204], f"Delete collection failed: {response.status_code}"
 
     def test_vector_operations(self, base_url, session):
-        """Test vector operations"""
+        """Test vector operations using SDK"""
         collection_name = f"vector_test_collection_{int(time.time())}"
         
-        # Create test collection for vectors
-        collection_data = {
-            "name": collection_name,
-            "dimension": 3,
-            "distance_metric": "cosine",
-            "storage_engine": "viper"
-        }
-        
-        response = session.post(f"{base_url}/v1/collections", json=collection_data)
-        assert response.status_code in [200, 201], f"Vector collection creation failed: {response.status_code}"
+        # Use SDK instead of raw REST calls for proper metadata handling
+        from proximadb import ProximaDBClient
+        from proximadb.models import VectorRecord
+        client = ProximaDBClient(force_protocol='rest')
         
         try:
-            # Test vector insert
-            vector_data = {
-                "collection_id": collection_name,
-                "vectors": [{
-                    "id": "test_vector_1",
-                    "vector": [0.1, 0.2, 0.3],
-                    "metadata": {"category": "test", "author": "demo"}
-                }]
-            }
+            # Create test collection using SDK
+            client.create_collection(
+                collection_name,
+                dimension=3,
+                distance_metric="cosine",
+                engine="viper"
+            )
             
-            # Note: Vector operations may not be fully integrated yet
-            response = session.post(f"{base_url}/v1/vectors/insert", json=vector_data)
-            # Accept various response codes as the endpoint infrastructure is ready
-            assert response.status_code in [200, 201, 400, 501], \
-                f"Vector insert endpoint not available: {response.status_code}"
+            # Test vector insert using SDK (handles metadata conversion)
+            vectors = [VectorRecord(
+                id="test_vector_1",
+                vector=[0.1, 0.2, 0.3],
+                metadata={"category": "test", "author": "demo"}
+            )]
+            
+            result = client.insert_vectors(collection_name, records=vectors)
+            assert result.metrics.successful_count > 0, "Vector insert should succeed"
+            
+            # Test vector retrieval with metadata
+            retrieved = client.get_vector(collection_name, "test_vector_1", include_metadata=True)
+            assert retrieved is not None, "Vector should be retrievable"
+            assert "metadata" in retrieved, "Metadata should be included"
+            assert retrieved["metadata"]["category"] == "test", "Metadata should be preserved"
+            
         finally:
-            # Cleanup
-            session.delete(f"{base_url}/v1/collections/{collection_name}")
+            # Cleanup using SDK
+            try:
+                client.delete_collection(collection_name)
+            except:
+                pass
 
     def test_performance_baseline(self, base_url, session):
         """Test basic performance characteristics"""
@@ -140,7 +154,7 @@ class TestDockerDemoContainer:
         
         # Measure collection list latency
         start_time = time.time()
-        response = session.get(f"{base_url}/v1/collections")
+        response = session.get(f"{base_url}/api/v1/collections")
         list_latency = (time.time() - start_time) * 1000
         
         assert response.status_code == 200
@@ -148,7 +162,7 @@ class TestDockerDemoContainer:
 
     def test_demo_collections(self, base_url, session):
         """Test that demo collections are created"""
-        response = session.get(f"{base_url}/v1/collections")
+        response = session.get(f"{base_url}/api/v1/collections")
         assert response.status_code == 200, f"Get collections failed: {response.status_code}"
         
         collections_response = response.json()
@@ -166,16 +180,15 @@ class TestDockerDemoContainer:
         if not found_demo:
             pytest.skip("Demo collections not found (may be created async)")
 
-
-@pytest.mark.parametrize("max_retries", [3])
-def test_container_restart_resilience(base_url, session, max_retries):
-    """Test that tests handle container restarts gracefully"""
-    for attempt in range(max_retries):
-        try:
-            response = session.get(f"{base_url}/health", timeout=5)
-            assert response.status_code == 200
-            break
-        except (requests.exceptions.RequestException, AssertionError):
-            if attempt == max_retries - 1:
-                pytest.fail("Container not responding after retries")
-            time.sleep(5)
+    @pytest.mark.parametrize("max_retries", [3])
+    def test_container_restart_resilience(self, base_url, session, max_retries):
+        """Test that tests handle container restarts gracefully"""
+        for attempt in range(max_retries):
+            try:
+                response = session.get(f"{base_url}/health", timeout=5)
+                assert response.status_code == 200
+                break
+            except (requests.exceptions.RequestException, AssertionError):
+                if attempt == max_retries - 1:
+                    pytest.fail("Container not responding after retries")
+                time.sleep(1)

@@ -78,6 +78,7 @@ struct WalPerformanceTestResult {
 
 #[tokio::test]
 async fn test_basic_service_creation() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     info!("🚀 Testing Basic DirectVectorService Creation");

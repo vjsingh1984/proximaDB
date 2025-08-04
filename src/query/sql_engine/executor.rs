@@ -122,9 +122,12 @@ impl SqlExecutor {
         let search_params_obj = if let Some(filter) = &plan.metadata_filter {
             let mut params = crate::core::search::SearchParams::default();
             params.filter_expression = Some(filter.expression.clone());
+            params.requires_ordering = Some(plan.has_order_by);
             Some(params)
         } else {
-            None
+            let mut params = crate::core::search::SearchParams::default();
+            params.requires_ordering = Some(plan.has_order_by);
+            Some(params)
         };
         
         // Execute search

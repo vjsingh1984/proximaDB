@@ -23,7 +23,7 @@ mod tests {
         let info = accelerator.get_info();
         
         // Check basic info fields
-        assert!(matches!(info.backend, ComputeBackend::CPU { .. }));
+        assert!(matches!(info.backend, ComputeBackend::CpuSIMD(_)));
         assert!(!info.device_name.is_empty());
         assert!(info.memory_total > 0);
         assert!(info.memory_free > 0);
@@ -241,7 +241,7 @@ mod tests {
         let accelerator = RocmAccelerator::new(1);
         let info = accelerator.get_info();
         
-        assert!(matches!(info.backend, ComputeBackend::ROCm { .. }));
+        assert!(matches!(info.backend, ComputeBackend::ROCm));
         assert_eq!(info.device_name, "ROCm Device 1");
         assert!(info.memory_total > 0);
         assert!(info.compute_capability.is_some());
@@ -250,16 +250,16 @@ mod tests {
     #[tokio::test]
     async fn test_create_accelerator_factory() {
         // Test CPU backend
-        let cpu_accel = create_accelerator(ComputeBackend::CPU { threads: Some(4) });
+        let cpu_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2));
         assert!(cpu_accel.is_available());
         
         // Test ROCm backend
-        let rocm_accel = create_accelerator(ComputeBackend::ROCm { device_id: Some(0) });
+        let rocm_accel = create_accelerator(ComputeBackend::ROCm);
         let info = rocm_accel.get_info();
-        assert!(matches!(info.backend, ComputeBackend::ROCm { .. }));
+        assert!(matches!(info.backend, ComputeBackend::ROCm));
         
         // Test default (should be CPU)
-        let default_accel = create_accelerator(ComputeBackend::CPU { threads: None });
+        let default_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2));
         assert!(default_accel.is_available());
     }
     
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn test_hardware_info_struct() {
         let info = HardwareInfo {
-            backend: ComputeBackend::CPU { threads: Some(8) },
+            backend: ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2),
             device_name: "Test CPU".to_string(),
             memory_total: 16 * 1024 * 1024 * 1024,
             memory_free: 8 * 1024 * 1024 * 1024,

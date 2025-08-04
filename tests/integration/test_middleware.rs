@@ -27,6 +27,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_authentication_middleware() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().join("data");
     let wal_dir = temp_dir.path().join("wal");
@@ -149,6 +150,7 @@ async fn test_authentication_middleware() {
 
 #[tokio::test]
 async fn test_rate_limiting_middleware() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().join("data");
     let wal_dir = temp_dir.path().join("wal");

@@ -16,6 +16,7 @@ use proximadb::proto::proximadb::CollectionConfig;
 
 #[tokio::test]
 async fn test_storage_assignment_end_to_end() -> Result<()> {
+    setup_hardware_capabilities();
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -139,6 +140,7 @@ async fn test_storage_assignment_end_to_end() -> Result<()> {
 
 #[tokio::test]
 async fn test_assignment_persistence_across_restarts() -> Result<()> {
+    setup_hardware_capabilities();
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -224,6 +226,7 @@ async fn test_assignment_persistence_across_restarts() -> Result<()> {
 
 #[tokio::test] 
 async fn test_concurrent_assignment_access() -> Result<()> {
+    setup_hardware_capabilities();
     use std::sync::Arc;
     use tokio::task::JoinSet;
     

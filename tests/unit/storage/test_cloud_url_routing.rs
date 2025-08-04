@@ -53,6 +53,7 @@ fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> Wri
         created_at: SystemTime::now(),
         total_size_bytes,
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 

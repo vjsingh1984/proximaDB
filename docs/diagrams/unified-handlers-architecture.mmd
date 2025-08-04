@@ -1,0 +1,71 @@
+flowchart TD
+    subgraph "API Layer"
+        REST[REST API Endpoints]
+        GRPC[gRPC Service]
+    end
+    
+    subgraph "Unified Handlers"
+        UH[UnifiedHandlers]
+        CH[handle_collection_operation]
+        VH[handle_vector_batch]
+        SH[handle_vector_search]
+        GH[handle_get_vector]
+    end
+    
+    subgraph "Conversion Layer"
+        CONV[Conversions Module]
+        CRB[CollectionRequestBuilder]
+        VBB[VectorBatchRequestBuilder]
+        VSB[VectorSearchRequestBuilder]
+    end
+    
+    subgraph "Core Services"
+        CS[CollectionService]
+        DVS[DirectVectorService]
+        subgraph "DirectVectorService Features"
+            DV1[40-60% Performance Improvement]
+            DV2[Direct Memtable Access]
+            DV3[Eliminated Registry Overhead]
+        end
+    end
+    
+    subgraph "Storage Layer"
+        GM[Global Memtable]
+        VE[VIPER Engine]
+        SE[SST Engine]
+    end
+    
+    REST --> CONV
+    GRPC --> CONV
+    
+    CONV --> CRB
+    CONV --> VBB
+    CONV --> VSB
+    
+    CRB --> UH
+    VBB --> UH  
+    VSB --> UH
+    
+    UH --> CH
+    UH --> VH
+    UH --> SH
+    UH --> GH
+    
+    CH --> CS
+    VH --> DVS
+    SH --> DVS
+    GH --> DVS
+    
+    DVS --> DV1
+    DVS --> DV2
+    DVS --> DV3
+    
+    DVS --> GM
+    GM --> VE
+    GM --> SE
+    
+    style UH fill:#e3f2fd
+    style DVS fill:#e8f5e8
+    style DV1 fill:#fff3e0
+    style DV2 fill:#fff3e0
+    style DV3 fill:#fff3e0

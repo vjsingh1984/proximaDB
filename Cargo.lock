@@ -3918,6 +3918,7 @@ dependencies = [
  "prost-types",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "raw-cpuid",
  "regex",
  "reqwest",
  "rocksdb",
@@ -4121,6 +4122,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core 0.9.3",
+]
+
+[[package]]
+name = "raw-cpuid"
+version = "11.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6df7ab838ed27997ba19a4664507e6f82b41fe6e20be42929332156e5e85146"
+dependencies = [
+ "bitflags 2.9.1",
 ]
 
 [[package]]

@@ -19,35 +19,49 @@
 //! Provides SQL-like query interface for vector search with metadata filtering.
 
 pub mod parser;
+pub mod pool;
+pub mod simd_parser;
+pub mod gpu_parser;
+pub mod query_result_cache;
 pub mod executor;
 pub mod planner;
-pub mod query_cache;
 
 #[cfg(test)]
 pub mod comprehensive_sql_tests;
 
 pub use parser::{SqlParser, ParsedQuery};
+pub use pool::{LockFreeParserPool, get_global_pool, parse_sql_global, PoolStats};
+pub use simd_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, get_global_simd_parser};
+pub use gpu_parser::{GpuSqlParser, parse_sql_gpu, get_global_gpu_parser};
+pub use crate::core::hardware_capabilities::GpuBackend;
+pub use query_result_cache::{QueryResultCache, QueryCacheKey, get_global_query_cache, cache_query_result, get_cached_query_result};
 pub use executor::{SqlExecutor, SqlExecutionResult};
 pub use planner::{QueryPlanner, ExecutionPlan};
-pub use query_cache::{QueryCache, QueryCacheConfig, QueryCacheStats};
 
 use anyhow::Result;
 use std::sync::Arc;
 use crate::services::{DirectVectorService, CollectionService};
 
-/// SQL Engine for ProximaDB with query plan caching
+/// SQL Engine for ProximaDB with unified caching
 pub struct SqlEngine {
     vector_service: Arc<DirectVectorService>,
     collection_service: Option<Arc<CollectionService>>,
     planner: QueryPlanner,
     executor: SqlExecutor,
-    query_cache: QueryCache,
+    /// Enable GPU acceleration for SQL parsing
+    use_gpu_acceleration: bool,
 }
 
 impl SqlEngine {
-    /// Create new SQL engine with default cache configuration
+    /// Create new SQL engine
     pub fn new(vector_service: Arc<DirectVectorService>) -> Self {
-        Self::with_cache_config(vector_service, QueryCacheConfig::default())
+        Self {
+            vector_service: vector_service.clone(),
+            collection_service: None,
+            planner: QueryPlanner::new(),
+            executor: SqlExecutor::new(vector_service),
+            use_gpu_acceleration: Self::detect_gpu_support(),
+        }
     }
     
     /// Create new SQL engine with collection service for name resolution
@@ -55,58 +69,73 @@ impl SqlEngine {
         vector_service: Arc<DirectVectorService>,
         collection_service: Arc<CollectionService>,
     ) -> Self {
-        Self::with_collection_service_and_cache(
-            vector_service,
-            collection_service,
-            QueryCacheConfig::default(),
-        )
-    }
-    
-    /// Create new SQL engine with custom cache configuration
-    pub fn with_cache_config(vector_service: Arc<DirectVectorService>, cache_config: QueryCacheConfig) -> Self {
-        Self {
-            vector_service: vector_service.clone(),
-            collection_service: None,
-            planner: QueryPlanner::new(),
-            executor: SqlExecutor::new(vector_service),
-            query_cache: QueryCache::new(cache_config),
-        }
-    }
-    
-    /// Create new SQL engine with collection service and custom cache configuration
-    pub fn with_collection_service_and_cache(
-        vector_service: Arc<DirectVectorService>,
-        collection_service: Arc<CollectionService>,
-        cache_config: QueryCacheConfig,
-    ) -> Self {
         Self {
             vector_service: vector_service.clone(),
             collection_service: Some(collection_service),
             planner: QueryPlanner::new(),
             executor: SqlExecutor::new(vector_service),
-            query_cache: QueryCache::new(cache_config),
+            use_gpu_acceleration: Self::detect_gpu_support(),
         }
     }
     
-    /// Execute SQL query with caching
+    /// Detect if GPU acceleration should be enabled
+    fn detect_gpu_support() -> bool {
+        // Check if GPU parsing is available
+        if let Ok(parser) = get_global_gpu_parser().lock() {
+            let backend = parser.backend(); // Get the backend value while the guard is active
+            match backend {
+                GpuBackend::None => {
+                    tracing::info!("SQL Engine: GPU acceleration not available");
+                    false
+                }
+                backend => {
+                    tracing::info!("SQL Engine: GPU acceleration enabled with {}", backend);
+                    true
+                }
+            }
+        } else {
+            false
+        }
+    }
+    
+    /// Enable or disable GPU acceleration
+    pub fn set_gpu_acceleration(&mut self, enabled: bool) {
+        self.use_gpu_acceleration = enabled;
+        tracing::info!("SQL Engine: GPU acceleration {}", 
+            if enabled { "enabled" } else { "disabled" });
+    }
+    
+    /// Execute SQL query with unified caching
     pub async fn execute(&self, sql: &str) -> Result<SqlExecutionResult> {
-        // Try to get cached execution plan first
-        if let Some(cached_plan) = self.query_cache.get_execution_plan(sql).await {
-            tracing::debug!("🎯 Using cached execution plan for SQL: {}", sql);
-            return self.executor.execute_plan(cached_plan).await;
+        // Create cache key for this query and collection
+        let collection_id = self.extract_collection_from_sql(sql);
+        let cache_key = QueryCacheKey::new(sql, &collection_id, None);
+        
+        // Check for cached query result first (fastest path)
+        if let Some(cached_result_data) = get_cached_query_result(&cache_key) {
+            tracing::debug!("🎯 Using cached query result for SQL: {}", sql);
+            // Deserialize cached result - in real implementation we'd use proper serialization
+            // For now, assume the cached data is the serialized SqlExecutionResult
+            if let Ok(result) = bincode::deserialize::<SqlExecutionResult>(&cached_result_data) {
+                return Ok(result);
+            }
         }
         
-        // Try to get cached parsed query
-        let mut parsed_query = if let Some(cached_parsed) = self.query_cache.get_parsed_query(sql).await {
-            tracing::debug!("🎯 Using cached parsed query for SQL: {}", sql);
-            cached_parsed
+        // Parse SQL using GPU acceleration if available, otherwise use lock-free parser pool
+        let mut parsed_query = if self.use_gpu_acceleration {
+            // Try GPU-accelerated parsing first
+            match parse_sql_gpu(sql) {
+                Ok(parsed) => {
+                    tracing::debug!("🚀 Used GPU-accelerated SQL parsing");
+                    parsed
+                }
+                Err(e) => {
+                    tracing::debug!("GPU parsing failed, falling back to CPU: {}", e);
+                    get_global_pool().parse_sql(sql.to_string())?
+                }
+            }
         } else {
-            // Parse SQL and cache result
-            let mut parser = SqlParser::new(sql);
-            let parsed = parser.parse()?;
-            self.query_cache.cache_parsed_query(sql, parsed.clone()).await;
-            tracing::debug!("📝 Cached new parsed query for SQL: {}", sql);
-            parsed
+            get_global_pool().parse_sql(sql.to_string())?
         };
         
         // Resolve collection name to UUID if we have a collection service
@@ -136,20 +165,35 @@ impl SqlEngine {
             }
         }
         
-        // Create execution plan and cache it
+        // Create execution plan
         let plan = self.planner.create_plan(parsed_query)?;
-        self.query_cache.cache_execution_plan(sql, plan.clone()).await;
-        tracing::debug!("📝 Cached new execution plan for SQL: {}", sql);
         
         // Execute plan
-        self.executor.execute_plan(plan).await
+        let result = self.executor.execute_plan(plan).await?;
+        
+        // Cache the query result
+        if let Ok(serialized_result) = bincode::serialize(&result) {
+            cache_query_result(cache_key, serialized_result, sql.to_string());
+            tracing::debug!("📝 Cached query result for SQL: {}", sql);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Extract collection ID from SQL query for caching
+    fn extract_collection_from_sql(&self, sql: &str) -> String {
+        // Simple extraction - in real implementation might parse more thoroughly
+        if let Ok(parsed) = get_global_pool().parse_sql(sql.to_string()) {
+            parsed.from_collection
+        } else {
+            "unknown".to_string()
+        }
     }
     
     /// Execute SQL query without caching (for debugging or one-time queries)
     pub async fn execute_uncached(&self, sql: &str) -> Result<SqlExecutionResult> {
-        // Parse SQL
-        let mut parser = SqlParser::new(sql);
-        let mut parsed_query = parser.parse()?;
+        // Parse SQL using lock-free parser pool
+        let mut parsed_query = get_global_pool().parse_sql(sql.to_string())?;
         
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {
@@ -186,29 +230,33 @@ impl SqlEngine {
     }
     
     /// Get query cache statistics
-    pub fn cache_stats(&self) -> QueryCacheStats {
-        self.query_cache.stats()
+    pub fn cache_stats(&self) -> String {
+        let cache = get_global_query_cache();
+        let stats = cache.stats();
+        stats.summary()
     }
     
     /// Clear query cache
-    pub async fn clear_cache(&self) {
-        self.query_cache.clear().await;
+    pub fn clear_cache(&self) {
+        let cache = get_global_query_cache();
+        cache.clear();
     }
     
     /// Get cache utilization summary
     pub fn cache_utilization_summary(&self) -> String {
-        self.query_cache.utilization_summary()
+        let cache = get_global_query_cache();
+        let stats = cache.stats();
+        format!(
+            "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB memory", 
+            stats.hit_ratio(),
+            cache.size(),
+            cache.get_total_memory_usage() as f64 / 1024.0
+        )
     }
     
     /// Invalidate cache entries for a specific collection
-    pub async fn invalidate_collection_cache(&self, collection_id: &str) {
-        // Invalidate queries that might reference this collection
-        let pattern = format!("*{}*", collection_id);
-        self.query_cache.invalidate_pattern(&pattern).await;
-    }
-    
-    /// Run cache maintenance (should be called periodically)
-    pub async fn run_cache_maintenance(&self) {
-        self.query_cache.run_maintenance().await;
+    pub fn invalidate_collection_cache(&self, collection_id: &str) {
+        let cache = get_global_query_cache();
+        cache.invalidate_collection(collection_id);
     }
 }

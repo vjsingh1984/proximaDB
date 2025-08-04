@@ -77,21 +77,8 @@ pub struct AccelerationConfig {
     pub math_library: MathLibrary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ComputeBackend {
-    /// NVIDIA CUDA acceleration
-    CUDA { device_id: Option<u32> },
-    /// AMD ROCm acceleration  
-    ROCm { device_id: Option<u32> },
-    /// Intel GPU acceleration
-    IntelGPU { device_id: Option<u32> },
-    /// Intel oneAPI DPC++ acceleration
-    OneAPI,
-    /// CPU with vectorization
-    CPU { threads: Option<usize> },
-    /// WebGPU for browser deployment
-    WebGPU,
-}
+// Using central HardwareBackend from hardware_capabilities module
+pub use crate::core::hardware_capabilities::HardwareBackend as ComputeBackend;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuVectorization {
@@ -288,10 +275,10 @@ impl Default for ComputeConfig {
         Self {
             acceleration: AccelerationConfig {
                 backend_priority: vec![
-                    ComputeBackend::CUDA { device_id: None },
-                    ComputeBackend::ROCm { device_id: None },
-                    ComputeBackend::IntelGPU { device_id: None },
-                    ComputeBackend::CPU { threads: None },
+                    ComputeBackend::CUDA,
+                    ComputeBackend::ROCm,
+                    ComputeBackend::OpenCL,
+                    ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2),
                 ],
                 cpu_vectorization: CpuVectorization {
                     avx512: true,
@@ -355,42 +342,11 @@ pub struct HardwareInfo {
     pub numa_topology: NumaTopology,
 }
 
-#[derive(Debug, Clone)]
-pub struct CpuFeatures {
-    pub avx512_support: bool,
-    pub avx2_support: bool,
-    pub sse42_support: bool,
-    pub neon_support: bool,
-    pub core_count: usize,
-    pub thread_count: usize,
-    pub cache_sizes: CacheSizes,
-}
+// Re-export CpuFeatures and CacheSizes from centralized hardware capabilities module
+pub use crate::core::hardware_capabilities::{CpuFeatures, CacheSizes};
 
-#[derive(Debug, Clone)]
-pub struct CacheSizes {
-    pub l1_data: usize,
-    pub l1_instruction: usize,
-    pub l2: usize,
-    pub l3: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct GpuDevice {
-    pub device_id: u32,
-    pub name: String,
-    pub compute_capability: String,
-    pub memory_total: u64,
-    pub memory_free: u64,
-    pub backend: GpuBackend,
-}
-
-#[derive(Debug, Clone)]
-pub enum GpuBackend {
-    CUDA { version: String },
-    ROCm { version: String },
-    IntelGPU { version: String },
-    WebGPU,
-}
+// Using central GpuDevice and GpuBackend from hardware_capabilities module
+pub use crate::core::hardware_capabilities::{GpuDevice, GpuBackend};
 
 #[derive(Debug, Clone)]
 pub struct MemoryInfo {
@@ -414,58 +370,27 @@ pub struct NumaNode {
     pub memory_free: u64,
 }
 
-/// Hardware capability detection
-pub fn detect_hardware() -> HardwareInfo {
+/// Get hardware info from centralized hardware capabilities (no duplicate detection)
+pub fn get_hardware_info() -> HardwareInfo {
+    let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+    
     HardwareInfo {
-        cpu_features: detect_cpu_features(),
-        gpu_devices: detect_gpu_devices(),
-        memory_info: detect_memory_info(),
-        numa_topology: detect_numa_topology(),
-    }
-}
-
-fn detect_cpu_features() -> CpuFeatures {
-    // TODO: Implement CPU feature detection using cpuid or similar
-    CpuFeatures {
-        avx512_support: false, // Detect using is_x86_feature_detected!("avx512f")
-        avx2_support: false,   // Detect using is_x86_feature_detected!("avx2")
-        sse42_support: false,  // Detect using is_x86_feature_detected!("sse4.2")
-        neon_support: false,   // Detect for ARM architectures
-        core_count: num_cpus::get_physical(),
-        thread_count: num_cpus::get(),
-        cache_sizes: CacheSizes {
-            l1_data: 32 * 1024, // 32KB typical
-            l1_instruction: 32 * 1024,
-            l2: 256 * 1024,      // 256KB typical
-            l3: 8 * 1024 * 1024, // 8MB typical
+        cpu_features: caps.cpu.features.clone(),
+        gpu_devices: caps.gpu.devices.clone(),
+        memory_info: MemoryInfo {
+            total_memory: caps.memory.total_memory,
+            available_memory: caps.memory.total_memory / 2, // Rough estimate
+            page_size: 4096,
+            huge_page_size: Some(2 * 1024 * 1024),
         },
-    }
-}
-
-fn detect_gpu_devices() -> Vec<GpuDevice> {
-    // TODO: Implement GPU detection for CUDA, ROCm, Intel GPU
-    vec![]
-}
-
-fn detect_memory_info() -> MemoryInfo {
-    // TODO: Implement memory info detection
-    MemoryInfo {
-        total_memory: 16 * 1024 * 1024 * 1024,    // 16GB placeholder
-        available_memory: 8 * 1024 * 1024 * 1024, // 8GB placeholder
-        page_size: 4096,
-        huge_page_size: Some(2 * 1024 * 1024), // 2MB
-    }
-}
-
-fn detect_numa_topology() -> NumaTopology {
-    // TODO: Implement NUMA topology detection
-    NumaTopology {
-        node_count: 1,
-        nodes: vec![NumaNode {
-            node_id: 0,
-            cpu_cores: (0..num_cpus::get()).collect(),
-            memory_total: 16 * 1024 * 1024 * 1024,
-            memory_free: 8 * 1024 * 1024 * 1024,
-        }],
+        numa_topology: NumaTopology {
+            node_count: 1,
+            nodes: vec![NumaNode {
+                node_id: 0,
+                cpu_cores: (0..caps.cpu.logical_cores).collect(),
+                memory_total: caps.memory.total_memory,
+                memory_free: caps.memory.total_memory / 2,
+            }],
+        },
     }
 }

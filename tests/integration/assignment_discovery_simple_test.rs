@@ -8,6 +8,8 @@ use tempfile::TempDir;
 /// This test directly simulates what happens during server startup
 #[tokio::test]
 async fn test_collection_directory_discovery() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     println!("🧪 Testing collection directory discovery issue");
     
     // Create test directories simulating multi-disk setup
@@ -229,6 +231,8 @@ async fn test_collection_directory_discovery() -> Result<()> {
 
 #[tokio::test]
 async fn test_assignment_service_implementation_gaps() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     println!("🔍 Testing assignment service implementation gaps");
     
     // This test identifies specific gaps in the assignment service implementation

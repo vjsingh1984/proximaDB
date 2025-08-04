@@ -101,6 +101,7 @@ async fn make_request(
 /// Test collection operations
 #[tokio::test]
 async fn test_collection_operations() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Test create collection
@@ -159,6 +160,7 @@ async fn test_collection_operations() {
 /// Test vector batch operations
 #[tokio::test]
 async fn test_vector_batch_operations() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Create test collection first
@@ -244,6 +246,7 @@ async fn test_vector_batch_operations() {
 /// Test vector search operations
 #[tokio::test]
 async fn test_vector_search_operations() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Create test collection
@@ -376,6 +379,7 @@ async fn test_vector_search_operations() {
 /// Test health and metrics endpoints
 #[tokio::test]
 async fn test_health_and_metrics() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Test health endpoint
@@ -435,6 +439,7 @@ async fn test_health_and_metrics() {
 /// Test error handling
 #[tokio::test]
 async fn test_error_handling() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Test invalid collection creation
@@ -481,6 +486,7 @@ async fn test_error_handling() {
 /// Test internal endpoints
 #[tokio::test]
 async fn test_internal_endpoints() {
+    setup_hardware_capabilities();
     let (app, _temp_dir) = create_test_app().await;
     
     // Create test collection and add some data

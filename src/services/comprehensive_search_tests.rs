@@ -25,7 +25,8 @@ mod tests {
     use tracing::debug;
     
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
+    use crate::compute::unified_distance::{UnifiedDistanceCompute, DistanceMode};
+    use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
         SearchParams, SearchResultSet, UnifiedSearchContext, UnifiedSearchEngine,
         FilterExpression, SearchResult, FilterableColumn, ComparisonOperator,
@@ -306,16 +307,16 @@ mod tests {
         
         // Verify backend selection hierarchy
         let expected_preference = vec![
-            HardwareBackend::Cuda,
-            HardwareBackend::Rocm,
-            HardwareBackend::Mps,
+            HardwareBackend::CUDA,
+            HardwareBackend::ROCm,
+            HardwareBackend::MPS,
             HardwareBackend::OpenCL,
-            HardwareBackend::CpuSimd(PlatformCapability::X86Avx512),
-            HardwareBackend::CpuSimd(PlatformCapability::X86Avx2),
-            HardwareBackend::CpuSimd(PlatformCapability::X86Avx),
-            HardwareBackend::CpuSimd(PlatformCapability::X86Sse2),
+            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx512),
+            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx2),
+            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx),
+            HardwareBackend::CpuSIMD(PlatformCapability::X86Sse2),
             #[cfg(target_arch = "aarch64")]
-            HardwareBackend::CpuSimd(PlatformCapability::ArmNeon),
+            HardwareBackend::CpuSIMD(PlatformCapability::ArmNeon),
             #[cfg(not(target_arch = "aarch64"))]
             HardwareBackend::Scalar,
             HardwareBackend::Scalar,
@@ -427,6 +428,7 @@ mod tests {
                 accuracy_threshold: Some(0.95),
                 include_expired: Some(false),
                 timeout_ms: Some(5000),
+                requires_ordering: None,
                 enable_two_stage: Some(true),
                 quantization_hint: None,
                 enable_clustering_hint: Some(true),
@@ -484,6 +486,7 @@ mod tests {
                 accuracy_threshold: Some(0.95),
                 include_expired: Some(false),
                 timeout_ms: Some(5000),
+                requires_ordering: None,
                 enable_two_stage: Some(true),
                 quantization_hint: None,
                 enable_clustering_hint: Some(true),

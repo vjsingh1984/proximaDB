@@ -307,11 +307,20 @@ classDiagram
     classDef optimizationStyle fill:#0891b2,stroke:#0e7490,stroke-width:3px,color:#ffffff,font-weight:bold
     classDef sqlStyle fill:#be185d,stroke:#9d174d,stroke-width:3px,color:#ffffff,font-weight:bold
     
-    %% Apply Styling to Classes
-    class ViperEngine,SstEngine engineStyle
-    class UnifiedSearchEngine,UnifiedSearchInterface traitStyle
-    class ViperUnifiedSearchEngine,SstUnifiedSearchEngine searchStyle
-    class IndexBasedFilterEvaluator,ThreeStageFilterPipeline filterStyle
-    class VectorSerializationConfig,OptimizedVectorWriter,StreamingVectorWriter,FixedLengthSerializer serializationStyle
-    class HardwareAcceleration,MemoryPoolManager optimizationStyle
-    class SqlExecutor,QueryPlanner sqlStyle
+    %% Apply Styling to Classes (one per line to avoid parser issues)
+    class ViperEngine engineStyle
+    class SstEngine engineStyle
+    class UnifiedSearchEngine traitStyle
+    class UnifiedSearchInterface traitStyle
+    class ViperUnifiedSearchEngine searchStyle
+    class SstUnifiedSearchEngine searchStyle
+    class IndexBasedFilterEvaluator filterStyle
+    class ThreeStageFilterPipeline filterStyle
+    class VectorSerializationConfig serializationStyle
+    class OptimizedVectorWriter serializationStyle
+    class StreamingVectorWriter serializationStyle
+    class FixedLengthSerializer serializationStyle
+    class HardwareAcceleration optimizationStyle
+    class MemoryPoolManager optimizationStyle
+    class SqlExecutor sqlStyle
+    class QueryPlanner sqlStyle

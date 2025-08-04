@@ -60,9 +60,29 @@ include::../diagrams/initialization-sequence.mmd[]
 ----
 ====
 
+image::hardware-capabilities-flow.svg[Hardware Capabilities Detection]
+
+.Hardware Capabilities Flow Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/hardware-capabilities-flow.mmd[]
+----
+====
+
 **Basic config.toml**: Set ports (REST 5678, gRPC 5679), data directory, compaction intervals, compression settings.
 
 **Storage Engines**: SST (write-heavy), VIPER (analytics/complex queries).
+
+**Hardware Acceleration**: ProximaDB automatically detects and optimizes for:
+
+* **CPU Features**: SIMD support (AVX-512, AVX2, SSE4.1, NEON)
+* **GPU Backends**: CUDA, ROCm, MPS (Apple Silicon), OpenCL
+* **Memory Layout**: Cache-aware data structures and processing
+* **SQL Acceleration**: GPU/SIMD parsing with intelligent CPU fallbacks
+
+All hardware detection runs once at startup with zero runtime overhead.
 
 == Next Steps
 

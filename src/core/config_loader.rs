@@ -106,7 +106,10 @@ impl ConfigLoader {
         Self::merge_toml_values(&mut base_toml, user_toml);
         
         // Deserialize merged TOML back to Config struct
-        let merged_config: Config = base_toml.try_into()?;
+        let mut merged_config: Config = base_toml.try_into()?;
+        
+        // Resolve all relative paths to absolute paths
+        Self::resolve_config_paths(&mut merged_config)?;
         
         Ok(merged_config)
     }
@@ -131,5 +134,112 @@ impl ConfigLoader {
                 *base_val = user_value;
             }
         }
+    }
+    
+    /// Resolve all relative paths in config to absolute paths
+    fn resolve_config_paths(config: &mut Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use std::path::{Path, PathBuf};
+        
+        // Helper function to resolve a path string to absolute
+        let resolve_path = |path_str: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            // Skip if it's already a URL or absolute path
+            if path_str.contains("://") || Path::new(path_str).is_absolute() {
+                return Ok(path_str.to_string());
+            }
+            
+            // Get current working directory or fallback
+            let base_dir = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(_) => {
+                    // Fallback to PWD or CARGO_MANIFEST_DIR
+                    if let Ok(pwd) = std::env::var("PWD") {
+                        PathBuf::from(pwd)
+                    } else if let Ok(cargo_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                        PathBuf::from(cargo_dir)
+                    } else {
+                        PathBuf::from("/tmp")
+                    }
+                }
+            };
+            
+            // Resolve relative path
+            let mut resolved = base_dir.clone();
+            
+            // Handle special relative path patterns
+            if path_str.starts_with("../") {
+                let mut current = base_dir.clone();
+                let mut remaining = path_str;
+                
+                while remaining.starts_with("../") {
+                    if let Some(parent) = current.parent() {
+                        current = parent.to_path_buf();
+                        remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                    } else {
+                        break;
+                    }
+                }
+                resolved = current.join(remaining);
+            } else if path_str == ".." {
+                if let Some(parent) = base_dir.parent() {
+                    resolved = parent.to_path_buf();
+                }
+            } else if path_str.starts_with("./") {
+                let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                resolved = base_dir.join(clean_path);
+            } else if path_str == "." {
+                resolved = base_dir;
+            } else {
+                resolved = base_dir.join(path_str);
+            }
+            
+            Ok(resolved.to_string_lossy().into_owned())
+        };
+        
+        // Helper to convert file path to file:// URL
+        let to_file_url = |path_str: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            if path_str.starts_with("file://") || path_str.contains("://") {
+                Ok(path_str.to_string())
+            } else {
+                let resolved = resolve_path(path_str)?;
+                Ok(format!("file://{}", resolved))
+            }
+        };
+        
+        // Resolve server data_dir
+        let resolved_data_dir = resolve_path(config.server.data_dir.to_string_lossy().as_ref())?;
+        config.server.data_dir = PathBuf::from(resolved_data_dir);
+        // Resolve storage locations URLs
+        for location in &mut config.storage.storage_locations {
+            location.url = to_file_url(&location.url)?;
+        }
+        
+        // Resolve metadata URL
+        config.storage.metadata_url = to_file_url(&config.storage.metadata_url)?;
+        
+        // Resolve write buffer directory
+        config.storage.write_buffer_config.write_buffer_directory = 
+            resolve_path(&config.storage.write_buffer_config.write_buffer_directory)?;
+        
+        // Resolve SST data directory
+        config.storage.sst_config.data_directory = 
+            resolve_path(&config.storage.sst_config.data_directory)?;
+        
+        // Resolve VIPER data directory if configured
+        if let Some(ref mut viper_config) = config.storage.viper_config {
+            viper_config.data_directory = 
+                resolve_path(&viper_config.data_directory)?;
+        }
+        
+        // Resolve TLS certificate paths if configured
+        if let Some(ref mut tls_config) = config.tls {
+            if let Some(ref cert_file) = tls_config.cert_file {
+                tls_config.cert_file = Some(resolve_path(cert_file)?);
+            }
+            if let Some(ref key_file) = tls_config.key_file {
+                tls_config.key_file = Some(resolve_path(key_file)?);
+            }
+        }
+        
+        Ok(())
     }
 }

@@ -29,6 +29,7 @@ use super::sst_test_config::{
 
 #[tokio::test]
 async fn test_lsm_do_flush_with_bloom_filter() {
+    common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     // Create temp directory

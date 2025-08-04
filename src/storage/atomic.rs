@@ -443,7 +443,7 @@ impl UnifiedAtomicCoordinator {
             .create_file_options(fs, &staging_file_url)?;
 
         // Extract path for write
-        let staging_path = self.filesystem.extract_path(&staging_file_url)?;
+        let staging_path = FilesystemFactory::resolve_path(&staging_file_url)?;
         info!("    staging_path extracted: {}", staging_path);
 
         // Write to staging using atomic executor
@@ -855,7 +855,7 @@ impl UnifiedAtomicCoordinator {
                 debug!("🔙 Rolling back disk: restoring file {} with {} bytes", path, content.len());
                 // Use filesystem to restore
                 let fs = self.filesystem.get_filesystem(&path)?;
-                fs.write(&self.filesystem.extract_path(&path)?, &content, None).await?;
+                fs.write(&FilesystemFactory::resolve_path(&path)?, &content, None).await?;
                 Ok(())
             }
             RollbackAction::Custom(desc) => {
@@ -1118,6 +1118,7 @@ impl ViperAtomicOperations {
             collection_id: Some(collection_id.to_string()),
             operation_type: StagingOperationType::Flush,
             auto_cleanup: true,
+            skip_uuid_subdir: true,  // Avoid creating subdirectories that get left behind
             ..Default::default()
         };
 

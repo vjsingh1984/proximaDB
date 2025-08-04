@@ -86,7 +86,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             let filesystem = fs.get_filesystem(&full_url)
                 .context("Failed to get filesystem for cloud URL")?;
             
-            let path = fs.extract_path_from_url(&full_url)
+            let path = FilesystemFactory::resolve_path(&full_url)
                 .context("Failed to extract path from cloud URL")?;
             
             let options = Some(crate::storage::persistence::filesystem::FileOptions {
@@ -130,7 +130,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             let filesystem = fs.get_filesystem(cloud_url)
                 .context("Failed to get filesystem for cloud URL")?;
             
-            let path = fs.extract_path_from_url(cloud_url)
+            let path = FilesystemFactory::resolve_path(cloud_url)
                 .context("Failed to extract path from cloud URL")?;
             
             let batch_bytes = filesystem.read(&path).await
@@ -161,6 +161,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: batch_bytes.len(),
                 is_flushed: false,
+            metadata_bloom_filter: None,
             };
             
             // Log detailed information for monitoring
@@ -225,6 +226,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             created_at: std::time::SystemTime::now(),
             total_size_bytes: payload.len(),
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         let sequences = self.write_native_batch(batch.clone(), collection_id).await?;
@@ -592,7 +594,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             let filesystem = fs.get_filesystem(cloud_base_url)
                 .context("Failed to get filesystem for cloud URL")?;
             
-            let base_path = fs.extract_path_from_url(cloud_base_url)
+            let base_path = FilesystemFactory::resolve_path(cloud_base_url)
                 .context("Failed to extract path from cloud URL")?;
             
             let entries = filesystem.list(&base_path).await
@@ -648,7 +650,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             let filesystem = fs.get_filesystem(cloud_url)
                 .context("Failed to get filesystem for cloud URL")?;
             
-            let path = fs.extract_path_from_url(cloud_url)
+            let path = FilesystemFactory::resolve_path(cloud_url)
                 .context("Failed to extract path from cloud URL")?;
             
             filesystem.delete(&path).await
@@ -685,7 +687,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             let filesystem = fs.get_filesystem(cloud_base_url)
                 .context("Failed to get filesystem for cloud URL")?;
             
-            let base_path = fs.extract_path_from_url(cloud_base_url)
+            let base_path = FilesystemFactory::resolve_path(cloud_base_url)
                 .context("Failed to extract path from cloud URL")?;
             
             // Try to list the directory to check accessibility
@@ -737,6 +739,7 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             created_at: std::time::SystemTime::now(),
             total_size_bytes: std::mem::size_of::<VectorRecord>(),
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         let sequences = self.write_native_batch(batch, collection_id).await?;

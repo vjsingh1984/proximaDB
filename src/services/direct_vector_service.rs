@@ -17,16 +17,20 @@ use tracing::{debug, info, warn, error};
 
 use crate::compute::distance::DistanceMetric;
 use crate::compute::unified_distance::UnifiedDistanceCompute;
-use crate::core::search::{SearchResult, SearchDebugInfo};
-use crate::core::VectorRecord;
+use crate::core::search::{SearchResult, SearchDebugInfo, SearchParams};
+use crate::core::search::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchCandidate, StorageTier, DeduplicationStorageEngine};
+use crate::core::{VectorRecord, proto_metadata_helper};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::sst::SstStorage;
 use crate::storage::memtable::specialized::write_buffer_behavior::{WriteBufferBehaviorWrapper, WriteBufferVectorBatch};
+use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::persistence::write_buffer::{WriteBufferConfig, WriteBufferFlushCoordinator, CompactionCoordinator, BatchId};
 use crate::storage::persistence::write_buffer::optimized_write_buffer_writer::OptimizedWriteBufferWriter;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::services::collection_service::CollectionService;
+use crate::proto::proximadb::{StorageEngine, metadata_item::Value as MetadataValue};
 
 /// Optimized Vector Service with direct memtable access
 /// 
@@ -246,7 +250,7 @@ impl DirectVectorService {
             write_buffer_config.performance.memory_flush_size_bytes,
             write_buffer_config.performance.memory_flush_size_bytes / (1024 * 1024)
         );
-        let memtable_config = crate::storage::memtable::core::MemtableConfig {
+        let memtable_config = MemtableConfig {
             max_size_bytes: write_buffer_config.memtable.global_memory_limit,
             flush_threshold_bytes: write_buffer_config.performance.memory_flush_size_bytes, // Use collection-level flush size from config
             enable_mvcc: write_buffer_config.enable_mvcc,
@@ -284,9 +288,9 @@ impl DirectVectorService {
         info!("🚀 Initializing OptimizedWriteBufferWriter for high-performance WAL writes");
         
         // Create filesystem factory for the writer
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+            FilesystemFactory::new(filesystem_config)
                 .await
                 .context("Failed to create filesystem factory for WAL writer")?
         );
@@ -431,10 +435,10 @@ impl DirectVectorService {
                 if let Some(config) = collection.config {
                     // Map storage engine enum value to engine name
                     let engine_name = match config.storage_engine {
-                        x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
-                        x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
-                        x if x == crate::proto::proximadb::StorageEngine::Mmap as i32 => "MMAP",
-                        x if x == crate::proto::proximadb::StorageEngine::Hybrid as i32 => "HYBRID",
+                        x if x == StorageEngine::Sst as i32 => "SST",
+                        x if x == StorageEngine::Viper as i32 => "VIPER",
+                        x if x == StorageEngine::Mmap as i32 => "MMAP",
+                        x if x == StorageEngine::Hybrid as i32 => "HYBRID",
                         _ => "VIPER", // Default to VIPER for unspecified
                     };
                     
@@ -462,7 +466,7 @@ impl DirectVectorService {
         query_vector: Vec<f32>,
         k: usize,
         distance_metric: DistanceMetric,
-        search_params: Option<crate::core::search::SearchParams>,
+        search_params: Option<SearchParams>,
         config: Option<StreamingSearchConfig>,
     ) -> Result<SearchResultStream> {
         info!(
@@ -514,6 +518,7 @@ impl DirectVectorService {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: self.estimate_batch_size(&vectors),
             is_flushed: false,
+            metadata_bloom_filter: None, // Will be created during batch addition
         };
         
         // Step 2: Direct memtable write (no registry lookup)
@@ -635,9 +640,9 @@ impl DirectVectorService {
                 // Log metadata details
                 for (meta_idx, meta_item) in vector_record.metadata.iter().enumerate() {
                     let value_str = match &meta_item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                        Some(MetadataValue::StringValue(s)) => s.clone(),
+                        Some(MetadataValue::NumberValue(n)) => n.to_string(),
+                        Some(MetadataValue::BoolValue(b)) => b.to_string(),
                         None => "null".to_string(),
                     };
                     info!("🔍 DEBUG:     Metadata[{}]: {} = {}", meta_idx, meta_item.key, value_str);
@@ -695,7 +700,7 @@ impl DirectVectorService {
                 distance: Some(0.0), // No distance for exact ID match
                 vector: if include_vector { Some(record.vector.clone()) } else { None },
                 metadata: if include_metadata { 
-                    crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)
+                    proto_metadata_helper::proto_metadata_to_json(&record.metadata)
                 } else { 
                     std::collections::HashMap::new() 
                 },
@@ -744,7 +749,7 @@ impl DirectVectorService {
                     distance: Some(0.0), // No distance for exact ID match
                     vector: if include_vector { Some(record.vector.clone()) } else { None },
                     metadata: if include_metadata { 
-                        crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata)
+                        proto_metadata_helper::proto_metadata_to_json(&record.metadata)
                     } else { 
                         std::collections::HashMap::new() 
                     },
@@ -793,7 +798,7 @@ impl DirectVectorService {
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-        search_params: Option<&crate::core::search::SearchParams>,
+        search_params: Option<&SearchParams>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
@@ -857,7 +862,7 @@ impl DirectVectorService {
                         rank: None, // Will be set after sorting
                         vector: if include_vectors { Some(vector_record.vector.clone()) } else { None },
                         metadata: if include_metadata {
-                            crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
+                            proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
                         } else { std::collections::HashMap::new() },
                         version: vector_record.version,
                         timestamp: Some(vector_record.timestamp),
@@ -899,24 +904,8 @@ impl DirectVectorService {
             all_results.extend(lsm_results);
         }
         
-        // Step 3: Apply MVCC-based deduplication (handles version continuity)
-        let deduped_results = self.apply_mvcc_deduplication(all_results);
-        
-        // Step 4: Sort by score and take top k
-        let mut final_results = deduped_results;
-        final_results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        
-        // Limit to requested k results
-        if final_results.len() > k {
-            final_results.truncate(k);
-        }
-        
-        // Set rankings
-        for (idx, result) in final_results.iter_mut().enumerate() {
-            result.rank = Some(idx as u16 + 1);
-        }
+        // Step 3: Apply multi-tier deduplication with early termination support
+        let final_results = self.apply_multi_tier_deduplication(all_results, k, search_params)?;
         
         let processing_time_us = start_time.elapsed().as_micros() as i64;
         
@@ -1340,7 +1329,7 @@ impl DirectVectorService {
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-        search_params: Option<&crate::core::search::SearchParams>,
+        search_params: Option<&SearchParams>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
@@ -1384,7 +1373,7 @@ impl DirectVectorService {
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-        search_params: Option<&crate::core::search::SearchParams>,
+        search_params: Option<&SearchParams>,
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<SearchResult>> {
@@ -1735,7 +1724,7 @@ impl DirectVectorService {
         }
         
         // Fallback to JSON-based filtering for backward compatibility
-        let mut metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
+        let mut metadata_map = proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
         
         // Special handling for ID field
         if let Some(ref record_id) = vector_record.id {
@@ -2166,6 +2155,107 @@ impl DirectWalRecovery for DirectVectorService {
 }
 
 impl DirectVectorService {
+    /// Apply multi-tier deduplication with early termination support
+    fn apply_multi_tier_deduplication(
+        &self, 
+        results: Vec<SearchResult>, 
+        k: usize,
+        search_params: Option<&SearchParams>
+    ) -> Result<Vec<SearchResult>> {
+        // Determine if ordering is required
+        let requires_ordering = search_params
+            .and_then(|p| p.requires_ordering)
+            .unwrap_or(true); // Default to requiring ordering for safety
+        
+        let initial_count = results.len();
+        debug!("🔍 DEDUPLICATION: Starting with {} results, k={}, requires_ordering={}", 
+               initial_count, k, requires_ordering);
+        
+        // Create deduplicator with appropriate settings
+        let mut deduplicator = MultiTierDeduplicator::with_k(k);
+        deduplicator.set_requires_ordering(requires_ordering);
+        
+        // Convert SearchResults to TieredSearchCandidates
+        let candidates: Vec<TieredSearchCandidate> = results.into_iter().map(|result| {
+            // Determine tier based on result source (could be added to SearchResult)
+            let tier = StorageTier::Unflushed; // Default, could be enhanced
+            let engine = DeduplicationStorageEngine::WAL; // Default, could be enhanced
+            
+            TieredSearchCandidate {
+                vector_record: VectorRecord {
+                    id: result.vector_id.clone(),
+                    vector: result.vector.unwrap_or_default(),
+                    metadata: {
+                        // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
+                        result.metadata.into_iter().map(|(key, value)| {
+                            crate::proto::proximadb::MetadataItem {
+                                key: key.clone(),
+                                value: match value {
+                                    serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)),
+                                    serde_json::Value::Number(n) => Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or_default())),
+                                    serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)),
+                                    _ => None,
+                                },
+                            }
+                        }).collect()
+                    },
+                    timestamp: result.timestamp.unwrap_or(0),
+                    updated_at: result.timestamp,
+                    expires_at: None,
+                    version: result.version,
+                    rank: result.rank.map(|r| r as i32),
+                    score: Some(result.score),
+                    distance: result.distance,
+                },
+                score: result.score,
+                tier,
+                engine,
+                timestamp: result.created_at.unwrap_or_else(|| chrono::Utc::now()),
+                sequence: 0, // Could be enhanced
+                file_path: None,
+            }
+        }).collect();
+        
+        // Add all candidates - deduplicator will handle early termination if enabled
+        deduplicator.add_tier_results(candidates);
+        
+        // Check early termination status before consuming deduplicator
+        let is_early_terminated = deduplicator.is_early_terminated();
+        
+        // Get final deduplicated results
+        let deduplicated = deduplicator.get_final_results(k);
+        
+        debug!("✅ DEDUPLICATION: Reduced {} results to {} (early_terminated={})", 
+               initial_count, deduplicated.len(), is_early_terminated);
+        
+        // Convert back to SearchResult
+        let final_results: Vec<SearchResult> = deduplicated.into_iter().enumerate().map(|(idx, candidate)| {
+            SearchResult {
+                id: candidate.vector_record.id.clone().unwrap_or_default(),
+                vector_id: candidate.vector_record.id,
+                score: candidate.score,
+                distance: candidate.vector_record.distance.map(|d| d as f32),
+                rank: Some(idx as u16 + 1),
+                vector: if candidate.vector_record.vector.is_empty() { 
+                    None 
+                } else { 
+                    Some(candidate.vector_record.vector.clone()) 
+                },
+                metadata: proto_metadata_helper::proto_metadata_to_json(&candidate.vector_record.metadata),
+                version: candidate.vector_record.version,
+                timestamp: Some(candidate.vector_record.timestamp),
+                debug_info: None,
+                semantic_distance: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+                created_at: Some(candidate.timestamp),
+            }
+        }).collect();
+        
+        Ok(final_results)
+    }
+    
     /// Apply MVCC-based deduplication to search results
     /// This ensures consistency with compaction behavior
     fn apply_mvcc_deduplication(&self, results: Vec<SearchResult>) -> Vec<SearchResult> {

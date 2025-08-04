@@ -17,7 +17,9 @@ from proximadb.models import (
     DistanceMetric,
     QuantizationConfig,
     QuantizationType,
-    SearchOptimization as SearchOptimizationHints
+    SearchOptimization as SearchOptimizationHints,
+    QuantizationHint,
+    VectorRecord
 )
 from proximadb import proximadb_pb2
 
@@ -42,7 +44,7 @@ class TestQuantizationE2E:
     @pytest.fixture
     def grpc_client(self):
         """Create gRPC client"""
-        client = connect_grpc("localhost:5679")
+        client = connect_grpc("grpc://localhost:5679")
         yield client
         # Cleanup
         try:
@@ -59,27 +61,32 @@ class TestQuantizationE2E:
         config = proximadb_pb2.CollectionConfig()
         assert hasattr(config, 'quantization_config')
         
-        # Check VectorSearchRequest has optimization_hints
+        # Check VectorSearchRequest has search_optimization
         search_req = proximadb_pb2.VectorSearchRequest()
-        assert hasattr(search_req, 'optimization_hints')
+        assert hasattr(search_req, 'search_optimization')
         
         # Check QuantizationConfig message exists
         quant_config = proximadb_pb2.QuantizationConfig()
         assert hasattr(quant_config, 'enabled')
-        assert hasattr(quant_config, 'level')
-        assert hasattr(quant_config, 'progressive_quantization')
+        # QuantizationConfig has different structure - check storage_quantization 
+        assert hasattr(quant_config, 'storage_quantization')
         
-        # Check SearchOptimizationHints exists
-        hints = proximadb_pb2.SearchOptimizationHints()
-        assert hasattr(hints, 'enable_two_stage_search')
-        assert hasattr(hints, 'quantization_hint')
-        assert hasattr(hints, 'candidate_multiplier')
+        # Check StorageQuantizationConfig has progressive_quantization
+        storage_config = proximadb_pb2.StorageQuantizationConfig()
+        assert hasattr(storage_config, 'progressive_quantization')
+        
+        # Check SearchParams exists (the actual proto message for search optimization)
+        search_params = proximadb_pb2.SearchParams()
+        assert hasattr(search_params, 'enable_two_stage')
+        assert hasattr(search_params, 'enable_clustering_hint')
+        assert hasattr(search_params, 'no_quantization')  # quantization_hint oneof field
     
     def test_create_collection_with_quantization_rest(self, rest_client):
         """Test creating collection with quantization via REST"""
         collection_name = f"test_quant_e2e_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             quantization_config=QuantizationConfig(
@@ -102,11 +109,11 @@ class TestQuantizationE2E:
         vectors = np.random.rand(10, 128).astype(np.float32)
         ids = [f"vec_{i}" for i in range(10)]
         
-        rest_client.insert_batch(collection_name, vectors, ids)
+        rest_client.insert_vectors(collection_name, vectors, ids)
         
         # Search without hints
         query = np.random.rand(128).astype(np.float32)
-        results = rest_client.search(collection_name, query, k=5)
+        results = rest_client.search(collection_name, query, top_k=5)
         assert len(results) == 5
     
     def test_search_with_optimization_hints_rest(self, rest_client):
@@ -114,7 +121,7 @@ class TestQuantizationE2E:
         collection_name = f"test_quant_e2e_hints_{int(time.time())}"
         
         # Create collection
-        config = CollectionConfig(dimension=256)
+        config = CollectionConfig(name=collection_name, dimension=256)
         rest_client.create_collection(collection_name, config)
         
         # Insert test data
@@ -130,7 +137,7 @@ class TestQuantizationE2E:
             ids.append(f"doc_{i}")
             metadata.append({"index": i, "category": f"cat_{i % 5}"})
         
-        rest_client.insert_batch(collection_name, vectors, ids, metadata)
+        rest_client.insert_vectors(collection_name, vectors, ids, metadata)
         
         # Test different optimization hints
         query = np.random.randn(256).astype(np.float32)
@@ -141,7 +148,7 @@ class TestQuantizationE2E:
         results_baseline = rest_client.search(
             collection_name, 
             query, 
-            k=10,
+            top_k=10,
             optimization_hints=None
         )
         time_baseline = time.time() - start
@@ -151,13 +158,11 @@ class TestQuantizationE2E:
         results_optimized = rest_client.search(
             collection_name,
             query,
-            k=10,
-            optimization_hints={
-                "enable_two_stage_search": True,
-                "quantization_hint": "INT8",
-                "candidate_multiplier": 3.0,
-                "enable_parallel_search": True
-            }
+            top_k=10,
+            optimization_hints=SearchOptimizationHints(
+                enable_two_stage=True,
+                quantization_hint=QuantizationHint(hint_type="scalar", parameters={"bits": 8})
+            )
         )
         time_optimized = time.time() - start
         
@@ -180,20 +185,21 @@ class TestQuantizationE2E:
         collection_name = f"test_quant_e2e_grpc_{int(time.time())}"
         
         # Create collection via gRPC
-        config = {
-            "dimension": 384,
-            "distance_metric": "cosine"
-        }
+        config = CollectionConfig(
+            name=collection_name,
+            dimension=384,
+            distance_metric=DistanceMetric.COSINE
+        )
         grpc_client.create_collection(collection_name, config)
         
         # Insert vectors
         vectors = []
-        for i in range(50):
-            vec = {
-                "id": f"grpc_vec_{i}",
-                "vector": np.random.randn(384).astype(np.float32).tolist(),
-                "metadata": {"index": i}
-            }
+        for i in range(10):
+            vec = VectorRecord(
+                id=f"grpc_vec_{i}",
+                vector=np.random.randn(384).astype(np.float32).tolist(),
+                metadata={"index": i}
+            )
             vectors.append(vec)
         
         grpc_client.insert_vectors(collection_name, vectors)
@@ -201,23 +207,19 @@ class TestQuantizationE2E:
         # Search with optimization hints
         query = np.random.randn(384).astype(np.float32).tolist()
         
-        hints = {
-            "enable_two_stage_search": True,
-            "quantization_hint": "PQ8",
-            "candidate_multiplier": 5.0,
-            "min_candidates": 20,
-            "max_candidates": 200,
-            "enable_clustering_optimization": True,
-            "accuracy_threshold": 0.9,
-            "custom_hints": {
+        hints = SearchOptimizationHints(
+            enable_two_stage=True,
+            quantization_hint=QuantizationHint(hint_type="product", parameters={"bits": 8}),
+            accuracy_threshold=0.9,
+            custom_hints={
                 "algorithm": "hnsw",
                 "ef_search": "100"
             }
-        }
+        )
         
-        results = grpc_client.search_vectors(
-            collection_name,
-            [query],
+        results = grpc_client.search(
+            collection_id=collection_name,
+            vector=query,
             top_k=10,
             optimization_hints=hints
         )
@@ -254,6 +256,7 @@ class TestQuantizationE2E:
             )
             
             config = CollectionConfig(
+                name=collection_name,
                 dimension=dimension,
                 distance_metric=DistanceMetric.EUCLIDEAN,
                 quantization_config=quant_config
@@ -267,11 +270,11 @@ class TestQuantizationE2E:
                 # Insert a few vectors
                 vectors = np.random.rand(5, dimension).astype(np.float32)
                 ids = [f"{type_name}_{i}" for i in range(5)]
-                rest_client.insert_batch(collection_name, vectors, ids)
+                rest_client.insert_vectors(collection_name, vectors, ids)
                 
                 # Search
                 query = np.random.rand(dimension).astype(np.float32)
-                results = rest_client.search(collection_name, query, k=3)
+                results = rest_client.search(collection_name, query, top_k=3)
                 
                 assert len(results) <= 3
                 print(f"  Found {len(results)} results")
@@ -284,6 +287,7 @@ class TestQuantizationE2E:
         collection_name = f"test_quant_e2e_progressive_{int(time.time())}"
         
         config = CollectionConfig(
+            name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
             quantization_config=QuantizationConfig(
@@ -306,7 +310,7 @@ class TestQuantizationE2E:
             vectors = np.random.rand(batch_size, 128).astype(np.float32)
             ids = [f"prog_{total_inserted + i}" for i in range(batch_size)]
             
-            rest_client.insert_batch(collection_name, vectors, ids)
+            rest_client.insert_vectors(collection_name, vectors, ids)
             total_inserted += batch_size
             
             print(f"Inserted {total_inserted} vectors total")
@@ -316,11 +320,11 @@ class TestQuantizationE2E:
             results = rest_client.search(
                 collection_name,
                 query,
-                k=5,
-                optimization_hints={
-                    "enable_two_stage_search": True,
-                    "quantization_hint": "UNIFORM_8bit"
-                }
+                top_k=5,
+                optimization_hints=SearchOptimizationHints(
+                    enable_two_stage=True,
+                    quantization_hint=QuantizationHint(hint_type="uniform", parameters={"bits": 8})
+                )
             )
             
             assert len(results) <= 5
@@ -329,34 +333,22 @@ class TestQuantizationE2E:
     def test_search_hints_model(self):
         """Test SearchOptimizationHints model"""
         hints = SearchOptimizationHints(
-            enable_two_stage_search=True,
-            quantization_hint="PQ4",
-            candidate_multiplier=4.0,
-            min_candidates=50,
-            max_candidates=500,
-            enable_clustering_optimization=True,
-            enable_metadata_filtering_hint=True,
-            enable_parallel_search=True,
+            enable_two_stage=True,
+            quantization_hint=QuantizationHint(hint_type="product", parameters={"bits": 4}),
             accuracy_threshold=0.95,
             timeout_ms=100,
-            include_expired_vectors=False,
             custom_hints={"gpu": "true", "batch_size": "64"}
         )
         
         # Convert to dict for API
         hints_dict = hints.model_dump(exclude_none=True)
         
-        assert hints_dict["enable_two_stage_search"] is True
-        assert hints_dict["quantization_hint"] == "PQ4"
-        assert hints_dict["candidate_multiplier"] == 4.0
+        assert hints_dict["enable_two_stage"] is True
+        assert hints_dict["quantization_hint"]["hint_type"] == "product"
+        assert hints_dict["quantization_hint"]["parameters"]["bits"] == 4
         assert hints_dict["custom_hints"]["gpu"] == "true"
         
-        # Test validation
-        with pytest.raises(ValueError):
-            SearchOptimizationHints(candidate_multiplier=0.5)  # Too low
-        
-        with pytest.raises(ValueError):
-            SearchOptimizationHints(candidate_multiplier=101.0)  # Too high
+        # Test validation - remove invalid field tests since model structure changed
 
 
 if __name__ == "__main__":

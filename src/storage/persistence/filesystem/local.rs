@@ -64,7 +64,7 @@ pub struct LocalFileSystem {
 
 impl LocalFileSystem {
     /// Extract path from URL for stateless operations (uses centralized utility)
-    fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
+    fn resolve_path(&self, url: &str) -> FsResult<String> {
         use crate::storage::persistence::filesystem::FilesystemFactory;
         
         let path = FilesystemFactory::resolve_path(url)?;
@@ -80,9 +80,103 @@ impl LocalFileSystem {
         
         Ok(path)
     }
+    
+    /// Resolve a path string to an absolute PathBuf, handling cases where current_dir() fails
+    fn resolve_to_absolute_path(&self, path_str: &str) -> PathBuf {
+        let mut resolved_path = PathBuf::from(path_str);
+        
+        // If path is already absolute, return it
+        if resolved_path.is_absolute() {
+            return resolved_path;
+        }
+        
+        // Try to get current directory, otherwise use fallbacks
+        match std::env::current_dir() {
+            Ok(cwd) => {
+                resolved_path = cwd.join(path_str);
+            }
+            Err(e) => {
+                
+                // Use PWD or CARGO_MANIFEST_DIR as fallback
+                let fallback_base = if let Ok(pwd) = std::env::var("PWD") {
+                    pwd
+                } else if let Ok(cargo_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                    cargo_dir
+                } else {
+                    "/tmp".to_string()
+                };
+                
+                // Properly resolve the relative path - order matters!
+                if path_str.starts_with("../") {
+                    // Handle parent directory references with path
+                    let base = PathBuf::from(&fallback_base);
+                    let mut current = base.clone();
+                    let mut remaining: &str = path_str;
+                    
+                    // Handle multiple ../ sequences
+                    while remaining.starts_with("../") {
+                        if let Some(parent) = current.parent() {
+                            current = parent.to_path_buf();
+                            remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                        } else {
+                            // Can't go up further, just use what we have
+                            break;
+                        }
+                    }
+                    resolved_path = current.join(remaining);
+                } else if path_str == ".." {
+                    // Just parent directory
+                    let base = PathBuf::from(&fallback_base);
+                    if let Some(parent) = base.parent() {
+                        resolved_path = parent.to_path_buf();
+                    } else {
+                        resolved_path = base;
+                    }
+                } else if path_str.starts_with("./") {
+                    // Replace ./ with the base directory
+                    let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                    resolved_path = PathBuf::from(fallback_base).join(clean_path);
+                } else if path_str == "." {
+                    // Just current directory
+                    resolved_path = PathBuf::from(fallback_base);
+                } else {
+                    // Regular relative path
+                    resolved_path = PathBuf::from(fallback_base).join(path_str);
+                }
+            }
+        }
+        
+        resolved_path
+    }
 
     /// Create new local filesystem instance
     pub async fn new(config: LocalConfig) -> FsResult<Self> {
+        // Capture the process start directory information
+        match std::env::current_dir() {
+            Ok(cwd) => {
+                
+                // Try to get parent to see if it's accessible
+                if let Some(parent) = cwd.parent() {
+                }
+            }
+            Err(e) => {
+                
+                // Try alternative methods to understand the environment
+                if let Ok(exe_path) = std::env::current_exe() {
+                    if let Some(exe_dir) = exe_path.parent() {
+                    }
+                }
+                
+                // Check environment variables
+                if let Ok(pwd) = std::env::var("PWD") {
+                }
+                
+                // Check if we're in a test environment
+                if let Ok(cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                }
+            }
+        }
+        
         // Create and validate root directory if specified
         if let Some(ref root_dir) = config.root_dir {
             if !root_dir.exists() {
@@ -155,7 +249,7 @@ impl LocalFileSystem {
 impl FileSystem for LocalFileSystem {
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         // Extract path from URL
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
 
         match fs::read(&resolved_path).await {
@@ -173,21 +267,18 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
         let options = options.unwrap_or_default();
 
         // Create parent directories if requested
         if options.create_dirs {
             if let Some(parent) = resolved_path.parent() {
-                println!("📁 DEBUG LocalFileSystem::write creating parent directories for: {:?}", parent);
                 fs::create_dir_all(parent)
                     .await
                     .map_err(|e| {
-                        println!("❌ DEBUG LocalFileSystem::write failed to create parent {:?}: {:?}", parent, e);
                         FilesystemError::Io(e)
                     })?;
-                println!("✅ DEBUG LocalFileSystem::write successfully created parent directories: {:?}", parent);
             }
         }
 
@@ -236,7 +327,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
 
         let mut file = fs::OpenOptions::new()
@@ -256,7 +347,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
 
         if !resolved_path.exists() {
@@ -277,7 +368,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
         Ok(resolved_path.exists())
     }
@@ -286,7 +377,7 @@ impl FileSystem for LocalFileSystem {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
         
         // Extract path from URL
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
         
         // Open file for reading
@@ -353,7 +444,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn metadata(&self, path: &str) -> FsResult<FileMetadata> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
 
         let metadata = if self.config.follow_symlinks {
@@ -374,23 +465,16 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        println!("📁 DEBUG LocalFileSystem::list called with path: '{}'", path);
-        println!("📁 DEBUG LocalFileSystem::list config.root_dir: {:?}", self.config.root_dir);
         
         // Extract path from URL
-        let path_str = self.extract_path_from_url(path)?;
-        println!("📁 DEBUG LocalFileSystem::list extracted path_str: '{}'", path_str);
+        let path_str = self.resolve_path(path)?;
         
         let resolved_path = PathBuf::from(path_str);
-        println!("📁 DEBUG LocalFileSystem::list resolved_path: {:?}", resolved_path);
-        println!("📁 DEBUG LocalFileSystem::list resolved_path exists: {}", resolved_path.exists());
-        println!("📁 DEBUG LocalFileSystem::list resolved_path is_dir: {}", resolved_path.is_dir());
 
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
             .await
             .map_err(|e| {
-                println!("❌ DEBUG LocalFileSystem::list fs::read_dir failed on {:?}: {:?}", resolved_path, e);
                 FilesystemError::Io(e)
             })?;
 
@@ -406,13 +490,19 @@ impl FileSystem for LocalFileSystem {
             let file_metadata = self.convert_metadata(&entry_path, &metadata);
 
             // Create full URL for entry (stateless design)
-            let entry_url = if self.config.root_dir.is_some() && path.starts_with("file://./") {
+            let entry_url = if path.starts_with("file://./") || path.starts_with("./") {
                 // For relative URLs, preserve the relative nature
-                let relative_from_root = entry_path.strip_prefix(&self.config.root_dir.as_ref().unwrap())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| entry_path.display().to_string());
-                format!("file://./{}", relative_from_root)
+                if self.config.root_dir.is_some() {
+                    let relative_from_root = entry_path.strip_prefix(&self.config.root_dir.as_ref().unwrap())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| entry_path.display().to_string());
+                    format!("file://./{}", relative_from_root)
+                } else {
+                    // No root_dir, but path is relative - preserve relative nature
+                    format!("file://{}", entry_path.display())
+                }
             } else {
+                // Absolute path
                 format!("file://{}", entry_path.display())
             };
             info!("📁 DEBUG LocalFileSystem::list entry_url: '{}' for entry_path: {:?}", entry_url, entry_path);
@@ -431,16 +521,12 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn create_dir(&self, path: &str) -> FsResult<()> {
-        println!("📁 DEBUG LocalFileSystem::create_dir called with path: '{}'", path);
-        let path_str = self.extract_path_from_url(path)?;
-        println!("📁 DEBUG LocalFileSystem::create_dir extracted path_str: '{}'", path_str);
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        println!("📁 DEBUG LocalFileSystem::create_dir resolved_path: {:?}", resolved_path);
 
         fs::create_dir(&resolved_path)
             .await
             .map_err(|e| {
-                println!("❌ DEBUG LocalFileSystem::create_dir failed on {:?}: {:?}", resolved_path, e);
                 match e.kind() {
                     std::io::ErrorKind::AlreadyExists => {
                         FilesystemError::AlreadyExists(resolved_path.display().to_string())
@@ -451,28 +537,24 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn create_dir_all(&self, path: &str) -> FsResult<()> {
-        println!("📁 DEBUG LocalFileSystem::create_dir_all called with path: '{}'", path);
-        let path_str = self.extract_path_from_url(path)?;
-        println!("📁 DEBUG LocalFileSystem::create_dir_all extracted path_str: '{}'", path_str);
-        let resolved_path = PathBuf::from(path_str);
-        println!("📁 DEBUG LocalFileSystem::create_dir_all resolved_path: {:?}", resolved_path);
-        println!("📁 DEBUG LocalFileSystem config: root_dir={:?}", self.config.root_dir);
-
-        match fs::create_dir_all(&resolved_path).await {
+        
+        // First extract path from URL
+        let path_str = self.resolve_path(path)?;
+        
+        // Then resolve to absolute path
+        let resolved_path = self.resolve_to_absolute_path(&path_str);
+        
+        // Now create the directory with the resolved absolute path
+        match std::fs::create_dir_all(&resolved_path) {
             Ok(()) => {
-                println!("✅ DEBUG LocalFileSystem::create_dir_all succeeded: {:?}", resolved_path);
                 Ok(())
             }
             Err(e) => {
-                // For create_dir_all, AlreadyExists should not normally happen as tokio::fs::create_dir_all handles it
-                // But let's be defensive and handle it anyway
                 match e.kind() {
                     std::io::ErrorKind::AlreadyExists => {
-                        println!("ℹ️ DEBUG LocalFileSystem::create_dir_all directory already exists (unexpected but OK): {:?}", resolved_path);
                         Ok(())
                     }
                     _ => {
-                        println!("❌ DEBUG LocalFileSystem::create_dir_all failed on {:?}: {:?}", resolved_path, e);
                         Err(FilesystemError::Io(e))
                     }
                 }
@@ -481,62 +563,45 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn copy(&self, from: &str, to: &str) -> FsResult<()> {
-        println!("📋 DEBUG LocalFileSystem::copy called: from='{}' to='{}'", from, to);
-        let from_path_str = self.extract_path_from_url(from)?;
+        let from_path_str = self.resolve_path(from)?;
         let from_path = PathBuf::from(from_path_str);
-        let to_path_str = self.extract_path_from_url(to)?;
+        let to_path_str = self.resolve_path(to)?;
         let to_path = PathBuf::from(to_path_str);
-        println!("📋 DEBUG LocalFileSystem::copy paths: from={:?} to={:?}", from_path, to_path);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
-            println!("📋 DEBUG LocalFileSystem::copy creating parent directories for: {:?}", parent);
             fs::create_dir_all(parent)
                 .await
                 .map_err(|e| {
-                    println!("❌ DEBUG LocalFileSystem::copy failed to create parent {:?}: {:?}", parent, e);
                     FilesystemError::Io(e)
                 })?;
-            println!("✅ DEBUG LocalFileSystem::copy successfully created parent directories: {:?}", parent);
         }
 
         fs::copy(&from_path, &to_path)
             .await
             .map_err(|e| {
-                println!("❌ DEBUG LocalFileSystem::copy failed to copy file: {:?}", e);
                 FilesystemError::Io(e)
             })?;
 
-        println!("✅ DEBUG LocalFileSystem::copy completed successfully");
         Ok(())
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
-        println!("🚚 DEBUG LocalFileSystem::move_file called:");
-        println!("🚚 DEBUG   from: '{}'", from);
-        println!("🚚 DEBUG   to: '{}'", to);
         
         // Extract paths from URLs
-        let from_path_str = self.extract_path_from_url(from)?;
-        println!("🚚 DEBUG   from_path_str: '{}'", from_path_str);
+        let from_path_str = self.resolve_path(from)?;
         let from_path = PathBuf::from(&from_path_str);
-        println!("🚚 DEBUG   from_path: '{:?}'", from_path);
         
-        let to_path_str = self.extract_path_from_url(to)?;
-        println!("🚚 DEBUG   to_path_str: '{}'", to_path_str);
+        let to_path_str = self.resolve_path(to)?;
         let to_path = PathBuf::from(&to_path_str);
-        println!("🚚 DEBUG   to_path: '{:?}'", to_path);
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
-            println!("🚚 DEBUG LocalFileSystem::move_file creating parent directories for: {:?}", parent);
             fs::create_dir_all(parent)
                 .await
                 .map_err(|e| {
-                    println!("❌ DEBUG LocalFileSystem::move_file failed to create parent {:?}: {:?}", parent, e);
                     FilesystemError::Io(e)
                 })?;
-            println!("✅ DEBUG LocalFileSystem::move_file successfully created parent directories: {:?}", parent);
         }
 
         fs::rename(&from_path, &to_path)
@@ -556,7 +621,7 @@ impl FileSystem for LocalFileSystem {
     
     async fn sync_file(&self, path: &str) -> FsResult<()> {
         // Extract path from URL
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
         
         // Only sync if enabled in config
@@ -586,7 +651,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>> {
-        let path_str = self.extract_path_from_url(path)?;
+        let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
         
         let file = if create {
@@ -755,15 +820,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_path_from_url() {
+    async fn test_resolve_path() {
         let config = LocalConfig::default();
         let fs = LocalFileSystem::new(config).await.unwrap();
         
         // Test various URL formats
-        assert_eq!(fs.extract_path_from_url("file:///tmp/test").unwrap(), "/tmp/test");
-        assert_eq!(fs.extract_path_from_url("file://./relative/path").unwrap(), "./relative/path");
-        assert_eq!(fs.extract_path_from_url("/absolute/path").unwrap(), "/absolute/path");
-        assert_eq!(fs.extract_path_from_url("relative/path").unwrap(), "relative/path");
+        assert_eq!(fs.resolve_path("file:///tmp/test").unwrap(), "/tmp/test");
+        assert_eq!(fs.resolve_path("file://./relative/path").unwrap(), "./relative/path");
+        assert_eq!(fs.resolve_path("/absolute/path").unwrap(), "/absolute/path");
+        assert_eq!(fs.resolve_path("relative/path").unwrap(), "relative/path");
     }
 
     #[tokio::test]
@@ -879,14 +944,14 @@ mod tests {
         let fs_with_root = LocalFileSystem::new(config_with_root).await.unwrap();
         
         // Path extraction should return the path as-is
-        let path_str = fs_with_root.extract_path_from_url("file://./subdir/file.txt").unwrap();
+        let path_str = fs_with_root.resolve_path("file://./subdir/file.txt").unwrap();
         assert_eq!(path_str, "./subdir/file.txt");
         
         // Test without root_dir - should be the same
         let config_no_root = LocalConfig::default();
         let fs_no_root = LocalFileSystem::new(config_no_root).await.unwrap();
         
-        let path_str = fs_no_root.extract_path_from_url("file://./subdir/file.txt").unwrap();
+        let path_str = fs_no_root.resolve_path("file://./subdir/file.txt").unwrap();
         assert_eq!(path_str, "./subdir/file.txt");
     }
 

@@ -94,6 +94,7 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
 /// Test basic vector insertion and search
 #[tokio::test]
 async fn test_basic_vector_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -153,6 +154,7 @@ async fn test_basic_vector_operations() {
 /// Test batch vector insertion
 #[tokio::test]
 async fn test_batch_vector_insertion() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -214,6 +216,7 @@ async fn test_batch_vector_insertion() {
 /// Test streaming search
 #[tokio::test]
 async fn test_streaming_search() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -268,6 +271,7 @@ async fn test_streaming_search() {
 /// Test metadata filtering
 #[tokio::test]
 async fn test_metadata_filtering() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -361,6 +365,7 @@ async fn test_metadata_filtering() {
 /// Test flush operations
 #[tokio::test]
 async fn test_flush_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -432,6 +437,7 @@ async fn test_flush_operations() {
 /// Test metrics and health check
 #[tokio::test]
 async fn test_metrics_and_health() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -491,6 +497,7 @@ async fn test_metrics_and_health() {
 /// Test error handling
 #[tokio::test]
 async fn test_error_handling() {
+    setup_hardware_capabilities();
     let (direct_service, _collection_service, _temp_dir) = create_test_services().await;
     
     // Test search on non-existent collection

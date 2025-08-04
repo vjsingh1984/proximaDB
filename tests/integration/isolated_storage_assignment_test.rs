@@ -13,6 +13,8 @@ use proximadb::storage::assignment_service::{HashBasedAssignmentService, Assignm
 
 #[tokio::test]
 async fn test_isolated_basic_assignment() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Test basic assignment functionality
@@ -39,6 +41,8 @@ async fn test_isolated_basic_assignment() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_assignment_persistence() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // First assignment
@@ -75,6 +79,8 @@ async fn test_isolated_assignment_persistence() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_multiple_storage_locations() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create multiple storage locations
@@ -122,6 +128,8 @@ async fn test_isolated_multiple_storage_locations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_weighted_assignment() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create weighted storage locations
@@ -179,6 +187,8 @@ async fn test_isolated_weighted_assignment() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_concurrent_assignment_safety() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Test concurrent assignment of the same collection
@@ -223,6 +233,8 @@ async fn test_isolated_concurrent_assignment_safety() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_assignment_removal() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create assignment
@@ -259,6 +271,8 @@ async fn test_isolated_assignment_removal() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_assignment_statistics() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create multiple assignments
@@ -299,6 +313,8 @@ async fn test_isolated_assignment_statistics() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_multi_environment_isolation() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Create multiple isolated environments
     let multi_env = MultiEnvironmentTest::new(3).await?;
     

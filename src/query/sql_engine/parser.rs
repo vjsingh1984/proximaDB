@@ -35,6 +35,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use crate::query::sql_engine::simd_parser::parse_vector_simd;
 
 /// Parsed SQL query representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -704,27 +705,37 @@ impl SqlParser {
     }
     
     fn parse_vector_literal(&mut self) -> Result<Vec<f32>> {
-        self.expect_char('[')?;
-        let mut values = Vec::new();
+        // Find the complete vector array string
+        let start_pos = self.position;
         
-        loop {
-            self.skip_whitespace();
-            
-            if self.check_char(']') {
-                self.position += 1;
-                break;
+        // Must start with '['
+        self.expect_char('[')?;
+        
+        // Find matching closing ']'
+        let mut bracket_count = 1;
+        let mut end_pos = self.position;
+        
+        while end_pos < self.query.len() && bracket_count > 0 {
+            match self.query.chars().nth(end_pos).unwrap() {
+                '[' => bracket_count += 1,
+                ']' => bracket_count -= 1,
+                _ => {}
             }
-            
-            let num = self.parse_number()? as f32;
-            values.push(num);
-            
-            if !self.consume_char(',') {
-                self.expect_char(']')?;
-                break;
-            }
+            end_pos += 1;
         }
         
-        Ok(values)
+        if bracket_count > 0 {
+            return Err(anyhow!("Unterminated vector array"));
+        }
+        
+        // Extract the complete vector array string
+        let vector_str = &self.query[start_pos..end_pos];
+        
+        // Update parser position
+        self.position = end_pos;
+        
+        // Use SIMD-optimized parser for high-performance vector parsing
+        parse_vector_simd(vector_str).map_err(|e| anyhow!("Vector parsing error: {}", e))
     }
     
     fn parse_number(&mut self) -> Result<f64> {

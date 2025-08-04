@@ -58,6 +58,7 @@ fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> Wri
         created_at: SystemTime::now(),
         total_size_bytes,
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 
@@ -115,6 +116,7 @@ async fn create_test_wal_strategy_with_cloud_atomicity() -> Result<BincodeWalBat
 
 #[tokio::test]
 async fn test_cloud_atomicity_manager_creation() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     
     // Test basic stats
@@ -128,6 +130,7 @@ async fn test_cloud_atomicity_manager_creation() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_transaction_lifecycle() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -165,6 +168,7 @@ async fn test_cloud_transaction_lifecycle() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_transaction_rollback() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -197,6 +201,7 @@ async fn test_cloud_transaction_rollback() -> Result<()> {
 
 #[tokio::test]
 async fn test_bincode_strategy_with_cloud_atomicity() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     
     // Test cloud atomicity stats
@@ -209,6 +214,7 @@ async fn test_bincode_strategy_with_cloud_atomicity() -> Result<()> {
 
 #[tokio::test]
 async fn test_atomic_cloud_write_integration() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     let collection_id = "test_collection".to_string();
     
@@ -256,6 +262,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_transaction_cleanup() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -291,6 +298,7 @@ async fn test_cloud_transaction_cleanup() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_atomicity_error_handling() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -310,6 +318,7 @@ async fn test_cloud_atomicity_error_handling() -> Result<()> {
 
 #[tokio::test]
 async fn test_concurrent_cloud_transactions() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     
     // Create multiple concurrent transactions
@@ -371,6 +380,7 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_atomicity_with_strategy_integration() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     
     // Test multiple cleanup operations

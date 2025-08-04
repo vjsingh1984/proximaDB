@@ -23,6 +23,7 @@
 //! - CPU optimization with SIMD
 
 use crate::compute::ComputeBackend;
+use crate::compute::distance::PlatformCapability;
 use async_trait::async_trait;
 
 /// Hardware accelerated vector operations
@@ -137,9 +138,7 @@ impl HardwareAccelerator for RocmAccelerator {
 
     fn get_info(&self) -> HardwareInfo {
         HardwareInfo {
-            backend: ComputeBackend::ROCm {
-                device_id: Some(self.device_id),
-            },
+            backend: ComputeBackend::ROCm,
             device_name: format!("ROCm Device {}", self.device_id),
             memory_total: 16 * 1024 * 1024 * 1024, // 16GB placeholder
             memory_free: 8 * 1024 * 1024 * 1024,   // 8GB placeholder
@@ -332,9 +331,7 @@ impl HardwareAccelerator for CpuAccelerator {
         let cache_sizes = Self::get_cache_sizes();
         
         HardwareInfo {
-            backend: ComputeBackend::CPU {
-                threads: Some(self.thread_count),
-            },
+            backend: ComputeBackend::CpuSIMD(PlatformCapability::X86Avx2),
             device_name: Self::get_cpu_name(),
             memory_total: total_memory,
             memory_free: free_memory,
@@ -461,10 +458,10 @@ impl HardwareAccelerator for CpuAccelerator {
 /// Factory function to create hardware accelerators
 pub fn create_accelerator(backend: ComputeBackend) -> Box<dyn HardwareAccelerator> {
     match backend {
-        ComputeBackend::ROCm { device_id } => {
-            Box::new(RocmAccelerator::new(device_id.unwrap_or(0)))
+        ComputeBackend::ROCm => {
+            Box::new(RocmAccelerator::new(0))
         }
-        ComputeBackend::CPU { threads } => Box::new(CpuAccelerator::new(threads, true)),
+        ComputeBackend::CpuSIMD(_) => Box::new(CpuAccelerator::new(None, true)),
         _ => {
             // Default to CPU
             Box::new(CpuAccelerator::new(None, true))

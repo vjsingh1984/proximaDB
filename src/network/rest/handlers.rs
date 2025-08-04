@@ -32,7 +32,24 @@ use std::sync::Arc;
 
 use crate::handlers::{UnifiedHandlers, conversions};
 use crate::core::search::SearchResult;
-use crate::proto::proximadb;
+use crate::proto::proximadb::{
+    self, 
+    OperationMetrics, IndexConfig, QuantizationConfig, QuantizationLevel,
+    CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
+    DistanceMetric, FilterableDataType, VectorOperation, StorageEngineCompatibility,
+    vector_operation_response::ResultPayload,
+    quantization_level::LevelType,
+    NoQuantization, UniformQuantization, ProductQuantization,
+    ScalarQuantization, BinaryQuantization, CustomQuantization,
+    HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
+    StorageQuantizationConfig as ProtoStorageQuantizationConfig,
+    IndexQuantizationConfig as ProtoIndexQuantizationConfig,
+    SearchQuantizationConfig as ProtoSearchQuantizationConfig,
+    QuantizationValidation as ProtoQuantizationValidation,
+    IndexQuantizationStrategy, FilterableColumnSpec,
+    CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
+    Collection as ProtoCollection, RandomProjectionType
+};
 
 /// Shared application state for REST handlers
 #[derive(Clone)]
@@ -69,14 +86,14 @@ pub struct CollectionOperationRequest {
     pub operation: String, // "create", "update" (get/list/delete now use dedicated HTTP verbs)
     pub collection_id: Option<String>,
     pub collection_name: Option<String>,
-    pub config: Option<CollectionConfig>,
+    pub config: Option<RestCollectionConfig>,
     pub query_params: Option<HashMap<String, String>>, // limit, offset, filters
     pub options: Option<HashMap<String, bool>>,        // force, include_stats
 }
 
 /// Collection config - aligned with proto CollectionConfig
 #[derive(Debug, Deserialize, Serialize)]
-pub struct CollectionConfig {
+pub struct RestCollectionConfig {
     pub name: String,
     pub dimension: i32,
     pub distance_metric: Option<String>,            // "cosine", "euclidean", "dot_product" - defaults to "cosine"
@@ -84,7 +101,7 @@ pub struct CollectionConfig {
     pub primary_indexing_algorithm: Option<String>, // "hnsw", "ivf", "flat", "pq", "annoy" - defaults to "hnsw"
     pub filterable_columns: Option<Vec<FilterableColumn>>,
     pub index_configs: Option<Vec<IndexConfiguration>>,
-    pub quantization_config: Option<QuantizationConfig>,
+    pub quantization_config: Option<RestQuantizationConfig>,
     pub primary_index_name: Option<String>,
     pub enable_automatic_index_selection: Option<bool>,
     pub description: Option<String>,
@@ -111,12 +128,12 @@ pub struct IndexConfiguration {
     pub async_update_timeout_ms: Option<i64>,
     pub async_update_batch_size: Option<i32>,
     pub enable_background_optimization: Option<bool>,
-    pub hnsw_config: Option<HnswConfig>,
-    pub ivf_config: Option<IvfConfig>,
-    pub flat_config: Option<FlatConfig>,
-    pub pq_config: Option<PqConfig>,
-    pub annoy_config: Option<AnnoyConfig>,
-    pub lsh_config: Option<LshConfig>,
+    pub hnsw_config: Option<RestHnswConfig>,
+    pub ivf_config: Option<RestIvfConfig>,
+    pub flat_config: Option<RestFlatConfig>,
+    pub pq_config: Option<RestPqConfig>,
+    pub annoy_config: Option<RestAnnoyConfig>,
+    pub lsh_config: Option<RestLshConfig>,
     pub build_concurrency: Option<i32>,
     pub memory_limit_mb: Option<i64>,
     pub checkpoint_interval_ms: Option<i32>,
@@ -127,7 +144,7 @@ pub struct IndexConfiguration {
 
 /// HNSW configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HnswConfig {
+pub struct RestHnswConfig {
     pub m: i32,
     pub ef_construction: i32,
     pub ef_search: i32,
@@ -142,7 +159,7 @@ pub struct HnswConfig {
 
 /// IVF configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct IvfConfig {
+pub struct RestIvfConfig {
     pub n_lists: i32,
     pub n_probe: i32,
     pub quantization_bits: i32,
@@ -154,7 +171,7 @@ pub struct IvfConfig {
 
 /// Flat index configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FlatConfig {
+pub struct RestFlatConfig {
     pub enable_simd: bool,
     pub batch_size: i32,
     pub enable_parallel_search: bool,
@@ -162,7 +179,7 @@ pub struct FlatConfig {
 
 /// Product Quantization configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PqConfig {
+pub struct RestPqConfig {
     pub subvectors: i32,
     pub bits_per_subvector: i32,
     pub training_sample_count: i32,
@@ -171,7 +188,7 @@ pub struct PqConfig {
 
 /// Annoy configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AnnoyConfig {
+pub struct RestAnnoyConfig {
     pub n_trees: i32,
     pub search_k: i32,
     pub max_leaf_size: i32,
@@ -180,7 +197,7 @@ pub struct AnnoyConfig {
 
 /// LSH configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct LshConfig {
+pub struct RestLshConfig {
     pub n_hash_tables: i32,
     pub n_hash_functions: i32,
     pub bucket_width: f32,
@@ -191,7 +208,7 @@ pub struct LshConfig {
 
 /// Quantization configuration - aligned with proto
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct QuantizationConfig {
+pub struct RestQuantizationConfig {
     pub enabled: bool,
     pub storage_quantization: Option<StorageQuantizationConfig>,
     pub index_quantization: Option<IndexQuantizationConfig>,
@@ -204,7 +221,7 @@ pub struct QuantizationConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageQuantizationConfig {
     pub enabled: bool,
-    pub level: QuantizationLevel,
+    pub level: RestQuantizationLevel,
     pub codebook_id: Option<String>,
     pub progressive_quantization: bool,
     pub storage_compatibility: String,
@@ -214,7 +231,7 @@ pub struct StorageQuantizationConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IndexQuantizationConfig {
     pub enabled: bool,
-    pub strategies: Vec<IndexQuantizationStrategy>,
+    pub strategies: Vec<RestIndexQuantizationStrategy>,
     pub auto_select_strategy: bool,
 }
 
@@ -222,7 +239,7 @@ pub struct IndexQuantizationConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SearchQuantizationConfig {
     pub enabled: bool,
-    pub default_level: QuantizationLevel,
+    pub default_level: RestQuantizationLevel,
     pub adaptive_precision: bool,
     pub accuracy_threshold: f32,
     pub candidate_multiplier: i32,
@@ -230,7 +247,7 @@ pub struct SearchQuantizationConfig {
 
 /// Quantization level
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct QuantizationLevel {
+pub struct RestQuantizationLevel {
     pub level_type: String, // "none", "uniform", "pq", "scalar", "binary", "custom"
     pub bits: Option<i32>,
     pub scale: Option<f32>,
@@ -249,9 +266,9 @@ pub struct QuantizationLevel {
 
 /// Index quantization strategy
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct IndexQuantizationStrategy {
+pub struct RestIndexQuantizationStrategy {
     pub index_name: String,
-    pub level: QuantizationLevel,
+    pub level: RestQuantizationLevel,
     pub build_async: bool,
     pub codebook_id: Option<String>,
 }
@@ -278,7 +295,7 @@ pub struct VectorGetResponse {
     pub id: String,
     pub collection_id: String,
     pub vector: Option<Vec<f32>>,
-    pub metadata: Option<HashMap<String, String>>,
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
     pub score: Option<f32>,
     pub rank: Option<i32>,
 }
@@ -302,7 +319,7 @@ pub struct CollectionResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Collection {
     pub id: String,
-    pub config: CollectionConfig,
+    pub config: RestCollectionConfig,
     pub stats: CollectionStats,
     pub created_at: i64,
     pub updated_at: i64,
@@ -338,7 +355,7 @@ pub struct CollectionStats {
 
 /// Vector batch request - aligned with proto VectorBatchRequest
 #[derive(Debug, Deserialize, Serialize)]
-pub struct VectorBatchRequest {
+pub struct RestVectorBatchRequest {
     pub collection_id: String,
     pub vectors: Vec<VectorData>,
     pub batch_timeout_ms: Option<i64>,
@@ -439,7 +456,7 @@ pub struct QuantizationHint {
 pub struct VectorOperationResponse {
     pub success: bool,
     pub operation: String,
-    pub metrics: OperationMetrics,
+    pub metrics: RestOperationMetrics,
     pub results: Option<Vec<SearchResult>>,
     pub vector_ids: Vec<String>,
     pub error_message: Option<String>,
@@ -448,7 +465,7 @@ pub struct VectorOperationResponse {
 
 /// Operation metrics
 #[derive(Debug, Serialize)]
-pub struct OperationMetrics {
+pub struct RestOperationMetrics {
     pub total_processed: i64,
     pub successful_count: i64,
     pub failed_count: i64,
@@ -650,10 +667,37 @@ pub async fn collection_operation(
 /// Unified vector batch handler - thin adapter to UnifiedHandlers
 pub async fn vector_batch(
     State(state): State<AppState>,
-    Json(request): Json<VectorBatchRequest>,
+    Json(mut request_json): Json<serde_json::Value>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
-    // Convert REST request to proto request
-    let proto_request = conversions::VectorBatchRequestBuilder::from_json(serde_json::to_value(&request).unwrap())
+    // Debug log the incoming request
+    tracing::debug!("vector_batch received JSON: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
+    
+    // Handle flexible metadata format before conversion
+    if let Some(vectors) = request_json.get_mut("vectors").and_then(|v| v.as_array_mut()) {
+        for vector in vectors {
+            if let Some(metadata) = vector.get_mut("metadata") {
+                // Convert object format to array format if needed
+                if let serde_json::Value::Object(obj) = metadata {
+                    let array_format: Vec<serde_json::Value> = obj.iter()
+                        .map(|(key, value)| {
+                            let mut item = serde_json::json!({"key": key});
+                            match value {
+                                serde_json::Value::String(s) => item["string_value"] = serde_json::Value::String(s.clone()),
+                                serde_json::Value::Number(n) => item["double_value"] = serde_json::Value::Number(n.clone()),
+                                serde_json::Value::Bool(b) => item["bool_value"] = serde_json::Value::Bool(*b),
+                                _ => item["string_value"] = serde_json::Value::String(value.to_string()),
+                            }
+                            item
+                        })
+                        .collect();
+                    *metadata = serde_json::Value::Array(array_format);
+                }
+            }
+        }
+    }
+    
+    // Convert REST request to proto request using flexible JSON parsing
+    let proto_request = conversions::VectorBatchRequestBuilder::from_json(request_json)
         .map_err(|e| {
             tracing::error!("Failed to parse vector batch request: {}", e);
             StatusCode::BAD_REQUEST
@@ -669,7 +713,7 @@ pub async fn vector_batch(
         })?;
     
     // Convert proto response to REST response  
-    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+    let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
         successful_count: 0,
         failed_count: 0,
@@ -682,7 +726,7 @@ pub async fn vector_batch(
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: conversions::vector_operation_to_string(proto_response.operation),
-        metrics: OperationMetrics {
+        metrics: RestOperationMetrics {
             total_processed: metrics.total_processed,
             successful_count: metrics.successful_count,
             failed_count: metrics.failed_count,
@@ -724,7 +768,7 @@ pub async fn vector_search(
     // Convert proto response to REST response
     let results = if let Some(result_payload) = proto_response.result_payload {
         match result_payload {
-            crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(compact) => {
+            ResultPayload::CompactResults(compact) => {
                 compact.results.into_iter()
                     .map(|r| SearchResult {
                         id: r.id.clone().unwrap_or_default(),
@@ -755,7 +799,7 @@ pub async fn vector_search(
         vec![]
     };
     
-    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+    let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
         successful_count: 0,
         failed_count: 0,
@@ -768,7 +812,7 @@ pub async fn vector_search(
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: "search".to_string(),
-        metrics: OperationMetrics {
+        metrics: RestOperationMetrics {
             total_processed: metrics.total_processed,
             successful_count: metrics.successful_count,
             failed_count: 0,
@@ -804,14 +848,14 @@ pub async fn get_vector(
         Ok(response) => {
             if response.success {
                 // Extract the single result from compact results
-                if let Some(crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(results)) = response.result_payload {
+                if let Some(ResultPayload::CompactResults(results)) = response.result_payload {
                     if let Some(result) = results.results.first() {
                         let vector_response = VectorGetResponse {
                             id: result.id.clone().unwrap_or_default(),
                             collection_id: collection_id.clone(),
                             vector: if include_vector { Some(result.vector.clone()) } else { None },
                             metadata: if include_metadata { 
-                                Some(crate::core::proto_metadata_helper::proto_metadata_to_hashmap(&result.metadata))
+                                Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&result.metadata))
                             } else { None },
                             score: Some(result.score),
                             rank: result.rank.map(|r| r as i32),
@@ -943,293 +987,32 @@ pub async fn internal_flush_collection(
 // ============================================================================
 
 /// Convert index config to proto
-fn convert_index_config_to_proto(config: IndexConfiguration) -> crate::proto::proximadb::IndexConfig {
-    use crate::proto::proximadb;
+fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
     
     let algorithm = match config.algorithm.as_str() {
-        "hnsw" => proximadb::IndexingAlgorithm::Hnsw as i32,
-        "ivf" => proximadb::IndexingAlgorithm::Ivf as i32,
-        "flat" => proximadb::IndexingAlgorithm::Flat as i32,
-        "pq" => proximadb::IndexingAlgorithm::Pq as i32,
-        "annoy" => proximadb::IndexingAlgorithm::Annoy as i32,
-        "lsh" => proximadb::IndexingAlgorithm::Lsh as i32,
-        _ => proximadb::IndexingAlgorithm::Hnsw as i32,
+        "hnsw" => IndexingAlgorithm::Hnsw as i32,
+        "ivf" => IndexingAlgorithm::Ivf as i32,
+        "flat" => IndexingAlgorithm::Flat as i32,
+        "pq" => IndexingAlgorithm::Pq as i32,
+        "annoy" => IndexingAlgorithm::Annoy as i32,
+        "lsh" => IndexingAlgorithm::Lsh as i32,
+        _ => IndexingAlgorithm::Hnsw as i32,
     };
     
     let update_mode = match config.update_mode.as_str() {
-        "synchronous" => proximadb::IndexUpdateMode::Synchronous as i32,
-        "asynchronous" => proximadb::IndexUpdateMode::Asynchronous as i32,
-        "hybrid_mode" => proximadb::IndexUpdateMode::HybridMode as i32,
-        _ => proximadb::IndexUpdateMode::Synchronous as i32,
+        "synchronous" => IndexUpdateMode::Synchronous as i32,
+        "asynchronous" => IndexUpdateMode::Asynchronous as i32,
+        "hybrid_mode" => IndexUpdateMode::HybridMode as i32,
+        _ => IndexUpdateMode::Synchronous as i32,
     };
     
-    proximadb::IndexConfig {
+    IndexConfig {
         index_name: config.index_name,
         algorithm,
         update_mode,
         async_update_timeout_ms: config.async_update_timeout_ms,
         async_update_batch_size: config.async_update_batch_size,
         enable_background_optimization: config.enable_background_optimization.unwrap_or(true),
-        hnsw_config: config.hnsw_config.map(|c| proximadb::HnswConfig {
-            m: c.m,
-            ef_construction: c.ef_construction,
-            ef_search: c.ef_search,
-            max_partition_size: c.max_partition_size,
-            adaptive_parameters: c.adaptive_parameters,
-            use_simd: c.use_simd,
-            memory_limit_mb: c.memory_limit_mb,
-            lazy_loading: c.lazy_loading,
-            prune_connections: c.prune_connections,
-            level_multiplier: c.level_multiplier,
-        }),
-        ivf_config: config.ivf_config.map(|c| proximadb::IvfConfig {
-            n_lists: c.n_lists,
-            n_probe: c.n_probe,
-            quantization_bits: c.quantization_bits,
-            use_pq: c.use_pq,
-            pq_subspaces: c.pq_subspaces,
-            train_on_insert: c.train_on_insert,
-            min_train_size: c.min_train_size,
-        }),
-        flat_config: config.flat_config.map(|c| proximadb::FlatConfig {
-            enable_simd: c.enable_simd,
-            batch_size: c.batch_size,
-            enable_parallel_search: c.enable_parallel_search,
-        }),
-        pq_config: config.pq_config.map(|c| proximadb::PqConfig {
-            subvectors: c.subvectors,
-            bits_per_subvector: c.bits_per_subvector,
-            training_sample_count: c.training_sample_count,
-            enable_reranking: c.enable_reranking,
-        }),
-        annoy_config: config.annoy_config.map(|c| proximadb::AnnoyConfig {
-            n_trees: c.n_trees,
-            search_k: c.search_k,
-            max_leaf_size: c.max_leaf_size,
-            enable_mmap: c.enable_mmap,
-        }),
-        lsh_config: config.lsh_config.map(|c| proximadb::LshConfig {
-            n_hash_tables: c.n_hash_tables,
-            n_hash_functions: c.n_hash_functions,
-            bucket_width: c.bucket_width,
-            binary_vectors: c.binary_vectors,
-            max_candidates: c.max_candidates,
-            projection: match c.projection.as_str() {
-                "binary" => 1,
-                "sparse" => 2,
-                _ => 0, // gaussian
-            },
-        }),
-        build_concurrency: config.build_concurrency,
-        memory_limit_mb: config.memory_limit_mb,
-        checkpoint_interval_ms: config.checkpoint_interval_ms,
-        is_primary: config.is_primary.unwrap_or(false),
-        use_cases: config.use_cases.unwrap_or_default(),
-        selectivity_threshold: config.selectivity_threshold,
-    }
-}
-
-/// Convert quantization config to proto
-fn convert_quantization_config_to_proto(config: QuantizationConfig) -> crate::proto::proximadb::QuantizationConfig {
-    use crate::proto::proximadb;
-    
-    proximadb::QuantizationConfig {
-        enabled: config.enabled,
-        storage_quantization: config.storage_quantization.map(|sq| {
-            proximadb::StorageQuantizationConfig {
-                enabled: sq.enabled,
-                level: Some(convert_quantization_level_to_proto(sq.level)),
-                codebook_id: sq.codebook_id,
-                progressive_quantization: sq.progressive_quantization,
-                storage_compatibility: match sq.storage_compatibility.as_str() {
-                    "viper_only" => proximadb::StorageEngineCompatibility::ViperOnly as i32,
-                    "all_engines" => proximadb::StorageEngineCompatibility::AllEngines as i32,
-                    "lsm_and_viper" => proximadb::StorageEngineCompatibility::LsmAndViper as i32,
-                    _ => proximadb::StorageEngineCompatibility::ViperOnly as i32,
-                },
-            }
-        }),
-        index_quantization: config.index_quantization.map(|iq| {
-            proximadb::IndexQuantizationConfig {
-                enabled: iq.enabled,
-                strategies: iq.strategies.into_iter().map(|s| {
-                    proximadb::IndexQuantizationStrategy {
-                        index_name: s.index_name,
-                        level: Some(convert_quantization_level_to_proto(s.level)),
-                        build_async: s.build_async,
-                        codebook_id: s.codebook_id,
-                    }
-                }).collect(),
-                auto_select_strategy: iq.auto_select_strategy,
-            }
-        }),
-        search_quantization: config.search_quantization.map(|sq| {
-            proximadb::SearchQuantizationConfig {
-                enabled: sq.enabled,
-                default_level: Some(convert_quantization_level_to_proto(sq.default_level)),
-                adaptive_precision: sq.adaptive_precision,
-                accuracy_threshold: sq.accuracy_threshold,
-                candidate_multiplier: sq.candidate_multiplier,
-            }
-        }),
-        compression_ratio_target: config.compression_ratio_target.unwrap_or(1.0),
-        validation: config.validation.map(|v| {
-            proximadb::QuantizationValidation {
-                accuracy_threshold: v.accuracy_threshold,
-                validation_sample_size: v.validation_sample_size,
-                enable_quality_monitoring: v.enable_quality_monitoring,
-                retraining_threshold: v.retraining_threshold,
-            }
-        }),
-    }
-}
-
-/// Convert quantization level to proto
-fn convert_quantization_level_to_proto(level: QuantizationLevel) -> crate::proto::proximadb::QuantizationLevel {
-    use crate::proto::proximadb::{self, quantization_level::LevelType};
-    
-    let level_type = match level.level_type.as_str() {
-        "none" => Some(LevelType::None(proximadb::NoQuantization {})),
-        "uniform" => Some(LevelType::Uniform(proximadb::UniformQuantization {
-            bits: level.bits.unwrap_or(8),
-            scale: level.scale,
-            offset: level.offset,
-        })),
-        "pq" => Some(LevelType::Pq(proximadb::ProductQuantization {
-            bits_per_code: level.bits_per_code.unwrap_or(8),
-            num_subvectors: level.num_subvectors.unwrap_or(8),
-            codebook_id: level.codebook_id,
-            adaptive_subvectors: false,
-        })),
-        "scalar" => Some(LevelType::Scalar(proximadb::ScalarQuantization {
-            bits: level.bits.unwrap_or(8),
-            scale: level.scale.unwrap_or(1.0),
-            offset: level.offset.unwrap_or(0.0),
-            clamp_values: false,
-        })),
-        "binary" => Some(LevelType::Binary(proximadb::BinaryQuantization {
-            threshold: level.threshold,
-            sign_based: level.sign_based.unwrap_or(false),
-        })),
-        "custom" => Some(LevelType::Custom(proximadb::CustomQuantization {
-            type_id: level.type_id.unwrap_or_default(),
-            bits_per_element: level.bits_per_element.unwrap_or(8),
-            config: level.config.unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, v))
-                .collect(),
-        })),
-        _ => Some(LevelType::None(proximadb::NoQuantization {})),
-    };
-    
-    proximadb::QuantizationLevel { level_type }
-}
-
-/// Convert REST config to proto config
-fn convert_to_proto_config(config: CollectionConfig) -> Result<crate::proto::proximadb::CollectionConfig, StatusCode> {
-    use crate::proto::proximadb;
-    
-    // Apply defaults for optional fields
-    let distance_metric_str = config.distance_metric.as_deref().unwrap_or("cosine");
-    let distance_metric = match distance_metric_str {
-        "cosine" => proximadb::DistanceMetric::Cosine as i32,
-        "euclidean" => proximadb::DistanceMetric::Euclidean as i32,
-        "dot_product" => proximadb::DistanceMetric::DotProduct as i32,
-        _ => proximadb::DistanceMetric::Cosine as i32,
-    };
-    
-    let storage_engine_str = config.storage_engine.as_deref().unwrap_or("viper");
-    let storage_engine = match storage_engine_str {
-        "viper" => proximadb::StorageEngine::Viper as i32,
-        "sst" => proximadb::StorageEngine::Sst as i32,
-        _ => proximadb::StorageEngine::Viper as i32,
-    };
-    
-    let indexing_algorithm_str = config.primary_indexing_algorithm.as_deref().unwrap_or("hnsw");
-    let indexing_algorithm = match indexing_algorithm_str {
-        "hnsw" => proximadb::IndexingAlgorithm::Hnsw as i32,
-        "ivf" => proximadb::IndexingAlgorithm::Ivf as i32,
-        "flat" => proximadb::IndexingAlgorithm::Flat as i32,
-        "pq" => proximadb::IndexingAlgorithm::Pq as i32,
-        "annoy" => proximadb::IndexingAlgorithm::Annoy as i32,
-        "lsh" => proximadb::IndexingAlgorithm::Lsh as i32,
-        _ => proximadb::IndexingAlgorithm::Hnsw as i32,
-    };
-    
-    // Convert filterable columns
-    let filterable_columns = config.filterable_columns.unwrap_or_default()
-        .into_iter()
-        .map(|col| {
-            let data_type = match col.data_type.as_str() {
-                "string" => proximadb::FilterableDataType::FilterableString as i32,
-                "integer" => proximadb::FilterableDataType::FilterableInteger as i32,
-                "float" => proximadb::FilterableDataType::FilterableFloat as i32,
-                "boolean" => proximadb::FilterableDataType::FilterableBoolean as i32,
-                "datetime" => proximadb::FilterableDataType::FilterableDatetime as i32,
-                "array_string" => proximadb::FilterableDataType::FilterableArrayString as i32,
-                "array_integer" => proximadb::FilterableDataType::FilterableArrayInteger as i32,
-                "array_float" => proximadb::FilterableDataType::FilterableArrayFloat as i32,
-                _ => proximadb::FilterableDataType::FilterableString as i32,
-            };
-            
-            proximadb::FilterableColumnSpec {
-                name: col.name,
-                data_type,
-                indexed: col.indexed,
-                supports_range: col.supports_range,
-                estimated_cardinality: col.estimated_cardinality,
-            }
-        })
-        .collect();
-    
-    // Convert index configs
-    let index_configs = config.index_configs.unwrap_or_default()
-        .into_iter()
-        .map(|idx| convert_index_config_to_proto(idx))
-        .collect();
-    
-    // Convert quantization config
-    let quantization_config = config.quantization_config.map(convert_quantization_config_to_proto);
-    
-    Ok(proximadb::CollectionConfig {
-        name: config.name,
-        dimension: config.dimension,
-        distance_metric,
-        storage_engine,
-        primary_indexing_algorithm: indexing_algorithm,
-        filterable_columns,
-        index_configs,
-        quantization_config,
-        primary_index_name: config.primary_index_name.unwrap_or_default(),
-        enable_automatic_index_selection: config.enable_automatic_index_selection.unwrap_or(false),
-        description: config.description,
-        tags: config.tags.unwrap_or_default(),
-        owner: config.owner,
-    })
-}
-
-/// Convert index config from proto
-fn convert_index_config_from_proto(config: crate::proto::proximadb::IndexConfig) -> IndexConfiguration {
-    IndexConfiguration {
-        index_name: config.index_name,
-        algorithm: match config.algorithm {
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32 => "hnsw",
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Ivf as i32 => "ivf",
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Flat as i32 => "flat",
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Pq as i32 => "pq",
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Annoy as i32 => "annoy",
-            x if x == crate::proto::proximadb::IndexingAlgorithm::Lsh as i32 => "lsh",
-            _ => "hnsw",
-        }.to_string(),
-        update_mode: match config.update_mode {
-            x if x == crate::proto::proximadb::IndexUpdateMode::Synchronous as i32 => "synchronous",
-            x if x == crate::proto::proximadb::IndexUpdateMode::Asynchronous as i32 => "asynchronous",
-            x if x == crate::proto::proximadb::IndexUpdateMode::HybridMode as i32 => "hybrid_mode",
-            _ => "synchronous",
-        }.to_string(),
-        async_update_timeout_ms: config.async_update_timeout_ms,
-        async_update_batch_size: config.async_update_batch_size,
-        enable_background_optimization: Some(config.enable_background_optimization),
         hnsw_config: config.hnsw_config.map(|c| HnswConfig {
             m: c.m,
             ef_construction: c.ef_construction,
@@ -1274,9 +1057,264 @@ fn convert_index_config_from_proto(config: crate::proto::proximadb::IndexConfig)
             bucket_width: c.bucket_width,
             binary_vectors: c.binary_vectors,
             max_candidates: c.max_candidates,
+            projection: match c.projection.as_str() {
+                "binary" => RandomProjectionType::Binary as i32,
+                "sparse" => RandomProjectionType::Sparse as i32,
+                _ => RandomProjectionType::Gaussian as i32,
+            },
+        }),
+        build_concurrency: config.build_concurrency,
+        memory_limit_mb: config.memory_limit_mb,
+        checkpoint_interval_ms: config.checkpoint_interval_ms,
+        is_primary: config.is_primary.unwrap_or(false),
+        use_cases: config.use_cases.unwrap_or_default(),
+        selectivity_threshold: config.selectivity_threshold,
+    }
+}
+
+/// Convert quantization config to proto
+fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> QuantizationConfig {
+    
+    QuantizationConfig {
+        enabled: config.enabled,
+        storage_quantization: config.storage_quantization.map(|sq| {
+            ProtoStorageQuantizationConfig {
+                enabled: sq.enabled,
+                level: Some(convert_quantization_level_to_proto(sq.level)),
+                codebook_id: sq.codebook_id,
+                progressive_quantization: sq.progressive_quantization,
+                storage_compatibility: match sq.storage_compatibility.as_str() {
+                    "viper_only" => StorageEngineCompatibility::ViperOnly as i32,
+                    "all_engines" => StorageEngineCompatibility::AllEngines as i32,
+                    "lsm_and_viper" => StorageEngineCompatibility::LsmAndViper as i32,
+                    _ => StorageEngineCompatibility::ViperOnly as i32,
+                },
+            }
+        }),
+        index_quantization: config.index_quantization.map(|iq| {
+            ProtoIndexQuantizationConfig {
+                enabled: iq.enabled,
+                strategies: iq.strategies.into_iter().map(|s| {
+                    IndexQuantizationStrategy {
+                        index_name: s.index_name,
+                        level: Some(convert_quantization_level_to_proto(s.level)),
+                        build_async: s.build_async,
+                        codebook_id: s.codebook_id,
+                    }
+                }).collect(),
+                auto_select_strategy: iq.auto_select_strategy,
+            }
+        }),
+        search_quantization: config.search_quantization.map(|sq| {
+            ProtoSearchQuantizationConfig {
+                enabled: sq.enabled,
+                default_level: Some(convert_quantization_level_to_proto(sq.default_level)),
+                adaptive_precision: sq.adaptive_precision,
+                accuracy_threshold: sq.accuracy_threshold,
+                candidate_multiplier: sq.candidate_multiplier,
+            }
+        }),
+        compression_ratio_target: config.compression_ratio_target.unwrap_or(1.0),
+        validation: config.validation.map(|v| {
+            ProtoQuantizationValidation {
+                accuracy_threshold: v.accuracy_threshold,
+                validation_sample_size: v.validation_sample_size,
+                enable_quality_monitoring: v.enable_quality_monitoring,
+                retraining_threshold: v.retraining_threshold,
+            }
+        }),
+    }
+}
+
+/// Convert quantization level to proto
+fn convert_quantization_level_to_proto(level: RestQuantizationLevel) -> QuantizationLevel {
+    let level_type = match level.level_type.as_str() {
+        "none" => Some(LevelType::None(NoQuantization {})),
+        "uniform" => Some(LevelType::Uniform(UniformQuantization {
+            bits: level.bits.unwrap_or(8),
+            scale: level.scale,
+            offset: level.offset,
+        })),
+        "pq" => Some(LevelType::Pq(ProductQuantization {
+            bits_per_code: level.bits_per_code.unwrap_or(8),
+            num_subvectors: level.num_subvectors.unwrap_or(8),
+            codebook_id: level.codebook_id,
+            adaptive_subvectors: false,
+        })),
+        "scalar" => Some(LevelType::Scalar(ScalarQuantization {
+            bits: level.bits.unwrap_or(8),
+            scale: level.scale.unwrap_or(1.0),
+            offset: level.offset.unwrap_or(0.0),
+            clamp_values: false,
+        })),
+        "binary" => Some(LevelType::Binary(BinaryQuantization {
+            threshold: level.threshold,
+            sign_based: level.sign_based.unwrap_or(false),
+        })),
+        "custom" => Some(LevelType::Custom(CustomQuantization {
+            type_id: level.type_id.unwrap_or_default(),
+            bits_per_element: level.bits_per_element.unwrap_or(8),
+            config: level.config.unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| (k, v))
+                .collect(),
+        })),
+        _ => Some(LevelType::None(NoQuantization {})),
+    };
+    
+    QuantizationLevel { level_type }
+}
+
+/// Convert REST config to proto config
+fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionConfig, StatusCode> {
+    // Apply defaults for optional fields
+    let distance_metric_str = config.distance_metric.as_deref().unwrap_or("cosine");
+    let distance_metric = match distance_metric_str {
+        "cosine" => DistanceMetric::Cosine as i32,
+        "euclidean" => DistanceMetric::Euclidean as i32,
+        "dot_product" => DistanceMetric::DotProduct as i32,
+        _ => DistanceMetric::Cosine as i32,
+    };
+    
+    let storage_engine_str = config.storage_engine.as_deref().unwrap_or("viper");
+    let storage_engine = match storage_engine_str {
+        "viper" => StorageEngine::Viper as i32,
+        "sst" => StorageEngine::Sst as i32,
+        _ => StorageEngine::Viper as i32,
+    };
+    
+    let indexing_algorithm_str = config.primary_indexing_algorithm.as_deref().unwrap_or("hnsw");
+    let indexing_algorithm = match indexing_algorithm_str {
+        "hnsw" => IndexingAlgorithm::Hnsw as i32,
+        "ivf" => IndexingAlgorithm::Ivf as i32,
+        "flat" => IndexingAlgorithm::Flat as i32,
+        "pq" => IndexingAlgorithm::Pq as i32,
+        "annoy" => IndexingAlgorithm::Annoy as i32,
+        "lsh" => IndexingAlgorithm::Lsh as i32,
+        _ => IndexingAlgorithm::Hnsw as i32,
+    };
+    
+    // Convert filterable columns
+    let filterable_columns = config.filterable_columns.unwrap_or_default()
+        .into_iter()
+        .map(|col| {
+            let data_type = match col.data_type.as_str() {
+                "string" => FilterableDataType::FilterableString as i32,
+                "integer" => FilterableDataType::FilterableInteger as i32,
+                "float" => FilterableDataType::FilterableFloat as i32,
+                "boolean" => FilterableDataType::FilterableBoolean as i32,
+                "datetime" => FilterableDataType::FilterableDatetime as i32,
+                "array_string" => FilterableDataType::FilterableArrayString as i32,
+                "array_integer" => FilterableDataType::FilterableArrayInteger as i32,
+                "array_float" => FilterableDataType::FilterableArrayFloat as i32,
+                _ => FilterableDataType::FilterableString as i32,
+            };
+            
+            FilterableColumnSpec {
+                name: col.name,
+                data_type,
+                indexed: col.indexed,
+                supports_range: col.supports_range,
+                estimated_cardinality: col.estimated_cardinality,
+            }
+        })
+        .collect();
+    
+    // Convert index configs
+    let index_configs = config.index_configs.unwrap_or_default()
+        .into_iter()
+        .map(|idx| convert_index_config_to_proto(idx))
+        .collect();
+    
+    // Convert quantization config
+    let quantization_config = config.quantization_config.map(convert_quantization_config_to_proto);
+    
+    Ok(CollectionConfig {
+        name: config.name,
+        dimension: config.dimension,
+        distance_metric,
+        storage_engine,
+        primary_indexing_algorithm: indexing_algorithm,
+        filterable_columns,
+        index_configs,
+        quantization_config,
+        primary_index_name: config.primary_index_name.unwrap_or_default(),
+        enable_automatic_index_selection: config.enable_automatic_index_selection.unwrap_or(false),
+        description: config.description,
+        tags: config.tags.unwrap_or_default(),
+        owner: config.owner,
+    })
+}
+
+/// Convert index config from proto
+fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
+    IndexConfiguration {
+        index_name: config.index_name,
+        algorithm: match config.algorithm {
+            x if x == IndexingAlgorithm::Hnsw as i32 => "hnsw",
+            x if x == IndexingAlgorithm::Ivf as i32 => "ivf",
+            x if x == IndexingAlgorithm::Flat as i32 => "flat",
+            x if x == IndexingAlgorithm::Pq as i32 => "pq",
+            x if x == IndexingAlgorithm::Annoy as i32 => "annoy",
+            x if x == IndexingAlgorithm::Lsh as i32 => "lsh",
+            _ => "hnsw",
+        }.to_string(),
+        update_mode: match config.update_mode {
+            x if x == IndexUpdateMode::Synchronous as i32 => "synchronous",
+            x if x == IndexUpdateMode::Asynchronous as i32 => "asynchronous",
+            x if x == IndexUpdateMode::HybridMode as i32 => "hybrid_mode",
+            _ => "synchronous",
+        }.to_string(),
+        async_update_timeout_ms: config.async_update_timeout_ms,
+        async_update_batch_size: config.async_update_batch_size,
+        enable_background_optimization: Some(config.enable_background_optimization),
+        hnsw_config: config.hnsw_config.map(|c| RestHnswConfig {
+            m: c.m,
+            ef_construction: c.ef_construction,
+            ef_search: c.ef_search,
+            max_partition_size: c.max_partition_size,
+            adaptive_parameters: c.adaptive_parameters,
+            use_simd: c.use_simd,
+            memory_limit_mb: c.memory_limit_mb,
+            lazy_loading: c.lazy_loading,
+            prune_connections: c.prune_connections,
+            level_multiplier: c.level_multiplier,
+        }),
+        ivf_config: config.ivf_config.map(|c| RestIvfConfig {
+            n_lists: c.n_lists,
+            n_probe: c.n_probe,
+            quantization_bits: c.quantization_bits,
+            use_pq: c.use_pq,
+            pq_subspaces: c.pq_subspaces,
+            train_on_insert: c.train_on_insert,
+            min_train_size: c.min_train_size,
+        }),
+        flat_config: config.flat_config.map(|c| RestFlatConfig {
+            enable_simd: c.enable_simd,
+            batch_size: c.batch_size,
+            enable_parallel_search: c.enable_parallel_search,
+        }),
+        pq_config: config.pq_config.map(|c| RestPqConfig {
+            subvectors: c.subvectors,
+            bits_per_subvector: c.bits_per_subvector,
+            training_sample_count: c.training_sample_count,
+            enable_reranking: c.enable_reranking,
+        }),
+        annoy_config: config.annoy_config.map(|c| RestAnnoyConfig {
+            n_trees: c.n_trees,
+            search_k: c.search_k,
+            max_leaf_size: c.max_leaf_size,
+            enable_mmap: c.enable_mmap,
+        }),
+        lsh_config: config.lsh_config.map(|c| RestLshConfig {
+            n_hash_tables: c.n_hash_tables,
+            n_hash_functions: c.n_hash_functions,
+            bucket_width: c.bucket_width,
+            binary_vectors: c.binary_vectors,
+            max_candidates: c.max_candidates,
             projection: match c.projection {
-                1 => "binary",
-                2 => "sparse",
+                x if x == RandomProjectionType::Binary as i32 => "binary",
+                x if x == RandomProjectionType::Sparse as i32 => "sparse",
                 _ => "gaussian",
             }.to_string(),
         }),
@@ -1290,12 +1328,12 @@ fn convert_index_config_from_proto(config: crate::proto::proximadb::IndexConfig)
 }
 
 /// Convert quantization config from proto
-fn convert_quantization_config_from_proto(config: crate::proto::proximadb::QuantizationConfig) -> QuantizationConfig {
-    QuantizationConfig {
+fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQuantizationConfig {
+    RestQuantizationConfig {
         enabled: config.enabled,
         storage_quantization: config.storage_quantization.map(|sq| StorageQuantizationConfig {
             enabled: sq.enabled,
-            level: sq.level.map(convert_quantization_level_from_proto).unwrap_or(QuantizationLevel {
+            level: sq.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
                 level_type: "none".to_string(),
                 bits: None,
                 scale: None,
@@ -1314,17 +1352,17 @@ fn convert_quantization_config_from_proto(config: crate::proto::proximadb::Quant
             codebook_id: sq.codebook_id,
             progressive_quantization: sq.progressive_quantization,
             storage_compatibility: match sq.storage_compatibility {
-                x if x == crate::proto::proximadb::StorageEngineCompatibility::ViperOnly as i32 => "viper_only",
-                x if x == crate::proto::proximadb::StorageEngineCompatibility::AllEngines as i32 => "all_engines",
-                x if x == crate::proto::proximadb::StorageEngineCompatibility::LsmAndViper as i32 => "lsm_and_viper",
+                x if x == StorageEngineCompatibility::ViperOnly as i32 => "viper_only",
+                x if x == StorageEngineCompatibility::AllEngines as i32 => "all_engines",
+                x if x == StorageEngineCompatibility::LsmAndViper as i32 => "lsm_and_viper",
                 _ => "viper_only",
             }.to_string(),
         }),
         index_quantization: config.index_quantization.map(|iq| IndexQuantizationConfig {
             enabled: iq.enabled,
-            strategies: iq.strategies.into_iter().map(|s| IndexQuantizationStrategy {
+            strategies: iq.strategies.into_iter().map(|s| RestIndexQuantizationStrategy {
                 index_name: s.index_name,
-                level: s.level.map(convert_quantization_level_from_proto).unwrap_or(QuantizationLevel {
+                level: s.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
                     level_type: "none".to_string(),
                     bits: None,
                     scale: None,
@@ -1347,7 +1385,7 @@ fn convert_quantization_config_from_proto(config: crate::proto::proximadb::Quant
         }),
         search_quantization: config.search_quantization.map(|sq| SearchQuantizationConfig {
             enabled: sq.enabled,
-            default_level: sq.default_level.map(convert_quantization_level_from_proto).unwrap_or(QuantizationLevel {
+            default_level: sq.default_level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
                 level_type: "none".to_string(),
                 bits: None,
                 scale: None,
@@ -1378,11 +1416,10 @@ fn convert_quantization_config_from_proto(config: crate::proto::proximadb::Quant
 }
 
 /// Convert quantization level from proto
-fn convert_quantization_level_from_proto(level: crate::proto::proximadb::QuantizationLevel) -> QuantizationLevel {
-    use crate::proto::proximadb::quantization_level::LevelType;
+fn convert_quantization_level_from_proto(level: QuantizationLevel) -> RestQuantizationLevel {
     
     match level.level_type {
-        Some(LevelType::None(_)) => QuantizationLevel {
+        Some(LevelType::None(_)) => RestQuantizationLevel {
             level_type: "none".to_string(),
             bits: None,
             scale: None,
@@ -1398,7 +1435,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: None,
             config: None,
         },
-        Some(LevelType::Uniform(u)) => QuantizationLevel {
+        Some(LevelType::Uniform(u)) => RestQuantizationLevel {
             level_type: "uniform".to_string(),
             bits: Some(u.bits),
             scale: u.scale,
@@ -1414,7 +1451,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: None,
             config: None,
         },
-        Some(LevelType::Pq(p)) => QuantizationLevel {
+        Some(LevelType::Pq(p)) => RestQuantizationLevel {
             level_type: "pq".to_string(),
             bits: None,
             scale: None,
@@ -1430,7 +1467,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: None,
             config: None,
         },
-        Some(LevelType::Scalar(s)) => QuantizationLevel {
+        Some(LevelType::Scalar(s)) => RestQuantizationLevel {
             level_type: "scalar".to_string(),
             bits: Some(s.bits),
             scale: Some(s.scale),
@@ -1446,7 +1483,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: None,
             config: None,
         },
-        Some(LevelType::Binary(b)) => QuantizationLevel {
+        Some(LevelType::Binary(b)) => RestQuantizationLevel {
             level_type: "binary".to_string(),
             bits: None,
             scale: None,
@@ -1462,7 +1499,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: None,
             config: None,
         },
-        Some(LevelType::Custom(c)) => QuantizationLevel {
+        Some(LevelType::Custom(c)) => RestQuantizationLevel {
             level_type: "custom".to_string(),
             bits: None,
             scale: None,
@@ -1478,7 +1515,7 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
             bits_per_element: Some(c.bits_per_element),
             config: Some(c.config),
         },
-        None => QuantizationLevel {
+        None => RestQuantizationLevel {
             level_type: "none".to_string(),
             bits: None,
             scale: None,
@@ -1498,35 +1535,35 @@ fn convert_quantization_level_from_proto(level: crate::proto::proximadb::Quantiz
 }
 
 /// Convert proto collection to REST collection
-fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> Collection {
+fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
     let config = proto.config.unwrap_or_default();
     
     let distance_metric = match config.distance_metric {
-        x if x == crate::proto::proximadb::DistanceMetric::Cosine as i32 => "cosine",
-        x if x == crate::proto::proximadb::DistanceMetric::Euclidean as i32 => "euclidean",
-        x if x == crate::proto::proximadb::DistanceMetric::DotProduct as i32 => "dot_product",
+        x if x == DistanceMetric::Cosine as i32 => "cosine",
+        x if x == DistanceMetric::Euclidean as i32 => "euclidean",
+        x if x == DistanceMetric::DotProduct as i32 => "dot_product",
         _ => "cosine",
     }.to_string();
     
     let storage_engine = match config.storage_engine {
-        x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "viper",
-        x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "sst",
+        x if x == StorageEngine::Viper as i32 => "viper",
+        x if x == StorageEngine::Sst as i32 => "sst",
         _ => "viper",
     }.to_string();
     
     let indexing_algorithm = match config.primary_indexing_algorithm {
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32 => "hnsw",
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Ivf as i32 => "ivf",
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Flat as i32 => "flat",
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Pq as i32 => "pq",
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Annoy as i32 => "annoy",
-        x if x == crate::proto::proximadb::IndexingAlgorithm::Lsh as i32 => "lsh",
+        x if x == IndexingAlgorithm::Hnsw as i32 => "hnsw",
+        x if x == IndexingAlgorithm::Ivf as i32 => "ivf",
+        x if x == IndexingAlgorithm::Flat as i32 => "flat",
+        x if x == IndexingAlgorithm::Pq as i32 => "pq",
+        x if x == IndexingAlgorithm::Annoy as i32 => "annoy",
+        x if x == IndexingAlgorithm::Lsh as i32 => "lsh",
         _ => "hnsw",
     }.to_string();
     
     Collection {
         id: proto.id,
-        config: CollectionConfig {
+        config: RestCollectionConfig {
             name: config.name,
             dimension: config.dimension,
             distance_metric: Some(distance_metric),
@@ -1536,14 +1573,14 @@ fn convert_from_proto_collection(proto: crate::proto::proximadb::Collection) -> 
                 FilterableColumn {
                     name: col.name,
                     data_type: match col.data_type {
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableString as i32 => "string",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableInteger as i32 => "integer",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableFloat as i32 => "float",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableBoolean as i32 => "boolean",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableDatetime as i32 => "datetime",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableArrayString as i32 => "array_string",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableArrayInteger as i32 => "array_integer",
-                        x if x == crate::proto::proximadb::FilterableDataType::FilterableArrayFloat as i32 => "array_float",
+                        x if x == FilterableDataType::FilterableString as i32 => "string",
+                        x if x == FilterableDataType::FilterableInteger as i32 => "integer",
+                        x if x == FilterableDataType::FilterableFloat as i32 => "float",
+                        x if x == FilterableDataType::FilterableBoolean as i32 => "boolean",
+                        x if x == FilterableDataType::FilterableDatetime as i32 => "datetime",
+                        x if x == FilterableDataType::FilterableArrayString as i32 => "array_string",
+                        x if x == FilterableDataType::FilterableArrayInteger as i32 => "array_integer",
+                        x if x == FilterableDataType::FilterableArrayFloat as i32 => "array_float",
                         _ => "string",
                     }.to_string(),
                     indexed: col.indexed,
@@ -1599,9 +1636,9 @@ pub async fn list_collections(
                 name: config.name,
                 dimension: config.dimension,
                 metric: match config.distance_metric {
-                    x if x == crate::proto::proximadb::DistanceMetric::Cosine as i32 => "cosine",
-                    x if x == crate::proto::proximadb::DistanceMetric::Euclidean as i32 => "euclidean",
-                    x if x == crate::proto::proximadb::DistanceMetric::DotProduct as i32 => "dot_product",
+                    x if x == DistanceMetric::Cosine as i32 => "cosine",
+                    x if x == DistanceMetric::Euclidean as i32 => "euclidean",
+                    x if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
                 created_at: c.created_at,
@@ -1649,9 +1686,9 @@ pub async fn get_collection(
                 name: config.name,
                 dimension: config.dimension,
                 metric: match config.distance_metric {
-                    x if x == crate::proto::proximadb::DistanceMetric::Cosine as i32 => "cosine",
-                    x if x == crate::proto::proximadb::DistanceMetric::Euclidean as i32 => "euclidean",
-                    x if x == crate::proto::proximadb::DistanceMetric::DotProduct as i32 => "dot_product",
+                    x if x == DistanceMetric::Cosine as i32 => "cosine",
+                    x if x == DistanceMetric::Euclidean as i32 => "euclidean",
+                    x if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
                 created_at: c.created_at,
@@ -1679,8 +1716,8 @@ pub async fn delete_collection(
     tracing::info!("🗑️ REST API: Deleting collection: {}", collection_id);
     
     // Create a proto request for delete operation
-    let proto_request = crate::proto::proximadb::CollectionRequest {
-        operation: crate::proto::proximadb::CollectionOperation::CollectionDelete as i32,
+    let proto_request = CollectionRequest {
+        operation: CollectionOperation::CollectionDelete as i32,
         collection_id: Some(collection_id.clone()),
         collection_config: None,
         migration_config: std::collections::HashMap::new(),
@@ -1737,9 +1774,9 @@ pub async fn delete_vectors(
         .unwrap()
         .as_millis() as i64;
     
-    let tombstone_vectors: Vec<crate::proto::proximadb::VectorRecord> = vector_ids
+    let tombstone_vectors: Vec<VectorRecord> = vector_ids
         .into_iter()
-        .map(|id| crate::proto::proximadb::VectorRecord {
+        .map(|id| VectorRecord {
             id: Some(id),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
@@ -1754,7 +1791,7 @@ pub async fn delete_vectors(
         .collect();
     
     // Create a proto request for batch operation with tombstone vectors
-    let proto_request = crate::proto::proximadb::VectorBatchRequest {
+    let proto_request = VectorBatchRequest {
         collection_id: collection_id.clone(),
         vectors: tombstone_vectors,
         batch_timeout_ms: None,
@@ -1771,7 +1808,7 @@ pub async fn delete_vectors(
         })?;
     
     // Convert proto response to REST response
-    let metrics = proto_response.metrics.unwrap_or(crate::proto::proximadb::OperationMetrics {
+    let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
         successful_count: 0,
         failed_count: 0,
@@ -1784,7 +1821,7 @@ pub async fn delete_vectors(
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: "delete".to_string(),
-        metrics: OperationMetrics {
+        metrics: RestOperationMetrics {
             total_processed: metrics.total_processed,
             successful_count: metrics.successful_count,
             failed_count: metrics.failed_count,
@@ -1839,9 +1876,10 @@ pub async fn debug_list_unflushed_vectors(
     }
 }
 
-// #[cfg(test)]
-// mod tests;
-// Note: Tests are currently disabled because REST handlers require
-// real UnifiedHandlers instance, not mocks.
-// TODO: Refactor to use trait abstractions or integration tests.
+#[cfg(test)]
+mod handlers_metadata_test;
+
+#[cfg(test)]
+mod handlers_simple_test;
+// Note: Tests now use real UnifiedHandlers instance for integration testing
 

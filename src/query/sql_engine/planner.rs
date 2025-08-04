@@ -38,6 +38,8 @@ pub struct ExecutionPlan {
     pub limit: usize,
     /// Result offset
     pub offset: usize,
+    /// Whether the query has ORDER BY (requires ordering)
+    pub has_order_by: bool,
 }
 
 /// Metadata filter representation
@@ -108,6 +110,7 @@ impl QueryPlanner {
             vector_search,
             limit: query.limit.unwrap_or(self.default_limit),
             offset: query.offset.unwrap_or(0),
+            has_order_by: query.order_by.is_some(),
         })
     }
     

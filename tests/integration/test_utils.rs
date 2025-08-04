@@ -3,7 +3,7 @@
 //! Provides isolated test environments with unique collections for reliable integration testing.
 
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -15,6 +15,15 @@ use proximadb::storage::assignment_service::{HashBasedAssignmentService, Assignm
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::traits::UnifiedStorageEngine;
+
+static HARDWARE_INIT: Once = Once::new();
+
+/// Setup hardware capabilities for tests
+fn setup_hardware_capabilities() {
+    HARDWARE_INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 /// Isolated test environment with unique collection and clean state
 pub struct IsolatedTestEnvironment {
@@ -29,6 +38,9 @@ pub struct IsolatedTestEnvironment {
 impl IsolatedTestEnvironment {
     /// Create a new isolated test environment with unique collection ID
     pub async fn new() -> Result<Self> {
+        // Ensure hardware capabilities are initialized
+        setup_hardware_capabilities();
+        
         let collection_id = format!("test_collection_{}", Uuid::new_v4().simple());
         let temp_dir = TempDir::new()?;
         

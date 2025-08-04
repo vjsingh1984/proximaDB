@@ -101,6 +101,7 @@ mod tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
+            metadata_bloom_filter: None,
         }
     }
     

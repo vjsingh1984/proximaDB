@@ -31,6 +31,7 @@ use common::unique_collection_id;
 
 #[tokio::test]
 async fn test_lsm_collection_with_proper_routing() {
+    common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     // Setup test environment

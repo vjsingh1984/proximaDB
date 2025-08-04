@@ -18,6 +18,8 @@ use crate::core::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_buffer::{BatchId, WriteBufferOperation, WriteBufferStats};
+use crate::core::bloom::{BloomFilterConfig, BloomStrategy, BloomFilterStrategy};
+use crate::storage::engines::sst::CompositeBloomFilter;
 
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
@@ -31,6 +33,65 @@ pub struct WriteBufferVectorBatch {
     pub created_at: std::time::SystemTime,
     pub total_size_bytes: usize,
     pub is_flushed: bool,
+    /// Bloom filter for fast metadata filtering (skip 95%+ irrelevant batches)
+    pub metadata_bloom_filter: Option<CompositeBloomFilter>,
+}
+
+impl WriteBufferVectorBatch {
+    /// Create bloom filter for batch metadata
+    pub fn create_bloom_filter(&mut self) -> Result<()> {
+        // Create bloom filter with optimal false positive rate
+        let config = BloomFilterConfig {
+            strategy: BloomStrategy::ByteAligned,
+            bits_per_key: 10, // 10 bits per key for ~1% false positive
+            false_positive_rate: Some(0.01),
+            expected_items: self.vector_records.len(),
+            enabled: true,
+            hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+        };
+        
+        let mut bloom_filter = CompositeBloomFilter::new(self.vector_records.len(), &config);
+        
+        // Add all metadata keys to bloom filter
+        for record in self.vector_records.iter() {
+            for item in &record.metadata {
+                bloom_filter.insert(item.key.as_bytes());
+                
+                // Also add key=value pairs for exact matching
+                let value_str = match &item.value {
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                    _ => continue,
+                };
+                
+                let key_value = format!("{}={}", item.key, value_str);
+                bloom_filter.insert(key_value.as_bytes());
+            }
+        }
+        
+        self.metadata_bloom_filter = Some(bloom_filter);
+        Ok(())
+    }
+    
+    /// Check if batch might contain metadata key
+    pub fn might_contain_metadata(&self, key: &str) -> bool {
+        match &self.metadata_bloom_filter {
+            Some(bloom) => bloom.might_contain(key.as_bytes()), // Use might_contain with bytes
+            None => true, // No bloom filter means we can't skip
+        }
+    }
+    
+    /// Check if batch might contain metadata key-value pair
+    pub fn might_contain_metadata_value(&self, key: &str, value: &str) -> bool {
+        match &self.metadata_bloom_filter {
+            Some(bloom) => {
+                let key_value = format!("{}={}", key, value);
+                bloom.might_contain(key_value.as_bytes())
+            }
+            None => true,
+        }
+    }
 }
 
 /// Write Buffer-specific batch coordinator
@@ -227,6 +288,7 @@ impl WriteBufferBehaviorWrapper {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: operation.payload_data.len(),
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         tracing::debug!(
@@ -240,7 +302,7 @@ impl WriteBufferBehaviorWrapper {
 
     /// Unified batch addition method - STREAMLINED ARCHITECTURE (stores entire batch natively)
     /// This is used when WriteBufferVectorBatch is already deserialized
-    pub async fn add_vector_batch(&self, collection_id: &str, batch: WriteBufferVectorBatch) -> Result<Vec<u64>> {
+    pub async fn add_vector_batch(&self, collection_id: &str, mut batch: WriteBufferVectorBatch) -> Result<Vec<u64>> {
         let batch_id = batch.batch_id.to_base62();
         let vector_count = batch.vector_records.len();
 
@@ -250,6 +312,18 @@ impl WriteBufferBehaviorWrapper {
             collection_id,
             vector_count
         );
+        
+        // Create bloom filter if not already present
+        if batch.metadata_bloom_filter.is_none() && vector_count > 0 {
+            match batch.create_bloom_filter() {
+                Ok(_) => {
+                    tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to create bloom filter for batch {}: {}", batch_id, e);
+                }
+            }
+        }
         
         tracing::debug!(
             "🚀 WAL_BEHAVIOR: Batch size info - total_size_bytes: {}, vector_count: {}",
@@ -415,6 +489,7 @@ impl WriteBufferBehaviorWrapper {
                 created_at: batch_ref.created_at,
                 total_size_bytes: batch_ref.total_size_bytes,
                 is_flushed: batch_ref.is_flushed,
+                metadata_bloom_filter: batch_ref.metadata_bloom_filter.clone(),
             })
             .collect();
         
@@ -826,6 +901,7 @@ mod tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         let sequences1 = wal_wrapper
@@ -841,6 +917,7 @@ mod tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         let sequences2 = wal_wrapper
@@ -909,6 +986,7 @@ mod tests {
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 1024,
                 is_flushed: false,
+            metadata_bloom_filter: None,
             };
             
             wal_wrapper.add_vector_batch("test_collection", batch).await.unwrap();

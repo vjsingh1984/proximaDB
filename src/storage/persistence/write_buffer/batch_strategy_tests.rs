@@ -306,6 +306,7 @@ mod write_buffer_batch_strategy_tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: vector_count * 1024, // Rough estimate
             is_flushed: false,
+            metadata_bloom_filter: None,
         }
     }
 
@@ -610,6 +611,7 @@ mod write_buffer_batch_strategy_tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 0,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         let result = strategy.write_native_batch(empty_batch, "empty_collection").await;

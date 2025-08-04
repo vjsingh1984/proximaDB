@@ -226,6 +226,7 @@ impl MetadataWriteBufferManager {
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 1024, // Approximate for metadata
                 is_flushed: false,
+            metadata_bloom_filter: None,
             };
             let _sequence = behavior_wrapper.add_vector_batch(&collection_id, batch).await?;
         } else {
@@ -508,6 +509,7 @@ impl MetadataWriteBufferManager {
                     created_at: std::time::SystemTime::now(),
                     total_size_bytes: 1024, // Approximate for metadata
                     is_flushed: false,
+            metadata_bloom_filter: None,
                 };
                 let _sequence = behavior_wrapper.add_vector_batch(collection_id, delete_batch).await?;
             } else {

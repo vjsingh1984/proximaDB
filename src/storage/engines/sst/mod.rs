@@ -32,8 +32,8 @@ pub use sstable_writer::SstableWriter;
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::{SstConfig, VectorRecord};
-use crate::core::search::SearchResult;
-use crate::core::serialization::{VectorSerializationConfig, VectorAnalysis};
+use crate::core::search::{SearchResult, json_value_serde};
+use crate::core::serialization::{VectorSerializationConfig, VectorAnalysis, CompressionAlgorithm};
 use crate::storage::optimization::{SortingStats};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
@@ -42,8 +42,13 @@ use crate::storage::traits::{
 };
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use crate::compute::unified_distance::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::UnifiedQuantizationEngine;
+use crate::compute::unified_quantization::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
 use crate::core::search::UnifiedSearchEngine;
+use crate::proto::proximadb::MetadataItem;
+use crate::storage::assignment_service::get_assignment_service;
+use crate::services::collection_service::CollectionService;
+use crate::compute::distance::DistanceMetric;
+use crate::core::search::FilterExpression;
 use unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -269,7 +274,7 @@ pub struct SstRecord {
     // Core VectorRecord fields stored directly
     pub id: String,
     pub vector: Vec<f32>,
-    pub metadata: Vec<crate::proto::proximadb::MetadataItem>,
+    pub metadata: Vec<MetadataItem>,
     pub timestamp: u32,  // Record timestamp - seconds since epoch (compact, unsigned)
     pub updated_at: Option<u32>,  // Only set if different from timestamp (saves bytes when not updated)
     pub expires_at: Option<u32>,  // TTL support (seconds since epoch, unsigned)
@@ -285,7 +290,7 @@ pub struct SstRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SstRecordMetadata {
     pub id: String,
-    pub metadata: Vec<crate::proto::proximadb::MetadataItem>,
+    pub metadata: Vec<MetadataItem>,
     pub timestamp: u32,
     pub updated_at: Option<u32>,
     pub expires_at: Option<u32>,
@@ -528,7 +533,7 @@ impl IndexEntry {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
             buffer.write_all(key_bytes)?;
-            crate::core::search::json_value_serde::serialize_json_value(value, &mut buffer)?;
+            json_value_serde::serialize_json_value(value, &mut buffer)?;
         }
         
         // Write metadata_max_values
@@ -537,7 +542,7 @@ impl IndexEntry {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
             buffer.write_all(key_bytes)?;
-            crate::core::search::json_value_serde::serialize_json_value(value, &mut buffer)?;
+            json_value_serde::serialize_json_value(value, &mut buffer)?;
         }
         
         // Write metadata_null_counts
@@ -601,7 +606,7 @@ impl IndexEntry {
             let mut key_bytes = vec![0u8; key_len];
             cursor.read_exact(&mut key_bytes)?;
             let key = String::from_utf8(key_bytes)?;
-            let value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor)?;
+            let value = json_value_serde::deserialize_json_value(&mut cursor)?;
             metadata_min_values.insert(key, value);
         }
         
@@ -615,7 +620,7 @@ impl IndexEntry {
             let mut key_bytes = vec![0u8; key_len];
             cursor.read_exact(&mut key_bytes)?;
             let key = String::from_utf8(key_bytes)?;
-            let value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor)?;
+            let value = json_value_serde::deserialize_json_value(&mut cursor)?;
             metadata_max_values.insert(key, value);
         }
         
@@ -697,9 +702,9 @@ impl DataBlockCompressionConfig {
                 use_bytemuck: true,
                 compression_threshold: 256,
                 compression_algorithm: match config.compression.as_str() {
-                    "zstd" => crate::core::serialization::CompressionAlgorithm::Zstd,
-                    "lz4" => crate::core::serialization::CompressionAlgorithm::Lz4,
-                    _ => crate::core::serialization::CompressionAlgorithm::None,
+                    "zstd" => CompressionAlgorithm::Zstd,
+                    "lz4" => CompressionAlgorithm::Lz4,
+                    _ => CompressionAlgorithm::None,
                 },
                 compression_level: config.compression_level,
                 adaptive_compression: true,
@@ -947,7 +952,7 @@ impl SstStorage {
         info!("🌲 Creating SST tree (pure SSTable storage) for collection: {}", collection_id);
         
         // Get the assigned storage URL for this collection
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let assignment_service = get_assignment_service();
         let storage_url = match assignment_service.get_assignment(&collection_id).await {
             Some(assignment) => {
                 println!("🔍 DEBUG SST: Got assignment data_url: {} for collection: {}", assignment.data_url, collection_id);
@@ -984,8 +989,8 @@ impl SstStorage {
         
         // Create quantization engine (optional for SST)
         // For now, use in-memory codebook store since SST doesn't require quantization
-        let codebook_store: Arc<dyn crate::compute::unified_quantization::CodebookStore> = 
-            Arc::new(crate::compute::unified_quantization::InMemoryCodebookStore::new());
+        let codebook_store: Arc<dyn CodebookStore> = 
+            Arc::new(InMemoryCodebookStore::new());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
             codebook_store,
@@ -1028,7 +1033,7 @@ impl SstStorage {
     
     /// Get the collection storage URL from assignment service
     async fn get_collection_storage_url(&self) -> Result<String> {
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
+        let assignment_service = get_assignment_service();
         match assignment_service.get_assignment(&self.collection_id).await {
             Some(assignment) => {
                 debug!("🔍 SST: Using assignment service data_url: {}", assignment.data_url);
@@ -1140,7 +1145,8 @@ impl SstStorage {
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
-            ..Default::default()  // This will pick up skip_uuid_subdir: false
+            skip_uuid_subdir: true,  // Avoid creating subdirectories that get left behind
+            ..Default::default()
         };
         
         let atomic_op = atomic_coordinator

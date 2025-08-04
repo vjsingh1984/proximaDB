@@ -65,6 +65,7 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
             log_level: "info".to_string(),
         },
         tls: None,
+        hardware: None,
     };
     
     // Test server startup time with parallel loading
@@ -136,6 +137,7 @@ async fn test_recovery_after_crash() -> Result<()> {
             log_level: "error".to_string(),
         },
         tls: None,
+        hardware: None,
     };
     
     // Start server first time

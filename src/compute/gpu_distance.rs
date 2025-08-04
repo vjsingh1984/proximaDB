@@ -22,50 +22,12 @@ use tracing::{debug, info, warn};
 
 use super::distance::{DistanceCompute, DistanceMetric};
 use crate::compute::unified_distance::{GpuAccelerator, HardwareBackend};
+use crate::core::hardware_capabilities::GpuBackend;
 
-/// Available GPU backends
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GpuBackend {
-    /// NVIDIA CUDA
-    Cuda,
-    /// AMD ROCm
-    Rocm,
-    /// Apple Metal Performance Shaders
-    Mps,
-    /// OpenCL (cross-platform)
-    OpenCL,
-    /// No GPU available
-    None,
-}
+// Using central GpuBackend enum from hardware_capabilities module
 
-impl std::fmt::Display for GpuBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GpuBackend::Cuda => write!(f, "CUDA"),
-            GpuBackend::Rocm => write!(f, "ROCm"),
-            GpuBackend::Mps => write!(f, "Metal Performance Shaders"),
-            GpuBackend::OpenCL => write!(f, "OpenCL"),
-            GpuBackend::None => write!(f, "None"),
-        }
-    }
-}
-
-/// GPU device information
-#[derive(Debug, Clone)]
-pub struct GpuDevice {
-    /// Device ID
-    pub id: u32,
-    /// Device name
-    pub name: String,
-    /// Total memory in bytes
-    pub total_memory: u64,
-    /// Available memory in bytes
-    pub available_memory: u64,
-    /// Compute capability (for CUDA)
-    pub compute_capability: Option<(u32, u32)>,
-    /// Backend type
-    pub backend: GpuBackend,
-}
+// Using central GpuDevice struct from hardware_capabilities module
+pub use crate::core::hardware_capabilities::GpuDevice;
 
 /// GPU distance computation manager
 pub struct GpuDistanceCompute {

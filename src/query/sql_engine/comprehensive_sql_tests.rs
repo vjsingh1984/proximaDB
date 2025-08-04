@@ -25,7 +25,8 @@ mod tests {
     use serde_json::Value;
     
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+    use crate::compute::unified_distance::UnifiedDistanceCompute;
+    use crate::core::hardware_capabilities::HardwareBackend;
     use crate::query::sql_engine::{
         SqlEngine, SqlParser, ParsedQuery, SqlExecutor, SqlExecutionResult,
         QueryPlanner, ExecutionPlan,

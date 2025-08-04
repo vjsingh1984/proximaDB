@@ -17,10 +17,10 @@
 //! ProximaDB Server - Main server binary for the ProximaDB vector database
 
 use clap::Parser;
-use proximadb::compute::hardware_detection::HardwareCapabilities;
+use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
 use proximadb::{ConfigLoader, ProximaDB};
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(name = "proximadb-server")]
@@ -126,10 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with(file_layer)
         .init();
 
-    // Initialize hardware capabilities detection early to prevent crashes
-    info!("🔧 Initializing hardware detection...");
-    let _hardware_caps = HardwareCapabilities::initialize();
-
+    // Parse arguments first
     let args = Args::parse();
 
     // Load configuration with default merging and cloud support
@@ -144,6 +141,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     if let Some(node_id) = args.node_id {
         config.server.node_id = node_id;
+    }
+
+    // Initialize hardware capabilities detection early with configuration
+    info!("🔧 Initializing hardware detection...");
+    let hardware_config = config.hardware.clone().unwrap_or_default();
+    if let Err(e) = initialize_hardware_capabilities(hardware_config) {
+        warn!("⚠️ Hardware capability detection failed: {}", e);
+        info!("Continuing with CPU-only mode");
     }
 
     info!("Starting ProximaDB server with config: {:?}", config);

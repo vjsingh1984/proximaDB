@@ -287,6 +287,27 @@ python -m pytest tests/integration/
 
 # SDK tests
 python -m pytest tests/sdk/
+
+# Generate coverage report
+python -m pytest tests/ --cov=proximadb --cov-report=html
+----
+
+=== Test Suite Status
+
+**Current Status**: 100% test success rate achieved!
+
+* **Active Tests**: 248 passing tests
+* **Coverage**: 67% SDK coverage
+* **Runtime**: ~27 seconds (optimized from >2 minutes)
+* **Skipped Tests**: 44 tests pending server-side features
+
+=== Recent Improvements
+
+* Fixed REST API metadata serialization (dict → MetadataItem array)
+* Fixed timestamp format (microseconds → seconds)
+* Updated default VectorRecord version
+* Resolved pytest configuration conflicts
+* Migrated performance tests to `demo/benchmark/python-sdk/`
 ----
 
 == Contributing

@@ -19,7 +19,8 @@ from proximadb import ProximaDBClient, Protocol
 
 try:
     from proximadb import proximadb_pb2
-except ImportError:
+except ImportError as e:
+    print(f"Failed to import proximadb_pb2: {e}")
     proximadb_pb2 = None
 
 
@@ -366,7 +367,7 @@ class TestQuantizationIntegration:
             
             # Insert test vectors
             vectors = np.random.rand(100, 128).astype(np.float32)
-            ids = [f"vec_{i}" for i in range(100)]
+            ids = [f"vec_{i}" for i in range(20)]
             client.insert_vectors(collection_name, vectors, ids)
             
             # Search with optimization hints

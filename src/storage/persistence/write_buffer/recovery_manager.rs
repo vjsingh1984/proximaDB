@@ -725,6 +725,7 @@ mod tests {
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes: 256,
                 is_flushed: false,
+            metadata_bloom_filter: None,
             };
             let data = serializer.serialize_batch(&batch.vector_records).expect("Failed to serialize");
             disk_manager.write_batch(

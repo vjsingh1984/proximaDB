@@ -85,4 +85,7 @@ pub mod sst_compression_integration_test;
 pub mod viper_compression_integration_test;
 pub mod optimization_e2e_test;
 
+// Early termination optimization tests
+pub mod early_termination_test;
+
 // Middleware integration tests are at this level since they cross-cut concerns

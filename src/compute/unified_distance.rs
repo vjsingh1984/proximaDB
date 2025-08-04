@@ -31,16 +31,15 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability, detect_platform_capability};
+use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability};
 use super::memory_pool::pooled_vector;
 use crate::services::collection_service::CollectionService;
+use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapabilities};
+
+// Re-export HardwareBackend for public use
+pub use crate::core::hardware_capabilities::HardwareBackend;
 use std::sync::{Arc, OnceLock};
 use std::cmp::Ordering;
-
-/// Global hardware capability cache - detected once at startup
-static UNIFIED_PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
-/// Global GPU acceleration support cache
-static GPU_ACCELERATION: OnceLock<Option<Arc<dyn GpuAccelerator>>> = OnceLock::new();
 
 // ============================================================================
 // Metric-Aware Result Types
@@ -247,32 +246,21 @@ impl MetricProperties for DistanceMetric {
 
 // Note: Distributed distance computation was removed in favor of unified local computation
 
-/// Hardware acceleration backend
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HardwareBackend {
-    /// CPU with SIMD (AVX-512, AVX2, SSE, NEON, etc.)
-    CpuSimd(PlatformCapability),
-    /// NVIDIA CUDA GPU
-    Cuda,
-    /// AMD ROCm GPU
-    Rocm,
-    /// Apple Metal Performance Shaders
-    Mps,
-    /// OpenCL (cross-platform GPU)
-    OpenCL,
-    /// CPU scalar (no acceleration)
-    Scalar,
-}
+// Using central HardwareBackend from hardware_capabilities module
 
 impl std::fmt::Display for HardwareBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HardwareBackend::CpuSimd(cap) => write!(f, "CPU SIMD ({})", cap),
-            HardwareBackend::Cuda => write!(f, "NVIDIA CUDA"),
-            HardwareBackend::Rocm => write!(f, "AMD ROCm"),
-            HardwareBackend::Mps => write!(f, "Apple Metal"),
+            HardwareBackend::CpuSIMD(cap) => write!(f, "CPU SIMD ({})", cap),
+            HardwareBackend::CUDA => write!(f, "NVIDIA CUDA"),
+            HardwareBackend::ROCm => write!(f, "AMD ROCm"),
+            HardwareBackend::MPS => write!(f, "Apple Metal"),
             HardwareBackend::OpenCL => write!(f, "OpenCL"),
             HardwareBackend::Scalar => write!(f, "CPU Scalar"),
+            HardwareBackend::AVX512 => write!(f, "CPU AVX-512"),
+            HardwareBackend::AVX2 => write!(f, "CPU AVX2"),
+            HardwareBackend::SSE => write!(f, "CPU SSE"),
+            HardwareBackend::NEON => write!(f, "ARM NEON"),
         }
     }
 }
@@ -330,57 +318,89 @@ impl std::fmt::Debug for UnifiedDistanceCompute {
 
 impl Default for UnifiedDistanceCompute {
     fn default() -> Self {
-        let platform_capability = Self::get_or_detect_platform_capability();
-        let gpu_accelerator = Self::get_or_detect_gpu_accelerator();
+        // Always use centralized hardware capabilities - no fallback for Release 1
+        let caps = get_hardware_capabilities();
         
-        // Determine preferred backend based on available hardware
-        let preferred_backend = if let Some(ref gpu) = gpu_accelerator {
-            if gpu.is_available() {
-                gpu.backend()
-            } else {
-                HardwareBackend::CpuSimd(platform_capability)
+        let platform_capability = if caps.has_simd() {
+            #[cfg(target_arch = "x86_64")]
+            {
+                if caps.has_avx512() {
+                    PlatformCapability::X86Avx512
+                } else if caps.cpu.simd.has_avx2 {
+                    PlatformCapability::X86Avx2
+                } else if caps.cpu.simd.has_avx {
+                    PlatformCapability::X86Avx
+                } else if caps.cpu.simd.has_sse {
+                    PlatformCapability::X86Sse2
+                } else {
+                    PlatformCapability::Scalar
+                }
+            }
+            #[cfg(target_arch = "aarch64")]
+            {
+                if caps.cpu.simd.has_neon {
+                    PlatformCapability::ArmNeon
+                } else {
+                    PlatformCapability::Scalar
+                }
+            }
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+            {
+                PlatformCapability::Scalar
             }
         } else {
-            HardwareBackend::CpuSimd(platform_capability)
+            PlatformCapability::Scalar
         };
         
-        info!("🚀 UnifiedDistanceCompute initialized with backend: {}", preferred_backend);
+        // GPU accelerator based on centralized capabilities
+        let gpu_accelerator = if caps.has_gpu_distance() {
+            Self::get_gpu_accelerator(&caps)
+        } else {
+            None
+        };
+        
+        // Determine preferred backend from centralized capabilities
+        let preferred_backend = if caps.has_gpu_distance() && gpu_accelerator.is_some() {
+            caps.preferred_backend()
+        } else {
+            HardwareBackend::CpuSIMD(platform_capability)
+        };
+        
+        info!("🚀 UnifiedDistanceCompute initialized with centralized capabilities: {}", preferred_backend);
         
         Self {
             system_default: DistanceMetric::Cosine,
             platform_capability,
             gpu_accelerator,
             preferred_backend,
-            gpu_enabled: true,
+            gpu_enabled: caps.config.enable_gpu_distance,
         }
     }
 }
 
 impl UnifiedDistanceCompute {
-    /// Get or detect platform capability (cached globally)
-    fn get_or_detect_platform_capability() -> PlatformCapability {
-        *UNIFIED_PLATFORM_CAPABILITY.get_or_init(|| {
-            let capability = detect_platform_capability();
-            debug!("🚀 Unified Distance Compute detected platform capability: {}", capability);
-            capability
-        })
-    }
-
-    /// Get or detect GPU accelerator (cached globally)
-    fn get_or_detect_gpu_accelerator() -> Option<Arc<dyn GpuAccelerator>> {
-        GPU_ACCELERATION.get_or_init(|| {
-            // Try to initialize GPU acceleration
+    /// Get GPU accelerator from centralized hardware capabilities (no fallback)
+    fn get_gpu_accelerator(caps: &HardwareCapabilities) -> Option<Arc<dyn GpuAccelerator>> {
+        if caps.has_gpu_distance() {
+            // Try to initialize GPU acceleration based on centralized detection
             #[cfg(feature = "gpu")]
             {
                 if let Ok(gpu) = super::gpu_distance::detect_best_gpu() {
-                    info!("🎮 GPU acceleration detected: {}", gpu.backend());
+                    info!("🎮 GPU acceleration initialized: {}", gpu.backend());
                     return Some(Arc::new(gpu) as Arc<dyn GpuAccelerator>);
                 }
             }
-            
-            debug!("No GPU acceleration available, using CPU only");
-            None
-        }).clone()
+            debug!("GPU distance calculation enabled but GPU not available");
+        } else {
+            debug!("GPU distance calculation disabled by configuration");
+        }
+        
+        #[cfg(not(feature = "gpu"))]
+        {
+            debug!("GPU acceleration not available (compiled without GPU support)");
+        }
+        
+        None
     }
     
     /// Create a new unified distance compute manager with default metric
@@ -394,13 +414,13 @@ impl UnifiedDistanceCompute {
     pub fn set_gpu_enabled(&mut self, enabled: bool) {
         self.gpu_enabled = enabled;
         if !enabled {
-            self.preferred_backend = HardwareBackend::CpuSimd(self.platform_capability);
+            self.preferred_backend = HardwareBackend::CpuSIMD(self.platform_capability);
         }
     }
     
     /// Get available hardware backends
     pub fn available_backends(&self) -> Vec<HardwareBackend> {
-        let mut backends = vec![HardwareBackend::CpuSimd(self.platform_capability)];
+        let mut backends = vec![HardwareBackend::CpuSIMD(self.platform_capability)];
         
         if let Some(ref gpu) = self.gpu_accelerator {
             if gpu.is_available() {
@@ -490,9 +510,10 @@ impl UnifiedDistanceCompute {
             };
         }
         
-        // Calculate raw distance using best available hardware
-        let raw_value = if self.gpu_enabled && self.gpu_accelerator.is_some() && vec_a.len() >= 64 {
-            // Use GPU for larger vectors if available
+        // Calculate raw distance using centralized hardware capabilities (no fallback)
+        let caps = get_hardware_capabilities();
+        let raw_value = if self.gpu_enabled && self.gpu_accelerator.is_some() && caps.should_use_gpu_distance(vec_a.len()) {
+            // Use GPU based on centralized threshold
             match self.calculate_with_gpu(vec_a, vec_b, metric) {
                 Ok(value) => value,
                 Err(e) => {
@@ -694,8 +715,13 @@ impl UnifiedDistanceCompute {
         vectors: &[&[f32]],
         metric: &DistanceMetric,
     ) -> Vec<SimilarityResult> {
-        // Use GPU for large batches if available
-        if self.gpu_enabled && self.gpu_accelerator.is_some() && vectors.len() >= 100 && query.len() >= 64 {
+        // Use GPU for large batches based on centralized capabilities (no fallback)
+        let caps = get_hardware_capabilities();
+        let should_use_gpu = self.gpu_enabled && self.gpu_accelerator.is_some() && 
+            caps.should_use_gpu_batch(vectors.len()) && 
+            caps.should_use_gpu_distance(query.len());
+        
+        if should_use_gpu {
             if let Ok(raw_values) = self.calculate_batch_with_gpu(query, vectors, metric) {
                 // Calculate query norm once using pooled vector for intermediate calculations
                 let query_norm = self.calculate_norm(query);
@@ -1046,21 +1072,36 @@ impl DistributedDistanceCompute for UnifiedDistanceCompute {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup_hardware_capabilities() {
+        INIT.call_once(|| {
+            let _ = initialize_hardware_capabilities_default();
+        });
+    }
 
     #[test]
     fn test_unified_distance_compute_creation() {
+        setup_hardware_capabilities();
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         assert_eq!(*compute.system_default(), DistanceMetric::Cosine);
     }
 
     #[test]
     fn test_custom_system_default() {
+        setup_hardware_capabilities();
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         assert_eq!(*compute.system_default(), DistanceMetric::Euclidean);
     }
 
     #[test]
     fn test_unified_distance_calculation() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
 
         let vec_a = vec![1.0, 0.0, 0.0];
@@ -1098,6 +1139,7 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch_handling() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
 
         let vec_a = vec![1.0, 0.0, 0.0];  // 3 dimensions
@@ -1120,6 +1162,7 @@ mod tests {
 
     #[test]
     fn test_similarity_metric_detection() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
 
         assert!(!compute.is_similarity_metric(&DistanceMetric::Cosine));
@@ -1129,6 +1172,7 @@ mod tests {
 
     #[test]
     fn test_semantic_result_ordering() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
 
         // Test that SimilarityResult ordering works correctly with rank_value
@@ -1152,6 +1196,7 @@ mod tests {
 
     #[test]
     fn test_unified_distance_config_creation() {
+        setup_hardware_capabilities();
         let config = UnifiedDistanceConfig::default();
         assert_eq!(config.system_default, DistanceMetric::Cosine);
         assert!(config.enable_simd);
@@ -1173,6 +1218,7 @@ mod tests {
 
     #[test]
     fn test_batch_distance_calculation() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let query = vec![1.0, 0.0, 0.0];
         let vec1 = vec![1.0, 0.0, 0.0]; // Identical
@@ -1199,6 +1245,7 @@ mod tests {
 
     #[test]
     fn test_empty_batch_distance_calculation() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let query = vec![1.0, 0.0, 0.0];
         let empty_vectors: Vec<&[f32]> = vec![];
@@ -1209,6 +1256,7 @@ mod tests {
 
     #[test]
     fn test_zero_vector_handling() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let zero_vec = vec![0.0, 0.0, 0.0];
         let unit_vec = vec![1.0, 0.0, 0.0];
@@ -1225,6 +1273,7 @@ mod tests {
 
     #[test]
     fn test_gpu_enabled_setting() {
+        setup_hardware_capabilities();
         let mut compute = UnifiedDistanceCompute::default();
         
         // Test setting GPU enabled
@@ -1238,6 +1287,7 @@ mod tests {
 
     #[test]
     fn test_preferred_backend() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let backend = compute.preferred_backend();
         
@@ -1249,6 +1299,7 @@ mod tests {
 
     #[test]
     fn test_all_distance_metrics_similarity_detection() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test all implemented distance metrics
@@ -1276,6 +1327,7 @@ mod tests {
 
     #[test]
     fn test_large_batch_processing() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let query = vec![1.0; 128]; // 128-dimensional vector
         
@@ -1301,6 +1353,7 @@ mod tests {
 
     #[test]
     fn test_extreme_vector_values() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test with very large values
@@ -1322,6 +1375,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metric_resolution_hierarchy() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
 
         // Test request override
@@ -1339,6 +1393,7 @@ mod tests {
 
     #[test]
     fn test_similarity_result_comparison() {
+        setup_hardware_capabilities();
         // Test SimilarityResult is_better_than method
         let result1 = SimilarityResult {
             raw_value: 0.5,
@@ -1361,6 +1416,7 @@ mod tests {
 
     #[test]
     fn test_similarity_result_debug_display() {
+        setup_hardware_capabilities();
         let result = SimilarityResult {
             raw_value: 0.123456,
             rank_value: 0.654321,
@@ -1380,6 +1436,7 @@ mod tests {
 
     #[test]
     fn test_vector_dimension_mismatch_handling() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test vectors with different dimensions
@@ -1394,6 +1451,7 @@ mod tests {
 
     #[test] 
     fn test_all_distance_metrics_coverage() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![0.0, 1.0, 0.0];
@@ -1423,6 +1481,7 @@ mod tests {
 
     #[test]
     fn test_config_field_access() {
+        setup_hardware_capabilities();
         // Test UnifiedDistanceConfig actual fields
         let config = UnifiedDistanceConfig {
             system_default: DistanceMetric::Euclidean,
@@ -1437,6 +1496,7 @@ mod tests {
 
     #[test]
     fn test_zero_magnitude_vectors() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test zero vectors
@@ -1455,6 +1515,7 @@ mod tests {
 
     #[test]
     fn test_hardware_backend_display() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test available backends method
@@ -1471,6 +1532,7 @@ mod tests {
 
     #[test] 
     fn test_platform_capability() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         
         // Test platform capability detection
@@ -1484,6 +1546,7 @@ mod tests {
 
     #[test]
     fn test_simd_configuration() {
+        setup_hardware_capabilities();
         let mut config = UnifiedDistanceConfig::default();
         config.enable_simd = false;
 
@@ -1500,6 +1563,7 @@ mod tests {
 
     #[test]
     fn test_config_clone_and_debug() {
+        setup_hardware_capabilities();
         let config = UnifiedDistanceConfig::default();
         let cloned_config = config.clone();
         
@@ -1514,6 +1578,7 @@ mod tests {
 
     #[test]
     fn test_custom_metric_fallback() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let vec1 = vec![1.0, 0.0];
         let vec2 = vec![0.0, 1.0];
@@ -1526,6 +1591,7 @@ mod tests {
 
     #[test]
     fn test_unspecified_metric_handling() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let vec1 = vec![1.0, 0.0];
         let vec2 = vec![0.0, 1.0];
@@ -1538,6 +1604,7 @@ mod tests {
 
     #[test]
     fn test_distance_mode_variations() {
+        setup_hardware_capabilities();
         let compute = UnifiedDistanceCompute::default();
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![0.0, 1.0, 0.0];

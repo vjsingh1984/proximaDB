@@ -17,10 +17,19 @@ use proximadb::storage::traits::UnifiedStorageEngine;
 use proximadb::storage::atomic::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::compute::unified_distance::UnifiedDistanceCompute;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio::sync::RwLock;
 use tempfile::TempDir;
 use tracing::{info, debug};
+
+static HARDWARE_INIT: Once = Once::new();
+
+/// Setup hardware capabilities for tests
+fn setup_hardware_capabilities() {
+    HARDWARE_INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 /// Create test SST configuration with compression
 fn create_test_config(temp_dir: &TempDir, compression_enabled: bool) -> SstConfig {
@@ -87,6 +96,7 @@ fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<Vect
 
 #[tokio::test]
 async fn test_sst_datablock_compression() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir, true);
     
@@ -117,6 +127,7 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
     
@@ -177,6 +188,7 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
     
@@ -254,6 +266,7 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
     
@@ -390,6 +403,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir_compressed = TempDir::new().unwrap();
     let temp_dir_uncompressed = TempDir::new().unwrap();
     
@@ -465,6 +479,7 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_compression_levels() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let vectors = create_test_vectors(200, 512, "level_test");
     

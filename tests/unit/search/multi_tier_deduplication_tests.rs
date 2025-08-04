@@ -49,7 +49,7 @@ fn test_basic_deduplication() {
             vector_record: base_record.clone(),
             score: 0.8,
             tier: StorageTier::Compacted,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(2),
             sequence: 100,
             file_path: Some("/data/compacted.db".to_string()),
@@ -62,7 +62,7 @@ fn test_basic_deduplication() {
             },
             score: 0.85,
             tier: StorageTier::Flushed,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(1),
             sequence: 200,
             file_path: Some("/data/flushed.db".to_string()),
@@ -181,7 +181,7 @@ fn test_metadata_filtering() {
             vector_record: record,
             score: 0.9 - (i as f32 * 0.1),
             tier: StorageTier::Flushed,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now(),
             sequence: i as u64,
             file_path: None,
@@ -281,7 +281,7 @@ fn test_mixed_engine_deduplication() {
             vector_record: base_record.clone(),
             score: 0.8,
             tier: StorageTier::Compacted,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(2),
             sequence: 100,
             file_path: Some("/data/lsm/compacted.db".to_string()),
@@ -345,7 +345,7 @@ fn test_k_limit_enforcement() {
             },
             score: (i as f32 * 0.01), // Increasing scores (ascending order)
             tier: StorageTier::Flushed,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now(),
             sequence: i as u64,
             file_path: Some(format!("/data/file_{}.db", i)),
@@ -372,8 +372,8 @@ fn test_complex_deduplication_scenario() {
     
     // Vector A: versions in all tiers
     for (version, tier, engine, hours_ago) in vec![
-        (1, StorageTier::Compacted, DeduplicationStorageEngine::LSM, 24),
-        (2, StorageTier::Flushed, DeduplicationStorageEngine::LSM, 12),
+        (1, StorageTier::Compacted, DeduplicationStorageEngine::SST, 24),
+        (2, StorageTier::Flushed, DeduplicationStorageEngine::SST, 12),
         (3, StorageTier::Unflushed, DeduplicationStorageEngine::WAL, 0),
     ] {
         results.push(TieredSearchCandidate {

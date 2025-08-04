@@ -56,6 +56,7 @@ mod write_buffer_corruption_recovery_tests {
                 log_level: "error".to_string(),
             },
             tls: None,
+            hardware: None,
         }
     }
     

@@ -145,13 +145,8 @@ pub enum SimdLevel {
     Neon,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ComputeBackend {
-    Cpu { simd_level: SimdLevel },
-    Cuda { device_id: u32 },
-    OpenCl { device_id: u32 },
-    Rocm { device_id: u32 },
-}
+// Using central HardwareBackend from hardware_capabilities module
+pub use crate::core::hardware_capabilities::HardwareBackend as ComputeBackend;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSizeConfig {
@@ -345,17 +340,11 @@ impl HardwareCapabilities {
 
         // Select preferred compute backend
         let preferred_backend = if gpu.has_cuda && !gpu.devices.is_empty() {
-            ComputeBackend::Cuda {
-                device_id: gpu.preferred_device.unwrap_or(0) as u32,
-            }
+            ComputeBackend::CUDA
         } else if gpu.has_opencl && !gpu.devices.is_empty() {
-            ComputeBackend::OpenCl {
-                device_id: gpu.preferred_device.unwrap_or(0) as u32,
-            }
+            ComputeBackend::OpenCL
         } else {
-            ComputeBackend::Cpu {
-                simd_level: simd_level.clone(),
-            }
+            ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2)
         };
 
         // Configure batch sizes based on memory and capabilities

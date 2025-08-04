@@ -136,6 +136,7 @@ async fn insert_test_vectors(client: &Client, collection_name: &str) -> Result<(
 
 #[tokio::test]
 async fn test_rest_vector_search_with_quantization() -> Result<()> {
+    setup_hardware_capabilities();
     let client = Client::new();
     let collection_name = format!("test_rest_quant_{}", uuid::Uuid::new_v4());
 
@@ -349,6 +350,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
 
 #[tokio::test]
 async fn test_rest_search_performance_comparison() -> Result<()> {
+    setup_hardware_capabilities();
     let client = Client::new();
     let collection_name = format!("test_rest_perf_{}", uuid::Uuid::new_v4());
 

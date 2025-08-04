@@ -60,6 +60,7 @@ fn create_test_lsm_config(base_path: &str) -> SstConfig {
 
 #[tokio::test]
 async fn test_lsm_search_with_flush() {
+    common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     // Create temp directory for storage
@@ -317,6 +318,7 @@ async fn test_lsm_search_with_flush() {
 
 #[tokio::test]
 async fn test_lsm_compaction_and_search() {
+    common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     let temp_dir = TempDir::new().unwrap();
@@ -494,6 +496,7 @@ async fn test_lsm_compaction_and_search() {
 
 #[tokio::test] 
 async fn test_lsm_bloom_filter_efficiency() {
+    common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
     let temp_dir = TempDir::new().unwrap();

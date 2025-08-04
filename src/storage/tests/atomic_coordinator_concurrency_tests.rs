@@ -106,7 +106,9 @@ mod tests {
             tasks.spawn(async move {
                 // Alternate between different status updates
                 if i % 2 == 0 {
-                    coord.write_to_staging(&op_id, "test.dat", b"test data").await
+                    // Use unique filename for each concurrent write to avoid collisions
+                    let filename = format!("test_{}.dat", i);
+                    coord.write_to_staging(&op_id, &filename, b"test data").await
                 } else {
                     coord.get_operation_status(&op_id).await.ok_or_else(|| 
                         anyhow::anyhow!("Operation not found")

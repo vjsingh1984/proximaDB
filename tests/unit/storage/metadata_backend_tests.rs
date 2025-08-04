@@ -36,6 +36,8 @@ use tokio::sync::RwLock;
 /// Test that only one metadata backend instance is created
 #[tokio::test]
 async fn test_single_metadata_backend_instance() {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let temp_dir = TempDir::new().unwrap();
     let metadata_path = temp_dir.path().join("metadata");
     let storage_path = temp_dir.path().join("storage");

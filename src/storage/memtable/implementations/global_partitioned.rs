@@ -52,10 +52,22 @@ impl CollectionPartition {
     }
 
     /// Add WAL batch to this collection partition
-    fn add_batch(&mut self, batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<()> {
+    fn add_batch(&mut self, mut batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
+
+        // Create bloom filter for this batch
+        if batch.metadata_bloom_filter.is_none() {
+            match batch.create_bloom_filter() {
+                Ok(_) => {
+                    tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to create bloom filter for batch {}: {}", batch_id, e);
+                }
+            }
+        }
 
         // Update vector ID index for fast lookups
         for vector_record in batch.vector_records.iter() {
@@ -245,14 +257,48 @@ impl CollectionPartition {
         distance_metric: &CoreDistanceMetric,
         distance_compute: &UnifiedDistanceCompute,
     ) -> Vec<(SimilarityResult, VectorRecord)> {
+        self.search_vectors_with_filter(query_vector, distance_metric, distance_compute, None)
+    }
+    
+    /// Search for similar vectors with optional metadata filter
+    fn search_vectors_with_filter(
+        &self,
+        query_vector: &[f32],
+        distance_metric: &CoreDistanceMetric,
+        distance_compute: &UnifiedDistanceCompute,
+        metadata_filter: Option<&HashMap<String, String>>,
+    ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
         
         let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> = HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
+        
+        let mut batches_checked = 0;
+        let mut batches_skipped = 0;
 
         // First pass: Find latest version of each ID by sequence and version (MVCC)
         for (batch_id, wal_batch) in &self.wal_batches {
+            batches_checked += 1;
+            
+            // Use bloom filter to quickly skip irrelevant batches
+            if let Some(filter) = metadata_filter {
+                let mut might_contain = false;
+                
+                for (key, value) in filter {
+                    if wal_batch.might_contain_metadata_value(key, value) {
+                        might_contain = true;
+                        break;
+                    }
+                }
+                
+                if !might_contain {
+                    batches_skipped += 1;
+                    tracing::debug!("⚡ Bloom filter: Skipping batch {} (no matching metadata)", batch_id);
+                    continue;
+                }
+            }
+            
             tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
             
             for vector_record in wal_batch.vector_records.iter() {
@@ -322,9 +368,19 @@ impl CollectionPartition {
         let results_without_id_count = results_without_id.len();
         final_results.extend(results_without_id);
 
+        if metadata_filter.is_some() {
+            let skip_percentage = (batches_skipped as f64 / batches_checked as f64) * 100.0;
+            tracing::info!(
+                "⚡ Bloom filter efficiency: Skipped {}/{} batches ({:.1}%) using bloom filters",
+                batches_skipped,
+                batches_checked,
+                skip_percentage
+            );
+        }
+        
         tracing::debug!(
             "🔍 Search results: {} batches searched, {} latest versions found, {} expired filtered, {} without ID, {} final results",
-            self.wal_batches.len(),
+            batches_checked - batches_skipped,
             latest_versions_count,
             filtered_count,
             results_without_id_count,

@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::core::{Config, ConfigLoader};
     use std::fs;
     use std::env;
-    use tempfile::{TempDir, NamedTempFile};
-    use std::io::Write;
+    use tempfile::TempDir;
 
     #[test]
     fn test_config_loader_creation() {
@@ -122,7 +120,7 @@ metadata_url = "/custom/path"
         assert_eq!(merged_config.server.bind_address, default_config.server.bind_address);
         // Should use user values for specified values
         assert_eq!(merged_config.server.port, 9999);
-        assert_eq!(merged_config.storage.metadata_url, "/custom/path");
+        assert_eq!(merged_config.storage.metadata_url, "file:///custom/path");
     }
 
     #[test]
@@ -342,10 +340,181 @@ level = "debug"
         // Verify selective merging
         assert_eq!(merged.server.bind_address, base_config.server.bind_address); // Keep default
         assert_eq!(merged.server.port, 9090); // Use user override
-        assert_eq!(merged.storage.metadata_url, "/custom/data"); // Use user override
+        assert_eq!(merged.storage.metadata_url, "file:///custom/data"); // Use user override with file:// scheme
         
         // Verify nested structures are preserved
         // Test that sst_config exists
         assert!(merged.storage.sst_config.bloom_filter_config.is_some());
+    }
+
+    #[test]
+    fn test_relative_path_resolution_dot() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("relative_test.toml");
+        
+        // Save current directory
+        let original_dir = env::current_dir().unwrap();
+        
+        // Change to temp directory
+        env::set_current_dir(&temp_dir).unwrap();
+        
+        // Create config with relative paths using "."
+        let config_content = r#"
+[server]
+data_dir = "."
+
+[storage]
+metadata_url = "./metadata"
+write_buffer_config.write_buffer_directory = "./write_buffer"
+sst_config.data_directory = "./sst_data"
+
+[[storage.storage_locations]]
+name = "local"
+url = "./storage"
+"#;
+        fs::write(&config_path, config_content).unwrap();
+        
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        
+        // Restore original directory
+        env::set_current_dir(original_dir).unwrap();
+        
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        
+        // Verify paths were resolved to absolute paths
+        assert!(config.server.data_dir.is_absolute());
+        assert!(config.storage.metadata_url.starts_with("file://"));
+        assert!(config.storage.metadata_url.contains(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.write_buffer_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.sst_config.data_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.storage_locations[0].url.starts_with("file://"));
+    }
+
+    #[test]
+    fn test_relative_path_resolution_dot_dot() {
+        let temp_dir = TempDir::new().unwrap();
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir_all(&sub_dir).unwrap();
+        
+        let config_path = sub_dir.join("parent_relative_test.toml");
+        
+        // Save current directory
+        let original_dir = env::current_dir().unwrap();
+        
+        // Change to subdirectory
+        env::set_current_dir(&sub_dir).unwrap();
+        
+        // Create config with parent directory references ".."
+        let config_content = r#"
+[server]
+data_dir = ".."
+
+[storage]
+metadata_url = "../metadata"
+write_buffer_config.write_buffer_directory = "../write_buffer"
+sst_config.data_directory = "../sst_data"
+
+[[storage.storage_locations]]
+name = "parent"
+url = "../storage"
+"#;
+        fs::write(&config_path, config_content).unwrap();
+        
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        
+        // Restore original directory
+        env::set_current_dir(original_dir).unwrap();
+        
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        
+        // Verify paths were resolved to parent directory (temp_dir)
+        assert!(config.server.data_dir.is_absolute());
+        assert_eq!(config.server.data_dir, temp_dir.path());
+        
+        // Metadata URL should be file:// URL pointing to parent
+        assert!(config.storage.metadata_url.starts_with("file://"));
+        assert!(config.storage.metadata_url.contains(temp_dir.path().to_str().unwrap()));
+        assert!(!config.storage.metadata_url.contains("subdir"));
+        
+        // Other paths should also point to parent directory
+        assert!(config.storage.write_buffer_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(!config.storage.write_buffer_config.write_buffer_directory.contains("subdir"));
+    }
+
+    #[test]
+    fn test_relative_path_resolution_mixed() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("mixed_paths_test.toml");
+        
+        // Create config with mixed absolute and relative paths
+        let config_content = r#"
+[server]
+data_dir = "./data"
+
+[storage]
+metadata_url = "/absolute/path/metadata"
+write_buffer_config.write_buffer_directory = "../sibling/write_buffer"
+sst_config.data_directory = "./sst_data"
+
+[[storage.storage_locations]]
+name = "absolute"
+url = "file:///absolute/storage"
+
+[[storage.storage_locations]]
+name = "relative"
+url = "./relative/storage"
+"#;
+        fs::write(&config_path, config_content).unwrap();
+        
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        
+        // Absolute paths should remain absolute
+        assert_eq!(config.storage.metadata_url, "file:///absolute/path/metadata");
+        assert_eq!(config.storage.storage_locations[0].url, "file:///absolute/storage");
+        
+        // Relative paths should be resolved
+        assert!(config.server.data_dir.is_absolute());
+        assert!(std::path::Path::new(&config.storage.sst_config.data_directory).is_absolute());
+        assert!(config.storage.storage_locations[1].url.starts_with("file://"));
+    }
+
+    #[test]
+    fn test_relative_path_resolution_with_pwd_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("pwd_fallback_test.toml");
+        
+        // Set PWD environment variable
+        let original_pwd = env::var("PWD").ok();
+        env::set_var("PWD", temp_dir.path());
+        
+        // Create config with relative paths
+        let config_content = r#"
+[server]
+data_dir = "./data"
+
+[storage]
+metadata_url = "./metadata"
+"#;
+        fs::write(&config_path, config_content).unwrap();
+        
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        
+        // Restore PWD
+        if let Some(pwd) = original_pwd {
+            env::set_var("PWD", pwd);
+        } else {
+            env::remove_var("PWD");
+        }
+        
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        
+        // Paths should be resolved using PWD as base
+        assert!(config.server.data_dir.is_absolute());
+        assert!(config.storage.metadata_url.starts_with("file://"));
     }
 }

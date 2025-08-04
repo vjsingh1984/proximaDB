@@ -1031,6 +1031,7 @@ impl WriteBufferManager {
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         // Use modern batch strategy
@@ -1300,6 +1301,7 @@ impl WriteBufferManager {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         // Delegate to strategy - each strategy handles its own serialization
@@ -1331,6 +1333,7 @@ impl WriteBufferManager {
             created_at: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         // Write to memory first
@@ -1543,6 +1546,7 @@ impl WriteBufferManager {
                 created_at: std::time::SystemTime::now(),
                 total_size_bytes,
                 is_flushed: false,
+            metadata_bloom_filter: None,
             })
         } else {
             Err(anyhow::anyhow!("WAL behavior not available for batch extraction"))

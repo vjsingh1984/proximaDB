@@ -487,6 +487,7 @@ mod tests {
             query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
             top_k: Some(3),
             distance_metric: Some(DistanceMetric::Cosine),
+            requires_ordering: None,
             filter_expression: None,
             accuracy_threshold: None,
             custom_hints: None,

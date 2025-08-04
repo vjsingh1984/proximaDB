@@ -19,6 +19,8 @@ from proximadb.models import CollectionConfig, DistanceMetric
 from proximadb.exceptions import ProximaDBError
 
 
+
+
 # Configure logging for tests
 logging.basicConfig(
     level=logging.INFO,
@@ -231,13 +233,17 @@ def pytest_runtest_setup(item):
 @pytest.fixture(scope="session", autouse=True)
 def configure_test_endpoints(request):
     """Configure test endpoints from command line options"""
-    rest_endpoint = request.config.getoption("--rest-endpoint")
-    grpc_endpoint = request.config.getoption("--grpc-endpoint")
-    
-    TEST_CONFIG["rest_endpoint"] = rest_endpoint
-    TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
-    
-    logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    try:
+        rest_endpoint = request.config.getoption("--rest-endpoint", default=TEST_CONFIG["rest_endpoint"])
+        grpc_endpoint = request.config.getoption("--grpc-endpoint", default=TEST_CONFIG["grpc_endpoint"])
+        
+        TEST_CONFIG["rest_endpoint"] = rest_endpoint
+        TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
+        
+        logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    except ValueError:
+        # Options not defined, use defaults from TEST_CONFIG
+        logging.info(f"Using default test configuration: REST={TEST_CONFIG['rest_endpoint']}, gRPC={TEST_CONFIG['grpc_endpoint']}")
 
 
 # Exception handling helpers

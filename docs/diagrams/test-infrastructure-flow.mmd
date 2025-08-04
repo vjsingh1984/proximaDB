@@ -1,0 +1,36 @@
+flowchart TD
+    A[Test Execution Start] --> B{Hardware Capabilities Initialized?}
+    B -->|No| C[setup_hardware_capabilities]
+    B -->|Yes| D[Skip Initialization]
+    
+    C --> E[std::sync::Once::call_once]
+    E --> F[initialize_hardware_capabilities_default]
+    
+    F --> G[Detect CPU Features]
+    G --> H[Check SIMD Support]
+    H --> I[Detect GPU Backends]
+    I --> J[Set Hardware Config]
+    
+    J --> K[Store in Global OnceLock]
+    K --> L[Hardware Ready]
+    
+    D --> L
+    L --> M[Execute Test Logic]
+    
+    M --> N{Test Type}
+    N -->|AXIS Integration| O[AxisManager Operations]
+    N -->|Compute Tests| P[Distance SIMD Operations]  
+    N -->|Storage Tests| Q[Engine Operations]
+    N -->|SQL Tests| R[Parser Cache Operations]
+    
+    O --> S[Test Completion]
+    P --> S
+    Q --> S
+    R --> S
+    
+    S --> T[Cleanup & Report]
+    
+    style A fill:#e1f5fe
+    style L fill:#c8e6c9
+    style S fill:#fff3e0
+    style T fill:#fce4ec

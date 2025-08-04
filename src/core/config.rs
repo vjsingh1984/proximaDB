@@ -10,6 +10,7 @@ pub struct Config {
     pub api: ApiConfig,
     pub monitoring: MonitoringConfig,
     pub tls: Option<TlsConfig>,
+    pub hardware: Option<HardwareConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,68 @@ pub struct TlsConfig {
     pub key_file: Option<String>,
     pub enabled: bool,
     pub bind_interface: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareConfig {
+    /// Enable automatic hardware detection (default: true)
+    #[serde(default = "default_true")]
+    pub enable_detection: bool,
+    
+    /// Enable GPU acceleration if detected (default: true)
+    #[serde(default = "default_true")]
+    pub enable_gpu_acceleration: bool,
+    
+    /// Enable SIMD acceleration if detected (default: true)
+    #[serde(default = "default_true")]
+    pub enable_simd: bool,
+    
+    /// Enable AVX-512 if available (default: true)
+    #[serde(default = "default_true")]
+    pub enable_avx512: bool,
+    
+    /// Enable GPU for SQL parsing (default: true)
+    #[serde(default = "default_true")]
+    pub enable_gpu_parsing: bool,
+    
+    /// Enable GPU for distance calculations (default: true)
+    #[serde(default = "default_true")]
+    pub enable_gpu_distance: bool,
+    
+    /// Minimum vector size to use GPU (default: 64)
+    #[serde(default = "default_gpu_min_vector_size")]
+    pub gpu_min_vector_size: usize,
+    
+    /// Minimum batch size to use GPU (default: 100)
+    #[serde(default = "default_gpu_min_batch_size")]
+    pub gpu_min_batch_size: usize,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_gpu_min_vector_size() -> usize {
+    64
+}
+
+fn default_gpu_min_batch_size() -> usize {
+    100
+}
+
+impl Default for HardwareConfig {
+    fn default() -> Self {
+        Self {
+            enable_detection: true,
+            enable_gpu_acceleration: true,
+            enable_simd: true,
+            enable_avx512: true,
+            enable_gpu_parsing: true,
+            enable_gpu_distance: true,
+            gpu_min_vector_size: 64,
+            gpu_min_batch_size: 100,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -696,6 +759,7 @@ impl Default for Config {
                 log_level: "info".to_string(),
             },
             tls: None,
+            hardware: Some(HardwareConfig::default()),
         }
     }
 }

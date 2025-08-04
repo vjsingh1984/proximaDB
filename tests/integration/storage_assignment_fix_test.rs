@@ -14,6 +14,7 @@ use proximadb::proto::proximadb::CollectionConfig;
 
 #[tokio::test]
 async fn test_assignment_stored_with_uuid_not_name() -> Result<()> {
+    setup_hardware_capabilities();
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -120,6 +121,7 @@ async fn test_assignment_stored_with_uuid_not_name() -> Result<()> {
 
 #[tokio::test]
 async fn test_assignment_recovery_with_uuid() -> Result<()> {
+    setup_hardware_capabilities();
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_str().unwrap();
@@ -219,6 +221,7 @@ async fn test_assignment_recovery_with_uuid() -> Result<()> {
 
 #[tokio::test] 
 async fn test_multiple_collections_assignment_uniqueness() -> Result<()> {
+    setup_hardware_capabilities();
     use std::collections::HashSet;
     
     // Create temporary directory

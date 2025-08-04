@@ -18,6 +18,8 @@ use proximadb::core::search::SearchResult;
 
 #[tokio::test]
 async fn test_viper_metadata_filtering_integration() {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // This is a simplified test that focuses on the key issue:
     // Testing that VIPER metadata filtering works with the unified search pipeline
     

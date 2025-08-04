@@ -48,6 +48,7 @@ async fn test_global_partitioned_batch_operations() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     // Test batch insertion with realistic base62 collection ID
@@ -98,6 +99,7 @@ async fn test_global_partitioned_multi_collection() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
+        metadata_bloom_filter: None,
     };
 
     // Collection B batch
@@ -118,6 +120,7 @@ async fn test_global_partitioned_multi_collection() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
+        metadata_bloom_filter: None,
     };
 
     // Insert batches into different collections (realistic base62 IDs)
@@ -203,6 +206,7 @@ async fn test_mvcc_and_logical_deletes() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     let batch2 = WriteBufferVectorBatch {
@@ -211,6 +215,7 @@ async fn test_mvcc_and_logical_deletes() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     let batch3 = WriteBufferVectorBatch {
@@ -219,6 +224,7 @@ async fn test_mvcc_and_logical_deletes() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     // Add batches
@@ -284,6 +290,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1024,
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     let collection_id = "1uctd3e"; // 7-char base62 ID (realistic)
@@ -318,6 +325,7 @@ async fn test_global_partitioned_clear_operations() {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 1536,
         is_flushed: false,
+            metadata_bloom_filter: None,
     };
 
     let sequences = memtable.add_wal_batch("test_collection", batch).await.unwrap();

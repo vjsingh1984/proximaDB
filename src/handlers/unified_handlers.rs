@@ -371,21 +371,21 @@ impl UnifiedHandlers {
         
         info!("🔍 Getting vector {} from collection {}", vector_id, resolved_collection_id);
         
-        // Use DirectVectorService to get vector by ID
-        match self.direct_vector_service.get_vector_by_id(
+        // Use DirectVectorService to get the raw VectorRecord first (to preserve original proto metadata)
+        match self.direct_vector_service.get_vector(
             &resolved_collection_id,
             vector_id,
             include_vector,
             include_metadata,
         ).await {
-            Ok(Some(result)) => {
-                // Convert to proto SearchResult
+            Ok(Some(vector_record)) => {
+                // Convert VectorRecord to proto SearchResult (no metadata conversion loss)
                 let proto_result = SearchResult {
-                    id: Some(result.id.clone()),
-                    score: result.score,
-                    vector: result.vector.unwrap_or_default(),
-                    metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata),
-                    rank: result.rank.map(|r| r as i32),
+                    id: vector_record.id.clone(),
+                    score: 1.0, // Perfect match for get_vector
+                    vector: if include_vector { vector_record.vector } else { vec![] },
+                    metadata: if include_metadata { vector_record.metadata } else { vec![] },
+                    rank: Some(1),
                 };
                 
                 Ok(VectorOperationResponse {

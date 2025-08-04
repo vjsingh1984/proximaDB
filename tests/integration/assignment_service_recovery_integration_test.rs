@@ -21,8 +21,14 @@ use tokio;
 use tempfile::TempDir;
 use std::sync::Arc;
 
+// Include common test utilities
+mod common {
+    include!("../common/mod.rs");
+}
+
 #[tokio::test]
 async fn test_assignment_service_discovery_after_restart() -> Result<()> {
+    common::setup_hardware_capabilities();
     println!("🧪 Testing assignment service collection discovery after server restart");
     
     // Create test directories for multi-disk setup
@@ -389,6 +395,7 @@ async fn test_assignment_service_discovery_after_restart() -> Result<()> {
 
 #[tokio::test]
 async fn test_assignment_persistence_and_recovery() -> Result<()> {
+    common::setup_hardware_capabilities();
     println!("🧪 Testing assignment metadata persistence and recovery");
     
     // This test focuses specifically on assignment metadata persistence

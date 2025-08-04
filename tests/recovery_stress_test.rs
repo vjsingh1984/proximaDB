@@ -81,6 +81,7 @@ mod recovery_stress_tests {
                 log_level: "error".to_string(),
             },
             tls: None,
+            hardware: None,
         }
     }
     

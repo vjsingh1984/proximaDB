@@ -73,17 +73,26 @@ class TestProtoFirstArchitecture:
             pb2.VectorRecord(
                 id="test_vec_1",
                 vector=[0.1, 0.2, 0.3],
-                metadata={"type": "test", "index": "1"}
+                metadata=[
+                    pb2.MetadataItem(key="type", string_value="test"),
+                    pb2.MetadataItem(key="index", string_value="1")
+                ]
             ),
             pb2.VectorRecord(
                 id="test_vec_2", 
                 vector=[0.4, 0.5, 0.6],
-                metadata={"type": "test", "index": "2"}
+                metadata=[
+                    pb2.MetadataItem(key="type", string_value="test"),
+                    pb2.MetadataItem(key="index", string_value="2")
+                ]
             ),
             pb2.VectorRecord(
                 id="test_vec_3",
                 vector=[0.7, 0.8, 0.9],
-                metadata={"type": "test", "index": "3"}
+                metadata=[
+                    pb2.MetadataItem(key="type", string_value="test"),
+                    pb2.MetadataItem(key="index", string_value="3")
+                ]
             )
         ]
         
@@ -94,9 +103,9 @@ class TestProtoFirstArchitecture:
         )
         
         # Insert vectors
-        insert_response = grpc_client.stub.InsertVectorsBatch(batch_request)
+        insert_response = grpc_client.stub.VectorBatch(batch_request)
         assert insert_response.success, f"Vector insertion failed: {insert_response.error_message}"
-        assert insert_response.count == 3, f"Expected 3 vectors inserted, got {insert_response.count}"
+        assert insert_response.metrics.total_processed == 3, f"Expected 3 vectors inserted, got {insert_response.metrics.total_processed}"
 
     def test_proto_first_vector_search(self, grpc_client, setup_collection):
         """Test search with proto messages"""
@@ -107,7 +116,7 @@ class TestProtoFirstArchitecture:
             pb2.VectorRecord(
                 id=f"search_vec_{i}",
                 vector=[float(i) * 0.1, float(i) * 0.2, float(i) * 0.3],
-                metadata={"batch": str(i // 10)}
+                metadata=[pb2.MetadataItem(key="batch", string_value=str(i // 10))]
             )
             for i in range(20)
         ]
@@ -117,24 +126,29 @@ class TestProtoFirstArchitecture:
             vectors=vector_records
         )
         
-        insert_response = grpc_client.stub.InsertVectorsBatch(batch_request)
+        insert_response = grpc_client.stub.VectorBatch(batch_request)
         assert insert_response.success, f"Vector insertion failed: {insert_response.error_message}"
         
         # Now search
-        search_request = pb2.VectorSearchRequest(
-            collection_id=collection_id,
-            vector=[0.5, 1.0, 1.5],
-            top_k=5,
-            include_metadata=True
+        search_query = pb2.SearchQuery(
+            vector=[0.5, 1.0, 1.5]
         )
         
-        search_response = grpc_client.stub.SearchVectors(search_request)
+        search_request = pb2.VectorSearchRequest(
+            collection_id=collection_id,
+            queries=[search_query],
+            top_k=5,
+            include_fields=pb2.IncludeFields(metadata=True, score=True)
+        )
+        
+        search_response = grpc_client.stub.VectorSearch(search_request)
         assert search_response.success, f"Search failed: {search_response.error_message}"
-        assert len(search_response.results) > 0, "No search results returned"
-        assert len(search_response.results) <= 5, f"Too many results: {len(search_response.results)}"
+        assert search_response.compact_results is not None, "No compact results in response"
+        assert len(search_response.compact_results.results) > 0, "No search results returned"
+        assert len(search_response.compact_results.results) <= 5, f"Too many results: {len(search_response.compact_results.results)}"
         
         # Verify results have IDs and scores
-        for result in search_response.results:
+        for result in search_response.compact_results.results:
             assert result.id, "Result missing ID"
             assert result.score >= 0, "Invalid score"
 
@@ -147,17 +161,26 @@ class TestProtoFirstArchitecture:
             pb2.VectorRecord(
                 id="electronics_1",
                 vector=[0.1, 0.2, 0.3],
-                metadata={"category": "electronics", "price": "100"}
+                metadata=[
+                    pb2.MetadataItem(key="category", string_value="electronics"),
+                    pb2.MetadataItem(key="price", string_value="100")
+                ]
             ),
             pb2.VectorRecord(
                 id="electronics_2", 
                 vector=[0.2, 0.3, 0.4],
-                metadata={"category": "electronics", "price": "200"}
+                metadata=[
+                    pb2.MetadataItem(key="category", string_value="electronics"),
+                    pb2.MetadataItem(key="price", string_value="200")
+                ]
             ),
             pb2.VectorRecord(
                 id="books_1",
                 vector=[0.3, 0.4, 0.5],
-                metadata={"category": "books", "price": "50"}
+                metadata=[
+                    pb2.MetadataItem(key="category", string_value="books"),
+                    pb2.MetadataItem(key="price", string_value="50")
+                ]
             )
         ]
         
@@ -166,29 +189,39 @@ class TestProtoFirstArchitecture:
             vectors=vector_records
         )
         
-        insert_response = grpc_client.stub.InsertVectorsBatch(batch_request)
+        insert_response = grpc_client.stub.VectorBatch(batch_request)
         assert insert_response.success, f"Vector insertion failed: {insert_response.error_message}"
         
         # Search with metadata filter
+        filter_condition = pb2.FilterCondition(
+            field_name="category",
+            operation=pb2.FilterOperation.EQUALS,
+            value=pb2.MetadataValue(string_value="electronics")
+        )
+        
         metadata_filter = pb2.MetadataFilter(
-            field="category",
-            operator=pb2.ComparisonOperator.EQUALS,
-            value=pb2.FilterValue(string_value="electronics")
+            conditions=[filter_condition],
+            operator=pb2.FilterOperator.AND
+        )
+        
+        search_query = pb2.SearchQuery(
+            vector=[0.15, 0.25, 0.35],
+            metadata_filter=metadata_filter
         )
         
         search_request = pb2.VectorSearchRequest(
             collection_id=collection_id,
-            vector=[0.15, 0.25, 0.35],
+            queries=[search_query],
             top_k=10,
-            metadata_filter=metadata_filter,
-            include_metadata=True
+            include_fields=pb2.IncludeFields(metadata=True, score=True)
         )
         
-        search_response = grpc_client.stub.SearchVectors(search_request)
+        search_response = grpc_client.stub.VectorSearch(search_request)
         assert search_response.success, f"Search with filter failed: {search_response.error_message}"
         
         # Verify only electronics items returned
-        for result in search_response.results:
+        assert search_response.compact_results is not None, "No compact results in response"
+        for result in search_response.compact_results.results:
             assert result.id.startswith("electronics"), \
                 f"Got non-electronics result: {result.id}"
 
@@ -203,7 +236,7 @@ class TestProtoFirstArchitecture:
             pb2.VectorRecord(
                 id=f"perf_vec_{i}",
                 vector=[float(i % 10) / 10.0 for _ in range(3)],
-                metadata={"batch": str(i // 10)}
+                metadata=[pb2.MetadataItem(key="batch", string_value=str(i // 10))]
             )
             for i in range(batch_size)
         ]
@@ -213,12 +246,12 @@ class TestProtoFirstArchitecture:
             vectors=vector_records
         )
         
-        insert_response = grpc_client.stub.InsertVectorsBatch(batch_request)
+        insert_response = grpc_client.stub.VectorBatch(batch_request)
         insert_time = time.time() - start_time
         
         assert insert_response.success, f"Batch insertion failed: {insert_response.error_message}"
-        assert insert_response.count == batch_size, \
-            f"Expected {batch_size} vectors inserted, got {insert_response.count}"
+        assert insert_response.metrics.total_processed == batch_size, \
+            f"Expected {batch_size} vectors inserted, got {insert_response.metrics.total_processed}"
         
         # Performance assertion
         vectors_per_second = batch_size / insert_time
@@ -231,9 +264,12 @@ class TestProtoFirstArchitecture:
     ])
     def test_proto_with_different_engines(self, grpc_client, test_collection_name, storage_engine):
         """Test proto operations with different storage engines"""
+        # Get engine name from enum
+        engine_name = pb2.StorageEngine.Name(storage_engine)
+        
         # Create collection with specific engine
         collection_config = pb2.CollectionConfig(
-            name=f"{test_collection_name}_{storage_engine.name}",
+            name=f"{test_collection_name}_{engine_name}",
             dimension=3,
             distance_metric=pb2.DistanceMetric.EUCLIDEAN,
             storage_engine=storage_engine
@@ -246,16 +282,16 @@ class TestProtoFirstArchitecture:
         
         collection_response = grpc_client.stub.CollectionOperation(collection_request)
         assert collection_response.success, \
-            f"Collection creation failed for {storage_engine.name}: {collection_response.error_message}"
+            f"Collection creation failed for {engine_name}: {collection_response.error_message}"
         
         collection_id = collection_response.collection.id
         
         try:
             # Insert test vector
             vector_record = pb2.VectorRecord(
-                id=f"engine_test_{storage_engine.name}",
+                id=f"engine_test_{engine_name}",
                 vector=[1.0, 2.0, 3.0],
-                metadata={"engine": storage_engine.name}
+                metadata=[pb2.MetadataItem(key="engine", string_value=engine_name)]
             )
             
             batch_request = pb2.VectorBatchRequest(
@@ -263,7 +299,7 @@ class TestProtoFirstArchitecture:
                 vectors=[vector_record]
             )
             
-            insert_response = grpc_client.stub.InsertVectorsBatch(batch_request)
+            insert_response = grpc_client.stub.VectorBatch(batch_request)
             assert insert_response.success, \
                 f"Vector insertion failed for {storage_engine.name}: {insert_response.error_message}"
             

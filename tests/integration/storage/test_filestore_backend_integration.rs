@@ -68,6 +68,7 @@ fn list_files_recursive(dir: &std::path::Path, files: &mut Vec<std::path::PathBu
 
 #[tokio::test]
 async fn test_filestore_backend_direct_operations() -> Result<()> {
+    setup_hardware_capabilities();
     println!("🧪 Testing FilestoreMetadataBackend direct operations");
     
     // Create temporary directory for test
@@ -207,6 +208,7 @@ async fn test_filestore_backend_direct_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_collection_service_with_filestore_backend() -> Result<()> {
+    setup_hardware_capabilities();
     println!("🧪 Testing CollectionService with FilestoreMetadataBackend integration");
     
     // Create temporary directory for test
@@ -322,6 +324,7 @@ async fn test_collection_service_with_filestore_backend() -> Result<()> {
 
 #[tokio::test]
 async fn test_filestore_persistence_across_restarts() -> Result<()> {
+    setup_hardware_capabilities();
     println!("🧪 Testing FilestoreMetadataBackend persistence across restarts");
     
     // Create temporary directory for test

@@ -75,6 +75,7 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
         created_at: std::time::SystemTime::now(),
         total_size_bytes: vector_count * 256, // Approximate
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 

@@ -20,10 +20,39 @@ use proximadb::storage::atomic::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::metadata::store::MetadataStore;
 use proximadb::compute::unified_distance::UnifiedDistanceCompute;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tokio::time::Instant;
 use tracing::info;
+
+static HARDWARE_INIT: Once = Once::new();
+
+/// Setup hardware capabilities for tests
+fn setup_hardware_capabilities() {
+    HARDWARE_INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
+
+/// Ensure required test directories exist - inline helper
+fn ensure_test_directories() {
+    let directories = vec![
+        "./data/metadata",
+        "./data/metadata/current", 
+        "./data/metadata/__staging",
+        "./data/metadata/archive",
+        "./test_metadata",
+        "./test_metadata/current",
+        "./test_metadata/current/__staging", 
+        "./test_metadata/__staging",
+        "./test_metadata/archive",
+        "./test_metadata/staging",
+    ];
+    
+    for dir in directories {
+        std::fs::create_dir_all(dir).ok();
+    }
+}
 
 // Inline test assignment helper to avoid import issues
 async fn setup_test_assignment(collection_id: &str) -> anyhow::Result<()> {
@@ -135,6 +164,12 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
 
 #[tokio::test]
 async fn test_optimization_end_to_end() -> anyhow::Result<()> {
+    setup_hardware_capabilities();
+    // Setup hardware capabilities
+    
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let temp_dir = TempDir::new().unwrap();
     
     // Create optimized configurations

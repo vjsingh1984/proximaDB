@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_server_startup_timeout() {
+    setup_hardware_capabilities();
     // This test ensures server startup doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
@@ -35,6 +36,7 @@ async fn test_server_startup_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_metadata_recovery_timeout() {
+    setup_hardware_capabilities();
     // Test that metadata recovery doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let metadata_path = temp_dir.path().join("metadata");
@@ -67,6 +69,7 @@ async fn test_metadata_recovery_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_storage_engine_initialization_timeout() {
+    setup_hardware_capabilities();
     // Test that storage engine initialization doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
@@ -100,6 +103,7 @@ async fn test_storage_engine_initialization_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_concurrent_metadata_operations_no_deadlock() {
+    setup_hardware_capabilities();
     // Test that concurrent metadata operations don't cause deadlocks
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
@@ -147,6 +151,7 @@ async fn test_concurrent_metadata_operations_no_deadlock() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_recovery_after_crash_simulation() {
+    setup_hardware_capabilities();
     // Simulate a crash and test recovery
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
@@ -204,6 +209,7 @@ async fn test_recovery_after_crash_simulation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_write_buffer_recovery_no_hang() {
+    setup_hardware_capabilities();
     // Test that write buffer recovery doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
@@ -238,6 +244,7 @@ async fn test_write_buffer_recovery_no_hang() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_atomic_operations_no_hang() {
+    setup_hardware_capabilities();
     // Test that atomic operations don't hang
     let temp_dir = TempDir::new().unwrap();
     
@@ -282,6 +289,7 @@ async fn test_atomic_operations_no_hang() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_checkpoint_creation_no_hang() {
+    setup_hardware_capabilities();
     // Test that checkpoint creation doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);

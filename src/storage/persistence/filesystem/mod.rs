@@ -673,8 +673,8 @@ impl FilesystemFactory {
         let to_fs = self.get_filesystem(to_url)?;
 
         // Extract paths from URLs
-        let from_path = self.extract_path_from_url(from_url)?;
-        let to_path = self.extract_path_from_url(to_url)?;
+        let from_path = Self::resolve_path(from_url)?;
+        let to_path = Self::resolve_path(to_url)?;
         
         info!("    from_path: {}", from_path);
         info!("    to_path: {}", to_path);
@@ -707,7 +707,7 @@ impl FilesystemFactory {
         // Delete source after successful copy
         info!("    🗑️ Deleting source file...");
         let from_fs = self.get_filesystem(from_url)?;
-        let from_path = self.extract_path_from_url(from_url)?;
+        let from_path = Self::resolve_path(from_url)?;
         info!("    from_path extracted: {}", from_path);
         from_fs.delete(&from_path).await?;
         info!("    ✅ Delete successful");
@@ -860,8 +860,8 @@ impl FilesystemFactory {
     }
 
     /// Extract relative path from URL (removes base path configured for the storage)
-    pub fn extract_path_from_url(&self, url: &str) -> FsResult<String> {
-        info!("🔍 extract_path_from_url: {}", url);
+    pub fn extract_relative_path(&self, url: &str) -> FsResult<String> {
+        info!("🔍 resolve_path: {}", url);
         
         // Handle URLs without schemes by prepending file://
         let normalized_url = if !url.contains("://") {
@@ -990,11 +990,6 @@ impl FilesystemFactory {
         }
     }
 
-    /// Get the path component from URL (uses centralized utility)
-    pub fn extract_path(&self, url: &str) -> FsResult<String> {
-        Self::resolve_path(url)
-    }
-
     /// List all available filesystem types
     pub fn available_filesystems(&self) -> Vec<&str> {
         self.filesystems.keys().map(|s| s.as_str()).collect()
@@ -1004,7 +999,7 @@ impl FilesystemFactory {
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("🔍 FilesystemFactory::read() - URL: {}", url);
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         tracing::debug!(
             "📖 Routing to {} filesystem for path: {}",
             fs.filesystem_type(),
@@ -1032,7 +1027,7 @@ impl FilesystemFactory {
             data.len()
         );
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         tracing::debug!(
             "💾 Routing to {} filesystem for path: {}",
             fs.filesystem_type(),
@@ -1055,7 +1050,7 @@ impl FilesystemFactory {
             data.len()
         );
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         tracing::debug!(
             "📎 Routing to {} filesystem for path: {}",
             fs.filesystem_type(),
@@ -1074,7 +1069,7 @@ impl FilesystemFactory {
     pub async fn delete(&self, url: &str) -> FsResult<()> {
         tracing::debug!("🗑️ FilesystemFactory::delete() - URL: {}", url);
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         tracing::debug!(
             "🚮 Routing to {} filesystem for path: {}",
             fs.filesystem_type(),
@@ -1093,7 +1088,7 @@ impl FilesystemFactory {
     pub async fn exists(&self, url: &str) -> FsResult<bool> {
         tracing::trace!("🔍 FilesystemFactory::exists() - URL: {}", url);
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         let result = fs.exists(&path).await;
 
         match &result {
@@ -1106,25 +1101,25 @@ impl FilesystemFactory {
 
     pub async fn metadata(&self, url: &str) -> FsResult<FileMetadata> {
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         fs.metadata(&path).await
     }
 
     pub async fn list(&self, url: &str) -> FsResult<Vec<DirEntry>> {
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         fs.list(&path).await
     }
 
     pub async fn create_dir(&self, url: &str) -> FsResult<()> {
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         fs.create_dir(&path).await
     }
 
     pub async fn create_dir_all(&self, url: &str) -> FsResult<()> {
         let fs = self.get_filesystem(url)?;
-        let path = self.extract_path(url)?;
+        let path = Self::resolve_path(url)?;
         fs.create_dir_all(&path).await
     }
 
@@ -1136,8 +1131,8 @@ impl FilesystemFactory {
         if from_scheme == to_scheme {
             // Same filesystem - use native copy
             let fs = self.get_filesystem(from_url)?;
-            let from_path = self.extract_path(from_url)?;
-            let to_path = self.extract_path(to_url)?;
+            let from_path = Self::resolve_path(from_url)?;
+            let to_path = Self::resolve_path(to_url)?;
             fs.copy(&from_path, &to_path).await
         } else {
             // Cross-filesystem copy - read from source, write to destination
@@ -1154,8 +1149,8 @@ impl FilesystemFactory {
         if from_scheme == to_scheme {
             // Same filesystem - use native move
             let fs = self.get_filesystem(from_url)?;
-            let from_path = self.extract_path(from_url)?;
-            let to_path = self.extract_path(to_url)?;
+            let from_path = Self::resolve_path(from_url)?;
+            let to_path = Self::resolve_path(to_url)?;
             fs.move_file(&from_path, &to_path).await
         } else {
             // Cross-filesystem move - copy then delete
@@ -1226,11 +1221,11 @@ mod inline_tests {
         let factory = FilesystemFactory::new(config).await.unwrap();
 
         assert_eq!(
-            factory.extract_path("file:///tmp/test.txt").unwrap(),
+            FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),
             "/tmp/test.txt"
         );
-        assert_eq!(factory.extract_path("s3://bucket/key").unwrap(), "/key");
-        assert_eq!(factory.extract_path("/local/path").unwrap(), "/local/path");
+        assert_eq!(FilesystemFactory::resolve_path("s3://bucket/key").unwrap(), "/key");
+        assert_eq!(FilesystemFactory::resolve_path("/local/path").unwrap(), "/local/path");
     }
 }
 

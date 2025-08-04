@@ -68,6 +68,26 @@ use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 
+/// Ensure required test directories exist - inline helper
+fn ensure_test_directories() {
+    let directories = vec![
+        "./data/metadata",
+        "./data/metadata/current", 
+        "./data/metadata/__staging",
+        "./data/metadata/archive",
+        "./test_metadata",
+        "./test_metadata/current",
+        "./test_metadata/current/__staging", 
+        "./test_metadata/__staging",
+        "./test_metadata/archive",
+        "./test_metadata/staging",
+    ];
+    
+    for dir in directories {
+        std::fs::create_dir_all(dir).ok();
+    }
+}
+
 /// Create test VIPER configuration with compression
 fn create_test_config(temp_dir: &TempDir, compression_enabled: bool) -> proximadb::core::config::ViperConfig {
     proximadb::core::config::ViperConfig {
@@ -199,6 +219,8 @@ fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<Vect
 
 #[tokio::test]
 async fn test_viper_binary_array_optimization() {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let config = OptimizedVectorWriterConfig::default();
     assert!(config.use_binary_array);
     
@@ -227,6 +249,11 @@ async fn test_viper_binary_array_optimization() {
 
 #[tokio::test]
 async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
     
@@ -327,6 +354,11 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
     
@@ -394,6 +426,11 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let temp_dir = TempDir::new().unwrap();
     let mut config = create_test_config(&temp_dir, true);
     config.row_group_size = 100; // Small row groups to create more files
@@ -471,6 +508,11 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let algorithms = vec![
         ("zstd", 3),
         // Note: Most compression formats are not yet fully supported by parquet crate
@@ -555,6 +597,11 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     let test_cases = vec![
         (true, "compressed"),
         (false, "uncompressed"),

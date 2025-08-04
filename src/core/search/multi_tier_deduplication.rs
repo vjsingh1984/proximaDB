@@ -40,7 +40,7 @@ pub enum StorageTier {
 /// Storage engine type for search result context (includes WAL for unflushed data)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeduplicationStorageEngine {
-    LSM,    // LSM-Tree with SST files
+    SST,    // SST files (LSM-Tree storage)
     VIPER,  // VIPER with Parquet files  
     WAL,    // WAL memtable (unflushed)
 }
@@ -60,6 +60,12 @@ pub struct MultiTierDeduplicator {
     metadata_query: Option<MetadataQuery>,
     /// Query engine for evaluating metadata queries
     query_engine: MetadataQueryEngine,
+    /// Target k for early termination optimization
+    target_k: Option<usize>,
+    /// Track if we've reached k unique results
+    early_termination_possible: bool,
+    /// Whether results need to be ordered by score (disables early termination)
+    requires_ordering: bool,
 }
 
 impl MultiTierDeduplicator {
@@ -70,6 +76,23 @@ impl MultiTierDeduplicator {
             metadata_filters: None,
             metadata_query: None,
             query_engine: MetadataQueryEngine::new(),
+            target_k: None,
+            early_termination_possible: false,
+            requires_ordering: true, // Default to true for safety
+        }
+    }
+    
+    /// Create with target k for early termination optimization
+    pub fn with_k(k: usize) -> Self {
+        Self {
+            id_to_latest: HashMap::new(),
+            results_without_id: Vec::new(),
+            metadata_filters: None,
+            metadata_query: None,
+            query_engine: MetadataQueryEngine::new(),
+            target_k: Some(k),
+            early_termination_possible: false,
+            requires_ordering: true,
         }
     }
 
@@ -81,6 +104,9 @@ impl MultiTierDeduplicator {
             metadata_filters: Some(metadata_filters),
             metadata_query: None,
             query_engine: MetadataQueryEngine::new(),
+            target_k: None,
+            early_termination_possible: false,
+            requires_ordering: true,
         }
     }
 
@@ -92,6 +118,9 @@ impl MultiTierDeduplicator {
             metadata_filters: None,
             metadata_query: Some(metadata_query),
             query_engine: MetadataQueryEngine::new(),
+            target_k: None,
+            early_termination_possible: false,
+            requires_ordering: true,
         }
     }
 
@@ -103,7 +132,34 @@ impl MultiTierDeduplicator {
             metadata_filters: Some(metadata_filters),
             metadata_query: Some(metadata_query),
             query_engine: MetadataQueryEngine::new(),
+            target_k: None,
+            early_termination_possible: false,
+            requires_ordering: true,
         }
+    }
+    
+    /// Set target k for early termination
+    pub fn set_target_k(&mut self, k: usize) {
+        self.target_k = Some(k);
+    }
+    
+    /// Set whether results require ordering (disables early termination)
+    pub fn set_requires_ordering(&mut self, requires_ordering: bool) {
+        self.requires_ordering = requires_ordering;
+        if requires_ordering {
+            // Disable early termination if ordering is required
+            self.early_termination_possible = false;
+        }
+    }
+    
+    /// Check if early termination is allowed
+    pub fn can_terminate_early(&self) -> bool {
+        !self.requires_ordering && self.target_k.is_some()
+    }
+    
+    /// Check if early termination has been triggered
+    pub fn is_early_terminated(&self) -> bool {
+        self.early_termination_possible
     }
 
     /// Check if a vector record matches the metadata filters or query
@@ -173,6 +229,17 @@ impl MultiTierDeduplicator {
 
     /// Add search results from a specific storage tier
     pub fn add_tier_results(&mut self, results: Vec<TieredSearchCandidate>) {
+        // Check if early termination is already possible before processing
+        // Only skip if we don't require ordering AND we've already reached k
+        if self.early_termination_possible && !self.requires_ordering {
+            tracing::debug!(
+                "🚀 Early termination: Already have {} unique results, skipping {} new results",
+                self.target_k.unwrap_or(0),
+                results.len()
+            );
+            return;
+        }
+        
         for result in results {
             // Apply metadata filters first
             if !self.matches_filters(&result.vector_record) {
@@ -251,6 +318,22 @@ impl MultiTierDeduplicator {
                     }
                 }
             }
+            
+            // Check for early termination after each addition
+            // Only terminate early if we don't require ordering
+            if !self.requires_ordering {
+                if let Some(k) = self.target_k {
+                    let current_unique_count = self.id_to_latest.len() + self.results_without_id.len();
+                    if current_unique_count >= k {
+                        self.early_termination_possible = true;
+                        tracing::info!(
+                            "🚀 Early termination triggered: Reached {} unique results (target k={}, ordering not required)",
+                            current_unique_count, k
+                        );
+                        return; // Stop processing more results
+                    }
+                }
+            }
         }
     }
 
@@ -268,8 +351,8 @@ impl MultiTierDeduplicator {
         // Add non-ID results
         final_results.extend(self.results_without_id);
 
-        // Sort by score (ascending for distance metrics)
-        final_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        // Sort by score (descending - higher score is better)
+        final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         
         // Limit to k results
         final_results.truncate(k);
@@ -357,7 +440,7 @@ mod tests {
             },
             score: 0.4,
             tier: StorageTier::Flushed,
-            engine: DeduplicationStorageEngine::LSM,
+            engine: DeduplicationStorageEngine::SST,
             timestamp: now,
             sequence: 200,
             file_path: Some("/data/flushed.sst".to_string()),
@@ -454,5 +537,96 @@ mod tests {
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].vector_record.version, Some(2)); // v2 should win
         assert_eq!(final_results[0].score, 0.4);
+    }
+    
+    #[test]
+    fn test_early_termination_without_ordering() {
+        let mut deduplicator = MultiTierDeduplicator::with_k(2);
+        deduplicator.set_requires_ordering(false); // No ordering required - can terminate early
+        
+        let now = chrono::Utc::now();
+        
+        // Create 5 candidates but we only need 2
+        let mut candidates = Vec::new();
+        for i in 0..5 {
+            candidates.push(TieredSearchCandidate {
+                vector_record: VectorRecord {
+                    id: Some(format!("vector_{}", i)),
+                    vector: vec![i as f32, 0.0, 0.0],
+                    metadata: vec![],
+                    timestamp: now.timestamp() as u32,
+                    updated_at: Some(now.timestamp() as u32),
+                    expires_at: None,
+                    version: Some(1),
+                    rank: None,
+                    score: None,
+                    distance: None,
+                },
+                score: i as f32,
+                tier: StorageTier::Unflushed,
+                engine: DeduplicationStorageEngine::WAL,
+                timestamp: now,
+                sequence: 100 + i as u64,
+                file_path: None,
+            });
+        }
+        
+        // Add first 2 results
+        deduplicator.add_tier_results(candidates[0..2].to_vec());
+        assert_eq!(deduplicator.early_termination_possible, true);
+        
+        // Try to add more - should be skipped due to early termination
+        deduplicator.add_tier_results(candidates[2..5].to_vec());
+        
+        let final_results = deduplicator.get_final_results(2);
+        
+        // Should only have 2 results due to early termination
+        assert_eq!(final_results.len(), 2);
+    }
+    
+    #[test]
+    fn test_no_early_termination_with_ordering() {
+        let mut deduplicator = MultiTierDeduplicator::with_k(2);
+        deduplicator.set_requires_ordering(true); // Ordering required - must process all
+        
+        let now = chrono::Utc::now();
+        
+        // Create 5 candidates
+        let mut candidates = Vec::new();
+        for i in 0..5 {
+            candidates.push(TieredSearchCandidate {
+                vector_record: VectorRecord {
+                    id: Some(format!("vector_{}", i)),
+                    vector: vec![i as f32, 0.0, 0.0],
+                    metadata: vec![],
+                    timestamp: now.timestamp() as u32,
+                    updated_at: Some(now.timestamp() as u32),
+                    expires_at: None,
+                    version: Some(1),
+                    rank: None,
+                    score: None,
+                    distance: None,
+                },
+                score: (5 - i) as f32, // Reverse scores - best results come last
+                tier: StorageTier::Unflushed,
+                engine: DeduplicationStorageEngine::WAL,
+                timestamp: now,
+                sequence: 100 + i as u64,
+                file_path: None,
+            });
+        }
+        
+        // Add all results - early termination should NOT occur
+        deduplicator.add_tier_results(candidates[0..2].to_vec());
+        assert_eq!(deduplicator.early_termination_possible, false); // Should not terminate
+        
+        deduplicator.add_tier_results(candidates[2..5].to_vec());
+        
+        let final_results = deduplicator.get_final_results(2);
+        
+        // Should have best 2 results (highest scores with descending sort)
+        assert_eq!(final_results.len(), 2);
+        assert_eq!(final_results[0].score, 5.0); // vector_0 has score 5
+        assert_eq!(final_results[1].score, 4.0); // vector_1 has score 4
     }
 }

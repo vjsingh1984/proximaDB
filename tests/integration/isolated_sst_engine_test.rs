@@ -14,6 +14,7 @@ use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedS
 
 #[tokio::test]
 async fn test_isolated_sst_basic_operations() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     
@@ -69,6 +70,7 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_metadata_filtering() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     
@@ -135,6 +137,7 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let mut engine = env.create_sst_engine().await?;
     
@@ -214,6 +217,7 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_concurrent_operations() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let engine = std::sync::Arc::new(env.create_sst_engine().await?);
     
@@ -302,6 +306,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_recovery_persistence() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let original_vectors = env.create_test_vectors(8);
     
@@ -357,6 +362,7 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_multi_collection_isolation() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     // Create multiple isolated environments
     let multi_env = MultiEnvironmentTest::new(3).await?;
     let mut engines = Vec::new();
@@ -423,6 +429,7 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_distance_metrics() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     
@@ -505,6 +512,7 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_sst_large_dataset() -> Result<()> {
+    crate::common::setup_hardware_capabilities();
     let env = IsolatedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     

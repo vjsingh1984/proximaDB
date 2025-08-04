@@ -11,6 +11,8 @@ use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemC
 
 #[tokio::test]
 async fn test_isolated_filesystem_basic_operations() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create filesystem factory
@@ -44,6 +46,8 @@ async fn test_isolated_filesystem_basic_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_filesystem_directory_operations() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -76,6 +80,8 @@ async fn test_isolated_filesystem_directory_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_filesystem_concurrent_operations() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     // Create the storage URL and filesystem outside the async closures
@@ -156,6 +162,8 @@ async fn test_isolated_filesystem_concurrent_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_filesystem_error_handling() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -189,6 +197,8 @@ async fn test_isolated_filesystem_error_handling() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_filesystem_large_file_operations() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
     
     let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -241,6 +251,8 @@ async fn test_isolated_filesystem_large_file_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_isolated_filesystem_multi_collection_isolation() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Create multiple isolated environments
     let env1 = IsolatedTestEnvironment::new().await?;
     let env2 = IsolatedTestEnvironment::new().await?;

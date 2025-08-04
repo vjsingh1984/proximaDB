@@ -297,31 +297,57 @@ impl VectorBatchRequestBuilder {
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect::<Vec<_>>();
             
-        // Convert metadata to Vec<MetadataItem>
+        // Convert metadata to Vec<MetadataItem> - handle both object and array formats
         let metadata = json.get("metadata")
-            .and_then(|v| v.as_object())
-            .map(|obj| {
+            .map(|v| {
                 use crate::proto::proximadb::MetadataItem;
-                obj.iter()
-                    .map(|(k, v)| {
-                        let metadata_value = match v {
-                            serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
-                            serde_json::Value::Number(n) => {
-                                if let Some(f) = n.as_f64() {
-                                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                match v {
+                    // Handle array format: [{"key": "k", "string_value": "v"}, ...]
+                    serde_json::Value::Array(arr) => {
+                        arr.iter()
+                            .filter_map(|item| {
+                                let key = item.get("key")?.as_str()?.to_string();
+                                let metadata_value = if let Some(s) = item.get("string_value") {
+                                    s.as_str().map(|s| crate::proto::proximadb::metadata_item::Value::StringValue(s.to_string()))
+                                } else if let Some(n) = item.get("double_value") {
+                                    n.as_f64().map(|f| crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                } else if let Some(b) = item.get("bool_value") {
+                                    b.as_bool().map(|b| crate::proto::proximadb::metadata_item::Value::BoolValue(b))
                                 } else {
-                                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                    None
+                                };
+                                Some(MetadataItem {
+                                    key,
+                                    value: metadata_value,
+                                })
+                            })
+                            .collect()
+                    },
+                    // Handle object format: {"key1": "value1", "key2": 123, ...}
+                    serde_json::Value::Object(obj) => {
+                        obj.iter()
+                            .map(|(k, v)| {
+                                let metadata_value = match v {
+                                    serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(f) = n.as_f64() {
+                                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                        } else {
+                                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                        }
+                                    },
+                                    serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                                    _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
+                                };
+                                MetadataItem {
+                                    key: k.clone(),
+                                    value: metadata_value,
                                 }
-                            },
-                            serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
-                            _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
-                        };
-                        MetadataItem {
-                            key: k.clone(),
-                            value: metadata_value,
-                        }
-                    })
-                    .collect()
+                            })
+                            .collect()
+                    },
+                    _ => Vec::new(),
+                }
             })
             .unwrap_or_default();
             

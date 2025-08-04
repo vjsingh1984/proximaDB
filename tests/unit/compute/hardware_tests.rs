@@ -93,12 +93,12 @@ fn test_gpu_capabilities() {
             assert!(device.memory_total_mb > 0);
             // Compute capability makes sense for the backend
             match &capabilities.optimal_paths.preferred_backend {
-                ComputeBackend::Cuda { .. } => {
+                ComputeBackend::CUDA => {
                     if let Some((major, _minor)) = device.compute_capability {
                         assert!(major >= 3);
                     }
                 }
-                ComputeBackend::Rocm { .. } => {
+                ComputeBackend::ROCm => {
                     // ROCm devices report version differently
                     // ROCm devices report compute capability
                     assert!(device.compute_capability.is_some());
@@ -123,16 +123,16 @@ fn test_optimal_paths() {
     
     // Verify compute backend selection
     match paths.preferred_backend {
-        ComputeBackend::Cpu { .. } => {
+        ComputeBackend::CpuSIMD(_) | ComputeBackend::Scalar => {
             // CPU should be available on all systems
             assert!(true);
         }
-        ComputeBackend::Cuda { .. } => {
+        ComputeBackend::CUDA => {
             // Should have CUDA-capable GPU
             assert!(!capabilities.gpu.devices.is_empty());
             assert!(capabilities.gpu.has_cuda);
         }
-        ComputeBackend::Rocm { .. } => {
+        ComputeBackend::ROCm => {
             // Should have ROCm-capable GPU
             assert!(!capabilities.gpu.devices.is_empty());
             assert!(capabilities.gpu.has_rocm);
@@ -283,7 +283,7 @@ fn test_simd_level_ordering() {
 #[test]
 fn test_hardware_info_construction() {
     let info = HardwareInfo {
-        backend: proximadb::compute::ComputeBackend::CPU { threads: None },
+        backend: proximadb::compute::ComputeBackend::CpuSIMD(proximadb::compute::distance::PlatformCapability::X86Avx2),
         device_name: "Test Device".to_string(),
         memory_total: 1024 * 1024 * 1024,
         memory_free: 512 * 1024 * 1024,

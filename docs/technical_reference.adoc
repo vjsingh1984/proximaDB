@@ -26,6 +26,139 @@ include::../diagrams/bloom-filter-architecture.mmd[]
 ----
 ====
 
+image::unified-handlers-architecture.svg[Unified Handlers Architecture]
+
+.Unified Handlers Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/unified-handlers-architecture.mmd[]
+----
+====
+
+image::sql-acceleration-architecture.svg[SQL Acceleration Architecture]
+
+.SQL Acceleration Architecture Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/sql-acceleration-architecture.mmd[]
+----
+====
+
+== Hardware Capabilities API
+
+=== Centralized Hardware Detection
+
+[source,rust]
+----
+use proximadb::core::hardware_capabilities::{
+    get_hardware_capabilities, initialize_hardware_capabilities_default
+};
+
+// Initialize at server startup (required)
+initialize_hardware_capabilities_default()?;
+
+// Access capabilities globally
+let caps = get_hardware_capabilities();
+println!("CPU: {} cores, GPU: {}", caps.cpu.logical_cores, caps.gpu.backend);
+----
+
+=== Hardware Capability Queries
+
+[source,rust]
+----
+// Check specific capabilities
+caps.has_avx512()           // AVX-512 available and enabled
+caps.has_gpu()              // GPU acceleration available
+caps.has_gpu_parsing()      // GPU SQL parsing enabled
+caps.has_simd()             // Any SIMD acceleration available
+
+// Hardware-aware decisions
+if caps.should_use_gpu_distance(vector_size) {
+    // Use GPU for large vectors
+}
+
+// Get optimal backend
+let backend = caps.preferred_backend(); // Returns best available hardware
+----
+
+=== Hardware Configuration
+
+[source,toml]
+----
+[hardware]
+enable_detection = true
+enable_gpu_acceleration = true
+enable_gpu_parsing = true
+enable_simd = true
+enable_avx512 = true
+gpu_min_vector_size = 512
+gpu_min_batch_size = 100
+----
+
+== SQL Acceleration APIs
+
+=== GPU-Accelerated SQL Parser
+
+[source,rust]
+----
+use proximadb::query::sql_engine::gpu_parser::{GpuSqlParser, parse_sql_gpu};
+
+// Global parser (recommended)
+let query = parse_sql_gpu(sql)?;
+
+// Direct parser instance
+let mut parser = GpuSqlParser::new()?;
+let query = parser.parse(sql)?;
+
+// Performance statistics
+let stats = parser.get_stats();
+println!("GPU: {}, CPU: {}", stats.gpu_accelerated_count, stats.cpu_fallback_count);
+----
+
+=== SIMD Vector Parser
+
+[source,rust]
+----
+use proximadb::query::sql_engine::simd_parser::SimdVectorParser;
+
+let mut parser = SimdVectorParser::new();
+let vectors = parser.parse_vector_array("[1.0, 2.0, 3.0]")?;
+
+// Performance monitoring
+let stats = parser.performance_summary();
+println!("SIMD utilization: {}%", stats.simd_utilization);
+----
+
+=== SQL Parser Performance Metrics
+
+[source,rust]
+----
+// GPU Parser Statistics
+pub struct GpuParserStats {
+    pub total_queries_parsed: u64,
+    pub gpu_accelerated_count: u64, 
+    pub cpu_fallback_count: u64,
+    pub total_parse_time_ms: f64,
+    pub gpu_parse_time_ms: f64,
+    pub cpu_parse_time_ms: f64,
+}
+
+// SIMD Parser Statistics  
+pub struct SimdPerformanceStats {
+    pub vectors_parsed: u64,
+    pub elements_parsed: u64,
+    pub total_time_ns: u64,
+    pub simd_utilization: f64, // Percentage of SIMD usage
+    pub avx2_operations: u64,
+    pub sse41_operations: u64, 
+    pub scalar_operations: u64,
+}
+----
+
 == API Reference
 
 === REST API

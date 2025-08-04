@@ -2,9 +2,20 @@
 
 use super::super::*;
 use std::sync::Arc;
+use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+fn setup_hardware_capabilities() {
+    INIT.call_once(|| {
+        let _ = initialize_hardware_capabilities_default();
+    });
+}
 
 #[test]
 fn test_quantization_level_bytes() {
+    setup_hardware_capabilities();
     let dimension = 768;
     
     let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -30,6 +41,7 @@ fn test_quantization_level_bytes() {
 
 #[test]
 fn test_compression_ratio() {
+    setup_hardware_capabilities();
     let dimension = 768;
     
     let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -39,6 +51,7 @@ fn test_compression_ratio() {
 
 #[tokio::test]
 async fn test_quantization_roundtrip() {
+    setup_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -57,6 +70,7 @@ async fn test_quantization_roundtrip() {
 
 #[test]
 fn test_quantization_level_variants() {
+    setup_hardware_capabilities();
     // Test PQ4 creation
     let pq4 = UnifiedQuantizationLevel::pq4(8);
     if let Some(crate::proto::proximadb::quantization_level::LevelType::Pq(pq)) = &pq4.level_type {
@@ -79,6 +93,7 @@ fn test_quantization_level_variants() {
 
 #[test]
 fn test_bytes_per_vector_calculation() {
+    setup_hardware_capabilities();
     let dim = 128;
     
     // Test None (FP32)
@@ -114,6 +129,7 @@ fn test_bytes_per_vector_calculation() {
 
 #[test]
 fn test_compression_ratio_calculations() {
+    setup_hardware_capabilities();
     let dim = 512;
     
     // No compression
@@ -140,6 +156,7 @@ fn test_compression_ratio_calculations() {
 
 #[test]
 fn test_in_memory_codebook_store() {
+    setup_hardware_capabilities();
     use crate::compute::unified_quantization::{Codebook, CodebookData, TrainingConfig};
     
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -185,6 +202,7 @@ fn test_in_memory_codebook_store() {
 
 #[test]
 fn test_hamming_distance_calculation() {
+    setup_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -212,6 +230,7 @@ fn test_hamming_distance_calculation() {
 
 #[test]
 fn test_pq_distance_calculation() {
+    setup_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);

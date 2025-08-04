@@ -6,6 +6,9 @@ pub mod unified_interface;
 pub mod typesafe_filter;
 pub mod index_based_filter;
 
+#[cfg(test)]
+mod early_termination_tests;
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +52,10 @@ pub struct SearchParams {
     
     /// Custom optimization parameters
     pub custom_hints: Option<HashMap<String, serde_json::Value>>,
+    
+    /// Internal: Indicates if the query requires ordering (e.g., gRPC/REST always true, SQL with ORDER BY true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires_ordering: Option<bool>,
 }
 
 impl Default for SearchParams {
@@ -66,6 +73,7 @@ impl Default for SearchParams {
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),
             custom_hints: None,
+            requires_ordering: None,
         }
     }
 }

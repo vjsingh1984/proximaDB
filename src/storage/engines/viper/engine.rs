@@ -802,6 +802,7 @@ impl UnifiedStorageEngine for ViperEngine {
             enable_clustering_hint: None,
             enable_metadata_filtering_hint: None,
             timeout_ms: None,
+            requires_ordering: None, // Default to None for internal engine searches
         };
         
         // Get collection metadata

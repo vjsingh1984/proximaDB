@@ -23,8 +23,37 @@ use proximadb::storage::metadata::backends::filestore_backend::{
 };
 use proximadb::storage::traits::CollectionMetadataProvider;
 use proximadb::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tempfile::TempDir;
+
+static HARDWARE_INIT: Once = Once::new();
+
+/// Setup hardware capabilities for tests
+fn setup_hardware_capabilities() {
+    HARDWARE_INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
+
+/// Ensure required test directories exist - inline helper
+fn ensure_test_directories() {
+    let directories = vec![
+        "./data/metadata",
+        "./data/metadata/current", 
+        "./data/metadata/__staging",
+        "./data/metadata/archive",
+        "./test_metadata",
+        "./test_metadata/current",
+        "./test_metadata/current/__staging", 
+        "./test_metadata/__staging",
+        "./test_metadata/archive",
+        "./test_metadata/staging",
+    ];
+    
+    for dir in directories {
+        std::fs::create_dir_all(dir).ok();
+    }
+}
 
 /// Helper to create a test collection
 fn create_test_collection(id: &str, name: &str) -> Collection {
@@ -59,6 +88,12 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
 
 #[tokio::test]
 async fn test_relative_url_no_path_duplication() -> Result<()> {
+    setup_hardware_capabilities();
+    // Setup hardware capabilities
+    
+    // Ensure required test directories exist
+    ensure_test_directories();
+    
     // Create a temporary directory
     let temp_dir = TempDir::new()?;
     let metadata_dir = temp_dir.path().join("test_metadata");
@@ -120,6 +155,7 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
 
 #[tokio::test]
 async fn test_absolute_url_no_path_duplication() -> Result<()> {
+    setup_hardware_capabilities();
     // Create a temporary directory
     let temp_dir = TempDir::new()?;
     let metadata_path = temp_dir.path().join("test_metadata_abs");
@@ -162,6 +198,7 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
 
 #[tokio::test]
 async fn test_atomic_operations_path_handling() -> Result<()> {
+    setup_hardware_capabilities();
     // Create a temporary directory
     let temp_dir = TempDir::new()?;
     let metadata_dir = temp_dir.path().join("test_metadata_atomic");
@@ -210,6 +247,7 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
 
 #[tokio::test]
 async fn test_concurrent_operations_no_conflicts() -> Result<()> {
+    setup_hardware_capabilities();
     // Create a temporary directory
     let temp_dir = TempDir::new()?;
     let metadata_path = temp_dir.path().join("test_metadata_concurrent");
@@ -266,6 +304,7 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
 
 #[tokio::test]
 async fn test_metadata_url_formats() -> Result<()> {
+    setup_hardware_capabilities();
     // Test various URL format edge cases
     let test_cases = vec![
         ("file://./metadata", "relative with ./"),

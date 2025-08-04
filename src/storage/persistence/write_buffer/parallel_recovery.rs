@@ -384,6 +384,7 @@ impl ParallelRecoverySystem {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: file_data.len(),
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
 
         debug!("📦 Recovered WAL file: {} bytes", file_data.len());

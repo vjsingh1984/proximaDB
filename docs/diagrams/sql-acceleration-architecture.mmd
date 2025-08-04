@@ -1,0 +1,99 @@
+flowchart TD
+    subgraph "SQL Query Input"
+        Q[SQL Query]
+    end
+    
+    subgraph "Lock-Free Parser Pool"
+        PP[LockFreeParserPool]
+        GP[get_global_pool]
+        AP[acquire_parser]
+        RP[release_parser]
+        
+        subgraph "Pool Statistics"
+            PS1[Parser Reuse: >85%]
+            PS2[CPU-Based Sizing]
+            PS3[Zero-Copy Context]
+        end
+    end
+    
+    subgraph "Parser Types"
+        CPU[CPU Parser]
+        SIMD[SIMD Parser]
+        GPU[GPU Parser]
+        
+        subgraph "GPU Backends"
+            CUDA[CUDA Backend]
+            ROCM[ROCm Backend]
+            MPS[MPS Backend - Apple]
+            OCL[OpenCL Backend]
+        end
+    end
+    
+    subgraph "Query Result Cache"
+        QRC[QueryResultCache]
+        CK[QueryCacheKey]
+        CR[CachedQueryResult]
+        
+        subgraph "Cache Features"
+            CF1[DashMap Concurrent]
+            CF2[LRU Eviction]
+            CF3[TTL Management]
+            CF4[Collection Invalidation]
+        end
+    end
+    
+    subgraph "Execution Engine"
+        SE[SqlEngine]
+        EE[execute]
+        DVS[DirectVectorService]
+        CS[CollectionService]
+    end
+    
+    subgraph "Early Termination"
+        ET[Early Termination Logic]
+        OC[ORDER BY Check]
+        TC[Termination Condition]
+    end
+    
+    Q --> PP
+    PP --> GP
+    GP --> AP
+    AP --> CPU
+    AP --> SIMD
+    AP --> GPU
+    
+    GPU --> CUDA
+    GPU --> ROCM
+    GPU --> MPS
+    GPU --> OCL
+    
+    CPU --> QRC
+    SIMD --> QRC  
+    GPU --> QRC
+    
+    QRC --> CK
+    QRC --> CR
+    QRC --> CF1
+    QRC --> CF2
+    QRC --> CF3
+    QRC --> CF4
+    
+    QRC --> SE
+    SE --> EE
+    EE --> DVS
+    EE --> CS
+    
+    EE --> ET
+    ET --> OC
+    OC --> TC
+    
+    RP --> PP
+    
+    PP --> PS1
+    PP --> PS2
+    PP --> PS3
+    
+    style PP fill:#e3f2fd
+    style QRC fill:#e8f5e8
+    style GPU fill:#fff3e0
+    style ET fill:#fce4ec

@@ -31,7 +31,7 @@ use tracing::info;
 pub use crate::proto::proximadb::DistanceMetric;
 
 /// Platform-agnostic SIMD capability detection
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PlatformCapability {
     Scalar,
     #[cfg(target_arch = "x86_64")]

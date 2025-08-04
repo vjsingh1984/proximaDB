@@ -10,6 +10,10 @@ sequenceDiagram
     participant VIPER as  VIPER Engine
     participant SST as  SST Engine
     participant Atomic as  AtomicCoordinator
+    participant SQL as  SQL Engine
+    participant GPU as  GPU Parser
+    participant SIMD as  SIMD Parser
+    participant HW as  Hardware Capabilities
     participant Cloud as  Cloud Storage
     
     %% Vector Insert Flow
@@ -92,6 +96,37 @@ sequenceDiagram
     Handler-->>-REST:  Proto → JSON Response
     REST-->>-Client:  Collection Details
     
+    %% SQL Query Processing Flow
+    Note over Client,Cloud: GPU/SIMD-Accelerated SQL Processing
+    
+    Client->>+REST: POST /query<br/> SQL with VECTOR_SIMILARITY
+    REST->>+SQL: execute_sql()<br/> Complex vector query
+    
+    SQL->>+HW: get_hardware_capabilities()<br/> Check available acceleration
+    HW-->>-SQL: GPU: CUDA, CPU: AVX2<br/> Hardware profile
+    
+    alt GPU Available
+        SQL->>+GPU: parse_sql_gpu()<br/> "SELECT * FROM collection<br/>ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2], 'cosine')"
+        GPU->>+HW: has_gpu_parsing()<br/> Check GPU parsing enabled
+        HW-->>-GPU: true
+        GPU->>GPU: tokenize_gpu()<br/> CUDA/ROCm/MPS/OpenCL
+        GPU->>GPU: parse_tokens_cpu()<br/> Grammar processing
+        GPU-->>-SQL: ParsedQuery<br/> 0.8ms parse time
+    else GPU Unavailable
+        SQL->>+SIMD: parse_vector_array()<br/> "[0.1, 0.2, 0.3, ...]"
+        SIMD->>+HW: has_simd()<br/> Check SIMD capabilities
+        HW-->>-SIMD: AVX2 available
+        SIMD->>SIMD: parse_avx2()<br/> 8 elements per instruction
+        SIMD-->>-SQL: Vec<f32><br/> 163.3 MB/s throughput
+    end
+    
+    SQL->>+DVS: search_vectors()<br/> Optimized query execution
+    DVS->>+Engine: search_with_metadata()<br/> Hardware-aware search
+    Engine-->>-DVS: Vector results
+    DVS-->>-SQL: Ranked results
+    SQL-->>-REST: Query results
+    REST-->>-Client: JSON response<br/> Sub-2ms query time
+    
     %% Error Handling Flow
     Note over Client,Cloud: Error Handling & Recovery
     
@@ -101,16 +136,5 @@ sequenceDiagram
     Handler-->>-gRPC:  ValidationError<br/> Detailed Error Info
     gRPC-->>-Client:  Error Response<br/> Actionable Message
     
-    %% Professional Styling for Service Interaction Diagram
-    classDef clientStyle fill:#3b82f6,stroke:#1d4ed8,stroke-width:3px,color:#ffffff,font-weight:bold
-    classDef apiStyle fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff,font-weight:bold
-    classDef serviceStyle fill:#8b5cf6,stroke:#7c3aed,stroke-width:3px,color:#ffffff,font-weight:bold
-    classDef engineStyle fill:#f59e0b,stroke:#d97706,stroke-width:3px,color:#ffffff,font-weight:bold
-    classDef cloudStyle fill:#ef4444,stroke:#dc2626,stroke-width:3px,color:#ffffff,font-weight:bold
-    
-    %% Apply Styling
-    class Client clientStyle
-    class REST,gRPC apiStyle
-    class Handler,DVS,CS serviceStyle
-    class VIPER,SST,Engine engineStyle
-    class Atomic,Cloud cloudStyle
+    %% Note: Sequence diagrams don't support classDef styling
+    %% Colors are controlled by the theme variables in the header

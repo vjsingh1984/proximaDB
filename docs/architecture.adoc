@@ -17,7 +17,7 @@ include::../diagrams/business-system-overview.mmd[]
 ----
 ====
 
-**Core Features**: DirectVectorService (40-60% latency reduction), Proto-First Design (zero double serialization), Dual Storage (SST + VIPER), Hardware Acceleration (SIMD/GPU).
+**Core Features**: DirectVectorService (40-60% latency reduction), Proto-First Design (zero double serialization), Dual Storage (SST + VIPER), Centralized Hardware Capabilities (one-time detection), Advanced SQL Acceleration (GPU/SIMD parsing).
 
 == Core Components
 
@@ -48,6 +48,66 @@ include::../diagrams/storage-engine-classes.mmd[]
 **Storage Engines**: SST (row-based, write-optimized, bloom filters, MVCC). VIPER (columnar, analytics-optimized, 60-90% I/O reduction).
 
 **AXIS Indexing**: Adaptive selection - HNSW (high-recall), IVF (large-scale), LSH (approximate), Annoy (memory-constrained).
+
+== Hardware Capabilities System
+
+image::hardware-capabilities-flow.svg[Hardware Capabilities Flow]
+
+.Hardware Capabilities Flow Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/hardware-capabilities-flow.mmd[]
+----
+====
+
+**Centralized Detection**: One-time hardware capability detection at server startup eliminates repeated overhead and provides consistent access across all modules.
+
+[source,rust]
+----
+// Global hardware capabilities access
+let caps = get_hardware_capabilities();
+if caps.has_avx512() && caps.config.enable_simd {
+    // Use AVX-512 acceleration
+}
+----
+
+**Hardware Features**:
+- **CPU Detection**: Physical/logical cores, vendor identification, model detection
+- **SIMD Capabilities**: AVX-512, AVX2, SSE4.1, SSE, NEON, FMA support
+- **GPU Backends**: CUDA, ROCm, MPS (Apple), OpenCL with automatic detection
+- **Memory Information**: Total/available memory, cache size recommendations
+- **Configuration Integration**: Respects TOML hardware configuration flags
+
+**Performance Benefits**:
+- **Initialization**: Single detection at startup vs repeated checks
+- **Thread Safety**: `OnceLock` pattern for safe concurrent access
+- **Fallback Logic**: Intelligent degradation when hardware unavailable
+- **Testing Support**: Deterministic initialization for test environments
+
+== Advanced SQL Processing
+
+**GPU-Accelerated SQL Parser**: High-performance SQL parsing with GPU tokenization and intelligent CPU fallback for complex grammar processing.
+
+**SIMD Vector Parser**: Multi-tier SIMD acceleration for large vector array parsing with comprehensive performance monitoring.
+
+[source,rust]
+----
+// GPU SQL parsing
+let mut parser = GpuSqlParser::new()?;
+let query = parser.parse(sql)?; // GPU tokenization + CPU grammar
+
+// SIMD vector parsing  
+let mut simd_parser = SimdVectorParser::new();
+let vectors = simd_parser.parse_vector_array(&input)?; // AVX2/SSE4.1/scalar
+----
+
+**SQL Acceleration Features**:
+- **Multi-GPU Support**: CUDA, ROCm, MPS, OpenCL backends
+- **Performance Statistics**: GPU vs CPU parsing metrics
+- **Complex Query Support**: VECTOR_SIMILARITY with array literals
+- **Global Parser Instances**: Thread-safe singleton patterns
 
 == Key Design Patterns
 

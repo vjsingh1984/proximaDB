@@ -92,6 +92,7 @@ impl MemtableManager {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 256, // Approximate
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         let sequences = self.add_vector_batch(collection_id, batch).await?;
@@ -279,6 +280,7 @@ mod tests {
             created_at: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
+            metadata_bloom_filter: None,
         };
         
         // Add batch

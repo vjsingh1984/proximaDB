@@ -25,6 +25,7 @@ async fn create_test_filesystem() -> (LocalFileSystem, TempDir) {
 
 #[tokio::test]
 async fn test_local_filesystem_basic_operations() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test write and read
@@ -76,6 +77,7 @@ async fn test_local_filesystem_basic_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_configuration_variants() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     
     // Test with custom configuration
@@ -108,6 +110,7 @@ async fn test_local_filesystem_configuration_variants() {
 
 #[tokio::test]
 async fn test_local_filesystem_error_handling() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test reading non-existent file
@@ -153,6 +156,7 @@ async fn test_local_filesystem_error_handling() {
 
 #[tokio::test]
 async fn test_local_filesystem_directory_operations() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test create_dir_all with nested directories
@@ -190,6 +194,7 @@ async fn test_local_filesystem_directory_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_file_operations_with_options() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test file creation with directory creation
@@ -235,6 +240,7 @@ async fn test_local_filesystem_file_operations_with_options() {
 
 #[tokio::test]
 async fn test_local_filesystem_atomic_operations() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = LocalConfig {
         root_dir: Some(temp_dir.path().to_path_buf()),
@@ -272,6 +278,7 @@ async fn test_local_filesystem_atomic_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_path_resolution() {
+    setup_hardware_capabilities();
     let (fs, temp_dir) = create_test_filesystem().await;
 
     // Test relative path resolution
@@ -299,6 +306,7 @@ async fn test_local_filesystem_path_resolution() {
 
 #[tokio::test]
 async fn test_local_filesystem_metadata_operations() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test file metadata
@@ -334,6 +342,7 @@ async fn test_local_filesystem_metadata_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_large_file_operations() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
 
     // Test with larger file (10KB)
@@ -356,6 +365,7 @@ async fn test_local_filesystem_large_file_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_concurrent_operations() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = LocalConfig {
         root_dir: Some(temp_dir.path().to_path_buf()),
@@ -390,6 +400,7 @@ async fn test_local_filesystem_concurrent_operations() {
 
 #[tokio::test]
 async fn test_local_filesystem_invalid_root_directory() {
+    setup_hardware_capabilities();
     // Test with non-existent root directory
     let non_existent_path = PathBuf::from("/definitely/does/not/exist/path");
     let config = LocalConfig {
@@ -408,6 +419,7 @@ async fn test_local_filesystem_invalid_root_directory() {
 
 #[tokio::test]
 async fn test_local_filesystem_without_root_directory() {
+    setup_hardware_capabilities();
     // Test with no root directory configured
     let config = LocalConfig {
         root_dir: None,
@@ -432,6 +444,7 @@ async fn test_local_filesystem_without_root_directory() {
 
 #[tokio::test]
 async fn test_local_filesystem_type_identification() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     
     // Test filesystem type
@@ -440,6 +453,7 @@ async fn test_local_filesystem_type_identification() {
 
 #[tokio::test]
 async fn test_local_filesystem_sync_operations() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = LocalConfig {
         root_dir: Some(temp_dir.path().to_path_buf()),

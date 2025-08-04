@@ -24,6 +24,7 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
 use std::collections::{HashMap, VecDeque};
+use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
@@ -32,6 +33,8 @@ use tracing::{debug, info, warn};
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 use super::quantization::{QuantizationConfig, VectorQuantizationEngine};
 use crate::core::{String, VectorRecord};
+use crate::core::proto_metadata_helper;
+use crate::proto::proximadb::metadata_item::Value as MetadataValue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -751,36 +754,36 @@ impl VectorRecordProcessor {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
                     let a_json = match a_meta {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(MetadataValue::NumberValue(n)) => {
                             serde_json::Number::from_f64(*n)
                                 .map(serde_json::Value::Number)
                                 .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
                         },
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
                     let b_json = match b_meta {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(MetadataValue::NumberValue(n)) => {
                             serde_json::Number::from_f64(*n)
                                 .map(serde_json::Value::Number)
                                 .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
                         },
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
                     let cmp = self.compare_metadata_values(&a_json, &b_json);
-                    if cmp != std::cmp::Ordering::Equal {
+                    if cmp != Ordering::Equal {
                         return cmp;
                     }
                 }
-                (Some(_), None) => return std::cmp::Ordering::Less,
-                (None, Some(_)) => return std::cmp::Ordering::Greater,
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
                 (None, None) => continue,
             }
         }
-        std::cmp::Ordering::Equal
+        Ordering::Equal
     }
 
     /// Smart metadata value comparison with type awareness
@@ -796,9 +799,9 @@ impl VectorRecordProcessor {
             (Value::Number(a_num), Value::Number(b_num)) => {
                 match (a_num.as_f64(), b_num.as_f64()) {
                     (Some(a_f), Some(b_f)) => {
-                        a_f.partial_cmp(&b_f).unwrap_or(std::cmp::Ordering::Equal)
+                        a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
                     }
-                    _ => std::cmp::Ordering::Equal,
+                    _ => Ordering::Equal,
                 }
             }
 
@@ -811,45 +814,45 @@ impl VectorRecordProcessor {
             // Array comparisons (by length, then lexicographic)
             (Value::Array(a_arr), Value::Array(b_arr)) => {
                 let len_cmp = a_arr.len().cmp(&b_arr.len());
-                if len_cmp != std::cmp::Ordering::Equal {
+                if len_cmp != Ordering::Equal {
                     return len_cmp;
                 }
                 for (a_item, b_item) in a_arr.iter().zip(b_arr.iter()) {
                     let item_cmp = self.compare_metadata_values(a_item, b_item);
-                    if item_cmp != std::cmp::Ordering::Equal {
+                    if item_cmp != Ordering::Equal {
                         return item_cmp;
                     }
                 }
-                std::cmp::Ordering::Equal
+                Ordering::Equal
             }
 
             // Mixed type comparisons (establish consistent ordering)
-            (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
-            (Value::Null, _) => std::cmp::Ordering::Less,
-            (_, Value::Null) => std::cmp::Ordering::Greater,
+            (Value::Null, Value::Null) => Ordering::Equal,
+            (Value::Null, _) => Ordering::Less,
+            (_, Value::Null) => Ordering::Greater,
 
             // Different types: Bool < Number < String < Array < Object
-            (Value::Bool(_), Value::Number(_)) => std::cmp::Ordering::Less,
-            (Value::Bool(_), Value::String(_)) => std::cmp::Ordering::Less,
-            (Value::Bool(_), Value::Array(_)) => std::cmp::Ordering::Less,
-            (Value::Bool(_), Value::Object(_)) => std::cmp::Ordering::Less,
+            (Value::Bool(_), Value::Number(_)) => Ordering::Less,
+            (Value::Bool(_), Value::String(_)) => Ordering::Less,
+            (Value::Bool(_), Value::Array(_)) => Ordering::Less,
+            (Value::Bool(_), Value::Object(_)) => Ordering::Less,
 
-            (Value::Number(_), Value::Bool(_)) => std::cmp::Ordering::Greater,
-            (Value::Number(_), Value::String(_)) => std::cmp::Ordering::Less,
-            (Value::Number(_), Value::Array(_)) => std::cmp::Ordering::Less,
-            (Value::Number(_), Value::Object(_)) => std::cmp::Ordering::Less,
+            (Value::Number(_), Value::Bool(_)) => Ordering::Greater,
+            (Value::Number(_), Value::String(_)) => Ordering::Less,
+            (Value::Number(_), Value::Array(_)) => Ordering::Less,
+            (Value::Number(_), Value::Object(_)) => Ordering::Less,
 
-            (Value::String(_), Value::Bool(_)) => std::cmp::Ordering::Greater,
-            (Value::String(_), Value::Number(_)) => std::cmp::Ordering::Greater,
-            (Value::String(_), Value::Array(_)) => std::cmp::Ordering::Less,
-            (Value::String(_), Value::Object(_)) => std::cmp::Ordering::Less,
+            (Value::String(_), Value::Bool(_)) => Ordering::Greater,
+            (Value::String(_), Value::Number(_)) => Ordering::Greater,
+            (Value::String(_), Value::Array(_)) => Ordering::Less,
+            (Value::String(_), Value::Object(_)) => Ordering::Less,
 
-            (Value::Array(_), Value::Bool(_)) => std::cmp::Ordering::Greater,
-            (Value::Array(_), Value::Number(_)) => std::cmp::Ordering::Greater,
-            (Value::Array(_), Value::String(_)) => std::cmp::Ordering::Greater,
-            (Value::Array(_), Value::Object(_)) => std::cmp::Ordering::Less,
+            (Value::Array(_), Value::Bool(_)) => Ordering::Greater,
+            (Value::Array(_), Value::Number(_)) => Ordering::Greater,
+            (Value::Array(_), Value::String(_)) => Ordering::Greater,
+            (Value::Array(_), Value::Object(_)) => Ordering::Less,
 
-            (Value::Object(_), _) => std::cmp::Ordering::Greater,
+            (Value::Object(_), _) => Ordering::Greater,
         }
     }
 
@@ -1226,7 +1229,7 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .unwrap_or(Ordering::Equal)
                 });
             }
 
@@ -1234,7 +1237,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| {
                     // Sort by metadata field count (descending)
                     let count_cmp = b.metadata.len().cmp(&a.metadata.len());
-                    if count_cmp != std::cmp::Ordering::Equal {
+                    if count_cmp != Ordering::Equal {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
@@ -1256,12 +1259,12 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(3, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(std::cmp::Ordering::Equal);
-                        if dim_cmp != std::cmp::Ordering::Equal {
+                            .unwrap_or(Ordering::Equal);
+                        if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
                     }
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
             }
         }
@@ -1298,13 +1301,13 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| {
                     if *include_id {
                         let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
-                        if id_cmp != std::cmp::Ordering::Equal {
+                        if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
                     }
 
                     let meta_cmp = self.compare_by_metadata_fields(a, b, metadata_fields);
-                    if meta_cmp != std::cmp::Ordering::Equal {
+                    if meta_cmp != Ordering::Equal {
                         return meta_cmp;
                     }
 
@@ -1312,7 +1315,7 @@ impl VectorRecordProcessor {
                         return a.timestamp.cmp(&b.timestamp);
                     }
 
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
             }
             SortingStrategy::Custom {
@@ -1344,9 +1347,9 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(std::cmp::Ordering::Equal);
+                        .unwrap_or(Ordering::Equal);
 
-                    if mag_cmp != std::cmp::Ordering::Equal {
+                    if mag_cmp != Ordering::Equal {
                         return mag_cmp;
                     }
 
@@ -1354,13 +1357,13 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(std::cmp::Ordering::Equal);
-                        if dim_cmp != std::cmp::Ordering::Equal {
+                            .unwrap_or(Ordering::Equal);
+                        if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
                     }
 
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
             }
             SortingStrategy::ById => {
@@ -1377,13 +1380,13 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| {
                     if *include_id {
                         let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
-                        if id_cmp != std::cmp::Ordering::Equal {
+                        if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
                     }
 
                     let meta_cmp = self.compare_by_metadata_fields(a, b, metadata_fields);
-                    if meta_cmp != std::cmp::Ordering::Equal {
+                    if meta_cmp != Ordering::Equal {
                         return meta_cmp;
                     }
 
@@ -1391,7 +1394,7 @@ impl VectorRecordProcessor {
                         return a.timestamp.cmp(&b.timestamp);
                     }
 
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
             }
             SortingStrategy::Custom {
@@ -1782,9 +1785,9 @@ impl VectorProcessor for VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(std::cmp::Ordering::Equal);
+                        .unwrap_or(Ordering::Equal);
 
-                    if mag_cmp != std::cmp::Ordering::Equal {
+                    if mag_cmp != Ordering::Equal {
                         return mag_cmp;
                     }
 
@@ -1792,13 +1795,13 @@ impl VectorProcessor for VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(std::cmp::Ordering::Equal);
-                        if dim_cmp != std::cmp::Ordering::Equal {
+                            .unwrap_or(Ordering::Equal);
+                        if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
                     }
 
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
                 tracing::debug!("🔢 Sorted {} records by vector similarity", record_count);
             }
@@ -1828,26 +1831,26 @@ impl VectorProcessor for VectorRecordProcessor {
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
                         let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
-                        if id_cmp != std::cmp::Ordering::Equal {
+                        if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
                     }
 
                     // Stage 2: Metadata fields comparison
                     let meta_cmp = self.compare_by_metadata_fields(a, b, metadata_fields);
-                    if meta_cmp != std::cmp::Ordering::Equal {
+                    if meta_cmp != Ordering::Equal {
                         return meta_cmp;
                     }
 
                     // Stage 3: Timestamp comparison (if enabled)
                     if *include_timestamp {
                         let timestamp_cmp = a.timestamp.cmp(&b.timestamp);
-                        if timestamp_cmp != std::cmp::Ordering::Equal {
+                        if timestamp_cmp != Ordering::Equal {
                             return timestamp_cmp;
                         }
                     }
 
-                    std::cmp::Ordering::Equal
+                    Ordering::Equal
                 });
                 tracing::info!("🎯 Sorted {} records using CompositeOptimal strategy (ID: {}, fields: {:?}, timestamp: {})", 
                               record_count, include_id, metadata_fields, include_timestamp);
@@ -2988,7 +2991,7 @@ impl CompactionEngine {
             let record = VectorRecord {
                 id: Some(format!("vec_{:06}", i)),
                 vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
-                metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata),
+                metadata: proto_metadata_helper::json_metadata_to_proto(&metadata),
                 timestamp: timestamp as u32,
                 updated_at: Some(timestamp as u32),
                 expires_at: None,
@@ -3092,9 +3095,9 @@ impl CompactionEngine {
                         .find(|item| &item.key == field)
                         .map(|item| {
                             let value_str = match &item.value {
-                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
-                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => n.to_string(),
-                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                                Some(MetadataValue::StringValue(s)) => s.clone(),
+                                Some(MetadataValue::NumberValue(n)) => n.to_string(),
+                                Some(MetadataValue::BoolValue(b)) => b.to_string(),
                                 None => String::new(),
                             };
                             format!("{}:{}", field, value_str)

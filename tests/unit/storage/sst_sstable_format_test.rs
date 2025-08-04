@@ -14,6 +14,8 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_sstable_write_read_format() {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let temp_dir = TempDir::new().unwrap();
     let sstable_path = temp_dir.path().join("test.sst");
     
@@ -69,6 +71,8 @@ async fn test_sstable_write_read_format() {
 
 #[tokio::test]
 async fn test_sstable_format_inspection() {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let temp_dir = TempDir::new().unwrap();
     let sstable_path = temp_dir.path().join("inspect.sst");
     

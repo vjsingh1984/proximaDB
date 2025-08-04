@@ -117,7 +117,7 @@ mod filesystem_api_tests {
 
         // Read ranges
         let fs = factory.get_filesystem(test_path)?;
-        let path = factory.extract_path(test_path)?;
+        let path = FilesystemFactory::resolve_path(test_path)?;
         
         let range1 = fs.read_range(&path, 0, 10).await?;
         assert_eq!(&range1[..], b"0123456789");
@@ -226,7 +226,7 @@ mod filesystem_api_tests {
         
         // Read portions
         let fs = factory.get_filesystem(test_path)?;
-        let path = factory.extract_path(test_path)?;
+        let path = FilesystemFactory::resolve_path(test_path)?;
         let chunk = fs.read_range(&path, 512*1024, 1024).await?;
         assert_eq!(chunk.len(), 1024);
         

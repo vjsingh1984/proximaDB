@@ -11,7 +11,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::io::Read;
-use tracing::{debug, warn};
+use tracing::{debug, warn, info};
 
 use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
@@ -373,13 +373,18 @@ impl UnifiedSstableReader {
         Ok(diverse_results)
     }
     
-    /// Full scan strategy implementation
+    /// Full scan strategy implementation with parallel file processing
     async fn full_scan_strategy(
         &self,
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<DataBlock>> {
         debug!("🔍 Full scan strategy for {} files (cache={})", context.sstable_files.len(), use_block_cache);
+        
+        // Use parallel processing for multiple files
+        if context.sstable_files.len() > 1 {
+            return self.parallel_full_scan(context, use_block_cache).await;
+        }
         let mut all_blocks = Vec::new();
         
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
@@ -403,6 +408,60 @@ impl UnifiedSstableReader {
         }
         
         debug!("✅ Full scan loaded {} total blocks from all files", all_blocks.len());
+        Ok(all_blocks)
+    }
+    
+    /// Parallel full scan across multiple SSTable files
+    async fn parallel_full_scan(
+        &self,
+        context: &CollectionContext,
+        use_block_cache: bool,
+    ) -> Result<Vec<DataBlock>> {
+        use tokio::task::JoinSet;
+        use tokio::sync::Semaphore;
+        use std::sync::Arc;
+        
+        // Limit concurrent file operations to avoid resource exhaustion
+        let max_concurrent_files = num_cpus::get().min(8);
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_files));
+        
+        info!("🚀 Starting parallel SSTable full scan across {} files (max concurrency: {})", 
+              context.sstable_files.len(), max_concurrent_files);
+        
+        // Process files sequentially for now to avoid lifetime issues
+        // TODO: Refactor to use Arc<Self> or implement Clone
+        let mut all_blocks = Vec::new();
+        
+        for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            debug!("🔄 Reading file {} of {}: {}", 
+                   idx + 1, context.sstable_files.len(), file_path);
+            
+            let start_time = std::time::Instant::now();
+            
+            let result = if use_block_cache {
+                self.read_file_with_cache(file_path).await
+            } else {
+                self.read_file_direct(file_path).await
+            };
+            
+            let elapsed = start_time.elapsed();
+            
+            match result {
+                Ok(blocks) => {
+                    debug!("✅ Loaded {} blocks from {} in {:?}", 
+                           blocks.len(), file_path, elapsed);
+                    all_blocks.extend(blocks);
+                }
+                Err(e) => {
+                    warn!("❌ Failed to read {}: {}", file_path, e);
+                    // Continue with other files instead of failing entirely
+                }
+            }
+        }
+        
+        info!("🎯 SSTable scan completed: {} total blocks from {} files", 
+              all_blocks.len(), context.sstable_files.len());
+        
         Ok(all_blocks)
     }
     
