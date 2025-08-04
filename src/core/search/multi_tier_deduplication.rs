@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use crate::core::{VectorRecord, MetadataQuery, MetadataQueryEngine};
+use crate::core::search::mvcc_resolution::MvccResolver;
 
 /// Vector search result with storage tier metadata
 #[derive(Debug, Clone)]
@@ -274,17 +275,9 @@ impl MultiTierDeduplicator {
                                 // Older sequence number
                                 false
                             } else {
-                                // Same sequence - use version and timestamp
-                                if result.vector_record.version > existing.vector_record.version {
-                                    // 3. Higher version number (explicit versioning)
-                                    true
-                                } else if result.vector_record.version < existing.vector_record.version {
-                                    // Lower version
-                                    false
-                                } else {
-                                    // Same version - use timestamp as final tiebreaker
-                                    result.timestamp > existing.timestamp
-                                }
+                                // Same sequence - use centralized MVCC resolution
+                                let resolver = MvccResolver::new();
+                                resolver.compare_records(&result.vector_record, &existing.vector_record)
                             }
                         }
                     }

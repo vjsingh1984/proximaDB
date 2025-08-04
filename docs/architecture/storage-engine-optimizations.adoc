@@ -79,6 +79,22 @@ K-means clustering for cluster-aware file organization and locality-preserving s
 
 == Unified Improvements
 
+=== Centralized MVCC Resolution
+
+Unified MVCC (Multi-Version Concurrency Control) resolution across all storage engines via MvccResolver.
+
+**Benefits**:
+- Consistent version continuity validation
+- Centralized expired record deletion logic
+- Append-only vector support
+- Engine-agnostic timestamp-based tiebreaking
+
+**Implementation**:
+- SST compaction uses MvccResolver instead of custom version validation
+- VIPER compaction uses MvccResolver for record resolution
+- MultiTierDeduplicator uses MvccResolver for search result comparison
+- Single source of truth for MVCC rules
+
 === Common Bloom Filter Design
 
 Shared bloom filter infrastructure with engine-specific strategies:

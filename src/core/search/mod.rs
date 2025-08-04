@@ -1,6 +1,7 @@
 //! Search module for ProximaDB storage-aware search implementations
 
 pub mod multi_tier_deduplication;
+pub mod mvcc_resolution;
 pub mod results;
 pub mod unified_interface;
 pub mod typesafe_filter;

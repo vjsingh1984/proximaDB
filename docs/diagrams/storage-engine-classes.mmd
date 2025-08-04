@@ -180,17 +180,36 @@ classDiagram
          Batch Processing
     }
     
-    %% MVCC Implementation
+    %% Centralized MVCC Implementation
     class MvccResolver {
-         core/search/results.rs
-        +resolve_duplicates(results: Vec~SearchResult~) Vec~SearchResult~
-        +apply_version_continuity(records: Vec~VectorRecord~) Vec~VectorRecord~
-        +handle_tombstones(records: Vec~VectorRecord~) Vec~VectorRecord~
-        +deduplicate_by_timestamp(records: Vec~VectorRecord~) Vec~VectorRecord~
-         Multi-Version Concurrency Control
+         core/search/mvcc_resolution.rs
+        -current_timestamp: u32
+        +new() MvccResolver
+        +with_timestamp(timestamp: u32) MvccResolver
+        +resolve_batch(records: Vec~VectorRecord~) Vec~VectorRecord~
+        +compare_records(a: VectorRecord, b: VectorRecord) bool
+        +is_expired(record: VectorRecord) bool
+        +is_append_only(id: Option~String~) bool
+         Centralized MVCC Resolution
          Version Continuity Validation
-        ⏰ Timestamp-based Resolution
-         Tombstone Handling
+         Expired Record Deletion
+         Append-Only Vector Support
+        ⏰ Timestamp-based Tiebreaking
+         ID-based Version Management
+    }
+    
+    class MultiTierDeduplicator {
+         core/search/multi_tier_deduplication.rs
+        -id_to_latest: HashMap~String, DedupSearchResult~
+        -results_without_id: Vec~DedupSearchResult~
+        +new() MultiTierDeduplicator
+        +add_tier_results(results: Vec~SearchResult~, tier: u8) 
+        +finalize_results(k: usize) Vec~SearchResult~
+        +reset()
+         Multi-tier Result Deduplication
+         ID-based MVCC Resolution
+         Tier-based Priority
+         Sequence Number Ordering
     }
     
     %% Core Relationships
@@ -213,6 +232,11 @@ classDiagram
     SstUnifiedSearchEngine --> MvccResolver : uses
     ViperUnifiedSearchEngine --> MvccResolver : uses
     
+    %% Centralized MVCC Usage
+    SstEngine --> MvccResolver : compaction uses
+    ViperEngine --> MvccResolver : compaction uses
+    MultiTierDeduplicator --> MvccResolver : record comparison
+    
     SqlExecutor --> DirectVectorService : executes via
     
     WriteBufferBehaviorWrapper --> UnifiedAtomicCoordinator : persists via
@@ -227,6 +251,8 @@ classDiagram
     note for ThreeStageFilterPipeline " SST Filtering\n• Bloom Pre-filter (99%)\n• Block Statistics\n• Row Filtering\n• 30% Processing Savings"
     
     note for DirectVectorService " Service Performance\n• Direct Memtable Access\n• 40-60% Latency Reduction\n• Dual Engine Support\n• Engine Routing"
+    
+    note for MvccResolver " Centralized MVCC\n• Version Continuity\n• Expired Record Deletion\n• Append-Only Support\n• Timestamp Tiebreaking\n• Engine-Agnostic Logic"
     
     %% Storage Optimization Classes
     class VectorSerializationConfig {
@@ -298,17 +324,18 @@ classDiagram
     %% Apply Styling to Classes (one per line to avoid parser issues)
     class ViperEngine engineStyle
     class SstEngine engineStyle
+    class DirectVectorService engineStyle
+    class StorageEngine traitStyle
     class UnifiedSearchEngine traitStyle
-    class UnifiedSearchInterface traitStyle
     class ViperUnifiedSearchEngine searchStyle
     class SstUnifiedSearchEngine searchStyle
     class IndexBasedFilterEvaluator filterStyle
     class ThreeStageFilterPipeline filterStyle
     class VectorSerializationConfig serializationStyle
     class OptimizedVectorWriter serializationStyle
-    class StreamingVectorWriter serializationStyle
     class FixedLengthSerializer serializationStyle
-    class HardwareAcceleration optimizationStyle
-    class MemoryPoolManager optimizationStyle
+    class WriteBufferBehaviorWrapper optimizationStyle
+    class UnifiedAtomicCoordinator optimizationStyle
+    class MvccResolver optimizationStyle
     class SqlExecutor sqlStyle
-    class QueryPlanner sqlStyle
+    class CollectionService sqlStyle

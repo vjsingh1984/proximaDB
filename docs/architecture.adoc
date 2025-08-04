@@ -45,7 +45,7 @@ include::../diagrams/storage-engine-classes.mmd[]
 ----
 ====
 
-**Storage Engines**: SST (row-based, write-optimized, bloom filters, MVCC). VIPER (columnar, analytics-optimized, 60-90% I/O reduction).
+**Storage Engines**: SST (row-based, write-optimized, bloom filters). VIPER (columnar, analytics-optimized, 60-90% I/O reduction). Both use centralized MVCC resolution for consistent versioning.
 
 **AXIS Indexing**: Adaptive selection - HNSW (high-recall), IVF (large-scale), LSH (approximate), Annoy (memory-constrained).
 
@@ -190,7 +190,7 @@ include::../diagrams/storage-performance-unified.mmd[]
 
 == Security & Reliability
 
-**Data Protection**: ACID transactions, MVCC, atomic operations, WAL durability, point-in-time recovery.
+**Data Protection**: ACID transactions, centralized MVCC resolution, atomic operations, WAL durability, point-in-time recovery.
 
 **Operations**: Health checks, Prometheus integration, JSON logging, hot config reload.
 

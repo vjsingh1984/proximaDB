@@ -21,6 +21,7 @@
 
 use super::{SstRecord, SstableWriter};
 use crate::core::{String, SstConfig, VectorId, VectorRecord};
+use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
@@ -502,9 +503,22 @@ impl CompactionManager {
             merged_data.insert(VectorId::from(id), record);
         }
         
-        // Apply MVCC version continuity validation
-        let validated_data = self.validate_version_continuity(merged_data)?;
-        info!("🔍 COMPACTION: Version continuity validation: {} records after validation", validated_data.len());
+        // Apply centralized MVCC resolution
+        let vector_records: Vec<VectorRecord> = merged_data.into_iter()
+            .map(|(_, sst_record)| sst_record.into())
+            .collect();
+        
+        let resolver = MvccResolver::new();
+        let resolved_records = resolver.resolve_batch(vector_records);
+        info!("🔍 COMPACTION: MVCC resolution: {} records after resolution", resolved_records.len());
+        
+        // Convert back to BTreeMap for compatibility
+        let mut validated_data = BTreeMap::new();
+        for record in resolved_records {
+            let vector_id = VectorId::from(record.id.as_deref().unwrap_or(""));
+            let sst_record = SstRecord::from_vector_record(record);
+            validated_data.insert(vector_id, sst_record);
+        }
 
         // Convert merged data to vectors for sorting
         let mut vector_records = Vec::new();
@@ -1082,107 +1096,8 @@ impl CompactionManager {
         Ok((sorted_records, sort_stats))
     }
     
-    /// Validate version continuity for MVCC consistency
-    /// This ensures versions are sequential (1,2,3...) with no gaps
-    fn validate_version_continuity(
-        &self,
-        merged_data: BTreeMap<VectorId, SstRecord>,
-    ) -> Result<BTreeMap<VectorId, SstRecord>> {
-        let mut validated = BTreeMap::new();
-        
-        // Group by actual ID (not VectorId which might be different)
-        let mut id_groups: HashMap<String, Vec<(VectorId, SstRecord)>> = HashMap::new();
-        let mut records_without_id = Vec::new();
-        
-        for (vector_id, record) in merged_data {
-            if record.id.is_empty() {
-                // Append-only records (no ID) - keep all
-                records_without_id.push((vector_id, record));
-            } else {
-                id_groups.entry(record.id.clone())
-                    .or_insert_with(Vec::new)
-                    .push((vector_id, record));
-            }
-        }
-        
-        // Process each ID group
-        for (id, mut versions) in id_groups {
-            // Sort by version, then timestamp
-            versions.sort_by(|a, b| {
-                a.1.version.cmp(&b.1.version)
-                    .then_with(|| a.1.timestamp.cmp(&b.1.timestamp))
-            });
-            
-            // Validate version continuity
-            let mut expected_version = 1;
-            let mut last_valid: Option<(VectorId, SstRecord)> = None;
-            
-            for (vector_id, record) in versions {
-                let version = record.version.unwrap_or(1);
-                
-                if version == expected_version {
-                    // Check for duplicate version - keep earliest timestamp
-                    if let Some((_, ref existing)) = last_valid {
-                        if existing.version.unwrap_or(1) == record.version.unwrap_or(1) {
-                            if record.timestamp < existing.timestamp {
-                                last_valid = Some((vector_id, record));
-                            }
-                            continue;
-                        }
-                    }
-                    last_valid = Some((vector_id, record));
-                    expected_version += 1;
-                } else if version > expected_version {
-                    // Version gap detected - stop processing this ID
-                    debug!("Version gap detected for {}: expected {}, found {}", id, expected_version, version);
-                    break;
-                }
-                // Skip older versions
-            }
-            
-            if let Some((vector_id, record)) = last_valid {
-                validated.insert(vector_id, record);
-            }
-        }
-        
-        // Add back records without IDs
-        for (vector_id, record) in records_without_id {
-            validated.insert(vector_id, record);
-        }
-        
-        Ok(validated)
-    }
 }
 
-/// Determine if a new record should replace an existing record during compaction
-/// This implements MVCC version resolution consistent with VIPER engine
-fn should_replace_record(existing: &SstRecord, new: &SstRecord) -> bool {
-    // If either record lacks an ID (append-only), use sequence number logic
-    if existing.id.is_empty() || new.id.is_empty() {
-        return if new.sequence_number != existing.sequence_number {
-            new.sequence_number > existing.sequence_number
-        } else {
-            new.timestamp > existing.timestamp
-        };
-    }
-    
-    // For records with IDs, apply MVCC version resolution
-    // Treat None/null as version 1 (consistent with search MVCC)
-    let existing_ver = existing.version.unwrap_or(1);
-    let new_ver = new.version.unwrap_or(1);
-    
-    if new_ver > existing_ver {
-        true
-    } else if new_ver == existing_ver {
-        // Same version - earliest timestamp wins (consistent with VIPER)
-        // SstRecord uses timestamp field (u32)
-        let existing_ts = existing.timestamp;
-        let new_ts = new.timestamp;
-        new_ts < existing_ts
-    } else {
-        false // Keep existing if new has lower version
-    }
-}
 
 impl Drop for CompactionManager {
     fn drop(&mut self) {

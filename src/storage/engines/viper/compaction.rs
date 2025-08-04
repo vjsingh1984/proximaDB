@@ -17,6 +17,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn, trace};
 
+use crate::core::search::mvcc_resolution::MvccResolver;
+use crate::core::VectorRecord;
+
 use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
@@ -621,28 +624,107 @@ impl CompactionManager {
         }
         debug!("End of all file processing");
         
-        // Combine records with IDs (sorted by ID) and records without IDs (in order)
-        let mut final_records: Vec<RecordData> = Vec::new();
+        // Apply centralized MVCC resolution instead of custom logic
+        let mut all_vector_records: Vec<VectorRecord> = Vec::new();
         
-        // First add all records with IDs, sorted by ID for consistent output
-        let mut sorted_id_records: Vec<_> = latest_records.into_iter().collect();
-        sorted_id_records.sort_by(|a, b| a.0.cmp(&b.0));
-        
-        let num_id_records = sorted_id_records.len();
-        let num_no_id_records = all_records_ordered.len();
-        
-        for (_, record) in sorted_id_records {
-            final_records.push(record);
+        // Convert ID records to VectorRecord
+        for (id, record_data) in latest_records {
+            let mut vector_record = VectorRecord {
+                id: Some(id),
+                version: Some(record_data.version as u32),
+                timestamp: record_data.timestamp.unwrap_or(0) as u32,
+                vector: vec![], // Will be filled from row_data
+                metadata: vec![],
+                updated_at: record_data.timestamp.map(|t| t as u32),
+                expires_at: None, // Will be extracted from row_data
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            
+            // Extract data from row_data
+            if let Some(vector_data) = record_data.row_data.get("vector") {
+                if let Some(vec_array) = vector_data.as_array() {
+                    let float_values: Vec<f32> = vec_array.iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
+                    vector_record.vector = float_values;
+                }
+            }
+            
+            if let Some(expires_at_value) = record_data.row_data.get("expires_at") {
+                vector_record.expires_at = expires_at_value.as_i64().map(|v| v as u32);
+            }
+            
+            all_vector_records.push(vector_record);
         }
         
-        // Then add all records without IDs in their original order
-        final_records.extend(all_records_ordered);
+        // Convert non-ID records to VectorRecord
+        for record_data in all_records_ordered {
+            let mut vector_record = VectorRecord {
+                id: record_data.id,
+                version: Some(record_data.version as u32),
+                timestamp: record_data.timestamp.unwrap_or(0) as u32,
+                vector: vec![], // Will be filled from row_data
+                metadata: vec![],
+                updated_at: record_data.timestamp.map(|t| t as u32),
+                expires_at: None, // Will be extracted from row_data
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            
+            // Extract data from row_data
+            if let Some(vector_data) = record_data.row_data.get("vector") {
+                if let Some(vec_array) = vector_data.as_array() {
+                    let float_values: Vec<f32> = vec_array.iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
+                    vector_record.vector = float_values;
+                }
+            }
+            
+            if let Some(expires_at_value) = record_data.row_data.get("expires_at") {
+                vector_record.expires_at = expires_at_value.as_i64().map(|v| v as u32);
+            }
+            
+            all_vector_records.push(vector_record);
+        }
+        
+        // Apply centralized MVCC resolution
+        let resolver = MvccResolver::new();
+        let resolved_vector_records = resolver.resolve_batch(all_vector_records);
+        
+        info!("📊 MVCC resolution completed: {} records after centralized resolution (expired: {})", 
+              resolved_vector_records.len(), expired_records_count);
+        
+        // Convert back to RecordData for compatibility with rest of the function
+        let mut final_records: Vec<RecordData> = Vec::new();
+        for vector_record in resolved_vector_records {
+            let mut row_data = HashMap::new();
+            
+            // Convert VectorRecord back to row_data format
+            if let Some(ref id) = vector_record.id {
+                row_data.insert("id".to_string(), serde_json::json!(id));
+            }
+            row_data.insert("version".to_string(), serde_json::json!(vector_record.version.unwrap_or(1) as i64));
+            row_data.insert("timestamp".to_string(), serde_json::json!(vector_record.timestamp as i64));
+            row_data.insert("vector".to_string(), serde_json::json!(vector_record.vector));
+            if let Some(expires_at) = vector_record.expires_at {
+                row_data.insert("expires_at".to_string(), serde_json::json!(expires_at as i64));
+            }
+            
+            let record_data = RecordData {
+                id: vector_record.id,
+                version: vector_record.version.unwrap_or(1) as i64,
+                timestamp: Some(vector_record.timestamp as i64),
+                row_data,
+            };
+            
+            final_records.push(record_data);
+        }
         
         let total_records = final_records.len();
-        info!("Final records count: {} (latest_records had {} entries, all_records_ordered had {} entries)",
-                 total_records, num_id_records, num_no_id_records);
-        info!("📊 MVCC resolution completed: {} records after merging (expired: {})", 
-              total_records, expired_records_count);
         
         if final_records.is_empty() {
             warn!("⚠️ COMPACTION: No records to compact! All records expired or invalid?");
