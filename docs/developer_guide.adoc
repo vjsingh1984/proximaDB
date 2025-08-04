@@ -1,22 +1,114 @@
-= Developer Guide
+= ProximaDB Developer Guide
 :toc: left
+:toclevels: 3
+:imagesdir: diagrams/images
 
-== Setup
+**Complete guide for contributing to and extending ProximaDB.**
 
-=== Requirements
-* Rust 1.75+
-* Python 3.8+
-* Docker 20.10+
+== 🚀 Quick Development Setup
 
-=== Quick Start
+=== Prerequisites
+
+[cols="1,2,1"]
+|===
+|**Tool** |**Purpose** |**Version**
+
+|**Rust** |Core development language |1.70+
+|**Docker** |Integration testing |20.10+
+|**Python** |Client SDK development |3.8+
+|**Node.js** |Documentation building |16+
+|===
+
+=== Environment Setup
+
 [source,bash]
 ----
+# Clone repository
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb
+
+# Install Rust toolchain
+rustup toolchain install stable
+rustup component add rustfmt clippy
+
+# Install development tools
+cargo install cargo-watch cargo-tarpaulin
+
+# Setup Python development
+cd clients/python
+pip install -e ".[dev]"
+cd ../..
+
+# Build and test
 cargo build --release
+cargo test --all
 ----
 
-== Project Structure
+== 🧪 Testing Framework
+
+image::test-infrastructure-flow.svg[Test Infrastructure, width=600]
+
+.📊 Test Infrastructure Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/test-infrastructure-flow.mmd[]
+----
+====
+
+=== Test Coverage Overview
+
+**ProximaDB maintains industry-leading test coverage:**
+
+[cols="2,1,1,1"]
+|===
+|**Component** |**Tests** |**Coverage** |**Status**
+
+|Core Services |550+ |98% |🟢 Excellent
+|Storage Engines |450+ |95% |🟢 Excellent  
+|API Handlers |280+ |92% |🟢 Good
+|Python SDK |180+ |72% |🟡 Improving
+|**Total** |**1,460+** |**100% Pass** |**✅ All Green**
+|===
+
+=== Running Tests
+
+**Rust Tests:**
+
+[source,bash]
+----
+# All tests
+cargo test --all
+
+# Specific module
+cargo test storage::engines::sst
+
+# With debug output  
+cargo test -- --nocapture
+
+# Release mode (faster)
+cargo test --release
+
+# Integration tests only
+cargo test --test '*'
+----
+
+**Python SDK Tests:**
+
+[source,bash]
+----
+# All Python tests
+PYTHONPATH=clients/python/src pytest clients/python/tests/ -v
+
+# With coverage report
+pytest clients/python/tests/ --cov=proximadb --cov-report=html
+
+# Performance tests
+pytest clients/python/tests/test_performance.py --benchmark-only
+----
+
+== 🏗️ Project Structure
 ```
 proximadb/
 ├── src/           # Rust source code

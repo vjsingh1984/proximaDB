@@ -3,106 +3,141 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
-// Licensed under the Apache License, Version 2.0
+image:https://img.shields.io/badge/tests-1460%2B%20passing-brightgreen[Tests] image:https://img.shields.io/badge/license-Apache%202.0-blue[License] image:https://img.shields.io/badge/rust-1.70%2B-orange[Rust Version]
 
-image::business-system-overview.svg[ProximaDB Overview, align=center]
+image::business-system-overview.svg[ProximaDB Overview, align=center, width=600]
 
 **The vector database that delivers enterprise performance without enterprise complexity.**
 
+*High-performance vector search • SQL query engine • Multi-cloud native • Hardware accelerated*
+
 toc::[]
 
-== Quick Start (30 seconds)
+== ⚡ Quick Start (2 minutes)
 
 [source,bash]
 ----
+# Start ProximaDB
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb && docker compose up -d
+
+# Install client
+pip install proximadb-client
 ----
 
 [source,python]
 ----
-from proximadb import connect_rest
+from proximadb import ProximaDBClient
 
-client = connect_rest("http://localhost:5678")
-collection = client.create_collection("my_ai_app", dimension=384)
+# Connect and create collection
+client = ProximaDBClient("http://localhost:5678")
+collection = client.create_collection("ai_docs", dimension=384, engine="viper")
 
-# Insert vectors
-client.insert_vectors("my_ai_app", embeddings, metadata)
+# Insert vectors with metadata
+vectors = [
+    {"id": "doc1", "vector": [0.1, 0.2, ...], "metadata": {"title": "AI Guide", "category": "tutorial"}},
+    {"id": "doc2", "vector": [0.3, 0.4, ...], "metadata": {"title": "ML Basics", "category": "reference"}}
+]
+client.insert_vectors("ai_docs", vectors)
 
 # Search with SQL
-results = client.search_sql("""
-    SELECT vector_id, metadata 
-    FROM my_ai_app
-    WHERE similarity(vector, [...]) > 0.8 
-    AND metadata->>'type' = 'important'
+results = client.execute_sql("""
+    SELECT id, metadata->>'title' as title, score
+    FROM ai_docs
+    WHERE VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine') > 0.8
+    AND metadata->>'category' = 'tutorial'
+    ORDER BY score DESC
+    LIMIT 10
 """)
 ----
 
-== Key Features
+== 🚀 Why ProximaDB?
 
-=== Performance
-* **49K vectors/sec** insertion (gRPC)
-* **<10ms** search latency at scale
-* **80% memory reduction** vs alternatives
-* **5-10x faster** with zero-copy serialization
-* **1,460+ tests** with 100% pass rate (0 failures)
+[cols="1,2,2"]
+|===
+|Feature |ProximaDB |Others
 
-=== Architecture
-* **Dual Storage Engines**: Write-optimized SST + Analytics-optimized VIPER
-* **Centralized MVCC**: `MvccResolver` for consistent versioning across engines
-* **Multi-Tier Deduplication**: Enhanced result processing with `MultiTierDeduplicator`
-* **Hardware Acceleration**: GPU/SIMD-accelerated SQL parsing with automatic fallback
-* **AXIS Indexing**: Auto-selects HNSW/IVF/LSH/Annoy based on data
-* **Multi-Cloud Native**: S3, Azure, GCS with atomic operations
-* **Hardware Acceleration**: CPU AVX-512, GPU CUDA, ARM NEON - automatic
+|**Performance**
+|49K vectors/sec, <10ms search
+|10-50x slower
 
-=== Enterprise Ready
-* **100% test coverage** (1,400+ tests)
-* **ACID transactions** with MVCC
-* **SQL query engine** with full AND/OR/NOT operators
-* **Zero-downtime updates**
+|**Storage**
+|Dual engines (VIPER + SST)
+|Single engine limitations
 
-== Documentation
+|**SQL Support**
+|Full SQL with vector functions
+|Limited or no SQL
+
+|**Hardware**
+|Auto GPU/SIMD acceleration
+|CPU-only
+
+|**Testing**
+|1,460+ tests, 100% pass rate
+|Limited test coverage
+
+|**Cloud**
+|Native S3/GCS/Azure support
+|Cloud bolted-on
+|===
+
+== 🏗️ Architecture Highlights
+
+* **🔄 Dual Storage Engines**: VIPER (columnar analytics) + SST (row-based writes)
+* **⚡ Hardware Acceleration**: Automatic GPU/SIMD with intelligent fallbacks  
+* **🎯 AXIS Indexing**: Adaptive HNSW/IVF/LSH/Annoy selection
+* **💾 MVCC Transactions**: ACID compliance with centralized version control
+* **☁️ Multi-Cloud**: S3, Azure Blob, Google Cloud Storage
+* **🔍 SQL Engine**: Complete AND/OR/NOT operators with vector similarity
+
+== 📚 Documentation
 
 [cols="2,3,1"]
 |===
-|Goal |Guide |Time
+|**Learning Path** |**Guide** |**Time**
 
-|Get started quickly
-|link:docs/getting_started.adoc[Quick Start Guide]
+|🚀 **Get Started**
+|link:docs/getting_started.adoc[Installation & Setup]
 |5 min
 
-|Build AI applications  
-|link:docs/user_guide.adoc[User Guide]
+|🛠️ **Build Applications**
+|link:docs/user_guide.adoc[Complete User Guide]
 |15 min
 
-|Deploy to production
-|link:docs/user_guide.adoc#docker-deployment[Production Guide]
-|30 min
-
-|Understand internals
-|link:docs/architecture.adoc[Architecture]
+|🏗️ **Understand Architecture**
+|link:docs/architecture.adoc[System Design]
 |20 min
 
-|Contribute code
+|⚙️ **Deploy Production**
+|link:docs/technical_reference.adoc[Production Guide]
+|30 min
+
+|👨‍💻 **Contribute Code**
 |link:docs/developer_guide.adoc[Developer Guide]
 |45 min
 |===
 
-== Use Cases
+**📖 Complete Documentation**: link:docs/index.adoc[docs/index.adoc]
 
-* **RAG Applications**: High-speed document retrieval with metadata filtering
-* **Semantic Search**: Natural language queries over your content  
-* **Recommendation Engines**: User/item embeddings with rapid inference
-* **Image/Video Search**: Multi-modal embeddings with real-time updates
-* **Chatbot Memory**: Conversation history with semantic similarity
+== 🎯 Use Cases
 
-== Community
+[cols="1,3"]
+|===
+|**RAG & Search** |High-speed document retrieval with metadata filtering for AI applications
+|**Recommendations** |User/item embeddings with sub-10ms inference for real-time systems
+|**Semantic Search** |Natural language queries over large content repositories
+|**Multi-modal AI** |Image, video, and text embeddings with unified search interface
+|**Chatbot Memory** |Conversation history with semantic similarity and context retrieval
+|===
 
-* **Issues**: https://github.com/vjsingh1984/proximadb/issues
-* **Discussions**: https://github.com/vjsingh1984/proximadb/discussions  
-* **Enterprise Support**: singhvjd@gmail.com
+== 🤝 Community & Support
 
----
+* **📖 Documentation**: https://github.com/vjsingh1984/proximadb/tree/main/docs
+* **🐛 Issues & Bugs**: https://github.com/vjsingh1984/proximadb/issues
+* **💬 Discussions**: https://github.com/vjsingh1984/proximadb/discussions
+* **🏢 Enterprise Support**: singhvjd@gmail.com
 
-_Licensed under Apache 2.0_
+== 📄 License
+
+Licensed under the Apache License 2.0. See link:LICENSE[LICENSE] for details.

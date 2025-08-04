@@ -1,72 +1,170 @@
-= ProximaDB Documentation
+= ProximaDB Documentation Hub
 :toc: left
 :toclevels: 2
 :imagesdir: diagrams/images
 
-**Complete documentation for ProximaDB - the enterprise vector database for AI applications.**
+**Your complete guide to ProximaDB - the enterprise vector database for AI applications.**
 
-== Quick Navigation
+== 🚀 Learning Paths
 
+Choose your path based on your role and experience level:
+
+=== 🆕 New to ProximaDB
+[cols="2,3,1,1"]
+|===
+|**Step** |**Guide** |**Time** |**Difficulty**
+
+|1. **Quick Start**
+|link:getting_started.adoc[Installation & First Steps]
+|5 min
+|🟢 Easy
+
+|2. **Build Your First App**
+|link:user_guide.adoc[User Guide with Examples]
+|20 min
+|🟢 Easy
+
+|3. **Production Deployment**
+|link:technical_reference.adoc[Production Setup]
+|45 min
+|🟡 Medium
+|===
+
+=== 🛠️ Application Developers
+[cols="2,3,1,1"]
+|===
+|**Need** |**Guide** |**Time** |**Difficulty**
+
+|**API Reference**
+|link:api/unified_rest_api.adoc[Complete REST API]
+|30 min
+|🟢 Easy
+
+|**Client Libraries**
+|link:user_guide.adoc#client-libraries[Python, JavaScript, Go]
+|15 min
+|🟢 Easy
+
+|**SQL Queries**
+|link:user_guide.adoc#sql-engine[Vector SQL Guide]
+|25 min
+|🟡 Medium
+
+|**Performance Tuning**
+|link:appendix_performance_metrics.adoc[Optimization Guide]
+|40 min
+|🟡 Medium
+|===
+
+=== 🏗️ System Architects
+[cols="2,3,1,1"]
+|===
+|**Topic** |**Guide** |**Time** |**Difficulty**
+
+|**Architecture Overview**
+|link:architecture.adoc[System Design]
+|30 min
+|🟡 Medium
+
+|**Storage Engines**
+|link:architecture/storage-engine-optimizations.adoc[VIPER vs SST]
+|45 min
+|🔴 Advanced
+
+|**Multi-Cloud Setup**
+|link:guides/Multi_Disk_Configuration_Guide.adoc[S3/GCS/Azure]
+|60 min
+|🔴 Advanced
+
+|**Scaling & Performance**
+|link:appendix_performance_metrics.adoc[Benchmarks & Tuning]
+|45 min
+|🔴 Advanced
+|===
+
+=== 👨‍💻 Contributors & Developers
+[cols="2,3,1,1"]
+|===
+|**Goal** |**Guide** |**Time** |**Difficulty**
+
+|**Contributing**
+|link:developer_guide.adoc[Developer Setup]
+|60 min
+|🟡 Medium
+
+|**Code Architecture**
+|link:appendix_implementation_details.adoc[Implementation Patterns]
+|90 min
+|🔴 Advanced
+
+|**Testing Framework**
+|link:appendix_testing_development.adoc[Test Development]
+|45 min
+|🟡 Medium
+|===
+
+== 📚 Quick Reference
+
+=== 🔍 Find What You Need
 [cols="2,3,1"]
 |===
-|Document |Description |Time
+|**Topic** |**Documentation** |**Type**
 
-|link:getting_started.adoc[Getting Started]
-|Setup ProximaDB in 5 minutes
-|5 min
+|**Getting Started**
+|link:getting_started.adoc[Installation Guide]
+|Essential
 
-|link:user_guide.adoc[User Guide]  
-|Complete usage guide with examples
-|15 min
+|**API Reference**
+|link:api/unified_rest_api.adoc[REST API] • link:technical_reference.adoc[gRPC API]
+|Reference
 
-|link:architecture.adoc[Architecture]
-|System design and components
-|20 min
+|**SQL Queries**
+|link:user_guide.adoc#sql-engine[Vector SQL Examples]
+|Tutorial
 
-|link:technical_reference.adoc[Technical Reference]
-|APIs, configuration, and internals
-|30 min
+|**Performance**
+|link:appendix_performance_metrics.adoc[Benchmarks & Optimization]
+|Deep Dive
 
-|link:developer_guide.adoc[Developer Guide]
-|Contributing and extending ProximaDB
-|45 min
+|**Architecture**
+|link:architecture.adoc[System Overview]
+|Conceptual
+
+|**Storage Engines**
+|link:architecture/storage-engine-optimizations.adoc[VIPER vs SST Comparison]
+|Technical
+
+|**Multi-Cloud**
+|link:guides/Multi_Disk_Configuration_Guide.adoc[S3/GCS/Azure Setup]
+|Configuration
+
+|**Vector Features**
+|link:quantization_and_optimization.adoc[Quantization & Compression]
+|Advanced
 |===
 
-== Documentation by Role
+=== 📋 Additional Resources
+* **📈 Roadmap**: link:requirements.adoc[Features & Timeline]
+* **🧪 Testing**: link:appendix_testing_development.adoc[Test Framework]
+* **📝 Changes**: link:../CHANGELOG.adoc[Release History]
+* **🤝 Contributing**: link:../CONTRIBUTING.adoc[Guidelines]
 
-=== For Users
-* link:getting_started.adoc[Getting Started] - Quick setup guide
-* link:user_guide.adoc[User Guide] - Using ProximaDB effectively
-* link:api/unified_rest_api.adoc[REST API Reference] - API documentation
+== 🎯 Popular Topics
 
-=== For Developers  
-* link:developer_guide.adoc[Developer Guide] - Contributing to ProximaDB
-* link:technical_reference.adoc[Technical Reference] - Deep technical details
-* link:appendix_implementation_details.adoc[Implementation Details] - Code patterns
+=== Most Visited Guides
+1. **link:getting_started.adoc[Getting Started]** - Set up ProximaDB in 5 minutes
+2. **link:user_guide.adoc[User Guide]** - Complete usage guide with examples
+3. **link:api/unified_rest_api.adoc[REST API]** - Full API documentation
+4. **link:architecture.adoc[Architecture]** - How ProximaDB works internally
 
-=== For Architects
-* link:architecture.adoc[Architecture] - System design overview
-* link:appendix_performance_metrics.adoc[Performance Metrics] - Benchmarks and optimization
-* link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-Disk Guide] - Advanced deployment
-
-== Specialized Topics
-
-=== Storage & Optimization
-* link:architecture/storage-engine-optimizations.adoc[Storage Engine Optimizations]
-* link:architecture/wal-optimization-insights.adoc[WriteBuffer Optimization]
-* link:architecture/bloom-filter-unified-design.adoc[Bloom Filter Design]
-
-=== Advanced Features
-* link:quantization_and_optimization.adoc[Vector Quantization]
-* link:enhancements/viper_vector_compression_enhancement.adoc[VIPER Compression]
-
-== Additional Resources
-
-* link:requirements.adoc[Requirements & Roadmap]
-* link:appendix_testing_development.adoc[Testing & Development]  
-* link:../CHANGELOG.adoc[Release History]
-* link:../CONTRIBUTING.adoc[Contributing Guidelines]
+=== Advanced Topics
+1. **link:appendix_performance_metrics.adoc[Performance Tuning]** - Optimize for your workload
+2. **link:architecture/storage-engine-optimizations.adoc[Storage Engines]** - VIPER vs SST deep dive  
+3. **link:quantization_and_optimization.adoc[Vector Quantization]** - Reduce memory usage
+4. **link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-Cloud Setup]** - Enterprise deployment
 
 ---
 
-_Last updated: {docdate}_
+**🚀 Ready to start?** Begin with link:getting_started.adoc[Getting Started] or jump to link:user_guide.adoc[User Guide] for complete examples.
+
+_Documentation updated: {docdate}_
