@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 2
 
-== Version 1.0.0 (2025-08-03)
+== Version 1.0.0 (2025-08-04)
 
 === Major Features
 
@@ -11,12 +11,15 @@
 * **Dual Storage Engines**: SST (write-optimized) and VIPER (analytics-optimized)
 * **AXIS Indexing**: Adaptive index selection (HNSW, IVF, LSH, Annoy)
 * **SQL Query Engine**: Full AND/OR/NOT operators with metadata filtering
+* **Centralized MVCC**: `MvccResolver` for consistent versioning and expiry handling
+* **Multi-Tier Deduplication**: `MultiTierDeduplicator` for optimal result processing
 
 ==== Performance Optimizations
 * **Zero-Copy Serialization**: 5-10x speedup with bytemuck integration
 * **ZSTD Compression**: 30-50% storage reduction across both engines
 * **Index-Based Filtering**: 60-90% I/O reduction with predicate pushdown
-* **Hardware Acceleration**: SIMD/AVX-512/GPU support with automatic detection
+* **Hardware Acceleration**: GPU/SIMD-accelerated SQL parsing with centralized detection
+* **Centralized Hardware Capabilities**: One-time detection with `OnceLock` pattern
 
 ==== Enterprise Features
 * **MVCC Support**: Multi-version concurrency control with deduplication
@@ -28,7 +31,7 @@
 * **Insert Rate**: 49K vectors/sec (gRPC), 20K vectors/sec (REST)
 * **Search Latency**: <2ms P50, <5ms P95, <10ms P99
 * **Memory Efficiency**: 80% reduction vs alternatives
-* **Test Coverage**: 100% pass rate (1,400+ tests)
+* **Test Coverage**: 100% pass rate (1,460+ tests with 0 failures)
 
 === API Improvements
 * **Unified REST/gRPC**: Consistent API across protocols

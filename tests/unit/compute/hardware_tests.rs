@@ -176,8 +176,8 @@ async fn test_cpu_accelerator() {
     
     // Test hardware info
     let info = accelerator.get_info();
-    // Check backend matches - using string comparison as types differ
-    assert!(format!("{:?}", info.backend).contains("CPU"));
+    // Check backend is CpuSIMD - using string comparison as types differ
+    assert!(format!("{:?}", info.backend).contains("CpuSIMD"));
     assert!(!info.device_name.is_empty());
     
     // Test batch operations
@@ -292,8 +292,8 @@ fn test_hardware_info_construction() {
         multiprocessor_count: Some(80),
     };
     
-    // Check backend matches - using string comparison as types differ
-    assert!(format!("{:?}", info.backend).contains("CPU"));
+    // Check backend is CpuSIMD - using string comparison as types differ
+    assert!(format!("{:?}", info.backend).contains("CpuSIMD"));
     assert_eq!(info.device_name, "Test Device");
     assert_eq!(info.memory_total, 1024 * 1024 * 1024);
     assert_eq!(info.memory_free, 512 * 1024 * 1024);

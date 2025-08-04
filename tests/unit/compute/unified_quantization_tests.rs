@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_quantization_level_bytes() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let dimension = 768;
     
     let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -37,6 +38,7 @@ fn test_quantization_level_bytes() {
 
 #[test]
 fn test_compression_ratio() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let dimension = 768;
     
     let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -46,6 +48,7 @@ fn test_compression_ratio() {
 
 #[tokio::test]
 async fn test_quantization_roundtrip() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -72,6 +75,7 @@ async fn test_quantization_roundtrip() {
 
 #[test]
 fn test_quantization_level_variants() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Test PQ4 creation
     let pq4 = UnifiedQuantizationLevel::pq4(8);
     match &pq4.level_type {
@@ -96,6 +100,7 @@ fn test_quantization_level_variants() {
 
 #[test]
 fn test_bytes_per_vector_calculation() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let dim = 128;
     
     // Test None (FP32)
@@ -131,6 +136,7 @@ fn test_bytes_per_vector_calculation() {
 
 #[test]
 fn test_compression_ratio_calculations() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let dim = 512;
     
     // No compression
@@ -157,6 +163,7 @@ fn test_compression_ratio_calculations() {
 
 #[test]
 fn test_in_memory_codebook_store() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     use proximadb::compute::unified_quantization::{Codebook, CodebookData, TrainingConfig};
     
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -202,6 +209,7 @@ fn test_in_memory_codebook_store() {
 
 #[test]
 fn test_hamming_distance_calculation() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -229,6 +237,7 @@ fn test_hamming_distance_calculation() {
 
 #[test]
 fn test_pq_distance_calculation() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let codebook_store = Arc::new(InMemoryCodebookStore::new());
     let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);

@@ -31,6 +31,9 @@ async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperEngine> {
 /// Test VIPER engine flush operations with simulated 10 records
 #[tokio::test]
 async fn test_viper_engine_flush_with_10_records() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new()?;
     let viper_engine = create_viper_engine(&temp_dir).await?;
 
@@ -103,6 +106,9 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
 /// Test VIPER engine compaction operations with simulated 10 records
 #[tokio::test]
 async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new()?;
     let viper_engine = create_viper_engine(&temp_dir).await?;
 
@@ -182,6 +188,9 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
 /// Test VIPER engine capabilities
 #[tokio::test]
 async fn test_viper_engine_capabilities() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new()?;
     let viper_engine = create_viper_engine(&temp_dir).await?;
 

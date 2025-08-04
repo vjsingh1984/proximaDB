@@ -45,7 +45,7 @@ include::../diagrams/storage-engine-classes.mmd[]
 ----
 ====
 
-**Storage Engines**: SST (row-based, write-optimized, bloom filters). VIPER (columnar, analytics-optimized, 60-90% I/O reduction). Both use centralized MVCC resolution for consistent versioning.
+**Storage Engines**: SST (row-based, write-optimized, bloom filters). VIPER (columnar, analytics-optimized, 60-90% I/O reduction). Both use centralized **MvccResolver** for consistent versioning and data lifecycle management.
 
 **AXIS Indexing**: Adaptive selection - HNSW (high-recall), IVF (large-scale), LSH (approximate), Annoy (memory-constrained).
 
@@ -85,6 +85,26 @@ if caps.has_avx512() && caps.config.enable_simd {
 - **Thread Safety**: `OnceLock` pattern for safe concurrent access
 - **Fallback Logic**: Intelligent degradation when hardware unavailable
 - **Testing Support**: Deterministic initialization for test environments
+
+== MVCC Resolution System
+
+**Centralized Version Control**: The `MvccResolver` provides consistent multi-version concurrency control across all storage engines with sophisticated lifecycle management.
+
+[source,rust]
+----
+// MVCC resolution with expiry and versioning
+let resolver = MvccResolver::new();
+let resolved_records = resolver.resolve_batch(records);
+----
+
+**MVCC Rules**:
+- **Expiry Handling**: Records with `expires_at < current_time` are automatically excluded
+- **Version Resolution**: For same ID, highest version without gaps wins (versions start from 1)
+- **Timestamp Precedence**: For same version, earliest timestamp wins
+- **Append-Only Mode**: Empty/null IDs bypass versioning for high-throughput scenarios
+- **Global Deletion**: Non-empty ID with expiry marks all versions as deleted
+
+**Multi-Tier Deduplication**: Enhanced result processing with `MultiTierDeduplicator` for optimal search result quality and performance.
 
 == Advanced SQL Processing
 
@@ -184,13 +204,13 @@ include::../diagrams/storage-performance-unified.mmd[]
 ----
 ====
 
-**Performance**: Insert <1ms (memtable), <5ms (durable). Search <2ms (P50), <10ms (P99). Writes 49K vectors/sec, reads 48 QPS.
+**Performance**: Insert <1ms (memtable), <5ms (durable). Search <2ms (P50), <10ms (P99). Writes 49K vectors/sec, reads 48 QPS. **Test Suite**: 1,460+ tests with 100% pass rate.
 
 **Resources**: 100MB base memory, scales with cores (SIMD), 30-50% compression ratio.
 
 == Security & Reliability
 
-**Data Protection**: ACID transactions, centralized MVCC resolution, atomic operations, WAL durability, point-in-time recovery.
+**Data Protection**: ACID transactions, centralized **MvccResolver** with expiry handling, atomic operations, WAL durability, point-in-time recovery, multi-tier deduplication.
 
 **Operations**: Health checks, Prometheus integration, JSON logging, hot config reload.
 

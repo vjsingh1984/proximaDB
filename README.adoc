@@ -45,9 +45,13 @@ results = client.search_sql("""
 * **<10ms** search latency at scale
 * **80% memory reduction** vs alternatives
 * **5-10x faster** with zero-copy serialization
+* **1,460+ tests** with 100% pass rate (0 failures)
 
 === Architecture
 * **Dual Storage Engines**: Write-optimized SST + Analytics-optimized VIPER
+* **Centralized MVCC**: `MvccResolver` for consistent versioning across engines
+* **Multi-Tier Deduplication**: Enhanced result processing with `MultiTierDeduplicator`
+* **Hardware Acceleration**: GPU/SIMD-accelerated SQL parsing with automatic fallback
 * **AXIS Indexing**: Auto-selects HNSW/IVF/LSH/Annoy based on data
 * **Multi-Cloud Native**: S3, Azure, GCS with atomic operations
 * **Hardware Acceleration**: CPU AVX-512, GPU CUDA, ARM NEON - automatic

@@ -85,6 +85,29 @@ if caps.should_use_gpu_distance(vector_size) {
 let backend = caps.preferred_backend(); // Returns best available hardware
 ----
 
+=== MVCC Resolution API
+
+[source,rust]
+----
+use proximadb::core::search::mvcc_resolution::MvccResolver;
+
+// Create resolver with current timestamp
+let resolver = MvccResolver::new();
+
+// Create resolver with custom timestamp (testing)
+let resolver = MvccResolver::with_timestamp(1234567890);
+
+// Resolve vector records according to MVCC rules
+let resolved = resolver.resolve_batch(records);
+----
+
+**MVCC Resolution Features**:
+- **Expiry Management**: Automatic exclusion of expired records
+- **Version Control**: Highest version without gaps wins
+- **Timestamp Resolution**: Earliest timestamp for same version
+- **Append-Only Support**: Empty ID bypass for high-throughput
+- **Global Deletion**: ID-based expiry affects all versions
+
 === Hardware Configuration
 
 [source,toml]
@@ -98,6 +121,25 @@ enable_avx512 = true
 gpu_min_vector_size = 512
 gpu_min_batch_size = 100
 ----
+
+=== Multi-Tier Deduplication API
+
+[source,rust]
+----
+use proximadb::core::search::multi_tier_deduplication::MultiTierDeduplicator;
+
+// Create deduplicator for search results
+let deduplicator = MultiTierDeduplicator::new();
+
+// Deduplicate search results with metadata preservation
+let deduplicated = deduplicator.deduplicate_results(search_results)?;
+----
+
+**Deduplication Features**:
+- **Multi-Tier Processing**: Layered result optimization
+- **Metadata Preservation**: Maintains result quality
+- **Performance Optimization**: Reduced result set processing
+- **Configurable Strategies**: Adaptive deduplication algorithms
 
 == SQL Acceleration APIs
 

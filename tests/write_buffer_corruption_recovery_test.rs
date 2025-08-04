@@ -62,6 +62,9 @@ mod write_buffer_corruption_recovery_tests {
     
     #[tokio::test]
     async fn test_recovery_with_corrupted_wal_header() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -106,6 +109,9 @@ mod write_buffer_corruption_recovery_tests {
     
     #[tokio::test]
     async fn test_recovery_with_truncated_wal() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -149,6 +155,9 @@ mod write_buffer_corruption_recovery_tests {
     
     #[tokio::test]
     async fn test_recovery_with_checksum_mismatch() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -190,6 +199,9 @@ mod write_buffer_corruption_recovery_tests {
     
     #[tokio::test]
     async fn test_recovery_rollback_incomplete_transactions() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);

@@ -6,6 +6,8 @@ classDiagram
          services/direct_vector_service.rs
         -viper_engine: Arc~ViperEngine~
         -sst_engine: Arc~SstEngine~
+        -mvcc_resolver: MvccResolver
+        -multi_tier_deduplicator: MultiTierDeduplicator
         -collection_service: Option~Arc~CollectionService~~
         -write_buffer_config: WriteBufferConfig
         +insert_vectors_direct(collection_id: String, vectors: Arc~Vec~VectorRecord~~) Result~()~
@@ -15,6 +17,7 @@ classDiagram
          Direct Memtable Access
          40-60% Latency Reduction
          Dual Engine Coordination
+         MVCC + Multi-Tier Processing
     }
     
     class StorageEngine {
@@ -141,6 +144,31 @@ classDiagram
          Staging-based Operations
     }
     
+    class MvccResolver {
+         core/search/mvcc_resolution.rs
+        -current_timestamp: u32
+        +new() Self
+        +with_timestamp(timestamp: u32) Self
+        +resolve_batch(records: Vec~VectorRecord~) Vec~VectorRecord~
+         Centralized Version Control
+         Expiry Management
+         Append-Only Support
+         Global Deletion Handling
+         Thread-Safe Resolution
+    }
+    
+    class MultiTierDeduplicator {
+         core/search/multi_tier_deduplication.rs
+        -strategies: Vec~DeduplicationStrategy~
+        +new() Self
+        +deduplicate_results(results: Vec~SearchResult~) Result~Vec~SearchResult~~
+        +configure_strategies(strategies: Vec~DeduplicationStrategy~) Self
+         Layered Result Processing
+         Metadata Preservation
+         Performance Optimization
+         Quality-Based Ranking
+    }
+
     class SqlExecutor {
          query/sql_engine/executor.rs
         -vector_service: Arc~DirectVectorService~
@@ -223,6 +251,8 @@ classDiagram
     DirectVectorService --> SstEngine : coordinates
     DirectVectorService --> CollectionService : optional
     DirectVectorService --> WriteBufferBehaviorWrapper : manages
+    DirectVectorService --> MvccResolver : uses
+    DirectVectorService --> MultiTierDeduplicator : uses
     
     ViperEngine --> ViperUnifiedSearchEngine : uses
     SstEngine --> SstUnifiedSearchEngine : uses
@@ -337,5 +367,6 @@ classDiagram
     class WriteBufferBehaviorWrapper optimizationStyle
     class UnifiedAtomicCoordinator optimizationStyle
     class MvccResolver optimizationStyle
+    class MultiTierDeduplicator optimizationStyle
     class SqlExecutor sqlStyle
     class CollectionService sqlStyle

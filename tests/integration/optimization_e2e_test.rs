@@ -18,7 +18,7 @@ use proximadb::proto::proximadb::{MetadataItem, Collection};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use proximadb::storage::atomic::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::metadata::store::MetadataStore;
+use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::compute::unified_distance::UnifiedDistanceCompute;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
@@ -212,8 +212,18 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         None
     ).await.unwrap());
     
+    // Create metadata store config with temp directory
+    let metadata_config = MetadataStoreConfig {
+        metadata_base_dir: temp_dir.path().join("metadata"),
+        metadata_storage_urls: vec![format!("file://{}/metadata", temp_dir.path().display())],
+        enable_atomic_operations: true,
+        cache_config: Default::default(),
+        backup_config: None,
+        replication_config: None,
+    };
+    
     let metadata_store = Arc::new(MetadataStore::new(
-        Default::default()
+        metadata_config
     ).await.unwrap());
     
     // Set up storage assignment for the test collection

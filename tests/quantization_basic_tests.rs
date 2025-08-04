@@ -58,6 +58,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_product_quantization_basic() {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         // Test basic Product Quantization functionality using UnifiedQuantizationEngine
         let level = UnifiedQuantizationLevel {
             level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
@@ -113,6 +116,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_quantization_levels() {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         // Test different quantization levels using unified API
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(InMemoryCodebookStore::new());

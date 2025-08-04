@@ -79,6 +79,7 @@ fn test_basic_deduplication() {
 
 #[test]
 fn test_deduplication_without_ids() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let mut deduplicator = MultiTierDeduplicator::new();
     
     // Create vectors without IDs (immutable vectors)
@@ -129,9 +130,10 @@ fn test_deduplication_without_ids() {
     let merged = deduplicator.get_final_results(10);
     
     // Both vectors should be included (no deduplication for ID-less vectors)
+    // Results are sorted by score in descending order (highest score first)
     assert_eq!(merged.len(), 2);
-    assert_eq!(merged[0].score, 0.85); // First result should be highest score
-    assert_eq!(merged[1].score, 0.9);
+    assert_eq!(merged[0].score, 0.9); // Highest score comes first
+    assert_eq!(merged[1].score, 0.85); // Lower score comes second
 }
 
 #[test]
@@ -358,9 +360,10 @@ fn test_k_limit_enforcement() {
     let merged = deduplicator.get_final_results(10);
     
     assert_eq!(merged.len(), 10);
-    // Verify we got the lowest scoring results (ascending score order)
-    assert_eq!(merged[0].vector_record.id, Some("vec0".to_string())); // Lowest score
-    assert_eq!(merged[merged.len() - 1].vector_record.id, Some("vec9".to_string())); // Highest among top 10
+    // Results are sorted by score in descending order (highest score first)
+    // Top 10 results should be vec19 (0.19) to vec10 (0.10)
+    assert_eq!(merged[0].vector_record.id, Some("vec19".to_string())); // Highest score (0.19)
+    assert_eq!(merged[merged.len() - 1].vector_record.id, Some("vec10".to_string())); // 10th highest score (0.10)
 }
 
 #[test]

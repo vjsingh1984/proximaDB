@@ -521,6 +521,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_sql_edge_cases() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let fixture = SqlOperatorTestFixture::new().await.unwrap();
         fixture.insert_test_vectors().await.unwrap();
         

@@ -44,6 +44,69 @@ pub fn initialize_hardware_capabilities(config: HardwareConfig) -> Result<()> {
 - Recommends cache sizes as 10% of available memory (capped at 8GB)
 - Total/available memory tracking for optimization decisions
 
+== MVCC Resolution Implementation
+
+=== Centralized Version Control Architecture
+
+**Design Pattern**: Centralized `MvccResolver` with sophisticated lifecycle management and expiry handling for consistent data versioning across all storage engines.
+
+[source,rust]
+----
+pub struct MvccResolver {
+    current_timestamp: u32,
+}
+
+impl MvccResolver {
+    pub fn resolve_batch(&self, records: Vec<VectorRecord>) -> Vec<VectorRecord> {
+        // 1. Separate by ID presence (empty ID = append-only)
+        // 2. Group by ID for version resolution
+        // 3. Apply expiry rules (expires_at < current_time)
+        // 4. Select highest version without gaps
+        // 5. Handle timestamp precedence for same version
+    }
+}
+----
+
+**Resolution Logic**:
+1. **Expiry Check**: Records with `expires_at < current_time` are excluded
+2. **ID Grouping**: Records grouped by ID for version comparison
+3. **Version Selection**: Highest version without gaps wins (starts from 1)
+4. **Timestamp Precedence**: Earliest timestamp for identical versions
+5. **Append-Only Mode**: Empty/null IDs bypass versioning for throughput
+6. **Global Deletion**: Non-empty ID expiry affects all versions
+
+**Performance Characteristics**:
+- **Memory Efficient**: HashMap grouping with streaming processing
+- **Thread Safe**: Immutable resolver with timestamp injection
+- **Test Coverage**: Comprehensive edge case validation
+- **Configurable**: Timestamp injection for deterministic testing
+
+=== Multi-Tier Deduplication Implementation
+
+**Architecture**: Layered result processing with `MultiTierDeduplicator` for optimal search result quality and performance optimization.
+
+[source,rust]
+----
+pub struct MultiTierDeduplicator {
+    // Configurable deduplication strategies
+    strategies: Vec<DeduplicationStrategy>,
+}
+
+impl MultiTierDeduplicator {
+    pub fn deduplicate_results(&self, results: Vec<SearchResult>) -> Result<Vec<SearchResult>> {
+        // Apply multiple deduplication tiers
+        // Preserve metadata and relevance scores
+        // Optimize for memory and performance
+    }
+}
+----
+
+**Deduplication Tiers**:
+- **Primary**: Hash-based duplicate removal
+- **Secondary**: Semantic similarity clustering
+- **Tertiary**: Metadata-based consolidation
+- **Quality**: Score-based ranking preservation
+
 == SQL Acceleration Implementation
 
 === GPU Parser Architecture

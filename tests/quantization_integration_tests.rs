@@ -55,6 +55,9 @@ fn generate_vector_records(count: usize, dimensions: usize) -> Vec<VectorRecord>
 
 #[tokio::test]
 async fn test_unified_product_quantization() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Test Product Quantization using UnifiedQuantizationEngine
     let level = UnifiedQuantizationLevel {
         level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
@@ -97,6 +100,9 @@ async fn test_unified_product_quantization() -> Result<()> {
 
 #[tokio::test]
 async fn test_unified_binary_quantization() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Test Binary Quantization using UnifiedQuantizationEngine
     let level = UnifiedQuantizationLevel {
         level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {

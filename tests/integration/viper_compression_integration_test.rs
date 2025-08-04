@@ -27,6 +27,18 @@ async fn setup_test_assignment(collection_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Helper to create metadata store with temp directory
+fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::storage::metadata::store::MetadataStoreConfig {
+    proximadb::storage::metadata::store::MetadataStoreConfig {
+        metadata_base_dir: temp_dir.path().join("metadata"),
+        metadata_storage_urls: vec![format!("file://{}/metadata", temp_dir.path().display())],
+        enable_atomic_operations: true,
+        cache_config: Default::default(),
+        backup_config: None,
+        replication_config: None,
+    }
+}
+
 // Helper function to find parquet files recursively
 fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
     use std::fs;
@@ -271,7 +283,7 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
     ).await.unwrap());
     
     let metadata_store = Arc::new(MetadataStore::new(
-        Default::default()
+        create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
     
@@ -375,7 +387,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     ).await.unwrap());
     
     let metadata_store = Arc::new(MetadataStore::new(
-        Default::default()
+        create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
     
@@ -448,7 +460,7 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
     ).await.unwrap());
     
     let metadata_store = Arc::new(MetadataStore::new(
-        Default::default()
+        create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
     
@@ -542,7 +554,7 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         ).await.unwrap());
         
         let metadata_store = Arc::new(MetadataStore::new(
-            Default::default()
+            create_metadata_store_config(&temp_dir)
         ).await.unwrap());
         
         
@@ -625,7 +637,7 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
         ).await.unwrap());
         
         let metadata_store = Arc::new(MetadataStore::new(
-            Default::default()
+            create_metadata_store_config(&temp_dir)
         ).await.unwrap());
         
         

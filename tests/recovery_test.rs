@@ -8,6 +8,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 
 #[tokio::test]
 async fn test_recovery_with_multiple_collections() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path();
     
@@ -87,6 +90,9 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
 
 #[tokio::test]
 async fn test_recovery_after_crash() -> Result<()> {
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path();
     

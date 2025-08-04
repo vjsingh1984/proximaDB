@@ -24,6 +24,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_unified_distance_construction() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Test default construction
         let default_compute = UnifiedDistanceCompute::default();
         assert_eq!(default_compute.platform_capability().to_string().is_empty(), false);
@@ -42,6 +43,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_all_distance_metrics() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         
         // Test vectors with known distances
@@ -85,6 +87,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_batch_distance_calculation() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         let query = vec![1.0, 0.0, 0.0];
@@ -104,6 +107,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_chunked_batch_calculation() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         
         let query = vec![1.0, 2.0, 3.0];
@@ -131,6 +135,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_dimension_mismatch_handling() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         
         let vec1 = vec![1.0, 2.0];
@@ -148,6 +153,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_special_float_values() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         
         // Test with NaN
@@ -171,6 +177,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_custom_distance_metric() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         
         let vec1 = vec![1.0, 2.0, 3.0];
@@ -189,6 +196,7 @@ mod unified_distance_coverage {
 
     #[test]
     fn test_distance_normalization() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         // Test that all metrics follow "lower = more similar" semantics
@@ -239,6 +247,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_no_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let test_vector = vec![0.1, 0.2, 0.3, 0.4];
@@ -265,6 +274,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_uniform_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let test_vector = vec![0.0, 0.25, 0.5, 0.75, 1.0];
@@ -301,6 +311,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_binary_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let test_vector = vec![-1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
@@ -335,6 +346,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_scalar_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let test_vector = vec![0.1, 0.5, 1.0, 2.0, 5.0];
@@ -365,6 +377,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_product_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         // Generate training data
@@ -420,6 +433,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_batch_quantization() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let vectors: Vec<Vec<f32>> = (0..10)
@@ -452,6 +466,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_quantization_edge_cases() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         // Empty vector
@@ -480,6 +495,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_quantization_level_helpers() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Test helper methods
         let pq8 = UnifiedQuantizationLevel::pq8(16);
         if let Some(LevelType::Pq(pq)) = &pq8.level_type {
@@ -509,6 +525,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_bytes_per_vector_calculation() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let dimension = 768; // BERT-like dimension
         
         // No quantization - full FP32
@@ -543,6 +560,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_compression_ratio() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let dimension = 512;
         
         // Test various quantization levels
@@ -570,6 +588,7 @@ mod unified_quantization_coverage {
 
     #[tokio::test]
     async fn test_distance_on_quantized_vectors() -> Result<()> {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = create_test_engine();
         
         let vec1 = vec![1.0, 0.0, 0.0, 0.0];
@@ -609,6 +628,7 @@ mod unified_quantization_coverage {
 // Integration test combining both modules
 #[tokio::test]
 async fn test_unified_modules_integration() -> Result<()> {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     use proximadb::compute::InMemoryCodebookStore;
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));

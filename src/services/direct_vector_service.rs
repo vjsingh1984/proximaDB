@@ -910,7 +910,7 @@ impl DirectVectorService {
         let processing_time_us = start_time.elapsed().as_micros() as i64;
         
         info!(
-            "✅ UNIFIED_SEARCH: {} results in {}μs (WAL + Storage with MVCC deduplication)",
+            "✅ UNIFIED_SEARCH: {} results in {}μs (WAL + Storage with multi-tier deduplication)",
             final_results.len(),
             processing_time_us
         );
@@ -2254,87 +2254,6 @@ impl DirectVectorService {
         }).collect();
         
         Ok(final_results)
-    }
-    
-    /// Apply MVCC-based deduplication to search results
-    /// This ensures consistency with compaction behavior
-    fn apply_mvcc_deduplication(&self, results: Vec<SearchResult>) -> Vec<SearchResult> {
-        use std::collections::BTreeMap;
-        
-        // Pre-allocate capacity for efficiency
-        let estimated_unique_ids = results.len() / 2; // Conservative estimate
-        
-        // Group results by ID - using BTreeMap for better cache locality and sorted access
-        let mut id_groups: BTreeMap<String, Vec<SearchResult>> = BTreeMap::new();
-        let mut results_without_id = Vec::with_capacity(results.len() / 4); // Estimate 25% without IDs
-        
-        for result in results {
-            if result.id.is_empty() {
-                // Vectors without IDs are append-only, no deduplication
-                results_without_id.push(result);
-            } else {
-                // Avoid cloning the ID by using entry API more efficiently
-                id_groups.entry(result.id.clone()).or_insert_with(Vec::new).push(result);
-            }
-        }
-        
-        // Process each ID group - pre-allocate with estimated capacity
-        let mut deduplicated = Vec::with_capacity(estimated_unique_ids + results_without_id.len());
-        
-        for (id, mut versions) in id_groups {
-            // Sort by version, then timestamp (earliest first for same version)
-            // Use unstable sort for better performance since we don't need stability
-            versions.sort_unstable_by(|a, b| {
-                let version_a = a.version.unwrap_or(1);
-                let version_b = b.version.unwrap_or(1);
-                
-                version_a.cmp(&version_b)
-                    .then_with(|| {
-                        // For same version, earliest timestamp wins
-                        let ts_a = a.timestamp.unwrap_or(u32::MAX);
-                        let ts_b = b.timestamp.unwrap_or(u32::MAX);
-                        ts_a.cmp(&ts_b)
-                    })
-            });
-            
-            // Validate version continuity and find the latest valid version
-            let mut expected_version = 1;
-            let mut last_valid: Option<SearchResult> = None;
-            
-            for result in versions {
-                let version = result.version.unwrap_or(1);
-                
-                if version == expected_version {
-                    // Check for duplicate version - keep earliest timestamp
-                    if let Some(ref existing) = last_valid {
-                        if existing.version == result.version {
-                            let existing_ts = existing.timestamp.unwrap_or(u32::MAX);
-                            let current_ts = result.timestamp.unwrap_or(u32::MAX);
-                            if current_ts < existing_ts {
-                                last_valid = Some(result);
-                            }
-                            continue;
-                        }
-                    }
-                    last_valid = Some(result);
-                    expected_version += 1;
-                } else if version > expected_version {
-                    // Version gap detected - stop processing this ID
-                    debug!("Version gap detected for {}: expected {}, found {}", id, expected_version, version);
-                    break;
-                }
-                // Skip older versions
-            }
-            
-            if let Some(result) = last_valid {
-                deduplicated.push(result);
-            }
-        }
-        
-        // Add back results without IDs (no deduplication for append-only vectors)
-        deduplicated.extend(results_without_id);
-        
-        deduplicated
     }
 }
 

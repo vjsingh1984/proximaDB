@@ -87,6 +87,9 @@ mod recovery_stress_tests {
     
     #[tokio::test]
     async fn test_recovery_with_large_dataset() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -137,6 +140,9 @@ mod recovery_stress_tests {
     
     #[tokio::test]
     async fn test_recovery_with_mixed_engines() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -188,6 +194,9 @@ mod recovery_stress_tests {
     
     #[tokio::test]
     async fn test_recovery_after_incomplete_flush() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -225,6 +234,9 @@ mod recovery_stress_tests {
     
     #[tokio::test]
     async fn test_concurrent_recovery_stress() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         let config = create_test_config(base_path);
@@ -282,6 +294,9 @@ mod recovery_stress_tests {
     
     #[tokio::test]
     async fn test_recovery_memory_efficiency() -> Result<()> {
+        // Initialize hardware capabilities
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap();
         

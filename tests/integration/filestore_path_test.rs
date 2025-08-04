@@ -98,8 +98,14 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let metadata_dir = temp_dir.path().join("test_metadata");
     
+    // Create the metadata directory
+    std::fs::create_dir_all(&metadata_dir)?;
+    
+    // Change to the parent directory so relative path works
+    std::env::set_current_dir(temp_dir.path())?;
+    
     // Use relative URL
-    let metadata_url = format!("file://./{}", metadata_dir.file_name().unwrap().to_str().unwrap());
+    let metadata_url = format!("file://./test_metadata");
     
     println!("Testing with relative metadata URL: {}", metadata_url);
     
