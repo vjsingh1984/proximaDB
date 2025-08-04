@@ -110,7 +110,8 @@ fn create_test_search_context() -> UnifiedSearchContext {
 /// Test unified search interface trait
 #[tokio::test]
 async fn test_unified_search_interface() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Test data
     let test_vectors = generate_test_vectors(10, 32);
     let query_vector = vec![0.5; 32];
@@ -150,7 +151,8 @@ async fn test_unified_search_interface() {
 /// Test basic search functionality with SearchParams
 #[tokio::test]
 async fn test_search_params_functionality() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Test various SearchParams configurations
     let query_vectors = vec![
         vec![0.1; 16],
@@ -189,7 +191,8 @@ async fn test_search_params_functionality() {
 /// Test distance metric functionality
 #[tokio::test]
 async fn test_distance_metrics() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_compute = UnifiedDistanceCompute::default();
     
     // Test vectors
@@ -231,7 +234,8 @@ async fn test_distance_metrics() {
 /// Test VectorRecord structure and metadata handling
 #[tokio::test]
 async fn test_vector_record_structure() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let test_vectors = generate_test_vectors(5, 64);
     
     // Test vector record structure
@@ -277,7 +281,8 @@ async fn test_vector_record_structure() {
 /// Test SearchResult structure
 #[tokio::test]
 async fn test_search_result_structure() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Create a mock search result
     let mut metadata = HashMap::new();
     metadata.insert("category".to_string(), json!("test"));
@@ -325,7 +330,8 @@ async fn test_search_result_structure() {
 /// Test unified search context creation
 #[tokio::test]
 async fn test_unified_search_context() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let context = create_test_search_context();
     
     // Test context structure
@@ -367,7 +373,8 @@ async fn test_unified_search_context() {
 /// Test basic unified search engine interface functionality
 #[tokio::test]
 async fn test_unified_search_engine_interface() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Create search context
     let context = create_test_search_context();
     
@@ -396,7 +403,8 @@ async fn test_unified_search_engine_interface() {
 /// Test SearchParams default values and edge cases
 #[tokio::test]
 async fn test_search_params_edge_cases() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Test default SearchParams
     let default_params = SearchParams::default();
     assert_eq!(default_params.query_vectors, None);
@@ -439,7 +447,8 @@ async fn test_search_params_edge_cases() {
 /// Test basic API usage patterns
 #[tokio::test]
 async fn test_api_usage_patterns() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Test single vector search helper
     let query_vector = vec![0.1, 0.2, 0.3];
     let single_search = SearchParams::single_vector(query_vector.clone());

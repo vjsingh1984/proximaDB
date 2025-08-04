@@ -78,7 +78,8 @@ struct WalPerformanceTestResult {
 
 #[tokio::test]
 async fn test_basic_service_creation() -> Result<()> {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let _ = tracing_subscriber::fmt::try_init();
     
     info!("🚀 Testing Basic DirectVectorService Creation");

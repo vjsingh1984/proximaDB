@@ -36,7 +36,8 @@ use std::sync::Arc;
 /// Test semantic consistency across different distance metrics
 #[tokio::test]
 async fn test_semantic_consistency_across_metrics() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     
     // Test vectors with known relationships
@@ -96,7 +97,8 @@ async fn test_semantic_consistency_across_metrics() {
 /// Test dot product specific semantic handling
 #[tokio::test]
 async fn test_dot_product_semantic_inversion() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     let metric = DistanceMetric::DotProduct;
     
@@ -134,7 +136,8 @@ async fn test_dot_product_semantic_inversion() {
 /// Test batch distance calculation with semantic results
 #[tokio::test]
 async fn test_batch_semantic_distance() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     let query = vec![1.0, 0.0, 0.0];
     
@@ -176,7 +179,8 @@ async fn test_batch_semantic_distance() {
 /// Test semantic distance in memtable search operations
 #[tokio::test]
 async fn test_memtable_semantic_search() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let memtable = GlobalPartitionedMemtable::new();
     let collection_id = "test_collection";
     
@@ -263,7 +267,8 @@ async fn test_memtable_semantic_search() {
 /// Test metric properties and validation
 #[tokio::test]
 async fn test_metric_properties_and_validation() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     
     // Test metric properties
@@ -294,7 +299,8 @@ async fn test_metric_properties_and_validation() {
 /// Test quantization with semantic distance
 #[tokio::test]
 async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     use proximadb::compute::{UnifiedQuantizationEngine, InMemoryCodebookStore};
     use proximadb::proto::proximadb::{quantization_level::LevelType, ProductQuantization};
     use std::sync::Arc;
@@ -420,7 +426,8 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
 /// Test edge cases and error handling
 #[tokio::test]
 async fn test_edge_cases_and_error_handling() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     
     // Test dimension mismatch
@@ -449,7 +456,8 @@ async fn test_edge_cases_and_error_handling() {
 /// Test comparative ordering across different metrics
 #[tokio::test]
 async fn test_comparative_metric_ordering() {
-    crate::common::setup_hardware_capabilities();
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let compute = UnifiedDistanceCompute::default();
     
     // Create test scenario with known relationships
