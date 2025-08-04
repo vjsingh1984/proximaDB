@@ -536,32 +536,48 @@ impl CompactionManager {
                         debug!("📝 Immutable vector record (no ID), including as-is");
                         true
                     } else if let Some(ref id_str) = record_id {
-                        // Version merging logic: keep latest version per ID
+                        // Use centralized MVCC resolution for version merging logic
                         if let Some(existing_record) = latest_records.get(id_str) {
-                            let existing_version = existing_record.version;
+                            // Create temporary VectorRecord instances for comparison
+                            let existing_vector_record = VectorRecord {
+                                id: Some(id_str.clone()),
+                                version: Some(existing_record.version as u32),
+                                timestamp: existing_record.timestamp.unwrap_or(0) as u32,
+                                vector: vec![],
+                                metadata: vec![],
+                                updated_at: existing_record.timestamp.map(|t| t as u32),
+                                expires_at: None,
+                                rank: None,
+                                score: None,
+                                distance: None,
+                            };
                             
-                            if record_version > existing_version {
-                                debug!("📝 Updating record {} from version {} to {}", id_str, existing_version, record_version);
-                                true
-                            } else if record_version == existing_version {
-                                // For same version, keep the one with earliest timestamp (first insert wins)
-                                let existing_timestamp = existing_record.timestamp.unwrap_or(i64::MAX);
-                                let current_timestamp = record_timestamp.unwrap_or(i64::MAX);
-                                
-                                if current_timestamp < existing_timestamp {
-                                    debug!("📝 Duplicate version {} for record {}: choosing earlier timestamp {} over {}", 
-                                           record_version, id_str, current_timestamp, existing_timestamp);
-                                    true
-                                } else {
-                                    debug!("📝 Duplicate version {} for record {}: keeping earlier timestamp {} over {}", 
-                                           record_version, id_str, existing_timestamp, current_timestamp);
-                                    false
-                                }
+                            let current_vector_record = VectorRecord {
+                                id: Some(id_str.clone()),
+                                version: Some(record_version as u32),
+                                timestamp: record_timestamp.unwrap_or(0) as u32,
+                                vector: vec![],
+                                metadata: vec![],
+                                updated_at: record_timestamp.map(|t| t as u32),
+                                expires_at: None,
+                                rank: None,
+                                score: None,
+                                distance: None,
+                            };
+                            
+                            // Use centralized MVCC resolver for comparison
+                            let resolver = MvccResolver::new();
+                            let should_replace = resolver.compare_records(&current_vector_record, &existing_vector_record);
+                            
+                            if should_replace {
+                                debug!("📝 Centralized MVCC: Updating record {} from version {} to {}", 
+                                       id_str, existing_record.version, record_version);
                             } else {
-                                debug!("📝 Keeping existing record {} at version {} (incoming version {})", 
-                                    id_str, existing_version, record_version);
-                                false
+                                debug!("📝 Centralized MVCC: Keeping existing record {} at version {} (incoming version {})", 
+                                       id_str, existing_record.version, record_version);
                             }
+                            
+                            should_replace
                         } else {
                             debug!("📝 New record {} at version {}", id_str, record_version);
                             true
@@ -624,107 +640,28 @@ impl CompactionManager {
         }
         debug!("End of all file processing");
         
-        // Apply centralized MVCC resolution instead of custom logic
-        let mut all_vector_records: Vec<VectorRecord> = Vec::new();
-        
-        // Convert ID records to VectorRecord
-        for (id, record_data) in latest_records {
-            let mut vector_record = VectorRecord {
-                id: Some(id),
-                version: Some(record_data.version as u32),
-                timestamp: record_data.timestamp.unwrap_or(0) as u32,
-                vector: vec![], // Will be filled from row_data
-                metadata: vec![],
-                updated_at: record_data.timestamp.map(|t| t as u32),
-                expires_at: None, // Will be extracted from row_data
-                rank: None,
-                score: None,
-                distance: None,
-            };
-            
-            // Extract data from row_data
-            if let Some(vector_data) = record_data.row_data.get("vector") {
-                if let Some(vec_array) = vector_data.as_array() {
-                    let float_values: Vec<f32> = vec_array.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect();
-                    vector_record.vector = float_values;
-                }
-            }
-            
-            if let Some(expires_at_value) = record_data.row_data.get("expires_at") {
-                vector_record.expires_at = expires_at_value.as_i64().map(|v| v as u32);
-            }
-            
-            all_vector_records.push(vector_record);
-        }
-        
-        // Convert non-ID records to VectorRecord
-        for record_data in all_records_ordered {
-            let mut vector_record = VectorRecord {
-                id: record_data.id,
-                version: Some(record_data.version as u32),
-                timestamp: record_data.timestamp.unwrap_or(0) as u32,
-                vector: vec![], // Will be filled from row_data
-                metadata: vec![],
-                updated_at: record_data.timestamp.map(|t| t as u32),
-                expires_at: None, // Will be extracted from row_data
-                rank: None,
-                score: None,
-                distance: None,
-            };
-            
-            // Extract data from row_data
-            if let Some(vector_data) = record_data.row_data.get("vector") {
-                if let Some(vec_array) = vector_data.as_array() {
-                    let float_values: Vec<f32> = vec_array.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect();
-                    vector_record.vector = float_values;
-                }
-            }
-            
-            if let Some(expires_at_value) = record_data.row_data.get("expires_at") {
-                vector_record.expires_at = expires_at_value.as_i64().map(|v| v as u32);
-            }
-            
-            all_vector_records.push(vector_record);
-        }
-        
-        // Apply centralized MVCC resolution
-        let resolver = MvccResolver::new();
-        let resolved_vector_records = resolver.resolve_batch(all_vector_records);
-        
-        info!("📊 MVCC resolution completed: {} records after centralized resolution (expired: {})", 
-              resolved_vector_records.len(), expired_records_count);
-        
-        // Convert back to RecordData for compatibility with rest of the function
+        // Combine records with IDs (sorted by ID) and records without IDs (in order)
         let mut final_records: Vec<RecordData> = Vec::new();
-        for vector_record in resolved_vector_records {
-            let mut row_data = HashMap::new();
-            
-            // Convert VectorRecord back to row_data format
-            if let Some(ref id) = vector_record.id {
-                row_data.insert("id".to_string(), serde_json::json!(id));
-            }
-            row_data.insert("version".to_string(), serde_json::json!(vector_record.version.unwrap_or(1) as i64));
-            row_data.insert("timestamp".to_string(), serde_json::json!(vector_record.timestamp as i64));
-            row_data.insert("vector".to_string(), serde_json::json!(vector_record.vector));
-            if let Some(expires_at) = vector_record.expires_at {
-                row_data.insert("expires_at".to_string(), serde_json::json!(expires_at as i64));
-            }
-            
-            let record_data = RecordData {
-                id: vector_record.id,
-                version: vector_record.version.unwrap_or(1) as i64,
-                timestamp: Some(vector_record.timestamp as i64),
-                row_data,
-            };
-            
-            final_records.push(record_data);
+        
+        // First add all records with IDs, sorted by ID for consistent output
+        let mut sorted_id_records: Vec<_> = latest_records.into_iter().collect();
+        sorted_id_records.sort_by(|a, b| a.0.cmp(&b.0));
+        
+        let num_id_records = sorted_id_records.len();
+        let num_no_id_records = all_records_ordered.len();
+        
+        for (_, record) in sorted_id_records {
+            final_records.push(record);
         }
+        
+        // Then add all records without IDs in their original order
+        final_records.extend(all_records_ordered);
         
         let total_records = final_records.len();
+        info!("Final records count: {} (latest_records had {} entries, all_records_ordered had {} entries)",
+                 total_records, num_id_records, num_no_id_records);
+        info!("📊 MVCC resolution completed: {} records after merging (expired: {})", 
+              total_records, expired_records_count);
         
         if final_records.is_empty() {
             warn!("⚠️ COMPACTION: No records to compact! All records expired or invalid?");
