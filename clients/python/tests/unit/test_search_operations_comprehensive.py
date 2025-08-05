@@ -7,12 +7,15 @@ Consolidated tests for ID-based search, metadata filtering, and proximity/simila
 import pytest
 import time
 import numpy as np
+import logging
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError
+
+logger = logging.getLogger(__name__)
 
 
 class TestSearchOperations:
@@ -40,14 +43,13 @@ class TestSearchOperations:
         """Create test collection with search data"""
         collection_name = f"search_test_{int(time.time())}"
         
-        config = CollectionConfig(
-            name=collection_name,
+        # Create collection without duplicate name
+        collection = grpc_client.create_collection(
+            collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
             distance_metric="cosine",
             description="Search operations test collection"
         )
-        
-        collection = grpc_client.create_collection(collection_name, config)
         yield collection
         
         # Cleanup
@@ -171,10 +173,10 @@ class TestSearchOperations:
                 results = search_func()
                 if len(results) >= min_results:
                     return results
-                print(f"Waiting for indexing... got {len(results)} results, need {min_results}")
+                logger.debug(f"Waiting for indexing... got {len(results)} results, need {min_results}")
                 time.sleep(retry_interval)
             except Exception as e:
-                print(f"Search error: {e}, retrying...")
+                logger.debug(f"Search error: {e}, retrying...")
                 time.sleep(retry_interval)
         
         # Final attempt
@@ -280,7 +282,7 @@ class TestSearchOperations:
             results = self._wait_for_search_results(search_func, min_results=1, max_wait=15)
             
             if len(results) == 0:
-                print(f"No results for query: {query_info['text']} - skipping")
+                logger.debug(f"No results for query: {query_info['text']} - skipping")
                 continue
             
             # Verify top result
@@ -347,7 +349,7 @@ class TestSearchOperations:
         try:
             rest_client.get_collection(search_collection.config.name)
         except Exception as e:
-            print(f"REST collection check failed: {e}")
+            logger.debug(f"REST collection check failed: {e}")
         
         rest_results = rest_client.search(
             collection_id=search_collection.config.name,
@@ -369,9 +371,9 @@ class TestSearchOperations:
             overlap = len(set(grpc_top_ids) & set(rest_top_ids))
             # Some overlap is good but not required since indexing may be async
             if overlap == 0:
-                print(f"No overlap found: gRPC={grpc_top_ids}, REST={rest_top_ids}")
+                logger.debug(f"No overlap found: gRPC={grpc_top_ids}, REST={rest_top_ids}")
         else:
-            print(f"Limited results: gRPC={len(grpc_results)}, REST={len(rest_results)}")
+                logger.debug(f"Limited results: gRPC={len(grpc_results)}, REST={len(rest_results)}")
     
     def test_search_edge_cases(self, grpc_client, search_collection, bert_model):
         """Test search edge cases and boundary conditions"""
@@ -388,7 +390,7 @@ class TestSearchOperations:
         # Should return up to all documents in collection (may be less due to indexing timing)
         assert len(results) <= 7, f"Expected at most 7 results, got {len(results)}"
         if len(results) != 7:
-            print(f"Got {len(results)} results instead of 7 - indexing may be incomplete")
+            logger.debug(f"Got {len(results)} results instead of 7 - indexing may be incomplete")
         
         # Verify all results have valid scores
         for result in results:
@@ -445,11 +447,12 @@ class TestSearchOperations:
     def test_empty_collection_search(self, grpc_client, bert_model):
         """Test search on empty collection"""
         empty_collection = f"empty_search_{int(time.time())}"
-        config = CollectionConfig(
-            name=empty_collection,  # Use unique name instead of "test_collection"
+        # Create collection without duplicate name
+        grpc_client.create_collection(
+            empty_collection,
             dimension=768,
-            distance_metric="cosine")
-        grpc_client.create_collection(empty_collection, config)
+            distance_metric="cosine"
+        )
         
         try:
             query_embedding = bert_model.encode(["test query"])[0]

@@ -29,15 +29,19 @@ class ProximaDBSyncGrpcClient:
     Provides the same interface as the improved REST client
     """
     
-    def __init__(self, server_address: str, timeout: float = 60.0):
+    def __init__(self, server_address: str, timeout: float = 60.0, enable_compression: bool = False, compression_algorithm: str = "gzip"):
         """Initialize sync gRPC client wrapper
         
         Args:
             server_address: gRPC server address (e.g., "localhost:5679")
             timeout: Request timeout in seconds
+            enable_compression: Enable gRPC compression (default: True)
+            compression_algorithm: Compression algorithm (currently only 'gzip' supported, default: 'gzip')
         """
         self.server_address = server_address
         self.timeout = timeout
+        self.enable_compression = enable_compression
+        self.compression_algorithm = compression_algorithm.lower()
         self._async_client = None
         
         # Initialize the gRPC client
@@ -46,8 +50,15 @@ class ProximaDBSyncGrpcClient:
     def _init_async_client(self):
         """Initialize the gRPC client (actually synchronous)"""
         try:
-            # Initialize gRPC client (it's actually synchronous despite the name)
-            self._async_client = AsyncGrpcClient(endpoint=self.server_address, timeout=self.timeout)
+            import grpc
+            # Initialize gRPC client with compression support
+            # Note: Currently only gzip is supported by tonic gRPC
+            compression = grpc.Compression.Gzip if self.enable_compression else None
+            self._async_client = AsyncGrpcClient(
+                endpoint=self.server_address, 
+                timeout=self.timeout,
+                compression=compression
+            )
             
         except Exception as e:
             logger.error(f"Failed to initialize gRPC client: {e}")

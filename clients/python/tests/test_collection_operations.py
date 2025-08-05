@@ -9,13 +9,13 @@ import time
 from typing import Dict, Any
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import (
+from proximadb import (
     CollectionConfig, IndexConfiguration, FlushConfig,
-    DistanceMetric, IndexingAlgorithm, StorageEngine,
+    DistanceMetric, IndexType, StorageEngine,
     CompressionType, StorageConfig
 )
-from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
-from proximadb.config import ClientConfig
+from proximadb import ProximaDBError, CollectionNotFoundError
+from proximadb import ClientConfig
 
 
 class TestCollectionCRUD:
@@ -163,7 +163,7 @@ class TestCollectionConfiguration:
         """Test advanced collection configuration with all options"""
         index_config = IndexConfiguration(
             index_name="primary_hnsw",
-            algorithm=IndexingAlgorithm.HNSW,
+            algorithm=IndexType.HNSW,
             memory_limit_mb=512
         )
         
@@ -172,17 +172,17 @@ class TestCollectionConfiguration:
             dimension=384,
             distance_metric="euclidean",
             storage_engine=StorageEngine.VIPER,
-            primary_indexing_algorithm=IndexingAlgorithm.HNSW,
+            primary_indexing_algorithm=IndexType.HNSW,
             index_configs=[index_config],
             description="Advanced test collection"
         )
         
         assert config.dimension == 384
         assert config.distance_metric == "euclidean"
-        assert config.primary_indexing_algorithm == IndexingAlgorithm.HNSW
+        assert config.primary_indexing_algorithm == IndexType.HNSW
         assert config.storage_engine == StorageEngine.VIPER
         assert len(config.index_configs) == 1
-        assert config.index_configs[0].algorithm == IndexingAlgorithm.HNSW
+        assert config.index_configs[0].algorithm == IndexType.HNSW
     
     def test_distance_metrics(self):
         """Test all distance metric options"""
@@ -204,11 +204,11 @@ class TestCollectionConfiguration:
     def test_index_algorithms(self):
         """Test index algorithm options"""
         algorithms = [
-            IndexingAlgorithm.HNSW,
-            IndexingAlgorithm.IVF,
-            IndexingAlgorithm.PQ,
-            IndexingAlgorithm.FLAT,
-            IndexingAlgorithm.ANNOY
+            IndexType.HNSW,
+            IndexType.IVF,
+            IndexType.PQ,
+            IndexType.FLAT,
+            IndexType.ANNOY
         ]
         
         for algo in algorithms:

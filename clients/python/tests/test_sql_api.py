@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 import json
 from proximadb import connect_rest, ProximaDBError
-from proximadb.models import CollectionConfig, StorageEngine, VectorRecord
+from proximadb import CollectionConfig, StorageEngine, VectorRecord
 
 
 class TestSqlApi:

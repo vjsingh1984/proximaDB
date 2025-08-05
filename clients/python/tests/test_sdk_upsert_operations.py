@@ -22,8 +22,8 @@ from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from proximadb import ProximaDBClient, Protocol
-from proximadb.models import CollectionConfig, VectorRecord, DistanceMetric, StorageEngine
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, VectorRecord, DistanceMetric, StorageEngine
+from proximadb import ProximaDBError
 
 
 class TestSDKUpsertOperations:
@@ -32,14 +32,14 @@ class TestSDKUpsertOperations:
     @pytest.fixture(scope="class")
     def rest_client(self):
         """REST client fixture"""
-        client = ProximaDBClient(protocol=Protocol.REST)
+        client = ProximaDBClient(url="http://localhost:5678", protocol=Protocol.REST)
         yield client
         client.close()
     
     @pytest.fixture(scope="class") 
     def grpc_client(self):
         """gRPC client fixture"""
-        client = ProximaDBClient(protocol=Protocol.GRPC)
+        client = ProximaDBClient(url="grpc://localhost:5679", protocol=Protocol.GRPC)
         yield client
         client.close()
     

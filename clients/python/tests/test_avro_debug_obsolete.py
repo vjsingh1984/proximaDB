@@ -121,7 +121,7 @@ def test_proto_serialization():
     
     try:
         # Create VectorRecord objects for proto-first architecture
-        from proximadb.models import VectorRecord
+        from proximadb import VectorRecord
         
         vector_records = [
             VectorRecord(

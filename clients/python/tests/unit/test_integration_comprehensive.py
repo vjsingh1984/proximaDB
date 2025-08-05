@@ -5,7 +5,10 @@ Comprehensive integration tests for ProximaDB functionality.
 import pytest
 import numpy as np
 import time
+import logging
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.integration
@@ -81,17 +84,17 @@ class TestComprehensiveIntegration:
         insert_time = time.time() - start_time
         throughput = test_size / insert_time
         
-        print(f"\\n📊 INSERT PERFORMANCE:")
-        print(f"   Vectors: {test_size}")
-        print(f"   Time: {insert_time:.2f}s")
-        print(f"   Throughput: {throughput:.1f} vectors/sec")
+        logger.info(f"\\n📊 INSERT PERFORMANCE:")
+        logger.info(f"   Vectors: {test_size}")
+        logger.info(f"   Time: {insert_time:.2f}s")
+        logger.info(f"   Throughput: {throughput:.1f} vectors/sec")
         
         # Test various search operations
         self._test_search_operations(bert_service, test_size)
     
     def _test_search_operations(self, bert_service, corpus_size):
         """Test different search operations."""
-        print(f"\\n🔍 TESTING SEARCH OPERATIONS:")
+        logger.info(f"\\n🔍 TESTING SEARCH OPERATIONS:")
         
         # 1. Test ID-based search (metadata filter)
         test_id = "corpus_vec_00001"
@@ -103,7 +106,7 @@ class TestComprehensiveIntegration:
             metadata_filter={"id": test_id}
         )
         search_time = (time.time() - start_time) * 1000
-        print(f"   ID search: {search_time:.2f}ms")
+        logger.info(f"   ID search: {search_time:.2f}ms")
         
         # 2. Test metadata filtering
         start_time = time.time()
@@ -114,7 +117,7 @@ class TestComprehensiveIntegration:
             metadata_filter={"category": "AI"}
         )
         search_time = (time.time() - start_time) * 1000
-        print(f"   Metadata filter: {search_time:.2f}ms")
+        logger.info(f"   Metadata filter: {search_time:.2f}ms")
         
         # 3. Test similarity search
         query_text = "machine learning algorithms"
@@ -127,7 +130,7 @@ class TestComprehensiveIntegration:
             top_k=10
         )
         search_time = (time.time() - start_time) * 1000
-        print(f"   Similarity search: {search_time:.2f}ms")
+        logger.info(f"   Similarity search: {search_time:.2f}ms")
         
         # 4. Test hybrid search
         start_time = time.time()
@@ -138,5 +141,5 @@ class TestComprehensiveIntegration:
             metadata_filter={"category": "AI"}
         )
         search_time = (time.time() - start_time) * 1000
-        print(f"   Hybrid search: {search_time:.2f}ms")
+        logger.info(f"   Hybrid search: {search_time:.2f}ms")
     

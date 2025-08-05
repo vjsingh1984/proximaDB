@@ -13,6 +13,7 @@ mod recovery_stress_tests {
         ApiConfig, ConsensusConfig, MonitoringConfig,
         AssignmentConfig, FilesystemOptimizationConfig,
     };
+    use proximadb::network::NetworkConfig;
     use proximadb::ProximaDB;
     
     // Helper to create test data
@@ -80,6 +81,7 @@ mod recovery_stress_tests {
                 metrics_enabled: false,
                 log_level: "error".to_string(),
             },
+            network: Some(NetworkConfig::default()),
             tls: None,
             hardware: None,
         }

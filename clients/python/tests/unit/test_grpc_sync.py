@@ -4,8 +4,8 @@ Test suite for ProximaDB synchronous gRPC client
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient, sync_method
-from proximadb.models import SearchResult, VectorOperationResponse, VectorRecord
-from proximadb.exceptions import ProximaDBError, NetworkError
+from proximadb import SearchResult, VectorOperationResponse, VectorRecord
+from proximadb import ProximaDBError, NetworkError
 
 
 class TestSyncMethod:
@@ -32,7 +32,7 @@ class TestProximaDBSyncGrpcClient:
         assert client.server_address == "localhost:5679"
         assert client.timeout == 30.0
         assert client._async_client == mock_instance
-        mock_async_client_class.assert_called_once_with(endpoint="localhost:5679", timeout=30.0)
+        mock_async_client_class.assert_called_once_with(endpoint="localhost:5679", timeout=30.0, compression=None)
     
     @patch('proximadb.protocols.grpc_sync.AsyncGrpcClient')
     def test_init_failure(self, mock_async_client_class):

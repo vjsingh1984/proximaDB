@@ -18,7 +18,7 @@ from enum import Enum
 import numpy as np
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .config import ClientConfig, load_config
+from .config import ClientConfig, load_config, Protocol
 from .models import (
     Collection,
     CollectionConfig,
@@ -53,11 +53,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class Protocol(Enum):
-    """Communication protocol options"""
-    AUTO = "auto"      # Auto-select best available (gRPC preferred)
-    GRPC = "grpc"      # Force gRPC (high performance, binary protocol)
-    REST = "rest"      # Force REST (web compatibility)
+# Protocol enum imported from config module
 
 
 class ProximaDBClient:
@@ -110,7 +106,8 @@ class ProximaDBClient:
             config.tls.verify = verify_ssl
             config.tls.cert_file = cert_file
             config.tls.key_file = key_file
-        config.enable_http2 = enable_http2
+        if hasattr(config, 'enable_http2'):
+            config.enable_http2 = enable_http2
         
         self.config = config
         self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
@@ -161,9 +158,12 @@ class ProximaDBClient:
         # Use the proper protocol URL generation for gRPC
         grpc_url = self.config.get_protocol_url(Protocol.GRPC)
         
+        # Pass compression settings from config
         return ProximaDBSyncGrpcClient(
             server_address=grpc_url,
-            timeout=60.0
+            timeout=60.0,
+            enable_compression=self.config.compression.enabled if hasattr(self.config, 'compression') else True,
+            compression_algorithm=self.config.compression.algorithm if hasattr(self.config, 'compression') else 'gzip'
         )
     
     def _create_rest_client(self):
@@ -694,7 +694,8 @@ class ProximaDBClient:
                         id=result.id if result.id else "",
                         score=result.score,
                         vector=list(result.vector) if result.vector else None,
-                        metadata=metadata_dict
+                        metadata=metadata_dict,
+                        rank=result.rank if hasattr(result, 'rank') and result.rank else None
                     )
                     results.append(search_result)
             return results

@@ -162,6 +162,21 @@ class NetworkError(ProximaDBError):
         self.original_error = original_error
 
 
+class TransportError(ProximaDBError):
+    """Transport layer error (REST/gRPC)"""
+    
+    def __init__(
+        self,
+        message: str = "Transport error",
+        transport_type: Optional[str] = None,
+        original_error: Optional[Exception] = None,
+        **kwargs
+    ) -> None:
+        super().__init__(message, error_code="TRANSPORT_ERROR", **kwargs)
+        self.transport_type = transport_type
+        self.original_error = original_error
+
+
 class TimeoutError(ProximaDBError):
     """Request timeout"""
     

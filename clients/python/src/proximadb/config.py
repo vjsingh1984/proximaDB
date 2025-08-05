@@ -40,15 +40,8 @@ class LogLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-class RetryConfig(BaseModel):
-    """Retry configuration"""
-    max_retries: int = Field(default=3, ge=0, le=10)
-    backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
-    max_backoff: float = Field(default=60.0, ge=1.0)
-    retry_on_timeout: bool = True
-    retry_on_connection_error: bool = True
-    retry_on_server_error: bool = True
-    retry_status_codes: list = Field(default_factory=lambda: [429, 500, 502, 503, 504])
+# Import retry configuration from resilience module
+from .resilience import NetworkRetryPolicy as RetryConfig
 
 
 class ConnectionConfig(BaseModel):
@@ -62,11 +55,14 @@ class ConnectionConfig(BaseModel):
 
 
 class CompressionConfig(BaseModel):
-    """Compression configuration"""
-    enabled: bool = True
-    algorithm: str = "gzip"  # gzip, deflate, br
-    threshold_bytes: int = Field(default=1024, ge=0)
-    level: Optional[int] = Field(default=None, ge=1, le=9)
+    """Compression configuration for Release 1.0
+    
+    Clean configuration without legacy compatibility.
+    """
+    enabled: bool = Field(default=False, description="Enable compression")
+    algorithm: str = Field(default="gzip", description="Compression algorithm")
+    threshold_bytes: int = Field(default=1024, ge=0, description="Minimum size to compress")
+    level: Optional[int] = Field(default=None, ge=1, le=9, description="Compression level")
 
 
 class TLSConfig(BaseModel):
@@ -226,6 +222,10 @@ class ClientConfig(BaseModel):
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        
+        # Add compression headers if enabled
+        if self.compression.enabled:
+            headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
         
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

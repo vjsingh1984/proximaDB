@@ -10,12 +10,12 @@ import time
 from typing import Dict, Any
 
 from proximadb import (
-    ProximaDBClient, ProximaDBGrpcClient, ProximaDBRestClient,
+    ProximaDBClient,
     connect, connect_grpc, connect_rest, Protocol
 )
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
-from proximadb.config import ClientConfig, RetryConfig
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError, CollectionNotFoundError
+from proximadb import ClientConfig, RetryConfig
 
 
 class TestClientCreation:
@@ -62,9 +62,9 @@ class TestClientCreation:
         assert rest_client is not None
         assert hasattr(rest_client, 'config') or hasattr(rest_client, '_http_client')
         
-        grpc_client = ProximaDBGrpcClient("http://localhost:5679")
+        grpc_client = ProximaDBClient("http://localhost:5679", protocol=Protocol.GRPC)
         assert grpc_client is not None
-        assert hasattr(grpc_client, 'endpoint') or hasattr(grpc_client, 'channel')
+        assert hasattr(grpc_client, 'config') or hasattr(grpc_client, '_transport')
     
     def test_client_with_config(self):
         """Test client creation with configuration objects"""
@@ -272,7 +272,7 @@ class TestContextManagers:
             pytest.skip("Context manager not implemented for REST client")
         
         try:
-            with ProximaDBGrpcClient("http://localhost:5679") as grpc_client:
+            with ProximaDBClient("http://localhost:5679", protocol=Protocol.GRPC) as grpc_client:
                 assert grpc_client is not None
                 
         except (AttributeError, TypeError):

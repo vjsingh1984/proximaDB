@@ -10,8 +10,8 @@ import numpy as np
 from typing import List, Dict, Any
 
 from proximadb import connect_rest
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError, CollectionNotFoundError
 
 
 class TestRESTAPICompleteness:

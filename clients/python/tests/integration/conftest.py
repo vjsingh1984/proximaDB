@@ -15,8 +15,8 @@ from typing import Generator, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError
 
 
 
@@ -31,7 +31,7 @@ logging.basicConfig(
 # Test configuration
 TEST_CONFIG = {
     "rest_endpoint": "http://localhost:5678",
-    "grpc_endpoint": "http://localhost:5679",
+    "grpc_endpoint": "grpc://localhost:5679",
     "default_timeout": 30.0,
     "max_retry_attempts": 3,
     "test_collection_prefix": "pytest_",

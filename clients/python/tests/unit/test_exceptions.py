@@ -2,7 +2,7 @@
 Test suite for ProximaDB exception classes
 """
 import pytest
-from proximadb.exceptions import (
+from proximadb import (
     ProximaDBError,
     AuthenticationError,
     AuthorizationError,
@@ -18,7 +18,7 @@ from proximadb.exceptions import (
     NetworkError,
     TimeoutError,
     ConfigurationError,
-    IndexError,
+    ProximaIndexError,
     BatchError,
     WALError,
     StreamingError,
@@ -169,10 +169,10 @@ class TestExceptionClasses:
         assert isinstance(exc, ProximaDBError)
     
     def test_index_error(self):
-        """Test IndexError"""
-        exc = IndexError("Index operation failed", index_type="hnsw")
+        """Test ProximaIndexError"""
+        exc = ProximaIndexError("Index operation failed", index_type="hnsw")
         assert "Index operation failed" in str(exc)
-        assert "INDEX_ERROR" in str(exc)
+        assert "INDEX_ERROR" in str(exc)  
         assert exc.index_type == "hnsw"
         assert isinstance(exc, ProximaDBError)
     

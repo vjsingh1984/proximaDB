@@ -9,15 +9,15 @@ import time
 from typing import Dict, Any
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import (
+from proximadb import (
     CollectionConfig, IndexConfiguration,
-    DistanceMetric, StorageEngine, IndexingAlgorithm,
+    DistanceMetric, StorageEngine, IndexType,
     Collection, CollectionStats, StorageConfig, CompressionType,
     FlushConfig
 )
-from proximadb import IndexConfig  # Import alias for IndexConfiguration
-from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
-from proximadb.config import ClientConfig
+# IndexConfig alias not needed - using IndexConfiguration directly
+from proximadb import ProximaDBError, CollectionNotFoundError
+from proximadb import ClientConfig
 
 
 class TestCollectionCRUD:
@@ -186,7 +186,7 @@ class TestCollectionConfiguration:
         """Test advanced collection configuration with all options"""
         index_config = IndexConfiguration(
             index_name="test_index",
-            algorithm=IndexingAlgorithm.HNSW,
+            algorithm=IndexType.HNSW,
             # parameters={"m": 16, "ef_construction": 200}  # Not a field anymore
         )
         
@@ -213,7 +213,7 @@ class TestCollectionConfiguration:
         assert config.dimension == 384
         assert config.distance_metric == "euclidean"
         # The model has index_configs (plural) but we added a backward compatibility property
-        assert config.index_config.algorithm == IndexingAlgorithm.HNSW
+        assert config.index_config.algorithm == IndexType.HNSW
         assert config.storage_config.compression == CompressionType.LZ4
     
     def test_distance_metrics(self):
@@ -236,11 +236,11 @@ class TestCollectionConfiguration:
     def test_index_algorithms(self):
         """Test index algorithm options"""
         algorithms = [
-            IndexingAlgorithm.HNSW,
-            IndexingAlgorithm.IVF,
-            IndexingAlgorithm.PQ,
-            IndexingAlgorithm.FLAT,
-            IndexingAlgorithm.ANNOY
+            IndexType.HNSW,
+            IndexType.IVF,
+            IndexType.PQ,
+            IndexType.FLAT,
+            IndexType.ANNOY
         ]
         
         for algo in algorithms:
@@ -262,7 +262,7 @@ class TestCollectionConfiguration:
     
     def test_collection_with_filterable_columns(self):
         """Test collection with filterable columns configuration"""
-        from proximadb.models import FilterableColumn, FilterableDataType
+        from proximadb import FilterableColumn, FilterableDataType
         
         filterable_cols = [
             FilterableColumn(name="category", data_type=FilterableDataType.STRING, indexed=True),

@@ -11,8 +11,8 @@ from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, FlushConfig, DistanceMetric, StorageEngine
-from proximadb.exceptions import ProximaDBError, VectorDimensionError
+from proximadb import CollectionConfig, FlushConfig, DistanceMetric, StorageEngine
+from proximadb import ProximaDBError, VectorDimensionError
 
 
 def extract_metadata_value(value: Any) -> Any:

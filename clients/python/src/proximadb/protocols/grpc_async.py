@@ -46,7 +46,7 @@ class ProximaDBClient:
         timeout: float = 60.0,
         enable_debug_logging: bool = False,
         use_tls: bool = False,
-        compression: Optional[grpc.Compression] = None
+        compression: Optional[grpc.Compression] = None  # Disabled by default
     ):
         """
         Initialize gRPC client
@@ -112,6 +112,15 @@ class ProximaDBClient:
                 ('grpc.http2.min_ping_interval_without_data_ms', 5000),
             ]
             
+            # Add compression options if enabled
+            if self.compression is not None:
+                options.extend([
+                    ('grpc.default_compression_algorithm', self.compression),
+                    ('grpc.default_compression_level', 'high'),
+                ])
+                logger.info(f"gRPC compression enabled: {self.compression}")
+            
+            
             if self.use_tls:
                 credentials = grpc.ssl_channel_credentials()
                 self.channel = grpc.secure_channel(self.endpoint, credentials, options=options)
@@ -138,7 +147,12 @@ class ProximaDBClient:
         """Make gRPC call with timeout and error handling"""
         try:
             timeout = timeout or self.timeout
-            return method(request, timeout=timeout, compression=self.compression)
+            # Add compression metadata
+            metadata = []
+            if self.compression is not None:
+                metadata.append(('grpc-accept-encoding', 'gzip,deflate'))
+            
+            return method(request, timeout=timeout, compression=self.compression, metadata=metadata)
         except grpc.RpcError as e:
             raise ProximaDBError(f"gRPC error: {e.code()}: {e.details()}")
         except Exception as e:
@@ -1009,7 +1023,8 @@ class ProximaDBClient:
                             id=result_pb.id if result_pb.id else None,
                             score=result_pb.score,
                             vector=list(result_pb.vector) if result_pb.vector else None,
-                            metadata=metadata_dict if metadata_dict else None
+                            metadata=metadata_dict if metadata_dict else None,
+                            rank=result_pb.rank if hasattr(result_pb, 'rank') and result_pb.rank else None
                         ))
                 return results
             else:

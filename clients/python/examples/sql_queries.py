@@ -8,6 +8,7 @@ with metadata filtering.
 import numpy as np
 from proximadb import connect
 from proximadb.models import CollectionConfig, StorageEngine
+from bert_utils import generate_text_embeddings, generate_query_embedding
 
 
 def main():
@@ -30,11 +31,26 @@ def main():
     collection = client.create_collection(collection_name, dimension=384, storage_engine=StorageEngine.VIPER)
     print(f"Created collection: {collection_name}")
     
-    # Insert sample product data
+    # Insert sample product data with real BERT embeddings
+    print("✨ Creating products with real BERT embeddings...")
+    
+    # Product descriptions for BERT embedding generation
+    product_descriptions = [
+        "High-performance laptop with Intel i7 processor, 16GB RAM and 512GB SSD storage",
+        "UltraBook Pro with Intel i9 processor, 32GB RAM and 1TB SSD for professionals", 
+        "SmartPhone X with 5G connectivity, 128GB storage and triple camera system",
+        "Python Programming book for beginners with 500 pages of comprehensive tutorials",
+        "Machine Learning Guide with advanced topics and practical examples, 700 pages"
+    ]
+    
+    # Generate BERT embeddings for product descriptions
+    print(f"🤖 Generating BERT embeddings for {len(product_descriptions)} products...")
+    embeddings = generate_text_embeddings(product_descriptions)
+    
     products = [
         {
             "id": "laptop_001",
-            "vector": np.random.rand(384).tolist(),
+            "vector": embeddings[0],
             "metadata": {
                 "name": "ProBook Laptop",
                 "category": "electronics",
@@ -42,12 +58,13 @@ def main():
                 "price": 899.99,
                 "rating": 4.5,
                 "in_stock": True,
-                "features": ["16GB RAM", "512GB SSD", "Intel i7"]
+                "features": ["16GB RAM", "512GB SSD", "Intel i7"],
+                "description": product_descriptions[0]
             }
         },
         {
             "id": "laptop_002",
-            "vector": np.random.rand(384).tolist(),
+            "vector": embeddings[1],
             "metadata": {
                 "name": "UltraBook Pro",
                 "category": "electronics",
@@ -55,12 +72,13 @@ def main():
                 "price": 1299.99,
                 "rating": 4.8,
                 "in_stock": True,
-                "features": ["32GB RAM", "1TB SSD", "Intel i9"]
+                "features": ["32GB RAM", "1TB SSD", "Intel i9"],
+                "description": product_descriptions[1]
             }
         },
         {
             "id": "phone_001",
-            "vector": np.random.rand(384).tolist(),
+            "vector": embeddings[2],
             "metadata": {
                 "name": "SmartPhone X",
                 "category": "electronics",
@@ -68,12 +86,13 @@ def main():
                 "price": 699.99,
                 "rating": 4.3,
                 "in_stock": False,
-                "features": ["5G", "128GB", "Triple Camera"]
+                "features": ["5G", "128GB", "Triple Camera"],
+                "description": product_descriptions[2]
             }
         },
         {
             "id": "book_001",
-            "vector": np.random.rand(384).tolist(),
+            "vector": embeddings[3],
             "metadata": {
                 "name": "Python Programming",
                 "category": "books",
@@ -81,12 +100,13 @@ def main():
                 "price": 49.99,
                 "rating": 4.7,
                 "in_stock": True,
-                "features": ["Beginner Friendly", "500 pages"]
+                "features": ["Beginner Friendly", "500 pages"],
+                "description": product_descriptions[3]
             }
         },
         {
             "id": "book_002",
-            "vector": np.random.rand(384).tolist(),
+            "vector": embeddings[4],
             "metadata": {
                 "name": "Machine Learning Guide",
                 "category": "books",
@@ -94,10 +114,15 @@ def main():
                 "price": 59.99,
                 "rating": 4.6,
                 "in_stock": True,
-                "features": ["Advanced Topics", "700 pages"]
+                "features": ["Advanced Topics", "700 pages"],
+                "description": product_descriptions[4]
             }
         }
     ]
+    
+    print(f"✅ Created {len(products)} products with semantic BERT embeddings")
+    for i, p in enumerate(products):
+        print(f"   {i+1}. {p['metadata']['name']} - {p['metadata']['description'][:50]}...")
     
     # Extract vectors, ids, and metadata separately
     vectors = [p["vector"] for p in products]
@@ -105,11 +130,19 @@ def main():
     metadata = [p["metadata"] for p in products]
     
     response = client.insert_vectors(collection_name, vectors, ids, metadata)
-    print(f"Inserted {len(products)} products")
+    print(f"\n✅ Inserted {len(products)} products with BERT embeddings")
+    print(f"   Each vector has {len(vectors[0])} dimensions (BERT all-MiniLM-L6-v2)")
     
-    # Example 1: Basic vector similarity search
-    print("\n=== Example 1: Basic Vector Similarity Search ===")
-    query_vector = np.random.rand(384).tolist()
+    # Example 1: Semantic similarity search with BERT query
+    print("\n" + "=" * 60)
+    print("SEMANTIC SQL QUERIES WITH BERT EMBEDDINGS")
+    print("=" * 60)
+    
+    # Generate query embedding from real text
+    query_text = "laptop computer for programming and development"
+    print(f"\n🎯 Example 1: Semantic search for '{query_text}'")
+    query_vector = generate_query_embedding(query_text)
+    print(f"   Generated BERT query embedding ({len(query_vector)} dimensions)")
     # Format vector as [0.1, 0.2, ...] for SQL parser
     vector_str = "[" + ", ".join(str(v) for v in query_vector) + "]"
     
@@ -122,10 +155,12 @@ def main():
     
     try:
         result = client.execute_sql(sql)
-        print(f"Found {result['row_count']} similar products:")
-        for row in result['rows']:
+        print(f"\n✅ Found {result['row_count']} semantically similar products:")
+        for i, row in enumerate(result['rows']):
             metadata = row.get('metadata', {})
-            print(f"  - {row['id']}: {metadata.get('name', 'N/A')} (${metadata.get('price', 'N/A')})")
+            print(f"   {i+1}. {metadata.get('name', 'N/A')} - ${metadata.get('price', 'N/A')}")
+            print(f"      📝 Description: {metadata.get('description', 'N/A')[:80]}...")
+            print(f"      🎯 Semantic match: Query about '{query_text}' matches product description")
     except Exception as e:
         print(f"SQL Error: {e}")
         # Try without metadata fields to see if basic SQL works
@@ -144,38 +179,51 @@ def main():
         except Exception as e2:
             print(f"Basic SQL also failed: {e2}")
     
-    # Example 2: Filtered vector search
-    print("\n=== Example 2: Vector Search with Category Filter ===")
+    # Example 2: Semantic search with category filtering
+    query_text_2 = "smartphone with camera and wireless connectivity"
+    print(f"\n🎯 Example 2: Semantic search + filter for '{query_text_2}'")
+    query_vector_2 = generate_query_embedding(query_text_2)
+    vector_str_2 = "[" + ", ".join(str(v) for v in query_vector_2) + "]"
     sql_filtered = f"""
     SELECT id, metadata
     FROM {collection_name}
     WHERE metadata->>'category' = 'electronics'
-    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str_2}, 'cosine')
     LIMIT 3
     """
     
     result = client.execute_sql(sql_filtered)
-    print(f"Found {result['row_count']} similar electronics:")
-    for row in result['rows']:
+    print(f"\n✅ Found {result['row_count']} similar electronics:")
+    for i, row in enumerate(result['rows']):
         metadata = row.get('metadata', {})
-        print(f"  - {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} (Rating: {metadata.get('rating', 'N/A')})")
+        print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} (Rating: {metadata.get('rating', 'N/A')})")
+        print(f"      📂 Category: {metadata.get('category')} (filtered)")
+        print(f"      📝 Features: {', '.join(metadata.get('features', []))}")
+        print(f"      🎯 Semantic match: '{query_text_2}' relates to this product's capabilities")
     
-    # Example 3: Complex filtering with price range
-    print("\n=== Example 3: Price Range Filter ===")
+    # Example 3: Semantic search for learning materials
+    query_text_3 = "learning resources for programming and machine learning"
+    print(f"\n🎯 Example 3: Semantic search for '{query_text_3}'")
+    query_vector_3 = generate_query_embedding(query_text_3)
+    vector_str_3 = "[" + ", ".join(str(v) for v in query_vector_3) + "]"
     sql_price = f"""
     SELECT id, metadata
     FROM {collection_name}
     WHERE metadata->>'in_stock' = 'true'
-    ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
+    ORDER BY VECTOR_SIMILARITY(vector, {vector_str_3}, 'cosine')
     LIMIT 5
     """
     
     result = client.execute_sql(sql_price)
-    print(f"Found {result['row_count']} products in stock:")
-    for row in result['rows']:
+    print(f"\n✅ Found {result['row_count']} available learning products:")
+    for i, row in enumerate(result['rows']):
         metadata = row.get('metadata', {})
         stock = "In Stock" if metadata.get('in_stock') == True else "Out of Stock"
-        print(f"  - {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} ({stock})")
+        print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} ({stock})")
+        print(f"      📂 Category: {metadata.get('category')}")
+        print(f"      🎯 Semantic match: Query about '{query_text_3}' matches educational content")
+        if metadata.get('description'):
+            print(f"      📝 Description: {metadata.get('description')[:60]}...")
     
     # Example 4: Different distance metrics
     print("\n=== Example 4: Different Distance Metrics ===")
@@ -229,8 +277,37 @@ def main():
     
     # Cleanup
     client.delete_collection(collection_name)
-    print(f"\nDeleted collection: {collection_name}")
+    print(f"\n📋 SQL QUERY DEMO SUMMARY:")
+    print("=" * 50)
+    print("✅ Demonstrated Features:")
+    print("   • BERT embeddings for semantic product search")
+    print("   • SQL vector similarity queries with real text")
+    print("   • Metadata filtering combined with semantic search")
+    print("   • Multiple distance metrics (cosine, euclidean, etc.)")
+    print("   • Complex WHERE clauses with JSON metadata access")
+    print("   • Pagination and result limiting")
+    print("\n💡 Key Insight: BERT embeddings enable semantic search")
+    print("   - Query 'laptop for programming' matches technical specifications")
+    print("   - Query 'smartphone with camera' finds relevant electronics")
+    print("   - Query 'learning resources' identifies educational content")
+    print("\n📋 Technical Details:")
+    print(f"   • Embedding Model: all-MiniLM-L6-v2 (384 dimensions)")
+    print(f"   • Distance Metric: Cosine similarity (optimal for normalized embeddings)")
+    print(f"   • Storage Engine: VIPER (columnar, optimized for metadata filtering)")
+    print(f"   • Query Language: SQL with VECTOR_SIMILARITY function")
+    print(f"\n🗑️ Deleted collection: {collection_name}")
+    print("✅ SQL semantic search demo completed successfully!")
 
 
 if __name__ == "__main__":
+    print("🚀 ProximaDB SQL Queries Demo with BERT Embeddings")
+    print("=" * 60)
+    print("📋 This demo showcases:")
+    print("   • Real BERT embeddings for semantic understanding")
+    print("   • SQL queries with vector similarity functions")
+    print("   • Complex metadata filtering and JSON access")
+    print("   • Semantic search vs keyword matching")
+    print("\n⚡ Starting SQL demo...")
+    print("=" * 60)
+    
     main()

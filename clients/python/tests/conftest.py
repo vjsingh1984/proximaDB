@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "clients/python/src"))
 
 from proximadb import ProximaDBClient
+from proximadb.config import ClientConfig, CompressionConfig
 
 
 @pytest.fixture(scope="session")
@@ -25,19 +26,27 @@ def rest_server_url():
 @pytest.fixture(scope="session")
 def grpc_server_url():
     """ProximaDB gRPC server URL for testing."""
-    return "localhost:5679"
+    return "grpc://localhost:5679"
 
 
 @pytest.fixture(scope="session")
 def client(rest_server_url):
-    """ProximaDB REST client instance."""
-    return ProximaDBClient(rest_server_url)
+    """ProximaDB REST client instance with compression disabled."""
+    config = ClientConfig(
+        url=rest_server_url,
+        compression=CompressionConfig(enabled=False)
+    )
+    return ProximaDBClient(config=config)
 
 
 @pytest.fixture(scope="session")
 def grpc_client(grpc_server_url):
-    """ProximaDB gRPC client instance."""
-    return ProximaDBClient(grpc_server_url)
+    """ProximaDB gRPC client instance with compression disabled."""
+    config = ClientConfig(
+        url=grpc_server_url,
+        compression=CompressionConfig(enabled=False)
+    )
+    return ProximaDBClient(config=config)
 
 
 @pytest.fixture

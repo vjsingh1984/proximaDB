@@ -17,7 +17,7 @@ import json
 import glob
 
 from proximadb import ProximaDBClient, Protocol
-from proximadb.models import Vector, CollectionConfig, DistanceMetric, StorageEngine
+from proximadb import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
 
 
 def generate_bert_embeddings(texts, model_name='all-MiniLM-L6-v2'):

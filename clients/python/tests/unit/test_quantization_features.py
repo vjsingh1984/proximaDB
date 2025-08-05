@@ -7,7 +7,8 @@ features added to ProximaDB.
 
 import pytest
 import numpy as np
-from proximadb.models import (
+import logging
+from proximadb import (
     QuantizationType,
     QuantizationConfig,
     SearchOptimization,
@@ -17,10 +18,12 @@ from proximadb.models import (
 )
 from proximadb import ProximaDBClient, Protocol
 
+logger = logging.getLogger(__name__)
+
 try:
     from proximadb import proximadb_pb2
 except ImportError as e:
-    print(f"Failed to import proximadb_pb2: {e}")
+    logger.debug(f"Failed to import proximadb_pb2: {e}")
     proximadb_pb2 = None
 
 
@@ -320,23 +323,21 @@ class TestQuantizationIntegration:
             pytest.skip("ProximaDB server not running")
             
         # Create collection with quantization
-        config = CollectionConfig(
-            name="test_quantization_collection",
-            dimension=128,
-            distance_metric="cosine",
-            quantization_config=QuantizationConfig(
-                enabled=True,
-                type=QuantizationType.SCALAR,
-                bits_per_vector=8,
-                accuracy_threshold=0.95
-            )
-        )
-        
         collection_name = f"test_quant_{np.random.randint(1000000)}"
         
         try:
             # Create collection
-            collection = client.create_collection(collection_name, config)
+            collection = client.create_collection(
+                collection_name,
+                dimension=128,
+                distance_metric="cosine",
+                quantization_config=QuantizationConfig(
+                    enabled=True,
+                    type=QuantizationType.SCALAR,
+                    bits_per_vector=8,
+                    accuracy_threshold=0.95
+                )
+            )
             assert collection.name == collection_name
             
             # Verify collection was created
@@ -367,7 +368,7 @@ class TestQuantizationIntegration:
             
             # Insert test vectors
             vectors = np.random.rand(100, 128).astype(np.float32)
-            ids = [f"vec_{i}" for i in range(20)]
+            ids = [f"vec_{i}" for i in range(100)]
             client.insert_vectors(collection_name, vectors, ids)
             
             # Search with optimization hints

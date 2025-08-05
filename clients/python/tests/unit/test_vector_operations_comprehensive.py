@@ -7,12 +7,15 @@ Consolidated tests for vector CRUD operations, batch insertions, and large-scale
 import pytest
 import time
 import numpy as np
+import logging
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
-from proximadb.exceptions import ProximaDBError, VectorDimensionError
+from proximadb import CollectionConfig, DistanceMetric, StorageEngine
+from proximadb import ProximaDBError, VectorDimensionError
+
+logger = logging.getLogger(__name__)
 
 
 class TestVectorCRUD:
@@ -34,14 +37,14 @@ class TestVectorCRUD:
     def test_collection(self, rest_client):
         """Create test collection for vector operations"""
         collection_name = f"vector_crud_{int(time.time())}"
-        config = CollectionConfig(
-            name=collection_name,
+        
+        # Create collection without duplicate name
+        collection = rest_client.create_collection(
+            collection_name,
             dimension=128,
             distance_metric="cosine",
             description="Vector CRUD test collection"
         )
-        
-        collection = rest_client.create_collection(collection_name, config)
         yield collection
         
         # Cleanup
@@ -81,7 +84,7 @@ class TestVectorCRUD:
                 assert retrieved.get('metadata', {}).get('category') == 'test'
         except (NotImplementedError, AttributeError, Exception) as e:
             # Skip get_vector test if not implemented
-            print(f"Skipping get_vector test (not implemented): {e}")
+            logger.debug(f"Skipping get_vector test (not implemented): {e}")
         
         # Update vector (upsert)
         updated_vector = np.random.random(128).astype(np.float32).tolist()
@@ -109,7 +112,7 @@ class TestVectorCRUD:
             if updated_retrieved is not None:
                 assert updated_retrieved.get('metadata', {}).get('category') == 'updated'
         except (NotImplementedError, AttributeError, Exception) as e:
-            print(f"Skipping get_vector verification (not implemented): {e}")
+            logger.debug(f"Skipping get_vector verification (not implemented): {e}")
     
     def test_single_vector_operations_grpc(self, grpc_client, test_collection):
         """Test single vector CRUD operations via gRPC"""
@@ -168,9 +171,9 @@ class TestVectorCRUD:
                 vector_id=rest_vector_id,
                 include_metadata=True
             )
-            print(f"REST check successful: {rest_check}")
+            logger.debug(f"REST check successful: {rest_check}")
         except Exception as e:
-            print(f"REST check failed: {e}")
+            logger.debug(f"REST check failed: {e}")
         
         # Retrieve via gRPC
         retrieved_via_grpc = grpc_client.get_vector(
@@ -230,15 +233,15 @@ class TestBatchVectorOperations:
     def batch_collection(self, rest_client):
         """Create collection optimized for batch operations"""
         collection_name = f"batch_test_{int(time.time())}"
-        config = CollectionConfig(
-            name=collection_name,
+        
+        # Create collection without duplicate name
+        collection = rest_client.create_collection(
+            collection_name,
             dimension=384,
             distance_metric="cosine",
             description="Batch operations test collection",
             storage_engine=StorageEngine.VIPER
         )
-        
-        collection = rest_client.create_collection(collection_name, config)
         yield collection
         
         # Cleanup
@@ -327,16 +330,15 @@ class TestLargeScaleOperations:
     def large_scale_collection(self, rest_client):
         """Create collection for large-scale testing"""
         collection_name = f"large_scale_{int(time.time())}"
-        config = CollectionConfig(
-            name=collection_name,
+        
+        # Create collection without duplicate name
+        collection = rest_client.create_collection(
+            collection_name,
             dimension=512,  # Larger dimension for more data per vector
             distance_metric="cosine",
             description="Large-scale operations test",
-            storage_engine=StorageEngine.VIPER,
-            # Collection configured for performance testing
+            storage_engine=StorageEngine.VIPER
         )
-        
-        collection = rest_client.create_collection(collection_name, config)
         yield collection
         
         # Cleanup
@@ -546,6 +548,358 @@ class TestVectorValidation:
                 client.delete_collection(collection_name)
             except:
                 pass
+
+
+class TestStreamingBatchingConcepts:
+    """Test streaming and batching concepts with regular SDK operations"""
+    
+    @pytest.fixture(scope="class")
+    def rest_client(self):
+        # Disable compression for debugging
+        from proximadb.config import CompressionConfig
+        client = connect_rest(
+            "http://localhost:5678",
+            compression=CompressionConfig(enabled=False)
+        )
+        yield client
+        client.close()
+    
+    @pytest.fixture(scope="class")
+    def grpc_client(self):
+        client = connect_grpc("http://localhost:5679")
+        yield client
+        client.close()
+    
+    @pytest.fixture(scope="class")
+    def streaming_collection(self, rest_client):
+        """Create collection for streaming tests"""
+        collection_name = f"streaming_test_{int(time.time())}"
+        
+        collection = rest_client.create_collection(
+            collection_name,
+            dimension=256,
+            distance_metric="cosine",
+            description="Streaming operations test collection"
+        )
+        yield collection
+        
+        # Cleanup
+        try:
+            rest_client.delete_collection(collection_name)
+        except:
+            pass
+    
+    def test_simulated_streaming_insertion(self, rest_client, streaming_collection):
+        """Test streaming-like vector insertion using regular batching"""
+        # Simulate streaming by processing data in chunks
+        total_vectors = 200
+        chunk_size = 50
+        
+        def generate_vector_chunk(start_idx, size):
+            """Generate a chunk of vectors"""
+            vectors = []
+            ids = []
+            metadatas = []
+            
+            for i in range(start_idx, start_idx + size):
+                vector = np.random.random(256).astype(np.float32).tolist()
+                vectors.append(vector)
+                ids.append(f"stream_vec_{i}")
+                metadatas.append({
+                    "index": i,
+                    "chunk": i // chunk_size,
+                    "source": "streaming_test"
+                })
+            
+            return vectors, ids, metadatas
+        
+        # Process vectors in streaming fashion
+        processed_count = 0
+        for chunk_start in range(0, total_vectors, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, total_vectors)
+            chunk_vectors, chunk_ids, chunk_metadatas = generate_vector_chunk(
+                chunk_start, chunk_end - chunk_start
+            )
+            
+            # Insert chunk
+            result = rest_client.insert_vectors(
+                collection_id=streaming_collection.config.name,
+                vectors=chunk_vectors,
+                ids=chunk_ids,
+                metadata=chunk_metadatas
+            )
+            
+            # Track progress
+            if hasattr(result, 'success'):
+                processed_count += len(chunk_vectors)
+            elif hasattr(result, 'total'):
+                processed_count += result.success
+            
+            # Simulate streaming delay
+            time.sleep(0.01)
+        
+        assert processed_count >= 190  # Allow some failures
+    
+    def test_paginated_search_as_stream(self, grpc_client, streaming_collection):
+        """Test search result streaming using pagination"""
+        # First insert test data
+        vectors = []
+        ids = []
+        metadatas = []
+        
+        for i in range(100):
+            vectors.append(np.random.random(256).astype(np.float32).tolist())
+            ids.append(f"search_stream_{i}")
+            metadatas.append({"index": i, "group": f"group_{i % 5}"})
+        
+        grpc_client.insert_vectors(
+            collection_id=streaming_collection.config.name,
+            vectors=vectors,
+            ids=ids,
+            metadata=metadatas
+        )
+        
+        time.sleep(1)  # Wait for indexing
+        
+        # Simulate streaming search results by making multiple smaller searches
+        query_vector = np.random.random(256).astype(np.float32).tolist()
+        all_results = []
+        page_size = 20
+        max_results = 50
+        
+        # Multiple search requests to simulate streaming
+        for page in range(3):  # 3 pages of 20 = 60 potential results
+            try:
+                results = grpc_client.search(
+                    collection_id=streaming_collection.config.name,
+                    vector=query_vector,
+                    top_k=min(page_size, max_results - len(all_results)),
+                    include_metadata=True
+                )
+                
+                # Filter out duplicates (in real streaming, this would be handled by offset)
+                existing_ids = {r.id for r in all_results}
+                new_results = [r for r in results if r.id not in existing_ids]
+                all_results.extend(new_results)
+                
+                if len(all_results) >= max_results:
+                    break
+                    
+                time.sleep(0.05)  # Simulate streaming delay
+                
+            except Exception as e:
+                logger.debug(f"Search page {page} failed: {e}")
+                continue
+        
+        # Verify we got some results
+        assert len(all_results) > 0
+        logger.info(f"Retrieved {len(all_results)} results in streaming fashion")
+
+
+class TestBatchingOptimization:
+    """Test batching optimization strategies using standard SDK"""
+    
+    @pytest.fixture(scope="class")
+    def rest_client(self):
+        client = connect_rest("http://localhost:5678")
+        yield client
+        client.close()
+    
+    @pytest.fixture(scope="class")
+    def batching_collection(self, rest_client):
+        """Create collection for batching tests"""
+        collection_name = f"batching_test_{int(time.time())}"
+        
+        collection = rest_client.create_collection(
+            collection_name,
+            dimension=128,
+            distance_metric="euclidean",
+            description="Batching operations test collection"
+        )
+        yield collection
+        
+        # Cleanup
+        try:
+            rest_client.delete_collection(collection_name)
+        except:
+            pass
+    
+    def test_optimal_batch_sizing(self, rest_client, batching_collection):
+        """Test different batch sizes to find optimal performance"""
+        batch_sizes = [10, 25, 50, 100]
+        results = {}
+        
+        for batch_size in batch_sizes:
+            start_time = time.time()
+            
+            # Generate and insert vectors in batches
+            total_vectors = 200
+            successful_inserts = 0
+            
+            for batch_start in range(0, total_vectors, batch_size):
+                batch_end = min(batch_start + batch_size, total_vectors)
+                batch_vectors = []
+                batch_ids = []
+                batch_metadatas = []
+                
+                for i in range(batch_start, batch_end):
+                    vector = np.random.random(128).astype(np.float32).tolist()
+                    batch_vectors.append(vector)
+                    batch_ids.append(f"batch_{batch_size}_{i}")
+                    batch_metadatas.append({"batch_size": batch_size, "index": i})
+                
+                try:
+                    result = rest_client.insert_vectors(
+                        collection_id=batching_collection.config.name,
+                        vectors=batch_vectors,
+                        ids=batch_ids,
+                        metadata=batch_metadatas
+                    )
+                    successful_inserts += len(batch_vectors)
+                except Exception as e:
+                    logger.warning(f"Batch insert failed for size {batch_size}: {e}")
+            
+            elapsed_time = time.time() - start_time
+            throughput = successful_inserts / elapsed_time if elapsed_time > 0 else 0
+            
+            results[batch_size] = {
+                "total_vectors": total_vectors,
+                "successful": successful_inserts,
+                "time_seconds": elapsed_time,
+                "throughput_per_sec": throughput
+            }
+            
+            logger.info(f"Batch size {batch_size}: {throughput:.1f} vectors/sec")
+        
+        # Verify all batch sizes worked
+        for batch_size, result in results.items():
+            assert result["successful"] >= result["total_vectors"] * 0.9
+    
+    def test_concurrent_batch_processing(self, rest_client, batching_collection):
+        """Test concurrent batch processing for improved throughput"""
+        import concurrent.futures
+        import threading
+        
+        # Shared counter for thread-safe ID generation
+        counter_lock = threading.Lock()
+        vector_counter = 0
+        
+        def process_batch(batch_num, size=50):
+            """Process a single batch of vectors"""
+            nonlocal vector_counter
+            
+            vectors = []
+            ids = []
+            metadatas = []
+            
+            # Generate batch data
+            with counter_lock:
+                start_idx = vector_counter
+                vector_counter += size
+            
+            for i in range(start_idx, start_idx + size):
+                vector = np.random.random(128).astype(np.float32).tolist()
+                vectors.append(vector)
+                ids.append(f"concurrent_{i}")
+                metadatas.append({"batch": batch_num, "index": i})
+            
+            # Insert batch
+            try:
+                result = rest_client.insert_vectors(
+                    collection_id=batching_collection.config.name,
+                    vectors=vectors,
+                    ids=ids,
+                    metadata=metadatas
+                )
+                return {"success": True, "count": size}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        # Process batches concurrently
+        num_batches = 10
+        start_time = time.time()
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(process_batch, i) for i in range(num_batches)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+        
+        elapsed_time = time.time() - start_time
+        
+        # Analyze results
+        successful_batches = sum(1 for r in results if r["success"])
+        total_vectors = sum(r.get("count", 0) for r in results if r["success"])
+        
+        logger.info(f"Concurrent batching: {successful_batches}/{num_batches} batches, "
+                    f"{total_vectors} vectors in {elapsed_time:.2f}s")
+        
+        assert successful_batches >= num_batches * 0.8  # Allow some failures
+    
+    def test_adaptive_batch_timing(self, rest_client, batching_collection):
+        """Test adaptive timing for batch operations"""
+        # Simulate an adaptive batching system that adjusts based on latency
+        target_latency_ms = 50
+        min_batch_size = 10
+        max_batch_size = 100
+        current_batch_size = 25
+        
+        latencies = []
+        batch_sizes_used = []
+        
+        # Run adaptive batching simulation
+        total_vectors = 0
+        while total_vectors < 300:
+            # Generate batch
+            vectors = []
+            ids = []
+            metadatas = []
+            
+            for i in range(current_batch_size):
+                vector = np.random.random(128).astype(np.float32).tolist()
+                vectors.append(vector)
+                ids.append(f"adaptive_{total_vectors + i}")
+                metadatas.append({"batch_size": current_batch_size})
+            
+            # Measure insertion time
+            start_time = time.time()
+            try:
+                result = rest_client.insert_vectors(
+                    collection_id=batching_collection.config.name,
+                    vectors=vectors,
+                    ids=ids,
+                    metadata=metadatas
+                )
+                latency_ms = (time.time() - start_time) * 1000
+                latencies.append(latency_ms)
+                batch_sizes_used.append(current_batch_size)
+                
+                # Adapt batch size based on latency
+                if latency_ms > target_latency_ms * 1.2:
+                    # Reduce batch size if too slow
+                    current_batch_size = max(min_batch_size, int(current_batch_size * 0.8))
+                elif latency_ms < target_latency_ms * 0.8:
+                    # Increase batch size if fast
+                    current_batch_size = min(max_batch_size, int(current_batch_size * 1.2))
+                
+                total_vectors += len(vectors)
+                
+            except Exception as e:
+                logger.warning(f"Adaptive batch failed: {e}")
+                # Reduce batch size on failure
+                current_batch_size = max(min_batch_size, int(current_batch_size * 0.5))
+            
+            # Small delay between batches
+            time.sleep(0.01)
+        
+        # Analyze adaptive behavior
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+        avg_batch_size = sum(batch_sizes_used) / len(batch_sizes_used) if batch_sizes_used else 0
+        
+        logger.info(f"Adaptive batching: avg latency {avg_latency:.1f}ms, "
+                    f"avg batch size {avg_batch_size:.1f}")
+        
+        # Verify adaptive behavior worked
+        assert len(latencies) > 0
+        assert min_batch_size <= avg_batch_size <= max_batch_size
 
 
 if __name__ == "__main__":

@@ -13,15 +13,15 @@ This test checks that:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_unified_client.py
 
 import pytest
-from proximadb.unified_client import ProximaDBClient, Protocol
-from proximadb.models import (
+from proximadb import ProximaDBClient, Protocol
+from proximadb import (
     CollectionConfig, 
     DistanceMetric, 
     StorageEngine, 
     IndexingAlgorithm,
-    VectorRecord
+    VectorRecord,
+    ProximaDBError
 )
-from proximadb.exceptions import ProximaDBError
 
 
 def test_protocol_selection():
@@ -133,7 +133,7 @@ def test_type_conversion_helpers():
         
         assert client._pydantic_to_proto_distance_metric("cosine") == pb2.COSINE
         assert client._pydantic_to_proto_storage_engine(StorageEngine.VIPER) == pb2.StorageEngine.VIPER
-        assert client._pydantic_to_proto_indexing_algorithm(IndexingAlgorithm.HNSW) == pb2.IndexingAlgorithm.HNSW
+        assert client._pydantic_to_proto_indexing_algorithm(IndexingAlgorithm.HNSW) == pb2.HNSW
         
     except ImportError:
         print("gRPC not available, skipping proto conversion tests")
@@ -193,7 +193,7 @@ def test_client_interface_consistency():
 def test_convenience_functions():
     """Test convenience connection functions"""
     
-    from proximadb.unified_client import connect, connect_grpc, connect_rest
+    from proximadb import connect, connect_grpc, connect_rest
     
     # Test generic connect
     client = connect(url="http://localhost:5678")

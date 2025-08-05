@@ -18,6 +18,8 @@ limitations under the License.
 
 import logging
 import time
+import gzip
+import json
 from typing import Any, Dict, List, Optional, Union, Iterator
 import warnings
 
@@ -94,12 +96,16 @@ class ProximaDBClient:
         if self.config.enable_debug_logging:
             level = logging.DEBUG
         else:
-            level = getattr(logging, self.config.log_level.value)
+            # Handle both enum and string log levels
+            if hasattr(self.config.log_level, 'value'):
+                level = getattr(logging, self.config.log_level.value)
+            else:
+                level = getattr(logging, str(self.config.log_level).upper(), logging.INFO)
         
         logging.getLogger("proximadb").setLevel(level)
     
     def _create_http_client(self) -> httpx.Client:
-        """Create configured HTTP client"""
+        """Create configured HTTP client with compression support"""
         timeout = httpx.Timeout(
             connect=self.config.connection.connect_timeout,
             read=self.config.connection.read_timeout,
@@ -123,8 +129,77 @@ class ProximaDBClient:
             http2=self.config.enable_http2,
         )
     
+    def _compress_data(self, data: bytes) -> bytes:
+        """Compress data using configured algorithm"""
+        algorithm = self.config.compression.algorithm.lower()
+        level = self.config.compression.level
+        
+        if algorithm == 'gzip':
+            return gzip.compress(data, compresslevel=level or 6)
+        elif algorithm == 'deflate':
+            import zlib
+            return zlib.compress(data, level=level or 6)
+        elif algorithm == 'zstd':
+            try:
+                import zstandard
+                cctx = zstandard.ZstdCompressor(level=level or 3)
+                return cctx.compress(data)
+            except ImportError:
+                logger.warning("zstd not available, falling back to gzip")
+                return gzip.compress(data, compresslevel=6)
+        elif algorithm == 'br' or algorithm == 'brotli':
+            try:
+                import brotli
+                return brotli.compress(data, quality=level or 4)
+            except ImportError:
+                logger.warning("brotli not available, falling back to gzip")
+                return gzip.compress(data, compresslevel=6)
+        else:
+            # Default to gzip if unknown algorithm
+            return gzip.compress(data, compresslevel=6)
+    
     def _make_request(self, method: str, endpoint: str, **kwargs) -> httpx.Response:
-        """Make HTTP request with retry logic"""
+        """Make HTTP request with retry logic and optional compression"""
+        
+        # Debug log the endpoint
+        logger.debug(f"Making {method} request to {endpoint}")
+        
+        # Handle request compression if enabled
+        # Use rest_enabled for REST protocol
+        if hasattr(self.config, 'compression') and self.config.compression.enabled and 'json' in kwargs:
+            json_data = kwargs.pop('json')
+            json_bytes = json.dumps(json_data).encode('utf-8')
+            
+            # Debug the payload size
+            logger.debug(f"Request payload size: {len(json_bytes)} bytes")
+            
+            # Only compress if data is larger than threshold
+            if len(json_bytes) > self.config.compression.threshold_bytes:
+                compressed_data = self._compress_data(json_bytes)
+                kwargs['content'] = compressed_data
+                kwargs['headers'] = kwargs.get('headers', {})
+                
+                # Set correct Content-Encoding based on algorithm
+                algorithm = self.config.compression.algorithm.lower()
+                if algorithm == 'br' or algorithm == 'brotli':
+                    kwargs['headers']['Content-Encoding'] = 'br'
+                elif algorithm == 'deflate':
+                    kwargs['headers']['Content-Encoding'] = 'deflate'
+                elif algorithm == 'zstd':
+                    kwargs['headers']['Content-Encoding'] = 'zstd'
+                else:  # default to gzip
+                    kwargs['headers']['Content-Encoding'] = 'gzip'
+                    
+                kwargs['headers']['Content-Type'] = 'application/json'
+                
+                logger.debug(
+                    f"Compressed request: {len(json_bytes)} -> {len(compressed_data)} bytes "
+                    f"({100 * (1 - len(compressed_data) / len(json_bytes)):.1f}% reduction)"
+                )
+            else:
+                # Data too small to benefit from compression
+                kwargs['json'] = json_data
+        
         @retry(
             stop=stop_after_attempt(self.config.retry.max_retries + 1),
             wait=wait_exponential(
@@ -460,6 +535,7 @@ class ProximaDBClient:
         }
         
         request_data = {
+            "operation": "upsert" if upsert else "insert",
             "collection_id": collection_id,
             "vectors": [vector_record]
         }
@@ -555,6 +631,17 @@ class ProximaDBClient:
                 "collection_id": collection_id,
                 "vectors": vector_data
             }
+            
+            # Debug logging
+            logger.debug(f"Sending vector batch request with {len(vector_data)} vectors")
+            logger.debug(f"Request payload preview: operation={unified_request['operation']}, collection_id={collection_id}, vector_count={len(vector_data)}")
+            if vector_data:
+                logger.debug(f"First vector: id={vector_data[0].get('id')}, metadata_items={len(vector_data[0].get('metadata', []))}")
+            
+            # Print full request for debugging
+            import json as debug_json
+            logger.debug(f"Full request JSON:\n{debug_json.dumps(unified_request, indent=2)[:1000]}")
+            
             response = self._make_request(
                 "POST",
                 "/api/v1/vector/batch",
@@ -623,7 +710,7 @@ class ProximaDBClient:
                 successful_count=total_successful,
                 failed_count=total_failed,
                 duration_ms=0,  # Total duration not tracked for multi-batch
-                errors=all_errors if all_errors else None
+                errors=all_errors if all_errors else []
             )
     
     def search(

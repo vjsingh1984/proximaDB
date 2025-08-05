@@ -2,7 +2,7 @@
 Test suite to improve models.py coverage to 100%
 """
 import pytest
-from proximadb.models import CollectionConfig, VectorRecord
+from proximadb import CollectionConfig, VectorRecord
 
 
 class TestCollectionConfigEdgeCases:

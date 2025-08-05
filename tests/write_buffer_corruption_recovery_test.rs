@@ -11,6 +11,7 @@ mod write_buffer_corruption_recovery_tests {
         ApiConfig, ConsensusConfig, MonitoringConfig,
         AssignmentConfig, FilesystemOptimizationConfig,
     };
+    use proximadb::network::NetworkConfig;
     use proximadb::ProximaDB;
     
     fn create_test_config(base_path: &str) -> Config {
@@ -55,6 +56,7 @@ mod write_buffer_corruption_recovery_tests {
                 metrics_enabled: false,
                 log_level: "error".to_string(),
             },
+            network: Some(NetworkConfig::default()),
             tls: None,
             hardware: None,
         }

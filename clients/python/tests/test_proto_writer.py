@@ -92,7 +92,7 @@ def test_proto_serialization():
     config.dimension = 384
     config.distance_metric = pb2.COSINE
     config.storage_engine = pb2.StorageEngine.SST
-    config.primary_indexing_algorithm = pb2.IndexingAlgorithm.HNSW
+    config.primary_indexing_algorithm = pb2.HNSW
     
     print(f"Collection: {config.name}")
     print(f"Dimension: {config.dimension}")

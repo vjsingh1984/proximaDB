@@ -1,4 +1,5 @@
 use proximadb::core::config::{Config, StorageConfig, StorageLocation, ServerConfig, ApiConfig, ConsensusConfig, MonitoringConfig, AssignmentConfig, FilesystemOptimizationConfig};
+use proximadb::network::NetworkConfig;
 use proximadb::ProximaDB;
 use tempfile::TempDir;
 use std::time::Instant;
@@ -67,6 +68,7 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
             metrics_enabled: false,
             log_level: "info".to_string(),
         },
+        network: Some(NetworkConfig::default()),
         tls: None,
         hardware: None,
     };
@@ -142,6 +144,7 @@ async fn test_recovery_after_crash() -> Result<()> {
             metrics_enabled: false,
             log_level: "error".to_string(),
         },
+        network: Some(NetworkConfig::default()),
         tls: None,
         hardware: None,
     };

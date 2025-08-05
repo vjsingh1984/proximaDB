@@ -14,7 +14,7 @@ This test checks that:
 import pytest
 from proximadb import ProximaDBClient, Protocol
 from proximadb import ProximaDBClient, Protocol
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
+from proximadb import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
 from proximadb import proximadb_pb2 as pb2
 
 
@@ -58,7 +58,7 @@ def test_proto_vs_pydantic_separation():
     # Proto enums should be integers
     assert pb2.COSINE == 1
     assert pb2.StorageEngine.VIPER == 1
-    assert pb2.IndexingAlgorithm.HNSW == 1
+    assert pb2.HNSW == 1
     
     # Pydantic enums should be strings
     assert "cosine" == "cosine"

@@ -107,8 +107,8 @@ class TestDockerDemoContainer:
         
         # Use SDK instead of raw REST calls for proper metadata handling
         from proximadb import ProximaDBClient
-        from proximadb.models import VectorRecord
-        client = ProximaDBClient(force_protocol='rest')
+        from proximadb import VectorRecord
+        client = ProximaDBClient(url=base_url, force_protocol='rest')
         
         try:
             # Create test collection using SDK

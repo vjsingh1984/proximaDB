@@ -11,8 +11,8 @@ from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
 from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric, QuantizationConfig, QuantizationType
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric, QuantizationConfig, QuantizationType
+from proximadb import ProximaDBError
 
 
 class TestSearchOperations:

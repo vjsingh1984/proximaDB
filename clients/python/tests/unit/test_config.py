@@ -4,7 +4,7 @@ Test suite for ProximaDB configuration
 import os
 import pytest
 from pydantic import ValidationError
-from proximadb.config import (
+from proximadb import (
     Protocol,
     LogLevel,
     RetryConfig,
@@ -124,7 +124,7 @@ class TestCompressionConfig:
     def test_compression_config_defaults(self):
         """Test default compression configuration"""
         config = CompressionConfig()
-        assert config.enabled is True
+        assert config.enabled is False
         assert config.algorithm == "gzip"
         assert config.threshold_bytes == 1024
         assert config.level is None
