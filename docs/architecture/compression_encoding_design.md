@@ -1241,14 +1241,124 @@ compression_strategy:
 | **Accuracy Loss** | Configurable precision thresholds, validation tests |
 | **Maintenance Burden** | Comprehensive tests, clear documentation |
 
+## 13. SST Block Size Optimization
+
+### 13.1 Vector Size Calculations
+```
+Per Vector Storage Requirements:
+- Vector data: dimension × 4 bytes (FP32)
+- Vector ID: ~50 bytes average
+- Metadata: ~200-400 bytes average
+- Total overhead: ~20-25% of vector size
+
+Examples:
+- 384D: 1.5KB vector + 0.4KB overhead = ~2KB/vector
+- 768D: 3KB vector + 0.4KB overhead = ~3.5KB/vector
+- 1536D: 6KB vector + 0.4KB overhead = ~6.5KB/vector
+```
+
+### 13.2 SST Storage Implementation
+**Note**: SST uses sort-merge algorithms during flush/compaction, NOT BTreeMap (which is only for in-memory operations)
+
+1. **Flush**: Memtable → Sorted disk blocks
+2. **Compaction**: Multi-way merge sort of SSTable files
+3. **Sorting**: ID-based primary, metadata similarity secondary
+4. **Compression**: Applied to entire sorted blocks
+
+### 13.3 Optimal Block Sizes by Dimension
+
+| Dimension | Vector + Overhead | Block Size | Vectors/Block | Use Case |
+|-----------|------------------|------------|---------------|----------|
+| 128D | 0.9KB | 2MB | ~2,200 | Small embeddings |
+| 384D | 1.9KB | 4MB | ~2,100 | text-embedding-3-small |
+| 768D | 3.4KB | 8MB | ~2,350 | BERT-base |
+| 1024D | 4.4KB | 8-12MB | ~2,000 | Large LMs |
+| 1536D | 6.4KB | 12-16MB | ~2,000 | GPT-3 ada |
+| 2048D | 8.4KB | 16MB | ~1,900 | Very large |
+| 3072D | 12.4KB | 24-32MB | ~2,000 | Specialized |
+
+**Target**: 2000-2500 vectors per block for optimal ZSTD compression
+
+### 13.4 Dynamic Block Sizing Formula
+```rust
+fn calculate_optimal_block_size(dimension: usize) -> usize {
+    let vector_size = dimension * 4 + 400; // FP32 + overhead
+    let target_vectors = 2000;
+    let block_size = vector_size * target_vectors;
+    
+    // Round to nearest MB, min 2MB, max 32MB
+    let block_mb = (block_size / 1_000_000).max(2).min(32);
+    block_mb * 1_000_000
+}
+```
+
+### 13.5 Environment-Specific Tuning
+
+| Environment | Block Size | Rationale |
+|------------|------------|-----------|
+| **Cloud (S3/GCS)** | 16-32MB | Reduce API calls |
+| **Local NVMe** | 4-8MB | Cache optimization |
+| **Memory-Constrained** | 1-2MB | Trade compression for memory |
+| **Sparse Vectors** | 2x normal | Capture sparsity patterns |
+
+## 14. Final Decision Summary
+
+### Critical Insight
+**Storage architecture determines quantization strategy:**
+
+#### SST (Row Storage)
+```
+❌ NEVER use quantization - it INCREASES I/O:
+[ID | FP32 Vector | Quantized Vector | Metadata] = 7.7KB per row
+         6KB     +      1.5KB      +    200B
+                  ↑
+            Makes it WORSE, not better
+```
+
+**Strategy**:
+- FP32 vectors ONLY
+- Dynamic block sizing (4-16MB based on dimension)
+- User-configurable ZSTD levels (1-9)
+- Sort-merge algorithms for disk operations
+- Metadata grouping for +10-15% compression
+
+#### VIPER (Columnar Storage)
+```
+✅ ALWAYS use quantization - it REDUCES I/O by 24x:
+├── fp32_column: [...]      ← Skip during search
+├── int8_column: [...]      ← Read ONLY this
+└── metadata: [...]         ← Skip if not filtering
+```
+
+**Strategy**:
+- Store quantized vectors in separate columns
+- Product Quantization for maximum compression
+- Read only needed columns
+- Optional FP32 for precision reranking
+
+### Optimal Two-Stage Architecture
+```yaml
+# Stage 1: VIPER for fast candidate selection
+viper_collection:
+  vectors: int8_quantized      # 24x less I/O
+  search: top_1000_candidates   # 100x faster
+  
+# Stage 2: SST for precision reranking
+sst_collection:  
+  vectors: fp32_only           # 100% accuracy
+  compression: zstd_3          # 20-40% reduction
+  block_size: dimension_aware  # 4-16MB
+  search: rerank_top_10        # Final results
+```
+
 ## Conclusion
 
 This unified design provides:
 
-1. **VIPER**: Standard Parquet compatibility with 30-50% compression through transforms
-2. **SST**: Custom optimization achieving 50-70% compression with streaming reads
-3. **Flexibility**: Per-collection compression configuration
-4. **Migration**: Zero-downtime compression changes with mixed format support
-5. **Performance**: Balanced trade-offs between compression, CPU, and compatibility
+1. **SST**: FP32-only with dynamic block sizing (20-60% compression)
+2. **VIPER**: Quantization-first approach (24x I/O reduction)
+3. **Block Optimization**: 2000-2500 vectors per block target
+4. **Flexibility**: Per-collection compression configuration
+5. **Two-Stage Search**: VIPER candidates → SST precision
 
-The key insight is that VIPER prioritizes ecosystem compatibility while SST leverages custom serialization for maximum compression. Both approaches are valid and optimized for their respective use cases.
+The key insight is that row storage (SST) should NEVER use quantization while columnar storage (VIPER) should ALWAYS use quantization. Block sizes should be dynamically adjusted based on vector dimensions to maintain optimal compression ratios.
