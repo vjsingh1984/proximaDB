@@ -357,19 +357,28 @@ pub struct BlockCompressionInfo {
 #### Block-Level Compression Architecture
 ```rust
 pub struct DataBlock {
-    pub vectors: Vec<VectorRecord>,  // ~1000 vectors
+    pub vectors: Vec<VectorRecord>,  // Target: 2000-2500 vectors
     pub block_id: u32,
-    pub vector_type: VectorType,     // FP32, INT16, INT8
+    pub vector_type: VectorType,     // FP32 only for SST
+    pub sort_order: SortOrder,       // ID-based with metadata grouping
 }
 
 impl SstableWriter {
     fn write_block(&self, vectors: Vec<VectorRecord>, compression: &CompressionConfig) {
-        // Group vectors into blocks for better compression
-        let block_size = match vectors[0].vector_type {
-            VectorType::Fp32 => 1000,     // 6MB blocks
-            VectorType::Int16 => 2000,    // 6MB blocks  
-            VectorType::Int8 => 4000,     // 6MB blocks
+        // Calculate optimal block size based on vector dimension
+        let dimension = vectors[0].dimension;
+        let vector_size = dimension * 4 + 400; // FP32 + metadata overhead
+        let target_vectors = 2000; // Optimal for compression
+        
+        // Dynamic block sizing based on dimension
+        let block_size_mb = match dimension {
+            d if d <= 384 => 4,    // 4MB for small vectors
+            d if d <= 768 => 8,    // 8MB for medium vectors  
+            d if d <= 1536 => 12,  // 12MB for large vectors
+            _ => 16,               // 16MB for very large vectors
         };
+        
+        let vectors_per_block = (block_size_mb * 1_000_000) / vector_size;
         
         for chunk in vectors.chunks(block_size) {
             let block = DataBlock {
@@ -876,7 +885,11 @@ client.create_collection(
 #### SST ENGINE STRATEGY [FINAL FOR RELEASE 1.0]
 
 ##### Primary Approach: FP32-Only with Block Compression
-- **Method**: ZSTD on entire data blocks (1000 vectors)
+- **Method**: ZSTD on entire data blocks
+- **Block Size**: Dimension-aware (targeting 2000-2500 vectors/block)
+  - 384D: 4MB blocks (~2100 vectors)
+  - 768D: 8MB blocks (~2350 vectors)
+  - 1536D: 12-16MB blocks (~2000 vectors)
 - **NO QUANTIZATION**: Avoid dual storage in row format
 - **Compression Levels**: User configurable (1-9)
   - ZSTD-1: 15-25% reduction, fastest (real-time)

@@ -510,7 +510,7 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_kb: 8192, // 8MB blocks optimized for ZSTD compression effectiveness
+            block_size_kb: 8192, // 8MB default - optimal for 768D vectors (~2350 vectors/block)
             compaction_strategy: "leveled".to_string(),
             compression: "zstd".to_string(),  // Changed to ZSTD for better compression
             compression_enabled: true,  // Compression enabled by default
